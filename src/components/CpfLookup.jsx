@@ -1,12 +1,12 @@
 // ============================================================================
 // CpfLookup - input de CPF que busca pessoa existente antes de cadastrar
 //
-// Pedido do Marcos: "Membresia e fonte unica. Antes de criar, busca pessoa
+// Pedido do Marcos: "Membresia e fonte única. Antes de criar, busca pessoa
 // existente em mem_membros via CPF / email. Se acha, vincula. Senao, cria."
 //
 // Props:
-//   onMatchFound({ membro, papeis })  -> callback quando acha pessoa existente
-//   onNoMatch(cpf)                    -> callback quando nao acha (segue pra cadastro novo)
+//   onMatchFound({ membro, papéis })  -> callback quando acha pessoa existente
+//   onNoMatch(cpf)                    -> callback quando não acha (segue pra cadastro novo)
 //   email, telefone (opcional, melhora a busca)
 //   placeholder, autoFocus (opcional)
 // ============================================================================

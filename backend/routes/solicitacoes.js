@@ -6,13 +6,12 @@ const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
 
 const CRON_SECRET = process.env.CRON_SECRET;
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // ── CRON · ATUALIZAR STATUS DE PEDIDOS ML VINCULADOS ───────────────────
-// Montado ANTES do authenticate · usa CRON_SECRET ou x-vercel-cron header.
+// Montado ANTES do authenticate · auth via CRON_SECRET (Vercel/GitHub Actions).
 router.post('/cron/atualizar-ml', async (req, res) => {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ erro: 'Nao autorizado' });
   }
   try {
@@ -26,7 +25,7 @@ router.post('/cron/atualizar-ml', async (req, res) => {
 
 router.use(authenticate);
 
-// Bust do cache do painel apos mutacao (afeta matriz adm/criativo)
+// Bust do cache do painel após mutacao (afeta matriz adm/criativo)
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     res.on('finish', () => {
@@ -36,19 +35,22 @@ router.use((req, res, next) => {
   next();
 });
 
-const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'outro'];
+const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'pagamento', 'servico', 'producao', 'outro'];
 
 // Map categoria → notification module
 const CATEGORIA_MODULO = {
   ti: 'ti',
   compras: 'logistica',
+  servico: 'logistica',     // contratação de fornecedor · logística negocia (Amaury)
   reembolso: 'financeiro',
+  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar (Yago)
   reserva_espaco: 'administrativo',
   espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
   ferias: 'rh',
   licenca: 'rh',
   marketing: 'marketing',
+  producao: 'producao',     // movimentação de material / configuração de equipamentos
   outro: 'administrativo',
 };
 
@@ -56,27 +58,31 @@ const CATEGORIA_MODULO = {
 const CATEGORIA_TO_AREA_RESP = {
   ti:              { area: 'ti',                subcategoria: 'default' },
   compras:         { area: 'logistica_compras', subcategoria: 'default' },
+  servico:         { area: 'logistica_compras', subcategoria: 'servico' },
   reembolso:       { area: 'financeiro',        subcategoria: 'reembolso' },
+  pagamento:       { area: 'financeiro',        subcategoria: 'pagamento' },
   reserva_espaco:  { area: 'reserva_espaco',    subcategoria: 'default' },
   espaco:          { area: 'reserva_espaco',    subcategoria: 'default' },
   infraestrutura:  { area: 'manutencao',        subcategoria: 'default' },
   ferias:          { area: 'rh',                subcategoria: 'ferias' },
   licenca:         { area: 'rh',                subcategoria: 'licenca' },
   marketing:       { area: 'marketing',         subcategoria: 'default' },
+  producao:        { area: 'producao',          subcategoria: 'default' },
   outro:           { area: null,                subcategoria: 'default' },
 };
 
 // Map módulo → categorias (for granular permission filtering)
 const MODULO_CATEGORIAS = {
   ti: ['ti'],
-  logistica: ['compras'],
-  financeiro: ['reembolso'],
+  logistica: ['compras', 'servico'],
+  financeiro: ['reembolso', 'pagamento'],
   administrativo: ['espaco', 'reserva_espaco', 'infraestrutura', 'outro'],
   rh: ['ferias', 'licenca'],
   marketing: ['marketing'],
+  producao: ['producao'],
 };
 
-// Map modulePerms key → backend modulo
+// Map modulePerms key → backend módulo
 const PERM_TO_MODULO = {
   'DP': 'rh',
   'Pessoas': 'rh',
@@ -95,7 +101,7 @@ router.get('/', async (req, res) => {
     const role = req.user.role;
     const granular = req.user.granular;
 
-    const { categoria, status, mine } = req.query;
+    const { categoria, status, mine, aba } = req.query;
     let q = supabase
       .from('solicitacoes')
       .select('*')
@@ -104,34 +110,27 @@ router.get('/', async (req, res) => {
     if (categoria) q = q.eq('categoria', categoria);
     if (status) q = q.eq('status', status);
 
-    if (mine === 'true') {
+    if (aba === 'aprovar') {
+      // Aba do diretor de origem · so o que o user precisa aprovar.
+      q = q.eq('aprovacao_origem_diretor_id', userId)
+           .eq('aprovacao_origem_status', 'pendente')
+           .is('deleted_at', null);
+    } else if (mine === 'true') {
       q = q.eq('solicitante_id', userId);
     } else if (['admin', 'diretor'].includes(role)) {
       // Admin/diretor sees all — no filter
     } else {
-      // Areas onde o user eh responsavel cadastrado em area_solicitacoes_responsaveis
+      // Fila "Para Atender": SO quem eh responsável cadastrado em
+      // area_solicitacoes_responsaveis ve as solicitações da sua área.
+      // Colaborador comum (sem área responsável) ve apenas as próprias —
+      // acesso genérico a um módulo NÃO da direito de ver a fila dos outros.
       const { data: respRows } = await supabase
         .from('area_solicitacoes_responsaveis')
         .select('area')
         .eq('profile_id', userId);
       const responsavelAreas = new Set((respRows || []).map(r => r.area));
 
-      const modulePerms = granular?.modulePerms || {};
-      const allowedCategories = new Set();
-
-      for (const [permKey, modulo] of Object.entries(PERM_TO_MODULO)) {
-        if (modulePerms[permKey] && modulePerms[permKey].leitura >= 2) {
-          const cats = MODULO_CATEGORIAS[modulo] || [];
-          cats.forEach(c => allowedCategories.add(c));
-        }
-      }
-
-      // Monta filtro OR · sempre ve as proprias + categorias permitidas via
-      // permissoes + areas onde eh responsavel cadastrado
       const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
-      if (allowedCategories.size > 0) {
-        orParts.push(`categoria.in.(${[...allowedCategories].join(',')})`);
-      }
       if (responsavelAreas.size > 0) {
         orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
       }
@@ -141,23 +140,151 @@ router.get('/', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
 
-    // Resolve profile names for solicitante/responsavel
-    const profileIds = [...new Set((data || []).flatMap(d => [d.solicitante_id, d.responsavel_id].filter(Boolean)))];
+    // Resolve profile names for solicitante/responsavel/diretor_origem
+    const profileIds = [...new Set((data || []).flatMap(d => [
+      d.solicitante_id, d.responsavel_id, d.aprovacao_origem_diretor_id,
+    ].filter(Boolean)))];
     let profileMap = {};
     if (profileIds.length) {
       const { data: profiles } = await supabase.from('profiles').select('id,name,email').in('id', profileIds);
       if (profiles) profileMap = Object.fromEntries(profiles.map(p => [p.id, p]));
     }
+
+    // Enrich Marketing etiquetas (Spec 010 · usado no Drawer de aprovação Spec 011)
+    const tipoIds    = [...new Set((data || []).map(d => d.marketing_tipo_id).filter(Boolean))];
+    const destinoIds = [...new Set((data || []).map(d => d.marketing_destino_id).filter(Boolean))];
+    let tipoMap = {}, destinoMap = {};
+    if (tipoIds.length) {
+      const { data: t } = await supabase.from('marketing_etiquetas_tipo').select('id, slug, nome, cor, habilidade_padrao, esforco_max_h').in('id', tipoIds);
+      tipoMap = Object.fromEntries((t || []).map(x => [x.id, x]));
+    }
+    if (destinoIds.length) {
+      const { data: d } = await supabase.from('marketing_etiquetas_destino').select('id, slug, nome, cor').in('id', destinoIds);
+      destinoMap = Object.fromEntries((d || []).map(x => [x.id, x]));
+    }
+
+    // Spec 012 · card Marketing LEGADO (cards antigos com solicitacao_id direto)
+    const solicMktIds = (data || [])
+      .filter(d => d.area_responsavel === 'marketing')
+      .map(d => d.id);
+    let cardMap = {};
+    let campanhaMap = {};
+    if (solicMktIds.length) {
+      const { data: cards } = await supabase
+        .from('marketing_kanban_cards')
+        .select('id, solicitacao_id, estado, tem_revisao, prazo_confirmado, prazo_preliminar, atribuido_a, entregue_em')
+        .in('solicitacao_id', solicMktIds)
+        .is('deleted_at', null);
+      cardMap = Object.fromEntries((cards || []).map(c => [c.solicitacao_id, c]));
+
+      // Redesenho 2026 · o solicitante acompanha a CAMPANHA (1 dor = 1 campanha com
+      // N entregaveis · os cards triados tem campanha_id, NÃO solicitacao_id).
+      const { data: camps } = await supabase
+        .from('marketing_campanhas')
+        .select('id, solicitacao_id, status, titulo, prazo_entrega')
+        .in('solicitacao_id', solicMktIds)
+        .is('deleted_at', null);
+      const campIds = (camps || []).map(c => c.id);
+      const entregMap = {};
+      if (campIds.length) {
+        const { data: ents } = await supabase
+          .from('marketing_kanban_cards')
+          .select('id, campanha_id, titulo, estado, atribuido_a, data_fim, tem_revisao')
+          .in('campanha_id', campIds)
+          .is('deleted_at', null);
+        const membroIds = [...new Set((ents || []).map(e => e.atribuido_a).filter(Boolean))];
+        let donoMap = {};
+        if (membroIds.length) {
+          const { data: ms } = await supabase.from('marketing_membros').select('id, profile_id, nome_display').in('id', membroIds);
+          const pids = [...new Set((ms || []).map(m => m.profile_id).filter(Boolean))];
+          let pmap = {};
+          if (pids.length) {
+            const { data: ps } = await supabase.from('profiles').select('id, name').in('id', pids);
+            pmap = Object.fromEntries((ps || []).map(p => [p.id, p.name]));
+          }
+          donoMap = Object.fromEntries((ms || []).map(m => [m.id, pmap[m.profile_id] || m.nome_display || null]));
+        }
+        for (const e of (ents || [])) {
+          if (!entregMap[e.campanha_id]) entregMap[e.campanha_id] = [];
+          entregMap[e.campanha_id].push({ id: e.id, titulo: e.titulo, estado: e.estado, dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim, tem_revisao: e.tem_revisao });
+        }
+      }
+      campanhaMap = Object.fromEntries((camps || []).map(c => [c.solicitacao_id, { ...c, entregaveis: entregMap[c.id] || [] }]));
+    }
+
     const enriched = (data || []).map(d => ({
       ...d,
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
+      aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
+      marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
+      marketing_destino: destinoMap[d.marketing_destino_id] || null,
+      marketing_card: cardMap[d.id] || null,
+      marketing_campanha: campanhaMap[d.id] || null,
     }));
 
     res.json(enriched);
   } catch (e) {
     console.error('[SOLICITACOES] list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar solicitações' });
+  }
+});
+
+// ── MEU PAPEL ───────────────────────────────────────────────
+// Define se o usuário ve a fila "Para Atender": admin/diretor OU
+// responsável cadastrado de alguma área (area_solicitacoes_responsaveis).
+// Colaborador comum recebe atende=false → so "Minhas Solicitações".
+router.get('/meu-papel', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+
+    // Aprovador de origem? Cargo de diretor de setor cadastrado em setor_diretor.
+    const { data: setorRow } = await supabase
+      .from('setor_diretor')
+      .select('setor, diretor_nome')
+      .eq('diretor_id', userId)
+      .maybeSingle();
+
+    // Contador de pendentes na fila do diretor de origem
+    let pendentesOrigem = 0;
+    if (setorRow) {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('aprovacao_origem_diretor_id', userId)
+        .eq('aprovacao_origem_status', 'pendente')
+        .is('deleted_at', null);
+      pendentesOrigem = count || 0;
+    }
+
+    if (['admin', 'diretor'].includes(role)) {
+      return res.json({
+        atende: true,
+        admin: true,
+        areas: [],
+        eh_diretor_origem: !!setorRow,
+        setor_origem: setorRow?.setor || null,
+        pendentes_origem: pendentesOrigem,
+      });
+    }
+    const { data, error } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('area')
+      .eq('profile_id', userId);
+    if (error) throw error;
+    const areas = (data || []).map(r => r.area);
+    res.json({
+      atende: areas.length > 0,
+      admin: false,
+      areas,
+      eh_diretor_origem: !!setorRow,
+      setor_origem: setorRow?.setor || null,
+      pendentes_origem: pendentesOrigem,
+    });
+  } catch (e) {
+    console.error('[SOLICITACOES] meu-papel error:', e.message);
+    res.status(500).json({ error: 'Erro ao resolver papel' });
   }
 });
 
@@ -169,11 +296,17 @@ router.post('/', async (req, res) => {
 
     const { titulo, descricao, justificativa, categoria, urgencia, valor_estimado, area_solicitante,
             // Fase A backbone
-            area_cliente, area_responsavel, subcategoria, eh_urgente, justificativa_urgencia,
+            area_responsavel, subcategoria, eh_urgente, justificativa_urgencia,
             data_necessaria, espaco_solicitado, data_uso, horario_inicio, horario_fim, qtde_pessoas,
             // Reembolso
             motivo_reembolso, data_compra,
-            forma_pagamento, chave_pix, banco, agencia, conta, documento_url } = req.body;
+            forma_pagamento, chave_pix, banco, agencia, conta, documento_url,
+            // Compras / Pagamentos / Serviços (campos estruturados compartilhados)
+            itens, link_referencia, favorecido_nome, favorecido_documento,
+            recorrente, recorrencia,
+            // Marketing · Spec 010 (etiquetas) + intake por DOR (Redesenho 2026-05-30)
+            marketing_tipo_id, marketing_destino_id,
+            mkt_publico_alvo, mkt_ideia_inicial } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
@@ -183,6 +316,33 @@ router.post('/', async (req, res) => {
     const mapa = CATEGORIA_TO_AREA_RESP[categoria] || { area: null, subcategoria: 'default' };
     const finalAreaResp = area_responsavel || mapa.area;
     const finalSub = subcategoria || mapa.subcategoria;
+
+    // Área do SOLICITANTE (dimensão de KPI) · NÃO vem mais de seletor no form
+    // (2026-06-01). Deriva de quem preenche · ignora qualquer area_cliente do body.
+    // Prioriza kpi_areas (slug que o resto dos KPIs usa) > 1a área granular de
+    // usuario_areas (nome normalizado pra slug) > setor do profile.
+    const _stripAcentos = (s) => String(s || '').normalize('NFD')
+      .split('').filter(c => { const code = c.charCodeAt(0); return code < 0x0300 || code > 0x036f; }).join('');
+    const _slugArea = (s) => _stripAcentos(s).toLowerCase().trim();
+    const areaClienteResolvida =
+      (Array.isArray(req.user.kpi_areas) && req.user.kpi_areas[0])
+      || (req.user.granular?.areas?.[0] ? _slugArea(req.user.granular.areas[0]) : null)
+      || (req.user.area ? _slugArea(req.user.area) : null)
+      || null;
+
+    // Aprovação hierarquica de origem (Spec 001) · resolvida AQUI porque o insert
+    // roda via service_role (auth.uid()=NULL) e, nesse caso, o trigger so dispensa.
+    // Gravamos aprovacao_origem_* + status no insert · o trigger continua de rede
+    // de segurança (so age quando ninguém setou aprovacao_origem_status).
+    let rota = null;
+    try {
+      const { data: r, error: rErr } = await supabase
+        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId });
+      if (rErr) throw rErr;
+      rota = r;
+    } catch (rerr) {
+      console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
+    }
 
     const { data, error } = await supabase
       .from('solicitacoes')
@@ -195,9 +355,19 @@ router.post('/', async (req, res) => {
         valor_estimado,
         solicitante_id: userId,
         area_solicitante,
-        // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira
-        area_cliente: area_cliente || null,
+        // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira.
+        // area_cliente vem da ÁREA do solicitante (KPIs), não mais de seletor.
+        area_cliente: areaClienteResolvida,
         area_responsavel: finalAreaResp,
+        // Roteamento hierarquico resolvido acima · status='aguardando_aprovacao_origem'
+        // (vai pro diretor) ou 'pendente' (dispensada). SLA trigger refina compras/reembolso.
+        ...(rota && {
+          aprovacao_origem_diretor_id: rota.diretor_id || null,
+          aprovacao_origem_status: rota.aprovacao_status,
+          aprovacao_origem_motivo: rota.motivo || null,
+          aprovacao_origem_em: rota.aprovacao_status === 'dispensada' ? new Date().toISOString() : null,
+          status: rota.status,
+        }),
         subcategoria: finalSub,
         eh_urgente: !!eh_urgente,
         justificativa_urgencia: justificativa_urgencia || null,
@@ -221,13 +391,51 @@ router.post('/', async (req, res) => {
           conta: conta || null,
           documento_url: documento_url || null,
         }),
+        // Compras · itens + link de referência + fornecedor sugerido
+        ...(categoria === 'compras' && {
+          itens: itens || null,
+          link_referencia: link_referencia || null,
+          favorecido_nome: favorecido_nome || null,
+        }),
+        // Pagamento · favorecido + documento (boleto/NF) + forma + recorrencia.
+        // data_necessaria carrega o vencimento (reusa a coluna · ver frontend).
+        ...(categoria === 'pagamento' && {
+          favorecido_nome: favorecido_nome || null,
+          favorecido_documento: favorecido_documento || null,
+          forma_pagamento: forma_pagamento || null,
+          chave_pix: chave_pix || null,
+          banco: banco || null,
+          agencia: agencia || null,
+          conta: conta || null,
+          documento_url: documento_url || null,
+          recorrente: !!recorrente,
+          recorrencia: recorrencia || null,
+        }),
+        // Serviço · o que (itens) + fornecedor sugerido + proposta + recorrencia
+        ...(categoria === 'servico' && {
+          itens: itens || null,
+          favorecido_nome: favorecido_nome || null,
+          favorecido_documento: favorecido_documento || null,
+          link_referencia: link_referencia || null,
+          documento_url: documento_url || null,
+          recorrente: !!recorrente,
+          recorrencia: recorrencia || null,
+        }),
+        // Marketing · intake por DOR (Redesenho 2026-05-30) · público + ideia opcional.
+        // marketing_tipo_id/destino_id ficam null no intake (Pedro classifica na triagem).
+        ...(categoria === 'marketing' && {
+          marketing_tipo_id: marketing_tipo_id || null,
+          marketing_destino_id: marketing_destino_id || null,
+          mkt_publico_alvo: mkt_publico_alvo || null,
+          mkt_ideia_inicial: mkt_ideia_inicial || null,
+        }),
       })
       .select('*')
       .single();
     if (error) throw error;
 
-    // Auto-vincula responsavel_id se houver uma unica pessoa cadastrada para
-    // a area · se houver mais, deixa nulo (qualquer um da fila pode pegar)
+    // Auto-vincula responsavel_id se houver uma única pessoa cadastrada para
+    // a área · se houver mais, deixa nulo (qualquer um da fila pode pegar)
     let responsaveisDaArea = [];
     if (finalAreaResp) {
       const { data: resps } = await supabase
@@ -245,8 +453,8 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Notify responsible people · alem das regras do modulo, sempre notifica
-    // os responsaveis cadastrados pra area (Pedro Paiva pra marketing, etc)
+    // Notify responsible people · além das regras do módulo, sempre notifica
+    // os responsáveis cadastrados pra área (Pedro Paiva pra marketing, etc)
     const modulo = CATEGORIA_MODULO[categoria] || 'administrativo';
     notificar({
       modulo,
@@ -259,35 +467,257 @@ router.post('/', async (req, res) => {
       extraTargetIds: responsaveisDaArea,
     }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
 
+    // Aprovação hierarquica · se trigger marcou aguardando_aprovacao_origem,
+    // notifica o diretor de origem em vez do responsável da área alvo.
+    if (data.status === 'aguardando_aprovacao_origem' && data.aprovacao_origem_diretor_id) {
+      notificar({
+        modulo: 'administrativo',
+        tipo: 'solicitacao_aprovacao_origem',
+        titulo: `Aprovar solicitacao: ${titulo}`,
+        mensagem: `${userName || 'Funcionario'} pediu uma solicitação que precisa da sua aprovação antes de seguir para ${finalAreaResp || 'area alvo'}.`,
+        link: '/solicitacoes?aba=aprovar',
+        severidade: 'info',
+        chaveDedup: `solicitacao_aprovacao_origem_${data.id}`,
+        targetIds: [data.aprovacao_origem_diretor_id],
+      }).catch(err => console.error('[SOLICITACOES] notify diretor:', err.message));
+    }
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[SOLICITACOES] create error:', e.message);
+    // Erro do trigger fn_solicitacoes_roteamento_aprovacao · membro nao-funcionario
+    if (e.code === '42501' || /apenas funcionarios podem criar solicitacoes/i.test(e.message || '')) {
+      return res.status(403).json({
+        error: 'Apenas funcionários com vinculo ativo em RH podem criar solicitações.',
+      });
+    }
     res.status(500).json({ error: e.message || 'Erro ao criar solicitação' });
   }
 });
 
-// ── UPDATE (status, responsavel, observacoes) ───────────────
+// ── APROVAÇÃO HIERARQUICA DE ORIGEM ─────────────────────────
+// Diretor de origem aprova a solicitação. Após aprovação, ela vai pra
+// fila normal da área alvo (status='pendente').
+async function isAdminFallback(req) {
+  // Marcos + Matheus + outros super-admins · permitem aprovar/rejeitar quando
+  // diretor de origem não esta cadastrado ou esta de férias (fallback).
+  if (['admin'].includes(req.user.role)) return true;
+  const { data } = await supabase
+    .from('app_super_admins')
+    .select('email')
+    .ilike('email', req.user.email)
+    .eq('ativo', true)
+    .maybeSingle();
+  return !!data;
+}
+
+router.patch('/:id/aprovar-origem', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const isSuperAdmin = await isAdminFallback(req);
+
+    const { data: atual, error: getErr } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (getErr) throw getErr;
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    if (atual.aprovacao_origem_status !== 'pendente') {
+      return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
+    }
+
+    // Quem pode aprovar: o diretor de origem cadastrado, OU super-admin (fallback
+    // quando diretor_id não foi resolvido, OU intervencao manual).
+    const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
+    if (!isDiretorAlvo && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem pode aprovar esta solicitação.' });
+    }
+
+    const novoResponsavelId = atual.responsavel_id;
+    const update = {
+      aprovacao_origem_status: 'aprovada',
+      aprovacao_origem_em: new Date().toISOString(),
+      // Após a aprovação de origem, segue pro próximo portao: aprovação financeira
+      // (se exigida e ainda não feita · ex: compras/reembolso/alcada) ou direto pra
+      // fila da área alvo (pendente). Sem isso, compras roteadas pulavam o financeiro.
+      status: (atual.precisa_aprovacao_financeira && !atual.aprovado_financeiro_em)
+        ? 'aguardando_aprovacao_financeira'
+        : 'pendente',
+    };
+    // Se super-admin esta aprovando como fallback, registra quem foi
+    if (!isDiretorAlvo && isSuperAdmin) {
+      update.aprovacao_origem_diretor_id = userId;
+      update.aprovacao_origem_motivo = '[Fallback super-admin]';
+    }
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    // Notifica solicitante + responsável da área alvo
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Aprovada: ${data.titulo}`,
+      mensagem: `${userName || 'Diretor'} aprovou sua solicitação. Foi para a fila ${data.area_responsavel || 'da area alvo'}.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solicitacao_aprovada_origem_${data.id}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify aprovar:', err.message));
+
+    if (data.area_responsavel) {
+      resolverDestinatarios(modulo).then(managers => {
+        const filtered = managers.filter(id => id !== data.solicitante_id);
+        if (filtered.length) {
+          notificar({
+            modulo,
+            tipo: 'solicitacao',
+            titulo: `Nova na fila: ${data.titulo}`,
+            mensagem: `Solicitação aprovada pelo diretor · pronta para atendimento.`,
+            link: '/solicitacoes',
+            severidade: 'info',
+            chaveDedup: `solicitacao_pos_aprovacao_${data.id}`,
+            targetIds: filtered,
+          }).catch(err => console.error('[SOLICITACOES] notify responsaveis:', err.message));
+        }
+      }).catch(err => console.error('[SOLICITACOES] resolve managers:', err.message));
+    }
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] aprovar-origem:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao aprovar solicitação' });
+  }
+});
+
+// Diretor de origem rejeita · motivo obrigatório · status fica imutavel
+// (Marcos 2026-05-28 · "solicitação rejeitada não reabre · cria nova").
+router.patch('/:id/rejeitar-origem', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const isSuperAdmin = await isAdminFallback(req);
+    const { motivo } = req.body || {};
+    if (!motivo || !motivo.trim()) {
+      return res.status(400).json({ error: 'Motivo da rejeição é obrigatório.' });
+    }
+
+    const { data: atual } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.aprovacao_origem_status !== 'pendente') {
+      return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
+    }
+    const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
+    if (!isDiretorAlvo && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem pode rejeitar esta solicitação.' });
+    }
+
+    const update = {
+      aprovacao_origem_status: 'rejeitada',
+      aprovacao_origem_em: new Date().toISOString(),
+      aprovacao_origem_motivo: motivo.trim(),
+      status: 'rejeitado',
+    };
+    if (!isDiretorAlvo && isSuperAdmin) {
+      update.aprovacao_origem_diretor_id = userId;
+    }
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Rejeitada: ${data.titulo}`,
+      mensagem: `${userName || 'Diretor'} rejeitou: ${motivo.trim()}`,
+      link: '/solicitacoes',
+      severidade: 'alta',
+      chaveDedup: `solicitacao_rejeitada_origem_${data.id}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify rejeitar:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] rejeitar-origem:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao rejeitar solicitação' });
+  }
+});
+
+// ── UPDATE (status, responsável, observações) ───────────────
 router.patch('/:id', async (req, res) => {
   try {
+    const userId = req.user.userId;
     const userName = req.user.name;
 
     const { status, responsavel_id, observacoes,
             // Fase A · novos campos editaveis
             proposta_orcamento, proposta_cronograma,
-            nps_nota, nps_comentario,
-            aprovado_financeiro_em } = req.body;
+            nps_nota, nps_comentario } = req.body;
+    // SEGURANCA: `aprovado_financeiro_em`/`aprovado_financeiro_por` NUNCA sao
+    // aceitos aqui. O portao de gasto so e liberado pelo endpoint dedicado
+    // POST /:id/aprovar-financeiro (gated por podeAprovarFinanceiro). Antes, este
+    // PATCH (sem authz) aceitava o campo do body → qualquer autenticado liberava
+    // pagamento de qualquer solicitacao.
+
+    // ── Autorizacao · carrega a solicitacao e decide quem pode editar ──
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, area_responsavel')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const isResponsavel = sol.responsavel_id === userId;
+    const isSolicitante = sol.solicitante_id === userId;
+    let isAreaResp = false;
+    if (!isAdmin && !isResponsavel && sol.area_responsavel) {
+      const { data: respRow } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('profile_id')
+        .eq('area', sol.area_responsavel)
+        .eq('profile_id', userId)
+        .maybeSingle();
+      isAreaResp = !!respRow;
+    }
+    const podeGerir = isAdmin || isResponsavel || isAreaResp;
+    if (!podeGerir && !isSolicitante) {
+      return res.status(403).json({ error: 'Sem permissão para alterar esta solicitação' });
+    }
+
     const update = {};
-    if (status) update.status = status;
-    if (responsavel_id !== undefined) update.responsavel_id = responsavel_id;
-    if (observacoes !== undefined) update.observacoes = observacoes;
-    if (proposta_orcamento !== undefined) update.proposta_orcamento = proposta_orcamento;
-    if (proposta_cronograma !== undefined) update.proposta_cronograma = proposta_cronograma;
+    // Gestao (status/responsavel/observacoes/propostas) · so quem administra a fila.
+    if (podeGerir) {
+      if (status) update.status = status;
+      if (responsavel_id !== undefined) update.responsavel_id = responsavel_id;
+      if (observacoes !== undefined) update.observacoes = observacoes;
+      if (proposta_orcamento !== undefined) update.proposta_orcamento = proposta_orcamento;
+      if (proposta_cronograma !== undefined) update.proposta_cronograma = proposta_cronograma;
+    }
+    // Avaliacao NPS · o solicitante (dono) tambem pode registrar a propria nota.
     if (nps_nota !== undefined) update.nps_nota = nps_nota;
     if (nps_comentario !== undefined) update.nps_comentario = nps_comentario;
-    if (aprovado_financeiro_em !== undefined) {
-      update.aprovado_financeiro_em = aprovado_financeiro_em;
-      update.aprovado_financeiro_por = req.user.userId;
-    }
 
     if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada para atualizar' });
 
@@ -299,13 +729,13 @@ router.patch('/:id', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notify solicitante + area managers about status change
+    // Notify solicitante + área managers about status change
     if (status && data) {
       const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
       const statusLabel = status.replace('_', ' ');
       const obsNote = observacoes ? ` — "${observacoes}"` : '';
 
-      // Conclusao · pede avaliacao NPS pro solicitante (alimenta KPIs ADM-*-Q)
+      // Conclusão · pede avaliação NPS pro solicitante (alimenta KPIs ADM-*-Q)
       const ehConclusao = status === 'concluido';
       const tituloSolicitante = ehConclusao
         ? `Avalie: ${data.titulo}`
@@ -326,7 +756,7 @@ router.patch('/:id', async (req, res) => {
         targetIds: [data.solicitante_id],
       }).catch(err => console.error('[SOLICITACOES] notify solicitante error:', err.message));
 
-      // 2. Notify area managers (excluding the requester to avoid duplicate)
+      // 2. Notify área managers (excluding the requester to avoid duplicate)
       resolverDestinatarios(modulo).then(managers => {
         const filtered = managers.filter(id => id !== data.solicitante_id);
         if (filtered.length) {
@@ -366,7 +796,7 @@ router.get('/sla-defs', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Reserva de espacos · calendario ────────────────────────────
+// ── Reserva de espacos · calendário ────────────────────────────
 router.get('/reservas-espaco', async (req, res) => {
   try {
     const { desde, ate } = req.query;
@@ -379,7 +809,7 @@ router.get('/reservas-espaco', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Area alcadas (limites de aprovacao financeira) ─────────────
+// ── Área alcadas (limites de aprovação financeira) ─────────────
 router.get('/alcadas', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -391,8 +821,8 @@ router.get('/alcadas', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Responsaveis por area de solicitacao (admin/diretor) ────────────────────
-// GET lista todos · agrupa por area com nomes dos responsaveis
+// ── Responsáveis por área de solicitação (admin/diretor) ────────────────────
+// GET lista todos · agrupa por área com nomes dos responsáveis
 router.get('/area-responsaveis', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -419,8 +849,8 @@ router.get('/area-responsaveis', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT substitui responsaveis de uma area · body: { area, profile_ids: [] }
-// Apaga vinculos atuais da area e insere os novos
+// PUT substitui responsáveis de uma área · body: { área, profile_ids: [] }
+// Apaga vinculos atuais da área e insere os novos
 router.put('/area-responsaveis', async (req, res) => {
   if (!['admin', 'diretor'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Apenas admin/diretor podem configurar responsaveis' });
@@ -430,7 +860,7 @@ router.put('/area-responsaveis', async (req, res) => {
     if (!area) return res.status(400).json({ error: 'area obrigatoria' });
     if (!Array.isArray(profile_ids)) return res.status(400).json({ error: 'profile_ids deve ser array' });
 
-    // Apaga vinculos existentes da area
+    // Apaga vinculos existentes da área
     const { error: delError } = await supabase
       .from('area_solicitacoes_responsaveis')
       .delete()
@@ -463,23 +893,23 @@ router.put('/area-responsaveis', async (req, res) => {
 
 // POST /api/solicitacoes/:id/vincular-ml
 // Body: { ml_input } · URL ou ID do pedido do Mercado Livre
-// Apenas o solicitante, responsavel ou admin/diretor podem vincular.
+// Apenas o solicitante, responsável ou admin/diretor podem vincular.
 router.post('/:id/vincular-ml', async (req, res) => {
   try {
     const userId = req.user.userId;
     const role = req.user.role;
     const { ml_input } = req.body || {};
     if (!ml_input) {
-      return res.status(400).json({ error: 'Cole a URL ou o numero do pedido do Mercado Livre.' });
+      return res.status(400).json({ error: 'Cole a URL ou o número do pedido do Mercado Livre.' });
     }
 
-    // Permissao: solicitante, responsavel, admin/diretor, ou responsavel da area_responsavel
+    // Permissão: solicitante, responsável, admin/diretor, ou responsável da area_responsavel
     const { data: sol } = await supabase
       .from('solicitacoes')
       .select('id, solicitante_id, responsavel_id, area_responsavel, categoria')
       .eq('id', req.params.id)
       .maybeSingle();
-    if (!sol) return res.status(404).json({ error: 'Solicitacao nao encontrada' });
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
     const isAdmin = ['admin', 'diretor'].includes(role);
     const isMine = sol.solicitante_id === userId || sol.responsavel_id === userId;
@@ -494,7 +924,7 @@ router.post('/:id/vincular-ml', async (req, res) => {
       isAreaResp = !!respRow;
     }
     if (!isAdmin && !isMine && !isAreaResp) {
-      return res.status(403).json({ error: 'Sem permissao para vincular o pedido.' });
+      return res.status(403).json({ error: 'Sem permissão para vincular o pedido.' });
     }
 
     const result = await mlTracker.linkOrder({
@@ -520,14 +950,14 @@ router.delete('/:id/vincular-ml', async (req, res) => {
       .select('id, solicitante_id, responsavel_id, ml_linked_by')
       .eq('id', req.params.id)
       .maybeSingle();
-    if (!sol) return res.status(404).json({ error: 'Solicitacao nao encontrada' });
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
     const isAdmin = ['admin', 'diretor'].includes(role);
     const podeRemover = isAdmin
       || sol.ml_linked_by === userId
       || sol.responsavel_id === userId;
     if (!podeRemover) {
-      return res.status(403).json({ error: 'Sem permissao para desvincular.' });
+      return res.status(403).json({ error: 'Sem permissão para desvincular.' });
     }
 
     await supabase
@@ -555,7 +985,7 @@ router.delete('/:id/vincular-ml', async (req, res) => {
   }
 });
 
-// GET /api/solicitacoes/:id/ml-timeline · historico de eventos do tracking
+// GET /api/solicitacoes/:id/ml-timeline · histórico de eventos do tracking
 router.get('/:id/ml-timeline', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -584,14 +1014,14 @@ router.post('/:id/atualizar-ml', async (req, res) => {
       .select('id, solicitante_id, responsavel_id, ml_shipment_id')
       .eq('id', req.params.id)
       .maybeSingle();
-    if (!sol) return res.status(404).json({ error: 'Solicitacao nao encontrada' });
-    if (!sol.ml_shipment_id) return res.status(400).json({ error: 'Solicitacao sem pedido ML vinculado.' });
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (!sol.ml_shipment_id) return res.status(400).json({ error: 'Solicitação sem pedido ML vinculado.' });
 
     const isAdmin = ['admin', 'diretor'].includes(role);
     const isMine = sol.solicitante_id === userId || sol.responsavel_id === userId;
-    if (!isAdmin && !isMine) return res.status(403).json({ error: 'Sem permissao.' });
+    if (!isAdmin && !isMine) return res.status(403).json({ error: 'Sem permissão.' });
 
-    // Reusa linkOrder com o order_id ja salvo (re-fetcha tudo)
+    // Reusa linkOrder com o order_id já salvo (re-fetcha tudo)
     const { data: full } = await supabase
       .from('solicitacoes')
       .select('ml_order_id')
@@ -611,8 +1041,8 @@ router.post('/:id/atualizar-ml', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// APROVACAO FINANCEIRA · Yago aprova compras/reembolsos antes de virar pra
-// logistica comprar / financeiro pagar
+// APROVAÇÃO FINANCEIRA · Yago aprova compras/reembolsos antes de virar pra
+// logística comprar / financeiro pagar
 // ══════════════════════════════════════════════════════════════════════════
 
 async function podeAprovarFinanceiro(req) {
@@ -643,6 +1073,8 @@ router.get('/pendentes-financeiro', async (req, res) => {
       .is('aprovado_financeiro_em', null)
       .neq('status', 'cancelado')
       .neq('status', 'rejeitado')
+      // Ainda aguardando o diretor de origem · so cai no financeiro depois (Spec 001)
+      .neq('status', 'aguardando_aprovacao_origem')
       .is('deleted_at', null)
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });
@@ -684,9 +1116,15 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       return res.status(400).json({ error: 'Já foi aprovada' });
     }
 
-    const mapaCat = { compras: 'logistica_compras', reembolso: 'financeiro' };
+    // Pra onde vai depois do OK do Yago:
+    //   compras/servico  -> logistica_compras (Amaury compra/contrata) · status pendente
+    //   reembolso/pagto  -> financeiro (paga) · status em_atendimento
+    const mapaCat = {
+      compras: 'logistica_compras', servico: 'logistica_compras',
+      reembolso: 'financeiro',      pagamento: 'financeiro',
+    };
     const novaAreaResp = mapaCat[atual.categoria] || atual.area_responsavel;
-    const novoStatus = atual.categoria === 'reembolso' ? 'em_atendimento' : 'pendente';
+    const novoStatus = ['reembolso', 'pagamento'].includes(atual.categoria) ? 'em_atendimento' : 'pendente';
 
     const updates = {
       aprovado_financeiro_em: new Date().toISOString(),
@@ -704,11 +1142,17 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
+    const acaoMsg = {
+      compras:   'enviado pra logística comprar',
+      servico:   'enviado pra logística contratar o serviço',
+      reembolso: 'pode efetuar o reembolso',
+      pagamento: 'pode efetuar o pagamento',
+    }[atual.categoria] || 'liberado pra atendimento';
     notificar({
-      modulo: atual.categoria === 'compras' ? 'logistica' : 'financeiro',
+      modulo: CATEGORIA_MODULO[atual.categoria] || 'financeiro',
       tipo: 'solicitacao_status',
       titulo: `Solicitação aprovada: ${atual.titulo}`,
-      mensagem: `Yago aprovou financeiramente · ${atual.categoria === 'compras' ? 'enviado pra logística comprar' : 'pode efetuar o reembolso'}`,
+      mensagem: `Yago aprovou financeiramente · ${acaoMsg}`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_fin_${data.id}`,
@@ -765,7 +1209,7 @@ router.post('/:id/reprovar-financeiro', async (req, res) => {
   }
 });
 
-// Dashboard urgencia frequente · top solicitantes urgentes ultimos 90d
+// Dashboard urgência frequente · top solicitantes urgentes últimos 90d
 router.get('/dashboard/urgencia-frequente', async (req, res) => {
   try {
     const role = req.user.role;

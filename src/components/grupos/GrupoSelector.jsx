@@ -1,16 +1,16 @@
 // ============================================================================
-// GrupoSelector — componente reutilizavel para escolher um grupo de conexao.
+// GrupoSelector — componente reutilizavel para escolher um grupo de conexão.
 //
 // Modos de busca (tabs):
-//   - "lider": digita o nome do lider, ve grupos dele
+//   - "líder": digita o nome do líder, ve grupos dele
 //   - "filtros": categoria + bairro
 //   - "cep": insere CEP, ve grupos num raio
 //   - "lista": ve todos da temporada atual (com search)
 //
 // Props:
-//   - onSelect(grupo): callback quando usuario escolhe um grupo
+//   - onSelect(grupo): callback quando usuário escolhe um grupo
 //   - selectedGrupoId: id atualmente selecionado (para destacar)
-//   - mode: 'simple' (so tab lider+lista) | 'full' (todas as tabs + mapa)
+//   - mode: 'simple' (so tab líder+lista) | 'full' (todas as tabs + mapa)
 //   - temporadaId: filtrar por essa temporada (default: a ativa)
 // ============================================================================
 
@@ -60,7 +60,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   const [cep, setCep] = useState('');
   const [raio, setRaio] = useState(20);
 
-  // Carrega temporada ativa se nao foi passada
+  // Carrega temporada ativa se não foi passada
   useEffect(() => {
     if (temporadaId) { setTemporada(temporadaId); return; }
     api.temporadas().then(ts => {
@@ -85,7 +85,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       .finally(() => setLoading(false));
   }, [tab, temporada, filtroCategoria, filtroBairro]);
 
-  // Autocomplete de lider
+  // Autocomplete de líder
   useEffect(() => {
     if (tab !== 'lider' || !temporada) return;
     if (searchLider.trim().length < 2) { setLideresList([]); return; }
@@ -95,7 +95,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
     return () => clearTimeout(t);
   }, [tab, searchLider, temporada]);
 
-  // Quando seleciona um lider, busca grupos dele
+  // Quando seleciona um líder, busca grupos dele
   useEffect(() => {
     if (!liderSelecionado) return;
     setLoading(true);

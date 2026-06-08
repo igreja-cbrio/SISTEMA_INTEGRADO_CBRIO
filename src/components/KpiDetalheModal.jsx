@@ -2,9 +2,9 @@
 // KpiDetalheModal — modal de detalhe completo de 1 KPI
 //
 // Substitui a rota /painel/kpi/:id (mais leve, abre como overlay).
-// Exibe: status atual, mini-grafico historico, trajetoria (checkpoints),
-// revisoes OKR. Botao "Editar" abre KpiEditorModal aninhado.
-// Botao "Registrar revisao" se KPI em alerta.
+// Exibe: status atual, mini-grafico histórico, trajetoria (checkpoints),
+// revisões OKR. Botao "Editar" abre KpiEditorModal aninhado.
+// Botao "Registrar revisão" se KPI em alerta.
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -43,7 +43,7 @@ const VALOR_LABELS = {
  *   open: boolean
  *   kpiId: string | null
  *   onClose: () => void
- *   onUpdated?: () => void  (chamado ao salvar editor ou revisao)
+ *   onUpdated?: () => void  (chamado ao salvar editor ou revisão)
  *   openInEdit?: boolean    (se true, abre direto no editor pulando a tela de detalhe)
  */
 export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openInEdit = false }) {
@@ -65,8 +65,8 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
 
   useEffect(() => { if (open && kpiId) carregar(); }, [open, kpiId, carregar]);
 
-  // Modo "edita direto": ao abrir, ja salta pro editor.
-  // Quando o editor fecha (cancela ou salva), fecha tudo — usuario nao queria ver detalhe.
+  // Modo "edita direto": ao abrir, já salta pro editor.
+  // Quando o editor fecha (cancela ou salva), fecha tudo — usuário não queria ver detalhe.
   useEffect(() => {
     if (open && openInEdit && data?.kpi && !editOpen) {
       setEditOpen(true);
@@ -111,7 +111,7 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
           ) : erro || !data ? (
             <div style={{ padding: 40, textAlign: 'center', color: '#ef4444' }}>
               <AlertCircle size={24} style={{ marginBottom: 8 }} />
-              <div style={{ marginBottom: 12 }}>{erro || 'KPI nao encontrado'}</div>
+              <div style={{ marginBottom: 12 }}>{erro || 'KPI não encontrado'}</div>
               <button onClick={onClose} style={btnGhost}>Fechar</button>
             </div>
           ) : (
@@ -143,7 +143,7 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                       <StatusIcon size={12} /> {sv.label}
                     </span>
                   </div>
-                  {/* Titulo: objetivo especifico (descricao no banco) · fallback pra indicador. */}
+                  {/* Título: objetivo especifico (descrição no banco) · fallback pra indicador. */}
                   <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0, lineHeight: 1.3 }}>
                     {kpi.descricao || kpi.indicador}
                   </h2>
@@ -207,13 +207,13 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                     </div>
                     {data.lider && (
                       <div style={{ marginTop: 4, fontSize: 10, color: C.t3 }}>
-                        <strong style={{ color: C.t2 }}>Lider:</strong> {data.lider.nome}{data.lider.cargo ? ` · ${data.lider.cargo}` : ''}
+                        <strong style={{ color: C.t2 }}>Líder:</strong> {data.lider.nome}{data.lider.cargo ? ` · ${data.lider.cargo}` : ''}
                       </div>
                     )}
                   </Section>
 
-                  {/* Mini grafico */}
-                  <Section title={`Historico (${data.historico?.length || 0} registros)`}>
+                  {/* Mini gráfico */}
+                  <Section title={`Histórico (${data.historico?.length || 0} registros)`}>
                     {data.historico && data.historico.length > 0 ? (
                       <MiniGrafico registros={data.historico} cor={sv.cor} unidade={kpi.unidade} />
                     ) : (
@@ -223,9 +223,9 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                     )}
                   </Section>
 
-                  {/* Memoria de calculo */}
+                  {/* Memória de calculo */}
                   {kpi.memoria_calculo && (
-                    <Section title="Memoria de calculo" full>
+                    <Section title="Memória de calculo" full>
                       <p style={{ fontSize: 12, color: C.t2, lineHeight: 1.5, margin: 0 }}>{kpi.memoria_calculo}</p>
                     </Section>
                   )}
@@ -237,9 +237,9 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                           <thead>
                             <tr>
-                              <th style={th}>Periodo</th>
+                              <th style={th}>Período</th>
                               <th style={th}>Meta</th>
-                              <th style={th}>Observacao</th>
+                              <th style={th}>Observação</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -256,9 +256,9 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
                     </Section>
                   )}
 
-                  {/* Revisoes */}
+                  {/* Revisões */}
                   {kpi.is_okr && (
-                    <Section title="Revisoes (regra de ouro)" full>
+                    <Section title="Revisões (regra de ouro)" full>
                       {!data.revisoes || data.revisoes.length === 0 ? (
                         <div style={{ padding: 12, textAlign: 'center', color: C.t3, fontSize: 11, fontStyle: 'italic' }}>
                           Nenhuma revisao registrada.
@@ -302,14 +302,14 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
           }}
           onSaved={() => {
             setEditOpen(false);
-            // Modo edita-direto: fecha tudo apos salvar
+            // Modo edita-direto: fecha tudo após salvar
             if (openInEdit) { onUpdated?.(); onClose?.(); }
             else { carregar(); onUpdated?.(); }
           }}
         />
       )}
 
-      {/* Revisao (sub-modal, z-index maior) */}
+      {/* Revisão (sub-modal, z-index maior) */}
       {revisarOpen && kpi && (
         <OkrRevisaoModal
           open={revisarOpen}
@@ -379,8 +379,8 @@ function RevisaoMini({ revisao }) {
       </div>
       <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.5 }}>
         <div><strong>Causa:</strong> {revisao.causa_desvio}</div>
-        <div><strong>Decisao:</strong> {revisao.decisao}</div>
-        {revisao.proximo_passo && <div><strong>Proximo passo:</strong> {revisao.proximo_passo}</div>}
+        <div><strong>Decisão:</strong> {revisao.decisao}</div>
+        {revisao.proximo_passo && <div><strong>Próximo passo:</strong> {revisao.proximo_passo}</div>}
       </div>
     </div>
   );

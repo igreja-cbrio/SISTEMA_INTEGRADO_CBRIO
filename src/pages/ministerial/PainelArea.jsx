@@ -1,13 +1,13 @@
 // ============================================================================
-// PainelArea v3 · drill-down de KPIs + CULTOS + DADOS BRUTOS + saude por area
+// PainelArea v3 · drill-down de KPIs + CULTOS + DADOS BRUTOS + saúde por área
 // ============================================================================
-// Mudancas v3 (2026-05-21 · varredura fina):
-//   - Nova aba "Cultos" (default) · puxa cultos recentes da area direto da
+// Mudanças v3 (2026-05-21 · varredura fina):
+//   - Nova aba "Cultos" (default) · puxa cultos recentes da área direto da
 //     vw_culto_stats · resolve o problema "aba Dados sempre vazia"
-//   - Filtro de periodo (30d/90d/180d/365d) no header · backend respeita
-//   - Score com label maior + diagnostico em destaque
+//   - Filtro de período (30d/90d/180d/365d) no header · backend respeita
+//   - Score com label maior + diagnóstico em destaque
 //   - Botao "Voltar ao painel mestre" no header
-//   - Variacao % nos KPIs (mesma logica dos dados)
+//   - Variacao % nos KPIs (mesma lógica dos dados)
 //   - Sparkline com hover tooltip
 //   - Filtro "Sem valor" so aparece quando > 0
 // ============================================================================
@@ -25,6 +25,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { ArrowLeft, ChevronRight, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import JornadaConvertidos from '../../components/JornadaConvertidos';
 
 const AREA_META = {
   kids: {
@@ -220,7 +221,7 @@ export default function PainelArea({ area }) {
           </div>
         </div>
 
-        {/* Score de saúde · agora com diagnostico em destaque */}
+        {/* Score de saúde · agora com diagnóstico em destaque */}
         <div className="flex items-center gap-4">
           <div
             className="w-32 h-32 rounded-full flex flex-col items-center justify-center border-4"
@@ -247,9 +248,9 @@ export default function PainelArea({ area }) {
         </div>
       </div>
 
-      {/* ─────────────────── FILTRO DE PERIODO ─────────────────── */}
+      {/* ─────────────────── FILTRO DE PERÍODO ─────────────────── */}
       <div className="flex items-center gap-2 text-xs">
-        <span className="text-muted-foreground">Periodo:</span>
+        <span className="text-muted-foreground">Período:</span>
         {PERIODOS.map(p => (
           <button
             key={p.id}
@@ -300,7 +301,7 @@ export default function PainelArea({ area }) {
 
       {/* ─────────────────────── TABS PRINCIPAIS ─────────────────────── */}
       <Tabs defaultValue={temCultos ? 'cultos' : 'indicadores'}>
-        <TabsList className={`grid w-full max-w-2xl ${temCultos ? 'grid-cols-4' : 'grid-cols-3'}`}>
+        <TabsList className={`grid w-full max-w-3xl ${temCultos ? 'grid-cols-5' : 'grid-cols-4'}`}>
           {temCultos && (
             <TabsTrigger value="cultos">
               Cultos <span className="ml-1 opacity-60">({cultos.length})</span>
@@ -313,7 +314,14 @@ export default function PainelArea({ area }) {
             Dados {data.dados?.length > 0 && <span className="ml-1 opacity-60">({data.dados.length})</span>}
           </TabsTrigger>
           <TabsTrigger value="saude">Saúde</TabsTrigger>
+          <TabsTrigger value="novos-convertidos">Novos convertidos</TabsTrigger>
         </TabsList>
+
+        {/* ──────── ABA NOVOS CONVERTIDOS ──────── */}
+        <TabsContent value="novos-convertidos" className="mt-6 space-y-4">
+          <p className="text-sm text-muted-foreground">Os primeiros 90 dias de quem se converteu nesta área: contato pastoral (3 dias), batismo e Next (90 dias). Atrasados em vermelho.</p>
+          <JornadaConvertidos area={area} />
+        </TabsContent>
 
         {/* ──────── ABA CULTOS ──────── */}
         {temCultos && (
@@ -537,7 +545,7 @@ function TotaisCultoCards({ totais, area, accent }) {
     { label: 'Frequência total', value: totais.presencial_adulto + totais.presencial_kids },
     { label: 'Decisões total', value: totais.decisoes_total },
   ];
-  // Cards extras especificos por area
+  // Cards extras especificos por área
   if (area === 'online') {
     cards.push({ label: 'Pico online (soma)', value: totais.online_pico_total });
     cards.push({ label: 'Views D+7 (DDUS)', value: totais.online_ddus_total });

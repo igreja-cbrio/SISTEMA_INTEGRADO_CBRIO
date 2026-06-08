@@ -1,6 +1,6 @@
-// Admin do bot WhatsApp · vinculo de lideres + revisao/aplicacao de coletas.
-// Autenticado · exige nivel >= 3 em integracao OU grupos (coordenador).
-// O webhook publico (recebimento) fica em routes/publicWhatsapp.js.
+// Admin do bot WhatsApp · vinculo de líderes + revisao/aplicacao de coletas.
+// Autenticado · exige nível >= 3 em integração OU grupos (coordenador).
+// O webhook público (recebimento) fica em routes/publicWhatsapp.js.
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -8,12 +8,12 @@ const { normalizarTelefone } = require('../services/whatsappSend');
 
 router.use(authenticate);
 
-// Coordenador de integracao OU grupos (nivel 3+) gerencia o bot.
-// 'whatsapp-admin' -> ['integracao','grupos'] no ROUTE_MODULE_MAP.
+// Coordenador de integração OU grupos (nível 3+) gerencia o bot.
+// 'whatsapp-admin' -> ['integração','grupos'] no ROUTE_MODULE_MAP.
 const podeGerir = authorizeModule('whatsapp-admin', 3);
 
 // ═══════════════════════════════════════════════════════════════════
-// LIDERES · vinculo telefone -> profile
+// LÍDERES · vinculo telefone -> profile
 // ═══════════════════════════════════════════════════════════════════
 
 // GET /api/whatsapp/lideres
@@ -32,7 +32,7 @@ router.get('/lideres', podeGerir, async (req, res) => {
     res.json(data || []);
   } catch (e) {
     console.error('[whatsapp] lideres list', e.message);
-    res.status(500).json({ error: 'Erro ao listar lideres' });
+    res.status(500).json({ error: 'Erro ao listar líderes' });
   }
 });
 
@@ -42,14 +42,14 @@ router.post('/lideres', podeGerir, async (req, res) => {
     const { profile_id, telefone, escopo, grupo_id, papel } = req.body || {};
     const tel = normalizarTelefone(telefone);
     if (!tel || tel.length < 12 || tel.length > 13) {
-      return res.status(400).json({ error: 'Telefone invalido. Use DDI+DDD+numero (ex: 5521999998888).' });
+      return res.status(400).json({ error: 'Telefone invalido. Use DDI+DDD+número (ex: 5521999998888).' });
     }
     if (!Array.isArray(escopo) || escopo.length === 0) {
       return res.status(400).json({ error: 'Informe ao menos um escopo (grupos/integracao).' });
     }
     const escopoValido = escopo.filter(s => ['grupos', 'integracao'].includes(s));
     if (escopoValido.length === 0) {
-      return res.status(400).json({ error: 'Escopo deve conter grupos e/ou integracao.' });
+      return res.status(400).json({ error: 'Escopo deve conter grupos e/ou integração.' });
     }
 
     // Cache do nome pra exibir rapido
@@ -74,13 +74,13 @@ router.post('/lideres', podeGerir, async (req, res) => {
       .select('id')
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Esse telefone ja esta vinculado.' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Esse telefone já esta vinculado.' });
       return res.status(400).json({ error: error.message });
     }
     res.status(201).json(data);
   } catch (e) {
     console.error('[whatsapp] lideres create', e.message);
-    res.status(500).json({ error: 'Erro ao vincular lider' });
+    res.status(500).json({ error: 'Erro ao vincular líder' });
   }
 });
 
@@ -101,7 +101,7 @@ router.put('/lideres/:id', podeGerir, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('[whatsapp] lideres update', e.message);
-    res.status(500).json({ error: 'Erro ao atualizar lider' });
+    res.status(500).json({ error: 'Erro ao atualizar líder' });
   }
 });
 
@@ -117,12 +117,12 @@ router.delete('/lideres/:id', podeGerir, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('[whatsapp] lideres delete', e.message);
-    res.status(500).json({ error: 'Erro ao remover lider' });
+    res.status(500).json({ error: 'Erro ao remover líder' });
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// COLETAS · revisao e aplicacao
+// COLETAS · revisão e aplicação
 // ═══════════════════════════════════════════════════════════════════
 
 // GET /api/whatsapp/coletas?status=parseado
@@ -149,10 +149,10 @@ router.get('/coletas', podeGerir, async (req, res) => {
 });
 
 // POST /api/whatsapp/coletas/:id/aplicar
-// integracao · cria submissao pendente no culto mais recente (cai na fila
+// integração · cria submissao pendente no culto mais recente (cai na fila
 //              existente /integracao?tab=pendentes pro coord aprovar)
-// grupos · marca aplicado (lancamento manual no modulo Grupos · o encontro
-//          exige lista nominal de presencas que o WhatsApp nao fornece)
+// grupos · marca aplicado (lancamento manual no módulo Grupos · o encontro
+//          exige lista nominal de presenças que o WhatsApp não fornece)
 router.post('/coletas/:id/aplicar', podeGerir, async (req, res) => {
   try {
     const { data: coleta, error: errFetch } = await supabase
@@ -160,15 +160,15 @@ router.post('/coletas/:id/aplicar', podeGerir, async (req, res) => {
       .select('id, parsed, modulo_destino, status')
       .eq('id', req.params.id)
       .single();
-    if (errFetch || !coleta) return res.status(404).json({ error: 'Coleta nao encontrada' });
+    if (errFetch || !coleta) return res.status(404).json({ error: 'Coleta não encontrada' });
     if (coleta.status !== 'parseado') {
-      return res.status(409).json({ error: `Coleta ja esta "${coleta.status}".` });
+      return res.status(409).json({ error: `Coleta já esta "${coleta.status}".` });
     }
 
     const dados = coleta.parsed?.dados || {};
 
     if (coleta.modulo_destino === 'integracao') {
-      // Acha o culto mais recente dos ultimos 7 dias
+      // Acha o culto mais recente dos últimos 7 dias
       const hoje = new Date().toISOString().slice(0, 10);
       const limite = new Date(); limite.setDate(limite.getDate() - 7);
       const desde = limite.toISOString().slice(0, 10);
@@ -180,7 +180,7 @@ router.post('/coletas/:id/aplicar', podeGerir, async (req, res) => {
         .limit(1)
         .maybeSingle();
       if (!culto) {
-        return res.status(422).json({ error: 'Nenhum culto nos ultimos 7 dias pra associar. Lance manualmente.' });
+        return res.status(422).json({ error: 'Nenhum culto nos últimos 7 dias pra associar. Lance manualmente.' });
       }
       const ambiente = (dados.kids != null && dados.presencial == null) ? 'kids' : 'templo';
       const presencial = ambiente === 'kids' ? (dados.kids ?? 0) : (dados.presencial ?? 0);
@@ -199,7 +199,7 @@ router.post('/coletas/:id/aplicar', podeGerir, async (req, res) => {
         .single();
       if (errSub) {
         if (errSub.code === '23505') {
-          return res.status(409).json({ error: 'Ja existe submissao ativa desse ambiente no culto. Veja em Pendentes.' });
+          return res.status(409).json({ error: 'Já existe submissao ativa desse ambiente no culto. Veja em Pendentes.' });
         }
         return res.status(400).json({ error: errSub.message });
       }

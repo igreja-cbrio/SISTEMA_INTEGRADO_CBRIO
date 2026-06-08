@@ -9,6 +9,7 @@ import VolCheckin from './VolCheckin';
 import VolEscalas from './VolEscalas';
 import VolRelatorios from './VolRelatorios';
 import VolInscricoes from './VolInscricoes';
+import VolEncaminhados from './VolEncaminhados';
 import VolQrCodes from './VolQrCodes';
 import VolAdmin from './VolAdmin';
 import VolEquipes from './VolEquipes';
@@ -29,11 +30,11 @@ export default function Voluntariado() {
   const location = useLocation();
   useHomeScreenMeta('checkin');
 
-  // Se URL começa com /voluntariado/checkin → portal do voluntario SEMPRE,
-  // independente do role (VolunteerShell ja foi aplicada pelo App.tsx).
+  // Se URL começa com /voluntariado/checkin → portal do voluntário SEMPRE,
+  // independente do role (VolunteerShell já foi aplicada pelo App.tsx).
   const isVolunteerRoute = location.pathname.startsWith('/voluntariado/checkin');
 
-  // Usuarios sem permissoes de gestao (nao-admin, nao-colaborador) veem
+  // Usuários sem permissões de gestão (nao-admin, nao-colaborador) veem
   // sempre o portal simples, mesmo em /ministerial/voluntariado.
   const shouldShowVolunteerPortal = isVolunteerRoute || (!isAdmin && !isColaborador);
 
@@ -55,6 +56,7 @@ export default function Voluntariado() {
         <Route path="disponibilidade" element={<VolDisponibilidade />} />
         <Route path="relatorios" element={<VolRelatorios />} />
         <Route path="inscricoes" element={<VolInscricoes />} />
+        <Route path="encaminhados" element={<VolEncaminhados />} />
         <Route path="qrcodes" element={<VolQrCodes />} />
         <Route path="lista" element={<VolLista />} />
         <Route path="admin" element={<VolAdmin />} />

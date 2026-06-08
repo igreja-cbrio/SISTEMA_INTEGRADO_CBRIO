@@ -41,10 +41,10 @@ async function carregarRegrasDoSharePoint() {
     const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`, { headers: { Authorization: `Bearer ${token}` } });
     const drives = await drivesRes.json();
     const vaultDrive = drives.value?.find(d => d.name === 'Cerebro CBRio');
-    if (!vaultDrive) { console.warn('[CEREBRO] Vault drive nao encontrado, usando regras padrao'); return null; }
+    if (!vaultDrive) { console.warn('[CEREBRO] Vault drive não encontrado, usando regras padrão'); return null; }
 
     const fileRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${vaultDrive.id}/root:/AGENTE-REGRAS.md:/content`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!fileRes.ok) { console.warn('[CEREBRO] AGENTE-REGRAS.md nao encontrado no vault'); return null; }
+    if (!fileRes.ok) { console.warn('[CEREBRO] AGENTE-REGRAS.md não encontrado no vault'); return null; }
     const regras = await fileRes.text();
     console.log(`[CEREBRO] Regras carregadas do SharePoint (${Math.round(regras.length / 1024)}KB)`);
     return regras;
@@ -92,8 +92,8 @@ async function processarFila() {
           { type: 'text', text: buildPrompt(item) }
         ] }];
       } else if (texto.startsWith('[') || texto.trim().length < 50) {
-        // Sem conteudo util
-        await supabase.from('cerebro_fila').update({ status: 'ignorado', erro_mensagem: 'Sem conteudo extraivel', processado_em: new Date().toISOString() }).eq('id', item.id);
+        // Sem conteúdo útil
+        await supabase.from('cerebro_fila').update({ status: 'ignorado', erro_mensagem: 'Sem conteúdo extraivel', processado_em: new Date().toISOString() }).eq('id', item.id);
         continue;
       } else {
         messages = [{ role: 'user', content: buildPrompt(item) + '\n\nConteudo:\n---\n' + texto + '\n---' }];
@@ -219,7 +219,7 @@ async function salvarNoVault(item, notaConteudo, analise) {
   const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${HUB_SITE_ID}/drives`, { headers: { Authorization: `Bearer ${token}` } });
   const drives = await drivesRes.json();
   const vaultDrive = drives.value?.find(d => d.name === 'Cerebro CBRio');
-  if (!vaultDrive) throw new Error('Biblioteca "Cerebro CBRio" nao encontrada');
+  if (!vaultDrive) throw new Error('Biblioteca "Cerebro CBRio" não encontrada');
 
   let pastaVault = MAPA_VAULT[item.biblioteca] || '_dados-brutos';
   let subpasta = analise.area_vault || '';

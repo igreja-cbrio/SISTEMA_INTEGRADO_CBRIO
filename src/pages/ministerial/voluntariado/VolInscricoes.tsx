@@ -1,10 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { useQuery } from '@tanstack/react-query';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import { Inbox, CheckCircle2, Percent, Search, Link2 } from 'lucide-react';
 import {
@@ -14,11 +16,11 @@ import {
 
 const STATUS_LABELS: Record<string, string> = {
   integrado: 'Integrado',
-  enviado_ministerio: 'Enviado ao ministerio',
+  enviado_ministerio: 'Enviado ao ministério',
   inscrito: 'Inscrito (triagem)',
   kids: 'Kids',
-  nao_responde: 'Nao responde',
-  nao_pode_ou_duplicata: 'Nao pode / duplicata',
+  nao_responde: 'Não responde',
+  nao_pode_ou_duplicata: 'Não pode / duplicata',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -29,6 +31,42 @@ const STATUS_COLORS: Record<string, string> = {
   nao_responde: 'bg-orange-500/10 text-orange-700 border-orange-500/20',
   nao_pode_ou_duplicata: 'bg-red-500/10 text-red-700 border-red-500/20',
 };
+
+const ORIGEM_LABELS: Record<string, string> = {
+  formulario_publico: 'Formulario publico',
+  form_google: 'Formulario Google',
+  form_google_backfill: 'Importacao (Google)',
+  membresia: 'Membresia',
+  manual: 'Manual',
+};
+
+function Info({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-foreground break-words">{value}</div>
+    </div>
+  );
+}
+
+const fmtCpf = (v?: string | null) => {
+  const d = (v || '').replace(/\D+/g, '');
+  if (d.length !== 11) return v || '-';
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+};
+const fmtTel = (v?: string | null) => {
+  const d = (v || '').replace(/\D+/g, '');
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return v || '-';
+};
+const fmtDataNasc = (v?: string | null) => {
+  if (!v) return '-';
+  const s = String(v).slice(0, 10);
+  const [y, m, d] = s.split('-');
+  return d && m && y ? `${d}/${m}/${y}` : s;
+};
+const origemLabel = (o?: string | null) => (o ? (ORIGEM_LABELS[o] || o) : '-');
 
 const ANO_ATUAL = new Date().getFullYear();
 const ANOS = [ANO_ATUAL, ANO_ATUAL - 1, ANO_ATUAL - 2];
@@ -75,6 +113,8 @@ interface InscricaoRow {
   feedback: string | null;
   integrado_em: string | null;
   membro_id: string | null;
+  nome_mae: string | null;
+  origem: string | null;
 }
 
 interface InscricoesListResponse {
@@ -91,7 +131,21 @@ export default function VolInscricoes() {
   const [search, setSearch] = useState<string>('');
   const [searchInput, setSearchInput] = useState<string>('');
   const [page, setPage] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [selected, setSelected] = useState<InscricaoRow | null>(null);
   const pageSize = 50;
+  const queryClient = useQueryClient();
+
+  const mudarStatus = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) => voluntariado.atualizarInscricao(id, status),
+    onSuccess: (_data, vars) => {
+      setSelected((prev) => (prev ? { ...prev, status: vars.status } : prev));
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
+      toast.success('Status atualizado.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao atualizar status.'),
+  });
 
   const { data, isLoading } = useQuery<InscricoesSummary>({
     queryKey: ['vol', 'inscricoes-summary', ano, area],
@@ -137,7 +191,6 @@ export default function VolInscricoes() {
   const formUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/inscricao-voluntariado`
     : '/inscricao-voluntariado';
-  const [copied, setCopied] = useState(false);
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(formUrl);
@@ -152,7 +205,7 @@ export default function VolInscricoes() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Inscricoes de Voluntariado</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Inscrições de Voluntariado</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Compara quem se inscreveu (formulario) vs quem foi efetivamente integrado.
           </p>
@@ -167,7 +220,7 @@ export default function VolInscricoes() {
           <Select value={area} onValueChange={setArea}>
             <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="todas">Todas areas</SelectItem>
+              <SelectItem value="todas">Todas áreas</SelectItem>
               <SelectItem value="kids">Kids</SelectItem>
               <SelectItem value="sede">Sede</SelectItem>
             </SelectContent>
@@ -175,7 +228,7 @@ export default function VolInscricoes() {
         </div>
       </div>
 
-      {/* Link do formulario publico · compartilhar por WhatsApp/bio/QR */}
+      {/* Link do formulário público · compartilhar por WhatsApp/bio/QR */}
       <Card className="border-[#00B39D]/30 bg-[#00B39D]/5">
         <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -227,7 +280,7 @@ export default function VolInscricoes() {
             </div>
             <div>
               <div className="text-2xl md:text-3xl font-bold">{total.alocadas}</div>
-              <div className="text-xs text-muted-foreground">Voluntarios integrados</div>
+              <div className="text-xs text-muted-foreground">Voluntários integrados</div>
             </div>
           </CardContent>
         </Card>
@@ -241,13 +294,13 @@ export default function VolInscricoes() {
               <div className="text-2xl md:text-3xl font-bold">
                 {total.taxa !== null ? `${total.taxa}%` : '-'}
               </div>
-              <div className="text-xs text-muted-foreground">Taxa de integracao</div>
+              <div className="text-xs text-muted-foreground">Taxa de integração</div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Breakdown por area */}
+      {/* Breakdown por área */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Por segmento</CardTitle>
@@ -288,10 +341,10 @@ export default function VolInscricoes() {
         </CardContent>
       </Card>
 
-      {/* Grafico de barras comparativo */}
+      {/* Gráfico de barras comparativo */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Inscritos vs Integrados por mes</CardTitle>
+          <CardTitle className="text-base">Inscritos vs Integrados por mês</CardTitle>
         </CardHeader>
         <CardContent>
           {chartData.length === 0 ? (
@@ -316,11 +369,11 @@ export default function VolInscricoes() {
         </CardContent>
       </Card>
 
-      {/* Grafico de linha taxa */}
+      {/* Gráfico de linha taxa */}
       {chartData.length > 0 && chartData.some(d => d.Taxa !== null) && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Taxa de integracao mensal</CardTitle>
+            <CardTitle className="text-base">Taxa de integração mensal</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-[240px]">
@@ -348,7 +401,7 @@ export default function VolInscricoes() {
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground border-b">
                 <tr>
-                  <th className="text-left px-4 py-2 font-medium">Mes</th>
+                  <th className="text-left px-4 py-2 font-medium">Mês</th>
                   <th className="text-right px-4 py-2 font-medium">Inscritos</th>
                   <th className="text-right px-4 py-2 font-medium">Integrados</th>
                   <th className="text-right px-4 py-2 font-medium">Taxa</th>
@@ -414,10 +467,10 @@ export default function VolInscricoes() {
               <thead className="text-xs text-muted-foreground border-b">
                 <tr>
                   <th className="text-left px-4 py-2 font-medium">Nome</th>
-                  <th className="text-left px-4 py-2 font-medium">Inscricao</th>
-                  <th className="text-left px-4 py-2 font-medium">Area</th>
+                  <th className="text-left px-4 py-2 font-medium">Inscrição</th>
+                  <th className="text-left px-4 py-2 font-medium">Área</th>
                   <th className="text-left px-4 py-2 font-medium">Status</th>
-                  <th className="text-left px-4 py-2 font-medium">Ministerio</th>
+                  <th className="text-left px-4 py-2 font-medium">Ministério</th>
                   <th className="text-left px-4 py-2 font-medium">Contato</th>
                   <th className="text-center px-4 py-2 font-medium">Membro</th>
                 </tr>
@@ -427,10 +480,14 @@ export default function VolInscricoes() {
                   <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
                 )}
                 {!loadingList && lista?.rows?.length === 0 && (
-                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma inscricao com esses filtros</td></tr>
+                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma inscrição com esses filtros</td></tr>
                 )}
                 {lista?.rows?.map(p => (
-                  <tr key={p.id} className="border-b last:border-b-0 hover:bg-accent/30">
+                  <tr
+                    key={p.id}
+                    onClick={() => setSelected(p)}
+                    className="border-b last:border-b-0 hover:bg-accent/30 cursor-pointer"
+                  >
                     <td className="px-4 py-2 font-medium">
                       {p.nome_completo}
                       {p.email && <div className="text-xs text-muted-foreground">{p.email}</div>}
@@ -487,6 +544,79 @@ export default function VolInscricoes() {
           )}
         </CardContent>
       </Card>
+
+      {/* Detalhe da inscrição · clique numa linha pra abrir */}
+      <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+        <DialogContent className="max-w-lg">
+          {selected && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 flex-wrap">
+                  {selected.nome_completo}
+                  <Badge variant="outline" className={STATUS_COLORS[selected.status] || ''}>
+                    {STATUS_LABELS[selected.status] || selected.status}
+                  </Badge>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm mt-1">
+                <Info label="Area" value={<span className="capitalize">{selected.area}</span>} />
+                <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
+                <Info label="Telefone" value={fmtTel(selected.telefone)} />
+                <Info label="E-mail" value={selected.email || '-'} />
+                <Info label="CPF" value={fmtCpf(selected.cpf)} />
+                <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
+                <Info label="Nome da mae" value={selected.nome_mae || '-'} />
+                <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
+                <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
+                <Info label="Origem" value={origemLabel(selected.origem)} />
+                <div className="sm:col-span-2">
+                  <Info label="Áreas de interesse" value={selected.ministerios_interesse || '-'} />
+                </div>
+                <Info
+                  label="Vinculo de membro"
+                  value={selected.membro_id
+                    ? <span className="text-green-600 font-medium">Vinculado</span>
+                    : 'Não vinculado'}
+                />
+                {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
+                {selected.feedback && (
+                  <div className="sm:col-span-2">
+                    <Info label="Observacoes" value={selected.feedback} />
+                  </div>
+                )}
+              </div>
+
+              {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
+              <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
+                {selected.status === 'inscrito' && (
+                  <Button size="sm" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
+                    Enviar ao ministério
+                  </Button>
+                )}
+                {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
+                  <Button size="sm" variant="default" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
+                    Integrar
+                  </Button>
+                )}
+                {selected.status === 'enviado_ministerio' && (
+                  <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'inscrito' })}>
+                    Voltar pra triagem
+                  </Button>
+                )}
+                {selected.status === 'integrado' && (
+                  <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
+                    Reverter integração
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

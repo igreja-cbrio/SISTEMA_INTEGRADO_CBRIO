@@ -93,9 +93,9 @@ function nivelBadge(nivel?: string | null): { label: string; className: string }
     ativo: { label: 'Ativo', className: 'bg-green-500/20 text-green-300 border-green-500/30' },
     irregular: { label: 'Irregular', className: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' },
     inativo: { label: 'Inativo', className: 'bg-red-500/20 text-red-300 border-red-500/30' },
-    nunca_contribuiu: { label: 'Sem contribuicao', className: 'bg-gray-500/20 text-gray-300 border-gray-500/30' },
+    nunca_contribuiu: { label: 'Sem contribuição', className: 'bg-gray-500/20 text-gray-300 border-gray-500/30' },
     ausente: { label: 'Ausente', className: 'bg-orange-500/20 text-orange-300 border-orange-500/30' },
-    nunca_serviu: { label: 'Sem servico', className: 'bg-gray-500/20 text-gray-300 border-gray-500/30' },
+    nunca_serviu: { label: 'Sem serviço', className: 'bg-gray-500/20 text-gray-300 border-gray-500/30' },
   };
   return map[nivel] || null;
 }
@@ -114,7 +114,7 @@ export default function MemberScan() {
       if (scannerRef.current?.isScanning) await scannerRef.current.stop();
       scannerRef.current = null;
     } catch {
-      // silencioso — camera pode ja estar parada
+      // silencioso — camera pode já estar parada
     }
   }, []);
 
@@ -168,7 +168,7 @@ export default function MemberScan() {
         () => {},
       );
     } catch (err: any) {
-      setErrorMsg('Nao foi possivel acessar a camera. Verifique permissoes.');
+      setErrorMsg('Não foi possível acessar a camera. Verifique permissões.');
       setState('error');
     }
   }, [handleScan]);
@@ -236,7 +236,7 @@ export default function MemberScan() {
           <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
             <XCircle className="h-16 w-16 text-red-400" />
             <div>
-              <h2 className="text-xl font-bold">QR nao reconhecido</h2>
+              <h2 className="text-xl font-bold">QR não reconhecido</h2>
               <p className="text-sm text-white/60 mt-1">
                 Este QR nao corresponde a nenhum cadastro da CBRio.
               </p>
@@ -344,7 +344,7 @@ function MemberCard({ membro, onOpenMembro }: { membro: MembroIdentidade; onOpen
         </Section>
       )}
 
-      {/* Endereco */}
+      {/* Endereço */}
       {(membro.endereco || membro.bairro || membro.cidade) && (
         <Section title="Endereco">
           <InfoLine
@@ -355,16 +355,16 @@ function MemberCard({ membro, onOpenMembro }: { membro: MembroIdentidade; onOpen
         </Section>
       )}
 
-      {/* Familia */}
+      {/* Família */}
       {membro.familia && (
         <Section title="Familia">
           <InfoLine icon={Users} label="" value={membro.familia.nome} />
         </Section>
       )}
 
-      {/* Grupo de Conexao */}
+      {/* Grupo de Conexão */}
       {membro.grupo_atual && (
-        <Section title="Grupo de Conexao">
+        <Section title="Grupo de Conexão">
           <div className="text-sm text-white/90">
             <p className="font-medium">{membro.grupo_atual.nome}</p>
             {(membro.grupo_atual.dia_semana || membro.grupo_atual.horario) && (
@@ -379,7 +379,7 @@ function MemberCard({ membro, onOpenMembro }: { membro: MembroIdentidade; onOpen
         </Section>
       )}
 
-      {/* Ministerios */}
+      {/* Ministérios */}
       {membro.ministerios && membro.ministerios.length > 0 && (
         <Section title="Ministerios">
           <div className="flex flex-wrap gap-2">
@@ -445,7 +445,7 @@ function MemberCard({ membro, onOpenMembro }: { membro: MembroIdentidade; onOpen
         </div>
       </Section>
 
-      {/* Acoes */}
+      {/* Ações */}
       <div className="p-4 border-t border-white/10 bg-black/30">
         <Button
           className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90"

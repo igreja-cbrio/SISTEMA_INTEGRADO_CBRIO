@@ -25,7 +25,7 @@ export default function VolLista() {
       {/* Tab switcher */}
       <div className="flex gap-1 border-b pb-0">
         {([
-          { key: 'todos', label: 'Todos os Voluntarios' },
+          { key: 'todos', label: 'Todos os Voluntários' },
           { key: 'fila', label: 'Fila de Alocacao' },
         ] as { key: Tab; label: string }[]).map(t => (
           <button
@@ -63,11 +63,11 @@ function TodosList() {
     mutationFn: (data: typeof addForm) => voluntariado.profiles.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vol', 'volunteers-pool'] });
-      toast.success('Voluntario adicionado com sucesso');
+      toast.success('Voluntário adicionado com sucesso');
       setShowAdd(false);
       setAddForm({ full_name: '', email: '', phone: '', cpf: '' });
     },
-    onError: (err: any) => toast.error(err.message || 'Erro ao adicionar voluntario'),
+    onError: (err: any) => toast.error(err.message || 'Erro ao adicionar voluntário'),
   });
 
   const allTeams = useMemo(() => {
@@ -118,7 +118,7 @@ function TodosList() {
     <>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-foreground">Voluntarios</h1>
+          <h1 className="text-xl font-bold text-foreground">Voluntários</h1>
           <p className="text-sm text-muted-foreground">{pool.length} voluntario(s) no sistema</p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
@@ -200,7 +200,7 @@ function TodosList() {
                             {tm.team?.name}{tm.position ? ` · ${tm.position.name}` : ''}
                           </span>
                         ))
-                      : <span className="text-[10px] text-muted-foreground/50">Sem equipe atribuida</span>
+                      : <span className="text-[10px] text-muted-foreground/50">Sem equipe atribuída</span>
                     }
                   </div>
                 </div>
@@ -214,11 +214,11 @@ function TodosList() {
         </div>
       )}
 
-      {/* Modal: adicionar voluntario manualmente */}
+      {/* Modal: adicionar voluntário manualmente */}
       <Dialog open={showAdd} onOpenChange={open => { if (!open) { setShowAdd(false); setAddForm({ full_name: '', email: '', phone: '', cpf: '' }); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Adicionar Voluntario</DialogTitle>
+            <DialogTitle>Adicionar Voluntário</DialogTitle>
           </DialogHeader>
           <div className="py-2 space-y-3">
             <div>
@@ -292,8 +292,8 @@ function FilaAlocacao() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <CheckCircle2 className="h-10 w-10 text-[#00B39D]/50 mb-3" />
-            <p className="font-medium text-muted-foreground">Nenhum voluntario aguardando alocacao</p>
-            <p className="text-sm text-muted-foreground/60 mt-1">Quando um membro indicar que quer servir, aparecera aqui</p>
+            <p className="font-medium text-muted-foreground">Nenhum voluntário aguardando alocacao</p>
+            <p className="text-sm text-muted-foreground/60 mt-1">Quando um membro indicar que quer servir, aparecerá aqui</p>
           </CardContent>
         </Card>
       ) : (
@@ -340,7 +340,7 @@ function FilaAlocacao() {
         <Dialog open onOpenChange={() => { setAllocating(null); setSelectedTeam(''); }}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
-              <DialogTitle>Alocar Voluntario</DialogTitle>
+              <DialogTitle>Alocar Voluntário</DialogTitle>
             </DialogHeader>
             <div className="py-3 space-y-4">
               <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">

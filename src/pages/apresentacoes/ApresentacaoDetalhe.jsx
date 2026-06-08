@@ -50,7 +50,7 @@ export default function ApresentacaoDetalhe() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Poll enquanto status nao for pronto/erro
+  // Poll enquanto status não for pronto/erro
   useEffect(() => {
     if (!apres) return;
     if (apres.status === 'pronto' || apres.status === 'erro') return;

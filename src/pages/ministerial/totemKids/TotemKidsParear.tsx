@@ -1,5 +1,5 @@
 // ============================================================================
-// Totem Kids · pareamento de tablet com estacao
+// Totem Kids · pareamento de tablet com estação
 // ============================================================================
 // Tablet/celular abre essa URL (via QR code escaneado uma vez):
 //   /ministerial/totem-kids/parear?estacao=<uuid>&token=<uuid>
@@ -8,7 +8,7 @@
 //   - Salva {id, nome, tipo, printer_modelo} no localStorage do device
 //   - Daí pra frente, todo check-in envia esse estacao_id automaticamente
 //
-// Sem token = redireciona pro totem (assume nao pareado).
+// Sem token = redireciona pro totem (assume não pareado).
 // Token invalido = mostra erro · admin precisa gerar QR novo.
 // ============================================================================
 

@@ -7,7 +7,7 @@
  *  3. Gerar PNG minimalista (icone colorido sem dependencia externa)
  *  4. Assinar e empacotar o .pkpass
  *
- * Dois tipos de passe: 'membro' e 'voluntario'
+ * Dois tipos de passe: 'membro' e 'voluntário'
  */
 
 const { PKPass } = require('passkit-generator');
@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-// ── Geracao de PNG minimalista (sem lib externa) ──────────────────────────
+// ── Geração de PNG minimalista (sem lib externa) ──────────────────────────
 
 function crc32(buf) {
   let crc = 0xFFFFFFFF;
@@ -77,20 +77,20 @@ function makeSolidPng(w, h, r, g, b) {
 }
 
 // Cores por tipo de passe
-// Membro: bege #eae3da = rgb(234, 227, 218)
-// Voluntario: azul escuro #408097 = rgb(64, 128, 151)
+// Membro: azul/teal #408097 (fundo) · texto branco · rótulos #D5E4E6
+// Voluntário: azul escuro #408097 = rgb(64, 128, 151)
 
-// Logo CBRio — lido do filesystem (incluido via vercel.json templates/**)
+// Logo CBRio — lido do filesystem (incluído via vercel.json templates/**)
 const LOGO_CBRIO = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text.png'));
 const LOGO_CBRIO_WHITE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'logo-cbrio-text-white.png'));
 
 // Icones pre-gerados por tipo (cached — gerados uma vez no startup)
 const ICONS_MEMBRO = {
-  'icon.png':    makeSolidPng(29,  29,  234, 227, 218),
-  'icon@2x.png': makeSolidPng(58,  58,  234, 227, 218),
-  'icon@3x.png': makeSolidPng(87,  87,  234, 227, 218),
-  'logo.png':    LOGO_CBRIO,
-  'logo@2x.png': LOGO_CBRIO,
+  'icon.png':    makeSolidPng(29,  29,  64, 128, 151),
+  'icon@2x.png': makeSolidPng(58,  58,  64, 128, 151),
+  'icon@3x.png': makeSolidPng(87,  87,  64, 128, 151),
+  'logo.png':    LOGO_CBRIO_WHITE,
+  'logo@2x.png': LOGO_CBRIO_WHITE,
 };
 
 const ICONS_VOLUNTARIO = {
@@ -136,7 +136,7 @@ function wwdrToPem(cerBase64) {
   return forge.pki.certificateToPem(cert);
 }
 
-// Cache de certs extraidos (operacao cara, faz uma vez por cold start)
+// Cache de certs extraidos (operação cara, faz uma vez por cold start)
 let _certCache = null;
 
 function getCerts() {
@@ -148,7 +148,7 @@ function getCerts() {
   const voluntarioBase64 = process.env.APPLE_WALLET_VOLUNTARIO_P12_BASE64 || '';
 
   if (!wwdrBase64 || !membroBase64 || !voluntarioBase64) {
-    throw new Error('Apple Wallet nao configurado (env vars ausentes)');
+    throw new Error('Apple Wallet não configurado (env vars ausentes)');
   }
 
   let wwdrPem, membro, voluntario;
@@ -165,7 +165,7 @@ function getCerts() {
   try {
     voluntario = p12ToPem(voluntarioBase64, password);
   } catch (e) {
-    throw new Error('Certificado voluntario .p12 invalido — verifique APPLE_WALLET_VOLUNTARIO_P12_BASE64 e a senha');
+    throw new Error('Certificado voluntário .p12 invalido — verifique APPLE_WALLET_VOLUNTARIO_P12_BASE64 e a senha');
   }
 
   _certCache = {
@@ -184,7 +184,7 @@ function getCerts() {
  * Gera o .pkpass do cartao de identidade do membro.
  *
  * @param {{nome: string, qrToken: string, memberId: string, pending?: boolean}} opts
- * @returns {Promise<Buffer>} conteudo binario do .pkpass
+ * @returns {Promise<Buffer>} conteúdo binario do .pkpass
  */
 async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
   const certs = getCerts();
@@ -198,9 +198,9 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
     teamIdentifier: teamId,
     organizationName: 'CBRio',
     description: 'CBRio — Cartao de Membro',
-    backgroundColor: 'rgb(234, 227, 218)',
-    foregroundColor: 'rgb(64, 128, 151)',
-    labelColor: 'rgb(64, 128, 151)',
+    backgroundColor: 'rgb(64, 128, 151)',
+    foregroundColor: 'rgb(255, 255, 255)',
+    labelColor: 'rgb(213, 228, 230)',
     generic: {
       primaryFields: [
         { key: 'name', label: 'MEMBRO', value: nome || 'Membro' },
@@ -245,7 +245,7 @@ async function buildMembroPass({ nome, qrToken, memberId, pending = false }) {
 }
 
 /**
- * Gera o .pkpass do cracha de voluntario (check-in).
+ * Gera o .pkpass do cracha de voluntário (check-in).
  *
  * @param {{nome: string, qrCode: string, voluntarioId: string}} opts
  * @returns {Promise<Buffer>}

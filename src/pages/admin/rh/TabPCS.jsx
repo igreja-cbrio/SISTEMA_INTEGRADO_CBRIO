@@ -832,7 +832,7 @@ function ProgressaoTab({ flash }) {
   const [historico, setHistorico] = useState([]);
   const [reajustes, setReajustes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState('elegibilidade'); // elegibilidade | historico | reajustes
+  const [view, setView] = useState('elegibilidade'); // elegibilidade | histórico | reajustes
 
   const load = useCallback(async () => {
     setLoading(true);

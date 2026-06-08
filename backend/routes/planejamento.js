@@ -260,7 +260,7 @@ router.get('/propostas/:id', async (req, res) => {
 });
 
 // POST /api/planejamento/propostas — líder cria nova
-// Body: { ciclo_id, tipo, area, payload (jsonb) }
+// Body: { ciclo_id, tipo, área, payload (jsonb) }
 //
 // Auto-roteia:
 //  - Se proposto_por é diretor do setor da proposta → status='pendente_diretoria' (skip 1º estágio)
@@ -271,8 +271,8 @@ router.post('/propostas', async (req, res) => {
     const { ciclo_id, tipo, area, payload } = req.body;
 
     if (!ciclo_id || !isUUID(ciclo_id)) return res.status(400).json({ error: 'ciclo_id obrigatório' });
-    if (!tipo || !VALID_TIPO.includes(tipo)) return res.status(400).json({ error: 'tipo inválido (evento|serie|projeto)' });
-    if (!area || typeof area !== 'string') return res.status(400).json({ error: 'area obrigatória' });
+    if (!tipo || !VALID_TIPO.includes(tipo)) return res.status(400).json({ error: 'tipo inválido (evento|série|projeto)' });
+    if (!area || typeof area !== 'string') return res.status(400).json({ error: 'área obrigatória' });
     if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'payload obrigatório' });
 
     // Ciclo precisa estar aberto
@@ -464,7 +464,7 @@ async function materializarProposta(proposta) {
 }
 
 // PATCH /api/planejamento/propostas/:id/decidir-diretor
-// Body: { decisao: 'aprovado'|'aprovado_com_ressalvas'|'rejeitado', comentario, payload_alterado? }
+// Body: { decisão: 'aprovado'|'aprovado_com_ressalvas'|'rejeitado', comentário, payload_alterado? }
 // Guard: proposto_por != req.user.userId E usuário é diretor do setor da proposta.
 router.patch('/propostas/:id/decidir-diretor', async (req, res) => {
   try {
@@ -534,7 +534,7 @@ router.patch('/propostas/:id/decidir-diretor', async (req, res) => {
 });
 
 // PATCH /api/planejamento/propostas/:id/decidir-diretoria
-// Body: { decisao, comentario, payload_alterado? }
+// Body: { decisão, comentário, payload_alterado? }
 // Guard: proposto_por != req.user.userId E usuário tem is_diretoria_geral=true.
 // Quando aprovado final, MATERIALIZA event/project oficial.
 router.patch('/propostas/:id/decidir-diretoria', async (req, res) => {

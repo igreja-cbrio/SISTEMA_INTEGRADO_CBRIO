@@ -3,9 +3,9 @@
 //
 // Usa OAuth 2.0 (refresh_token persistido em online_oauth_tokens) pra acessar:
 //   - YouTube Data API v3        · live concurrent viewers
-//   - YouTube Analytics API v2   · views, watchTime por periodo
+//   - YouTube Analytics API v2   · views, watchTime por período
 //
-// Funcoes principais:
+// Funções principais:
 //   - getAuthUrl(state, redirectUri) -> URL de autorizacao
 //   - exchangeCode(code, redirectUri) -> { tokens, channel }
 //   - getValidAccessToken(channelId) -> access_token (refresh se preciso)
@@ -13,7 +13,7 @@
 //   - findActiveBroadcast(channelId) -> { video_id, started_at, title }
 //   - fetchVideoAnalytics(channelId, videoId, startDate, endDate) -> stats
 //
-// ENV necessarios:
+// ENV necessários:
 //   GOOGLE_OAUTH_CLIENT_ID
 //   GOOGLE_OAUTH_CLIENT_SECRET
 // ============================================================================
@@ -26,11 +26,11 @@ const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const DATA_API   = 'https://www.googleapis.com/youtube/v3';
 const ANALYTICS  = 'https://youtubeanalytics.googleapis.com/v2';
 
-// Canal CBRio fixo · usado quando a conta OAuth NAO possui canal proprio mas
-// tem permissao de Manager via YT Studio Permissions. Override via env
+// Canal CBRio fixo · usado quando a conta OAuth NÃO possui canal próprio mas
+// tem permissão de Manager via YT Studio Permissions. Override via env
 // YOUTUBE_CHANNEL_ID se um dia precisar.
-// Canal CBRio 'IgrejaCBRio' (UCfjMVz...) onde os videos dos cultos vivem.
-// (Canal 'Rede Social CBrio' UCMJOg5... NAO tem os videos.)
+// Canal CBRio 'IgrejaCBRio' (UCfjMVz...) onde os vídeos dos cultos vivem.
+// (Canal 'Rede Social CBrio' UCMJOg5... NÃO tem os vídeos.)
 const CBRIO_CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
 
 const SCOPES = [
@@ -41,7 +41,7 @@ const SCOPES = [
 function getCreds() {
   const id = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const secret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-  if (!id || !secret) throw new Error('GOOGLE_OAUTH_CLIENT_ID/SECRET nao configurados');
+  if (!id || !secret) throw new Error('GOOGLE_OAUTH_CLIENT_ID/SECRET não configurados');
   return { id, secret };
 }
 
@@ -85,10 +85,10 @@ async function exchangeCode(code, redirectUri) {
   // data: { access_token, refresh_token, expires_in, scope, token_type }
 
   // Tenta descobrir o canal OWNED pela conta autorizada (mine=true).
-  // Se a conta nao possui canal proprio (ex: conta pessoal que so eh
+  // Se a conta não possui canal próprio (ex: conta pessoal que so eh
   // Manager do canal CBRio via YT Studio Permissions), usamos o canal
   // CBRio fixo · Analytics API aceita `channel==<ID>` desde que o token
-  // tenha permissao no canal.
+  // tenha permissão no canal.
   let channel = { id: CBRIO_CHANNEL_ID, title: 'CBRio (via permissoes)' };
   try {
     const ch = await fetch(`${DATA_API}/channels?part=snippet&mine=true`, {
@@ -212,16 +212,41 @@ async function findActiveBroadcast(channelId) {
   const { token } = await getValidAccessToken(channelId);
   const url = `${DATA_API}/liveBroadcasts?part=id,snippet,status&broadcastStatus=active&broadcastType=all`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // NÃO engolir · propaga pra quem chama registrar o motivo (ex: 403 quando
+    // a conta OAuth não eh dona do canal e liveBroadcasts.list fica indisponível).
+    const t = await res.text();
+    throw new Error(`liveBroadcasts.list falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
   const data = await res.json();
   const item = (data.items || [])[0];
-  if (!item) return null;
+  if (!item) return null; // sem live ativa de verdade
   return {
     broadcast_id: item.id,
     video_id: item.id, // o ID do broadcast eh o video_id
     title: item.snippet?.title,
     started_at: item.snippet?.actualStartTime || item.snippet?.scheduledStartTime,
+    live_chat_id: item.snippet?.liveChatId || null,
   };
+}
+
+// Lista mensagens do chat ao vivo (Data API · liveChat/messages). Aceita
+// pageToken pra paginar incrementalmente (so mensagens novas). Retorna o texto
+// de cada mensagem + o nextPageToken pra a próxima chamada.
+async function fetchLiveChatMessages(channelId, liveChatId, pageToken) {
+  const { token } = await getValidAccessToken(channelId);
+  let url = `${DATA_API}/liveChat/messages?part=snippet&liveChatId=${encodeURIComponent(liveChatId)}&maxResults=200`;
+  if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`liveChat.messages falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const mensagens = (data.items || []).map(
+    (it) => it.snippet?.displayMessage || it.snippet?.textMessageDetails?.messageText || ''
+  );
+  return { mensagens, nextPageToken: data.nextPageToken || null };
 }
 
 // concurrentViewers via Data API videos.list (liveStreamingDetails)
@@ -237,7 +262,30 @@ async function fetchLiveConcurrentViewers(channelId, videoId) {
   return viewers ? parseInt(viewers, 10) : null;
 }
 
-// Analytics: views por video em uma janela de data
+// Estatísticas lifetime do vídeo via Data API (videos.list?part=statistics).
+// viewCount = total ACUMULADO de views até o momento da chamada · quase em tempo
+// real, SEM o atraso de 1-2 dias da Analytics. Usado pelo DS (snapshot da manha
+// seguinte ao culto). Retorna null se o vídeo não existe.
+async function fetchVideoStatistics(channelId, videoId) {
+  const { token } = await getValidAccessToken(channelId);
+  const url = `${DATA_API}/videos?part=statistics&id=${videoId}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`videos.statistics falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const item = (data.items || [])[0];
+  if (!item) return null;
+  const s = item.statistics || {};
+  return {
+    viewCount: s.viewCount != null ? parseInt(s.viewCount, 10) : null,
+    likeCount: s.likeCount != null ? parseInt(s.likeCount, 10) : null,
+    commentCount: s.commentCount != null ? parseInt(s.commentCount, 10) : null,
+  };
+}
+
+// Analytics: views por vídeo em uma janela de data
 // startDate/endDate em formato YYYY-MM-DD (timezone do canal aplicado pelo YT)
 async function fetchVideoViews(channelId, videoId, startDate, endDate) {
   const { token, channel_id } = await getValidAccessToken(channelId);
@@ -267,7 +315,7 @@ async function fetchVideoViews(channelId, videoId, startDate, endDate) {
   };
 }
 
-// Analytics: subscribers gained/lost atribuidos a um video em uma janela.
+// Analytics: subscribers gained/lost atribuídos a um vídeo em uma janela.
 // startDate/endDate em formato YYYY-MM-DD.
 async function fetchVideoSubsChange(channelId, videoId, startDate, endDate) {
   const { token, channel_id } = await getValidAccessToken(channelId);
@@ -291,7 +339,7 @@ async function fetchVideoSubsChange(channelId, videoId, startDate, endDate) {
   return { gained: row[0] || 0, lost: row[1] || 0 };
 }
 
-// Analytics: views/watchMinutes por fonte de trafego em uma janela.
+// Analytics: views/watchMinutes por fonte de tráfego em uma janela.
 // Retorna [{ fonte, views, watch_minutes }] · uma linha por insightTrafficSourceType.
 async function fetchVideoTrafficSources(channelId, videoId, startDate, endDate) {
   const { token, channel_id } = await getValidAccessToken(channelId);
@@ -353,10 +401,10 @@ async function fetchVideoRetentionCurve(channelId, videoId, startDate, endDate) 
 // Analytics: pico de viewers simultaneos durante uma live (peakConcurrentViewers).
 // IMPORTANTE: este metric eh um RECOVERY POST-LIVE pro online_pico. O live-monitor
 // captura concurrentViewers via Data API enquanto a live ta ativa · mas se o cron
-// nao rodar em algum momento (GitHub Actions atrasado, OAuth com escopo de Manager
-// que nao retorna liveBroadcasts.list, etc), o pico se perde. Analytics tem este
-// metric disponivel POST-LIVE (com delay de 1-2 dias) e nao depende de scope owner.
-// Retorna { peak, avg } · null se video nao foi live OU se Analytics nao tem dado ainda.
+// não rodar em algum momento (GitHub Actions atrasado, OAuth com escopo de Manager
+// que não retorna liveBroadcasts.list, etc), o pico se perde. Analytics tem este
+// metric disponível POST-LIVE (com delay de 1-2 dias) e não depende de scope owner.
+// Retorna { peak, avg } · null se vídeo não foi live OU se Analytics não tem dado ainda.
 async function fetchLivePeakConcurrentViewers(channelId, videoId, startDate, endDate) {
   const { token, channel_id } = await getValidAccessToken(channelId);
   const params = new URLSearchParams({
@@ -400,7 +448,7 @@ async function fetchVideoViewsBySubStatus(channelId, videoId, startDate, endDate
     throw new Error(`Analytics subStatus falhou: ${res.status} ${t.slice(0, 200)}`);
   }
   const data = await res.json();
-  // data.rows = [['SUBSCRIBED', n], ['UNSUBSCRIBED', n]] (ordem nao garantida)
+  // data.rows = [['SUBSCRIBED', n], ['UNSUBSCRIBED', n]] (ordem não garantida)
   const out = { subscribed: 0, unsubscribed: 0 };
   for (const row of (data.rows || [])) {
     if (row[0] === 'SUBSCRIBED') out.subscribed = row[1] || 0;
@@ -409,9 +457,9 @@ async function fetchVideoViewsBySubStatus(channelId, videoId, startDate, endDate
   return out;
 }
 
-// Lista canais que a conta OAuth atual gerencia. Util pra diagnosticar se
+// Lista canais que a conta OAuth atual gerencia. Útil pra diagnosticar se
 // o token autorizou a conta CERTA · `mine=true` retorna so canais que o
-// usuario do token possui/gerencia. Se vier vazio ou canal errado, o
+// usuário do token possui/gerencia. Se vier vazio ou canal errado, o
 // problema dos zeros e' OAuth na conta errada.
 async function listAuthorizedChannels() {
   const { token } = await getValidAccessToken();
@@ -430,7 +478,7 @@ async function listAuthorizedChannels() {
   }));
 }
 
-// Faz UMA chamada Analytics e retorna a resposta CRUA · diagnostico.
+// Faz UMA chamada Analytics e retorna a resposta CRUA · diagnóstico.
 // Se rows for null/[] e ok=true · 99% e' OAuth na conta errada.
 async function debugAnalyticsCall(videoId, startDate, endDate) {
   const { token, channel_id } = await getValidAccessToken();
@@ -462,7 +510,7 @@ async function debugAnalyticsCall(videoId, startDate, endDate) {
     interpretacao: !res.ok
       ? `ERRO HTTP ${res.status} · ${body?.error?.message || 'sem detalhe'}`
       : !body.rows || body.rows.length === 0
-      ? 'ROWS VAZIO · conta OAuth provavelmente nao gerencia o canal dono deste video, OU video nao existe nessa data range'
+      ? 'ROWS VAZIO · conta OAuth provavelmente não gerencia o canal dono deste vídeo, OU vídeo não existe nessa data range'
       : 'OK · veio dado',
   };
 }
@@ -475,7 +523,9 @@ module.exports = {
   getValidAccessToken,
   disconnect,
   findActiveBroadcast,
+  fetchLiveChatMessages,
   fetchLiveConcurrentViewers,
+  fetchVideoStatistics,
   fetchLivePeakConcurrentViewers,
   fetchVideoViews,
   fetchVideoSubsChange,

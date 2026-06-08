@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
-  ComposedChart, Line,
+  ComposedChart,
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import KpiCard from './KpiCard';
@@ -54,6 +54,56 @@ export default function DashSemanalAba() {
     staleTime: 5 * 60_000,
   });
 
+  // Ranking de semanas do ano filtrado · melhor (top 1) e pior (bottom 1).
+  // Usa o indicador primário (1º selecionado) e respeita o filtro de culto.
+  const indicadorRank = indicadoresSel[0] || null;
+  const { data: ranking } = useQuery({
+    queryKey: ['dash-sem', 'ranking', ano, indicadorRank, culto],
+    queryFn: () => api.ranking({ ano, indicador: indicadorRank, culto }),
+    enabled: !!indicadorRank,
+    staleTime: 60_000,
+  });
+
+  // Comparativo YoY · mesma semana ISO no ano atual + 2 anos anteriores.
+  // Respeita indicador primário + filtro de culto. Distingue "semana não
+  // existe naquele ano" (W53) de "semana existe com valor 0".
+  const anosComparados = useMemo(() => [ano - 2, ano - 1, ano], [ano]);
+  const { data: yoy } = useQuery({
+    queryKey: ['dash-sem', 'yoy', semana, indicadorRank, culto, anosComparados.join(',')],
+    queryFn: () => api.yoy({ semana, indicador: indicadorRank, culto, anos: anosComparados.join(',') }),
+    enabled: !!indicadorRank && !!semana,
+    staleTime: 60_000,
+  });
+
+  // Cards comparativos · 1 por ano · valor + Δ% vs ano anterior comparado
+  // que tem dado na mesma semana.
+  const cardsYoy = useMemo(() => {
+    if (!yoy?.resultados?.length) return [];
+    const linhas = yoy.resultados; // ordem dos anos da query
+    return linhas.map((r, idx) => {
+      let deltaPct = null;
+      let baseAno = null;
+      if (r.tem_dado) {
+        for (let j = idx - 1; j >= 0; j--) {
+          const prev = linhas[j];
+          if (prev.tem_dado && prev.total !== 0) {
+            deltaPct = ((r.total - prev.total) / prev.total) * 100;
+            baseAno = prev.ano;
+            break;
+          }
+        }
+      }
+      return {
+        ano: r.ano,
+        valor: r.tem_dado ? r.total : null,
+        deltaPct,
+        baseAno,
+        cor: PALETA_MULTI[idx % PALETA_MULTI.length],
+        atual: r.ano === ano,
+      };
+    });
+  }, [yoy, ano]);
+
   // Fetch paralelo · 1 query por indicador selecionado · sempre busca TODOS os
   // cultos (o filtro `culto` é aplicado client-side nos cards/taxa pra manter o
   // chart com todas as barras visíveis · click numa barra alterna o filtro).
@@ -82,8 +132,8 @@ export default function DashSemanalAba() {
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsFiltrados.reduce((s, it) => s + (it.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef?.usa_ocupacao
-      ? Math.round((total / 1200) * 1000) / 10
-      : Math.round((totalPresencial / 1200) * 1000) / 10;
+      ? Math.round((total / 1050) * 1000) / 10
+      : Math.round((totalPresencial / 1050) * 1000) / 10;
 
     return {
       indicador: indicadoresSel[i],
@@ -101,7 +151,7 @@ export default function DashSemanalAba() {
   const isEmpty = indicadoresSel.length === 0;
   const primario = datasets[0];
 
-  // Nome do culto selecionado (pra mostrar nos titulos quando filtrado)
+  // Nome do culto selecionado (pra mostrar nos títulos quando filtrado)
   const cultoSelInfo = useMemo(() => {
     if (culto === 'todos') return null;
     return (cultos || []).find(c => c.id === culto) || null;
@@ -124,8 +174,9 @@ export default function DashSemanalAba() {
           media: i.media,
           taxa: i.taxa_ocupacao,
           variacao,
+          _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
-      });
+      }).sort((a, b) => a._order - b._order);
     }
     // Multi · merge por nome do culto
     const mapPorNome = new Map();
@@ -135,7 +186,7 @@ export default function DashSemanalAba() {
         const row = mapPorNome.get(k) || {
           nome: k,
           service_type_id: i.service_type_id,
-          _order: i.recurrence_day * 100 + parseInt((i.recurrence_time || '0').slice(0, 2), 10),
+          _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
         row[d.indicador] = i.valor_absoluto;
         mapPorNome.set(k, row);
@@ -163,8 +214,8 @@ export default function DashSemanalAba() {
     setCulto(prev => prev === entry.service_type_id ? 'todos' : entry.service_type_id);
   };
 
-  // Modo DDUS completo: DDUS so fecha 7 dias depois do culto, entao a semana
-  // que estamos apresentando ainda nao tem dados completos. Esse modo mostra
+  // Modo DDUS completo: DDUS so fecha 7 dias depois do culto, então a semana
+  // que estamos apresentando ainda não tem dados completos. Esse modo mostra
   // SO online_ddus + semana = (semana atual selecionada) - 1, garantindo
   // a janela completa.
   const [modoDdus, setModoDdus] = useState(false);
@@ -291,6 +342,42 @@ export default function DashSemanalAba() {
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-2" />
           )}
 
+          {/* Melhor / Pior semana do ano filtrado · pula direto pra ela */}
+          {!isEmpty && (
+            <div className="flex items-end gap-2">
+              <button
+                onClick={() => ranking?.melhor && setSemana(ranking.melhor.semana)}
+                disabled={!ranking?.melhor || modoDdus}
+                title={ranking?.melhor
+                  ? `Melhor semana de ${ranking.rotulo} em ${ano}: ${ranking.melhor.label} · ${ranking.melhor.total.toLocaleString('pt-BR')}`
+                  : `Sem dados de ${ranking?.rotulo || 'indicador'} em ${ano}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  ranking?.melhor && semana === ranking.melhor.semana
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-card text-foreground border-border hover:border-emerald-500/50 hover:text-emerald-600'
+                }`}
+              >
+                <TrendingUp className="h-3.5 w-3.5" />
+                Melhor semana
+              </button>
+              <button
+                onClick={() => ranking?.pior && setSemana(ranking.pior.semana)}
+                disabled={!ranking?.pior || modoDdus}
+                title={ranking?.pior
+                  ? `Pior semana de ${ranking.rotulo} em ${ano}: ${ranking.pior.label} · ${ranking.pior.total.toLocaleString('pt-BR')}`
+                  : `Sem dados de ${ranking?.rotulo || 'indicador'} em ${ano}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  ranking?.pior && semana === ranking.pior.semana
+                    ? 'bg-rose-600 text-white border-rose-600'
+                    : 'bg-card text-foreground border-border hover:border-rose-500/50 hover:text-rose-600'
+                }`}
+              >
+                <TrendingDown className="h-3.5 w-3.5" />
+                Pior semana
+              </button>
+            </div>
+          )}
+
           {/* Botao DDUS completo · 1 semana antes da apresentada */}
           <button
             onClick={toggleModoDdus}
@@ -305,6 +392,20 @@ export default function DashSemanalAba() {
             {modoDdus ? 'Sair · DDUS completo' : 'DDUS completo (1 semana antes)'}
           </button>
         </div>
+
+        {/* Dica · melhor e pior semana do ano (por indicador primário) */}
+        {!isEmpty && !modoDdus && ranking?.melhor && (
+          <p className="text-[11px] text-muted-foreground">
+            {ranking.rotulo} em {ano}
+            {culto !== 'todos' && cultoSelInfo ? ` · ${cultoSelInfo.name}` : ''}
+            {' · melhor: '}
+            <span className="font-semibold text-emerald-600">{ranking.melhor.label}</span>
+            {` (${ranking.melhor.total.toLocaleString('pt-BR')})`}
+            {' · pior: '}
+            <span className="font-semibold text-rose-600">{ranking.pior.label}</span>
+            {` (${ranking.pior.total.toLocaleString('pt-BR')})`}
+          </p>
+        )}
 
         {/* Banner explicativo quando modo DDUS esta ativo */}
         {modoDdus && (
@@ -469,16 +570,6 @@ export default function DashSemanalAba() {
                         domain={[0, 'auto']}
                       />
                     )}
-                    {/* Eixo invisivel da linha de variacao · permite valores
-                        negativos sem afetar o eixo das barras laranja */}
-                    {isSingle && (
-                      <YAxis
-                        yAxisId="var"
-                        orientation="right"
-                        hide
-                        domain={['dataMin - 10', 'dataMax + 10']}
-                      />
-                    )}
                     <Tooltip
                       cursor={{ fill: 'rgba(0,179,157,0.06)' }}
                       contentStyle={{ borderRadius: 8, fontSize: 12 }}
@@ -497,6 +588,7 @@ export default function DashSemanalAba() {
                           yAxisId="left"
                           dataKey="valor_absoluto"
                           name="Valor Absoluto"
+                          fill={C.primary}
                           radius={[6, 6, 0, 0]}
                           animationDuration={900}
                           style={{ cursor: 'pointer' }}
@@ -514,6 +606,7 @@ export default function DashSemanalAba() {
                           yAxisId="left"
                           dataKey="media"
                           name="Média Histórica"
+                          fill={C.media}
                           radius={[6, 6, 0, 0]}
                           animationDuration={1100}
                           style={{ cursor: 'pointer' }}
@@ -532,6 +625,7 @@ export default function DashSemanalAba() {
                             yAxisId="right"
                             dataKey="taxa"
                             name="Taxa de ocupação"
+                            fill={C.taxa}
                             radius={[6, 6, 0, 0]}
                             animationDuration={1300}
                             onClick={onClickBarra}
@@ -552,31 +646,6 @@ export default function DashSemanalAba() {
                             />
                           </Bar>
                         )}
-                        {/* Linha de variacao % por culto · eixo invisivel proprio
-                            (var) pra nao afetar a escala das barras laranjas */}
-                        <Line
-                          yAxisId="var"
-                          type="monotone"
-                          dataKey="variacao"
-                          name="Variação por culto"
-                          stroke="#8b5cf6"
-                          strokeWidth={2.5}
-                          dot={{ r: 4, fill: '#8b5cf6', strokeWidth: 0 }}
-                          activeDot={{ r: 6 }}
-                          animationDuration={1500}
-                          connectNulls
-                        >
-                          <LabelList
-                            dataKey="variacao"
-                            position="top"
-                            formatter={v => {
-                              if (v == null) return '';
-                              const s = v > 0 ? '+' : '';
-                              return `${s}${v}%`;
-                            }}
-                            style={{ fontSize: 10, fontWeight: 700, fill: '#8b5cf6' }}
-                          />
-                        </Line>
                       </>
                     ) : (
                       datasets.map((d, idx) => (
@@ -615,6 +684,63 @@ export default function DashSemanalAba() {
         </Card>
         )}
 
+        {/* Comparativo entre anos · mesma semana ISO em anos anteriores */}
+        {!isEmpty && yoy?.resultados?.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">
+                Comparativo entre anos · Semana {semana}
+                {culto !== 'todos' && cultoSelInfo ? ` · ${cultoSelInfo.name}` : ''}
+                <span className="text-muted-foreground font-normal"> · {yoy.rotulo}</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className={`grid gap-3 ${
+                cardsYoy.length <= 2 ? 'grid-cols-2'
+                : cardsYoy.length === 3 ? 'grid-cols-3'
+                : 'grid-cols-2 md:grid-cols-4'
+              }`}>
+                {cardsYoy.map(c => (
+                  <div
+                    key={c.ano}
+                    className={`rounded-lg border bg-card p-3 ${
+                      c.atual ? 'border-[#00B39D]/60 ring-1 ring-[#00B39D]/30' : 'border-border'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: c.cor }} />
+                      <span className="text-xs font-medium text-muted-foreground">
+                        S{semana}/{c.ano}{c.atual ? ' · atual' : ''}
+                      </span>
+                    </div>
+                    <div className="text-2xl font-bold tabular-nums">
+                      {c.valor != null ? Number(c.valor).toLocaleString('pt-BR') : '—'}
+                    </div>
+                    {c.deltaPct != null ? (
+                      <div className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                        c.deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                      }`}>
+                        {c.deltaPct >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                        {c.deltaPct >= 0 ? '+' : ''}{c.deltaPct.toFixed(1)}%
+                        <span className="text-muted-foreground font-normal">vs {c.baseAno}</span>
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {c.valor != null ? 'base' : 'sem dado'}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Total da mesma semana ISO em cada ano (respeita o filtro de culto e exclui
+                cultos sem Kids quando o indicador é de kids). A variação % compara cada ano
+                com o anterior que tem dado na mesma semana.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Meta · só aparece em modo single */}
         {isSingle && primario?.data?.meta && (
           <Card>
@@ -633,12 +759,18 @@ export default function DashSemanalAba() {
 
 function shortLabel(nome, day, time) {
   if (!nome) return '—';
-  if (/domingo/i.test(nome)) {
-    const h = (time || '').slice(0, 2);
-    return `D${h}`;
-  }
+  const hhmm = (time || '').slice(0, 5);
+  if (/domingo/i.test(nome)) return hhmm ? `Dom ${hhmm}` : nome;
   if (/quarta/i.test(nome)) return 'Quarta';
   return nome;
+}
+
+// Ordem lógica dos cultos: Quarta -> Bridge/AMI (sábado) -> Domingos (por horario).
+// Semana comecando na segunda (Seg=0..Dom=6) + minutos do dia desempata.
+function ordemCulto(day, time) {
+  const d = day === null || day === undefined ? 99 : ((Number(day) + 6) % 7);
+  const [h, m] = String(time || '0:0').split(':').map(Number);
+  return d * 10000 + (h || 0) * 100 + (m || 0);
 }
 
 function formatBr(iso) {

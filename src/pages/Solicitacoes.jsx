@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { solicitacoes as api } from '../api';
+import { solicitacoes as api, marketing as marketingApi } from '../api';
 import { playSuccessSound } from '../lib/sounds';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -16,25 +16,32 @@ import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
 const CATEGORIAS = [
-  { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',       areaResp: 'ti' },
   { value: 'compras',        label: 'Compras',             color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400', areaResp: 'logistica_compras' },
-  { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro' },
+  { value: 'infraestrutura', label: 'Serviços',            color: 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-400', areaResp: 'manutencao' },
+  { value: 'pagamento',      label: 'Pagamento',           color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', areaResp: 'financeiro', sub: 'pagamento' },
+  { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro', sub: 'reembolso' },
   { value: 'reserva_espaco', label: 'Reserva de Espaço',   color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400', areaResp: 'reserva_espaco' },
-  { value: 'infraestrutura', label: 'Infraestrutura',      color: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400', areaResp: 'manutencao' },
+  { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',       areaResp: 'ti' },
   { value: 'marketing',      label: 'Marketing',           color: 'bg-pink-500/15 text-pink-700 dark:text-pink-400',       areaResp: 'marketing' },
-  { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',       areaResp: 'rh' },
-  { value: 'licenca',        label: 'Licença',             color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400',       areaResp: 'rh' },
-  { value: 'outro',          label: 'Outro',               color: 'bg-muted text-muted-foreground',                         areaResp: null },
+  { value: 'producao',       label: 'Produção de Culto',   color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400', areaResp: 'producao' },
+  { value: 'ferias',         label: 'Férias',              color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400',       areaResp: 'rh', sub: 'ferias' },
+  { value: 'licenca',        label: 'Licença',             color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400',       areaResp: 'rh', sub: 'licenca' },
 ];
 
-const AREAS_CLIENTE = [
-  { value: 'kids',   label: 'CBKids' },
-  { value: 'ami',    label: 'AMI' },
-  { value: 'bridge', label: 'Bridge' },
-  { value: 'sede',   label: 'Sede' },
-  { value: 'online', label: 'Online' },
-  { value: 'cba',    label: 'CBA' },
-];
+// Dica curta por tipo · ajuda o solicitante a escolher o fluxo certo
+// (intencao em linguagem simples · evita confundir Compra/Serviço/Pagamento/Reembolso).
+const CATEGORIA_HINT = {
+  compras:        'Comprar um produto/material. A logística cota e compra.',
+  infraestrutura: 'Pedir um reparo/serviço à manutenção da igreja (goteira, ar-condicionado, elétrica, marcenaria...). Precisa contratar e pagar alguém de fora? Use Pagamento.',
+  pagamento:      'Pagar um fornecedor externo (boleto, nota fiscal) ou contratar/pagar um serviço de fora (gráfica, buffet, transporte...). Já gastou do próprio bolso? Use Reembolso.',
+  reembolso:      'Você já pagou do próprio bolso e quer o dinheiro de volta.',
+  reserva_espaco: 'Reservar um espaço/sala na agenda da igreja.',
+  producao:       'Apoio da equipe de Produção: movimentação de material ou configuração de equipamentos (áudio, vídeo, palco, transmissão).',
+};
+
+// Áreas do solicitante em 2 níveis: macro -> sub
+// Área do solicitante NÃO e' mais escolhida no form (2026-06-01) · o backend
+// deriva de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
 const URGENCIAS = [
   { value: 'baixa', label: 'Baixa', color: 'bg-muted text-muted-foreground' },
@@ -43,20 +50,29 @@ const URGENCIAS = [
   { value: 'critica', label: 'Crítica', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
 ];
 
+// Cada coluna agrupa os status reais via `match` (o backbone tem 10 status mas o
+// board operacional usa 5 colunas). Sem isso, itens em aguardando_aprovacao_financeira/
+// em_atendimento/aguardando_entrega/avaliado não caiam em coluna nenhuma e sumiam do board.
+// aguardando_aprovacao_origem fica de fora de proposito (vive na aba "Aprovar").
 const KANBAN_COLUMNS = [
-  { key: 'pendente', label: 'Pendente', icon: Clock, color: 'border-t-amber-500' },
-  { key: 'em_analise', label: 'Em Análise', icon: SearchIcon, color: 'border-t-blue-500' },
-  { key: 'aprovado', label: 'Aprovado', icon: CheckCircle2, color: 'border-t-green-500' },
-  { key: 'rejeitado', label: 'Rejeitado', icon: XCircle, color: 'border-t-red-500' },
-  { key: 'concluido', label: 'Concluído', icon: CheckCircle2, color: 'border-t-emerald-600' },
+  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira'] },
+  { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-t-blue-500',    match: ['em_analise'] },
+  { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-t-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
+  { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-t-emerald-600', match: ['concluido', 'avaliado'] },
+  { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-t-red-500',     match: ['rejeitado'] },
 ];
 
 const STATUS_LABELS = {
+  aguardando_aprovacao_origem: { label: 'Aguardando aprovação', color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400' },
   pendente: { label: 'Pendente', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  aguardando_aprovacao_financeira: { label: 'Aprov. financeira', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
   em_analise: { label: 'Em Análise', color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
   aprovado: { label: 'Aprovado', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
+  em_atendimento: { label: 'Em atendimento', color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
+  aguardando_entrega: { label: 'Aguardando entrega', color: 'bg-teal-500/15 text-teal-700 dark:text-teal-400' },
   rejeitado: { label: 'Rejeitado', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
   concluido: { label: 'Concluído', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+  avaliado: { label: 'Avaliado', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
 };
 
 function getCatMeta(cat) {
@@ -69,8 +85,76 @@ function getStatusMeta(status) {
   return STATUS_LABELS[status] || { label: status, color: 'bg-muted text-muted-foreground' };
 }
 
+// Dropzone reutilizavel · comprovante de reembolso, boleto/NF de pagamento,
+// proposta de serviço. Estado de drag interno (self-contained).
+function DocDropzone({ file, onFile, onClear }) {
+  const [drag, setDrag] = useState(false);
+  const inputRef = useRef(null);
+  return (
+    <>
+      <div
+        className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors cursor-pointer
+          ${drag ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}
+          ${file ? 'border-green-500 bg-green-500/5' : ''}`}
+        onDragOver={e => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={e => {
+          e.preventDefault(); setDrag(false);
+          const f = e.dataTransfer.files[0];
+          if (f) onFile(f);
+        }}
+        onClick={() => inputRef.current?.click()}
+      >
+        {file ? (
+          <div className="flex items-center justify-center gap-2">
+            <FileText className="h-5 w-5 text-green-600 shrink-0" />
+            <span className="text-sm text-green-700 truncate max-w-[220px]">{file.name}</span>
+            <button type="button" className="ml-1 text-muted-foreground hover:text-red-500"
+              onClick={e => { e.stopPropagation(); onClear(); if (inputRef.current) inputRef.current.value = ''; }}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-1.5">
+            <Upload className="h-7 w-7 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Arraste ou clique para selecionar</p>
+            <p className="text-xs text-muted-foreground">PDF, JPG, PNG — até 10 MB</p>
+          </div>
+        )}
+      </div>
+      <input ref={inputRef} type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp"
+        onChange={e => { const f = e.target.files[0]; if (f) onFile(f); }} />
+    </>
+  );
+}
+
+// Toggle "é recorrente" + frequência · pagamento e serviço (aluguel, mensalidade)
+function RecorrenteToggle({ form, setForm }) {
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={form.recorrente}
+          onChange={e => setForm(f => ({ ...f, recorrente: e.target.checked }))}
+          className="h-4 w-4 cursor-pointer"
+        />
+        <span className="text-sm">É recorrente (se repete todo mês/período)</span>
+      </label>
+      {form.recorrente && (
+        <Input
+          value={form.recorrencia}
+          onChange={e => setForm(f => ({ ...f, recorrencia: e.target.value }))}
+          placeholder="Frequência · ex: mensal (todo dia 10), trimestral..."
+          className="ml-6"
+        />
+      )}
+    </div>
+  );
+}
+
 export default function Solicitacoes() {
-  const { profile, isAdmin, canAccessModule } = useAuth();
+  const { profile, isAdmin } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -78,50 +162,85 @@ export default function Solicitacoes() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef(null);
 
-  // Determine if user is a "responsável" (can see Kanban)
-  const isResponsavel = isAdmin || canAccessModule(['DP', 'Pessoas', 'Financeiro', 'Logística', 'Patrimônio', 'Membresia', 'TI']);
+  // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
+  // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
+  // via /meu-papel · colaborador comum so ve "Minhas Solicitações".
+  // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
+  const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0 });
+  const atendeAreas = papel.atende;
+  const ehDiretorOrigem = papel.eh_diretor_origem;
+  const pendentesOrigem = papel.pendentes_origem || 0;
+  const isResponsavel = isAdmin || atendeAreas;
 
-  // View atual · 'minhas' (lista das proprias) | 'atender' (kanban da equipe).
-  // Colaborador sem permissao de area NAO ve aba "atender" (so existe o que e dele).
-  // Responsavel comeca em 'atender' (visao operacional padrao), mas pode trocar pra 'minhas'.
-  const [view, setView] = useState(isResponsavel ? 'atender' : 'minhas');
+  // View atual · 'minhas' (lista das próprias) | 'atender' (kanban da equipe) | 'aprovar' (diretor de origem).
+  const [view, setView] = useState('minhas');
+  const [viewTouched, setViewTouched] = useState(false);
+
+  async function refreshPapel() {
+    try {
+      const r = await api.meuPapel?.();
+      if (r) setPapel(r);
+    } catch (_) {}
+  }
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.meuPapel?.();
+        if (alive && r) setPapel(r);
+      } catch (_) {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Responsavel/admin comeca na visão operacional (atender) se ainda não trocou de aba.
+  // Se for diretor de origem com fila pendente, comeca em 'aprovar'.
+  useEffect(() => {
+    if (viewTouched) return;
+    if (ehDiretorOrigem && pendentesOrigem > 0) {
+      setView('aprovar');
+    } else if (isAdmin || atendeAreas) {
+      setView('atender');
+    }
+  }, [isAdmin, atendeAreas, ehDiretorOrigem, pendentesOrigem, viewTouched]);
 
   // Form state
   const FORM_INITIAL = {
     titulo: '', descricao: '', justificativa: '',
     categoria: '', urgencia: 'normal', valor_estimado: '',
-    area_cliente: '',
     eh_urgente: false, justificativa_urgencia: '',
     data_necessaria: '',
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
     motivo_reembolso: '', data_compra: '',
     forma_pagamento: '', chave_pix: '', banco: '', agencia: '', conta: '', documento_file: null,
+    // Compras / Pagamentos / Serviços (campos estruturados compartilhados)
+    itens: '', link_referencia: '', favorecido_nome: '', favorecido_documento: '',
+    recorrente: false, recorrencia: '',
+    // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
   };
   const [form, setForm] = useState(FORM_INITIAL);
   const [slaDefs, setSlaDefs] = useState([]);
-
   // Carrega SLAs pra mostrar prazo expected no form
   useEffect(() => {
     api.slaDefs?.().then(setSlaDefs).catch(() => setSlaDefs([]));
   }, []);
 
-  // Pre-preenche area_cliente baseado em profile.kpi_areas
-  useEffect(() => {
-    const minhasAreas = profile?.kpi_areas || [];
-    const primeira = AREAS_CLIENTE.find(a => minhasAreas.includes(a.value));
-    if (primeira && !form.area_cliente) {
-      setForm(f => ({ ...f, area_cliente: primeira.value }));
-    }
-  }, [profile?.kpi_areas]);
+  // Marketing · intake por DOR (Redesenho 2026-05-30): o solicitante descreve o
+  // problema/objetivo + público; o Pedro tria e define o entregavel depois.
+  // (sairam daqui: cascata grupo->tipo, carga de etiquetas e estimativa no form)
+  // Área do solicitante · NÃO ha mais seletor (2026-06-01). O backend deriva a
+  // área de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
   async function load() {
     try {
       // view='minhas' sempre filtra pelo solicitante atual · view='atender'
-      // delega o filtro pro backend (responsavel ve da area dele, admin ve tudo).
-      const params = view === 'minhas' ? { mine: 'true' } : {};
+      // delega o filtro pro backend (responsável ve da área dele, admin ve tudo).
+      // view='aprovar' · diretor de origem ve so o que precisa decidir.
+      let params = {};
+      if (view === 'minhas') params = { mine: 'true' };
+      else if (view === 'aprovar') params = { aba: 'aprovar' };
       const data = await api.list(params);
       setItems(data);
     } catch (e) {
@@ -131,18 +250,40 @@ export default function Solicitacoes() {
     }
   }
 
-  // Ref pra sempre chamar a versao MAIS RECENTE do load() (com o view atual)
+  async function handleAprovarOrigem(id) {
+    try {
+      await api.aprovarOrigem(id);
+      toast.success('Solicitação aprovada.');
+      await refreshPapel();
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao aprovar.');
+    }
+  }
+
+  async function handleRejeitarOrigem(id, motivo) {
+    try {
+      await api.rejeitarOrigem(id, motivo);
+      toast.success('Solicitação rejeitada.');
+      await refreshPapel();
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao rejeitar.');
+    }
+  }
+
+  // Ref pra sempre chamar a versão MAIS RECENTE do load() (com o view atual)
   // dentro do callback do Realtime · sem isso o canal capturava o load via
-  // closure de mount e usava `view='atender'` velho mesmo quando o usuario
-  // ja estava em 'minhas', sobrescrevendo a lista 3s depois de trocar de aba.
+  // closure de mount e usava `view='atender'` velho mesmo quando o usuário
+  // já estava em 'minhas', sobrescrevendo a lista 3s depois de trocar de aba.
   const loadRef = useRef(load);
   useEffect(() => { loadRef.current = load; });
 
   useEffect(() => { load(); }, [view]);
 
-  // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitacoes` recarrega
+  // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitações` recarrega
   // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
-  // atualiza a mesma row varias vezes em sequencia).
+  // atualiza a mesma row várias vezes em sequencia).
   useEffect(() => {
     if (!supabase || !profile?.id) return;
     let timeout = null;
@@ -172,7 +313,7 @@ export default function Solicitacoes() {
   const columns = useMemo(() => {
     return KANBAN_COLUMNS.map(col => ({
       ...col,
-      items: filtered.filter(i => i.status === col.key),
+      items: filtered.filter(i => (col.match || [col.key]).includes(i.status)),
     }));
   }, [filtered]);
 
@@ -196,8 +337,14 @@ export default function Solicitacoes() {
       if (!payload.espaco_solicitado) delete payload.espaco_solicitado;
       if (!payload.data_compra) delete payload.data_compra;
       if (!payload.motivo_reembolso) delete payload.motivo_reembolso;
+      if (!payload.itens) delete payload.itens;
+      if (!payload.link_referencia) delete payload.link_referencia;
+      if (!payload.favorecido_nome) delete payload.favorecido_nome;
+      if (!payload.favorecido_documento) delete payload.favorecido_documento;
+      if (!payload.recorrencia) delete payload.recorrencia;
+      // Marketing por dor · so título+descrição no intake (Pedro define o resto na triagem)
 
-      // Upload do comprovante para Supabase Storage (bucket: solicitacoes)
+      // Upload do comprovante para Supabase Storage (bucket: solicitações)
       if (form.documento_file && supabase) {
         const ext = form.documento_file.name.split('.').pop().toLowerCase();
         const path = `comprovantes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
@@ -213,7 +360,6 @@ export default function Solicitacoes() {
       toast.success('Solicitação criada com sucesso!');
       setDialogOpen(false);
       setForm(FORM_INITIAL);
-      setDragOver(false);
       load();
     } catch (e) {
       console.error('[SOLICITACOES] create error:', e);
@@ -253,19 +399,36 @@ export default function Solicitacoes() {
     }
   }
 
-  const showValueField = ['compras', 'reembolso'].includes(form.categoria);
+  const showValueField = ['compras', 'reembolso', 'pagamento'].includes(form.categoria);
   const isReembolso = form.categoria === 'reembolso';
   const isReservaEspaco = form.categoria === 'reserva_espaco';
+  const isCompras = form.categoria === 'compras';
+  const isPagamento = form.categoria === 'pagamento';
+  // Reembolso e Pagamento compartilham os campos de destino do dinheiro (PIX/banco)
+  const dadosBancariosValid = (forma) => (
+    !!forma &&
+    (forma !== 'pix' || form.chave_pix.trim()) &&
+    (forma !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
+  );
+  // Reembolso · valor EXATO da nota + data da compra + destino do dinheiro.
+  // (o "motivo" saiu · a "Justificativa do pedido" geral já cobre o porquê)
   const reembolsoValid = !isReembolso || (
-    form.motivo_reembolso.trim().length >= 5 &&
+    !!form.valor_estimado &&
     form.data_compra &&
-    form.forma_pagamento &&
-    (form.forma_pagamento !== 'pix' || form.chave_pix.trim()) &&
-    (form.forma_pagamento !== 'transferencia_bancaria' || (form.banco.trim() && form.agencia.trim() && form.conta.trim()))
+    dadosBancariosValid(form.forma_pagamento)
   );
   const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
+  // Compras · descrição do que se precisa (itens) é o campo-chave
+  const comprasValid = !isCompras || form.itens.trim().length >= 3;
+  // Pagamento · favorecido + vencimento (data_necessaria) + forma/destino do dinheiro.
+  // Boleto não exige PIX/banco (o documento carrega a linha de pagamento).
+  const pagamentoValid = !isPagamento || (
+    form.favorecido_nome.trim() &&
+    form.data_necessaria &&
+    form.forma_pagamento &&
+    (form.forma_pagamento === 'boleto' || dadosBancariosValid(form.forma_pagamento))
+  );
   const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
-  const areaClienteValid = !!form.area_cliente;
 
   return (
     <div className="p-6 space-y-6">
@@ -276,10 +439,10 @@ export default function Solicitacoes() {
             <ClipboardList className="h-6 w-6 text-primary" />
             Solicitações
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">TI, marketing, compras, reembolso, infraestrutura, reservas, férias e licenças</p>
+          <p className="text-sm text-muted-foreground mt-1">Compras, serviços, pagamentos, reembolsos, reservas, TI, marketing, infraestrutura, férias e licenças</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Config de responsaveis · so admin/diretor */}
+          {/* Config de responsáveis · so admin/diretor */}
           {isAdmin && (
             <Button
               variant="outline"
@@ -319,36 +482,35 @@ export default function Solicitacoes() {
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Categoria *</Label>
-                    <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                      <SelectContent>
-                        {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Área (cliente) *</Label>
-                    <Select value={form.area_cliente} onValueChange={v => setForm(f => ({ ...f, area_cliente: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Quem pede" /></SelectTrigger>
-                      <SelectContent>
-                        {AREAS_CLIENTE.map(a => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="space-y-2">
+                  <Label>Qual tipo de solicitação? *</Label>
+                  <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {CATEGORIA_HINT[form.categoria] && (
+                    <p className="text-xs text-muted-foreground">
+                      {CATEGORIA_HINT[form.categoria]}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <Label>Título *</Label>
-                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} />
+                  <Label>Título da solicitação *</Label>
+                  <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Resuma em uma frase" />
                 </div>
                 <div className="space-y-2">
-                  <Label>Descrição</Label>
-                  <Textarea value={form.descricao} onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} rows={3} />
+                  <Label>{isReservaEspaco ? 'Descrição da necessidade (qual evento / finalidade)' : 'Descrição da necessidade'}</Label>
+                  <Textarea
+                    value={form.descricao}
+                    onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
+                    rows={3}
+                    placeholder={isReservaEspaco ? 'Qual evento/atividade vai acontecer e o que precisa no espaço' : undefined}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label>Justificativa</Label>
+                  <Label>Justificativa do pedido</Label>
                   <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2} />
                 </div>
 
@@ -411,25 +573,155 @@ export default function Solicitacoes() {
                       <Label className="text-xs">Qtde de pessoas (estimada)</Label>
                       <Input type="number" value={form.qtde_pessoas} onChange={e => setForm(f => ({ ...f, qtde_pessoas: e.target.value }))} placeholder="0" />
                     </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Material ou arrumação específica (opcional)</Label>
+                      <Textarea
+                        value={form.itens}
+                        onChange={e => setForm(f => ({ ...f, itens: e.target.value }))}
+                        rows={2}
+                        placeholder="Ex: 50 cadeiras em U · som + microfone · projetor · mesa de apoio"
+                      />
+                    </div>
                   </div>
                 )}
 
-                {/* Data necessaria (outras categorias) */}
+                {/* Compras · itens + referência + fornecedor sugerido */}
+                {isCompras && (
+                  <div className="space-y-3 rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
+                    <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Detalhes da compra</p>
+                    <div className="space-y-2">
+                      <Label className="text-xs">O que comprar (itens + quantidade) *</Label>
+                      <Textarea
+                        value={form.itens}
+                        onChange={e => setForm(f => ({ ...f, itens: e.target.value }))}
+                        rows={2}
+                        placeholder="Ex: 2 caixas de som JBL · 10 cabos P10 · 1 mesa dobrável"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Link / referência do produto (opcional)</Label>
+                      <Input
+                        value={form.link_referencia}
+                        onChange={e => setForm(f => ({ ...f, link_referencia: e.target.value }))}
+                        placeholder="Cole o link do Mercado Livre / site, se tiver"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Fornecedor sugerido (opcional)</Label>
+                      <Input
+                        value={form.favorecido_nome}
+                        onChange={e => setForm(f => ({ ...f, favorecido_nome: e.target.value }))}
+                        placeholder="Se já sabe de onde comprar"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Pagamento · favorecido + documento + forma + recorrencia */}
+                {isPagamento && (
+                  <div className="space-y-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                    <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Dados do pagamento</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs">Favorecido (quem recebe) *</Label>
+                        <Input
+                          value={form.favorecido_nome}
+                          onChange={e => setForm(f => ({ ...f, favorecido_nome: e.target.value }))}
+                          placeholder="Nome ou razão social"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">CNPJ/CPF (opcional)</Label>
+                        <Input
+                          value={form.favorecido_documento}
+                          onChange={e => setForm(f => ({ ...f, favorecido_documento: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Documento — boleto / nota fiscal / contrato *</Label>
+                      <DocDropzone
+                        file={form.documento_file}
+                        onFile={f => setForm(prev => ({ ...prev, documento_file: f }))}
+                        onClear={() => setForm(prev => ({ ...prev, documento_file: null }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Forma de pagamento *</Label>
+                      <Select value={form.forma_pagamento} onValueChange={v => setForm(f => ({ ...f, forma_pagamento: v, chave_pix: '', banco: '', agencia: '', conta: '' }))}>
+                        <SelectTrigger><SelectValue placeholder="Como pagar?" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="boleto">Boleto</SelectItem>
+                          <SelectItem value="pix">PIX</SelectItem>
+                          <SelectItem value="transferencia_bancaria">Transferência Bancária</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {form.forma_pagamento === 'pix' && (
+                      <div className="space-y-2">
+                        <Label className="text-xs">Chave PIX *</Label>
+                        <Input value={form.chave_pix} onChange={e => setForm(f => ({ ...f, chave_pix: e.target.value }))} placeholder="CPF, e-mail, telefone ou chave aleatória" />
+                      </div>
+                    )}
+                    {form.forma_pagamento === 'transferencia_bancaria' && (
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label className="text-xs">Banco *</Label>
+                          <Input value={form.banco} onChange={e => setForm(f => ({ ...f, banco: e.target.value }))} placeholder="Ex: Banco do Brasil, Nubank..." />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label className="text-xs">Agência *</Label>
+                            <Input value={form.agencia} onChange={e => setForm(f => ({ ...f, agencia: e.target.value }))} placeholder="0000" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs">Conta *</Label>
+                            <Input value={form.conta} onChange={e => setForm(f => ({ ...f, conta: e.target.value }))} placeholder="00000-0" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <RecorrenteToggle form={form} setForm={setForm} />
+                  </div>
+                )}
+
+                {/* Data necessária · vira "Vencimento" obrigatório pra pagamento */}
                 {form.categoria && form.categoria !== 'reserva_espaco' && (
                   <div className="space-y-2">
-                    <Label>Data necessária (opcional)</Label>
+                    <Label>{isPagamento ? 'Vencimento *' : 'Data necessária (opcional)'}</Label>
                     <Input type="date" value={form.data_necessaria} onChange={e => setForm(f => ({ ...f, data_necessaria: e.target.value }))} />
                     <p className="text-xs text-muted-foreground">
-                      Se preencher, alertaremos caso o SLA padrão não bata.
+                      {isPagamento
+                        ? 'Quando o boleto/nota vence. Priorizamos pra não pagar com atraso.'
+                        : 'Se preencher, alertaremos caso o SLA padrão não bata.'}
                     </p>
                   </div>
                 )}
 
-                {/* SLA esperado em tempo real */}
+                {/* Marketing · intake por DOR (Redesenho 2026-05-30 · só o aviso · Pedro tria) */}
+                {form.categoria === 'marketing' && (
+                  <div className="rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
+                    <p className="text-sm font-semibold text-pink-700 dark:text-pink-400 mb-1">
+                      Demanda de Marketing
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Conte a <strong>necessidade/dor</strong> no título e na descrição acima — o problema, não a peça.
+                      A equipe vai avaliar e te devolver o formato e o prazo. Demandas de marketing levam de
+                      3 a 8 semanas conforme a complexidade.
+                    </p>
+                  </div>
+                )}
+
+                {/* SLA esperado em tempo real (oculto p/ marketing · usa o aviso de 3-8 sem) */}
                 {(() => {
                   const cat = CATEGORIAS.find(c => c.value === form.categoria);
-                  if (!cat?.areaResp) return null;
-                  const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === !!form.eh_urgente);
+                  if (!cat?.areaResp || form.categoria === 'marketing') return null;
+                  const urg = !!form.eh_urgente;
+                  const sub = cat.sub || 'default';
+                  // Prefere a subcategoria exata · cai pra 'default' · cai pra área
+                  const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === urg)
+                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === 'default' && s.eh_urgente === urg)
+                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === urg);
                   if (!sla) return null;
                   return (
                     <div className="rounded-md bg-blue-500/5 border border-blue-500/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
@@ -440,33 +732,16 @@ export default function Solicitacoes() {
                 })()}
 
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Urgência (sentimento)</Label>
-                    <Select value={form.urgencia} onValueChange={v => setForm(f => ({ ...f, urgencia: v }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {URGENCIAS.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
                   {showValueField && (
                     <div className="space-y-2">
-                      <Label>Valor estimado (R$)</Label>
-                      <Input type="number" step="0.01" value={form.valor_estimado} onChange={e => setForm(f => ({ ...f, valor_estimado: e.target.value }))} />
+                      <Label>{isReembolso ? 'Valor (exato da nota) *' : 'Valor estimado (R$)'}</Label>
+                      <Input type="number" step="0.01" value={form.valor_estimado} onChange={e => setForm(f => ({ ...f, valor_estimado: e.target.value }))}
+                        placeholder={isReembolso ? 'Igual ao da nota fiscal' : undefined} />
                     </div>
                   )}
                 </div>
                 {isReembolso && (
                   <>
-                    <div className="space-y-2">
-                      <Label>Motivo do reembolso *</Label>
-                      <Textarea
-                        value={form.motivo_reembolso}
-                        onChange={e => setForm(f => ({ ...f, motivo_reembolso: e.target.value }))}
-                        placeholder="Ex: 'Compra de material gráfico pra Conferência X · não havia tempo de pedir cotação'"
-                        rows={2}
-                      />
-                    </div>
                     <div className="space-y-2">
                       <Label>Data da compra *</Label>
                       <Input type="date" max={new Date().toISOString().slice(0, 10)}
@@ -476,38 +751,11 @@ export default function Solicitacoes() {
                     {/* Comprovante — drag and drop */}
                     <div className="space-y-2">
                       <Label>Comprovante / Documento *</Label>
-                      <div
-                        className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors cursor-pointer
-                          ${dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}
-                          ${form.documento_file ? 'border-green-500 bg-green-500/5' : ''}`}
-                        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                        onDragLeave={() => setDragOver(false)}
-                        onDrop={e => {
-                          e.preventDefault(); setDragOver(false);
-                          const file = e.dataTransfer.files[0];
-                          if (file) setForm(f => ({ ...f, documento_file: file }));
-                        }}
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        {form.documento_file ? (
-                          <div className="flex items-center justify-center gap-2">
-                            <FileText className="h-5 w-5 text-green-600 shrink-0" />
-                            <span className="text-sm text-green-700 truncate max-w-[220px]">{form.documento_file.name}</span>
-                            <button type="button" className="ml-1 text-muted-foreground hover:text-red-500"
-                              onClick={e => { e.stopPropagation(); setForm(f => ({ ...f, documento_file: null })); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center gap-1.5">
-                            <Upload className="h-7 w-7 text-muted-foreground" />
-                            <p className="text-sm text-muted-foreground">Arraste ou clique para selecionar</p>
-                            <p className="text-xs text-muted-foreground">PDF, JPG, PNG — até 10 MB</p>
-                          </div>
-                        )}
-                      </div>
-                      <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp"
-                        onChange={e => { const f = e.target.files[0]; if (f) setForm(prev => ({ ...prev, documento_file: f })); }} />
+                      <DocDropzone
+                        file={form.documento_file}
+                        onFile={f => setForm(prev => ({ ...prev, documento_file: f }))}
+                        onClear={() => setForm(prev => ({ ...prev, documento_file: null }))}
+                      />
                     </div>
 
                     {/* Forma de pagamento */}
@@ -552,7 +800,7 @@ export default function Solicitacoes() {
 
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !areaClienteValid || !reembolsoValid || !reservaEspacoValid || !urgenciaValid || submitting}>
+                  <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !reembolsoValid || !reservaEspacoValid || !comprasValid || !pagamentoValid || !urgenciaValid || submitting}>
                     {submitting ? 'Criando...' : 'Criar Solicitação'}
                   </Button>
                 </div>
@@ -562,24 +810,43 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* Tabs · Minhas Solicitacoes vs Para Atender · so quem e responsavel
-          ve a aba "Para Atender". Colaborador comum so tem "Minhas". */}
-      {isResponsavel && (
+      {/* Tabs · Aprovar (diretor de origem) · Para Atender (responsável) · Minhas (todos). */}
+      {(isResponsavel || ehDiretorOrigem) && (
         <div className="flex items-center gap-1 border-b border-border">
+          {ehDiretorOrigem && (
+            <button
+              type="button"
+              onClick={() => { setViewTouched(true); setView('aprovar'); }}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                view === 'aprovar'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Aprovar
+              {pendentesOrigem > 0 && (
+                <Badge className="text-[10px] bg-violet-500/15 text-violet-700 dark:text-violet-400 px-1.5">
+                  {pendentesOrigem}
+                </Badge>
+              )}
+            </button>
+          )}
+          {isResponsavel && (
+            <button
+              type="button"
+              onClick={() => { setViewTouched(true); setView('atender'); }}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                view === 'atender'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Para Atender
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setView('atender')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              view === 'atender'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Para Atender
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('minhas')}
+            onClick={() => { setViewTouched(true); setView('minhas'); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               view === 'minhas'
                 ? 'border-primary text-primary'
@@ -591,10 +858,31 @@ export default function Solicitacoes() {
         </div>
       )}
 
-      {/* Content: Kanban so na view 'atender' (responsavel) · Lista nas demais */}
+      {/* Content: Kanban so na view 'atender' · Lista de aprovação em 'aprovar' · Lista simples nas demais. */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
+        </div>
+      ) : view === 'aprovar' ? (
+        /* ── Aba Aprovar · diretor de origem ── */
+        <div className="space-y-3">
+          {filtered.length === 0 ? (
+            <Card className="p-8 text-center">
+              <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-3" />
+              <p className="text-muted-foreground">Sem solicitações aguardando aprovação.</p>
+              <p className="text-sm text-muted-foreground mt-1">Quando alguém do seu setor solicitar algo, aparecerá aqui.</p>
+            </Card>
+          ) : (
+            filtered.map(item => (
+              <AprovacaoOrigemCard
+                key={item.id}
+                item={item}
+                onApprove={handleAprovarOrigem}
+                onReject={handleRejeitarOrigem}
+                onClick={() => setDetailItem(item)}
+              />
+            ))
+          )}
         </div>
       ) : view === 'atender' ? (
         /* ── Kanban Board (managers/admins) ── */
@@ -656,11 +944,16 @@ export default function Solicitacoes() {
               const precisaAvaliar = item.status === 'concluido'
                 && item.solicitante_id === profile?.id
                 && item.nps_nota == null;
+              const aguardandoOrigem = item.status === 'aguardando_aprovacao_origem'
+                && item.aprovacao_origem_status === 'pendente';
+              const diretorNome = item.aprovacao_origem_diretor?.name;
+              const foiRejeitada = item.status === 'rejeitado' && item.aprovacao_origem_status === 'rejeitada';
               return (
                 <Card
                   key={item.id}
                   className={`p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' : ''
+                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' :
+                    aguardandoOrigem ? 'border-l-4 border-l-violet-500 bg-violet-500/5' : ''
                   }`}
                   onClick={() => setDetailItem(item)}
                 >
@@ -685,7 +978,17 @@ export default function Solicitacoes() {
                       <span className="text-xs text-muted-foreground">{date}</span>
                     </div>
                   </div>
-                  {item.descricao && (
+                  {aguardandoOrigem && (
+                    <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
+                      ⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}
+                    </p>
+                  )}
+                  {foiRejeitada && item.aprovacao_origem_motivo && (
+                    <p className="text-xs text-red-700 dark:text-red-400 mt-2">
+                      <span className="font-medium">Rejeitada:</span> {item.aprovacao_origem_motivo}
+                    </p>
+                  )}
+                  {item.descricao && !aguardandoOrigem && !foiRejeitada && (
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-1">{item.descricao}</p>
                   )}
                 </Card>
@@ -704,7 +1007,7 @@ export default function Solicitacoes() {
         onStatusChange={handleStatusChange}
         onNpsSubmit={handleNpsSubmit}
         onItemRefresh={async () => {
-          // recarrega a lista e atualiza o detailItem com a versao fresca
+          // recarrega a lista e atualiza o detailItem com a versão fresca
           const data = await api.list();
           setItems(data);
           setDetailItem(curr => (curr ? data.find(d => d.id === curr.id) || curr : curr));
@@ -732,13 +1035,148 @@ function getSlaBadge(item) {
   return null;
 }
 
+function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
+  const [confirmReject, setConfirmReject] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const cat = getCatMeta(item.categoria);
+  const urg = getUrgMeta(item.urgencia);
+  const solicitanteNome = item.solicitante?.name || item.solicitante_nome || 'Solicitante';
+  const date = new Date(item.created_at).toLocaleDateString('pt-BR');
+  const horas = Math.round((Date.now() - new Date(item.created_at).getTime()) / 3600000);
+  const aguardandoHa = horas < 24 ? `${horas}h` : `${Math.floor(horas / 24)}d ${horas % 24}h`;
+
+  async function confirmarRejeicao() {
+    if (motivo.trim().length < 5) {
+      toast.error('Motivo precisa ter pelo menos 5 caracteres');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onReject(item.id, motivo.trim());
+      setConfirmReject(false);
+      setMotivo('');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card
+      className="p-4 cursor-pointer hover:shadow-md transition-shadow border-l-4 border-l-violet-500"
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className={`text-xs ${cat.color}`}>{cat.label}</Badge>
+          <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
+          {item.eh_urgente && (
+            <Badge className="text-xs bg-red-500/15 text-red-700 dark:text-red-400">Urgente</Badge>
+          )}
+          <span className="text-xs text-muted-foreground">aguardando {aguardandoHa}</span>
+        </div>
+        <span className="text-xs text-muted-foreground whitespace-nowrap">{date}</span>
+      </div>
+      <p className="text-sm font-semibold text-foreground mb-1">{item.titulo}</p>
+      <p className="text-xs text-muted-foreground mb-2">
+        por {solicitanteNome}
+        {item.area_responsavel && <> · vai pra <span className="font-medium">{item.area_responsavel}</span></>}
+        {item.data_necessaria && <> · precisa até {new Date(item.data_necessaria).toLocaleDateString('pt-BR')}</>}
+      </p>
+      {item.descricao && (
+        <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.descricao}</p>
+      )}
+      {item.justificativa && (
+        <p className="text-xs text-muted-foreground mb-2"><span className="font-medium">Justificativa:</span> {item.justificativa}</p>
+      )}
+      {item.eh_urgente && item.justificativa_urgencia && (
+        <p className="text-xs text-red-700 dark:text-red-400 mb-2"><span className="font-medium">Urgência:</span> {item.justificativa_urgencia}</p>
+      )}
+
+      {/* Etiquetas Marketing (Spec 010) · so quando categoria=marketing */}
+      {item.categoria === 'marketing' && (item.marketing_tipo || item.marketing_destino) && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {item.marketing_tipo && (
+            <Badge
+              className="text-[10px] px-1.5 py-0.5"
+              style={item.marketing_tipo.cor ? { backgroundColor: `${item.marketing_tipo.cor}25`, color: item.marketing_tipo.cor } : undefined}
+            >
+              {item.marketing_tipo.nome}
+            </Badge>
+          )}
+          {item.marketing_destino && (
+            <Badge
+              className="text-[10px] px-1.5 py-0.5"
+              style={item.marketing_destino.cor ? { backgroundColor: `${item.marketing_destino.cor}25`, color: item.marketing_destino.cor } : undefined}
+            >
+              {item.marketing_destino.nome}
+            </Badge>
+          )}
+          {item.marketing_tipo?.habilidade_padrao && (
+            <span className="text-[10px] text-muted-foreground self-center">
+              · sugere {item.marketing_tipo.habilidade_padrao}
+            </span>
+          )}
+        </div>
+      )}
+
+      {!confirmReject ? (
+        <div className="flex gap-2 mt-3 pt-3 border-t border-border" onClick={e => e.stopPropagation()}>
+          <Button
+            size="sm"
+            onClick={() => onApprove(item.id)}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmReject(true)}
+            className="flex-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+          >
+            <XCircle className="h-4 w-4 mr-1" /> Rejeitar
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-3 pt-3 border-t border-border space-y-2" onClick={e => e.stopPropagation()}>
+          <Label className="text-xs">Motivo da rejeição *</Label>
+          <Textarea
+            value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+            rows={2}
+            placeholder="Solicitação rejeitada não reabre · solicitante terá que criar nova."
+          />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setConfirmReject(false); setMotivo(''); }}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={confirmarRejeicao}
+              disabled={motivo.trim().length < 5 || submitting}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {submitting ? 'Rejeitando...' : 'Confirmar rejeição'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) {
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
   const solicitante = item.solicitante?.name || 'Desconhecido';
   const date = new Date(item.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
   const sla = getSlaBadge(item);
+  const st = getStatusMeta(item.status);
   const aguardandoFin = item.status === 'aguardando_aprovacao_financeira';
+  // Status real visível quando a coluna agrupa vários (ex: "Em Andamento" tem
+  // aprovado/em_atendimento/aguardando_entrega). Os headliners obvios não repetem.
+  const mostrarStatus = !['pendente', 'em_analise', 'concluido', 'rejeitado', 'aguardando_aprovacao_financeira'].includes(item.status);
 
   return (
     <Card
@@ -756,6 +1194,7 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
       <div className="flex items-center justify-between gap-1.5 flex-wrap">
         <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solicitante}</span>
         <div className="flex items-center gap-1">
+          {mostrarStatus && <Badge className={`text-[10px] px-1.5 py-0.5 ${st.color}`}>{st.label}</Badge>}
           {sla && <Badge className={`text-[10px] px-1.5 py-0.5 ${sla.color}`}>⏱ {sla.label}</Badge>}
           <Badge className={`text-[10px] px-1.5 py-0.5 ${urg.color}`}>{urg.label}</Badge>
         </div>
@@ -812,7 +1251,7 @@ const ML_STATUS_META = {
 function statusIndex(status) {
   const i = ML_STATUS_FLOW.findIndex(s => s.key === status);
   if (i >= 0) return i;
-  // status que nao estao no flow (in_transit, out_for_delivery) caem entre shipped e delivered
+  // status que não estão no flow (in_transit, out_for_delivery) caem entre shipped e delivered
   if (status === 'in_transit' || status === 'out_for_delivery') return 3.5;
   return -1;
 }
@@ -842,7 +1281,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
     setLinking(true);
     try {
       await api.vincularML(item.id, mlInput.trim());
-      toast.success('Pedido vinculado! Voce e o solicitante recebem as atualizacoes automaticamente.');
+      toast.success('Pedido vinculado! Você e o solicitante recebem as atualizações automaticamente.');
       setShowInput(false);
       setMlInput('');
       onChanged?.();
@@ -867,7 +1306,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   }
 
   async function unlink() {
-    if (!confirm('Tem certeza que quer desvincular o pedido do Mercado Livre? O tracking sera removido.')) return;
+    if (!confirm('Tem certeza que quer desvincular o pedido do Mercado Livre? O tracking será removido.')) return;
     setUnlinking(true);
     try {
       await api.desvincularML(item.id);
@@ -995,10 +1434,10 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
             })}
           </div>
 
-          {/* Historico de eventos */}
+          {/* Histórico de eventos */}
           {eventos.length > 0 && (
             <div className="pt-2 border-t border-border">
-              <p className="text-xs font-semibold text-muted-foreground mb-2">Historico</p>
+              <p className="text-xs font-semibold text-muted-foreground mb-2">Histórico</p>
               <ul className="space-y-1.5">
                 {eventos.slice().reverse().map(ev => {
                   const m = ML_STATUS_META[ev.status] || { label: ev.status, emoji: '•' };
@@ -1039,7 +1478,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
 }
 
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
-  const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluido', 'em_analise'
+  const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
 
   if (!item) return null;
@@ -1170,6 +1609,66 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
+          {/* Detalhes da compra */}
+          {item.categoria === 'compras' && (item.itens || item.link_referencia || item.favorecido_nome) && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Detalhes da compra</p>
+              {item.itens && (
+                <div><span className="text-xs text-muted-foreground">Itens</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
+              )}
+              {item.favorecido_nome && (
+                <div><span className="text-xs text-muted-foreground">Fornecedor sugerido</span><p className="text-sm">{item.favorecido_nome}</p></div>
+              )}
+              {item.link_referencia && (
+                item.link_referencia.startsWith('http')
+                  ? <a href={item.link_referencia} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">Ver referência →</a>
+                  : <div><span className="text-xs text-muted-foreground">Referência</span><p className="text-sm">{item.link_referencia}</p></div>
+              )}
+            </div>
+          )}
+
+          {/* Detalhes da reserva · espaco/data/horario + material (itens) */}
+          {item.categoria === 'reserva_espaco' && (item.espaco_solicitado || item.data_uso || item.itens) && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Detalhes da reserva</p>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {item.espaco_solicitado && (<div><span className="text-muted-foreground">Espaço</span><p className="font-medium">{item.espaco_solicitado}</p></div>)}
+                {item.data_uso && (<div><span className="text-muted-foreground">Data</span><p className="font-medium">{new Date(item.data_uso + 'T00:00:00').toLocaleDateString('pt-BR')}{item.horario_inicio ? ` · ${item.horario_inicio}${item.horario_fim ? `–${item.horario_fim}` : ''}` : ''}</p></div>)}
+                {item.qtde_pessoas != null && (<div><span className="text-muted-foreground">Pessoas</span><p className="font-medium">{item.qtde_pessoas}</p></div>)}
+              </div>
+              {item.itens && (
+                <div><span className="text-xs text-muted-foreground">Material / arrumação</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
+              )}
+            </div>
+          )}
+
+          {/* Dados do pagamento */}
+          {item.categoria === 'pagamento' && (item.favorecido_nome || item.forma_pagamento || item.documento_url) && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Dados do pagamento</p>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {item.favorecido_nome && (<div><span className="text-muted-foreground">Favorecido</span><p className="font-medium">{item.favorecido_nome}</p></div>)}
+                {item.favorecido_documento && (<div><span className="text-muted-foreground">CNPJ/CPF</span><p className="font-medium font-mono">{item.favorecido_documento}</p></div>)}
+                {item.forma_pagamento && (<div><span className="text-muted-foreground">Forma</span><p className="font-medium">{item.forma_pagamento === 'boleto' ? 'Boleto' : item.forma_pagamento === 'pix' ? 'PIX' : 'Transferência'}</p></div>)}
+                {item.data_necessaria && (<div><span className="text-muted-foreground">Vencimento</span><p className="font-medium">{new Date(item.data_necessaria).toLocaleDateString('pt-BR')}</p></div>)}
+                {item.forma_pagamento === 'pix' && item.chave_pix && (<div><span className="text-muted-foreground">Chave PIX</span><p className="font-medium font-mono">{item.chave_pix}</p></div>)}
+                {item.forma_pagamento === 'transferencia_bancaria' && (<>
+                  {item.banco && <div><span className="text-muted-foreground">Banco</span><p className="font-medium">{item.banco}</p></div>}
+                  {item.agencia && <div><span className="text-muted-foreground">Agência</span><p className="font-medium">{item.agencia}</p></div>}
+                  {item.conta && <div><span className="text-muted-foreground">Conta</span><p className="font-medium">{item.conta}</p></div>}
+                </>)}
+              </div>
+              {item.recorrente && (
+                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">⟳ Recorrente{item.recorrencia ? ` · ${item.recorrencia}` : ''}</Badge>
+              )}
+              {item.documento_url && (
+                <a href={item.documento_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+                  <FileText className="h-4 w-4" /> Ver documento (boleto / NF)
+                </a>
+              )}
+            </div>
+          )}
+
           {isAdmin && !actionPending && (
             <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
               {item.status === 'pendente' && <Button size="sm" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
@@ -1183,7 +1682,16 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
-          {/* NPS pos-conclusao · so pro solicitante apos status concluido */}
+          {/* Marketing · acompanhamento pelo solicitante (redesenho = campanha · legado = card) */}
+          {item.categoria === 'marketing' && item.solicitante_id === currentUserId && (
+            item.marketing_campanha
+              ? <MarketingCampanhaBlock campanha={item.marketing_campanha} onChanged={() => onItemRefresh?.()} />
+              : item.marketing_card
+                ? <MarketingCardBlock card={item.marketing_card} onChanged={() => onItemRefresh?.()} />
+                : null
+          )}
+
+          {/* NPS pos-conclusao · so pro solicitante após status concluído */}
           {item.status === 'concluido'
             && currentUserId
             && item.solicitante_id === currentUserId
@@ -1217,6 +1725,285 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// MarketingCampanhaBlock · acompanhamento da campanha pelo solicitante (redesenho 2026-05-31)
+// 1 dor = 1 campanha com N entregaveis · mostra status + prazo + progresso + entregaveis.
+// ═══════════════════════════════════════════════════════════════════════
+const EST_ENTREGAVEL_LABEL = {
+  triagem: 'Em triagem', backlog: 'Na fila', fila: 'Na fila', pesquisa: 'Pesquisa',
+  producao: 'Em produção', em_producao: 'Em produção', revisao: 'Em revisão',
+  aguardando_solicitante: 'Em revisão', concluido: 'Concluído',
+};
+function MarketingCampanhaBlock({ campanha, onChanged }) {
+  const ents = campanha.entregaveis || [];
+  const feitos = ents.filter(e => e.estado === 'concluido').length;
+  const pct = ents.length ? Math.round((feitos / ents.length) * 100) : 0;
+  const tudoPronto = ents.length > 0 && feitos === ents.length;
+  const jaRevisou = ents.some(e => e.tem_revisao);
+  const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR') : null;
+  const emTriagem = campanha.status === 'triagem';
+  const concluida = campanha.status === 'concluida';
+  // Aprovação é da DEMANDA COMPLETA: só aparece quando TODOS os entregáveis estão prontos.
+  const podeAprovar = tudoPronto && campanha.status === 'ativa';
+
+  const [revisaoOpen, setRevisaoOpen] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function aprovar() {
+    setSubmitting(true);
+    try {
+      await marketingApi.campanhas.aprovar(campanha.id);
+      toast.success('Demanda aprovada · obrigado! Agora avalie pelo NPS.');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao aprovar'); }
+    finally { setSubmitting(false); }
+  }
+  async function revisar() {
+    if (motivo.trim().length < 5) { toast.error('Conte o que precisa ajustar (mín. 5 caracteres)'); return; }
+    setSubmitting(true);
+    try {
+      await marketingApi.campanhas.revisar(campanha.id, motivo.trim());
+      toast.success('Pedido de revisão enviado · a equipe vai ajustar.');
+      setRevisaoOpen(false); setMotivo('');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao pedir revisão'); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+        <FileText className="h-4 w-4 text-pink-500" /> Sua demanda Marketing
+      </p>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <Badge className={
+          concluida ? 'bg-emerald-500/15 text-emerald-700' :
+          emTriagem ? 'bg-pink-500/15 text-pink-700' :
+          tudoPronto ? 'bg-emerald-500/15 text-emerald-700' : 'bg-blue-500/15 text-blue-700'
+        }>
+          {concluida ? 'Concluída · aprovada' :
+           emTriagem ? 'Em triagem · a equipe vai avaliar e planejar' :
+           tudoPronto ? 'Tudo pronto · aguardando sua aprovação' : 'Em produção'}
+        </Badge>
+        {fmt(campanha.prazo_entrega) && (
+          <span className="text-muted-foreground">Entrega prevista: {fmt(campanha.prazo_entrega)}</span>
+        )}
+      </div>
+
+      {ents.length > 0 ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+              <div className={`h-full ${pct === 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-[11px] text-muted-foreground shrink-0">{feitos}/{ents.length} prontos</span>
+          </div>
+          {ents.map(e => (
+            <div key={e.id} className="flex items-center justify-between gap-2 text-xs bg-muted/30 rounded px-2 py-1.5">
+              <span className="truncate flex-1 flex items-center gap-1.5">
+                {e.estado === 'concluido' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                {e.titulo}
+              </span>
+              <span className="text-muted-foreground shrink-0">{EST_ENTREGAVEL_LABEL[e.estado] || e.estado}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">A equipe ainda vai definir os entregáveis desta demanda.</p>
+      )}
+
+      {/* Aprovação da DEMANDA COMPLETA · só quando tudo pronto */}
+      {podeAprovar && !revisaoOpen && (
+        <div className="flex gap-2 pt-1">
+          <Button size="sm" onClick={aprovar} disabled={submitting} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar entrega
+          </Button>
+          {!jaRevisou && (
+            <Button size="sm" variant="outline" onClick={() => setRevisaoOpen(true)} className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+              ⟳ Pedir revisão (1x)
+            </Button>
+          )}
+        </div>
+      )}
+      {revisaoOpen && (
+        <div className="space-y-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded">
+          <Label className="text-xs">O que precisa ajustar? *</Label>
+          <Textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={2} placeholder="Atenção · só 1 revisão. A equipe vai refazer o que você apontar." />
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="outline" onClick={() => { setRevisaoOpen(false); setMotivo(''); }}>Cancelar</Button>
+            <Button size="sm" onClick={revisar} disabled={submitting}>Enviar revisão</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MarketingCardBlock · solicitante revisa preview, aprova entrega ou pede revisão (Spec 012 · LEGADO)
+// ═══════════════════════════════════════════════════════════════════════
+function MarketingCardBlock({ card, onChanged }) {
+  const [entregaveis, setEntregaveis] = useState([]);
+  const [posicao, setPosicao] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [revisaoOpen, setRevisaoOpen] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!card?.id) return;
+    setLoading(true);
+    Promise.all([
+      marketingApi.entregaveis.list(card.id).catch(() => []),
+      marketingApi.fila.posicao(card.id).catch(() => null),
+    ]).then(([ent, pos]) => {
+      setEntregaveis(ent || []);
+      setPosicao(pos);
+    }).finally(() => setLoading(false));
+  }, [card?.id]);
+
+  async function aprovar() {
+    setSubmitting(true);
+    try {
+      await marketingApi.aprovarEntrega(card.id);
+      toast.success('Entrega aprovada · agora avalie pelo NPS');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao aprovar entrega');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function sugerirRevisao() {
+    if (motivo.trim().length < 5) { toast.error('Motivo precisa ter pelo menos 5 caracteres'); return; }
+    setSubmitting(true);
+    try {
+      await marketingApi.sugerirRevisao(card.id, motivo.trim());
+      toast.success('Revisão enviada · card volta pro fim da fila');
+      setRevisaoOpen(false);
+      setMotivo('');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao sugerir revisão');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!card) return null;
+
+  const podeRevisar = card.estado === 'aguardando_solicitante' && !card.tem_revisao;
+  const podeAprovar = card.estado === 'aguardando_solicitante';
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+        <FileText className="h-4 w-4 text-pink-500" />
+        Sua demanda Marketing
+      </p>
+
+      {/* Status do card */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted-foreground">Status:</span>
+        <Badge className={
+          card.estado === 'concluido' ? 'bg-emerald-500/15 text-emerald-700' :
+          card.estado === 'aguardando_solicitante' ? 'bg-violet-500/15 text-violet-700' :
+          card.estado === 'em_producao' ? 'bg-blue-500/15 text-blue-700' :
+          'bg-amber-500/15 text-amber-700'
+        }>
+          {card.estado === 'fila' ? 'Na fila' :
+           card.estado === 'em_producao' ? 'Em produção' :
+           card.estado === 'aguardando_solicitante' ? 'Aguardando sua revisão' :
+           'Concluído'}
+        </Badge>
+        {card.tem_revisao && (
+          <Badge className="bg-amber-500/15 text-amber-700">⟳ Já teve revisão (1x)</Badge>
+        )}
+        {card.prazo_confirmado && (
+          <span className="text-muted-foreground">
+            Prazo: {new Date(card.prazo_confirmado).toLocaleDateString('pt-BR')}
+          </span>
+        )}
+        {posicao && posicao.posicao != null && (
+          <Badge className="bg-primary/10 text-primary">
+            Fila #{posicao.posicao} de {posicao.total}
+          </Badge>
+        )}
+      </div>
+
+      {/* Entregáveis · preview/download */}
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Carregando arquivos...</p>
+      ) : entregaveis.length > 0 ? (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-foreground">Arquivos ({entregaveis.length})</p>
+          {entregaveis.map(e => (
+            <a
+              key={e.id}
+              href={marketingApi.entregaveis.download(e.id)}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 text-xs bg-muted/30 rounded px-2 py-1.5 hover:bg-muted/50 transition-colors"
+            >
+              <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span className="truncate flex-1">{e.nome_arquivo}</span>
+              {e.tamanho_bytes && <span className="text-muted-foreground text-[10px]">{Math.round(e.tamanho_bytes/1024)}KB</span>}
+            </a>
+          ))}
+        </div>
+      ) : card.estado === 'aguardando_solicitante' ? (
+        <p className="text-xs text-muted-foreground italic">Equipe finalizou · preview ainda não anexado.</p>
+      ) : null}
+
+      {/* Botoes de ação · so quando aguardando solicitante */}
+      {podeAprovar && !revisaoOpen && (
+        <div className="flex gap-2 pt-2">
+          <Button
+            size="sm"
+            onClick={aprovar}
+            disabled={submitting}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar entrega
+          </Button>
+          {podeRevisar && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRevisaoOpen(true)}
+              className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+            >
+              ⟳ Sugerir revisão (1x)
+            </Button>
+          )}
+        </div>
+      )}
+
+      {revisaoOpen && (
+        <div className="space-y-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded">
+          <Label className="text-xs">Motivo da revisão *</Label>
+          <Textarea
+            value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+            rows={2}
+            placeholder="Atenção · só 1 revisão. Card volta pro fim da fila."
+          />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setRevisaoOpen(false); setMotivo(''); }}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={sugerirRevisao} disabled={motivo.trim().length < 5 || submitting}>
+              {submitting ? 'Enviando...' : 'Confirmar revisão'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NpsBlock({ item, onSubmit }) {
   const [nota, setNota] = useState(item.nps_nota ?? null);
   const [comentario, setComentario] = useState(item.nps_comentario || '');
@@ -1247,7 +2034,7 @@ function NpsBlock({ item, onSubmit }) {
     try {
       await onSubmit(item.id, nota, comentario.trim() || null);
     } catch {
-      // erro ja foi exibido pelo handler do pai
+      // erro já foi exibido pelo handler do pai
     } finally {
       setSubmitting(false);
     }

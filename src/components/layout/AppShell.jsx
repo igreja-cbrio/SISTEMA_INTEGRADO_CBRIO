@@ -13,10 +13,10 @@ import { CommandSearch } from '../ui/command-search';
 import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map, ListChecks,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
-  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard,
+  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
+  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -68,6 +68,7 @@ const NAV_ITEMS = [
         title: 'Visão macro',
         items: [
           { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
+          { label: 'Monitoramento OKR', description: 'Planejamento estratégico 2026 · NSM, 9 OKRs e indicadores táticos', icon: Compass, path: '/monitoramento-okr' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
           { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
         ],
@@ -78,6 +79,7 @@ const NAV_ITEMS = [
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
+          { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
           { label: 'Apresentações', description: 'Gera slides HTML premium via Claude Opus · upload opcional', icon: Sparkles, path: '/admin/apresentacoes', module: 'apresentacoes' },
         ],
       },
@@ -104,10 +106,10 @@ const NAV_ITEMS = [
       {
         title: 'Áreas ministeriais',
         items: [
-          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao' },
+          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
-          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos' },
+          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
         ],
@@ -139,12 +141,12 @@ const NAV_ITEMS = [
   {
     id: 6,
     label: 'Criativo',
-    roles: ['admin', 'diretor'],
     subMenus: [
       {
-        title: 'Áreas',
+        title: 'Demandas criativas',
         items: [
-          { label: 'Marketing', description: 'Projetos e solicitações', icon: Megaphone, path: '/criativo/marketing' },
+          { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
+          { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
         ],
       },
     ],
@@ -159,7 +161,7 @@ export default function AppShell() {
   const permsLoaded = modulePerms !== null || isAdmin;
 
   // Item passa se: sem perm + sem module · OU perm explicita true · OU
-  // module com nivel leitura >= 1 (admin sempre passa)
+  // module com nível leitura >= 1 (admin sempre passa)
   function itemAllowed(item) {
     if (!permsLoaded) return true;
     if (isAdmin) return true;
@@ -219,10 +221,10 @@ export default function AppShell() {
       } else {
         const r = await subscribePush();
         if (r === 'ok') setPushSubscribed(true);
-        else if (r === 'denied') alert('Voce bloqueou notificacoes neste navegador. Habilite nas configuracoes do site.');
-        else if (r === 'no_vapid') alert('Push ainda nao foi configurado pelo administrador.');
-        else if (r === 'unsupported') alert('Este navegador nao suporta notificacoes push.');
-        else alert('Nao foi possivel ativar notificacoes.');
+        else if (r === 'denied') alert('Você bloqueou notificações neste navegador. Habilite nas configurações do site.');
+        else if (r === 'no_vapid') alert('Push ainda não foi configurado pelo administrador.');
+        else if (r === 'unsupported') alert('Este navegador não suporta notificações push.');
+        else alert('Não foi possível ativar notificações.');
       }
     } finally { setPushBusy(false); }
   };
@@ -239,9 +241,9 @@ export default function AppShell() {
     return () => clearInterval(interval);
   }, []);
 
-  // Realtime · escuta INSERTs em `notificacoes` filtrado pelo usuario logado.
+  // Realtime · escuta INSERTs em `notificações` filtrado pelo usuário logado.
   // Quando uma nova chega, toca o som, incrementa o badge e (se o dropdown
-  // ja estiver aberto) prepend na lista sem precisar refazer fetch.
+  // já estiver aberto) prepend na lista sem precisar refazer fetch.
   useEffect(() => {
     if (!supabase || !profile?.id) return;
     const channel = supabase
@@ -260,7 +262,7 @@ export default function AppShell() {
           playNotificationSound();
           setNotifCount(c => {
             const next = c + 1;
-            // Mantem o ref sincronizado pro polling subsequente nao tocar som de novo
+            // Mantem o ref sincronizado pro polling subsequente não tocar som de novo
             // pelo mesmo evento (a comparacao em loadNotifCount usa prevNotifCount).
             prevNotifCount.current = next;
             return next;
@@ -389,7 +391,7 @@ export default function AppShell() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-[380px] p-0" sideOffset={8}>
                 <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                  <span className="text-sm font-bold text-foreground">Notificacoes</span>
+                  <span className="text-sm font-bold text-foreground">Notificações</span>
                   <div className="flex items-center gap-2">
                     {notifCount > 0 && (
                       <button onClick={handleLerTodas} className="flex items-center gap-1 text-[11px] text-primary hover:underline">
@@ -402,7 +404,7 @@ export default function AppShell() {
                         disabled={pushBusy}
                         className="p-1 rounded hover:bg-accent transition-colors"
                         style={{ color: pushSubscribed ? '#00B39D' : 'var(--cbrio-text3)' }}
-                        title={pushSubscribed ? 'Desativar notificacoes no celular/desktop' : 'Ativar notificacoes no celular/desktop'}
+                        title={pushSubscribed ? 'Desativar notificações no celular/desktop' : 'Ativar notificações no celular/desktop'}
                       >
                         {pushSubscribed ? <BellRing className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
                       </button>
@@ -420,7 +422,7 @@ export default function AppShell() {
                   ) : notifs.length === 0 ? (
                     <div className="flex flex-col items-center py-10 gap-2 text-muted-foreground">
                       <Bell className="h-8 w-8 opacity-30" />
-                      <span className="text-xs">Nenhuma notificacao</span>
+                      <span className="text-xs">Nenhuma notificação</span>
                     </div>
                   ) : (
                     <div className="py-1">
@@ -489,7 +491,7 @@ export default function AppShell() {
 
 // ─────────────────────────────────────────────────────────────────────────
 // MobileNavSheet · drawer lateral pra navegar em telas pequenas
-// Visivel so < md (768px) · desktop usa MegaMenu no centro do header.
+// Visível so < md (768px) · desktop usa MegaMenu no centro do header.
 // ─────────────────────────────────────────────────────────────────────────
 function MobileNavSheet({ items }) {
   const [open, setOpen] = useState(false);

@@ -203,14 +203,14 @@ export default function VisualizacaoDecisoes() {
 }
 
 // ============================================================================
-// DetalhamentoDecisoes · embaixo do grafico · 2 modos de visao
+// DetalhamentoDecisoes · embaixo do gráfico · 2 modos de visão
 //
-// Marcos: "colocar essa aba de pessoas que decidiram em decisoes abaixo do
-//          grafico, exatamente como e o batismo, e ai pode ter um filtro de
-//          ver as decisoes por culto como numero ou aparecer os cpfs como na
-//          area de batismo".
+// Marcos: "colocar essa aba de pessoas que decidiram em decisões abaixo do
+//          gráfico, exatamente como e o batismo, e ai pode ter um filtro de
+//          ver as decisões por culto como número ou aparecer os cpfs como na
+//          área de batismo".
 //
-// Modo "Por culto"  · agregacao por culto individual (data, tipo, decisoes,
+// Modo "Por culto"  · agregacao por culto individual (data, tipo, decisões,
 //                     pessoas registradas, gap)
 // Modo "Pessoas"    · lista igual Batismos (nome, CPF, telefone, email, data,
 //                     culto, status_followup)
@@ -516,7 +516,7 @@ function VisaoPessoas() {
   );
 }
 
-// Bloco do historico importado (sem culto vinculado) · agrupa por data de conversao
+// Bloco do histórico importado (sem culto vinculado) · agrupa por data de conversao
 function HistoricoImportadoExpandivel({
   pessoas, expanded, onToggle,
 }: { pessoas: any[]; expanded: boolean; onToggle: () => void }) {
@@ -872,7 +872,7 @@ function maskCpf(v: string): string {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 }
 
-// Telefone BR · 11 digitos (DDD + 9 + numero) → (21) 99999-0000
+// Telefone BR · 11 digitos (DDD + 9 + número) → (21) 99999-0000
 function maskTelefone(v: string): string {
   const d = String(v || '').replace(/\D/g, '').slice(0, 11);
   if (d.length === 0) return '';

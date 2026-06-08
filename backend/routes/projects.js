@@ -140,7 +140,7 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar projeto' }); }
 });
 
-// ── DELETE · soft-delete (preserva historico de projeto) ──
+// ── DELETE · soft-delete (preserva histórico de projeto) ──
 router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {

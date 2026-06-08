@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { cadastroPublico } from '../../api';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
+import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
 import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
@@ -70,7 +71,7 @@ function cpfValido(v) {
 // ── Input reutilizável com label flutuante ──
 function Field({ id, label, type = 'text', value, onChange, required, placeholder, as = 'input', rows, maxLength, autoComplete, inputMode }) {
   const [focused, setFocused] = useState(false);
-  const active = focused || (value !== undefined && value !== null && String(value).length > 0);
+  const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag = as;
 
   return (
@@ -144,7 +145,7 @@ function SelectField({ id, label, value, onChange, options, required }) {
       >
         <option value=""></option>
         {options.map((o) => (
-          <option key={o.value} value={o.value} style={{ background: '#161616', color: '#e5e5e5' }}>
+          <option key={o.value} value={o.value} style={{ background: C.optionBg, color: C.text }}>
             {o.label}
           </option>
         ))}
@@ -230,6 +231,7 @@ function CheckboxField({ id, checked, onChange, label }) {
 }
 
 export default function CadastroMembresia() {
+  const { C } = usePublicTheme();
   useHomeScreenMeta('membresia');
   const searchParams = new URLSearchParams(window.location.search);
   const fromTotem = searchParams.get('from') === 'totem';
@@ -264,19 +266,19 @@ export default function CadastroMembresia() {
   const [buscouFamilia, setBuscouFamilia] = useState(false);
 
   // Lookup proativo por CPF (debounced)
-  // null = nao buscou | { found: false } | { found: true, primeiroNome, ... }
+  // null = não buscou | { found: false } | { found: true, primeiroNome, ... }
   const [cpfLookup, setCpfLookup] = useState(null);
   const [cpfChecando, setCpfChecando] = useState(false);
 
   // Lookup proativo por nome + telefone (debounced).
-  // Reconhece novos convertidos ja cadastrados (importados ou registrados em
+  // Reconhece novos convertidos já cadastrados (importados ou registrados em
   // culto) e oferece vincular automaticamente em vez de criar duplicata.
-  // null = nao buscou | { found: false } | { found: true, matchId, primeiroNome, telefoneMascarado, ... }
+  // null = não buscou | { found: false } | { found: true, matchId, primeiroNome, telefoneMascarado, ... }
   const [nomeTelLookup, setNomeTelLookup] = useState(null);
   const [nomeTelChecando, setNomeTelChecando] = useState(false);
-  // matchConfirmado: id do mem_membros confirmado pelo usuario ("sou eu")
+  // matchConfirmado: id do mem_membros confirmado pelo usuário ("sou eu")
   const [matchConfirmado, setMatchConfirmado] = useState(null);
-  const [matchDescartado, setMatchDescartado] = useState(false); // "nao sou eu" → para de perguntar
+  const [matchDescartado, setMatchDescartado] = useState(false); // "não sou eu" → para de perguntar
 
   const origem = useMemo(() => {
     try {
@@ -308,7 +310,7 @@ export default function CadastroMembresia() {
     }
   };
 
-  // Debounce: 600ms apos parar de digitar CPF, se CPF for valido, faz lookup
+  // Debounce: 600ms após parar de digitar CPF, se CPF for valido, faz lookup
   useEffect(() => {
     const cpf = form.cpf;
     if (!cpfValido(cpf)) {
@@ -330,9 +332,9 @@ export default function CadastroMembresia() {
     return () => clearTimeout(t);
   }, [form.cpf]);
 
-  // Debounce: 700ms apos parar de digitar nome/telefone — busca cadastro
+  // Debounce: 700ms após parar de digitar nome/telefone — busca cadastro
   // pre-existente (novo convertido importado, etc.) por primeiro nome +
-  // telefone exatos. Para de buscar se usuario ja confirmou ou descartou.
+  // telefone exatos. Para de buscar se usuário já confirmou ou descartou.
   useEffect(() => {
     if (matchConfirmado || matchDescartado) {
       setNomeTelChecando(false);
@@ -363,7 +365,7 @@ export default function CadastroMembresia() {
 
   const processarFoto = useCallback((file) => {
     if (!file.type.startsWith('image/')) { setError('Selecione um arquivo de imagem (JPG, PNG ou WebP).'); return; }
-    if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no maximo 5 MB.'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('A imagem deve ter no máximo 5 MB.'); return; }
     setFotoFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => setFotoPreview(ev.target.result);
@@ -535,15 +537,16 @@ export default function CadastroMembresia() {
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
-      padding: '40px 16px', background: '#0a0a0a',
+      padding: '40px 16px', background: C.pageBg,
     }}>
-      <LoginShapesBackground />
+      <AnimatedBackground />
+      <PublicThemeToggle />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
-        background: 'rgba(22,22,22,0.78)', backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20,
-        padding: '40px 36px',
+        background: C.card, backdropFilter: 'blur(24px)',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 20,
+        padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
       }}>
         {fromTotem && (
           <button
@@ -551,7 +554,7 @@ export default function CadastroMembresia() {
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
               background: 'transparent', border: 'none',
-              color: '#737373', fontSize: 13, cursor: 'pointer',
+              color: C.textDim, fontSize: 13, cursor: 'pointer',
               padding: '0 0 20px', marginBottom: 0,
             }}
           >
@@ -564,8 +567,8 @@ export default function CadastroMembresia() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>Cadastro de Membresia</h1>
-          <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 6, lineHeight: 1.5 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Cadastro de Membresia</h1>
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             Preencha seus dados para que nossa equipe de acolhimento entre em contato.
           </p>
         </div>
@@ -581,17 +584,17 @@ export default function CadastroMembresia() {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e5e5e5', margin: 0 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
               Cadastro enviado!
             </h2>
-            <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 10, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
               Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.
             </p>
 
             {fromTotem ? (
               /* Modo totem: exibe QR para o membro escanear com o celular e pegar a wallet */
               <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                <p style={{ fontSize: 13, color: '#a3a3a3', marginBottom: 16 }}>
+                <p style={{ fontSize: 13, color: C.text3, marginBottom: 16 }}>
                   Escaneie o QR Code com seu celular para adicionar seu QR de membro na carteira digital:
                 </p>
                 <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 12, marginBottom: 16 }}>
@@ -609,7 +612,7 @@ export default function CadastroMembresia() {
                   onClick={() => window.location.href = '/totem'}
                   style={{
                     padding: '10px 24px', borderRadius: 10, background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.2)', color: '#a3a3a3',
+                    border: '1px solid rgba(255,255,255,0.2)', color: C.text3,
                     fontSize: 14, cursor: 'pointer',
                   }}
                 >
@@ -640,13 +643,13 @@ export default function CadastroMembresia() {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 22, marginBottom: 14,
             }}>&#x1F3E0;</div>
-            <h2 style={{ fontSize: 17, fontWeight: 700, color: '#e5e5e5', margin: '0 0 8px' }}>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: '0 0 8px' }}>
               Encontramos uma familia!
             </h2>
-            <p style={{ fontSize: 13, color: '#a3a3a3', lineHeight: 1.5, marginBottom: 20 }}>
+            <p style={{ fontSize: 13, color: C.text3, lineHeight: 1.5, marginBottom: 20 }}>
               {familiaOpcoes.length === 1
-                ? `Existe a familia "${familiaOpcoes[0].nome}" cadastrada. Voce faz parte dessa familia?`
-                : `Encontramos familias com sobrenome parecido. Voce faz parte de alguma delas?`}
+                ? `Existe a família "${familiaOpcoes[0].nome}" cadastrada. Você faz parte dessa família?`
+                : `Encontramos famílias com sobrenome parecido. Você faz parte de alguma delas?`}
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 360, margin: '0 auto' }}>
@@ -674,11 +677,11 @@ export default function CadastroMembresia() {
                 style={{
                   padding: '12px 20px', background: 'transparent',
                   border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10,
-                  color: '#a3a3a3', fontSize: 13, fontWeight: 500,
+                  color: C.text3, fontSize: 13, fontWeight: 500,
                   cursor: 'pointer', transition: 'all 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Nao, nao faco parte de nenhuma dessas familias'}
+                {loading ? 'Enviando...' : 'Não, não faco parte de nenhuma dessas famílias'}
               </button>
             </div>
           </div>
@@ -749,7 +752,7 @@ export default function CadastroMembresia() {
                       )}
                     </div>
                     <input ref={fotoRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleFotoSelect} />
-                    {!fotoPreview && <span style={{ fontSize: 11, color: '#a3a3a3' }}>Clique ou arraste uma foto</span>}
+                    {!fotoPreview && <span style={{ fontSize: 11, color: C.text3 }}>Clique ou arraste uma foto</span>}
                     {fotoPreview && (
                       <button type="button" onClick={() => { setFotoFile(null); setFotoPreview(null); if (fotoRef.current) fotoRef.current.value = ''; }}
                         style={{ fontSize: 12, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
@@ -791,7 +794,7 @@ export default function CadastroMembresia() {
                           </>
                         ) : (
                           <>
-                            <strong>Ja existe um cadastro com este CPF</strong>
+                            <strong>Já existe um cadastro com este CPF</strong>
                             <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
                               Em nome de {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome} (em analise).
                               Se for voce, pode continuar — vamos atualizar.
@@ -823,8 +826,8 @@ export default function CadastroMembresia() {
                         </div>
                         <div style={{ color: 'var(--cbrio-text3)', marginTop: 4, fontSize: 12 }}>
                           {nomeTelLookup.cadastroCompleto
-                            ? 'Esse cadastro ja existe no sistema. E voce mesmo?'
-                            : 'Provavelmente voce e um novo convertido ja registrado no nosso sistema. E voce?'}
+                            ? 'Esse cadastro já existe no sistema. E você mesmo?'
+                            : 'Provavelmente você e um novo convertido já registrado no nosso sistema. E você?'}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -984,7 +987,7 @@ export default function CadastroMembresia() {
               {currentStep === 3 && (
                 <div>
                   <SectionTitle>Grupo de conexão</SectionTitle>
-                  <p style={{ fontSize: 13, color: '#a3a3a3', marginBottom: 16 }}>
+                  <p style={{ fontSize: 13, color: C.text3, marginBottom: 16 }}>
                     Você participa de algum grupo de conexão da CBRio? Se sim, podemos te
                     vincular automaticamente — o líder vai aprovar seu pedido.
                   </p>
@@ -1011,7 +1014,7 @@ export default function CadastroMembresia() {
 
                   {estaEmGrupo === true && (
                     <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--cbrio-border)', borderRadius: 12, padding: 14 }}>
-                      <p style={{ fontSize: 12, color: '#a3a3a3', margin: 0, marginBottom: 10 }}>
+                      <p style={{ fontSize: 12, color: C.text3, margin: 0, marginBottom: 10 }}>
                         Busque pelo nome do líder do seu grupo e selecione o grupo correto:
                       </p>
                       <GrupoSelectorComponent
@@ -1034,7 +1037,7 @@ export default function CadastroMembresia() {
                   )}
 
                   {estaEmGrupo === false && (
-                    <p style={{ fontSize: 12, color: '#a3a3a3', fontStyle: 'italic' }}>
+                    <p style={{ fontSize: 12, color: C.text3, fontStyle: 'italic' }}>
                       Sem problemas — depois você pode buscar e se inscrever em um grupo direto pelo app.
                     </p>
                   )}
@@ -1050,7 +1053,7 @@ export default function CadastroMembresia() {
                     border: '1px solid var(--cbrio-border)',
                     borderRadius: 12, padding: 16, marginBottom: 8,
                   }}>
-                    <p style={{ fontSize: 12, color: '#a3a3a3', lineHeight: 1.6, margin: 0, marginBottom: 12 }}>
+                    <p style={{ fontSize: 12, color: C.text3, lineHeight: 1.6, margin: 0, marginBottom: 12 }}>
                       {TEXTO_CONSENTIMENTO}
                     </p>
                     <CheckboxField
@@ -1070,10 +1073,10 @@ export default function CadastroMembresia() {
               )}
             </MultistepFormShell>
 
-            {/* "Ja fiz meu cadastro e quero meu QR de membro" */}
+            {/* "Já fiz meu cadastro e quero meu QR de membro" */}
             <div style={{
               marginTop: 20, padding: '16px 0 0',
-              borderTop: '1px solid rgba(255,255,255,0.06)',
+              borderTop: `1px solid ${C.cardBorder}`,
               textAlign: 'center',
             }}>
               <button

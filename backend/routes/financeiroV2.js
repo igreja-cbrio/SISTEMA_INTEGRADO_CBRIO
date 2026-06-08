@@ -1,4 +1,4 @@
-// Rotas do modulo Financeiro V2 · estrutura fiscal
+// Rotas do módulo Financeiro V2 · estrutura fiscal
 //
 // Cobre:
 //   /plano-contas          · CRUD hierarquico do plano de contas
@@ -11,7 +11,7 @@
 //   /importar/pix-extrato  · upload Excel/CSV do extrato PIX
 //   /lancamentos-brutos    · lista bruta
 //   /fila-classificacao    · fila de transacoes pendentes
-//   /classificar/:id       · aprova/edita sugestao
+//   /classificar/:id       · aprova/edita sugestão
 //   /transacoes            · transacoes finais classificadas (view)
 //   /dashboard/semana      · resumo da semana qua-ter
 //   /dashboard/culto       · receita por culto na semana
@@ -53,7 +53,7 @@ router.post('/plano-contas', async (req, res) => {
   try {
     const { codigo, codigo_pai, nome, tipo, natureza, nivel, aceita_lancamento, ordem } = req.body;
     if (!codigo || !nome || !tipo || !nivel) {
-      return res.status(400).json({ error: 'codigo, nome, tipo e nivel obrigatorios' });
+      return res.status(400).json({ error: 'código, nome, tipo e nível obrigatórios' });
     }
     const { data, error } = await supabase
       .from('fin_plano_contas')
@@ -82,7 +82,7 @@ router.put('/plano-contas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar conta' }); }
 });
 
-router.delete('/plano-contas/:id', async (req, res) => {
+router.delete('/plano-contas/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     // Soft delete · so desativa
     const { error } = await supabase.from('fin_plano_contas')
@@ -114,7 +114,7 @@ router.post('/centros-custo', async (req, res) => {
   try {
     const { codigo, codigo_pai, nome, campus, area_slug, nivel, aceita_lancamento, ordem } = req.body;
     if (!codigo || !nome || !nivel) {
-      return res.status(400).json({ error: 'codigo, nome e nivel obrigatorios' });
+      return res.status(400).json({ error: 'código, nome e nível obrigatórios' });
     }
     const { data, error } = await supabase
       .from('fin_centros_custo')
@@ -143,7 +143,7 @@ router.put('/centros-custo/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar centro' }); }
 });
 
-router.delete('/centros-custo/:id', async (req, res) => {
+router.delete('/centros-custo/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_centros_custo')
       .update({ ativo: false, updated_at: new Date().toISOString() })
@@ -171,7 +171,7 @@ router.post('/identificadores', async (req, res) => {
   try {
     const { centavo, plano_contas_id, centro_custo_id, descricao, observacao } = req.body;
     if (!centavo || !descricao) {
-      return res.status(400).json({ error: 'centavo e descricao obrigatorios' });
+      return res.status(400).json({ error: 'centavo e descrição obrigatórios' });
     }
     const centavoNorm = String(centavo).padStart(2, '0');
     const { data, error } = await supabase
@@ -207,7 +207,7 @@ router.put('/identificadores/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar identificador' }); }
 });
 
-router.delete('/identificadores/:id', async (req, res) => {
+router.delete('/identificadores/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_identificadores_centavo').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -251,7 +251,7 @@ router.put('/culto-slots/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar slot' }); }
 });
 
-router.delete('/culto-slots/:id', async (req, res) => {
+router.delete('/culto-slots/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_culto_slots').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -260,7 +260,7 @@ router.delete('/culto-slots/:id', async (req, res) => {
 });
 
 // ====================================================================
-// REGRAS DE CLASSIFICACAO
+// REGRAS DE CLASSIFICAÇÃO
 // ====================================================================
 router.get('/regras-classificacao', async (req, res) => {
   try {
@@ -295,7 +295,7 @@ router.put('/regras-classificacao/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar regra' }); }
 });
 
-router.delete('/regras-classificacao/:id', async (req, res) => {
+router.delete('/regras-classificacao/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_regras_classificacao').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -362,7 +362,7 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
 
     // Roda matching com PIX detalhe (se houver)
     const matchResult = await matchOfxPix({ uploadId: uploadRow.id });
-    // Roda classificacao em batch
+    // Roda classificação em batch
     const classifResult = await classificarBatch({ uploadId: uploadRow.id });
 
     // Finaliza upload
@@ -458,7 +458,7 @@ router.post('/importar/pix-extrato', upload.single('arquivo'), async (req, res) 
 });
 
 // ====================================================================
-// UPLOADS HISTORICO
+// UPLOADS HISTÓRICO
 // ====================================================================
 router.get('/uploads', async (req, res) => {
   try {
@@ -494,7 +494,7 @@ router.get('/lancamentos-brutos', async (req, res) => {
 });
 
 // ====================================================================
-// FILA DE CLASSIFICACAO
+// FILA DE CLASSIFICAÇÃO
 // ====================================================================
 router.get('/fila-classificacao', async (req, res) => {
   try {
@@ -540,7 +540,7 @@ router.get('/fila-classificacao', async (req, res) => {
 });
 
 // ====================================================================
-// APROVAR / EDITAR classificacao
+// APROVAR / EDITAR classificação
 // ====================================================================
 router.post('/classificar/:filaId/aprovar', async (req, res) => {
   try {
@@ -551,7 +551,7 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
       .from('fin_fila_classificacao')
       .select('*, lancamento:lancamento_bruto_id(*)')
       .eq('id', req.params.filaId).single();
-    if (errFila || !fila) return res.status(404).json({ error: 'Item nao encontrado' });
+    if (errFila || !fila) return res.status(404).json({ error: 'Item não encontrado' });
 
     const lanc = fila.lancamento;
     const finalPlanoContas = plano_contas_id || fila.sugestao_plano_contas_id;
@@ -595,7 +595,7 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
       culto_slot_id = cultoId || null;
     }
 
-    // Busca pix_detalhe_id linkado a esse lancamento (pra historico do pagador)
+    // Busca pix_detalhe_id linkado a esse lancamento (pra histórico do pagador)
     let pixDetalheId = null;
     if (tipoTransacao === 'receita') {
       const { data: pd } = await supabase
@@ -612,7 +612,7 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
       .insert({
         conta_id: lanc.conta_id,
         tipo: tipoTransacao,
-        descricao: lanc.memo || 'Sem descricao',
+        descricao: lanc.memo || 'Sem descrição',
         valor: Math.abs(lanc.valor),
         data_competencia: lanc.data_lancamento,
         data_pagamento: lanc.data_lancamento,
@@ -651,7 +651,7 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
       })
       .eq('id', req.params.filaId);
 
-    // Aprende pra memoria
+    // Aprende pra memória
     await aprenderClassificacao({
       documento: lanc.documento_contraparte,
       nome: lanc.nome_contraparte,
@@ -756,14 +756,14 @@ router.get('/transacoes', async (req, res) => {
 router.get('/arrecadacoes', async (req, res) => {
   try {
     const { inicio, fim } = req.query;
-    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim obrigatorios' });
+    if (!inicio || !fim) return res.status(400).json({ error: 'início e fim obrigatórios' });
     const { data, error } = await supabase.rpc('fin_arrecadacoes_listar', { p_inicio: inicio, p_fim: fim });
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar arrecadacoes: ' + e.message }); }
 });
 
-// Historico de classificacao deste pagador (por CPF ou nome)
+// Histórico de classificação deste pagador (por CPF ou nome)
 // Retorna agregacao por plano de contas pra ajudar o admin a decidir
 router.get('/historico-pagador', async (req, res) => {
   try {
@@ -801,7 +801,7 @@ router.get('/historico-pagador', async (req, res) => {
 router.get('/sugerir-plano-horario', async (req, res) => {
   try {
     const { data, hora, tipo = 'dizimo' } = req.query;
-    if (!data || !hora) return res.status(400).json({ error: 'data e hora obrigatorios' });
+    if (!data || !hora) return res.status(400).json({ error: 'data e hora obrigatórios' });
     const { data: rows, error } = await supabase.rpc('fin_sugerir_plano_por_horario', {
       p_data: data, p_hora: hora, p_tipo: tipo,
     });
@@ -814,7 +814,7 @@ router.get('/sugerir-plano-horario', async (req, res) => {
 router.get('/despesas/detalhe', async (req, res) => {
   try {
     const { inicio, fim, prefixo } = req.query;
-    if (!inicio || !fim || !prefixo) return res.status(400).json({ error: 'inicio, fim e prefixo obrigatorios' });
+    if (!inicio || !fim || !prefixo) return res.status(400).json({ error: 'início, fim e prefixo obrigatórios' });
     const { data, error } = await supabase.rpc('fin_despesas_detalhe', {
       p_inicio: inicio, p_fim: fim, p_prefixo: prefixo,
     });
@@ -827,7 +827,7 @@ router.get('/despesas/detalhe', async (req, res) => {
 // DASHBOARD OVERVIEW · agrega tudo do /admin/financeiro home
 // ====================================================================
 
-// Calcula range [inicio, fim] e ranges anteriores baseados no period
+// Calcula range [início, fim] e ranges anteriores baseados no period
 // Aceita period preset (week/month/quarter/year), ano/mes explicitos
 // (year=2022, year=2022&month=3), ou range custom (inicio=YYYY-MM-DD&fim=YYYY-MM-DD).
 function calcPeriodRanges(period, queryOpts = {}) {
@@ -842,7 +842,7 @@ function calcPeriodRanges(period, queryOpts = {}) {
     fimAnt = new Date(inicio); fimAnt.setDate(inicio.getDate() - 1);
     inicioAnt = new Date(fimAnt); inicioAnt.setDate(fimAnt.getDate() - dias);
   }
-  // 2. Ano + mes explicitos
+  // 2. Ano + mês explicitos
   else if (queryOpts.year && queryOpts.month != null) {
     const y = Number(queryOpts.year);
     const m = Number(queryOpts.month);
@@ -894,8 +894,8 @@ function calcPeriodRanges(period, queryOpts = {}) {
   };
 }
 
-// Fallback · se nao ha fin_transacoes classificadas, exibe lancamentos brutos
-// pra dashboard nao ficar vazio enquanto fila de classificacao nao foi processada
+// Fallback · se não ha fin_transacoes classificadas, exibe lancamentos brutos
+// pra dashboard não ficar vazio enquanto fila de classificação não foi processada
 async function getTransacoesRecentes(transacoesClassificadas) {
   if (transacoesClassificadas && transacoesClassificadas.length > 0) {
     return transacoesClassificadas;
@@ -906,7 +906,7 @@ async function getTransacoesRecentes(transacoesClassificadas) {
     .order('data_lancamento', { ascending: false })
     .order('hora_lancamento', { ascending: false, nullsFirst: false })
     .limit(8);
-  // Normaliza formato pro frontend nao precisar mudar
+  // Normaliza formato pro frontend não precisar mudar
   return (data || []).map(l => ({
     id: l.id,
     descricao: l.nome_contraparte || l.memo || '—',
@@ -931,12 +931,12 @@ router.get('/dashboard/overview', async (req, res) => {
       inicio: req.query.inicio,
       fim: req.query.fim,
     });
-    // 12 meses atras (pra grafico de fluxo de caixa anual)
+    // 12 meses atras (pra gráfico de fluxo de caixa anual)
     const dozeMesesAtras = new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1).toISOString().slice(0, 10);
 
     // Best-effort · refresca saldo Santander se snapshot esta stale (> 5 min)
     // Garante que dashboard sempre mostra saldo atual quando o user entra.
-    // Best-effort silencioso · nao quebra se Santander nao configurado.
+    // Best-effort silencioso · não quebra se Santander não configurado.
     try {
       const { data: snapHoje } = await supabase
         .from('santander_saldo_snapshot')
@@ -945,7 +945,7 @@ router.get('/dashboard/overview', async (req, res) => {
         .maybeSingle();
       const ultimoMs = snapHoje?.capturado_em ? new Date(snapHoje.capturado_em).getTime() : 0;
       const staleMs = Date.now() - ultimoMs;
-      // Refresh se nao tem snapshot do dia OU se ultimo > 5 minutos
+      // Refresh se não tem snapshot do dia OU se último > 5 minutos
       if (!snapHoje || staleMs > 5 * 60 * 1000) {
         const santander = require('../services/santander/httpClient');
         if (santander.isConfigured()) {
@@ -1005,20 +1005,20 @@ router.get('/dashboard/overview', async (req, res) => {
     const contasAtivas = (contas.data || []).filter(c => c.ativa);
     const saldoTotal = contasAtivas.reduce((s, c) => s + Number(c.saldo || 0), 0);
 
-    // RPC retorna agregação ja filtrada por plano 3.%/4.% (sem transferencias internas)
+    // RPC retorna agregação já filtrada por plano 3.%/4.% (sem transferencias internas)
     const receitaMes    = Number(transPeriodo.data?.[0]?.receita || 0);
     const despesaMes    = Number(transPeriodo.data?.[0]?.despesa || 0);
     const receitaMesAnt = Number(transPeriodoAnt.data?.[0]?.receita || 0);
     const despesaMesAnt = Number(transPeriodoAnt.data?.[0]?.despesa || 0);
 
-    // Serie 12 meses ja agregada por YYYY-MM no banco
+    // Série 12 meses já agregada por YYYY-MM no banco
     const serie6m = (trans6m.data || []).map(r => ({
       mes: r.mes,
       receita: Number(r.receita),
       despesa: Number(r.despesa),
     }));
 
-    // Receita por culto · agregado dos ultimos 6 meses
+    // Receita por culto · agregado dos últimos 6 meses
     const cultoMap = new Map();
     for (const t of receitaPorCulto.data || []) {
       const k = t.culto_service_type_slug || t.culto_nome;
@@ -1031,8 +1031,8 @@ router.get('/dashboard/overview', async (req, res) => {
       r.total += Number(t.valor);
     }
 
-    // Top 5 categorias de despesa do periodo
-    // Mapeamento nivel 2 -> rotulo amigavel (codigo aceita curtos)
+    // Top 5 categorias de despesa do período
+    // Mapeamento nível 2 -> rotulo amigavel (código aceita curtos)
     const CATEGORIA_LABELS = {
       '4.01': 'Recursos Humanos',
       '4.02': 'Despesas Prediais',
@@ -1145,7 +1145,7 @@ router.post('/backfill/transacoes', async (req, res) => {
         banco_origem: null,
       };
 
-      // Extrai CPF/CNPJ se houver na descricao
+      // Extrai CPF/CNPJ se houver na descrição
       const onlyDigits = (t.descricao || '').replace(/\D/g, '');
       const cpfMatch = (t.descricao || '').match(/\d{11}/);
       const cnpjMatch = (t.descricao || '').match(/\d{14}/);
@@ -1252,7 +1252,7 @@ router.get('/dre/mensal', async (req, res) => {
   try {
     const { mes } = req.query;
     if (!mes || !/^\d{4}-\d{2}$/.test(mes)) {
-      return res.status(400).json({ error: 'mes obrigatorio no formato YYYY-MM' });
+      return res.status(400).json({ error: 'mês obrigatório no formato YYYY-MM' });
     }
 
     const [linhas, porClasse] = await Promise.all([
@@ -1323,7 +1323,7 @@ router.get('/dre/comparativo', async (req, res) => {
       .select('*')
       .in('mes', mesesArray);
 
-    // Pivot · mes → totais
+    // Pivot · mês → totais
     const pivot = {};
     mesesArray.forEach(m => {
       pivot[m] = { mes: m, receita: 0, fixa: 0, variavel: 0, eventual: 0, sem_classe: 0 };
@@ -1440,7 +1440,7 @@ router.post('/analises/rodar', async (req, res) => {
 });
 
 // ====================================================================
-// DASHBOARD SEMANAL COMPLETO · receita + frequencia + ticket medio
+// DASHBOARD SEMANAL COMPLETO · receita + frequência + ticket medio
 // ====================================================================
 router.get('/dashboard/semana-completa', async (req, res) => {
   try {
@@ -1463,7 +1463,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       topContribuintes,
       categorias,
     ] = await Promise.all([
-      // Cultos da semana com frequencia + receita
+      // Cultos da semana com frequência + receita
       supabase.from('vw_fin_semana_cultos').select('*')
         .gte('culto_data', range.inicio).lte('culto_data', range.fim)
         .order('culto_data').order('hora_culto'),
@@ -1478,7 +1478,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
         .gte('semana_inicio', new Date(yoy.getTime() - 4 * 86400000).toISOString().slice(0, 10))
         .lte('semana_inicio', new Date(yoy.getTime() + 4 * 86400000).toISOString().slice(0, 10))
         .limit(1).maybeSingle(),
-      // Historico 12 semanas pra tendencia
+      // Histórico 12 semanas pra tendência
       supabase.from('vw_fin_semana_resumo').select('*')
         .lte('semana_inicio', range.inicio)
         .order('semana_inicio', { ascending: false }).limit(12),
@@ -1486,9 +1486,10 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       supabase.from('vw_fin_top_contribuintes_semana').select('*')
         .eq('semana_inicio', range.inicio)
         .order('total_doado', { ascending: false }).limit(10),
-      // Quebra por categoria (plano de contas nivel 3)
+      // Quebra por categoria (plano de contas nível 3)
+      // Inclui data_competencia + classe_movimento pra bucketing por DOW (Power BI)
       supabase.from('vw_fin_transacoes_completa')
-        .select('plano_contas_codigo, plano_contas_nome, plano_contas_natureza, valor, culto_nome, culto_service_type_slug')
+        .select('plano_contas_codigo, plano_contas_nome, plano_contas_natureza, valor, culto_nome, culto_service_type_slug, data_competencia, classe_movimento')
         .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
         .eq('tipo', 'receita').neq('status', 'cancelado'),
     ]);
@@ -1511,14 +1512,22 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       return nome?.split('·')[0]?.trim() || 'Outros';
     };
 
+    // Bucket pela DATA REAL DO CULTO (2026-06-01 · oferta lançada na data do culto,
+    // não mais em D+1):
+    //   Sun=0 Mon=1 Tue=2 Wed=3 Thu=4 Fri=5 Sat=6
+    //   w=3 (Quarta)        → "Quarta com Deus"
+    //   w=6/0 (Sáb/Dom)     → "Final de Semana"
+    //   else                → "Durante a Semana"
+    // Empréstimo / transferência / estorno NÃO entram em arrecadação por culto.
     for (const t of categorias.data || []) {
+      if (['emprestimo','transferencia','estorno'].includes(t.classe_movimento)) continue;
       const cat = labelCategoria(t.plano_contas_codigo, t.plano_contas_nome, t.plano_contas_natureza);
       const v = Number(t.valor);
-      const slug = (t.culto_service_type_slug || '').toLowerCase();
-      // Bucket por culto
+      const data = t.data_competencia ? new Date(t.data_competencia + 'T12:00:00Z') : null;
+      const dow = data ? data.getUTCDay() : -1; // 0=Sun..6=Sat
       let key;
-      if (slug.includes('quarta')) key = 'quarta';
-      else if (slug.startsWith('domingo') || slug === 'sede') key = 'domingo';
+      if (dow === 3) key = 'quarta';
+      else if (dow === 0 || dow === 6) key = 'domingo';
       else key = 'outros';
       buckets[key].categorias[cat] = (buckets[key].categorias[cat] || 0) + v;
       buckets[key].total += v;
@@ -1579,7 +1588,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
 
 // ====================================================================
 // DASHBOARD FINANCEIRO COMPLETO · PR A do roadmap
-// (graficos mensal/semanal/decendio/YTD/YoY/freq vs receita)
+// (gráficos mensal/semanal/decendio/YTD/YoY/freq vs receita)
 // ====================================================================
 router.get('/dashboard/financeiro-completo', async (req, res) => {
   try {
@@ -1620,7 +1629,7 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
       ? ((Number(ytdAtual.receita_ytd) - Number(ytdAnt.receita_ytd)) / Number(ytdAnt.receita_ytd)) * 100
       : null;
 
-    // Frequencia vs Arrecadacao · crescimento % mes a mes
+    // Frequência vs Arrecadacao · crescimento % mês a mês
     const fr = (freqReceita.data || []);
     const freqVsReceita = fr.map((m, i) => {
       if (i === 0) return { ...m, delta_freq_pct: null, delta_receita_pct: null, elasticidade: null };
@@ -1703,7 +1712,7 @@ router.post('/metas', async (req, res) => {
   try {
     const payload = req.body || {};
     if (!payload.tipo || payload.valor === undefined) {
-      return res.status(400).json({ error: 'tipo e valor obrigatorios' });
+      return res.status(400).json({ error: 'tipo e valor obrigatórios' });
     }
     const { data, error } = await supabase
       .from('fin_metas')
@@ -1725,7 +1734,7 @@ router.put('/metas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar meta' }); }
 });
 
-router.delete('/metas/:id', async (req, res) => {
+router.delete('/metas/:id', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('fin_metas').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -1734,7 +1743,7 @@ router.delete('/metas/:id', async (req, res) => {
 });
 
 // ====================================================================
-// SAIDAS DETALHADAS · por categoria, plano, centro
+// SAÍDAS DETALHADAS · por categoria, plano, centro
 // ====================================================================
 router.get('/dashboard/saidas-detalhadas', async (req, res) => {
   try {
@@ -1780,12 +1789,12 @@ router.get('/dashboard/saidas-detalhadas', async (req, res) => {
     });
   } catch (e) {
     console.error('[FIN-V2] saidas-detalhadas:', e);
-    res.status(500).json({ error: 'Erro ao montar saidas' });
+    res.status(500).json({ error: 'Erro ao montar saídas' });
   }
 });
 
 // ====================================================================
-// MELHOR SEMANA · do mes atual e do ano
+// MELHOR SEMANA · do mês atual e do ano
 // ====================================================================
 router.get('/dashboard/melhor-semana', async (req, res) => {
   try {
@@ -1823,6 +1832,418 @@ router.post('/sync-saldo-bancos', async (req, res) => {
     res.json({ ok: true, atualizados: data });
   } catch (e) {
     console.error('[FIN-V2] sync-saldo-bancos:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// FREQUÊNCIA × ARRECADAÇÃO SEMANAL (qua-ter) · 2026-05-28
+// Empréstimos NÃO entram em arrecadação (regra CLAUDE.md)
+// Default: últimas 20 semanas
+// ====================================================================
+router.get('/freq-arrecadacao-semanal', async (req, res) => {
+  try {
+    const semanas = Math.min(Number(req.query.semanas || 20), 104);
+    const hoje = new Date();
+    const hojeISO = hoje.toISOString().slice(0, 10);
+    // Volta N+2 semanas pra ter cushion
+    const inicio = new Date(hoje.getTime() - (semanas + 2) * 7 * 86400000)
+      .toISOString().slice(0, 10);
+
+    const { data, error } = await supabase
+      .from('vw_fin_freq_vs_arrecadacao_semanal')
+      .select('*')
+      .gte('semana_inicio', inicio)
+      .lte('semana_inicio', hojeISO) // ⚠️ corta semanas futuras (cultos agendados sem dados)
+      .order('semana_inicio', { ascending: true });
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    const limpas = (data || []).slice(-semanas).map(r => ({
+      semana_inicio: r.semana_inicio,
+      semana_fim: r.semana_fim,
+      semana_label: r.semana_label,
+      ano: r.ano,
+      receita: Number(r.receita || 0),
+      despesa: Number(r.despesa || 0),
+      resultado: Number(r.resultado || 0),
+      presencial: Number(r.presencial || 0),
+      online: Number(r.online || 0),
+      total_freq: Number(r.total_freq || 0),
+      decisoes: Number(r.decisoes || 0),
+      qtd_cultos: Number(r.qtd_cultos || 0),
+      ticket_medio_presencial: Number(r.ticket_medio_presencial || 0),
+    }));
+
+    res.json({ semanas: limpas });
+  } catch (e) {
+    console.error('[FIN-V2] freq-arrecadacao-semanal:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// ARRECADAÇÃO MENSAL POR ANO · 2026-05-28
+// Retorna os 12 meses (Jan-Dez) do ano + acumulado · filtra empréstimo
+// ====================================================================
+router.get('/arrecadacao-anual', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const centroId = req.query.centro_custo_id || null;
+    const planoId = req.query.plano_contas_id || null;
+
+    const inicio = `${ano}-01-01`;
+    const fim = `${ano}-12-31`;
+
+    // Se há filtros, query direta em fin_transacoes
+    // Senão usa vw_fin_arrecadacao_mensal (já agrega + filtra empréstimos)
+    let data, error;
+    if (centroId || planoId) {
+      let q = supabase
+        .from('fin_transacoes')
+        .select('data_competencia, tipo, valor, classe_movimento')
+        .gte('data_competencia', inicio)
+        .lte('data_competencia', fim)
+        .neq('status', 'cancelado')
+        .in('classe_movimento', ['ordinaria', 'extraordinaria']);
+      if (centroId) q = q.eq('centro_custo_id', centroId);
+      if (planoId) q = q.eq('plano_contas_id', planoId);
+      const res2 = await q.limit(50000);
+      if (res2.error) return res.status(400).json({ error: res2.error.message });
+      // Agrega em JS por mês
+      const aggMap = {};
+      (res2.data || []).forEach(r => {
+        const k = (r.data_competencia || '').slice(0, 7);
+        if (!aggMap[k]) aggMap[k] = { mes: k, receita: 0, despesa: 0, qtd: 0 };
+        const v = Number(r.valor || 0);
+        if (r.tipo === 'receita') aggMap[k].receita += v;
+        else if (r.tipo === 'despesa') aggMap[k].despesa += v;
+        aggMap[k].qtd += 1;
+      });
+      data = Object.values(aggMap);
+      Object.values(aggMap).forEach(r => { r.resultado = r.receita - r.despesa; });
+    } else {
+      const res2 = await supabase
+        .from('vw_fin_arrecadacao_mensal')
+        .select('mes, receita, despesa, resultado, qtd')
+        .eq('ano', ano)
+        .order('mes', { ascending: true });
+      if (res2.error) return res.status(400).json({ error: res2.error.message });
+      data = res2.data;
+    }
+
+    const porMes = {};
+    (data || []).forEach(r => { porMes[r.mes] = r; });
+    const meses = [];
+    let acumulado = 0;
+    for (let m = 1; m <= 12; m++) {
+      const key = `${ano}-${String(m).padStart(2, '0')}`;
+      const linha = porMes[key];
+      const receita = Number(linha?.receita || 0);
+      acumulado += receita;
+      meses.push({
+        mes: key,
+        mes_num: m,
+        mes_label: ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][m - 1],
+        receita,
+        despesa: Number(linha?.despesa || 0),
+        resultado: Number(linha?.resultado || 0),
+        acumulado,
+        qtd: Number(linha?.qtd || 0),
+      });
+    }
+
+    res.json({ ano, meses, total: acumulado, filtros: { centro_custo_id: centroId, plano_contas_id: planoId } });
+  } catch (e) {
+    console.error('[FIN-V2] arrecadacao-anual:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// SAZONALIDADE SEMANAL · compara a mesma semana ISO em vários anos
+// Retorna 52 semanas × N anos · cada slot tem valor + datas reais
+// ====================================================================
+router.get('/sazonalidade-semanal', async (req, res) => {
+  try {
+    const anosParam = req.query.anos;
+    const anoBase = new Date().getFullYear();
+    const anos = anosParam
+      ? String(anosParam).split(',').map(n => Number(n)).filter(n => Number.isInteger(n))
+      : [anoBase - 2, anoBase - 1, anoBase];
+
+    const { data, error } = await supabase
+      .from('vw_fin_arrecadacao_semanal')
+      .select('ano, semana_inicio, semana_fim, semana_label, receita')
+      .in('ano', anos);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const isoWeekOf = (d) => {
+      const date = new Date(d + 'T12:00:00Z');
+      const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+      const dayNum = tmp.getUTCDay() || 7;
+      tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
+      const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+      return Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+    };
+
+    const semanas = [];
+    for (let w = 1; w <= 52; w++) {
+      const linha = { num_semana: w, label: `S${w}` };
+      anos.forEach(a => {
+        linha[String(a)] = 0;
+        linha[`${a}_label`] = null;
+        linha[`${a}_inicio`] = null;
+        linha[`${a}_fim`] = null;
+      });
+      semanas.push(linha);
+    }
+
+    (data || []).forEach(r => {
+      const w = isoWeekOf(r.semana_inicio);
+      if (w < 1 || w > 52) return;
+      const slot = semanas[w - 1];
+      slot[String(r.ano)] = Number(r.receita || 0);
+      slot[`${r.ano}_label`] = r.semana_label;
+      slot[`${r.ano}_inicio`] = r.semana_inicio;
+      slot[`${r.ano}_fim`] = r.semana_fim;
+    });
+
+    res.json({ anos, semanas });
+  } catch (e) {
+    console.error('[FIN-V2] sazonalidade-semanal:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// DRILLDOWN · transações de uma categoria no período · 2026-05-28
+// ====================================================================
+router.get('/categoria-transacoes', async (req, res) => {
+  try {
+    const { categoria, inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'início e fim obrigatórios' });
+
+    // Mapeia categoria do UI (label do labelCategoria do backend) → prefixos do plano de contas
+    const PREFIXOS = {
+      'dizimos': ['3.01.01'],
+      'ofertas regulares': ['3.01.02'],
+      'campanha 2025': ['3.02.01'],
+      'eventos': ['3.02.02'],
+      'outras ofertas': ['3.02.03'],
+      'financeiras': ['3.02.06'],
+    };
+    const catNorm = String(categoria || '').toLowerCase().normalize('NFD').replace(/[^\w\s]/g, '').trim();
+    const prefixos = PREFIXOS[catNorm] || null;
+
+    let q = supabase
+      .from('vw_fin_transacoes_completa')
+      .select('id, data_competencia, descricao, valor, plano_contas_codigo, plano_contas_nome, plano_contas_natureza, membro_nome, referencia, conta_id, classe_movimento')
+      .eq('tipo', 'receita')
+      .neq('status', 'cancelado')
+      .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+      .gte('data_competencia', inicio)
+      .lte('data_competencia', fim)
+      .order('data_competencia', { ascending: false })
+      .order('valor', { ascending: false });
+
+    if (prefixos) {
+      const ors = prefixos.map(p => `plano_contas_codigo.like.${p}.%`).join(',');
+      q = q.or(ors);
+    } else if (catNorm.includes('ministerial') || catNorm.includes('campanhas e outros') || catNorm.includes('extraordin')) {
+      q = q.eq('plano_contas_natureza', 'extraordinaria');
+    }
+
+    const { data, error } = await q.limit(2000);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const total = (data || []).reduce((s, r) => s + Number(r.valor || 0), 0);
+    res.json({
+      categoria, inicio, fim,
+      total,
+      qtd: (data || []).length,
+      transacoes: (data || []).map(r => ({
+        ...r,
+        valor: Number(r.valor || 0),
+      })),
+    });
+  } catch (e) {
+    console.error('[FIN-V2] categoria-transacoes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// DRILLDOWN · despesas detalhadas · 2026-05-28
+// ====================================================================
+router.get('/despesa-transacoes', async (req, res) => {
+  try {
+    const { categoria_codigo, plano_codigo, centro_codigo, inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'início e fim obrigatórios' });
+
+    let q = supabase
+      .from('vw_fin_transacoes_completa')
+      .select('id, data_competencia, descricao, valor, plano_contas_codigo, plano_contas_nome, centro_custo_codigo, centro_custo_nome, referencia, classe_movimento')
+      .eq('tipo', 'despesa')
+      .neq('status', 'cancelado')
+      .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+      .gte('data_competencia', inicio)
+      .lte('data_competencia', fim)
+      .order('data_competencia', { ascending: false })
+      .order('valor', { ascending: false });
+
+    if (categoria_codigo) q = q.like('plano_contas_codigo', `${categoria_codigo}.%`);
+    if (plano_codigo) q = q.eq('plano_contas_codigo', plano_codigo);
+    if (centro_codigo) q = q.eq('centro_custo_codigo', centro_codigo);
+
+    const { data, error } = await q.limit(2000);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const total = (data || []).reduce((s, r) => s + Number(r.valor || 0), 0);
+    res.json({
+      categoria_codigo, plano_codigo, centro_codigo, inicio, fim,
+      total,
+      qtd: (data || []).length,
+      transacoes: (data || []).map(r => ({ ...r, valor: Number(r.valor || 0) })),
+    });
+  } catch (e) {
+    console.error('[FIN-V2] despesa-transacoes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// PLANO DE CONTAS + CENTROS · listagem leve pra filtros globais
+// ====================================================================
+router.get('/filtros-disponiveis', async (req, res) => {
+  try {
+    const [planos, centros] = await Promise.all([
+      supabase.from('fin_plano_contas')
+        .select('id, codigo, nome, tipo, classe')
+        .eq('ativo', true)
+        .order('codigo'),
+      supabase.from('fin_centros_custo')
+        .select('id, codigo, nome, campus')
+        .eq('ativo', true)
+        .order('codigo'),
+    ]);
+    res.json({
+      planos: planos.data || [],
+      centros: centros.data || [],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// SAÚDE FINANCEIRA · resultado + folha + concentração doadores · 2026-05-29
+// ====================================================================
+router.get('/saude-financeira', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const { data, error } = await supabase.rpc('fin_saude_financeira', { p_ano: ano });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || {});
+  } catch (e) {
+    console.error('[FIN-V2] saude-financeira:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lista paginada de doadores do ano · alimenta drilldown do card "Concentração de doadores"
+router.get('/doadores', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const { data, error } = await supabase.rpc('fn_fin_doadores_lista', {
+      p_ano: ano, p_limit: limit, p_offset: offset,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { items: [], total_geral: 0, qtd_total: 0 });
+  } catch (e) {
+    console.error('[FIN-V2] doadores:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lançamentos individuais de um doador (usado quando não está vinculado a mem_membros)
+router.get('/doador/transacoes', async (req, res) => {
+  try {
+    const nome = String(req.query.nome || '').trim();
+    if (!nome) return res.status(400).json({ error: 'parametro nome obrigatorio' });
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const { data, error } = await supabase.rpc('fn_fin_transacoes_por_referencia', {
+      p_nome: nome, p_ano: ano, p_limit: limit,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { items: [], total: 0, qtd: 0 });
+  } catch (e) {
+    console.error('[FIN-V2] doador transacoes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// DÍZIMO VS OFERTA mensal · 2026-05-29
+// ====================================================================
+router.get('/dizimo-oferta', async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    const { data, error } = await supabase.rpc('fin_dizimo_oferta_mensal', { p_ano: ano });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ano, meses: data || [] });
+  } catch (e) {
+    console.error('[FIN-V2] dizimo-oferta:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ====================================================================
+// METAS · progresso de cada meta no período · 2026-05-28
+// Filtros: ano, mês (1-12), semana_inicio (YYYY-MM-DD)
+// Se nada passado, cada meta usa sua própria periodicidade no período atual.
+// ====================================================================
+router.get('/metas-progresso', async (req, res) => {
+  try {
+    const { ano, mes, semana_inicio, meta_id } = req.query;
+    let p_inicio = null;
+    let p_fim = null;
+
+    if (semana_inicio) {
+      const { data: sem } = await supabase.rpc('fin_semana_qua_ter', { p_data: semana_inicio });
+      const r = (sem || [])[0];
+      if (r) { p_inicio = r.inicio; p_fim = r.fim; }
+    } else if (ano && mes) {
+      const a = Number(ano);
+      const m = Number(mes);
+      p_inicio = `${a}-${String(m).padStart(2, '0')}-01`;
+      const last = new Date(a, m, 0).getDate();
+      p_fim = `${a}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+    } else if (ano) {
+      p_inicio = `${ano}-01-01`;
+      p_fim = `${ano}-12-31`;
+    }
+
+    const rpcArgs = { p_inicio, p_fim };
+    if (meta_id) rpcArgs.p_meta_id = meta_id;
+
+    const { data, error } = await supabase.rpc('fin_metas_progresso', rpcArgs);
+    if (error) return res.status(400).json({ error: error.message });
+
+    res.json({
+      filtro: { ano: ano || null, mes: mes || null, semana_inicio: semana_inicio || null, meta_id: meta_id || null, periodo_inicio: p_inicio, periodo_fim: p_fim },
+      metas: (data || []).map(m => ({
+        ...m,
+        valor_meta: Number(m.valor_meta || 0),
+        valor_atual: Number(m.valor_atual || 0),
+        pct: Number(m.pct || 0),
+      })),
+    });
+  } catch (e) {
+    console.error('[FIN-V2] metas-progresso:', e);
     res.status(500).json({ error: e.message });
   }
 });

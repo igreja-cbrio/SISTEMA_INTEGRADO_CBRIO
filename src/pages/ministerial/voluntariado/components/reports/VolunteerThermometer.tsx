@@ -44,7 +44,7 @@ export default function VolunteerThermometer({ data }: { data: ThermometerEntry[
       {/* Distribution bar */}
       {total > 0 && (
         <div className="p-4 rounded-lg border bg-card space-y-3">
-          <h4 className="font-semibold">Distribuicao</h4>
+          <h4 className="font-semibold">Distribuição</h4>
           <div className="flex h-8 rounded-lg overflow-hidden">
             {(Object.entries(counts) as [keyof typeof counts, number][]).map(([level, count]) => {
               if (count === 0) return null;
@@ -100,7 +100,7 @@ export default function VolunteerThermometer({ data }: { data: ThermometerEntry[
             );
           })}
           {total === 0 && (
-            <p className="text-center text-muted-foreground py-8">Nenhum voluntario encontrado no periodo</p>
+            <p className="text-center text-muted-foreground py-8">Nenhum voluntário encontrado no período</p>
           )}
         </div>
       </div>

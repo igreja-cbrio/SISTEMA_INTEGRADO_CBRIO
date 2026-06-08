@@ -108,7 +108,7 @@ export default function Next() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatisticsCard
-          title="Eventos do mes"
+          title="Eventos do mês"
           value={String(dashboard?.eventos_mes?.length ?? 0)}
           icon={Calendar}
           iconColor={C.info}
@@ -213,7 +213,7 @@ function TabEventos({ onChanged }: { onChanged: () => void }) {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : eventos.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Nenhum evento. Clique em "Gerar eventos do mes".
+          Nenhum evento. Clique em "Gerar eventos do mês".
         </div>
       ) : (
         <div className="rounded-2xl border border-border overflow-hidden">
@@ -364,7 +364,7 @@ function ModalEventoDetalhe({ evento, onClose, onChanged }: { evento: Evento; on
           <div className="rounded-xl border border-amber-200 bg-amber-50/40 dark:bg-amber-950/20 dark:border-amber-900/40 p-3 flex gap-2 text-xs">
             <FileText className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
             <div>
-              <p className="font-medium text-amber-900 dark:text-amber-200 mb-0.5">Observacao do dia</p>
+              <p className="font-medium text-amber-900 dark:text-amber-200 mb-0.5">Observação do dia</p>
               <p className="text-amber-800 dark:text-amber-300/80">{evento.observacoes}</p>
               {evento.arquivo_origem && <p className="text-[10px] text-amber-700/70 dark:text-amber-400/60 mt-1">Origem: {evento.arquivo_origem}</p>}
             </div>
@@ -490,7 +490,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
   const eventDates = eventos.map(ev => new Date(ev.data + 'T12:00:00'));
   const eventoAtual = eventoFilter ? eventos.find(e => e.id === eventoFilter) : null;
   const [calOpen, setCalOpen] = useState(false);
-  // Mes inicial: ultimo evento (mais recente) ou hoje
+  // Mês inicial: último evento (mais recente) ou hoje
   const initialMonth = eventos[0] ? new Date(eventos[0].data + 'T12:00:00') : new Date();
   const [calMonth, setCalMonth] = useState<Date>(initialMonth);
 
@@ -596,7 +596,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
                       {i.ja_batizado || i.ja_voluntario || i.ja_doador ? (
                         <div className="flex gap-1 mt-1">
                           {i.ja_batizado && <Badge variant="outline" className="text-[9px]">batizado</Badge>}
-                          {i.ja_voluntario && <Badge variant="outline" className="text-[9px]">voluntario</Badge>}
+                          {i.ja_voluntario && <Badge variant="outline" className="text-[9px]">voluntário</Badge>}
                           {i.ja_doador && <Badge variant="outline" className="text-[9px]">doador</Badge>}
                         </div>
                       ) : null}
@@ -656,7 +656,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Modal de cadastro manual de inscricao (espelha campos do form publico)
+// Modal de cadastro manual de inscrição (espelha campos do form público)
 // ──────────────────────────────────────────────────────────────────────────
 function ModalNovaInscricao({
   eventos, eventoIdInicial, onClose, onCreated,
@@ -695,7 +695,7 @@ function ModalNovaInscricao({
       && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
   };
 
-  // Evento default: o filtrado, senao o proximo "agendado", senao o primeiro
+  // Evento default: o filtrado, senao o próximo "agendado", senao o primeiro
   const defaultEventoId = eventoIdInicial
     || eventos.find(e => e.status === 'agendado')?.id
     || eventos[0]?.id
@@ -740,7 +740,7 @@ function ModalNovaInscricao({
         observacoes: form.observacoes.trim() || null,
         origem_lista: form.origem_lista,
       });
-      toast.success('Inscricao cadastrada!');
+      toast.success('Inscrição cadastrada!');
       onCreated();
       onClose();
     } catch (e: any) {
@@ -811,7 +811,7 @@ function ModalNovaInscricao({
               <Input id="ni-nasc" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
             </div>
             <div>
-              <Label className="text-xs">Origem da inscricao</Label>
+              <Label className="text-xs">Origem da inscrição</Label>
               <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 mt-1 w-full">
                 {(['impressa', 'manuscrito'] as const).map(o => (
                   <button
@@ -828,7 +828,7 @@ function ModalNovaInscricao({
           </div>
 
           <div>
-            <Label htmlFor="ni-obs" className="text-xs">Observacoes (opcional)</Label>
+            <Label htmlFor="ni-obs" className="text-xs">Observações (opcional)</Label>
             <Textarea id="ni-obs" value={form.observacoes} onChange={set('observacoes')} rows={2} />
           </div>
 
@@ -879,7 +879,7 @@ function CardInscrito({ inscricao, onClose, onSaved }: {
     setSaving(true);
     try {
       await nextApi.inscricoes.indicacoes(inscricao.id, { tipos: Array.from(tipos), observacoes: obs });
-      toast.success('Indicacoes registradas! Areas notificadas.');
+      toast.success('Indicacoes registradas! Áreas notificadas.');
       onSaved();
       onClose();
     } catch (e: any) {
@@ -911,13 +911,13 @@ function CardInscrito({ inscricao, onClose, onSaved }: {
 
           {inscricao.observacoes && (
             <div>
-              <Label>Observacoes da inscricao</Label>
+              <Label>Observações da inscrição</Label>
               <p className="text-sm bg-muted/30 rounded-lg p-2 mt-1">{inscricao.observacoes}</p>
             </div>
           )}
 
           <div>
-            <Label className="mb-2 block">Indicacoes (marcar gera notificacao para a area)</Label>
+            <Label className="mb-2 block">Indicacoes (marcar gera notificação para a área)</Label>
             <div className="grid grid-cols-1 gap-2">
               {opcoes.map(opt => {
                 const Icon = opt.icon;
@@ -962,7 +962,7 @@ function CardInscrito({ inscricao, onClose, onSaved }: {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// INDICACOES (visao geral)
+// INDICACOES (visão geral)
 // ──────────────────────────────────────────────────────────────────────────
 function TabIndicacoes() {
   const [list, setList] = useState<Indicacao[]>([]);
@@ -1019,8 +1019,8 @@ function TabIndicacoes() {
                 <TableHead>Pessoa</TableHead>
                 <TableHead className="hidden md:table-cell">Contato</TableHead>
                 <TableHead className="hidden lg:table-cell">Evento</TableHead>
-                <TableHead>Area</TableHead>
-                <TableHead className="text-right">Acoes</TableHead>
+                <TableHead>Área</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1073,12 +1073,12 @@ function TabIndicacoes() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Modal de compartilhar link de inscricao
+// Modal de compartilhar link de inscrição
 // ──────────────────────────────────────────────────────────────────────────
 function ModalCompartilhar({ onClose }: { onClose: () => void }) {
   const url = `${window.location.origin}/next/inscrever`;
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
-  const mensagem = `Voce esta convidado(a) para o NEXT da CBRio - a porta de entrada da igreja!\n\nInscreva-se: ${url}`;
+  const mensagem = `Você esta convidado(a) para o NEXT da CBRio - a porta de entrada da igreja!\n\nInscreva-se: ${url}`;
 
   useEffect(() => {
     QRCode.toDataURL(url, { width: 320, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
@@ -1105,7 +1105,7 @@ function ModalCompartilhar({ onClose }: { onClose: () => void }) {
         <div className="space-y-4">
           {/* Link */}
           <div>
-            <Label className="text-xs">Link publico</Label>
+            <Label className="text-xs">Link público</Label>
             <div className="flex gap-2 mt-1">
               <Input value={url} readOnly className="font-mono text-xs" />
               <Button size="sm" variant="outline" onClick={() => copy(url)} className="shrink-0 gap-1.5">

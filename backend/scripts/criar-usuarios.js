@@ -3,7 +3,7 @@
  *
  * Cria contas Supabase Auth (email + senha) para todos os funcionários
  * ativos em rh_funcionarios que ainda não têm acesso ao sistema.
- * Também cria os registros em `profiles` e `usuarios` se necessário.
+ * Também cria os registros em `profiles` e `usuários` se necessário.
  *
  * Uso:
  *   cd backend
@@ -62,14 +62,14 @@ async function main() {
     .maybeSingle();
 
   const cargoId = cargoPadrao?.id ?? null;
-  if (!cargoId) console.warn(`⚠️   Cargo "${CARGO_PADRAO}" não encontrado — usuarios serão criados sem cargo.\n`);
+  if (!cargoId) console.warn(`⚠️   Cargo "${CARGO_PADRAO}" não encontrado — usuários serão criados sem cargo.\n`);
 
   let criados = 0, jaExistem = 0, erros = 0;
 
   for (const func of funcionarios) {
     const email = func.email.toLowerCase().trim();
 
-    // Já tem conta → apenas garante entrada na tabela usuarios
+    // Já tem conta → apenas garante entrada na tabela usuários
     if (emailsExistentes.has(email)) {
       jaExistem++;
       await garantirUsuario(email, func, cargoId);
@@ -102,7 +102,7 @@ async function main() {
       area:  func.area ?? null,
     }, { onConflict: 'id' });
 
-    // Criar entrada na tabela usuarios (sistema de permissões)
+    // Criar entrada na tabela usuários (sistema de permissões)
     await garantirUsuarioPorId(uid, email, func, cargoId);
 
     criados++;
@@ -122,7 +122,7 @@ async function main() {
 `);
 }
 
-// Garante que o profile.email tem entrada em `usuarios`
+// Garante que o profile.email tem entrada em `usuários`
 async function garantirUsuario(email, func, cargoId) {
   const { data: profile } = await supabase
     .from('profiles')

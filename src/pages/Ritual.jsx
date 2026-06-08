@@ -1,12 +1,12 @@
 // ============================================================================
-// /ritual — Ritual Mensal de Revisao OKR
+// /ritual — Ritual Mensal de Revisão OKR
 //
-// "Regra de ouro": todo desvio gera causa, decisao, responsavel, proximo passo.
+// "Regra de ouro": todo desvio gera causa, decisão, responsável, próximo passo.
 //
 // Modos:
-//   - Lista: tela permanente com KPIs em alerta nao revisados
-//   - Guiado: wizard sequencial (1 KPI por vez, automatico) — Marcos
-//             abre dia 5 do mes, faz tudo de uma vez
+//   - Lista: tela permanente com KPIs em alerta não revisados
+//   - Guiado: wizard sequencial (1 KPI por vez, automático) — Marcos
+//             abre dia 5 do mês, faz tudo de uma vez
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -87,7 +87,7 @@ export default function Ritual() {
       setModoGuiado(false);
       setRevisarKpi(null);
       carregar();
-      toast.success('Ritual concluido!');
+      toast.success('Ritual concluído!');
       return;
     }
     setIndiceGuiado(novoIdx);
@@ -119,7 +119,7 @@ export default function Ritual() {
           <Stat label="Revisados" value={resumo.total_revisados} cor="#10B981" />
           <Stat label="Pendentes" value={resumo.total_pendentes} cor="#EF4444" />
           <Stat label="Concluido" value={`${resumo.percentual_concluido}%`} cor={C.primary} />
-          <Stat label="Dias ate fim do mes" value={resumo.dias_restantes_mes} cor={C.t2} />
+          <Stat label="Dias até fim do mês" value={resumo.dias_restantes_mes} cor={C.t2} />
         </div>
       )}
 
@@ -159,7 +159,7 @@ export default function Ritual() {
         </Tab>
       </div>
 
-      {/* Conteudo */}
+      {/* Conteúdo */}
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
       ) : aba === 'pendentes' ? (
@@ -175,7 +175,7 @@ export default function Ritual() {
         onUpdated={carregar}
       />
 
-      {/* Modal de revisao + barra do modo guiado */}
+      {/* Modal de revisão + barra do modo guiado */}
       {revisarKpi && (
         <>
           {modoGuiado && (
@@ -287,7 +287,7 @@ function KpiPendenteCard({ kpi, ordem, onRevisar, onDetalhe }) {
           ) : (
             <>Sem registro · {kpi.periodicidade}</>
           )}
-          {kpi.lider && <> · lider <strong style={{ color: C.t2 }}>{kpi.lider.nome}</strong></>}
+          {kpi.lider && <> · líder <strong style={{ color: C.t2 }}>{kpi.lider.nome}</strong></>}
         </div>
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -324,8 +324,8 @@ function ListaRevisados({ revisados }) {
           </div>
           <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.5 }}>
             <div><strong>Causa:</strong> {r.causa_desvio}</div>
-            <div><strong>Decisao:</strong> {r.decisao}</div>
-            {r.proximo_passo && <div><strong>Proximo passo:</strong> {r.proximo_passo}{r.prazo_proximo_passo ? ` (ate ${r.prazo_proximo_passo})` : ''}</div>}
+            <div><strong>Decisão:</strong> {r.decisao}</div>
+            {r.proximo_passo && <div><strong>Próximo passo:</strong> {r.proximo_passo}{r.prazo_proximo_passo ? ` (ate ${r.prazo_proximo_passo})` : ''}</div>}
             {r.responsavel?.nome && <div><strong>Resp.:</strong> {r.responsavel.nome}</div>}
           </div>
         </div>

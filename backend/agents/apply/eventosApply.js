@@ -1,4 +1,4 @@
-// Handlers do eventos_watcher · cria notificacoes pros responsaveis.
+// Handlers do eventos_watcher · cria notificações pros responsáveis.
 
 const { supabase } = require('../../utils/supabase');
 
@@ -27,7 +27,7 @@ async function applyAlertarTarefaSemResponsavel({ payload }) {
   const { tarefa_id, area, nome_tarefa, dias_ate_evento, is_critica, event_id } = payload || {};
   if (!tarefa_id) return { ok: false, error: 'tarefa_id ausente' };
 
-  // Resolve responsavel da area via area_responsaveis
+  // Resolve responsável da área via area_responsaveis
   let targetIds;
   if (area) {
     const { data: r } = await supabase
@@ -41,7 +41,7 @@ async function applyAlertarTarefaSemResponsavel({ payload }) {
   await notif({
     modulo: 'eventos',
     tipo: 'tarefa_sem_responsavel',
-    titulo: `${is_critica ? '🔴 ' : ''}Tarefa sem responsavel · ${area}`,
+    titulo: `${is_critica ? '🔴 ' : ''}Tarefa sem responsável · ${area}`,
     mensagem: `"${nome_tarefa}" (area ${area}) esta sem responsavel atribuido${dias_ate_evento != null ? ` e o evento eh em ${dias_ate_evento} dias` : ''}. Atribua alguem.`,
     link: event_id ? `/eventos/${event_id}` : '/eventos',
     severidade: is_critica ? 'critico' : 'aviso',
@@ -57,8 +57,8 @@ async function applyAlertarEventoAtrasado({ payload }) {
   await notif({
     modulo: 'eventos',
     tipo: 'evento_atrasado',
-    titulo: `Evento ${nome_evento} com baixa preparacao`,
-    mensagem: `${nome_evento} (${data_evento}) tem so ${pct_concluido}% das tarefas concluidas · ${pendentes} pendentes. Atencao do responsavel.`,
+    titulo: `Evento ${nome_evento} com baixa preparação`,
+    mensagem: `${nome_evento} (${data_evento}) tem so ${pct_concluido}% das tarefas concluídas · ${pendentes} pendentes. Atenção do responsável.`,
     link: `/eventos/${event_id}`,
     severidade: pct_concluido < 50 ? 'critico' : 'alerta',
     chaveDedup: `eventos_atrasado_${event_id}_${new Date().toISOString().slice(0, 10)}`,

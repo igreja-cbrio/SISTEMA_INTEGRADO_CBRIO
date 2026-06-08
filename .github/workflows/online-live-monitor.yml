@@ -48,8 +48,14 @@ jobs:
       - name: Call live-monitor endpoint
         run: |
           set -euo pipefail
-          curl --fail-with-body --max-time 60 -sS \
+          # -L segue redirect (ex.: 308 apex<->www ou URL nao-canonica em
+          # APP_BASE_URL) · sem isso o curl parava no "Redirecting..." e o
+          # monitor nunca rodava (pico nao era capturado). Loga o HTTP status
+          # e o corpo pra diagnostico.
+          out=$(curl -sS -L --max-time 60 -w "\n[http_code=%{http_code} url=%{url_effective}]" \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
             -H "user-agent: github-actions-cron" \
-            "${{ secrets.APP_BASE_URL }}/api/online/cron/live-monitor" \
-            || echo "Live monitor falhou (possivelmente fora de janela ou token revogado)"
+            "${{ secrets.APP_BASE_URL }}/api/online/cron/live-monitor") || true
+          echo "$out"
+          echo "$out" | grep -q '"ok"\|"skipped"' \
+            || echo "::warning::live-monitor nao retornou JSON esperado · verifique o secret APP_BASE_URL (deve ser o dominio canonico, ex. https://cbrio.org) e CRON_SECRET"

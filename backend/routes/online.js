@@ -7,12 +7,11 @@ const yt = require('../services/youtubeAnalytics');
 const collectors = require('../services/onlineCollectors');
 
 const CRON_SECRET = process.env.CRON_SECRET;
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // ── Cron · definido ANTES de router.use(authenticate) ──
 async function autorizaCron(req, res, next) {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   next();
@@ -68,7 +67,25 @@ router.get('/cron/catch-up', autorizaCron, async (req, res) => {
   } catch (e) { console.error('[catch-up]', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// ── OAuth callback eh publico (Google redireciona, sem nosso JWT) ──
+// Blindagem · roda DEPOIS dos demais coletores do dia. Self-heal: tenta um
+// catch-up antes de verificar; se ainda faltar metrica (ou o token caiu),
+// dispara notificação via gerarNotificacoesOnline.
+router.get('/cron/verificar', autorizaCron, async (_req, res) => {
+  try {
+    let selfHeal = null;
+    try { selfHeal = await collectors.catchUpMetricas({ limit: 10 }); }
+    catch (e) { selfHeal = { erro: e.message }; }
+    const relatorio = await collectors.verificarColetaOnline();
+    const { gerarNotificacoesOnline } = require('../services/notificacaoGenerator');
+    const notificacoes = await gerarNotificacoesOnline();
+    res.json({ ok: true, selfHeal, relatorio, notificacoes });
+  } catch (e) {
+    console.error('[online/cron/verificar]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── OAuth callback eh público (Google redireciona, sem nosso JWT) ──
 // State carrega: userId + nonce assinado com CRON_SECRET pra anti-CSRF
 function signState(payload) {
   const json = JSON.stringify(payload);
@@ -120,8 +137,8 @@ router.get('/oauth/authorize', authorize('admin', 'diretor'), (req, res) => {
   res.json({ url: yt.getAuthUrl(state, getRedirectUri()) });
 });
 
-// Diagnostico · lista canais que a conta OAuth atual gerencia
-// Se vier vazio ou nao incluir CBRio, autorizacao foi feita na conta errada
+// Diagnóstico · lista canais que a conta OAuth atual gerencia
+// Se vier vazio ou não incluir CBRio, autorizacao foi feita na conta errada
 router.get('/debug/canais-autorizados', authorize('admin', 'diretor'), async (_req, res) => {
   try {
     const canais = await yt.listAuthorizedChannels();
@@ -131,7 +148,7 @@ router.get('/debug/canais-autorizados', authorize('admin', 'diretor'), async (_r
   }
 });
 
-// Diagnostico · chama Analytics pra um video especifico e retorna resposta crua
+// Diagnóstico · chama Analytics pra um vídeo especifico e retorna resposta crua
 // Uso: GET /api/online/debug/analytics-test?video_id=XXX&start=2026-05-10&end=2026-05-17
 router.get('/debug/analytics-test', authorize('admin', 'diretor'), async (req, res) => {
   try {
@@ -156,8 +173,8 @@ router.get('/oauth/status', async (_req, res) => {
     .order('connected_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  // Fallback · se nao tem ativa, retorna a mais recente (mesmo revogada) pra
-  // UI exibir o ultimo estado com last_error.
+  // Fallback · se não tem ativa, retorna a mais recente (mesmo revogada) pra
+  // UI exibir o último estado com last_error.
   if (!data) {
     const r = await supabase
       .from('vw_online_oauth_status')
@@ -181,10 +198,20 @@ router.post('/coletar/live', authorize('admin', 'diretor'), async (_req, res) =>
   try { res.json(await collectors.liveMonitor()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post('/coletar/ds', authorize('admin', 'diretor'), async (_req, res) => {
-  try { res.json(await collectors.dsCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    // Vincula o vídeo aos cultos pendentes ANTES de coletar (o DS so age em culto
+    // já vinculado · sem isso o botao volta 0 quando o vídeo não foi linkado ainda).
+    const backfill = await collectors.backfillCultoVideoIds().catch((e) => ({ erro: e.message }));
+    const ds = await collectors.dsCollector();
+    res.json({ ...ds, backfill });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post('/coletar/ddus', authorize('admin', 'diretor'), async (_req, res) => {
-  try { res.json(await collectors.ddusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const backfill = await collectors.backfillCultoVideoIds().catch((e) => ({ erro: e.message }));
+    const ddus = await collectors.ddusCollector();
+    res.json({ ...ddus, backfill });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post('/coletar/subs', authorize('admin', 'diretor'), async (_req, res) => {
   try { res.json(await collectors.subsCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
@@ -200,7 +227,7 @@ router.post('/coletar/sub-status', authorize('admin', 'diretor'), async (_req, r
 });
 router.post('/coletar/backfill-range', authorize('admin', 'diretor'), async (req, res) => {
   const { data_inicio, data_fim } = req.body || {};
-  if (!data_inicio || !data_fim) return res.status(400).json({ error: 'data_inicio e data_fim obrigatorios' });
+  if (!data_inicio || !data_fim) return res.status(400).json({ error: 'data_inicio e data_fim obrigatórios' });
   try { res.json(await collectors.backfillRange(data_inicio, data_fim)); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post('/coletar/backfill-cultos', authorize('admin', 'diretor'), async (_req, res) => {
@@ -214,6 +241,38 @@ router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (req, res)
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/online/engajamento
+// KPIs de engajamento de conteúdo do canal (retenção média, taxa de
+// compartilhamento, cliques em séries) · mês mais recente de online_engajamento.
+// Estrutura pronta pra receber dados da API/Analytics do YouTube; enquanto não há
+// coleta, devolve 0 (não "—"). Mesma fonte que alimenta a aba /monitoramento-okr.
+// ---------------------------------------------------------------------------
+router.get('/engajamento', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('online_engajamento')
+      .select('mes, retencao_media_pct, taxa_compartilhamento_pct, cliques_series_pct, fonte, observacao, collected_at')
+      .order('mes', { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    const row = (data || [])[0] || null;
+    const mesLabel = row?.mes
+      ? new Date(row.mes + 'T00:00:00').toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' })
+      : null;
+    res.json({
+      mes: row?.mes ?? null,
+      mes_label: mesLabel,
+      retencao: Number(row?.retencao_media_pct ?? 0),
+      compartilhamento: Number(row?.taxa_compartilhamento_pct ?? 0),
+      cliques_series: Number(row?.cliques_series_pct ?? 0),
+      fonte: row?.fonte ?? null,
+      observacao: row?.observacao ?? null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/online/dashboard
 // ---------------------------------------------------------------------------
 router.get('/dashboard', async (_req, res) => {
@@ -239,7 +298,7 @@ router.get('/dashboard', async (_req, res) => {
       video: atual.video_count - ha30.video_count,
     } : null;
 
-    // 2. Videos do mes atual
+    // 2. Vídeos do mês atual
     const hoje = new Date();
     const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
 
@@ -264,7 +323,7 @@ router.get('/dashboard', async (_req, res) => {
       .order('view_count', { ascending: false })
       .limit(5);
 
-    // 3. Series
+    // 3. Séries
     const { data: series } = await supabase
       .from('vw_online_series_kpi')
       .select('*')
@@ -330,7 +389,7 @@ router.get('/series', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/online/series/:id · detalhe + videos da serie
+// GET /api/online/series/:id · detalhe + vídeos da série
 // ---------------------------------------------------------------------------
 router.get('/series/:id', async (req, res) => {
   try {
@@ -340,7 +399,7 @@ router.get('/series/:id', async (req, res) => {
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
-    if (!serie) return res.status(404).json({ error: 'Serie nao encontrada' });
+    if (!serie) return res.status(404).json({ error: 'Série não encontrada' });
 
     const { data: videos } = await supabase
       .from('online_videos')
@@ -357,7 +416,7 @@ router.get('/series/:id', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/online/cultos-metricas · cultos com video_id + metricas YT completas
 // (watch time, retencao, subs ganhos, inscritos/nao-inscritos, fontes de
-// trafego e curva de retencao) · pra UI da pagina Online.
+// tráfego e curva de retencao) · pra UI da página Online.
 // ---------------------------------------------------------------------------
 router.get('/cultos-metricas', async (req, res) => {
   try {
@@ -381,7 +440,7 @@ router.get('/cultos-metricas', async (req, res) => {
     const videoIds = (cultos || []).map(c => c.youtube_video_id).filter(Boolean);
     if (!videoIds.length) return res.json([]);
 
-    // Trafico por video
+    // Trafico por vídeo
     const { data: traficoRows } = await supabase
       .from('online_video_trafico')
       .select('video_id, fonte, views, watch_minutes')
@@ -395,7 +454,7 @@ router.get('/cultos-metricas', async (req, res) => {
       traficoByVideo[vId].sort((a, b) => b.views - a.views);
     }
 
-    // Curva de retencao por video
+    // Curva de retencao por vídeo
     const { data: curvaRows } = await supabase
       .from('online_video_retencao_curva')
       .select('video_id, ratio_pct, audience_watch_ratio')

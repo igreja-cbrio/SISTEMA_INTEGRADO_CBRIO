@@ -1,21 +1,21 @@
 // ============================================================================
-// Totem Kids · Decisoes da Sessao
+// Totem Kids · Decisões da Sessão
 // ============================================================================
 // Fluxo (pedido do Marcos 2026-05-21):
 //
-// Apos o culto, a pastoral leva as criancas que tomaram decisao pra uma sala
-// separada pra conversar. Nessa sala, voluntario opera essa tela:
+// Após o culto, a pastoral leva as crianças que tomaram decisão pra uma sala
+// separada pra conversar. Nessa sala, voluntário opera essa tela:
 //
-//   1. Digita o codigo de seguranca da etiqueta da crianca (4 chars)
-//   2. Sistema busca · mostra foto, nome, idade, sala original, responsavel
-//      + quantas vezes a crianca ja decidiu antes
-//   3. Voluntario pode adicionar observacao pastoral ("entendeu bem", etc)
-//   4. Clica "Confirmar decisao" · marca fez_decisao_jesus=true no checkin
+//   1. Digita o código de segurança da etiqueta da criança (4 chars)
+//   2. Sistema busca · mostra foto, nome, idade, sala original, responsável
+//      + quantas vezes a criança já decidiu antes
+//   3. Voluntário pode adicionar observação pastoral ("entendeu bem", etc)
+//   4. Clica "Confirmar decisão" · marca fez_decisao_jesus=true no checkin
 //   5. Trigger fn_kids_decisao_para_culto cria registro em
 //      cultos_decisoes_pessoas com kids_crianca_id preenchido
 //
-// Lista lateral mostra todas as criancas que ja tiveram decisao registrada
-// nessa sessao · permite remover/editar observacao.
+// Lista lateral mostra todas as crianças que já tiveram decisão registrada
+// nessa sessão · permite remover/editar observação.
 // ============================================================================
 
 import { useEffect, useState, useRef } from 'react';
@@ -128,7 +128,7 @@ export default function TotemKidsDecisoes() {
       } catch {
         setDecisoesAnteriores(0);
       }
-      // Pré-preenche observacao se já tem
+      // Pré-preenche observação se já tem
       setObservacao(data.observacoes_no_dia || '');
     } catch (e: unknown) {
       const err = e as { status?: number; message?: string };

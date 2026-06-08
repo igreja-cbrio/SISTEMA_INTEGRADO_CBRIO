@@ -3,16 +3,17 @@ import { motion, AnimatePresence, useSpring, useTransform, animate } from 'frame
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Users, Banknote,
   Sparkles, ArrowUp, ArrowDown, Minus, Award, Calendar,
-  BarChart3, Activity, Target, FileText, Loader2,
+  BarChart3, Activity, Target, FileText, Loader2, Filter, X, MousePointer2,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
+import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
 import {
   ComposedChart, Line, Bar, Area, AreaChart, BarChart, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell,
 } from 'recharts';
 
 const C = {
@@ -38,39 +39,80 @@ const fmtInt = (v) => Number(v || 0).toLocaleString('pt-BR');
 
 const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+// Ordem lógica dos cultos: Quarta -> Bridge/AMI (sábado) -> Domingos (por horario).
+// Semana comecando na segunda (Seg=0..Dom=6) + minutos do dia desempata.
+const ordemCulto = (day, time) => {
+  const d = day === null || day === undefined ? 99 : ((Number(day) + 6) % 7);
+  const [h, m] = String(time || '0:0').split(':').map(Number);
+  return d * 10000 + (h || 0) * 100 + (m || 0);
+};
+
 // ============================================================
-// SEMANAS QUA-TER · gera lista das ultimas N semanas
-// Numeracao: 1 = primeira semana qua-ter cuja quarta-feira cai em
-// ou apos 01/01 do ano. Pode dar W53 em anos com 53 semanas qua-ter.
+// FILTROS GLOBAIS · persistidos em localStorage
 // ============================================================
-function numeroSemanaQuaTer(quarta) {
-  const ano = quarta.getFullYear();
-  const jan1 = new Date(ano, 0, 1);
-  const dowJan1 = jan1.getDay(); // 0=Dom ... 3=Qua
-  const diasAteQuarta = (3 - dowJan1 + 7) % 7;
-  const primeiraQuarta = new Date(ano, 0, 1 + diasAteQuarta);
-  const dias = Math.round((quarta - primeiraQuarta) / 86400000);
-  return Math.floor(dias / 7) + 1;
+const LS_FILTROS = 'fin_dashboard_filtros_v1';
+
+function lerFiltrosGlobais() {
+  try {
+    const raw = localStorage.getItem(LS_FILTROS);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
 }
 
-function gerarSemanasQuaTer(qtd = 26) {
-  const hoje = new Date();
-  const dow = hoje.getDay(); // 0=Dom ... 3=Qua ... 6=Sab
-  // dias para voltar ate a quarta da semana atual qua-ter
-  // qua=0, qui=1, sex=2, sab=3, dom=4, seg=5, ter=6
-  const diasParaQuarta = (dow + 4) % 7;
-  const quartaAtual = new Date(hoje);
-  quartaAtual.setHours(0, 0, 0, 0);
-  quartaAtual.setDate(hoje.getDate() - diasParaQuarta);
+function salvarFiltrosGlobais(f) {
+  try {
+    localStorage.setItem(LS_FILTROS, JSON.stringify(f || {}));
+    window.dispatchEvent(new CustomEvent('fin-filtros-changed', { detail: f }));
+  } catch {}
+}
+
+function useFiltrosGlobais() {
+  const [filtros, setFiltros] = useState(() => lerFiltrosGlobais());
+  useEffect(() => {
+    const handler = (e) => setFiltros(e.detail || {});
+    window.addEventListener('fin-filtros-changed', handler);
+    return () => window.removeEventListener('fin-filtros-changed', handler);
+  }, []);
+  return [filtros, (f) => { salvarFiltrosGlobais(f); setFiltros(f); }];
+}
+
+// ============================================================
+// SEMANAS ISO seg-dom · UNIFICADAS com a aba de cultos (2026-06-01)
+// Antes era qua-ter (corte na terca pelo lag D+1 do extrato). Como a oferta
+// de culto já e lancada com a data do culto, mudamos pra segunda->domingo pra
+// "Semana 21" bater com os cultos. O backend (fin_semana_qua_ter, nome mantido)
+// também foi reescrito pra ISO seg-dom.
+// ============================================================
+function segundaDaSemana(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const offset = (d.getDay() + 6) % 7; // Seg=0 ... Dom=6
+  d.setDate(d.getDate() - offset);
+  return d;
+}
+
+// Número da semana ISO (mesmo critério do to_char(IW) do Postgres e da aba cultos)
+function numeroSemanaIso(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7; // Seg=0
+  d.setUTCDate(d.getUTCDate() - dayNum + 3); // quinta da semana define o ano ISO
+  const primeiraQuinta = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const fdNum = (primeiraQuinta.getUTCDay() + 6) % 7;
+  primeiraQuinta.setUTCDate(primeiraQuinta.getUTCDate() - fdNum + 3);
+  return 1 + Math.round((d - primeiraQuinta) / (7 * 86400000));
+}
+
+function gerarSemanasIso(qtd = 26) {
+  const segAtual = segundaDaSemana(new Date());
 
   const out = [];
   for (let i = 0; i < qtd; i++) {
-    const inicio = new Date(quartaAtual);
-    inicio.setDate(quartaAtual.getDate() - i * 7);
+    const inicio = new Date(segAtual);
+    inicio.setDate(segAtual.getDate() - i * 7);
     const fim = new Date(inicio);
     fim.setDate(inicio.getDate() + 6);
     const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-    const num = numeroSemanaQuaTer(inicio);
+    const num = numeroSemanaIso(inicio);
     const numStr = String(num).padStart(2, '0');
     out.push({
       ref: inicio.toISOString().slice(0, 10),
@@ -106,13 +148,29 @@ function CountUp({ value, format = fmtMoney, duration = 1.2 }) {
 // ============================================================
 // MAIN
 // ============================================================
+// ============================================================
+// SLIDES · sequência narrativa pra apresentação de quarta
+// ─────────────────────────────────────────────────────────────
+// BLOCO 1 · MINISTERIAL — "como foi nossa semana?"
+//   Resumo · Por Culto · Performance (freq × arrec)
+// BLOCO 2 · ANO · FINANCEIRO ESTRATÉGICO — "como vamos no ano?"
+//   Tendências · Saúde · Comparativos · Dízimo × Oferta
+// BLOCO 3 · DESPESA + FUTURO — "pra onde vai o dinheiro?"
+//   Saídas · Metas
+// ============================================================
 const SLIDES = [
-  { key: 'resumo',       label: 'Resumo',         icon: Sparkles,   desc: 'KPIs · cultos · top contribuintes' },
-  { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · domingo · outros · acumulada' },
-  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Histórico semanal e mensal' },
+  // Bloco 1 · semana ministerial
+  { key: 'resumo',       label: 'Resumo',         icon: Sparkles,   desc: 'Foto da semana · receita · presença · ticket · decisões' },
+  { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · final de semana · durante a semana · acumulada' },
+  { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Frequência × arrecadação semanal' },
+  // Bloco 2 · ano · saúde financeira
+  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Arrecadação anual + acumulado mês a mês' },
+  { key: 'saude',        label: 'Saúde',          icon: Activity,   desc: 'Resultado · folha · concentração de doadores' },
   { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
-  { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Frequência × receita · melhores' },
-  { key: 'controle',     label: 'Saídas & Metas', icon: Target,     desc: 'Despesas detalhadas · metas' },
+  { key: 'dizimo_oferta',label: 'Dízimo×Oferta',  icon: TrendingUp, desc: 'Proporção da base de contribuição' },
+  // Bloco 3 · despesa + futuro
+  { key: 'controle',     label: 'Saídas',         icon: Target,     desc: 'Despesas detalhadas · drilldown' },
+  { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Alvos financeiros com filtros' },
 ];
 
 export default function DashboardSemanal() {
@@ -122,7 +180,7 @@ export default function DashboardSemanal() {
   const [saidas, setSaidas] = useState(null);
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
-  const semanas = useMemo(() => gerarSemanasQuaTer(26), []);
+  const semanas = useMemo(() => gerarSemanasIso(26), []);
   const [refData, setRefData] = useState(semanas[0].ref);
   const [slide, setSlide] = useState(0);
 
@@ -173,7 +231,7 @@ export default function DashboardSemanal() {
   };
 
   // Stale-while-revalidate · so bloqueia tela no carregamento INICIAL.
-  // Trocas de semana mantem UI anterior visivel + spinner sutil no header.
+  // Trocas de semana mantem UI anterior visível + spinner sutil no header.
   if (!data) return <LoadingPretty />;
   if (data.erro) return <div className="text-sm text-muted-foreground">Erro: {data.erro}</div>;
 
@@ -192,7 +250,7 @@ export default function DashboardSemanal() {
 
             <div className="flex flex-col items-center flex-1 min-w-[240px]">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-                Semana qua-ter
+                Semana (seg–dom)
                 {loading && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
               </div>
               <select
@@ -221,6 +279,7 @@ export default function DashboardSemanal() {
 
         {/* SlideNav · botões de navegação entre slides */}
         <SlideNav current={slide} onChange={setSlide} />
+        <FiltrosFinanceiroBar />
       </div>
 
       {/* CONTENT · slides animados com AnimatePresence */}
@@ -233,50 +292,61 @@ export default function DashboardSemanal() {
           transition={{ duration: 0.25, ease: 'easeOut' }}
           className="space-y-6"
         >
-          {slide === 0 && (
+          {SLIDES[slide].key === 'resumo' && (
             <Slide0Resumo
               kpis={kpis} cultos={cultos} top_contribuintes={top_contribuintes}
               historico={historico}
             />
           )}
-          {slide === 1 && (
+          {SLIDES[slide].key === 'saude' && <SlideSaudeFinanceira />}
+          {SLIDES[slide].key === 'por_culto' && (
             <Slide1PorCulto
               buckets={buckets}
               melhorSemana={melhorSemana}
+              semana={semana}
             />
           )}
-          {slide === 2 && (
-            <Slide2Tendencias
-              historico={historico}
-              completo={completo}
-            />
+          {SLIDES[slide].key === 'tendencias' && (
+            <Slide2Tendencias />
           )}
-          {slide === 3 && (
+          {SLIDES[slide].key === 'comparativos' && (
             <Slide3Comparativos
               completo={completo}
             />
           )}
-          {slide === 4 && (
+          {SLIDES[slide].key === 'performance' && (
             <Slide4Performance
               completo={completo}
               melhorSemana={melhorSemana}
             />
           )}
-          {slide === 5 && (
+          {SLIDES[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
+          {SLIDES[slide].key === 'controle' && (
             <Slide5Controle
               saidas={saidas}
+            />
+          )}
+          {SLIDES[slide].key === 'metas' && (
+            <Slide6Metas
               metas={metas}
               onMetasChange={reloadMetas}
-              completo={completo}
-              receitaSemana={kpis.receita}
             />
           )}
         </motion.div>
       </AnimatePresence>
 
-      {/* Footer · atalhos */}
-      <div className="text-center text-[10px] text-muted-foreground">
-        Use ← → no teclado pra navegar entre slides · {slide + 1} de {SLIDES.length}
+      {/* Footer · atalhos + bloco narrativo atual */}
+      <div className="text-center text-[10px] text-muted-foreground flex items-center justify-center gap-2 flex-wrap">
+        {(() => {
+          const bloco = SLIDE_BLOCO[SLIDES[slide].key] || {};
+          return bloco.label ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+              style={{ background: `${bloco.color}1f`, color: bloco.color }}>
+              Bloco {bloco.id} · {bloco.label}
+            </span>
+          ) : null;
+        })()}
+        <span>Use ← → no teclado · {slide + 1} de {SLIDES.length}</span>
       </div>
     </div>
   );
@@ -285,35 +355,51 @@ export default function DashboardSemanal() {
 // ============================================================
 // SLIDE NAVIGATION · botões em pílula sticky
 // ============================================================
+// Mapeia cada slide pro bloco narrativo da apresentação
+const SLIDE_BLOCO = {
+  resumo: { id: 1, label: 'Ministerial', color: '#00B39D' },
+  por_culto: { id: 1, label: 'Ministerial', color: '#00B39D' },
+  performance: { id: 1, label: 'Ministerial', color: '#00B39D' },
+  tendencias: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  saude: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  comparativos: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  dizimo_oferta: { id: 2, label: 'Ano', color: '#8b5cf6' },
+  controle: { id: 3, label: 'Despesa & Metas', color: '#f59e0b' },
+  metas: { id: 3, label: 'Despesa & Metas', color: '#f59e0b' },
+};
+
 function SlideNav({ current, onChange }) {
   return (
     <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
       {SLIDES.map((s, i) => {
         const active = i === current;
         const Icon = s.icon;
+        const bloco = SLIDE_BLOCO[s.key] || { id: 0, label: '', color: '#888' };
+        const blocoAnterior = i > 0 ? SLIDE_BLOCO[SLIDES[i - 1].key]?.id : null;
+        const showSep = blocoAnterior != null && blocoAnterior !== bloco.id;
         return (
-          <motion.button
-            key={s.key}
-            onClick={() => onChange(i)}
-            whileHover={{ y: -1 }}
-            whileTap={{ scale: 0.97 }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all shrink-0 ${
-              active
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'bg-card border border-border hover:border-primary/50 text-foreground'
-            }`}
-            title={s.desc}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            <span>{s.label}</span>
-            {active && (
-              <motion.span
-                layoutId="slide-active-indicator"
-                className="absolute inset-0 rounded-lg pointer-events-none"
-                style={{ background: 'transparent' }}
-              />
+          <span key={s.key} className="contents">
+            {showSep && (
+              <div className="flex flex-col items-center shrink-0 px-0.5">
+                <span className="h-6 w-px bg-border" />
+              </div>
             )}
-          </motion.button>
+            <motion.button
+              onClick={() => onChange(i)}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.97 }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all shrink-0 relative ${
+                active
+                  ? 'text-primary-foreground shadow-sm'
+                  : 'bg-card border border-border hover:border-primary/50 text-foreground'
+              }`}
+              style={active ? { background: bloco.color } : { borderLeftWidth: '3px', borderLeftColor: bloco.color }}
+              title={`${bloco.label} · ${s.desc}`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              <span>{s.label}</span>
+            </motion.button>
+          </span>
         );
       })}
     </div>
@@ -321,10 +407,13 @@ function SlideNav({ current, onChange }) {
 }
 
 // ============================================================
-// SLIDES · conteudo de cada aba
+// SLIDES · conteúdo de cada aba
 // ============================================================
 
 function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
+  const cultosOrd = [...(cultos || [])].sort(
+    (a, b) => ordemCulto(a.dia_semana, a.hora_culto) - ordemCulto(b.dia_semana, b.hora_culto)
+  );
   return (
     <>
       {/* 4 KPIs principais com count-up + comparativos */}
@@ -390,7 +479,7 @@ function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {cultos.map((c, i) => (
+                  {cultosOrd.map((c, i) => (
                     <motion.tr
                       key={c.culto_id}
                       initial={{ opacity: 0, x: -20 }}
@@ -472,15 +561,15 @@ function Slide0Resumo({ kpis, cultos, top_contribuintes, historico }) {
   );
 }
 
-function Slide1PorCulto({ buckets, melhorSemana }) {
+function Slide1PorCulto({ buckets, melhorSemana, semana }) {
   return (
     <>
       {/* 4 Buckets estilo Power BI */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <BucketCard custom={0} bucket={buckets.quarta} color={C.blue} />
-        <BucketCard custom={1} bucket={buckets.domingo} color={C.primary} />
-        <BucketCard custom={2} bucket={buckets.outros} color={C.amber} />
-        <BucketCard custom={3} bucket={buckets.acumulada} color={C.purple} isAcumulado />
+        <BucketCard custom={0} bucket={buckets.quarta} color={C.blue} semana={semana} />
+        <BucketCard custom={1} bucket={buckets.domingo} color={C.primary} semana={semana} />
+        <BucketCard custom={2} bucket={buckets.outros} color={C.amber} semana={semana} />
+        <BucketCard custom={3} bucket={buckets.acumulada} color={C.purple} isAcumulado semana={semana} />
       </div>
 
       {/* Melhor semana */}
@@ -491,50 +580,11 @@ function Slide1PorCulto({ buckets, melhorSemana }) {
   );
 }
 
-function Slide2Tendencias({ historico, completo }) {
+function Slide2Tendencias() {
   return (
     <>
-      {/* Tendência 12 semanas */}
-      <Card>
-        <CardContent className="pt-6">
-          <h3 className="text-base font-semibold mb-1">Tendência das últimas 12 semanas</h3>
-          <p className="text-xs text-muted-foreground mb-4">
-            Receita (barras verdes) · presença (linha azul) · ticket médio (linha roxa pontilhada)
-          </p>
-          <div style={{ width: '100%', height: 320 }}>
-            <ResponsiveContainer>
-              <ComposedChart data={historico}>
-                <defs>
-                  <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.green} stopOpacity={0.9} />
-                    <stop offset="100%" stopColor={C.green} stopOpacity={0.4} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="semana_label" tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
-                <Tooltip
-                  formatter={(v, n) => n === 'Presença' ? [fmtInt(v), n] : [fmtMoney(v), n]}
-                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="left" dataKey="receita" name="Receita" fill="url(#gradReceita)" radius={[4, 4, 0, 0]} />
-                <Line yAxisId="right" type="monotone" dataKey="presencial" name="Presença" stroke={C.blue} strokeWidth={2.5} dot={{ r: 3 }} />
-                <Line yAxisId="left" type="monotone" dataKey="ticket" name="Ticket médio" stroke={C.purple} strokeWidth={2} strokeDasharray="5 5" dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* PR A · Mensal + Semanal */}
-      {completo && (
-        <>
-          <ArrecadacaoMensalChart dados={completo.mensal} />
-          <ArrecadacaoSemanalChart dados={completo.semanal} anoAtual={completo.ano_atual} />
-        </>
-      )}
+      <ArrecadacaoAnualChart />
+      <SazonalidadeSemanalChart />
     </>
   );
 }
@@ -557,33 +607,31 @@ function Slide3Comparativos({ completo }) {
 function Slide4Performance({ completo, melhorSemana }) {
   return (
     <>
-      {completo && <FreqVsReceitaChart dados={completo.freq_vs_receita} />}
+      <FreqVsArrecadacaoSemanal />
+      <ReceitaVsSaidaMensal />
       {melhorSemana && (melhorSemana.melhor_do_mes || melhorSemana.melhor_do_ano) && (
         <MelhorSemanaCards melhor={melhorSemana} />
       )}
-      {!completo && !melhorSemana && (
-        <div className="text-sm text-muted-foreground text-center py-10">Sem dados de performance ainda</div>
-      )}
     </>
   );
 }
 
-function Slide5Controle({ saidas, metas, onMetasChange, completo, receitaSemana }) {
+function Slide5Controle({ saidas }) {
   return (
     <>
-      {saidas && <SaidasDetalhadas saidas={saidas} />}
-      <MetasFinanceiras
-        metas={metas}
-        onChange={onMetasChange}
-        completo={completo}
-        receitaSemana={receitaSemana}
-      />
+      {saidas
+        ? <SaidasDetalhadas saidas={saidas} />
+        : <div className="text-sm text-muted-foreground text-center py-10">Sem dados de despesas ainda</div>}
     </>
   );
+}
+
+function Slide6Metas({ metas, onMetasChange }) {
+  return <MetasFinanceirasComFiltros metas={metas} onMetasChange={onMetasChange} />;
 }
 
 // ============================================================
-// CALCULA "valor atual" da meta usando dados ja carregados
+// CALCULA "valor atual" da meta usando dados já carregados
 // ============================================================
 function calcularAtualMeta(meta, ctx) {
   const { completo, receitaSemana } = ctx;
@@ -604,10 +652,18 @@ function calcularAtualMeta(meta, ctx) {
 }
 
 function labelPeriodoMeta(tipo) {
-  if (tipo === 'receita_anual')      return 'no ano';
-  if (tipo === 'saldo_minimo')       return 'resultado YTD';
-  if (tipo?.includes('mensal'))      return 'no mês';
+  if (tipo?.includes('anual'))   return 'no ano';
+  if (tipo === 'saldo_minimo')   return 'resultado YTD';
+  if (tipo?.includes('semanal')) return 'na semana';
+  if (tipo?.includes('mensal'))  return 'no mês';
   return '';
+}
+
+function periodicidadeDoTipo(tipo) {
+  if (!tipo) return 'mensal';
+  if (tipo.includes('semanal')) return 'semanal';
+  if (tipo.includes('anual'))   return 'anual';
+  return 'mensal';
 }
 
 // ============================================================
@@ -707,38 +763,236 @@ function ArrecadacaoMensalChart({ dados }) {
   );
 }
 
-function ArrecadacaoSemanalChart({ dados, anoAtual }) {
-  const filtrado = dados
-    .filter(d => d.ano === anoAtual)
-    .map(d => ({
-      label: d.semana_label,
-      Receita: d.receita,
-    }));
+function SazonalidadeSemanalChart() {
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
+  const [semanaSel, setSemanaSel] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.sazonalidadeSemanal()
+      .then(r => {
+        if (!cancelled) {
+          setDados(r);
+          setErro(null);
+          // Selecionar a última semana do ano corrente que tem dado
+          const anoAtual = new Date().getFullYear();
+          const corrente = String(anoAtual);
+          const ultimaComDado = [...(r.semanas || [])].reverse().find(s => Number(s[corrente]) > 0);
+          if (ultimaComDado) setSemanaSel(ultimaComDado.num_semana);
+        }
+      })
+      .catch(e => { if (!cancelled) setErro(e?.message || 'Erro ao carregar sazonalidade'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const anos = dados?.anos || [];
+  const semanas = dados?.semanas || [];
+  const anoAtual = new Date().getFullYear();
+  const anoCorrenteStr = String(anoAtual);
+
+  const corPorAno = (ano, idx) => {
+    if (String(ano) === anoCorrenteStr) return COL.primary;
+    const paleta = [COL.purple, COL.amber, COL.blue, COL.red, COL.green];
+    return paleta[idx % paleta.length];
+  };
+
+  const semanaCorrente = useMemo(() => {
+    const tmp = new Date();
+    const date = new Date(Date.UTC(tmp.getFullYear(), tmp.getMonth(), tmp.getDate()));
+    const dayNum = date.getUTCDay() || 7;
+    date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+    return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  }, []);
+
+  const totaisPorAno = useMemo(() => {
+    const out = {};
+    anos.forEach(a => {
+      const key = String(a);
+      out[key] = semanas.reduce((s, m) => s + Number(m[key] || 0), 0);
+    });
+    return out;
+  }, [anos, semanas]);
+
+  const onClickBar = (e) => {
+    const payload = e?.activePayload?.[0]?.payload;
+    if (payload?.num_semana) setSemanaSel(payload.num_semana);
+  };
+
+  const slotSel = semanaSel ? semanas.find(s => s.num_semana === semanaSel) : null;
+
   return (
     <Card>
       <CardContent className="pt-6">
-        <h3 className="text-base font-semibold mb-1">Arrecadação Semanal · {anoAtual}</h3>
-        <p className="text-xs text-muted-foreground mb-4">{filtrado.length} semanas qua-ter</p>
-        <div style={{ width: '100%', height: 280 }}>
-          <ResponsiveContainer>
-            <BarChart data={filtrado}>
-              <defs>
-                <linearGradient id="gradSemanal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={COL.primary} stopOpacity={0.95} />
-                  <stop offset="100%" stopColor={COL.primary} stopOpacity={0.5} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.floor(filtrado.length / 12)} />
-              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
-              <Tooltip
-                formatter={(v) => fmtMoney(v)}
-                contentStyle={{ borderRadius: 8, fontSize: 12 }}
-              />
-              <Bar dataKey="Receita" fill="url(#gradSemanal)" radius={[3, 3, 0, 0]} animationDuration={1200} />
-            </BarChart>
-          </ResponsiveContainer>
+        <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Sazonalidade Semanal
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique numa semana
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Compara a mesma semana ISO ao longo dos anos · empréstimos excluídos
+            </p>
+          </div>
         </div>
+
+        {loading && (
+          <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Carregando sazonalidade…
+          </div>
+        )}
+        {erro && !loading && (
+          <div className="text-sm text-red-500 py-6 text-center">{erro}</div>
+        )}
+
+        {!loading && !erro && semanas.length > 0 && (
+          <>
+            <div style={{ width: '100%', height: 280 }}>
+              <ResponsiveContainer>
+                <BarChart data={semanas} onClick={onClickBar} barGap={1} barCategoryGap="16%">
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis
+                    dataKey="num_semana"
+                    tick={{ fontSize: 9 }}
+                    interval={3}
+                    tickFormatter={(v) => `S${v}`}
+                  />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                    formatter={(v, name) => [fmtMoney(v), name]}
+                    labelFormatter={(label) => `Semana ${label}`}
+                    contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {anos.map((ano, idx) => (
+                    <Bar
+                      key={ano}
+                      dataKey={String(ano)}
+                      name={String(ano)}
+                      fill={corPorAno(ano, idx)}
+                      radius={[3, 3, 0, 0]}
+                      cursor="pointer"
+                      animationDuration={1000}
+                    >
+                      {semanas.map((s, i) => {
+                        const ehSel = s.num_semana === semanaSel;
+                        const ehAtual = String(ano) === anoCorrenteStr;
+                        const dim = ehAtual && s.num_semana > semanaCorrente;
+                        return (
+                          <Cell
+                            key={`c-${ano}-${i}`}
+                            fill={corPorAno(ano, idx)}
+                            fillOpacity={dim ? 0.18 : 1}
+                            stroke={ehSel ? COL.amber : 'transparent'}
+                            strokeWidth={ehSel ? 2 : 0}
+                          />
+                        );
+                      })}
+                    </Bar>
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Cards do ano completo */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 font-medium">
+                Acumulado anual
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {anos.map((ano, idx) => {
+                  const total = totaisPorAno[String(ano)] || 0;
+                  const anoAnt = anos[idx - 1];
+                  const totalAnt = anoAnt ? (totaisPorAno[String(anoAnt)] || 0) : 0;
+                  const delta = anoAnt && totalAnt > 0 ? ((total - totalAnt) / totalAnt) * 100 : null;
+                  const ehAtual = String(ano) === anoCorrenteStr;
+                  return (
+                    <div
+                      key={ano}
+                      className="rounded-lg border p-2.5"
+                      style={{ borderLeft: `3px solid ${corPorAno(ano, idx)}` }}
+                    >
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                        {ano}
+                        {ehAtual && <span className="text-[9px] px-1 rounded bg-primary/10 text-primary">em curso</span>}
+                      </div>
+                      <div className="text-sm font-semibold tabular-nums" style={{ color: corPorAno(ano, idx) }}>
+                        {fmtCompact(total)}
+                      </div>
+                      {delta !== null && (
+                        <div className={`text-[10px] mt-0.5 ${delta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {fmtPct(delta)} vs {anoAnt}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Cards da semana selecionada · responsivos ao clique */}
+            <AnimatePresence mode="wait">
+              {slotSel && (
+                <motion.div
+                  key={`sem-${semanaSel}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.25 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
+                      Semana selecionada
+                    </div>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      Semana {slotSel.num_semana}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {anos.map((ano, idx) => {
+                      const valor = Number(slotSel[String(ano)] || 0);
+                      const label = slotSel[`${ano}_label`];
+                      const anoAnt = anos[idx - 1];
+                      const valorAnt = anoAnt ? Number(slotSel[String(anoAnt)] || 0) : 0;
+                      const delta = anoAnt && valorAnt > 0 ? ((valor - valorAnt) / valorAnt) * 100 : null;
+                      const ehAtual = String(ano) === anoCorrenteStr;
+                      const ehFuturo = ehAtual && slotSel.num_semana > semanaCorrente;
+                      return (
+                        <div
+                          key={ano}
+                          className="rounded-lg border p-3"
+                          style={{ borderLeft: `3px solid ${corPorAno(ano, idx)}` }}
+                        >
+                          <div className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center justify-between">
+                            <span>{ano}</span>
+                            {label && <span className="text-[9px] normal-case tracking-normal">{label}</span>}
+                          </div>
+                          <div className="text-lg font-bold tabular-nums mt-0.5" style={{ color: corPorAno(ano, idx) }}>
+                            {ehFuturo ? <span className="text-muted-foreground text-sm">— aguardando</span> : fmtMoney(valor)}
+                          </div>
+                          {delta !== null && !ehFuturo && (
+                            <div className={`text-[11px] ${delta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {fmtPct(delta)} vs {anoAnt}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -804,7 +1058,7 @@ function YoYSemanalChart({ dados, anoAtual, anoAnterior }) {
       <CardContent className="pt-6">
         <h3 className="text-base font-semibold mb-1">Comparativo Ano a Ano · Semanal</h3>
         <p className="text-xs text-muted-foreground mb-4">
-          Mesma semana qua-ter de {anoAtual} vs {anoAnterior}
+          Mesma semana (seg–dom) de {anoAtual} vs {anoAnterior}
         </p>
         <div style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
@@ -959,7 +1213,8 @@ function KpiBig({ custom, icon: Icon, accent, label, valor, format = fmtMoney, d
   );
 }
 
-function BucketCard({ custom, bucket, color, isAcumulado }) {
+function BucketCard({ custom, bucket, color, isAcumulado, semana }) {
+  const [drilldown, setDrilldown] = useState(null); // { categoria, color }
   if (!bucket) return null;
 
   return (
@@ -976,8 +1231,11 @@ function BucketCard({ custom, bucket, color, isAcumulado }) {
           <div className="flex items-center justify-between mb-3">
             <div>
               <h4 className="text-base font-bold" style={{ color }}>{bucket.nome}</h4>
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
                 {isAcumulado ? 'Soma da semana' : 'Categorias'}
+                {bucket.categorias.length > 0 && (
+                  <span className="text-[9px] opacity-60">· clique pra detalhar</span>
+                )}
               </div>
             </div>
             <div className="text-xl font-bold tabular-nums">
@@ -991,12 +1249,13 @@ function BucketCard({ custom, bucket, color, isAcumulado }) {
           ) : (
             <div className="space-y-2 mt-2">
               {bucket.categorias.map((c, i) => (
-                <motion.div
+                <motion.button
                   key={c.categoria}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.4 + custom * 0.08 + i * 0.04 }}
-                  className="space-y-1"
+                  onClick={() => setDrilldown({ categoria: c.categoria, color, valor: c.valor })}
+                  className="w-full text-left space-y-1 rounded-md p-1 -mx-1 hover:bg-muted/60 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30"
                 >
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-medium truncate">{c.categoria}</span>
@@ -1014,12 +1273,28 @@ function BucketCard({ custom, bucket, color, isAcumulado }) {
                       transition={{ delay: 0.5 + custom * 0.08 + i * 0.04, duration: 0.7 }}
                     />
                   </div>
-                </motion.div>
+                </motion.button>
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {drilldown && semana && (
+        <TransacoesDrilldownDialog
+          open={!!drilldown}
+          onClose={() => setDrilldown(null)}
+          titulo={drilldown.categoria}
+          subtitulo={`Receitas · ${bucket.nome} · ${semana.inicio} a ${semana.fim}`}
+          color={drilldown.color}
+          totalEsperado={drilldown.valor}
+          fetcher={() => financeiroV2.categoriaTransacoes({
+            categoria: drilldown.categoria,
+            inicio: semana.inicio,
+            fim: semana.fim,
+          })}
+        />
+      )}
     </motion.div>
   );
 }
@@ -1091,78 +1366,247 @@ function DestaqueCard({ titulo, semana, gradient, bgClass }) {
   );
 }
 
-function SaidasDetalhadas({ saidas }) {
+function SaidasDetalhadas({ saidas: saidasInicial }) {
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+  const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  // Estado do filtro · inicializa no mês do saidasInicial (ou mês atual)
+  const mesInicial = saidasInicial?.mes || hoje.toISOString().slice(0, 7);
+  const [ano, setAno] = useState(Number(mesInicial.split('-')[0]));
+  const [mes, setMes] = useState(Number(mesInicial.split('-')[1]));
   const [view, setView] = useState('categoria');
-  const dados = saidas[view];
+  const [drilldown, setDrilldown] = useState(null);
+  const [saidas, setSaidas] = useState(saidasInicial);
+  const [loading, setLoading] = useState(false);
+
+  const mesLabel = `${ano}-${String(mes).padStart(2, '0')}`;
+
+  // Refetch quando ano/mes muda · usa o saidasInicial se bater com o mês inicial
+  useEffect(() => {
+    if (saidasInicial?.mes === mesLabel) { setSaidas(saidasInicial); return; }
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.dashboard.saidasDetalhadas?.(mesLabel)
+      .then(r => { if (!cancelled) setSaidas(r); })
+      .catch(e => console.warn('[Saidas]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mesLabel]);
+
+  const dados = saidas?.[view];
+
+  const periodo = useMemo(() => {
+    const last = new Date(ano, mes, 0).getDate();
+    return {
+      label: mesLabel,
+      inicio: `${mesLabel}-01`,
+      fim: `${mesLabel}-${String(last).padStart(2, '0')}`,
+    };
+  }, [ano, mes, mesLabel]);
+
+  const COLORS_VIEW = {
+    categoria: ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#a855f7'],
+    plano: ['#3b82f6', '#06b6d4', '#10b981', '#84cc16', '#eab308', '#f59e0b'],
+    centro: ['#8b5cf6', '#ec4899', '#f43f5e', '#a855f7'],
+  };
+  const palette = COLORS_VIEW[view];
+
+  const onClickLinha = (linha) => {
+    const params = { inicio: periodo.inicio, fim: periodo.fim };
+    let titulo = '';
+    if (view === 'categoria') {
+      params.categoria_codigo = linha.categoria_codigo;
+      titulo = linha.categoria_nome;
+    } else if (view === 'plano') {
+      params.plano_codigo = linha.plano_codigo;
+      titulo = `${linha.plano_codigo} · ${linha.plano_nome}`;
+    } else {
+      params.centro_codigo = linha.centro_codigo;
+      titulo = `${linha.centro_codigo} · ${linha.centro_nome}`;
+    }
+    setDrilldown({ titulo, params, valor: Number(linha.total) });
+  };
 
   return (
-    <Card>
+    <Card className="relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500" />
       <CardContent className="pt-6">
-        <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-start justify-between mb-4 flex-wrap gap-3">
           <div>
-            <h3 className="text-base font-semibold">Saídas detalhadas · {saidas.mes}</h3>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-rose-500" />
+              Saídas detalhadas · {MESES[mes - 1]}/{ano}
+              {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            </h3>
             <p className="text-xs text-muted-foreground">
-              Total: <strong>{fmtMoney(dados.total)}</strong>
+              Total: <strong className="text-rose-600 dark:text-rose-400">{fmtMoney(dados?.total || 0)}</strong>
+              {dados?.linhas?.length > 0 && (
+                <span className="ml-2 opacity-70">· clique numa linha pra ver lançamentos</span>
+              )}
             </p>
           </div>
-          <div className="flex gap-1">
-            {[
-              { key: 'categoria', label: 'Por categoria' },
-              { key: 'plano', label: 'Por plano' },
-              { key: 'centro', label: 'Por centro' },
-            ].map(t => (
-              <Button
-                key={t.key}
-                size="sm"
-                variant={view === t.key ? 'default' : 'outline'}
-                onClick={() => setView(t.key)}
+          <div className="flex flex-col items-end gap-2">
+            {/* Filtro mês + ano */}
+            <div className="flex gap-1.5">
+              <select
+                value={mes}
+                onChange={(e) => setMes(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded-md border border-border bg-background"
               >
-                {t.label}
-              </Button>
-            ))}
+                {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+              </select>
+              <select
+                value={ano}
+                onChange={(e) => setAno(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded-md border border-border bg-background tabular-nums"
+              >
+                {anos.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            {/* Toggle de visão */}
+            <div className="flex gap-1 bg-muted/40 p-1 rounded-lg">
+              {[
+                { key: 'categoria', label: 'Por categoria' },
+                { key: 'plano', label: 'Por plano' },
+                { key: 'centro', label: 'Por centro' },
+              ].map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setView(t.key)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                    view === t.key
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {dados.linhas.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            Sem despesas classificadas no mês
+        {!dados?.linhas?.length ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {loading ? 'Carregando...' : 'Sem despesas classificadas neste mês'}
           </div>
         ) : view === 'categoria' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Donut + lista */}
-            <div style={{ width: '100%', height: 260 }}>
-              <ResponsiveContainer>
-                <PieChartLite linhas={dados.linhas} />
+          <div className="flex flex-col lg:flex-row gap-6">
+            <div className="shrink-0 w-full lg:w-[300px] h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChartLite linhas={dados.linhas} colors={palette} />
               </ResponsiveContainer>
             </div>
-            <SaidasList linhas={dados.linhas} labelKey="categoria_nome" />
+            <div className="flex-1 min-w-0">
+              <SaidasListModerna
+                linhas={dados.linhas}
+                labelKey="categoria_nome"
+                extraKey="categoria_codigo"
+                colors={palette}
+                onClick={onClickLinha}
+              />
+            </div>
           </div>
         ) : (
-          <SaidasList linhas={dados.linhas} labelKey={view === 'plano' ? 'plano_nome' : 'centro_nome'} extraKey={view === 'plano' ? 'plano_codigo' : 'centro_codigo'} />
+          <SaidasListModerna
+            linhas={dados.linhas}
+            labelKey={view === 'plano' ? 'plano_nome' : 'centro_nome'}
+            extraKey={view === 'plano' ? 'plano_codigo' : 'centro_codigo'}
+            colors={palette}
+            onClick={onClickLinha}
+          />
         )}
       </CardContent>
+
+      {drilldown && (
+        <TransacoesDrilldownDialog
+          open={!!drilldown}
+          onClose={() => setDrilldown(null)}
+          titulo={drilldown.titulo}
+          subtitulo={`Despesas · ${periodo.inicio} a ${periodo.fim}`}
+          color={C.red}
+          totalEsperado={drilldown.valor}
+          fetcher={() => financeiroV2.despesaTransacoes(drilldown.params)}
+        />
+      )}
     </Card>
   );
 }
 
+// ============================================================
+// SaidasListModerna · linhas com barras coloridas + click + animação
+// ============================================================
+function SaidasListModerna({ linhas, labelKey, extraKey, colors, onClick }) {
+  const max = Math.max(...linhas.map(l => Number(l.total)), 1);
+  const total = linhas.reduce((s, l) => s + Number(l.total), 0);
+  return (
+    <div className="space-y-1.5">
+      {linhas.slice(0, 15).map((l, i) => {
+        const cor = colors[i % colors.length];
+        const valor = Number(l.total);
+        const pct = (valor / total) * 100;
+        const barPct = (valor / max) * 100;
+        return (
+          <motion.button
+            key={i}
+            type="button"
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: i * 0.03 }}
+            onClick={() => onClick?.(l)}
+            className="w-full text-left rounded-lg p-2.5 hover:bg-muted/60 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30 group"
+          >
+            <div className="flex items-baseline justify-between gap-3 mb-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: cor }} />
+                <span className="text-sm font-medium truncate group-hover:text-foreground">{l[labelKey] || '(sem nome)'}</span>
+                {extraKey && l[extraKey] && (
+                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 font-mono">{l[extraKey]}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3 tabular-nums shrink-0">
+                <span className="text-[11px] text-muted-foreground w-12 text-right">{pct.toFixed(1)}%</span>
+                <span className="text-sm font-semibold" style={{ color: cor }}>{fmtMoney(valor)}</span>
+              </div>
+            </div>
+            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: cor }}
+                initial={{ width: 0 }}
+                animate={{ width: `${barPct}%` }}
+                transition={{ duration: 0.7, delay: i * 0.03 }}
+              />
+            </div>
+          </motion.button>
+        );
+      })}
+      {linhas.length > 15 && (
+        <div className="text-[10px] text-muted-foreground text-center pt-2">
+          + {linhas.length - 15} categorias menores agrupadas
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Componente leve · pie chart com cores rotativas
-function PieChartLite({ linhas }) {
-  const COLORS_PIE = ['#00B39D', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#10b981', '#ef4444', '#06b6d4'];
+function PieChartLite({ linhas, colors }) {
+  const COLORS_PIE = colors || ['#00B39D', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#10b981', '#ef4444', '#06b6d4'];
   const data = linhas.slice(0, 8).map((l, i) => ({
     name: l.categoria_nome || l.plano_nome || l.centro_nome,
     value: Number(l.total),
     color: COLORS_PIE[i % COLORS_PIE.length],
   }));
-  // Usa Recharts.PieChart via Pie · simples
-  const PieChart = require('recharts').PieChart;
-  const Pie = require('recharts').Pie;
-  const Cell = require('recharts').Cell;
   return (
     <PieChart>
-      <Pie data={data} cx="50%" cy="50%" outerRadius={90} innerRadius={50} dataKey="value" paddingAngle={2}>
+      <Pie data={data} cx="50%" cy="50%" outerRadius={95} innerRadius={55} dataKey="value" paddingAngle={3} animationDuration={1200}>
         {data.map((d, i) => <Cell key={i} fill={d.color} />)}
       </Pie>
-      <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
+      <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
     </PieChart>
   );
 }
@@ -1204,9 +1648,12 @@ function SaidasList({ linhas, labelKey, extraKey }) {
 }
 
 const TIPO_META_LABEL = {
+  receita_semanal: 'Receita semanal',
   receita_mensal: 'Receita mensal',
   receita_anual: 'Receita anual',
+  despesa_max_semanal: 'Teto despesa semanal',
   despesa_max_mensal: 'Teto despesa mensal',
+  despesa_max_anual: 'Teto despesa anual',
   saldo_minimo: 'Saldo mínimo',
   pct_categoria: '% por categoria',
   meta_centro_custo: 'Meta centro de custo',
@@ -1415,9 +1862,12 @@ function MetaForm({ inicial, onCancel, onSave }) {
     id: inicial.id,
   });
   const tipos = [
+    { v: 'receita_semanal', l: 'Receita semanal' },
     { v: 'receita_mensal', l: 'Receita mensal' },
     { v: 'receita_anual', l: 'Receita anual' },
+    { v: 'despesa_max_semanal', l: 'Teto despesa semanal' },
     { v: 'despesa_max_mensal', l: 'Teto despesa mensal' },
+    { v: 'despesa_max_anual', l: 'Teto despesa anual' },
     { v: 'saldo_minimo', l: 'Saldo mínimo' },
     { v: 'pct_categoria', l: '% por categoria' },
     { v: 'meta_centro_custo', l: 'Meta centro de custo' },
@@ -1509,10 +1959,1641 @@ function MetaForm({ inicial, onCancel, onSave }) {
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <Button size="sm" variant="outline" onClick={onCancel}>Cancelar</Button>
-        <Button size="sm" onClick={() => onSave({ ...form, valor: Number(form.valor) })}>
+        <Button size="sm" onClick={() => onSave({ ...form, valor: Number(form.valor), periodicidade: periodicidadeDoTipo(form.tipo) })}>
           {form.id ? 'Salvar' : 'Criar meta'}
         </Button>
       </div>
     </motion.div>
+  );
+}
+
+// ============================================================
+// NOVO · Freq × Arrecadação SEMANAL com click-to-select cards
+// ============================================================
+function FreqVsArrecadacaoSemanal() {
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedIdx, setSelectedIdx] = useState(null);
+  const [semanasJanela, setSemanasJanela] = useState(20);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.freqArrecadacaoSemanal(semanasJanela)
+      .then((r) => {
+        if (cancelled) return;
+        setDados(r);
+        // Seleciona última por padrão
+        const arr = r?.semanas || [];
+        setSelectedIdx(arr.length > 0 ? arr.length - 1 : null);
+      })
+      .catch((e) => console.warn('[FreqArrec] erro:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [semanasJanela]);
+
+  const semanas = dados?.semanas || [];
+  const formatado = useMemo(() => semanas.map((s, i) => ({
+    idx: i,
+    label: s.semana_label || s.semana_inicio?.slice(5) || `S${i}`,
+    semana_inicio: s.semana_inicio,
+    Receita: Number(s.receita || 0),
+    Presença: Number(s.presencial || 0),
+    'Ticket médio': Number(s.ticket_medio_presencial || 0),
+    Decisões: Number(s.decisoes || 0),
+    receita: Number(s.receita || 0),
+    presencial: Number(s.presencial || 0),
+    online: Number(s.online || 0),
+    ticket: Number(s.ticket_medio_presencial || 0),
+    decisoes: Number(s.decisoes || 0),
+    qtd_cultos: Number(s.qtd_cultos || 0),
+    resultado: Number(s.resultado || 0),
+    despesa: Number(s.despesa || 0),
+  })), [semanas]);
+
+  const sel = selectedIdx !== null ? formatado[selectedIdx] : null;
+  const semAnterior = selectedIdx !== null && selectedIdx > 0 ? formatado[selectedIdx - 1] : null;
+
+  const dRec = sel && semAnterior && semAnterior.receita > 0
+    ? ((sel.receita - semAnterior.receita) / semAnterior.receita) * 100
+    : null;
+  const dFreq = sel && semAnterior && semAnterior.presencial > 0
+    ? ((sel.presencial - semAnterior.presencial) / semAnterior.presencial) * 100
+    : null;
+  const dTicket = sel && semAnterior && semAnterior.ticket > 0
+    ? ((sel.ticket - semAnterior.ticket) / semAnterior.ticket) * 100
+    : null;
+
+  const onBarClick = (data) => {
+    if (data && data.activePayload?.[0]) {
+      const payload = data.activePayload[0].payload;
+      if (typeof payload.idx === 'number') setSelectedIdx(payload.idx);
+    }
+  };
+
+  const temDados = semanas.some(s => Number(s.receita || 0) > 0 || Number(s.presencial || 0) > 0);
+
+  return (
+    <Card className="overflow-hidden">
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Frequência × Arrecadação semanal
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique numa semana
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Semanas seg–dom · empréstimos excluídos · cards abaixo refletem a semana selecionada
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {[12, 20, 52].map(n => (
+              <button
+                key={n}
+                onClick={() => setSemanasJanela(n)}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
+                  semanasJanela === n
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+              >
+                {n}sem
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : !temDados ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">
+            Sem dados semanais · importe lançamentos pra ver
+          </div>
+        ) : (
+          <>
+            <div style={{ width: '100%', height: 360 }} className="mt-3">
+              <ResponsiveContainer>
+                <ComposedChart data={formatado} onClick={onBarClick} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradReceitaSem" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.primary} stopOpacity={0.95} />
+                      <stop offset="100%" stopColor={C.primary} stopOpacity={0.45} />
+                    </linearGradient>
+                    <linearGradient id="gradReceitaSel" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.amber} stopOpacity={1} />
+                      <stop offset="100%" stopColor={C.amber} stopOpacity={0.55} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} angle={-22} textAnchor="end" height={50} interval="preserveStartEnd" />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtInt(v)} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                    contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
+                    formatter={(v, n) => {
+                      if (n === 'Presença' || n === 'Decisões') return [fmtInt(v), n];
+                      return [fmtMoney(v), n];
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="Receita"
+                    fill={C.primary}
+                    radius={[6, 6, 0, 0]}
+                    animationDuration={1400}
+                    cursor="pointer"
+                  >
+                    {formatado.map((entry, i) => (
+                      <Cell
+                        key={i}
+                        fill={i === selectedIdx ? 'url(#gradReceitaSel)' : 'url(#gradReceitaSem)'}
+                        stroke={i === selectedIdx ? C.amber : 'transparent'}
+                        strokeWidth={i === selectedIdx ? 2 : 0}
+                      />
+                    ))}
+                  </Bar>
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="Presença"
+                    stroke={C.blue}
+                    strokeWidth={2.5}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 6, stroke: C.blue, strokeWidth: 2, fill: '#fff' }}
+                    animationDuration={1700}
+                  />
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="Ticket médio"
+                    stroke={C.purple}
+                    strokeDasharray="5 5"
+                    strokeWidth={2}
+                    dot={false}
+                    animationDuration={2000}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* CARDS interativos · refletem a semana selecionada */}
+            <AnimatePresence mode="wait">
+              {sel && (
+                <motion.div
+                  key={`sel-${sel.idx}`}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4, ease: 'easeOut' }}
+                  className="mt-5 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <div className="text-xs text-muted-foreground">
+                      Semana selecionada
+                    </div>
+                    <div className="text-sm font-semibold flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 tabular-nums">
+                        {sel.label}
+                      </span>
+                      <span className="text-muted-foreground text-xs tabular-nums">
+                        {sel.semana_inicio}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <SemanaCard
+                      label="Arrecadação"
+                      icon={Banknote}
+                      accent={C.green}
+                      valor={fmtMoney(sel.receita)}
+                      delta={dRec}
+                      sub={`vs anterior · ${sel.qtd_cultos} culto(s)`}
+                      anim={`r-${sel.idx}`}
+                    />
+                    <SemanaCard
+                      label="Presença total"
+                      icon={Users}
+                      accent={C.blue}
+                      valor={`${fmtInt(sel.presencial + sel.online)}`}
+                      delta={dFreq}
+                      sub={`${fmtInt(sel.presencial)} presencial · ${fmtInt(sel.online)} online`}
+                      anim={`p-${sel.idx}`}
+                    />
+                    <SemanaCard
+                      label="Ticket médio"
+                      icon={Sparkles}
+                      accent={C.purple}
+                      valor={fmtMoney(sel.ticket)}
+                      delta={dTicket}
+                      sub="R$ por presencial"
+                      anim={`t-${sel.idx}`}
+                    />
+                    <SemanaCard
+                      label="Decisões"
+                      icon={Award}
+                      accent={C.pink}
+                      valor={fmtInt(sel.decisoes)}
+                      delta={null}
+                      sub="presencial + online + kids"
+                      anim={`d-${sel.idx}`}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SemanaCard({ label, icon: Icon, accent, valor, delta, sub, anim }) {
+  let DeltaIcon = Minus, deltaColor = 'text-muted-foreground';
+  if (delta !== null && delta !== undefined && Number.isFinite(delta)) {
+    if (Math.abs(delta) < 1) { DeltaIcon = Minus; deltaColor = 'text-muted-foreground'; }
+    else if (delta > 0) { DeltaIcon = ArrowUp; deltaColor = 'text-emerald-600'; }
+    else { DeltaIcon = ArrowDown; deltaColor = 'text-rose-600'; }
+  }
+  return (
+    <motion.div
+      key={anim}
+      initial={{ opacity: 0, scale: 0.92, y: 12 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ duration: 0.45, ease: 'easeOut' }}
+      className="relative overflow-hidden rounded-xl border border-border bg-card p-3"
+    >
+      <div className="absolute top-0 left-0 right-0 h-1" style={{ background: accent }} />
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{label}</span>
+        <div
+          className="h-7 w-7 rounded-lg flex items-center justify-center"
+          style={{ background: `${accent}1f`, color: accent }}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+      </div>
+      <div className="text-xl md:text-2xl font-bold tabular-nums leading-tight" style={{ color: accent }}>
+        {valor}
+      </div>
+      <div className="flex items-center justify-between mt-1">
+        {delta !== null && delta !== undefined && Number.isFinite(delta) ? (
+          <div className={`text-[11px] font-semibold flex items-center ${deltaColor} tabular-nums`}>
+            <DeltaIcon className="h-3 w-3 mr-0.5" />
+            {Math.abs(delta).toFixed(1)}%
+          </div>
+        ) : <div />}
+        <div className="text-[10px] text-muted-foreground truncate">{sub}</div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// NOVO · Metas Financeiras com filtros (Ano / Mês / Semana / Por meta)
+// ============================================================
+function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
+  const [metas, setMetas] = useState(metasIniciais || []);
+  const [editing, setEditing] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [progresso, setProgresso] = useState({});
+  const [loadingProg, setLoadingProg] = useState(false);
+
+  // Filtros globais (afetam todas as metas que tiverem "global")
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const semanasOpcoes = useMemo(() => gerarSemanasIso(52), []);
+
+  const [filtroAno, setFiltroAno] = useState(anoAtual);
+  const [filtroMes, setFiltroMes] = useState(''); // '' = todos / 1-12
+  const [filtroSemana, setFiltroSemana] = useState(''); // '' = nenhuma / YYYY-MM-DD da quarta
+  // metaId -> { ano?, mês?, semana_inicio? } · override individual por meta
+  const [perMetaPeriod, setPerMetaPeriod] = useState({});
+  const [filtroTipo, setFiltroTipo] = useState('todos'); // 'todos' | 'receita' | 'despesa' | 'saldo'
+
+  useEffect(() => { setMetas(metasIniciais || []); }, [metasIniciais]);
+
+  // Carrega progresso por meta · usa filtro global como default · só pra metas SEM override
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingProg(true);
+    // Sem mês/semana selecionados, NÃO força o ano inteiro · cada meta usa seu
+    // período natural (semanal=esta semana · mensal=este mês · anual=este ano).
+    // Evita agregar o ano todo numa meta semanal/mensal e evita o range anual
+    // que deixava os gauges presos em "Calculando..." no carregamento inicial.
+    const params = {};
+    if (filtroSemana) params.semana_inicio = filtroSemana;
+    else if (filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+    else if (filtroAno !== anoAtual) params.ano = filtroAno;
+
+    financeiroV2.metas.progresso(params)
+      .then(r => {
+        if (cancelled) return;
+        setProgresso(prev => {
+          const next = { ...prev };
+          (r?.metas || []).forEach(m => {
+            // Só atualiza se NÃO tem override individual (per-meta vence)
+            if (!perMetaPeriod[m.meta_id]) next[m.meta_id] = m;
+          });
+          return next;
+        });
+      })
+      .catch(e => console.warn('[Metas progresso]:', e?.message))
+      .finally(() => !cancelled && setLoadingProg(false));
+    return () => { cancelled = true; };
+    // perMetaPeriod fora das deps de propósito · só recarrega no filtro global
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtroAno, filtroMes, filtroSemana, metas]);
+
+  // Refetch individual quando uma meta muda seu período
+  const handlePeriodChange = async (metaId, period) => {
+    setPerMetaPeriod(prev => {
+      const next = { ...prev };
+      if (period === null) delete next[metaId];
+      else next[metaId] = period;
+      return next;
+    });
+
+    if (period === null) {
+      // Volta ao default · recarrega via global (mesmo critério do load inicial)
+      const params = { meta_id: metaId };
+      if (filtroSemana) params.semana_inicio = filtroSemana;
+      else if (filtroMes) { params.ano = filtroAno; params.mes = filtroMes; }
+      else if (filtroAno !== anoAtual) params.ano = filtroAno;
+      try {
+        const r = await financeiroV2.metas.progresso(params);
+        const item = (r?.metas || []).find(m => m.meta_id === metaId);
+        if (item) setProgresso(prev => ({ ...prev, [metaId]: item }));
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    const params = { meta_id: metaId };
+    if (period.semana_inicio) params.semana_inicio = period.semana_inicio;
+    else if (period.ano && period.mes) { params.ano = period.ano; params.mes = period.mes; }
+    else if (period.ano) params.ano = period.ano;
+
+    try {
+      const r = await financeiroV2.metas.progresso(params);
+      const item = (r?.metas || []).find(m => m.meta_id === metaId);
+      if (item) setProgresso(prev => ({ ...prev, [metaId]: item }));
+    } catch (e) {
+      console.warn('[Meta period change]:', e?.message);
+    }
+  };
+
+  const salvar = async (payload) => {
+    try {
+      if (payload.id) await financeiroV2.metas.update(payload.id, payload);
+      else await financeiroV2.metas.create(payload);
+      setEditing(null);
+      setShowForm(false);
+      onMetasChange?.();
+    } catch (e) { alert(`Erro: ${e.message}`); }
+  };
+
+  const remover = async (id) => {
+    if (!confirm('Remover esta meta?')) return;
+    await financeiroV2.metas.remove(id);
+    onMetasChange?.();
+  };
+
+  const metasFiltradas = useMemo(() => {
+    return metas.filter(m => {
+      if (filtroTipo === 'todos') return true;
+      if (filtroTipo === 'receita') return m.tipo?.startsWith('receita_');
+      if (filtroTipo === 'despesa') return m.tipo?.startsWith('despesa_');
+      if (filtroTipo === 'saldo') return m.tipo === 'saldo_minimo';
+      return true;
+    });
+  }, [metas, filtroTipo]);
+
+  // Resumo geral
+  const totalNoAlvo = metasFiltradas.filter(m => {
+    const p = progresso[m.id];
+    if (!p) return false;
+    const isInverso = m.tipo?.startsWith('despesa_');
+    return isInverso ? p.pct <= 100 : p.pct >= 100;
+  }).length;
+  const totalAtras = metasFiltradas.length - totalNoAlvo;
+
+  return (
+    <>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div>
+              <h3 className="text-base font-semibold flex items-center gap-2">
+                <Award className="h-4 w-4 text-amber-500" />
+                Metas Financeiras
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {metasFiltradas.length} meta(s) · {totalNoAlvo} no alvo · {totalAtras} fora do alvo
+                {loadingProg && <Loader2 className="inline h-3 w-3 ml-2 animate-spin" />}
+              </p>
+            </div>
+            <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }}>
+              + Nova meta
+            </Button>
+          </div>
+
+          {/* FILTROS */}
+          <div className="bg-muted/40 rounded-xl p-3 mb-4 grid grid-cols-1 md:grid-cols-5 gap-2">
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Ano</label>
+              <select
+                value={filtroAno}
+                onChange={(e) => { setFiltroAno(Number(e.target.value)); setFiltroSemana(''); }}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                {[anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3, anoAtual - 4].map(a => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Mês</label>
+              <select
+                value={filtroMes}
+                onChange={(e) => { setFiltroMes(e.target.value); setFiltroSemana(''); }}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                <option value="">Todos</option>
+                {['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'].map((m,i)=>(
+                  <option key={i+1} value={i+1}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (seg–dom)</label>
+              <select
+                value={filtroSemana}
+                onChange={(e) => setFiltroSemana(e.target.value)}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                <option value="">Usar ano/mês acima</option>
+                {semanasOpcoes
+                  .filter(s => s.ano === filtroAno || filtroAno === anoAtual)
+                  .slice(0, 30)
+                  .map(s => (
+                    <option key={s.ref} value={s.ref}>{s.labelCurto} · {s.label.replace(' (atual)', '')}</option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Tipo</label>
+              <select
+                value={filtroTipo}
+                onChange={(e) => setFiltroTipo(e.target.value)}
+                className="w-full px-2 py-1.5 text-sm rounded-md border border-border bg-background"
+              >
+                <option value="todos">Todos</option>
+                <option value="receita">Receita</option>
+                <option value="despesa">Despesa</option>
+                <option value="saldo">Saldo</option>
+              </select>
+            </div>
+          </div>
+
+          {(filtroAno !== anoAtual || filtroMes || filtroSemana || filtroTipo !== 'todos') && (
+            <div className="flex items-center gap-2 mb-3 text-[11px]">
+              <Filter className="h-3 w-3 text-muted-foreground" />
+              <span className="text-muted-foreground">Filtros ativos</span>
+              <button
+                onClick={() => { setFiltroAno(anoAtual); setFiltroMes(''); setFiltroSemana(''); setFiltroTipo('todos'); }}
+                className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-foreground flex items-center gap-1"
+              >
+                <X className="h-3 w-3" /> Limpar
+              </button>
+            </div>
+          )}
+
+          {metasFiltradas.length === 0 ? (
+            <div className="py-12 text-center">
+              <Target className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+              <p className="text-sm text-muted-foreground">Nenhuma meta nesta visão</p>
+              <Button size="sm" className="mt-3" onClick={() => { setEditing(null); setShowForm(true); }}>
+                + Criar nova meta
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {metasFiltradas.map((m, i) => (
+                <MetaCardFiltrado
+                  key={m.id}
+                  meta={m}
+                  idx={i}
+                  prog={progresso[m.id]}
+                  periodOverride={perMetaPeriod[m.id]}
+                  semanasOpcoes={semanasOpcoes}
+                  anoAtual={anoAtual}
+                  onPeriodChange={(p) => handlePeriodChange(m.id, p)}
+                  onEdit={() => { setEditing(m); setShowForm(true); }}
+                  onDelete={() => remover(m.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {showForm && (
+            <MetaForm
+              inicial={editing || {}}
+              onCancel={() => { setEditing(null); setShowForm(false); }}
+              onSave={salvar}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+// Seletor contextual de período por meta · varia conforme periodicidade
+function MetaPeriodoSeletor({ meta, periodicidade, periodOverride, semanasOpcoes, anoAtual, prog, cor, onPeriodChange }) {
+  const MESES_LBL = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const temOverride = !!periodOverride;
+
+  // Valor mostrado no select · derivado do override OU do que o backend calculou
+  let valorAtual = '';
+  if (periodicidade === 'semanal') {
+    valorAtual = periodOverride?.semana_inicio || prog?.periodo_inicio || '';
+  } else if (periodicidade === 'mensal') {
+    if (periodOverride?.ano && periodOverride?.mes) {
+      valorAtual = `${periodOverride.ano}-${String(periodOverride.mes).padStart(2, '0')}`;
+    } else if (prog?.periodo_inicio) {
+      valorAtual = prog.periodo_inicio.slice(0, 7);
+    }
+  } else if (periodicidade === 'anual') {
+    valorAtual = String(periodOverride?.ano || prog?.periodo_inicio?.slice(0, 4) || anoAtual);
+  }
+
+  const handle = (v) => {
+    if (!v) return onPeriodChange(null);
+    if (periodicidade === 'semanal') {
+      onPeriodChange({ semana_inicio: v });
+    } else if (periodicidade === 'mensal') {
+      const [a, m] = v.split('-');
+      onPeriodChange({ ano: Number(a), mes: Number(m) });
+    } else if (periodicidade === 'anual') {
+      onPeriodChange({ ano: Number(v) });
+    }
+  };
+
+  // Gera opções de meses (12 últimos)
+  const mesesOpcoes = [];
+  const hoje = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    const a = d.getFullYear();
+    const m = d.getMonth() + 1;
+    mesesOpcoes.push({
+      value: `${a}-${String(m).padStart(2, '0')}`,
+      label: `${MESES_LBL[m - 1]}/${String(a).slice(2)}${i === 0 ? ' (atual)' : ''}`,
+    });
+  }
+
+  const anosOpcoes = [anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3];
+
+  return (
+    <div className="mb-3 -mt-1">
+      <div className="flex items-center gap-1.5">
+        <select
+          value={valorAtual}
+          onChange={(e) => handle(e.target.value)}
+          className="flex-1 px-2 py-1 text-[11px] rounded-md border border-border bg-background hover:border-primary/40 transition"
+          style={temOverride ? { borderColor: cor, color: cor } : {}}
+        >
+          {periodicidade === 'semanal' && (
+            <>
+              {semanasOpcoes.slice(0, 16).map(s => (
+                <option key={s.ref} value={s.ref}>
+                  {s.label}
+                </option>
+              ))}
+            </>
+          )}
+          {periodicidade === 'mensal' && (
+            mesesOpcoes.map(o => <option key={o.value} value={o.value}>{o.label}</option>)
+          )}
+          {periodicidade === 'anual' && (
+            anosOpcoes.map(a => <option key={a} value={a}>{a}{a === anoAtual ? ' (atual)' : ''}</option>)
+          )}
+        </select>
+        {temOverride && (
+          <button
+            onClick={() => onPeriodChange(null)}
+            className="px-1.5 py-1 text-[10px] rounded-md border border-border hover:bg-muted text-muted-foreground transition shrink-0"
+            title="Voltar ao período natural"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MetaCardFiltrado({ meta, idx, prog, periodOverride, semanasOpcoes, anoAtual, onPeriodChange, onEdit, onDelete }) {
+  const atual = Number(prog?.valor_atual || 0);
+  const valorMeta = Number(meta.valor) || 1;
+  const isInverso = meta.tipo?.startsWith('despesa_');
+  const pct = Math.min(200, Math.round((atual / valorMeta) * 100));
+  const cor = isInverso
+    ? (pct <= 80 ? C.green : pct <= 100 ? C.amber : C.red)
+    : (pct >= 100 ? C.green : pct >= 70 ? C.amber : C.red);
+
+  const tipoLabel = TIPO_META_LABEL[meta.tipo] || meta.tipo;
+  const periodicidade = meta.periodicidade || periodicidadeDoTipo(meta.tipo);
+  const tipoGrafico = meta.tipo_grafico || 'gauge';
+  const semDado = !prog;
+  const temOverride = !!periodOverride;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: idx * 0.04, ease: 'easeOut' }}
+    >
+      <Card className={`relative overflow-hidden ${!meta.ativa ? 'opacity-60' : ''}`}>
+        <div className="absolute top-0 left-0 right-0 h-1" style={{ background: cor }} />
+        <CardContent className="pt-5 pb-4">
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap gap-1 mb-1">
+                <Badge variant="outline" className="text-[10px]">{tipoLabel}</Badge>
+                <Badge variant="outline" className="text-[10px] capitalize" style={{ borderColor: cor, color: cor }}>
+                  {periodicidade}
+                </Badge>
+              </div>
+              <h4 className="text-sm font-semibold leading-tight truncate" title={meta.descricao || tipoLabel}>
+                {meta.descricao || tipoLabel}
+              </h4>
+              {(meta.plano || meta.centro) && (
+                <div className="text-[10px] text-muted-foreground mt-1 truncate">
+                  {meta.plano && `${meta.plano.codigo} ${meta.plano.nome}`}
+                  {meta.centro && ` · ${meta.centro.codigo} ${meta.centro.nome}`}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-0.5 shrink-0">
+              <button onClick={onEdit} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition" title="Editar">
+                <FileText className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={onDelete} className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition" title="Remover">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Seletor de período · contextual por periodicidade */}
+          <MetaPeriodoSeletor
+            meta={meta}
+            periodicidade={periodicidade}
+            periodOverride={periodOverride}
+            semanasOpcoes={semanasOpcoes}
+            anoAtual={anoAtual}
+            prog={prog}
+            cor={cor}
+            onPeriodChange={onPeriodChange}
+          />
+
+          {semDado ? (
+            <div className="py-8 text-center text-xs text-muted-foreground">
+              {prog === undefined ? 'Calculando...' : 'Sem dado no período'}
+            </div>
+          ) : tipoGrafico === 'gauge' ? (
+            <div className="-mt-2">
+              <MetaGauge
+                atual={atual}
+                meta={valorMeta}
+                anim={`${meta.id}-${atual}-${prog?.periodo_inicio || 'x'}`}
+                size={200}
+                label={`${pct}% ${isInverso ? 'consumido' : 'atingido'}`}
+                showLabels={false}
+              />
+              <div className="text-center text-[11px] text-muted-foreground -mt-2">
+                <span className="tabular-nums font-medium" style={{ color: cor }}>{fmtCompact(atual)}</span>
+                <span className="mx-1">de</span>
+                <span className="tabular-nums">{fmtCompact(valorMeta)}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <motion.div
+                  key={`val-${meta.id}-${atual}`}
+                  initial={{ scale: 0.85, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ duration: 0.4 }}
+                  className="text-2xl font-bold tabular-nums"
+                  style={{ color: cor }}
+                >
+                  <CountUp value={atual} format={fmtCompact} />
+                </motion.div>
+                <div className="text-xs text-muted-foreground tabular-nums">
+                  / {fmtCompact(valorMeta)}
+                </div>
+              </div>
+              <div className="h-3 rounded-full bg-muted overflow-hidden">
+                <motion.div
+                  key={`bar-${meta.id}-${pct}`}
+                  className="h-full rounded-full"
+                  style={{ background: cor }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.min(100, pct)}%` }}
+                  transition={{ duration: 1.0, ease: 'easeOut' }}
+                />
+              </div>
+              <div className="flex items-baseline justify-between text-[11px]">
+                <span className="font-semibold tabular-nums" style={{ color: cor }}>{pct}%</span>
+              </div>
+            </div>
+          )}
+
+          {prog?.periodo_inicio && prog?.periodo_fim && (
+            <div className="mt-3 pt-2 border-t border-border/50 text-[10px] text-muted-foreground text-center tabular-nums">
+              {prog.periodo_inicio.slice(5)} → {prog.periodo_fim.slice(5)}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// NOVO · Arrecadação anual (Tendências) · filtro de ano + click → cards
+// ============================================================
+function ArrecadacaoAnualChart() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedIdx, setSelectedIdx] = useState(null);
+  const [filtrosVersion, setFiltrosVersion] = useState(0);
+
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    const h = () => setFiltrosVersion(v => v + 1);
+    window.addEventListener('fin-filtros-changed', h);
+    return () => window.removeEventListener('fin-filtros-changed', h);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.arrecadacaoAnual(ano, lerFiltrosGlobais())
+      .then((r) => {
+        if (cancelled) return;
+        setDados(r);
+        const meses = r?.meses || [];
+        const ultimo = meses.reduceRight((acc, m, i) => acc !== null ? acc : (m.receita > 0 ? i : null), null);
+        setSelectedIdx(ultimo);
+      })
+      .catch((e) => console.warn('[ArrecAnual]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano, filtrosVersion]);
+
+  const meses = dados?.meses || [];
+  const total = dados?.total || 0;
+  const sel = selectedIdx !== null ? meses[selectedIdx] : null;
+  const ant = selectedIdx !== null && selectedIdx > 0 ? meses[selectedIdx - 1] : null;
+  const dRec = sel && ant && ant.receita > 0 ? ((sel.receita - ant.receita) / ant.receita) * 100 : null;
+
+  const onBarClick = (e) => {
+    if (e?.activePayload?.[0]?.payload) {
+      const p = e.activePayload[0].payload;
+      if (typeof p.idx === 'number') setSelectedIdx(p.idx);
+    }
+  };
+
+  const formatado = meses.map((m, i) => ({
+    idx: i,
+    label: m.mes_label,
+    Receita: m.receita,
+    Acumulado: m.acumulado,
+    qtd: m.qtd,
+  }));
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Arrecadação Anual · {ano}
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique num mês
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Total no ano: <strong>{fmtMoney(total)}</strong> · barras mensais + acumulado · empréstimos excluídos
+            </p>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {anos.map(a => (
+              <button
+                key={a}
+                onClick={() => setAno(a)}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
+                  ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+              >
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+        {loading ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : total === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano} · selecione outro ano</div>
+        ) : (
+          <>
+            <div style={{ width: '100%', height: 320 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={formatado} onClick={onBarClick} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradArrecAnual" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.primary} stopOpacity={0.9} />
+                      <stop offset="100%" stopColor={C.primary} stopOpacity={0.4} />
+                    </linearGradient>
+                    <linearGradient id="gradArrecAnualSel" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.amber} stopOpacity={1} />
+                      <stop offset="100%" stopColor={C.amber} stopOpacity={0.55} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.08)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  <Bar yAxisId="left" dataKey="Receita" fill={C.primary} radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
+                    {formatado.map((entry, i) => (
+                      <Cell key={i} fill={i === selectedIdx ? 'url(#gradArrecAnualSel)' : 'url(#gradArrecAnual)'} stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
+                    ))}
+                  </Bar>
+                  <Line yAxisId="right" type="monotone" dataKey="Acumulado" stroke={C.purple} strokeWidth={2.5} dot={{ r: 3 }} animationDuration={1500} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <AnimatePresence mode="wait">
+              {sel && (
+                <motion.div
+                  key={`anosel-${selectedIdx}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <span className="text-xs text-muted-foreground">Mês selecionado</span>
+                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      {sel.mes_label}/{String(ano).slice(2)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <SemanaCard label="Arrecadação do mês" icon={Banknote} accent={C.green} valor={fmtMoney(sel.receita)} delta={dRec} sub="vs mês anterior" anim={`r-${selectedIdx}`} />
+                    <SemanaCard label="Acumulado no ano" icon={TrendingUp} accent={C.purple} valor={fmtMoney(sel.acumulado)} delta={null} sub={`até ${sel.mes_label}`} anim={`a-${selectedIdx}`} />
+                    <SemanaCard label="Lançamentos" icon={FileText} accent={C.blue} valor={fmtInt(sel.qtd)} delta={null} sub="no mês" anim={`q-${selectedIdx}`} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+// NOVO · Receita vs Saída mensal (barras lado a lado · Performance)
+// ============================================================
+function ReceitaVsSaidaMensal() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedIdx, setSelectedIdx] = useState(null);
+  const [filtrosVersion, setFiltrosVersion] = useState(0);
+
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    const h = () => setFiltrosVersion(v => v + 1);
+    window.addEventListener('fin-filtros-changed', h);
+    return () => window.removeEventListener('fin-filtros-changed', h);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.arrecadacaoAnual(ano, lerFiltrosGlobais())
+      .then((r) => {
+        if (cancelled) return;
+        setDados(r);
+        const meses = r?.meses || [];
+        const ultimo = meses.reduceRight((acc, m, i) => acc !== null ? acc : ((m.receita > 0 || m.despesa > 0) ? i : null), null);
+        setSelectedIdx(ultimo);
+      })
+      .catch((e) => console.warn('[RecVsSai]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano, filtrosVersion]);
+
+  const meses = dados?.meses || [];
+  const sel = selectedIdx !== null ? meses[selectedIdx] : null;
+
+  const onBarClick = (e) => {
+    if (e?.activePayload?.[0]?.payload) {
+      const p = e.activePayload[0].payload;
+      if (typeof p.idx === 'number') setSelectedIdx(p.idx);
+    }
+  };
+
+  const formatado = meses.map((m, i) => ({
+    idx: i, label: m.mes_label,
+    Receita: m.receita, Despesa: m.despesa, Resultado: m.resultado,
+  }));
+
+  const totalReceita = meses.reduce((s, m) => s + m.receita, 0);
+  const totalDespesa = meses.reduce((s, m) => s + m.despesa, 0);
+  const resultadoAno = totalReceita - totalDespesa;
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              Receita × Saída mensal · {ano}
+              <Badge variant="outline" className="text-[10px] font-normal">
+                <MousePointer2 className="h-2.5 w-2.5 mr-1" />
+                clique num mês
+              </Badge>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Resultado do ano: <strong className={resultadoAno >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmtMoney(resultadoAno)}</strong>
+              · empréstimos e transferências excluídos
+            </p>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {anos.map(a => (
+              <button key={a} onClick={() => setAno(a)} className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+        {loading ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : meses.every(m => m.receita === 0 && m.despesa === 0) ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano}</div>
+        ) : (
+          <>
+            <div style={{ width: '100%', height: 340 }}>
+              <ResponsiveContainer>
+                <BarChart data={formatado} onClick={onBarClick} barGap={4} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradMesReceita" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.green} stopOpacity={0.95} />
+                      <stop offset="100%" stopColor={C.green} stopOpacity={0.5} />
+                    </linearGradient>
+                    <linearGradient id="gradMesDespesa" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.red} stopOpacity={0.95} />
+                      <stop offset="100%" stopColor={C.red} stopOpacity={0.5} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.06)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  <Bar dataKey="Receita" fill={C.green} radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
+                    {formatado.map((entry, i) => (
+                      <Cell key={i} fill="url(#gradMesReceita)" stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
+                    ))}
+                  </Bar>
+                  <Bar dataKey="Despesa" fill={C.red} radius={[6, 6, 0, 0]} animationDuration={1400} cursor="pointer">
+                    {formatado.map((entry, i) => (
+                      <Cell key={i} fill="url(#gradMesDespesa)" stroke={i === selectedIdx ? C.amber : 'transparent'} strokeWidth={i === selectedIdx ? 2 : 0} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <AnimatePresence mode="wait">
+              {sel && (
+                <motion.div
+                  key={`rvs-${selectedIdx}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <span className="text-xs text-muted-foreground">Mês selecionado</span>
+                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      {sel.mes_label}/{String(ano).slice(2)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <SemanaCard label="Arrecadação" icon={Banknote} accent={C.green} valor={fmtMoney(sel.receita)} delta={null} sub="no mês" anim={`r-${selectedIdx}`} />
+                    <SemanaCard label="Saídas" icon={TrendingDown} accent={C.red} valor={fmtMoney(sel.despesa)} delta={null} sub="no mês" anim={`d-${selectedIdx}`} />
+                    <SemanaCard label="Resultado" icon={Activity} accent={sel.resultado >= 0 ? C.green : C.red} valor={fmtMoney(sel.resultado)} delta={null} sub="receita − despesa" anim={`res-${selectedIdx}`} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================
+// TransacoesDrilldownDialog · modal compartilhado (categoria/despesa)
+// ============================================================
+function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C.primary, totalEsperado, fetcher }) {
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busca, setBusca] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setBusca('');
+    fetcher()
+      .then(r => { if (!cancelled) setDados(r); })
+      .catch(e => console.warn('[Drilldown]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  if (!open) return null;
+
+  const transacoes = (dados?.transacoes || []).filter(t => {
+    if (!busca) return true;
+    const q = busca.toLowerCase();
+    return (
+      String(t.referencia || '').toLowerCase().includes(q) ||
+      String(t.descricao || '').toLowerCase().includes(q) ||
+      String(t.plano_contas_nome || '').toLowerCase().includes(q)
+    );
+  });
+
+  const total = dados?.total || 0;
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-4xl max-h-[88vh] bg-card rounded-2xl shadow-2xl overflow-hidden border border-border flex flex-col"
+          >
+            <div className="relative px-6 py-4 border-b border-border" style={{ background: `linear-gradient(135deg, ${color}15, transparent)` }}>
+              <div className="absolute top-0 left-0 right-0 h-1" style={{ background: color }} />
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-bold truncate" style={{ color }}>{titulo}</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">{subtitulo}</p>
+                </div>
+                <button
+                  onClick={onClose}
+                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition shrink-0"
+                  aria-label="Fechar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-4 mt-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</div>
+                  <div className="text-xl font-bold tabular-nums" style={{ color }}>{fmtMoney(total)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Lançamentos</div>
+                  <div className="text-xl font-bold tabular-nums">{fmtInt(dados?.qtd || 0)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Média</div>
+                  <div className="text-xl font-bold tabular-nums">
+                    {fmtMoney(dados?.qtd ? total / dados.qtd : 0)}
+                  </div>
+                </div>
+              </div>
+              {totalEsperado != null && Math.abs(total - totalEsperado) > 0.5 && !loading && (
+                <div className="mt-2 text-[10px] text-amber-600 dark:text-amber-400">
+                  Total esperado: {fmtMoney(totalEsperado)} · diff {fmtMoney(total - totalEsperado)}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-3 border-b border-border bg-muted/30">
+              <input
+                type="text"
+                placeholder="Filtrar por nome, descrição, plano de contas..."
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {loading ? (
+                <div className="py-20 flex justify-center">
+                  <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                </div>
+              ) : transacoes.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  {busca ? 'Nenhum lançamento bate com a busca' : 'Sem lançamentos neste período'}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {transacoes.slice(0, 200).map((t, i) => (
+                    <motion.div
+                      key={t.id || i}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(i * 0.01, 0.5) }}
+                      className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-muted/50 transition border border-transparent hover:border-border"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium truncate">
+                            {t.referencia || t.descricao || '(sem nome)'}
+                          </span>
+                          {t.plano_contas_codigo && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground tabular-nums">
+                              {t.plano_contas_codigo}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate">
+                          {t.data_competencia} · {t.plano_contas_nome || t.descricao || '—'}
+                          {t.centro_custo_nome && ` · ${t.centro_custo_nome}`}
+                        </div>
+                      </div>
+                      <div className="text-sm font-semibold tabular-nums shrink-0" style={{ color }}>
+                        {fmtMoney(t.valor)}
+                      </div>
+                    </motion.div>
+                  ))}
+                  {transacoes.length > 200 && (
+                    <div className="text-[10px] text-muted-foreground text-center pt-3">
+                      Mostrando 200 de {fmtInt(transacoes.length)} · refine a busca pra ver mais
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ============================================================
+// FiltrosFinanceiroBar · filtros globais (Centro Custo + Plano Contas)
+// Persistidos em localStorage · disparam evento global pra reload
+// ============================================================
+function FiltrosFinanceiroBar() {
+  const [filtros, setFiltros] = useFiltrosGlobais();
+  const [opcoes, setOpcoes] = useState({ planos: [], centros: [] });
+  const [open, setOpen] = useState(false);
+  const [buscaCentro, setBuscaCentro] = useState('');
+  const [buscaPlano, setBuscaPlano] = useState('');
+
+  useEffect(() => {
+    financeiroV2.filtrosDisponiveis()
+      .then(setOpcoes)
+      .catch(() => {});
+  }, []);
+
+  const ativos = (filtros.centro_custo_id ? 1 : 0) + (filtros.plano_contas_id ? 1 : 0);
+  const centroSel = opcoes.centros.find(c => c.id === filtros.centro_custo_id);
+  const planoSel = opcoes.planos.find(p => p.id === filtros.plano_contas_id);
+
+  const setCentro = (id) => setFiltros({ ...filtros, centro_custo_id: id || null });
+  const setPlano = (id) => setFiltros({ ...filtros, plano_contas_id: id || null });
+  const limpar = () => setFiltros({});
+
+  const planosFiltrados = buscaPlano
+    ? opcoes.planos.filter(p =>
+        `${p.codigo} ${p.nome}`.toLowerCase().includes(buscaPlano.toLowerCase()))
+    : opcoes.planos.slice(0, 50);
+  const centrosFiltrados = buscaCentro
+    ? opcoes.centros.filter(c =>
+        `${c.codigo} ${c.nome}`.toLowerCase().includes(buscaCentro.toLowerCase()))
+    : opcoes.centros.slice(0, 50);
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-muted transition"
+      >
+        <Filter className="h-3.5 w-3.5" />
+        <span className="font-medium">Filtros globais</span>
+        {ativos > 0 && (
+          <span className="px-1.5 py-0.5 rounded bg-primary text-primary-foreground text-[10px] font-bold tabular-nums">
+            {ativos}
+          </span>
+        )}
+        {ativos === 0 && <span className="text-muted-foreground">· nenhum</span>}
+      </button>
+
+      {(ativos > 0 || open) && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="inline-flex items-center gap-2 ml-2 text-[11px]"
+        >
+          {centroSel && (
+            <span className="px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 inline-flex items-center gap-1">
+              <span className="font-mono">{centroSel.codigo}</span>
+              <span className="truncate max-w-[180px]">{centroSel.nome}</span>
+              <button onClick={() => setCentro(null)} className="hover:opacity-70"><X className="h-3 w-3" /></button>
+            </span>
+          )}
+          {planoSel && (
+            <span className="px-2 py-1 rounded-md bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 inline-flex items-center gap-1">
+              <span className="font-mono">{planoSel.codigo}</span>
+              <span className="truncate max-w-[180px]">{planoSel.nome}</span>
+              <button onClick={() => setPlano(null)} className="hover:opacity-70"><X className="h-3 w-3" /></button>
+            </span>
+          )}
+          {ativos > 0 && (
+            <button onClick={limpar} className="text-muted-foreground hover:text-foreground">
+              limpar tudo
+            </button>
+          )}
+        </motion.div>
+      )}
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 overflow-hidden"
+          >
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">
+                  Centro de Custo
+                </div>
+                <input
+                  type="text"
+                  placeholder="Buscar centro..."
+                  value={buscaCentro}
+                  onChange={(e) => setBuscaCentro(e.target.value)}
+                  className="w-full px-2 py-1 text-xs bg-background border border-border rounded-md mb-2"
+                />
+                <div className="max-h-48 overflow-y-auto space-y-0.5">
+                  {centrosFiltrados.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => { setCentro(c.id); setOpen(false); setBuscaCentro(''); }}
+                      className={`w-full text-left px-2 py-1 text-xs rounded hover:bg-muted transition ${
+                        filtros.centro_custo_id === c.id ? 'bg-primary/15 text-primary font-semibold' : ''
+                      }`}
+                    >
+                      <span className="font-mono mr-2 text-muted-foreground">{c.codigo}</span>
+                      {c.nome}
+                    </button>
+                  ))}
+                  {centrosFiltrados.length === 0 && (
+                    <div className="text-[11px] text-muted-foreground py-2 text-center">Nada encontrado</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">
+                  Plano de Contas
+                </div>
+                <input
+                  type="text"
+                  placeholder="Buscar plano..."
+                  value={buscaPlano}
+                  onChange={(e) => setBuscaPlano(e.target.value)}
+                  className="w-full px-2 py-1 text-xs bg-background border border-border rounded-md mb-2"
+                />
+                <div className="max-h-48 overflow-y-auto space-y-0.5">
+                  {planosFiltrados.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => { setPlano(p.id); setOpen(false); setBuscaPlano(''); }}
+                      className={`w-full text-left px-2 py-1 text-xs rounded hover:bg-muted transition ${
+                        filtros.plano_contas_id === p.id ? 'bg-primary/15 text-primary font-semibold' : ''
+                      }`}
+                    >
+                      <span className="font-mono mr-2 text-muted-foreground">{p.codigo}</span>
+                      {p.nome}
+                    </button>
+                  ))}
+                  {planosFiltrados.length === 0 && (
+                    <div className="text-[11px] text-muted-foreground py-2 text-center">Nada encontrado</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ============================================================
+// SlideSaudeFinanceira · resultado + folha + concentração doadores
+// ============================================================
+function SlideSaudeFinanceira() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showDoadores, setShowDoadores] = useState(false);
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.saudeFinanceira(ano)
+      .then(r => { if (!cancelled) setDados(r); })
+      .catch(e => console.warn('[Saude]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano]);
+
+  if (loading && !dados) {
+    return <div className="py-20 flex justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div>;
+  }
+  if (!dados) return <div className="py-12 text-center text-sm text-muted-foreground">Sem dados</div>;
+
+  const resMes = Number(dados.resultado_mes || 0);
+  const resYtd = Number(dados.resultado_ytd || 0);
+  const res12m = Number(dados.resultado_12m || 0);
+  const pctFolha = Number(dados.pct_folha || 0);
+  const top20 = Number(dados.concentracao_top20pct_pct || 0);
+  const top10 = Number(dados.concentracao_top10_pct || 0);
+  const mesesVermelho = Number(dados.meses_vermelho || 0);
+  const mesesDado = Number(dados.meses_com_dado || 0);
+
+  // Folha · faixa de saúde (verde ≤45 · âmbar ≤55 · vermelho >55)
+  const folhaCor = pctFolha <= 45 ? C.green : pctFolha <= 55 ? C.amber : C.red;
+  const folhaLabel = pctFolha <= 45 ? 'saudável' : pctFolha <= 55 ? 'atenção' : 'crítico';
+  // Concentração · verde <60 · âmbar <80 · vermelho ≥80
+  const concCor = top20 < 60 ? C.green : top20 < 80 ? C.amber : C.red;
+  const concLabel = top20 < 60 ? 'base diluída' : top20 < 80 ? 'concentração média' : 'concentração alta';
+
+  return (
+    <>
+      <Card className="relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-amber-500 to-rose-500" />
+        <CardContent className="pt-6">
+          <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
+            <div>
+              <h3 className="text-base font-semibold flex items-center gap-2">
+                <Activity className="h-4 w-4 text-primary" />
+                Saúde Financeira · {ano}
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Resultado operacional · comprometimento com folha · risco de concentração ·
+                empréstimos e transferências excluídos
+              </p>
+            </div>
+            <div className="flex gap-1 flex-wrap">
+              {anos.map(a => (
+                <button key={a} onClick={() => setAno(a)}
+                  className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                  {a}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Linha 1 · resultados */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <SaudeResultadoCard label="Resultado do mês" valor={resMes} sub={dados.mes_atual} />
+            <SaudeResultadoCard label="Resultado no ano (YTD)" valor={resYtd} sub={`receita − despesa · ${ano}`} destaque />
+            <SaudeResultadoCard label="Resultado 12 meses" valor={res12m} sub={`${mesesVermelho} de ${mesesDado} meses no vermelho`} />
+          </div>
+
+          {/* Linha 2 · folha + concentração */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Folha */}
+            <div className="rounded-xl border border-border p-4 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1" style={{ background: folhaCor }} />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Comprometimento com folha (RH)</span>
+                <Users className="h-4 w-4" style={{ color: folhaCor }} />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold tabular-nums" style={{ color: folhaCor }}>{pctFolha.toFixed(1)}%</span>
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: `${folhaCor}1f`, color: folhaCor }}>{folhaLabel}</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
+                <motion.div className="h-full rounded-full" style={{ background: folhaCor }}
+                  initial={{ width: 0 }} animate={{ width: `${Math.min(100, pctFolha)}%` }} transition={{ duration: 1 }} />
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-2 tabular-nums">
+                {fmtMoney(dados.folha_ytd)} de {fmtMoney(dados.receita_ytd)} · benchmark saudável ≤ 45%
+              </div>
+            </div>
+
+            {/* Concentração de doadores · clicável → abre lista completa */}
+            <button
+              type="button"
+              onClick={() => setShowDoadores(true)}
+              className="rounded-xl border border-border p-4 relative overflow-hidden text-left transition hover:border-primary/50 hover:shadow-md group"
+            >
+              <div className="absolute top-0 left-0 right-0 h-1" style={{ background: concCor }} />
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Concentração de doadores</span>
+                <Award className="h-4 w-4" style={{ color: concCor }} />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold tabular-nums" style={{ color: concCor }}>{top20.toFixed(0)}%</span>
+                <span className="text-xs text-muted-foreground">da arrecadação vem dos top 20% doadores</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
+                <motion.div className="h-full rounded-full" style={{ background: concCor }}
+                  initial={{ width: 0 }} animate={{ width: `${Math.min(100, top20)}%` }} transition={{ duration: 1 }} />
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-2 tabular-nums flex items-center justify-between gap-2">
+                <span>{fmtInt(dados.doadores_qtd)} doadores · top 10 pessoas = {top10.toFixed(1)}% · <span style={{ color: concCor }}>{concLabel}</span></span>
+                <span className="text-[10px] text-primary opacity-0 group-hover:opacity-100 transition">ver lista →</span>
+              </div>
+            </button>
+          </div>
+
+          <DoadoresListDialog open={showDoadores} onClose={() => setShowDoadores(false)} ano={ano} />
+
+          {resYtd < 0 && (
+            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30">
+              <TrendingDown className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+              <div className="text-xs text-rose-700 dark:text-rose-300">
+                <strong>Atenção:</strong> a igreja está operando com déficit de {fmtMoney(Math.abs(resYtd))} no ano —
+                gastando mais do que arrecada (excluindo empréstimos). Recomenda-se revisar despesas ou reforçar arrecadação.
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function SaudeResultadoCard({ label, valor, sub, destaque }) {
+  const positivo = valor >= 0;
+  const cor = positivo ? C.green : C.red;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
+      className={`rounded-xl border p-4 relative overflow-hidden ${destaque ? 'border-primary/40 bg-primary/5' : 'border-border'}`}
+    >
+      <div className="absolute top-0 left-0 right-0 h-1" style={{ background: cor }} />
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">{label}</div>
+      <div className="text-2xl font-bold tabular-nums flex items-center gap-1" style={{ color: cor }}>
+        {positivo ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+        {fmtMoney(Math.abs(valor))}
+      </div>
+      <div className="text-[11px] text-muted-foreground mt-1">{positivo ? 'superávit' : 'déficit'} · {sub}</div>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// SlideDizimoOferta · proporção dízimo/oferta mês a mês
+// ============================================================
+function SlideDizimoOferta() {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.dizimoOferta(ano)
+      .then(r => { if (!cancelled) setDados(r); })
+      .catch(e => console.warn('[DizOf]:', e?.message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [ano]);
+
+  const meses = dados?.meses || [];
+  const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const formatado = meses.map(m => ({
+    label: MESES[(m.mes_num || 1) - 1],
+    Dízimo: Number(m.dizimo || 0),
+    Oferta: Number(m.oferta || 0),
+    pct: Number(m.pct_dizimo || 0),
+  }));
+
+  const totalDiz = meses.reduce((s, m) => s + Number(m.dizimo || 0), 0);
+  const totalOf = meses.reduce((s, m) => s + Number(m.oferta || 0), 0);
+  const pctDizGeral = (totalDiz + totalOf) > 0 ? (totalDiz / (totalDiz + totalOf)) * 100 : 0;
+
+  return (
+    <Card className="relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 to-sky-500" />
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-primary" />
+              Dízimo × Oferta · {ano}
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Proporção da base de contribuição · dízimo é recorrente, oferta é eventual ·
+              ano: <strong>{pctDizGeral.toFixed(0)}% dízimo</strong> / {(100 - pctDizGeral).toFixed(0)}% oferta
+            </p>
+          </div>
+          <div className="flex gap-1 flex-wrap">
+            {anos.map(a => (
+              <button key={a} onClick={() => setAno(a)}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+        {loading && !dados ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : formatado.length === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano}</div>
+        ) : (
+          <div style={{ width: '100%', height: 340 }}>
+            <ResponsiveContainer>
+              <ComposedChart data={formatado} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradDiz" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.primary} stopOpacity={0.95} />
+                    <stop offset="100%" stopColor={C.primary} stopOpacity={0.55} />
+                  </linearGradient>
+                  <linearGradient id="gradOf" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.blue} stopOpacity={0.95} />
+                    <stop offset="100%" stopColor={C.blue} stopOpacity={0.55} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
+                <Tooltip
+                  formatter={(v, n) => n === '% dízimo' ? [`${Number(v).toFixed(1)}%`, n] : [fmtMoney(v), n]}
+                  contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
+                />
+                <Legend
+                  wrapperStyle={{ fontSize: 11 }}
+                  iconSize={10}
+                  payload={[
+                    { value: 'Dízimo', type: 'square', id: 'Dízimo', color: C.primary },
+                    { value: 'Oferta', type: 'square', id: 'Oferta', color: C.blue },
+                    { value: '% dízimo', type: 'line', id: 'pct', color: C.purple },
+                  ]}
+                />
+                <Bar yAxisId="left" dataKey="Dízimo" stackId="a" fill="url(#gradDiz)" radius={[0, 0, 0, 0]} animationDuration={1200} />
+                <Bar yAxisId="left" dataKey="Oferta" stackId="a" fill="url(#gradOf)" radius={[6, 6, 0, 0]} animationDuration={1300} />
+                <Line yAxisId="right" type="monotone" dataKey="pct" name="% dízimo" stroke={C.purple} strokeWidth={2.5} dot={{ r: 3 }} animationDuration={1600} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

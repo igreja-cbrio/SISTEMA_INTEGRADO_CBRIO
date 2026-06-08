@@ -1,9 +1,9 @@
 // Service de Emissao de Boletos via API Santander
 //
-// Produto · "Cobranca" (collection_bill_management). Endpoints variam por versao.
+// Produto · "Cobrança" (collection_bill_management). Endpoints variam por versão.
 // Override:
 //   SANTANDER_BOLETOS_BASE_PATH (default '/collection_bill_management/v2')
-//   SANTANDER_BOLETOS_WORKSPACE_ID  · ID do workspace de cobranca da igreja
+//   SANTANDER_BOLETOS_WORKSPACE_ID  · ID do workspace de cobrança da igreja
 //
 // Toggle: SANTANDER_BOLETOS_ENABLED=true
 
@@ -85,7 +85,7 @@ function getConfig() {
 }
 
 /**
- * Gera nosso_numero unico (max 13 digitos · padrao Santander).
+ * Gera nosso_numero único (max 13 digitos · padrão Santander).
  * Usa sequence Postgres.
  */
 async function gerarNossoNumero() {
@@ -104,7 +104,7 @@ async function gerarNossoNumero() {
  * @param {string} args.nossoNumero
  * @param {number} args.valor
  * @param {string} args.vencimento     · YYYY-MM-DD
- * @param {object} args.pagador        · { nome, documento, tipoDoc, email, telefone, endereco }
+ * @param {object} args.pagador        · { nome, documento, tipoDoc, email, telefone, endereço }
  * @param {string} [args.descricao]
  * @param {string} [args.instrucoes]
  * @param {object} [args.encargos]     · { multaPct, jurosPctDia, descontoValor, descontoDataLimite }
@@ -113,7 +113,7 @@ async function emitirBoleto({
   nossoNumero, valor, vencimento, pagador, descricao, instrucoes, encargos,
 }) {
   if (!ENABLED) throw new Error('Boletos desabilitado · setar SANTANDER_BOLETOS_ENABLED=true');
-  if (!WORKSPACE_ID) throw new Error('SANTANDER_BOLETOS_WORKSPACE_ID nao configurado');
+  if (!WORKSPACE_ID) throw new Error('SANTANDER_BOLETOS_WORKSPACE_ID não configurado');
   if (!nossoNumero) throw new Error('nossoNumero obrigatorio');
   if (!valor || valor <= 0) throw new Error('valor invalido');
   if (!vencimento) throw new Error('vencimento obrigatorio');
@@ -122,7 +122,7 @@ async function emitirBoleto({
   const docNorm = String(pagador.documento || '').replace(/\D/g, '');
   const tipoDoc = pagador.tipoDoc || (docNorm.length === 11 ? 'CPF' : 'CNPJ');
 
-  // Payload padrao Santander Collection v2
+  // Payload padrão Santander Collection v2
   const body = {
     nsuCode: nossoNumero,
     nsuDate: new Date().toISOString().slice(0, 10),
@@ -180,7 +180,7 @@ async function emitirBoleto({
 
 async function consultarBoleto(nossoNumero) {
   if (!ENABLED) throw new Error('Boletos desabilitado');
-  if (!WORKSPACE_ID) throw new Error('WORKSPACE_ID nao configurado');
+  if (!WORKSPACE_ID) throw new Error('WORKSPACE_ID não configurado');
   return tentarComPaths(base =>
     callApi(`${base}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips/${encodeURIComponent(nossoNumero)}`, {
       method: 'GET',
@@ -190,7 +190,7 @@ async function consultarBoleto(nossoNumero) {
 
 async function cancelarBoleto(nossoNumero) {
   if (!ENABLED) throw new Error('Boletos desabilitado');
-  if (!WORKSPACE_ID) throw new Error('WORKSPACE_ID nao configurado');
+  if (!WORKSPACE_ID) throw new Error('WORKSPACE_ID não configurado');
   return tentarComPaths(base =>
     callApi(`${base}/workspaces/${encodeURIComponent(WORKSPACE_ID)}/bank_slips/${encodeURIComponent(nossoNumero)}`, {
       method: 'PATCH',

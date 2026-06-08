@@ -2,23 +2,27 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../contexts/AuthContext';
-import { LoginShapesBackground } from '../components/ui/shape-landing-hero';
+import AnimatedBackground from './public/AnimatedBackground';
+import { PublicThemeToggle } from './public/publicTheme';
+import { useTheme } from '../contexts/ThemeContext';
 
-const COL = {
-  text: '#f5f5f5',
-  textMuted: '#a3a3a3',
-  textDim: '#737373',
-  border: 'rgba(255,255,255,0.18)',
-  borderFocus: '#00B39D',
-  cardBg: 'rgba(22,22,22,0.78)',
-  cardBorder: 'rgba(255,255,255,0.08)',
+const mkCOL = (isDark) => isDark ? {
+  text: '#f5f5f5', textMuted: '#a3a3a3', textDim: '#737373',
+  border: 'rgba(255,255,255,0.18)', borderFocus: '#00B39D',
+  cardBg: 'rgba(22,22,22,0.78)', cardBorder: 'rgba(255,255,255,0.08)', pageBg: '#0a0a0a',
+} : {
+  text: '#171717', textMuted: '#525252', textDim: '#737373',
+  border: 'rgba(0,0,0,0.18)', borderFocus: '#00B39D',
+  cardBg: 'rgba(255,255,255,0.92)', cardBorder: 'rgba(0,0,0,0.08)', pageBg: '#eef2f1',
 };
 
 export default function RedefinirSenha() {
+  const { isDark } = useTheme();
+  const COL = mkCOL(isDark);
   const navigate = useNavigate();
   const { updatePasswordOnly } = useAuth();
   // Quando o link do e-mail eh aberto, Supabase coloca tokens no hash da URL.
-  // O onAuthStateChange dispara PASSWORD_RECOVERY · ai a sessao ja estah valida.
+  // O onAuthStateChange dispara PASSWORD_RECOVERY · ai a sessão já estah valida.
   const [pronto, setPronto] = useState(false);
   const [erroSessao, setErroSessao] = useState('');
 
@@ -31,10 +35,10 @@ export default function RedefinirSenha() {
 
   useEffect(() => {
     if (!supabase) {
-      setErroSessao('Sistema de autenticacao indisponivel.');
+      setErroSessao('Sistema de autenticação indisponível.');
       return;
     }
-    // Se ja tem sessao (Supabase parseou o hash), libera direto
+    // Se já tem sessão (Supabase parseou o hash), libera direto
     supabase.auth.getSession().then(({ data }) => {
       if (data?.session) setPronto(true);
     });
@@ -56,7 +60,7 @@ export default function RedefinirSenha() {
     e.preventDefault();
     setErro('');
     if (senha.length < 6) return setErro('A senha precisa ter pelo menos 6 caracteres.');
-    if (senha !== confirma) return setErro('As senhas nao conferem.');
+    if (senha !== confirma) return setErro('As senhas não conferem.');
     setLoading(true);
     const { error } = await updatePasswordOnly(senha);
     setLoading(false);
@@ -66,8 +70,9 @@ export default function RedefinirSenha() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: '#0a0a0a' }}>
-      <LoginShapesBackground />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: COL.pageBg }}>
+      <AnimatedBackground />
+      <PublicThemeToggle />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 420, margin: '0 16px',
@@ -76,7 +81,7 @@ export default function RedefinirSenha() {
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 64, height: 64, marginBottom: 12 }} />
-          <h1 style={{ fontSize: 20, fontWeight: 800, color: COL.text, margin: 0 }}>Criar nova senha</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, margin: 0, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Criar nova senha</h1>
           <p style={{ fontSize: 13, color: COL.textDim, marginTop: 4 }}>
             Defina uma senha forte que voce vai lembrar
           </p>

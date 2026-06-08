@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { next as nextApi } from '../../api';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
+import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 // ── Helpers de mascara ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -47,7 +48,7 @@ function Field({
   maxLength?: number; autoComplete?: string; inputMode?: any;
 }) {
   const [focused, setFocused] = useState(false);
-  const active = focused || (value !== undefined && value !== null && String(value).length > 0);
+  const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag: any = as;
   return (
     <div style={{ position: 'relative', marginBottom: 20 }}>
@@ -125,7 +126,7 @@ function SelectField({
       >
         <option value=""></option>
         {options.map((o) => (
-          <option key={o.value} value={o.value} style={{ background: '#161616', color: '#e5e5e5' }}>
+          <option key={o.value} value={o.value} style={{ background: C.optionBg, color: C.text }}>
             {o.label}
           </option>
         ))}
@@ -171,6 +172,7 @@ function Row({ children }: { children: React.ReactNode }) {
 type Evento = { id: string; data: string; titulo?: string };
 
 export default function InscricaoNext() {
+  const { C } = usePublicTheme();
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [form, setForm] = useState({
     evento_id: '',
@@ -221,7 +223,7 @@ export default function InscricaoNext() {
       });
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || 'Erro ao enviar inscricao');
+      setError(err?.message || 'Erro ao enviar inscrição');
     }
     setLoading(false);
   };
@@ -237,15 +239,16 @@ export default function InscricaoNext() {
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
-      padding: '40px 16px', background: '#0a0a0a',
+      padding: '40px 16px', background: C.pageBg,
     }}>
-      <LoginShapesBackground />
+      <AnimatedBackground />
+      <PublicThemeToggle />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
-        background: 'rgba(22,22,22,0.78)', backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20,
-        padding: '40px 36px',
+        background: C.card, backdropFilter: 'blur(24px)',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 20,
+        padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img
@@ -253,8 +256,8 @@ export default function InscricaoNext() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>Inscricao no NEXT</h1>
-          <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 6, lineHeight: 1.5 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Inscrição no NEXT</h1>
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             O NEXT e a porta de entrada da CBRio — onde voce conhece nossa cultura,
             como funciona cada area e descobre os proximos passos.
           </p>
@@ -271,10 +274,10 @@ export default function InscricaoNext() {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e5e5e5', margin: 0 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
               Inscricao confirmada!
             </h2>
-            <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 10, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
               Voce esta inscrito(a) no NEXT. Em breve nossa equipe entrara em contato com mais detalhes.
               Nos vemos no domingo!
             </p>
@@ -303,7 +306,7 @@ export default function InscricaoNext() {
                   <SectionTitle>Evento</SectionTitle>
                   <SelectField
                     id="evento_id"
-                    label="Em qual domingo voce vai participar?"
+                    label="Em qual domingo você vai participar?"
                     value={form.evento_id}
                     onChange={set('evento_id') as any}
                     options={eventoOptions}
@@ -324,7 +327,7 @@ export default function InscricaoNext() {
               </Row>
               <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
 
-              <SectionTitle>Observacoes</SectionTitle>
+              <SectionTitle>Observações</SectionTitle>
               <Field
                 id="observacoes"
                 label="Quer compartilhar algo com a gente?"
@@ -350,7 +353,7 @@ export default function InscricaoNext() {
               </button>
 
               <p style={{
-                fontSize: 11, color: '#737373', textAlign: 'center', marginTop: 16, lineHeight: 1.5,
+                fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
                 Ao se inscrever, voce concorda em receber contato da equipe da CBRio sobre o NEXT.
               </p>

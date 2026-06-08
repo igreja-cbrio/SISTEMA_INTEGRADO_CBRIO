@@ -1,6 +1,6 @@
 // MembersJornadaPanel - subview embutida em /ministerial/membresia (tab Jornada).
-// Antes vivia em /ministerial/jornada como pagina propria. Movido para evitar
-// duplicacao de "lista de membros" e centralizar gestao em Membresia.
+// Antes vivia em /ministerial/jornada como página própria. Movido para evitar
+// duplicacao de "lista de membros" e centralizar gestão em Membresia.
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { jornada as api } from '../api';
@@ -17,14 +17,14 @@ const C = {
 };
 const inp = { padding: '8px 12px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-input-bg)', color: 'var(--cbrio-text)', fontSize: 14, boxSizing: 'border-box', fontFamily: 'inherit' };
 
-// Metadados visuais dos 5 valores. Os KPIs vinculados a cada valor sao lidos
+// Metadados visuais dos 5 valores. Os KPIs vinculados a cada valor são lidos
 // do banco (kpi_indicadores_taticos.valores) via useKpis().byValor.
 const VALOR_META = [
   { key: 'seguir', nome: 'Seguir a Jesus', desc: 'Fez decisao/conversao ou foi batizado', color: '#3b82f6', bg: '#dbeafe' },
   { key: 'conectar', nome: 'Conectar-se com Pessoas', desc: 'Participa de um grupo ativo', color: '#8b5cf6', bg: '#ede9fe' },
   { key: 'investir', nome: 'Investir Tempo com Deus', desc: 'Participa da Jornada 180 / Discipulado', color: '#f59e0b', bg: '#fef3c7' },
-  { key: 'servir', nome: 'Servir em Comunidade', desc: 'Voluntario ativo com check-in recente', color: '#10b981', bg: '#d1fae5' },
-  { key: 'generosidade', nome: 'Viver Generosamente', desc: 'Contribuiu nos ultimos 90 dias', color: '#ef4444', bg: '#fee2e2' },
+  { key: 'servir', nome: 'Servir em Comunidade', desc: 'Voluntário ativo com check-in recente', color: '#10b981', bg: '#d1fae5' },
+  { key: 'generosidade', nome: 'Viver Generosamente', desc: 'Contribuiu nos últimos 90 dias', color: '#ef4444', bg: '#fee2e2' },
 ];
 
 export default function MembersJornadaPanel() {
@@ -146,7 +146,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
   if (!valor) return null;
 
   // KPIs vinculados a esse valor (vindos do banco via prop kpisDoValor)
-  // KPIs disponiveis pra promover (todos ativos que NAO tem esse valor)
+  // KPIs disponíveis pra promover (todos ativos que NÃO tem esse valor)
   const linkedIds = new Set((kpisDoValor || []).map(k => k.id));
   const candidatosPromover = (allKpis || []).filter(k => k.ativo !== false && !linkedIds.has(k.id));
 
@@ -182,7 +182,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
         }
       }
       if (kpi.is_okr && novosValores.length === 0) {
-        alert('Nao da: KPI esta marcado como OKR e precisa de pelo menos 1 valor. Edite o KPI e desmarque OKR primeiro.');
+        alert('Não da: KPI esta marcado como OKR e precisa de pelo menos 1 valor. Edite o KPI e desmarque OKR primeiro.');
         setBusy(null);
         return;
       }
@@ -251,7 +251,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
         ))}
       </div>
 
-      {/* Picker de KPIs disponiveis pra promover */}
+      {/* Picker de KPIs disponíveis pra promover */}
       {pickerOpen && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--cbrio-overlay)' }} onClick={() => setPickerOpen(false)}>
           <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: 600, maxHeight: '80vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
@@ -395,7 +395,7 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
             style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'none', cursor: page <= 1 ? 'default' : 'pointer', color: C.t2, opacity: page <= 1 ? 0.3 : 1 }}>Anterior</button>
           <span style={{ padding: '6px 12px', fontSize: 13, color: C.t3 }}>{page} / {Math.ceil(total / 50)}</span>
           <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / 50)}
-            style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'none', cursor: 'pointer', color: C.t2 }}>Proximo</button>
+            style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'none', cursor: 'pointer', color: C.t2 }}>Próximo</button>
         </div>
       )}
     </div>
@@ -444,10 +444,10 @@ function TabDetalhe({ detail, loading, onBack }) {
               </div>
               <div style={{ fontSize: 12, color: C.t3 }}>
                 {v.key === 'seguir' && (ativo ? 'Decisao registrada' : 'Sem registro de conversao')}
-                {v.key === 'conectar' && (ativo ? `Grupo: ${data.dados?.mem_grupos?.nome || 'Ativo'}` : 'Nao esta em nenhum grupo')}
+                {v.key === 'conectar' && (ativo ? `Grupo: ${data.dados?.mem_grupos?.nome || 'Ativo'}` : 'Não esta em nenhum grupo')}
                 {v.key === 'investir' && (ativo ? 'Participando da Jornada 180' : 'Sem registro de discipulado')}
-                {v.key === 'servir' && (ativo ? `Ministerio: ${data.dados?.mem_ministerios?.nome || 'Ativo'}` : 'Nao esta servindo')}
-                {v.key === 'generosidade' && (ativo ? `Ultima contribuicao: ${data.dados?.data || ''}` : 'Sem contribuicao nos ultimos 90 dias')}
+                {v.key === 'servir' && (ativo ? `Ministério: ${data.dados?.mem_ministerios?.nome || 'Ativo'}` : 'Não esta servindo')}
+                {v.key === 'generosidade' && (ativo ? `Última contribuição: ${data.dados?.data || ''}` : 'Sem contribuição nos últimos 90 dias')}
               </div>
             </div>
           );
@@ -494,7 +494,7 @@ function TabDetalhe({ detail, loading, onBack }) {
 
         {contribuicoes.length > 0 && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, color: C.text }}>Contribuicoes recentes</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, color: C.text }}>Contribuições recentes</h3>
             {contribuicoes.map(c => (
               <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
                 <span style={{ color: C.text }}>{c.tipo} - R$ {Number(c.valor).toFixed(2)}</span>

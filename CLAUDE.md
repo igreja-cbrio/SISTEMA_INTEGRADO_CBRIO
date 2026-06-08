@@ -34,6 +34,2008 @@ ganhou GET/PUT `/config` + `papel` no vínculo. Webhook (`publicWhatsapp.js`)
 roteia known→conversa, unknown→institucional, com dedup por message_id e
 lookup de sessão aberta (`lider_id + status=aguardando_info + created_at>now-30min`).
 
+## OKR · KR medido pelo KPI (Frente B1 · 2026-06-03)
+
+Marcos: "o KR é pra ser respondido pelo **KPI central** do indicador · **sem entrada manual**;
+o que precisar de mais coisa pra preencher, **remove**". Diagnóstico (ao vivo): a cascata de KRs
+está OK (1 geral + N área-específicos via `kr_pai_id`+`agregacao_cascata`, **sem duplicata real**),
+MAS **0 KRs eram medidos** e só **5 de 29 objetivos** têm KPI com fonte → **83% dos KRs (428/513)**
+estão sob objetivos **sem nenhuma medição** (voluntários, grupos, doadores, capelania, NPS…). Marcos
+decidiu **NÃO apagar em massa**: ligar os medidos agora + roadmap de dar fonte ao resto.
+
+**B1 (mecanismo · não-destrutivo · migration `20260603220000`):** `kpi_krs.fonte_kpi_id` (→ o KPI
+tático que mede o KR). `estrategia.js` `enriquecerKrs()` anexa `realizado`/`kr_status`/`percentual_meta`
+do **`vw_kpi_trajetoria_atual`** (cobre KPIs manual + calculado); **KR geral agrega dos filhos medidos**
+(avg p/ %). `EstruturaOkr.jsx` mostra "realizado vs meta · no alvo/fora". **Ligados** (12 KRs específicos):
+batismo-90d→`X-BAT90`, reunião→`AMI-21/SED-17/BRG-19/ONL-04`, Next-90d→`X-NEXT90` (criei os específicos
+do Next nesta migration). ⚠️ Importante: a matriz/painel lê `vw_kpi_trajetoria_atual` (que pega
+`kpi_registros` qd `tipo_calculo='manual'`), por isso os KPIs da Frente A aparecem lá.
+
+**PRÓXIMO (B2/B3):** (1) ligar os KRs dos demais objetivos JÁ medidos (frequência cultos, batismo
+crescimento…); (2) **triagem de remoção ✅ FEITA** (migration `20260603230000` · Marcos aprovou):
+201 KRs não-mensuráveis-por-KPI desativados (`ativo=false`, reversível) — floor "0 X", contagem-de-meses,
+processo/cadência e o vago "Make a Difference". Sobram ~316, todos "número vs meta". (3) **roadmap**: dar fonte/coletor aos 24 objetivos sem medição (voluntários,
+grupos, doadores, capelania, aconselhamento, NPS…), aí seus KRs passam a ser respondidos. **NUNCA
+entrada manual** (decisão do Marcos). Ver `project_okr_kr_medicao`.
+
+## Jornada na NSM · 3 marcos medidos + KRs (Frente A · 2026-06-03)
+
+Marcos: levar os 3 marcos pra matriz/mandala, medidos pela lógica de coorte do tracker.
+Metas: **Batismo ≥30%/90d · Next ≥30%/90d · Reunião aceita ≥70%**. Contato (100%) fica no
+operacional (não vira KPI · a escalação já existe).
+
+**Achado do audit (consulta ao vivo):** os objetivos já existiam, mas o tático que os media
+era **crescimento de volume**, não o % de coorte 90d. E os **KRs (`kpi_krs`) são só texto-alvo,
+sem valor medido** e estão **duplicados** (~6-7 cópias/objetivo, resíduo da cascata) — Marcos
+levantou isso → **Frente B**. Então, na Frente A:
+- **Batismo (obj `ac906f19`) e Next (obj `68c17f72`):** CRIADOS táticos de coorte por área
+  (`AMI/BRG/ONL/SED-BAT90` e `-NEXT90` · `valores=['seguir']` · mensal · meta 30 ·
+  `tipo_calculo='manual'` · `fonte_auto` cuidados.batismo_90d_pct/next_90d_pct). O de crescimento
+  CONTINUA (métrica diferente, não duplicata).
+- **Atendidos (obj `5ffafa58`):** RELIGADOS os táticos existentes (`AMI-21/SED-17/BRG-19/ONL-04`)
+  → "% que aceitou a reunião", `fonte_auto='cuidados.reuniao_aceita_pct'`, meta 70 (sem KPI novo).
+- **KRs:** trocado "1 ciclo NEXT/trimestre" → "Next em ≤90d"; "contato ≤7d" → "aceita reunião".
+
+**Coletores (`kpiAutoCollector.js`):** `cuidados.{reuniao_aceita_pct,batismo_90d_pct,next_90d_pct}`
+(coorte mensal por área · helper `cohortNoPrazoPct` cruza `cui_convertidos` × `batismo_inscricoes`/
+`next_inscricoes` por membro/cpf/nome, janela 90d). **`coletarTodos` agora passa `area: ind.area`**
+ao coletor (retrocompatível) → 1 coletor serve N áreas (não precisa fonte por área).
+`tipo_calculo='manual'` → a view lê de `kpi_registros` (que o coletor JS popula). `meta_valor_absoluto`
+fica NULL nos %s (não normaliza por periodicidade · é %, não volume).
+
+**Migration `20260603190000_jornada_nsm_kpis.sql`.** ⚠️ Aplicar antes do merge; depois rodar o
+coletor: `POST /api/kpis/v2/coletar` body `{ fontes: ['cuidados.'] }` (ou esperar o cron diário).
+
+**Frente B (A FAZER · Marcos pediu "rever a lógica dos KR"):** KRs hoje não têm valor/medição
+(só texto) e estão duplicados. Projeto: deduplicar + dar fonte/medição a cada KR (ligar ao tático
+que o mede via `kpi_krs.kpi_id`, ou marcar 'manual') + `estrategia.js`/gestão mostrar "% atingido
+por KR". Começa por um diagnóstico dos 75 KRs (quais medem automático, quais são duplicata, quais
+precisam de fonte).
+
+## Jornada do novo convertido · 90 dias + responsabilidade por área (2026-06-03)
+
+Marcos: medir 3 marcos por novo convertido a partir da conversão — **Contato pastoral ≤3d**,
+**Batismo ≤90d**, **Next ≤90d** — com a responsabilidade seguindo a **ÁREA DE CULTO** da
+conversão. Cadeia: Integração CONTA → Cuidados REÚNE no encontro e PONTUA o destino → **líder
+da área** acompanha as fases → **Marcelo Soares** (`supervisor-jornada`) supervisiona de Cuidados
+e **cobra** quem não fez o contato. Áreas→líder: AMI→Arthur · Online→Renata · Bridge→Lillian ·
+Domingo/Sede→Marcelo. Kids fora (LGPD · não vira convertido).
+
+**Migration `20260603160000_jornada_novos_convertidos.sql`** (aditiva): `cui_convertidos` +=
+`area` (ami/bridge/online/sede), `primeiro_contato_em`, `primeiro_contato_por`. Trigger
+`tg_cultos_dec_pessoas_to_cuidados` recriado pra gravar `area` (online se a decisão foi online;
+senão pelo nome do tipo de culto). Backfill da `area` pelos cultos existentes (+ override 'online'
+via `cultos_decisoes_pessoas`).
+
+**Backend (`routes/cuidados.js`):**
+- `agendar-encontro` e o novo `registrar-contato` carimbam `primeiro_contato_em` na 1ª vez (SLA 3d).
+- `GET /cuidados/jornada-convertidos?area=` → convertidos com os 3 marcos (status semáforo:
+  feito/no_prazo/vencendo/atrasado/inscrito) + resumo (% por marco). Cruza `batismo_inscricoes`
+  + `next_inscricoes` por membro/cpf/nome (paginado p/ o cap de 1000).
+- `registrar-contato` deixa o líder marcar o contato sem precisar agendar a reunião ainda.
+
+**Escalação (`notificacaoGenerator.js` · `gerarNotificacoesJornadaConvertidos`):** sem contato
+em ~2 dias → notifica o **módulo da área** (líder); >3 dias → também notifica **cuidados**
+(Marcelo cobra). Dedup por convertido/dia. ⚠️ pra mirar Arthur/Renata/Lillian, configurar os
+destinatários dos módulos `ami`/`bridge`/`online` em `/admin` (NotificacaoRegras) · senão cai
+no fallback admin.
+
+**Frontend — componente reusável `src/components/JornadaConvertidos.tsx`** (3 marcos semáforo +
+% no topo + filtros + botão "marcar contato"), montado em:
+- **Cuidados** aba **"Primeiros passos"** (cockpit do Marcelo · todas as áreas + filtro).
+- **`/ami` e `/bridge`** (PainelArea) e **`/online`** (Online.tsx) → filtrado pela área
+  (Arthur/Lillian/Renata veem só a sua gente).
+- **Integração** aba **"Next"** (`view="next"` · cobertura do Next em 90d, todas as áreas).
+- `api.js`: `cuidados.jornadaConvertidos` + `cuidados.convertidos.registrarContato`.
+
+**Next em Integração:** decisão do Marcos = aba de **cobertura/funil** reusando `/api/next`
+(o módulo `/next` standalone continua pro admin de eventos). **Fase 2:** formalizar os 3 marcos
+como **KPIs na matriz/NSM** (hoje os % já aparecem no tracker, mas fora da matriz).
+
+⚠️ **Aplicar a migration `20260603160000` antes do merge.**
+
+## Cuidados · Encontro pastoral + Encaminhamento da jornada (2026-06-03)
+
+Marcos: na aba **Convertidos** (`/ministerial/cuidados`), (1) filtro **"Já atendidas"**;
+(2) o encontro pastoral vira registro real (data + **hora** + **quem vai atender** +
+**compareceu**); (3) o **desfecho** encaminha a pessoa pros próximos valores
+(**Jornada 180 / Grupos / Voluntários**) e cada área recebe numa **caixa de entrada**
+onde registra contato + **devolutiva** (Pendente/Não respondeu/Em dúvida/Engajou/Sem
+interesse). É a **amarração conversão→valores** que faltava (alimenta o NSM · ver
+`project_jornada_gaps`).
+
+**Decisões do Marcos (travadas):** SEM opção "não se converteu" (não interrompe o
+fluxo, qualidade de entrada é da Integração · NÃO mexe em trilha/NSM); **sem rótulo de
+dor** (guarda a *direção*, não o *diagnóstico* · motivo sensível só em observação
+discreta); **toda pessoa sai com ≥1 encaminhamento**; o "primeiro contato" (encontro)
+é o diferencial → continua sendo **agendado** (data/hora/quem). A tarefa-automática na
+aba Tarefas + agenda-da-área foram **descartadas** em favor do registro de contato +
+devolutiva na caixa de entrada da área.
+
+**Migration `20260603120000_cuidados_encontro_encaminhamento.sql`** (aditiva · idempotente):
+- `cui_convertidos` += `encontro_hora`, `encontro_responsavel_id/nome`, `encontro_status`
+  (agendado/realizado/faltou/cancelado), `encontro_compareceu`, `desfecho_em/por/observacoes`.
+- `jornada_encaminhamentos` (pessoa×destino · `destino` jornada180/grupos/voluntarios ·
+  `valor_alvo` · `status`=devolutiva · encaminhado/recebido/resolvido) + filho
+  `jornada_encaminhamento_contatos` (log: data_contato, canal, observacao, devolutiva,
+  feito_por · CASCADE, sem soft-delete próprio). Padrão PII: `deleted_at` + whitelist
+  `app_soft_deletable_tables()` + RLS contextual **por módulo do destino** (cuidados vê
+  tudo; grupos/voluntariado veem o seu) + service_role.
+
+**Backend:**
+- `routes/cuidados.js`: `POST /convertidos/:id/agendar-encontro` (notifica o pastor via
+  `targetIds`), `…/cancelar-encontro`, `…/desfecho` (cria os encaminhamentos só se
+  compareceu + notifica as áreas). Mapa `DESTINO_META` (destino→valor+módulo notif+link).
+- `routes/encaminhamentos.js` (`/api/encaminhamentos`, montado no `server.js`):
+  `GET /` (?destino=&status=), `GET /resumo`, `GET /:id` (+ log de contatos),
+  `POST /:id/contato` (insere + atualiza pai: status=devolutiva, recebido_em na 1ª vez,
+  resolvido em engajou/sem_interesse), `PATCH /:id`. Auth **in-handler por módulo do
+  destino** (`req.user.granular.modulePerms` · admin/diretor=5) — não usa authorizeModule.
+
+**Frontend:**
+- `Cuidados.tsx`: filtros "Já atendidas"/"Aguardando desfecho"; modais
+  `AgendarEncontroModal` (data/hora/quem · select de `users`) e `DesfechoModal`
+  (compareceu? + destinos `DESTINOS_ENC` + observação discreta); ficha do convertido
+  mostra o encontro (data/hora/quem/status) + botões Agendar/Reagendar/Desfecho;
+  botões na linha da tabela. Bloco de encontro saiu do `ConvertidoModal` (virou fluxo
+  dedicado). Aba **Jornada 180** recebe `<EncaminhamentosInbox destino="jornada180">`.
+- **Componente reusável** `src/components/EncaminhamentosInbox.tsx` (lista + dialog com
+  log de contato + form de devolutiva) usado nos 3 destinos. Filtros: **A contatar /
+  Já atendidos** (recebido_em set · já houve contato) **/ Engajaram / Todos** + contagem no topo.
+- **Grupos.jsx**: aba **"Encaminhados"** (`pageTab='encaminhados'` · `destino=grupos`).
+- **Voluntariado**: `VolEncaminhados.tsx` + rota `encaminhados` no `index.tsx` + item no
+  `VolNavBar` (`destino=voluntarios`).
+- `api.js`: `cuidados.convertidos.{agendarEncontro,cancelarEncontro,desfecho}` + namespace
+  `encaminhamentos.{list,resumo,get,contato,updateStatus}`.
+
+**Cobertura de batismo (Integração · mesma PR · SEM migration):** trilho **universal** —
+todo convertido deve ser chamado pro batismo, a Integração acompanha independente do
+Cuidados. `GET /kpis/batismos/cobertura-convertidos` cruza `cui_convertidos` ×
+`batismo_inscricoes` (por `membro_id`, CPF ou nome · **paginado** p/ o cap de 1000 do
+PostgREST) → card **"Convertidos chamados pro batismo"** na aba Batismos (`Batismos.tsx`):
+% batizados + nº inscritos + nº não inscritos + botão "Ver quem falta" (lista dos
+pendentes). `api.kpis.batismos.coberturaConvertidos()`.
+
+⚠️ **Aplicar a migration `20260603120000` antes do merge** (APLICADA em prod 2026-06-03).
+Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/voluntário),
+fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
+funil de analytics encaminhados→aderiram.
+
+## Juninho (presidente) · acesso restrito a 3 telas (2026-06-03)
+
+Marcos: o Pr. Juninho deve ver **só 3 telas** (Dashboard do sistema · Monitoramento
+OKR · Dashboard Semanal) pra não se confundir enquanto o time desenvolve o resto.
+Manter o **cargo pastor-presidente** (só ele tem), mas rebaixar o acesso —
+**sem criar módulo novo** (decisão do Marcos: nada de "lógica morta" que ele perceba
+e queira o sistema todo).
+
+**Conta ativa = `juninho.lit@cbrio.org`** (a `juninho@cbrio.com.br` está abandonada
+desde abr/2026 · duplicata conhecida).
+
+**Por que mexer no role:** o frontend trata `role ∈ {admin,diretor}` como **admin**
+(`isAdmin` em AuthContext) e `itemAllowed`/`sectionAllowed` fazem `if (isAdmin) return
+true` → vê tudo ignorando a matriz. Logo, restringir EXIGE rebaixar o role.
+
+**Migration `20260603240000_juninho_presidente_3_telas.sql`:**
+1. `profiles.role` `'diretor'→'assistente'` em `juninho.lit@cbrio.org` (+`is_membro_only=false`
+   pra cair no `/dashboard`, não no webapp de devocional). **NÃO** toca o cargo →
+   `/perfil` segue mostrando "Pastor Presidente". OBS: a CHECK `profiles_role_check` só
+   aceita `assistente|admin|diretor` — `'assistente'` é o único role não-admin (não existe
+   `'membro'` como role aqui).
+2. Zera a matriz do cargo `pastor-presidente` (cargo_id 32 · só o Juninho o tem) → some
+   todo item de menu gateado por módulo.
+
+**Mudanças no menu (`AppShell.jsx`) pra deixar exatamente as 3 visíveis:**
+- **Monitoramento OKR**: removido o `module: 'painel-cbrio'` → vira **sem-módulo** (igual
+  ao Dashboard Semanal). Aparece pro Juninho (e pros demais que veem o menu · benigno, é
+  read-only macro). Necessário porque dividia o módulo com o **Painel CBRio**, que precisa
+  continuar escondido pro Juninho.
+- **Integração** e **Grupos**: GANHARAM `module: 'integracao'`/`'grupos'` (antes eram
+  sem-módulo e vazavam pra qualquer não-admin). Agora só aparecem pra quem tem o módulo —
+  correção que também os esconde do Juninho.
+- **Dashboard Semanal** segue sem-módulo (alvo · aparece). **Dashboard do sistema**
+  (`/dashboard`) é o landing pós-login + logo (não é item de menu).
+
+**Dashboard Semanal · aba Financeiro gateada:** `DashboardSemanal.jsx` esconde a aba
+Financeiro (que puxa de `/financeiro-v2`, gateado) pra quem não tem `canFinanceiro` —
+senão quebraria pra ele. As outras abas (semanal/mensal/média-móvel/kpis/metas/IA) e o
+`/monitoramento-okr` puxam de endpoints **authenticate-only**, então funcionam com a
+matriz zerada.
+
+**⚠️ Pós-merge (obrigatório):** aplicar a migration → **bust de cache**
+(`POST /api/permissoes/cache/bust` ou botão em `/admin/permissoes`) → **Juninho
+logout/login** pra renovar o JWT. Sem isso a matriz antiga fica no cache 5 min.
+
+## Permissões · "Acesso base" (role) editável na tela de Usuários (2026-06-03)
+
+Marcos: poder **promover/rebaixar o `profiles.role` sem SQL** (motivado pelo caso
+do Juninho, que precisou de migration só pra virar `assistente`). O `role` controla
+o `isAdmin` do frontend (`role ∈ {admin,diretor}` → vê o sistema inteiro, ignora a
+matriz; `assistente` → segue cargo + áreas + overrides). Antes só dava pra mudar via
+SQL direto. **SEM migration** (é `UPDATE` em `profiles` via service_role).
+
+- **Backend** (`routes/permissoes.js`): `PUT /usuario/:id/role` (já sob
+  `authorize('admin','diretor')` do topo do arquivo). Valida `role ∈
+  {assistente,admin,diretor}` (= CHECK `profiles_role_check` · não existe `'membro'`
+  como role). `:id` é o **UUID do profile** (a lista de colaboradores vem de
+  `profiles`) → `UPDATE profiles SET role` direto pelo id (não passa por
+  `resolverUsuarioId`, que resolve a tabela `usuarios`/int). Anti-autoescalação via
+  `bloqueiaAutoEdicao(req, null)` — ninguém muda o próprio acesso base. `bustPermissionCaches()`.
+- **api.js**: `permissoes.setRole(id, role)`.
+- **Frontend** (`src/pages/admin/Usuarios.jsx`): no diálogo de edição, seção
+  **"Acesso base"** (entre Cargo e Áreas) com select assistente/diretor/admin +
+  texto explicando que admin/diretor liberam tudo. Estado `role` inicia de
+  `colaborador.role` (o `GET /colaboradores` já devolve `role`). `patchColaborador`
+  no pai sincroniza lista + diálogo aberto após salvar (o role NÃO vem do
+  `GET /usuario/:id`, que lê `usuarios`, não `profiles`).
+- ⚠️ Mudar o role **exige logout/login** da pessoa afetada pra renovar o
+  acesso no frontend (toast já avisa). É a mesma capacidade do `setCargo` (que via
+  boost de área concede nível 5), só que sobre o role — escopo aprovado pelo Marcos.
+
+## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
+
+**Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
+refactor, label, mensagem de toast, placeholder, título, texto de botão, texto
+de notificação, e-mail, copy de página, comentário visível ao usuário, etc.),
+o texto em português **DEVE** estar com a **acentuação correta do português do
+Brasil**. Isso é obrigatório e não-negociável — não regredir.
+
+- Acentos agudos (á é í ó ú), circunflexos (â ê ô), til (ã õ), crase/grave (à),
+  cedilha (ç) e trema histórico quando aplicável. Ex.: "você", "usuário",
+  "permissões", "configurações", "ministério", "relatório", "ação", "não",
+  "está", "três", "código", "horário", "será", "número", "página", "área",
+  "índice", "saúde", "também", "responsável", "início", "próximo".
+- Vale para **todo texto visível ao usuário** no frontend (`src/`), mensagens
+  do backend (`backend/`), e-mails/notificações, e qualquer copy nova.
+
+**Exceção crítica (NÃO acentuar):** identificadores de código e dados nunca
+recebem acento — **slugs** de módulo/rota (`permissoes`, `solicitacoes`,
+`integracao`, `configuracoes`), **valores de enum** do banco, **chaves de
+objeto**, nomes de **variáveis/funções/arquivos**, **colunas** SQL e qualquer
+string que seja comparada/persistida como identificador. Acentuar esses quebra
+matching, RLS, rotas e o banco. A regra de acentuar vale para o **conteúdo
+exibido**, não para os identificadores técnicos.
+
+## Totem Kids · integração com PAGERS físicos (2026-06-02)
+
+Eduardo/Marcos: integrar os pagers que a igreja já usa ao pickup do Totem Kids —
+no check-in o voluntário entrega um pager numerado à família; no pickup o sistema
+faz **aquele** pager vibrar ("caso vibre, suba para ver sua criança").
+
+**Hardware real (confirmado por foto):** transmissor **LRS Freedom T7470** com
+porta **RJ-45 (rede)** + coasters redondos da LRS. (Há também um Retekess TD163 +
+coasters R8500, mas a LRS foi escolhida porque o **protocolo é público**: LRSN =
+XML sobre TCP, comando `<PageRequest pager="2;NUMERO" color="R" message="Flash5Min"/>`.)
+
+**Arquitetura — agente local (mesmo padrão do Brother/worker financeiro):** o
+Vercel serverless não alcança o transmissor físico, então um **agente local**
+(`pager-bridge/`, Node puro) roda num PC da recepção, na rede do Freedom. Ele faz
+só conexões de **saída** (HTTPS pro backend + TCP pro Freedom) e autentica por
+**bearer token** (`PAGER_BRIDGE_TOKEN`) — **não** carrega service_role nem abre porta.
+
+**Migration `20260602140000_kids_pagers.sql`** (ADITIVA · idempotente):
+- `kids_pagers` · catálogo de cada pager (`numero` = ID no LRS, `cor` char R/B/G/Y/O/P/W,
+  `tipo_lrs` default 2 = Guest, `responsavel_padrao_id`, `ativo`, soft-delete · na
+  whitelist `app_soft_deletable_tables()`).
+- `kids_checkins.pager_id` · qual pager a família levou (FK SET NULL).
+- `kids_pager_envios` · fila de saída que o agente consome (`status`
+  pendente→enviado/erro/cancelado, `origem` chamada/rechamada/teste/manual, snapshot
+  `pager_numero`/`cor`).
+- Trigger `fn_kids_checkout_cancela_pager` · cancela envios pendentes quando a
+  criança já saiu (checkout). RLS contextual `current_user_module_level('kids')`
+  (read≥1 · write≥3 · delete super-admin · service_role all).
+
+**Backend (`routes/totemKids.js`):** CRUD `/pager/pagers` (kids≥3), `/pager/em-uso`
+(quem está com cada pager agora), `/pager/pagers/:id/testar` (enfileira toque de teste),
+`/pager/envios` (histórico). No `POST /chamadas` (pickup, já existia e aciona a TV da
+sala), se o checkin tem `pager_id` ativo → insere `kids_pager_envios`. Endpoints do
+agente (bearer token · bypassam JWT): `GET /pager/bridge/fila` + `POST
+/pager/bridge/envios/:id/resultado`. `POST /checkin` aceita `pager_id`.
+
+**Frontend:** nova aba **"Pagers"** em `/admin/totem-kids` (CRUD + cor + vínculo a
+responsável padrão + botão "Testar toque" + aviso do agente). No check-in
+(`TotemKidsCheckin.tsx`) um select opcional "Pager da família" (lista só ativos e não
+em uso). `api.js`: `totemKids.pagers.{list,create,update,remove,testar,emUso,envios}`.
+
+**Agente `pager-bridge/`:** `index.js` (poll da fila → LRSN/TCP → reporta) + `.env.example`
++ `README.md`. Roda com `npm start` (Node 18+). `DRY_RUN=1` testa sem hardware.
+
+**⚠️ Pendências operacionais (não-código):**
+- **Aplicar a migration** antes do merge (o backend chama as tabelas novas).
+- Definir `PAGER_BRIDGE_TOKEN` no **Vercel** (backend) e no `.env` do agente (mesmo valor).
+- Confirmar com a LRS que a **Ethernet do Freedom aceita paging local (NetPage/LRSN)** e
+  qual a **porta TCP** (`LRS_PORT`, default 5000 é chute). Se a Ethernet só servir SMS em
+  nuvem, habilitar NetPage ou usar um TX-7471 — o comando LRSN já está implementado.
+
+## Monitoramento OKR · aba /monitoramento-okr (2026-06-02)
+
+Marcos pediu uma aba nova na **Inteligência** reproduzindo a planilha
+**"CBRio_cabeca_Juninho"** (ótica enxuta do Pr. Juninho · 1 NSM → 9 OKRs em 4
+blocos de Área Responsável → ~25 indicadores táticos), que se alimente sozinha
+onde já temos dado. **Decisão explícita do Marcos:** NÃO integrar à lógica dos
+25 OKRs / 150 KPIs do `/painel` — é uma ótica paralela, só reproduzir e exibir
+(não questionar a lógica da planilha).
+
+**Arquitetura (read-only · SEM migration · não toca o sistema OKR existente):**
+- **A estrutura fixa da planilha vive no frontend** (`src/pages/MonitoramentoOkr.jsx`,
+  consts `NSM`/`BLOCOS`) — textos, alvos, objetivos, área envolvida e memória de
+  cálculo exatos da planilha. É o modelo do Juninho, versionado em código.
+- **O backend devolve só os VALORES VIVOS** dos indicadores com fonte real
+  (`GET /api/painel/monitoramento-okr` em `backend/routes/painel.js`), indexados
+  por chave estável em `metricas[chave]`. Indicador sem fonte → o front mostra
+  pílula **"manual"** + a memória de cálculo (honesto · a maioria das fontes
+  operacionais ainda é nascente — ver abaixo).
+- Rota `/monitoramento-okr` (`App.tsx`, lazy) · item "Monitoramento OKR" em
+  Inteligência > Visão macro (`AppShell.jsx`, `module:'painel-cbrio'`, ícone
+  Compass) · `api.painel.monitoramentoOkr()`. Cache de 5 min (mesmo
+  `painelCache` do resto de `/painel`).
+
+**7 indicadores auto-alimentados (colunas verificadas contra o banco em 2026-06-02):**
+- **NSM central** (`vw_nsm_painel` segmento='central') = a Estrela do Norte do
+  Juninho na veia · hoje 5,9% vs alvo ≥50%.
+- **OKR Batismos** = batismos realizados 90d ÷ conversões 90d (`cultos`) · ~14,5%.
+- **Nº batismos/mês** (`batismo_inscricoes` status='realizado' · último mês
+  completo + média de 6 meses).
+- **Tempo decisão→batismo** = avg(`batismo_inscricoes.data_batismo` −
+  `mem_trilha_valores`(etapa='conversao')`.data_conclusao`) · ~57d (alvo ≤90).
+- **Nº DS online** = soma `cultos.decisoes_online` 90d.
+- **% assentos ocupados** = média `cultos.presencial_adulto` do Templo
+  (Domingo+Quarta+AMI, exclui Bridge via `vol_service_types.name`) ÷ 1200 ·
+  ~30,3% (mesma regra do card de ocupação da Integração).
+- **Rotatividade staff** = demissões 12m ÷ ativos (`rh_funcionarios`) · ~2%.
+
+**Manual (sem fonte ainda · mostram alvo + memória de cálculo):** prazo/café/Next,
+% grupos, % voluntários, % dizimistas (tabelas `mem_grupo_membros` /
+`mem_voluntarios` / `mem_contribuicoes` ainda **vazias** em prod), NPS culto
+on/presencial, follow-up online, retenção/compart./cliques YouTube, eficiência
+financeira, Q12 (Gallup), treinamentos, cronogramas/orçamentos de expansão.
+Quando essas fontes ganharem dado (módulos NPS, grupos, voluntariado,
+financeiro, produção), basta **adicionar um ramo no endpoint** + a chave `live`
+no tático correspondente em `BLOCOS` — sem mexer na estrutura.
+
+### Ajustes pós-avaliação do Marcos (2026-06-02 · v2)
+
+- **Pílula "manual" removida.** Tático sem fonte mostra só **"—"** (cinza); ao
+  **expandir** ele exibe a memória de cálculo + um bloco **"Para puxar automático,
+  preciso de: …"** (campo `precisa` no `BLOCOS`) — vira a lista do que o Marcos
+  precisa mandar pra cada indicador virar automático.
+- **Número inline + cor binária** em todo tático: verde no alvo / vermelho fora
+  (`avaliar()` agora retorna só verde/vermelho; sem alvo numérico comparável →
+  neutro teal, sem julgar — ex.: "+20% YoY" e "Nº batismos/mês"). NSM e OKR
+  idem (binário).
+- **Linha clicável → expande** (accordion inline, `ChevronDown` rotativo). Quando
+  o indicador tem série, mostra **gráfico de barras mensal** (recharts · 6 meses
+  completos) com linha tracejada no alvo. Backend passou a devolver `serie:
+  [{mes,valor}]` em `okr_batismos`/`batismos_mes` (batismos/mês), `ds_online` e
+  `assentos` (% ocupação/mês). `tempo_batismo`/`rotativ`/NSM ficam só com o número.
+- **"Café" → Acompanhamento "1º Encontro"** em todo o 1º OKR (nome + 2 táticos),
+  a pedido do Marcos.
+
+### Ajustes v3 (2026-06-03 · "0 vs lógica a criar")
+
+- **Memória de cálculo ("Como medir: Planilha…") REMOVIDA** de todos os táticos
+  (a planilha some da visão — o sistema substitui). O campo `memoria` segue no
+  `BLOCOS` mas não renderiza mais.
+- **4 táticos viraram automáticos** porque a fonte já existe no banco (hoje ~0):
+  **% frequência em Grupos**, **% Voluntários ativos**, **% dizimistas regulares**
+  (÷ membros ativos · base 328) e **% convertidos atendidos no Acompanhamento**
+  (`cui_convertidos.atendido_apos_culto` ÷ conversões 90d). Mostram o **número**
+  (0/x% · vermelho fora do alvo) em vez de "—". Backend: 5 queries novas no
+  endpoint (base membros ativos + as 4). `addM` já inclui valor **0** (só pula
+  null/NaN), então 0% aparece.
+- **Distinção pedida pelo Marcos:** **número (incl. 0)** = o sistema já mede ·
+  **"—" + "preciso de"** = lógica de automação ainda a criar (NPS culto,
+  follow-up online, YouTube, eficiência financeira, Q12, treinamentos, expansão,
+  prazo 1º contato, Acompanhamento→Next).
+- ⚠️ **Base do %** = `membros ativos` (`mem_membros.status='membro_ativo'`, hoje
+  328) — provisório. Quando grupos/voluntários/dízimos começarem a popular,
+  confirmar com o Marcos qual é o "total da igreja" certo (a planilha do Juninho
+  diz "total de pessoas na igreja", que pode ser > membros ativos).
+- **Bloco "Ministerial — Geracionais" REMOVIDO** (2026-06-03 · pedido do Marcos):
+  era um bloco de Área Responsável só com a nota do censo e sem OKRs — saiu do
+  `BLOCOS`. Restam 3 blocos: Ministerial · Criativo · Operações (+ a NSM no topo).
+
+### 🔴 Fix · endpoint usava pool pg direto (não conectava no Vercel) → RPC (2026-06-03)
+
+**Sintoma:** a aba mostrava "—" em TUDO (até batismos/mês e assentos, que têm
+dado). A request `GET /api/painel/monitoramento-okr` devolvia **`200` com
+`metricas: {}`** (vazio) em produção — confirmado no DevTools do Marcos. Em
+testes locais sempre vinha cheio, o que mascarou o problema por dias.
+
+**Causa raiz:** o endpoint era o **único do `/painel` usando o pool pg direto**
+(`query()` de `utils/supabase`, que conecta via `DATABASE_URL`). Esse pool **não
+conecta no serverless do Vercel** (o resto do painel usa o cliente `supabase`
+REST sobre HTTPS, que sempre funciona). As 15 queries estouravam, o wrapper
+`uma()` engolia cada erro e devolvia `metricas` vazio com `200`. Por isso nunca
+apareceu dado em prod — só nos testes locais (a máquina alcança o Postgres direto).
+
+**Correção (migration `20260603220000_fn_monitoramento_okr_raw.sql` + `painel.js`):**
+- Função SQL **`fn_monitoramento_okr_raw()`** (STABLE SECURITY DEFINER) devolve as
+  ~15 métricas em JSONB — **1 query no banco** em vez de 15 no pool.
+- O endpoint passa a chamar **`supabase.rpc('fn_monitoramento_okr_raw')`** (mesmo
+  canal REST do resto do painel) e monta `metricas` com a MESMA lógica de antes
+  (guardas + `addM` + série). Nenhuma mudança de comportamento/valores.
+- ⚠️ **Lição:** no Vercel, preferir o cliente `supabase` (REST) a `query()`/pool
+  pg em rotas serverless. Se precisar de SQL complexo, encapsular numa função e
+  chamar via `supabase.rpc()` (padrão da `fn_grupos_kpis_relatorio`).
+
+### Engajamento de Conteúdo · estrutura no Online + 0 no monitoramento (2026-06-03)
+
+Marcos: os 3 táticos do OKR **"Engajamento de Conteúdo"** (Retenção média ≥40%,
+Taxa de compartilhamento ≥5%, Cliques em séries ≥15%) — que viriam da API do
+YouTube — devem virar **KPI específico no módulo Online**, com a **estrutura pronta
+pra receber** o dado e o `/monitoramento-okr` mostrando **0** (não "—") até a 1ª
+coleta. (Exceção explícita à raia "não mexer em outros módulos" — o Marcos avisou.)
+
+**Migration `20260603260000_online_engajamento.sql`:**
+- Tabela `online_engajamento` (channel-level **mensal** · `mes` UNIQUE ·
+  `retencao_media_pct`/`taxa_compartilhamento_pct`/`cliques_series_pct` ·
+  `fonte` default 'manual' · não é PII, sem soft-delete · RLS no padrão das
+  `online_*`: `service_role FOR ALL` + `authenticated FOR SELECT`). Um futuro
+  coletor da YouTube Analytics faz UPSERT por mês.
+- `CREATE OR REPLACE fn_monitoramento_okr_raw()` += chave **`engajamento`** via
+  subqueries escalares com `COALESCE 0` → **sempre 1 linha (0 quando a tabela está
+  vazia)**, pra a aba mostrar 0 e não "—". Resto da função idêntico.
+
+**Backend:** `painel.js` (monitoramento-okr) destrutura `r.engajamento` + 3 `addM`
+(`eng_retencao`/`eng_compartilhamento`/`eng_cliques_series`, '%'). `online.js`:
+`GET /engajamento` (authenticate · level 1) devolve o mês mais recente ou zeros.
+
+**Frontend:** `MonitoramentoOkr.jsx` — os 3 táticos ganharam `live`+`alvoNum`+
+`cmp:'gte'` (mesmo shape de `freq_grupos`), perderam `memoria`/`precisa` → mostram
+**0% em vermelho** (abaixo do alvo). `Online.tsx` — card **"Engajamento de conteúdo"**
+(3 `StatCard`: retenção/compartilhamento/cliques) lendo `online.engajamento()`,
+com aviso "aguardando API do YouTube". `api.js`: `online.engajamento()`.
+
+**⚠️ A API do YouTube NÃO foi ligada** (retenção até existe por culto em
+`cultos.online_retencao_pct_*`; compartilhamento e CTR de séries não têm coleta —
+exigem YouTube Analytics custom report). Só a **estrutura** ficou pronta. Pra ligar
+de verdade: coletor que faz UPSERT em `online_engajamento` por mês. ⚠️ Aplicar a
+migration antes do merge.
+
+## Produção de Culto · aba /producao (2026-06-02)
+
+Marcos: criar aba pra área de **Produção de Culto** com (A) KPIs técnicos
+preenchidos POR CULTO (espelhando a Integração) e (B) os KPIs gerais que já
+existem (SLA de solicitações + NPS interno).
+
+**Achado que enxugou o trabalho:** `producao` já era área de Solicitações (SLA
+24/72 · coord Pedro Fernandes) e os KPIs gerais já existiam — `ADM-C-G-PRODUCAO`
+(% no SLA) e `ADM-C-Q-PRODUCAO` (NPS interno). A Parte B só **expõe** isso (não
+recria). Ver "OKR Criativo" (`20260512280000`).
+
+**Decisões (Marcos · 2026-06-02):**
+- Ocorrências = **log unificado** (tipo técnica/estrutura · descrição = rastro ·
+  severidade), não 2 campos soltos.
+- Checklist **itemizado** (template editável + marcação por culto → "% executado").
+- Pontualidade: duração-alvo **60 min** (`vol_service_types.meta_duracao_min`,
+  configurável por tipo no futuro) · observação **SEMPRE opcional** (nunca bloqueia
+  salvar, mesmo passando do tempo).
+- Os 4 KPIs por culto são **ESPECÍFICOS, não cascateiam**: `is_okr=false`,
+  `valores='{}'`, `objetivo_geral_id=NULL`. Aparecem no painel da área mas ficam
+  FORA da matriz NSM e da cascata OKR (separação que o Marcos pediu).
+
+**Migration `20260602140000_producao_culto_fundacao.sql`:**
+- Módulo `producao` em `modulos` + matriz copiada de `kids` (read universal nível 1).
+- Tabelas: `culto_producao` (satélite 1:1 de `cultos` · duração + obs),
+  `culto_producao_ocorrencias` (log), `producao_checklist_itens` (template ·
+  `service_type_id` NULL = vale pra todos), `culto_producao_checklist` (marcação).
+- `vol_service_types.meta_duracao_min int default 60`.
+- 4 KPIs `PROD-CULTO-{PONTUAL,CHECKLIST,FALHAS,ESTAB}` (`tipo_kpi='operacional'` ·
+  ⚠️ `tipo_kpi` só aceita `qualitativo|quantitativo|operacional`, NÃO `'tatico'` ·
+  `tipo_calculo='manual'`, `fonte_auto='producao.*'`).
+- Estende `kpi_calcular_valor_auto` com 4 ramos `producao.*` e `kpi_recalcular_para_data`
+  passa a cobrir `fonte_auto LIKE 'producao.%'`. Triggers AFTER ROW em
+  culto_producao/ocorrencias/checklist → recalc em tempo real (data via lookup).
+  Seed de 6 itens de checklist.
+
+**Boost (`backend/middleware/auth.js`):** `AREA_MODULO_BOOST['producao']='producao'`
++ `ROUTE_MODULE_MAP['producao']=['producao']` + `painel-area` inclui producao.
+⚠️ pós-migration: atribuir a área "Produção" ao Pedro Fernandes em /admin/permissoes
++ cache bust + logout/login → vira admin nível 5.
+
+**Backend (`routes/producao.js` · `/api/producao`):** `GET /semana?inicio&fim`
+(cultos da `vw_culto_stats` + produção mesclada); `GET /culto/:id`; `PUT /culto/:id`
+(nível 2 · upsert satélite); `POST /culto/:id/ocorrencias` + `DELETE /ocorrencias/:id`;
+`PUT /culto/:id/checklist` (bulk); `GET/POST/PATCH/DELETE /checklist-itens` (template,
+nível 3); `GET /acumulado`; `GET /desempenho` (KPIs próprios + SLA + NPS comparativo
+via `vw_kpi_trajetoria_atual`).
+
+**Frontend (`src/pages/ministerial/Producao.jsx` · rota `/producao`):** 6 sub-abas —
+Preenchimento (calendário semanal + modal: pontualidade, ocorrências, checklist,
+obs), Acumulado, Detalhado, Checklists (admin), Solicitações (fila
+`area_responsavel='producao'` reusando a API `solicitacoes` · andamento por select),
+Desempenho. `api.js` ganhou namespace `producao`. Menu em Criativo (`module:'producao'`).
+
+**Notificações (2026-06-02):** ocorrência crítica (`severidade='critica'`) dispara
+`notificar()` urgente (módulo `producao` · responsáveis da área + regras). Módulo
+`producao` registrado em `NotificacaoRegras.jsx`. Nova solicitação já é notificada
+pelo backbone de Solicitações.
+
+**Intake de Solicitações (2026-06-02 · migration `20260602160000`):** categoria
+**`producao`** no form de Solicitações roteia `area_responsavel='producao'` (só campos
+básicos · uso: movimentação de material, configuração de equipamentos). CHECK de
+`categoria` estendido; SLA da produção já existia (24/72). Backend: `ALLOWED_CATEGORIES`
++ `CATEGORIA_MODULO['producao']='producao'` + `CATEGORIA_TO_AREA_RESP` +
+`MODULO_CATEGORIAS`. Frontend: `CATEGORIAS` + `CATEGORIA_HINT` (sem bloco específico ·
+validação base titulo+categoria). Isso alimenta a fila da aba Solicitações da Produção
++ o KPI `ADM-C-G-PRODUCAO` (SLA).
+
+## Integração · % de ocupação de assentos na aba Frequência (2026-06-02 · sem migration)
+
+Marcos: card (estilo do de batismo) na aba **Frequência** (`/integracao` →
+`VisualizacaoFrequencia.tsx`, value `vis_frequencia`) com a **% média de assentos
+ocupados**, **toggle Templo/Kids** + **seletor por culto**.
+
+- **Conta:** `% = média da presença por culto ÷ capacidade`. Como a capacidade é
+  constante, isso equivale à média das ocupações por culto. Conta só cultos com
+  presença lançada (>0) no modo escolhido (culto sem dado não derruba a média).
+- **Capacidades (constantes no código):** Templo **1200** · Kids **250**.
+- **Templo** usa `presencial_adulto`; **Kids** usa `presencial_kids` (÷250 · seletor
+  só mostra cultos com Kids = Domingo + Quarta).
+- **Exclui Bridge e Online** do seletor de Templo (`foraDoTemplo` = regex no nome).
+  **AMI entra no Templo** (decisão do Marcos · 2026-06-02). Domingo + Quarta + AMI.
+- **100% client-side:** reusa o `cultos.list({data_inicio,data_fim})` que a aba já
+  carrega — sem backend, sem migration, sem mudança no `api.js`. Respeita o período
+  (3m/6m/12m/2a/5a) já selecionado na aba.
+- **UI:** `Armchair` + número grande (`X%`) + média/culto, nº de cultos e capacidade.
+  `ocupacao.alvo` faz fallback p/ 'todos' quando o culto selecionado não existe no modo.
+
+## Grupos · aba Relatórios de KPIs (2026-06-02)
+
+Marcos: "crie uma área dentro de grupos que seja possível ver os relatórios de
+kpis de grupos, como fizemos em integração... frequência, número de líderes,
+número de grupos, satisfação dos líderes e quantidade de líderes em treinamento".
+
+Nova aba **Relatórios** em `/grupos` (`src/pages/ministerial/Grupos.jsx`),
+espelhando o estilo de relatório da Integração (`VisualizacaoFrequencia.tsx`):
+seletor de período (3/6/12/24 meses) → linha de `StatisticsCard` → gráfico
+Recharts de frequência por mês → lista de líderes em treinamento. Respeita o
+filtro de **temporada** já presente na página. Read-only (visível a qualquer
+nível ≥1 no módulo · não gated por `podeEditarGrupos`).
+
+**5 métricas → fontes reais (todas computadas, não dependem do cache de KPI):**
+- **Nº de grupos** · `mem_grupos` ativos (`deleted_at IS NULL`, `ativo=true`)
+- **Nº de líderes** · count distinct `mem_grupos.lider_id` dos grupos ativos
+- **Líderes em treinamento** · `mem_grupo_membros.funcao='lider_treinamento'` (ativos)
+- **Satisfação dos líderes** · último `dados_brutos` com `tipo_id='nps_lideres'`
+  (preenchido em /dados-brutos ou módulo NPS · mostra "—" se não houver)
+- **Frequência** · `mem_grupo_encontros` + `mem_grupo_encontro_presencas`
+  (`presente=true`) · média por encontro + série mensal de presenças
+
+**Modelo de líder (refinamento Marcos · 2026-06-02):** uma só noção de líder = o
+**responsável pelo grupo** (`mem_grupos.lider_id`). A única outra função relevante
+é **líder em treinamento** (opcional). Por isso o relatório lista nominalmente os
+líderes em treinamento (nome + grupo) em vez da distribuição genérica de papéis.
+
+- **Marcar/desmarcar líder em treinamento** · na lista de membros do grupo
+  (`Grupos.jsx` detalhe) há a coluna **Treino**: quem edita grupos
+  (`podeEditarGrupos`) liga/desliga via `api.setFuncaoMembro(participacao_id, ...)`
+  (`'lider_treinamento'` ↔ `'frequentador'`). `GET /:id` passou a devolver `funcao`
+  em cada membro.
+- **`PUT /membros/:rowId/funcao`** · autorização ampliada (era só
+  admin/coordenador/supervisor da hierarquia): agora aceita também quem tem
+  **grupos ≥ 3** no módulo (mesma regra do `podeEditarGrupos`), pros líderes de
+  área (boost) conseguirem marcar. Ajuste no check do route handler (não em
+  `auth.js`/RLS/login).
+- **`GET /api/grupos/kpis/lideres-treinamento?temporada=`** · lista os
+  `funcao='lider_treinamento'` ativos (nome + grupo) · alimenta o card do relatório
+  (`api.lideresTreinamento`). Volume pequeno (sem risco do cap de 1000 linhas).
+
+**Migration `20260602120000_grupos_kpis_relatorio.sql`** (ADITIVA · `CREATE OR
+REPLACE FUNCTION` · sem mudança de schema): RPC `fn_grupos_kpis_relatorio(p_temporada
+text, p_meses int)` que agrega **tudo numa chamada** (STABLE SECURITY DEFINER).
+Motivo de ser RPC e não query no backend: encontros+presenças crescem rápido e
+bateriam no **cap de 1000 linhas do PostgREST** (silenciaria a frequência). ⚠️
+Aplicar a migration antes do merge (o backend chama a RPC).
+
+**Backend** (`backend/routes/grupos.js`): `GET /api/grupos/kpis/relatorio?temporada=&meses=`
+(nível 1 · só `authenticate`) chama a RPC. Colocado **antes de `/:id`** (senão o
+Express casa `/kpis` como `/:id`).
+
+**Frontend**: `api.relatorioKpis(params)` em `src/api.js`; componente
+`RelatorioGrupos` no fim de `Grupos.jsx`; aba `relatorios` (ícone `BarChart3`)
+logo após "Grupos" na barra de abas.
+
+## Batismos · tempo de conversão até o batismo (2026-06-02 · sem migration)
+
+Marcos: mostrar, na área de Batismos (`/integracao` aba Batismos), o **tempo de
+conversão até o batismo** — por pessoa (na janela do membro) e uma média geral
+em dias de todos os membros batizados.
+
+- **Data de conversão** = `mem_trilha_valores.data_conclusao` da etapa
+  `'conversao'` (mesma fonte do "Seguir a Jesus" da Jornada; criada pelo trigger
+  quando o visitante decide / decisão de culto vira trilha). **Data do batismo** =
+  `batismo_inscricoes.data_batismo`. Dias = `data_batismo − data_conversao`.
+- **Backend** (`routes/kpis.js` `GET /batismos`): além de `membro:membro_id(...)`,
+  busca em **lote** as trilhas `etapa='conversao'` dos membros vinculados e
+  devolve por inscrição `data_conversao` + `dias_conversao_batismo` (campos
+  aditivos · `membro` segue com o mesmo shape). Sem migration · sem mudança no
+  `api.js` (a lista só ganha 2 campos).
+- **Frontend** (`Batismos.tsx`):
+  - **Visão geral** · card "Tempo médio de conversão até o batismo" (após os 4
+    KPIs, antes do gráfico): média em dias entre os batismos **realizados** com
+    conversão registrada, + n de membros, mín e máx. Ignora dias negativos
+    (conversão posterior ao batismo = inconsistência).
+  - **Por membro** · no `ModalDetalheBatismo`, bloco azul que recalcula ao vivo
+    conforme a data do batismo é editada; trata 3 casos (tem conversão+data →
+    "N dias"; tem conversão sem data → pede a data; sem conversão na jornada →
+    aviso). Só aparece quando a inscrição tem `membro_id`.
+- Membros batizados **sem** etapa `conversao` na trilha (ex.: importados direto)
+  ficam de fora da média — honesto: só medimos quando há as duas datas.
+
+## Marketing · REDESENHO em fases (2026-05-30) · EM ANDAMENTO
+
+Após feedback profundo do Pedro, o módulo Marketing está sendo redesenhado de
+"balcão que decide sozinho" → "mesa de comando do Pedro" (sistema assiste, não
+decide). Plano em **6 fases, cada uma 1 PR**. Resumo:
+
+- **Fluxo-alvo:** solicitante pede por **DOR** (não "faça X") → diretor aprova (Spec 001
+  segue valendo) → cai na **Triagem** do Pedro → ele decide a solução (pode ≠ pedido),
+  cria a **campanha com N cards** (dono + duração-dias + paralela/foco) + os 2 prazos →
+  **planner por slots/dia** → produção → revisão (buffer) → entrega.
+- **2 prazos:** entrega ao solicitante (na campanha · conservador: simples 3-4 sem ·
+  complexa 5-8 sem · Pedro escolhe) × produção interna (no card · deadline do designer).
+- **Capacidade vira SLOTS/DIA por pessoa** (não horas) · planner arrastável (barras
+  contínuas, máx 3/dia) · recorrentes só contam se `eh_demanda_calendario`.
+- **Revisa o que está em prod:** intake cascata (#797), estimativa+piso-7d (#803),
+  auto-assign (#806) e padrões por fase (#808) viram **sugestão/triagem**; órfãos no
+  Pedro (Spec 023) saem; Pedro fica **fora dos slots** (é gestor).
+
+### Fase 0 · Fundação de dados (`20260530140000_marketing_redesenho_f0_fundacao.sql`)
+**ADITIVA · não muda comportamento** (as Fases 1-5 ligam os usos):
+- Tabela `marketing_campanhas` (origem solicitacao|evento|interna · solicitacao_id · event_id ·
+  titulo · dor_descricao · publico_alvo · complexidade · prazo_entrega · status · RLS).
+- `marketing_kanban_cards` += `campanha_id`, `prazo_producao`, `duracao_dias`, `pode_paralelo`.
+- `marketing_membros` += `slots_dia` (default 3 · configurável por pessoa).
+- `marketing_compromissos_recorrentes` += `eh_demanda_calendario`.
+- CHECK de `estado` aceita os novos (triagem/backlog/pesquisa/producao/revisao/concluido)
+  **E** os legados (fila/em_producao/aguardando_solicitante · removidos na Fase 3 após remap).
+- Soft-delete de campanhas: incluir na whitelist `app_soft_deletable_tables()` na Fase 2
+  (quando o delete de campanha existir · evita reescrever a lista grande às cegas agora).
+
+### Fase 1 · Intake por dor (`20260530150000_solicitacoes_marketing_dor.sql`)
+O form de `/solicitacoes` (categoria=marketing) deixa de pedir grupo→entregável e passa a
+pedir a **dor**: título + descrição (a dor) + **público-alvo** (select) + "tem algo em mente?"
+(opcional). A estimativa de prazo saiu do form (o Pedro define na triagem · Fase 2).
+- Migration: `solicitacoes` += `mkt_publico_alvo`, `mkt_ideia_inicial` (ADITIVO).
+- Backend (`routes/solicitacoes.js` POST): aceita os 2 campos; `marketing_tipo_id`/`destino`
+  ficam null no intake (Pedro classifica depois).
+- Frontend (`Solicitacoes.jsx`): bloco "Detalhes da demanda (Marketing)" reescrito (público +
+  ideia + aviso de 3–8 sem); removidos cascata grupo→tipo, carga de etiquetas, habilidade
+  sugerida e estimativa. `MKT_GRUPO_*` → `MKT_PUBLICO_OPCOES`. `marketingValid` = público preenchido.
+- Efeito colateral de graça: sem `marketing_tipo_id` no intake, o auto-assign (#806) e a
+  estimativa/piso-7d (#803) já não disparam pra solicitações novas (só agiam com tipo). A
+  Fase 2 formaliza (trigger cria campanha em Triagem).
+
+### Fase 2 · Triagem + Campanha (`20260530160000_marketing_redesenho_f2_triagem.sql`)
+A solicitação-dor aprovada vira uma **campanha em triagem** (não mais card direto). O Pedro
+abre a Triagem, define a solução e cria os **entregáveis** (cards de produção).
+- Migration: `fn_marketing_cards_solicitacao_sync` recriada → INSERT em `marketing_campanhas`
+  (status='triagem') em vez de `marketing_kanban_cards`. Aposenta auto-assign (#806) e
+  estimativa/piso-7d (#803). 1 campanha por solicitação (idempotente).
+- Backend (`routes/marketing.js`): `GET /campanhas` (filtro status · +solicitante +total_cards),
+  `GET /campanhas/:id` (com cards), `PATCH`/`DELETE` (soft via deleted_at), `POST /campanhas/:id/cards`
+  (materializa: card origem='interna' + `campanha_id`, estado 'fila'; campanha vira 'ativa').
+- Frontend: tela nova **`/marketing/triagem`** (`MarketingTriagem.jsx`, nível 5) — lista campanhas
+  em triagem; ao abrir, mostra a dor + complexidade/prazo de entrega + cria entregáveis (etiqueta,
+  dono, duração-dias, paralela/foco). Item "Triagem" no `MarketingNav` (só coord). `api.js`:
+  `marketing.campanhas.{list,get,update,remove,criarCard}`.
+- **Card materializado** nasce origem='interna' + `campanha_id` (o CHECK aceita; evita o UNIQUE
+  de `solicitacao_id`) em estado 'fila' (visível na coluna Fila atual; Fase 3 remapeia p/ backlog).
+- **Pendente p/ sub-fases:** eventos/ciclo criativo ainda nascem card direto (não triados); o
+  solicitante ainda acompanha via card (Fase 3 liga via-campanha); régua de 6 colunas (Fase 3).
+- ⚠️ Aplicar a migration antes do merge.
+
+### Fase 2 · ajustes pós-teste (2026-05-30 · `20260530170000_marketing_entregavel_datas.sql`)
+- **Intake** (`Solicitacoes.jsx`): bloco Marketing = só o aviso de 3–8 sem (removidos público-alvo e "tem algo em mente"); SLA azul oculto p/ marketing; removido o select "Urgência (sentimento)" (redundante c/ `eh_urgente`). `marketingValid` sempre true.
+- **Migration**: `marketing_kanban_cards` += `data_inicio`, `data_fim` (datas de produção do entregável).
+- **Triagem** (`MarketingTriagem.jsx`): mostra **a data que o cliente pediu** + **urgência**; cada entregável tem **início+fim** (duração derivada) e mostra o **dono**; **entrega interna** = max(data_fim); o prazo de entrega tem "seguir a data pedida" e, se o Pedro mudar, **o solicitante é notificado** (`PATCH /campanhas` dispara `marketing_prazo_ajustado`).
+- **Backend**: `GET /campanhas` e `/campanhas/:id` retornam `data_pedida` + `eh_urgente` (da solicitação) e o `dono_nome` de cada entregável; `POST /campanhas/:id/cards` aceita `data_inicio`/`data_fim`.
+- ⚠️ Aplicar a migration antes do merge.
+
+### Fase 4 · fundação da capacidade (slots/dia · 2026-05-30 · SEM migration)
+Primeira parte do planner — a régua de **3/dia** já vale na triagem; o calendário arrastável (visual) vem na Fase 4b.
+- **Backend** `GET /marketing/capacidade-dia?membro_id&inicio&fim` → ocupação de slots por dia do membro, a partir dos intervalos `data_inicio→data_fim` dos cards ativos (paralela conta 1/dia · foco enche o dia). `slots_dia` vem de `marketing_membros` (default 3).
+- **Triagem** (`MarketingTriagem.jsx`): ao definir dono + início + fim do entregável, simula a agenda do dono e avisa **"sobrecarrega em N/total dia(s)"** (âmbar) ou **"cabe (≤ slots/dia)"** (verde). Não bloqueia — o Pedro decide.
+- `api.capacidadeDia(membroId, inicio, fim)`.
+- **Dias úteis (2026-05-30):** capacidade, aviso da triagem e `duracao_dias` contam **só seg–sex** (fim de semana não consome slot · `getDay()` ≠ 0/6). ⚠️ exceção da Aline (fotógrafa só domingo) fica pra Fase 4b.
+### Fase 4b · planner visual arrastável (`/marketing/planner` · 2026-05-30 · SEM migration)
+- **`MarketingPlanner.jsx`**: Gantt **mensal de dias úteis** (seg–sex), uma **raia por pessoa**, **barras contínuas** por entregável (`data_inicio→data_fim`) empilhadas em lanes. Navegação de mês + filtro por pessoa. Dias em excesso (> `slots_dia`) ficam **vermelhos**; 🎯 = foco (não paralela). Item no nav só p/ coord.
+- **Drag (HTML5 nativo, sem lib):** arrastar a barra pra outro dia/pessoa → recalcula `data_fim` mantendo a **duração em dias úteis** → `PATCH /cards/:id` (otimista). Coluna do drop = `clientX` relativo à raia.
+- **Backend:** `GET /marketing/planner?inicio&fim` (membros + barras); `PATCH /cards/:id` agora aceita `data_inicio`/`data_fim`/`pode_paralelo` (admin) e recalcula `duracao_dias`. Helper `diasUteisInclusive` (DRY, POST + PATCH). `api.planner`.
+- **Pendente (incrementos 4b):** "levar tudo" (mover campanha inteira), auto-rascunho na triagem, flag recorrente "é demanda de calendário", exceção da Aline (domingo). **Fase 5 (limpeza):** remover `MKT_PUBLICO_OPCOES`/`URGENCIAS` ociosos no intake.
+
+## Marketing · CONSOLIDAÇÃO em 4 abas (2026-05-30 · aprovada) — "Kanban melhor que o Trello"
+Reduzir o módulo a **Kanban · Planner · Analytics · Admin**. As outras abas somem e renascem no Kanban: **Triagem**→1ª coluna · **Fila**→ordenação dentro da coluna · **Ciclo Criativo**→ÉPICO de evento · **Calendário**→descontinuado (Planner é o sucessor). Decisões (Marcos): épico = agrupa **cards reais** (subdemanda = card com dono/data/fase, entra no Planner; épico é a visão por fase com %), **NÃO** checklist-style · **tudo é campanha** (1 peça = campanha de 1 entregável). Faseamento: **F-A** 6 colunas → **F-B** triagem no card (remove aba Triagem+Fila) → **F-C** épico (remove Ciclo) → **F-D** limpeza (remove Calendário; recorrentes/detalhe→Planner) → **F-E** acabamento + KPIs.
+
+### F-A · régua de 6 colunas no Kanban (2026-05-30 · SEM migration)
+- `MarketingKanban.jsx`: 4 colunas → **6** (Triagem→Backlog→Pesquisa→Produção→Revisão→Concluído), em **scroll horizontal** (estilo Trello). Constante `ESTADOS` ganhou `aceita: []` agrupando o canônico novo + o legado (backlog←fila, producao←em_producao, revisao←aguardando_solicitante) — **sem migration**; o drop grava o canônico novo (CHECK da F0 já aceita os 6).
+- Cards ordenados na coluna por **urgente → `ordem_fila`** (absorve a visão da Fila). Card mostra o **prazo de produção** (`prazo_producao`/`data_fim`, fallback no legado); SLA individual passou a contar `producao` também.
+### F-B/C/D/E · consolidação completa (2026-05-30 · SEM migration · 1 PR)
+- **F-B · triagem no card:** a coluna Triagem lista as **campanhas** (`status='triagem'`); clicar abre o `MarketingTriagemSheet` (extraído de MarketingTriagem, reusável) — complexidade, 2 prazos, criar entregáveis c/ aviso de 3/dia. Nav perde **Triagem** e **Fila**; rotas redirecionam pro Kanban.
+- **F-C · épico:** toggle **Quadro | Épicos** no Kanban → `MarketingEpicos.jsx`: campanhas e eventos como épicos expansíveis, cada um com subdemandas (cards reais) + **barra de progresso**; eventos mantêm **batch** (etiqueta/dono por fase) + link Eventos (absorve o **Ciclo**). Nav perde **Ciclo**.
+- **F-D:** **Calendário descontinuado** (Planner é o sucessor, slots não horas); nav perde Calendário; rota redireciona.
+- **F-E:** deletados os 4 órfãos (`MarketingTriagem/Fila/Calendario/CicloCriativo.jsx`) + lazy imports; **busca por título** no Kanban.
+- **✅ NAV FINAL: Kanban · Planner · Analytics · Admin** (+ toggle Quadro/Épicos dentro do Kanban). Telas órfãs = 0.
+### Acabamento do card + limpeza · NO AR (PR #828 · 2026-05-30)
+- Card: **avatar** (inicial do dono), **mini-barra de progresso** do checklist, **2º prazo** (entrega da campanha) — `enrichCards` agora traz `checklist {feitos,total}` + `campanha {prazo_entrega}`. Realtime do Kanban também escuta `marketing_campanhas` (coluna Triagem auto-atualiza). `MKT_PUBLICO_OPCOES` removido do intake (`URGENCIAS` fica, ainda usado).
+- **Fase 5 · KPIs NO AR (sem migration):** `entregue_em` + trigger `fn_marketing_cards_estado_ts` JÁ existiam (não precisou migration). Coletores em `kpiAutoCollector.js` ajustados ao redesenho: **MKT-PRAZO** passa a usar `prazo_producao || prazo_confirmado`; **MKT-DEM-CAP reescrito em SLOTS** (slot-dias úteis ocupados na semana ÷ Σ`slots_dia`×5 · não horas), corrigindo os estados legados que tinham ficado órfãos pós-régua. MKT-LEAD/THROUGHPUT já ok. `/estimar` + `fn_marketing_estimar_prazo` marcados **@deprecated** (intake por dor não usa mais; não dropados — aposentar após validar a triagem). Os KPIs populam com ~1 semana de histórico real.
+- **Resta só:** **reordenar-arrastando vertical** no Kanban (drag HTML5 · NÃO-crítico; urgente→`ordem_fila` já cobre a prioridade).
+
+### UI Trello-like no Kanban (2026-05-30 · pedido do Marcos · sem migration)
+Repaginação visual da aba (mantém toda a lógica): **listas com fundo cinza** (`bg-muted/50`, `rounded-xl`) + **bolinha de cor** por coluna (`ESTADOS.dot`); **cards estilo Trello** = `<div>` branco arredondado com sombra, **etiquetas em barras coloridas no topo** (componente `Etiqueta`, cor de `etiqueta_tipo`/`destino`/fase), **faixa de prioridade** no topo (urgente rosa / revisão âmbar), badges de meta (prazo · checklist · SLA · 🚩 entrega) e **avatar redondo** (inicial). `CampanhaCard` no mesmo estilo. Objetivo: o Pedro sentir o board do Trello dele.
+
+### Consertos de fluxo · pós-auditoria (2026-05-31 · sem migration)
+Varredura completa do módulo (2 auditorias + benchmark). Consertado:
+- **🔴 Solicitante↔campanha RELIGADO** (furo crítico): os cards triados têm `campanha_id` mas não `solicitacao_id`, e o solicitante buscava por `solicitacao_id` → tinha perdido o acompanhamento. `solicitacoes.js` (GET list) agora traz `marketing_campanha` = campanha (por `solicitacao_id`) + entregáveis (por `campanha_id`, com dono/estado). Novo `MarketingCampanhaBlock` em `Solicitacoes.jsx` mostra status + prazo + barra de progresso + lista de entregáveis. O `MarketingCardBlock` legado fica de fallback p/ cards antigos com `solicitacao_id`.
+- **Materialização da triagem grava `estado:'backlog'`** (não mais `'fila'`) em `POST /campanhas/:id/cards`.
+- Bugfix do filtro **"Não atribuído"** no Kanban (escondia tudo) + Select de estado no drawer normaliza legados (`fila→backlog`…) em vez de cair em `'fila'`.
+- **Falso alarme da auditoria:** "arrastar card pra Triagem some o card" NÃO procede — a coluna Triagem usa `TriagemColumn`, sem `onDrop`.
+- **Aprovação da DEMANDA COMPLETA (2026-05-31):** decisão do Marcos = aprovar a campanha inteira (NÃO por entregável). `POST /campanhas/:id/aprovar` (exige todos os entregáveis `concluido` → campanha `concluida` + solicitação `concluido` p/ NPS) e `POST /campanhas/:id/revisar` (1x · reabre os concluídos pra `revisao` + `tem_revisao`/`motivo_revisao` no card + notifica os donos · SEM migration). `MarketingCampanhaBlock` mostra **Aprovar entrega / Pedir revisão** só quando "tudo pronto" (status `ativa` + todos concluídos). `api.campanhas.aprovar/revisar`.
+- **Limpeza pós-auditoria (2026-05-31):** ✅ Pedro (`habilidade='coordenador'`) **fora das raias** do Planner e do cálculo DEM-CAP (`.neq('habilidade','coordenador')`); ✅ **Admin edita `slots_dia`** no membro (não mais horas) — POST/PATCH `/admin/membros` aceitam `slots_dia`; ✅ api.js limpo dos mortos (`capacidade`, `estimar`, `fila.list/reordenar`, `decidirUrgencia` · `fila.posicao` fica). ✅ **DROP** dos mortos (migration `20260531120000`: `fn_marketing_calcular_capacidade_semana`, `fn_marketing_estimar_prazo`, tabela `marketing_grupo_padrao`) + endpoints backend `/capacidade`, `/estimar`, `/fila`, `/fila/reordenar` removidos · `decidir-urgencia` fica inerte (sem chamador). ⚠️ aplicar a migration antes do merge.
+- **Resta (menor):** `sugerir-revisao`/`aprovar-entrega` de CARD (legado) em estados antigos — só afetam o fluxo pré-redesenho; Analytics vazio até juntar histórico.
+
+## /novosite · prévia da home do novo site público (2026-05-30)
+
+Ambiente isolado pra testar o redesign do site público **cbrio.com.br** dentro
+do ERP, sem afetar nada. Endpoint **`/novosite`** · página PÚBLICA standalone
+(FORA do AppShell e do ProtectedRoute · sem login), **não-listada** (nenhum link
+em menu · só via URL direta) e **noindex** (meta `noindex,nofollow` + `Disallow:
+/novosite` no `robots.txt` · vive no domínio real). É um TESTE de layout.
+
+**Origem do design:** handoff de marca em `~/Downloads/site cbrio` (brief +
+copy PT-BR + tokens.css + assets SVG + PDF "When Culture Changes Everything"),
+originalmente pensado pra Astro · adaptado num único componente React.
+
+- **Página**: `src/pages/public/NovoSite.tsx` · home completa, autocontida.
+  Tokens da marca como CSS vars escopadas em `.ns` (petróleo #00839D, areia
+  #EDE0D4, etc), fonte Urbanist, ondas SVG inline (assinatura visual), marquee
+  de valores, reveals no scroll (IntersectionObserver), header sticky
+  transparente→sólido + drawer mobile. Copy real; **missão no hero**
+  ("Empoderados por Deus para alcançar pessoas pra Jesus" · Mt 28:19). Seções:
+  Hero · Boas-vindas+marquee · Comece aqui/visita · Jornada (6 cards) · Valores ·
+  Online · História+stats 2021→2025 · Galeria (bento) · CTA · Footer.
+  **CTAs são visuais (sem href/redirect)** e a nav faz scroll interno — decisão
+  do Marcos ("é teste, sem funcionalidades/redirects").
+- **Vídeo de hero** (estilo mosaic.org / eaglebrookchurch.com): aftermovie da
+  igreja (adoração + batismo) como fundo. Source 4K/951MB (`telao_1920_1080.mp4`)
+  transcodado p/ loop web 1080p · 28s · sem áudio → `public/novosite/hero.webm`
+  (VP9 ~5MB) + `hero.mp4` (H.264 ~6.4MB). Poster = foto `hero.webp`, fade-in ao
+  tocar, e **só carrega em ≥768px sem prefers-reduced-motion** (mobile/a11y ficam
+  só na foto · economia de dados). Transcode via ffmpeg do pacote python
+  `imageio_ffmpeg` (não há ffmpeg no PATH).
+- **Fotos**: 10 fotos reais da igreja otimizadas em WebP
+  (`public/novosite/*.webp` · ~840 KB no total) + SVGs de marca em
+  `public/novosite/brand/`.
+- **Rota** em `src/App.tsx` (seção "Rotas publicas", lazy). Sem backend/migration ·
+  rota de frontend (Vercel reescreve não-`/api` pra `index.html`).
+- **Link do Next LIGADO (2026-06-01):** `LINKS.next = https://www.cbrio.org/next/inscrever`
+  em `novosite/shared.tsx`; o card "Next" da Jornada virou link (`href: LINKS.next`,
+  cta "Inscreva-se no Next", sem mais `soon`). Rota `/next/inscrever` existe em
+  `App.tsx` → `InscricaoNext`. Pendências de conteúdo do /novosite agora: zero.
+- **Ajustes pós-prints (2026-05-30):** galeria virou layout **bento** (1 destaque
+  2x2 + apoio · `.ns-gallery-bento`/`.ns-g-feat`); **Jornada com 6 cards** (incluídos
+  *Investir tempo com Deus* + *Next*, sem link ainda); **menu sobre o vídeo
+  corrigido** — o reset `.ns a{color:inherit}` (especificidade 0,1,1) vencia
+  `.ns-nav-link`/`.ns-logo` (0,1,0) e deixava o menu escuro/invisível; agora
+  `.ns-header .ns-nav-link` e `.ns-header .ns-logo` forçam branco + scrim escuro
+  no topo (`.ns-header::before`, some ao rolar). Mais respiro no hero
+  (título→"Mt 28:19") e na visita (legenda→horários). ⚠️ Não regredir o menu branco.
+  Botões do CTA final centralizados (`.ns-cta .ns-hero-actions{justify-content:center}` ·
+  `.ns-center-x` só dá margin auto, que não centraliza itens flex).
+- **Links ligados + página Quem Somos (2026-05-30):** todos os CTAs/rodapé têm destino.
+  Refator: chrome/estilos extraídos p/ `src/pages/public/novosite/shared.tsx` (SVGs,
+  `LINKS`, `NAV`, `SiteHeader`, `SiteFooter`, `Action`, `useChrome`, `useGo`,
+  `useHashScroll`) + `novosite/styles.ts` (`NS_CSS`) — usados pela home e por
+  **`/novosite/quem-somos`** (página nova · rota em `App.tsx` · história/missão/stats
+  da copy "When Culture", fotos atuais). Destinos: membro/grupos/batismo/voluntariado →
+  `cbrio.org/...`; assistir/online + footer Assista → `cbrio.tv`; Instagram →
+  `instagram.com/igrejacbrio/`; YouTube → `cbrio.tv`; **contato = CBZap**
+  `wa.me/5521997567770`; "Como chegar" → Google Maps (busca "CBRio"); endereço
+  Av. das Américas 7907 · Open Mall (subsolo). "Comece aqui"/"Quarta com Deus" →
+  scroll `#visita`. Agenda ganhou **sábado: Bridge 17h (teens) · AMI 20h (jovens)**.
+  Nav cross-page via `useGo` (âncora rola na página atual; senão navega p/
+  `/novosite#secao` e `useHashScroll` rola no destino). ⚠️ Botões agora são `<a>` →
+  regras `.ns-btn.ns-btn-*` usam **dupla classe** p/ a cor vencer o reset `.ns a`
+  (mesma armadilha do menu · não regredir).
+
+## Solicitações · 5 fluxos da administração · +Pagamentos +Serviços (2026-06-01)
+
+Marcos: a administração recebe **5 fluxos distintos com donos diferentes**
+(Reembolso, Reserva de Espaço, Compras, Pagamentos, Serviços), mas só 3 existiam.
+**Compras** era flat (só `valor_estimado`) e **Pagamentos/Serviços não existiam** —
+caíam no "Outro" (`area_responsavel=NULL` · sem dono, sem SLA, sem aprovação
+financeira automática · sumiam do radar e poluíam os KPIs adm). Decisão: adicionar
+os 2 fluxos + enriquecer Compras, com **form guiado por intenção + revelação
+progressiva** (cada fluxo só mostra os próprios campos · não fica mais pesado).
+
+**Migration `20260601120000_solicitacoes_pagamentos_servicos.sql`** (aditiva · idempotente):
+- CHECK de `categoria` aceita `'pagamento'` e `'servico'`.
+- Gatilho `tg_solicitacoes_calcula_sla` · lista de "sempre exige Yago" passa a ser
+  `compras/reembolso/pagamento/servico` (preserva a interação com a aprovação de
+  origem da Spec 001 · o portão financeiro só entra DEPOIS do diretor de origem).
+- Colunas novas (compartilhadas · reuso máximo): `favorecido_nome`,
+  `favorecido_documento`, `itens`, `link_referencia`, `recorrente`, `recorrencia`.
+  Reusa `documento_url`/`forma_pagamento`/`chave_pix`/`banco`/`agencia`/`conta`/
+  `valor_estimado` e **`data_necessaria` como vencimento** do pagamento.
+- Seed SLA: `financeiro/pagamento` (48/120 · urgente 24/48) e
+  `logistica_compras/servico` (72/336 · urgente 24/72). Obs: `financeiro` **não tem
+  subcategoria `default`** → pagamento PRECISA de linha própria (senão cai no
+  fallback 24/48 hardcoded da `calcular_sla_deadlines`).
+
+**Roteamento (backend `routes/solicitacoes.js`):**
+- `pagamento` → `financeiro` (subcat `pagamento`) · módulo notif `financeiro`.
+- `servico` → `logistica_compras` (subcat `servico`) · módulo notif `logistica` ·
+  **dono = Amaury/Compras** (decisão do Marcos · logística já negocia fornecedor).
+- `aprovar-financeiro` pós-Yago: `compras/servico` → `logistica_compras` (status
+  `pendente`, Amaury compra/contrata) · `reembolso/pagamento` → `financeiro` (status
+  `em_atendimento`, financeiro paga). `acaoMsg` por categoria na notificação.
+- `ALLOWED_CATEGORIES`, `CATEGORIA_MODULO`, `CATEGORIA_TO_AREA_RESP`,
+  `MODULO_CATEGORIAS` atualizados. POST aceita os campos novos por fluxo.
+
+**Frontend (`src/pages/Solicitacoes.jsx`):**
+- 2 categorias novas + `CATEGORIA_HINT` (dica curta por categoria · reduz erro de
+  classificação · "já gastou do bolso? use Reembolso").
+- Blocos por fluxo: Compras (itens+qtd, link, fornecedor), Serviço (o quê,
+  fornecedor, proposta, recorrência), Pagamento (favorecido, boleto/NF, vencimento,
+  forma boleto/PIX/transf, recorrência). `data_necessaria` vira "Vencimento *" no
+  pagamento. Validações `comprasValid`/`servicoValid`/`pagamentoValid`.
+- `DocDropzone` extraído (componente reusável · reembolso/pagamento/serviço) ·
+  removidos `dragOver`/`fileInputRef` do nível da página. `RecorrenteToggle` novo.
+- Preview "Prazo esperado" passou a casar **subcategoria** (CATEGORIAS ganhou `sub`)
+  → corrige também o reembolso, que mostrava o SLA de outra subcat.
+- Detalhe renderiza os campos novos por categoria.
+
+**Os 2 portões valem pros novos:** diretor de origem (Spec 001) → Yago (financeiro).
+**Decisões mantidas:** compras/pagamento/serviço **sempre** passam pelo Yago (sem
+bypass por valor · decisão de 22/05). **Follow-up não feito:** expor as subcategorias
+de RH que o backbone já tem (`vaga_nova/treinamento/documentacao/duvida` · hoje o form
+só mostra Férias/Licença). ⚠️ Aplicar a migration antes do merge.
+
+### Ajustes pós-avaliação do Marcos (2026-06-01 · sem migration)
+
+Depois de avaliar em prod, o Marcos refinou o significado dos fluxos. **Tudo
+frontend + backend, sem migration** (reúso da coluna `itens`):
+
+- **"Serviços" agora é MANUTENÇÃO INTERNA** (goteira, ar, elétrica → equipe da
+  igreja). Virou rótulo da categoria `infraestrutura` (→ `manutencao`, **NÃO** passa
+  pelo Yago). A categoria `servico` (contratação externa → logistica_compras + Yago)
+  **saiu do form** · contratar/pagar gente de fora agora é **Pagamento**. Os slugs
+  `servico`/`outro` continuam na CHECK do banco (linhas históricas), só não são mais
+  oferecidos. O SLA `logistica_compras/servico` fica dormente.
+- **"Outro" removido** do form (tirava o pretexto de furar o fluxo).
+- **Reembolso:** campo passa a ser **"Valor (exato da nota)"** obrigatório (era
+  "valor estimado"). **"Motivo do reembolso" removido** — era redundante com a
+  "Justificativa do pedido" (auditoria de redundância pedida pelo Marcos · os blocos
+  extras devem **complementar**, não repetir os campos gerais).
+- **Reserva de Espaço:** a Descrição vira "qual evento/finalidade" + campo novo
+  **"Material ou arrumação específica"** (gravado em `itens`). Detalhe da reserva
+  agora renderiza espaço/data/horário/pessoas + material.
+- **Seletor de área REMOVIDO do form.** O backend deriva `area_cliente` de quem
+  preenche — `kpi_areas[0]` (slug) → 1ª área de `usuario_areas` (nome normalizado p/
+  slug via `_slugArea`) → `profile.area`. Ignora qualquer `area_cliente` do body.
+  Crucial pros KPIs ADM ficarem corretos sem depender do solicitante escolher certo.
+- **Labels:** "Categoria" → **"Qual tipo de solicitação?"**, "Título" → **"Título da
+  solicitação"**, "Descrição" → **"Descrição da necessidade"**, "Justificativa" →
+  **"Justificativa do pedido"**.
+- **`DocDropzone`/`RecorrenteToggle`** seguem reusáveis (reembolso/pagamento). Limpei
+  os órfãos do seletor (`AREAS_MACRO`, `SUB_TO_MACRO`, `CARGO_TO_SUBAREA`, `cargoSlug`).
+- **Amaury** cadastrado em `area_solicitacoes_responsaveis` nas 4 áreas de logística
+  (`logistica_compras` = Compras · `manutencao` = Serviços · `reserva_espaco` ·
+  `logistica_estoque`) · via SQL no painel (limpeza/cozinha ficam com a Jéssica).
+
+**Mapa final de roteamento:** Compras→Amaury(logística)+Yago · Serviços(manutenção
+interna)→Amaury(manutenção, sem Yago) · Pagamento→Yago(financeiro) · Reembolso→Yago ·
+Reserva→Amaury(reserva_espaco) · TI→TI · Marketing→Pedro · Férias/Licença→RH.
+
+## Solicitações · fix da ENTRADA do fluxo (validação E2E Marketing · 2026-05-28)
+
+Validação ponta a ponta do fluxo de Solicitações de Marketing revelou que o módulo
+foi marcado como "concluído" mas **nunca tinha rodado em prod** (0 solicitações
+marketing, 0 cards `origem='solicitacao'`) — e quebrava no primeiro clique. 3 bugs
+latentes na entrada, todos corrigidos na migration `20260528500000_solicitacoes_fix_entrada.sql`:
+
+- **BUG A · `solicitacoes_categoria_check` rejeitava `marketing`/`reserva_espaco`/`licenca`.**
+  O form e o backend (`ALLOWED_CATEGORIES`) oferecem, mas a CHECK só tinha
+  `{ti,compras,reembolso,espaco,infraestrutura,ferias,outro}`. INSERT estourava → 500.
+  Fix: CHECK ampliada pra incluir as 3 (mantém `espaco` legado).
+
+- **BUG C · `area_cliente` era enum `area_kpi` (só 6 áreas de culto).** O form de
+  "Sub-área" manda 21 valores (integracao, cuidados, grupos, rh, financeiro, marketing…);
+  qualquer um fora de `{kids,ami,bridge,sede,online,cba}` → `invalid input value for enum`.
+  Fix: `area_cliente` vira **`text`** em `solicitacoes` E `area_alcadas` (o enum `area_kpi`
+  só era usado nesses 2 lugares · não toca KPI/NSM). Views `vw_solicitacoes_sla` e
+  `vw_reserva_espacos` dropadas e recriadas idênticas (a 1ª alimenta KPIs ADM em `painel.js`).
+
+- **BUG B · aprovação hierárquica (Spec 001) contornada inteira.** O backend insere via
+  **service_role** (`auth.uid()=NULL`), então o trigger `fn_solicitacoes_roteamento_aprovacao`
+  caía no branch de bypass e marcava TUDO como `dispensada` — a aba "Aprovar" do diretor
+  nunca recebia nada (afeta todas as áreas, não só marketing). Fix: função nova
+  **`fn_solicitacoes_rotear_origem(uuid)`** (espelha as regras de dispensa sem depender de
+  `auth.uid()`); o backend (`routes/solicitacoes.js` POST `/`) chama via RPC e grava
+  `aprovacao_origem_diretor_id/status/motivo` + `status` no insert. O **trigger continua de
+  rede de segurança** (só dispensa quando ninguém setou `aprovacao_origem_status`).
+
+**Interação com aprovação financeira (transversal):** como agora compras/reembolso também
+passam pela aprovação de origem antes, o `PATCH /:id/aprovar-origem` decide o próximo status:
+`aguardando_aprovacao_financeira` se `precisa_aprovacao_financeira AND aprovado_financeiro_em IS NULL`,
+senão `pendente`. E `GET /pendentes-financeiro` exclui `status='aguardando_aprovacao_origem'`
+(não mostra no financeiro antes do diretor aprovar).
+
+**Validação:** migration + função + cadeia (routed→Arthur → aprovação → card materializa)
+testadas em transação revertida (`ROLLBACK`) contra prod · zero persistência. Frontend não
+precisou de mudança (já oferecia tudo). **Não enforçado ainda:** "só funcionários criam"
+(D-04) — o trigger só checava isso com `auth.uid()` presente; deixado como follow-up pra não
+gerar 403 surpresa em quem está sem vínculo `rh_funcionarios` no piloto.
+
+## Solicitações · Kanban não esconde mais status do backbone (2026-05-28)
+
+O board "Para Atender" (`src/pages/Solicitacoes.jsx`) só tinha 5 colunas casando 1:1
+com 5 status (`pendente/em_analise/aprovado/rejeitado/concluido`), mas o
+`solicitacoes_status_check` tem **10** status. Itens em `aguardando_aprovacao_financeira`,
+`em_atendimento`, `aguardando_entrega` e `avaliado` não caíam em coluna nenhuma e
+**sumiam do board** (ex: reembolso aprovado pelo financeiro vira `em_atendimento`).
+
+Fix: cada `KANBAN_COLUMNS` ganhou um array `match` que agrupa os status reais
+(o filtro usa `col.match.includes(status)`):
+- Pendente ← `pendente`, `aguardando_aprovacao_financeira`
+- Em Análise ← `em_analise`
+- Em Andamento ← `aprovado`, `em_atendimento`, `aguardando_entrega`
+- Concluído ← `concluido`, `avaliado`
+- Rejeitado ← `rejeitado`
+
+`aguardando_aprovacao_origem` fica **de fora de propósito** (vive na aba "Aprovar",
+não é fila da área ainda). `STATUS_LABELS` ganhou os 4 status que faltavam, e o
+card mostra um badge com o status real quando a coluna agrupa vários (`mostrarStatus`).
+Drag-and-drop continua setando `col.key` (status canônico). Frontend puro · sem migration.
+
+## Dados · Pr. Juninho nome + Pr. Pedrão (2026-05-28)
+
+Migration `20260528510000_juninho_nome_exibicao.sql`: corrige o nome de exibição
+`juninho` → `Juninho` na conta oficial (`juninho@cbrio.com.br` · Marcos confirmou),
+sincronizando os text-mirrors legados (`projects.leader`/`responsible` · 2+2 linhas +
+`usuarios.nome`) pra não desencontrar do filtro `escopo_proprio` de `/projetos` (mesmo
+padrão da renomeação "Alda → Lorena"). A conta `juninho.lit@cbrio.org` (Pedro L. B.
+Litwinczuk Júnior) **fica como está** · possível duplicata a tratar depois. **Pr. Pedrão
+não tem conta** no sistema → nada a marcar em `is_diretoria_geral` (quando criarem,
+marcar Pastor Senior).
+
+## Marketing · intake em cascata (grupo → entregável) + destino interno (2026-05-28)
+
+Marcos: o solicitante encarava 16 tipos soltos + escolhia destino · simplificado pra
+**2 menus em cascata**, e o destino saiu da mão dele.
+
+**Migration `20260528520000_marketing_etiquetas_grupo.sql`:** `marketing_etiquetas_tipo`
+ganhou coluna `grupo` + seed dos 16:
+- `rede_social` → Post · Carrossel · Story · Reels
+- `video_foto` → Vídeo curto · Aftermovie · Motion · Foto evento · Foto retrato
+- `artes` → Cartaz/Folder · Banner/Lona · Adesivo · Mockup · Telão LED · Logo · Identidade visual
+
+**Form `/solicitacoes` (`Solicitacoes.jsx`, categoria=marketing):** menu1 = grupo
+(`MKT_GRUPO_LABELS`/`MKT_GRUPO_ORDER` · derivado de `marketingGrupos`) → menu2 = entregáveis
+filtrados por grupo (`marketingTipos.filter(t => t.grupo === form.marketing_grupo)`). Tipo
+virou **obrigatório** (`marketingValid`). **Destino removido** do form (`marketing_grupo` é
+UI-only · deletado do payload). Estimativa + habilidade sugerida mantidas.
+
+**Destino → etiqueta interna do Pedro:** `solicitacoes.marketing_destino_id` fica null no
+intake. O Pedro classifica no card do Kanban (label "Destino" → **"Etiqueta interna"** em
+`MarketingKanban.jsx` · CardDrawer + NovaTaskForm). `marketing_etiquetas_destino` intocado.
+
+**Backend:** `GET /etiquetas` usa `select('*')` → já retorna `grupo` (sem mudança).
+`POST/PATCH /admin/etiquetas/tipo` passaram a aceitar `grupo` (re-map sem migration). UI do
+admin pra editar grupo fica pra depois (hoje não há "add tipo novo" pelo admin · Spec 009).
+
+⚠️ **Aplicar a migration ANTES do deploy** — senão `GET /etiquetas` não traz `grupo`,
+`marketingGrupos` fica vazio e o menu 1 não mostra opção nenhuma.
+
+### Estimativa preliminar · piso de 7 dias (2026-05-29)
+
+Migration `20260529030000_marketing_estimar_piso_7dias.sql` recria
+`fn_marketing_estimar_prazo` com **piso de 7 dias** (Marcos): se a carga horária
+permite fazer em menos, mostra 7 (tempo mínimo viável pra equipe pensar+executar);
+se a carga exige mais, vale o maior. `dias_uteis` passou a ser **dias corridos até a
+data sugerida** (`data_sugerida - hoje`), pra bater com a data quando o solicitante
+informa uma "data necessária" maior. Rótulo no form: "dias úteis" → "dias".
+Inputs e limitações inalterados (usa `esforco_max_h` + capacidade da equipe inteira ÷5
+× 0,6 · ainda não é per-habilidade, não conta o tempo de aprovação do diretor).
+
+### Atribuição padrão por grupo (2026-05-29)
+
+Migration `20260529040000_marketing_atribuicao_padrao_grupo.sql`: card de solicitação
+**já nasce atribuído** ao responsável do grupo. Tabela `marketing_grupo_padrao`
+(`grupo` PK → `membro_id`), seed por habilidade:
+- `artes` → Cauã (designer) · `rede_social` → Lorena (social_media) · `video_foto` → Allan (videomaker)
+
+Allan pega vídeos **e fotos** (Aline não tem login). `fn_marketing_cards_solicitacao_sync`
+recriada: olha o `grupo` do `etiqueta_tipo_id` → busca o padrão → grava `atribuido_a` no
+INSERT. **Pedro troca no card** quando quiser ("Atribuído a" · já existia · backend PATCH
+`/cards` aceita). Sem tela pra editar os defaults (decisão "só seed" · ajustar via SQL se
+mudar). Cards de evento/interna sem tipo não recebem default (Pedro aloca). ⚠️ Migration
+sem dependência de código novo, mas aplicar antes do merge pra manter git↔prod em sincronia.
+Obs: card auto-atribuído (criado pelo trigger) não dispara a notificação "card atribuído"
+do backend — só quando o Pedro (re)atribui via API. Notificar no auto-assign fica de follow-up.
+
+### Padrões por fase do ciclo criativo (2026-05-29)
+
+Marcos+Pedro: ~80% dos cards de ciclo criativo seguem o mesmo padrão por
+(categoria do evento × fase). Em vez do Pedro classificar tarefa por tarefa,
+um padrão reutilizável aplica **etiqueta + esforço + dono automáticos** quando
+o card de evento nasce.
+
+**Migration `20260529060000_marketing_ciclo_padroes.sql`:**
+- Tabela `marketing_ciclo_padroes` (`category_id` FK event_categories, `nome_fase`,
+  `etiqueta_tipo_id`, `atribuido_a`, `ativo` · UNIQUE(category_id, nome_fase)).
+- Chave = `(events.category_id × event_cycle_phases.nome_fase)`. O
+  `cycle_phase_tasks` já carrega `event_id` + `event_phase_id` (ver `enrichCards`).
+- `fn_marketing_cards_cycle_phase_sync` recriada (Spec 022): no **nascimento** do
+  card resolve o par (categoria × fase) e preenche `etiqueta_tipo_id` + `atribuido_a`.
+  **Só no INSERT** · UPDATE de card existente NÃO toca etiqueta/dono (respeita a
+  classificação manual do Pedro). Sem match → nasce vazio como antes.
+- `fn_marketing_aplicar_padroes_ciclo(category_id)` · backfill manual · aplica os
+  padrões aos cards de evento ativos (fila/em_producao) **só nos campos NULL**
+  (COALESCE · nunca sobrescreve). Retorna nro de cards afetados.
+- Esforço vem de graça pela etiqueta (`esforco_max_h` · Spec 016).
+
+**Backend (`routes/marketing.js`, nível 5):**
+- `GET/POST/PATCH/DELETE /admin/ciclo-padroes` · CRUD (DELETE é hard · config sem PII)
+- `GET /admin/ciclo-padroes/categorias` · event_categories ativas (select da UI)
+- `GET /admin/ciclo-padroes/fases?category_id=X` · nomes de fase do catálogo
+  (`cycle_phase_templates` da categoria · distinct por nome · fonte que casa com
+  `event_cycle_phases.nome_fase`)
+- `POST /admin/ciclo-padroes/aplicar` · chama a RPC de backfill
+
+**Frontend:**
+- Nova aba **"Padrões"** em `/marketing/admin` (5ª aba). Lista agrupada por
+  categoria · select inline de etiqueta/dono · toggle ativo · remover.
+- Form: categoria → fase (carrega fases da categoria) → etiqueta + dono (≥1).
+- Botão **"Aplicar a cards ativos"** roda o backfill com confirmação + toast do count.
+- `api.js`: `marketing.admin.cicloPadroes.{list,categorias,fases,create,update,remove,aplicar}`.
+
+**Decisões:** chave (categoria × fase) sem granularidade por entregável (o refino
+manual cobre o resto · Pedro ajusta no card); padrões só por UI (sem seed · Pedro
+preenche). ⚠️ Aplicar a migration antes do merge.
+
+### Checklists no card + anexos de referência (2026-05-29)
+
+Inspirado no Trello do Pedro (board "Institucional" · épico com checklists + anexos de
+referência). Quick win pra aproximar o card do fluxo deles antes da demo.
+
+**Migration `20260529080000_marketing_card_checklist_referencias.sql`:**
+- Tabela `marketing_card_checklist` (`card_id` FK CASCADE, `grupo` text nullable = "frente",
+  `texto`, `feito`, `ordem` bigserial) + RLS (select authenticated · service_role all).
+  Sem `deleted_at` · DELETE direto (item trivial, não-PII).
+- Coluna `tipo` em `marketing_entregaveis`: `'entregavel'` (default) | `'referencia'` · CHECK.
+  Distingue input (briefing/inspiração) de output (arquivo final).
+
+**Backend (`routes/marketing.js` + `services/sharepointMarketing.js`):**
+- `GET /cards/:id/checklist` (nível 1) · `POST /cards/:id/checklist` (nível 3) ·
+  `PATCH /checklist/:itemId` (nível 3) · `DELETE /checklist/:itemId` (nível 3).
+- `POST /cards/:id/entregaveis` aceita campo `tipo` (multipart). `uploadEntregavel({...,tipo})`
+  grava a coluna e usa subpasta `Marketing/Referencias/AAAA/AAAA-MM` quando referência.
+  A notificação "arquivo final" só dispara quando `tipo != 'referencia'`.
+
+**Frontend (`MarketingKanban.jsx` · CardDrawer):**
+- Bloco **Checklist**: itens agrupados por frente (`grupo`), barra de % (feitos/total),
+  marcar/adicionar/remover inline. Enter adiciona e mantém a frente (vários itens seguidos).
+- Bloco **Referências** (input): upload `tipo=referencia` · lista com download.
+- Bloco **Entregáveis** (output): passa a filtrar `tipo != 'referencia'`.
+- Gate por `isCoordenador` (nível 5 · cobre toda a equipe via boost de área) · diretoria (nível 1) read-only.
+- `api.js`: `marketing.checklist.{list,create,update,remove}` + `entregaveis.upload(cardId, file, tipo)`.
+
+**Decisões:** checklist é 1 nível com `grupo` text (não 2 tabelas) · cobre o caso do Trello e é
+bem mais simples. Referência reusa toda a infra SharePoint (Graph) só com a coluna `tipo`.
+⚠️ Aplicar a migration antes do merge.
+
+## Marketing · Spec 024 · Tela /marketing/ciclo-criativo (2026-05-28)
+
+Marcos: "ao colocar o horário no marketing, coloque alguma visualização para Pedro ir por fase do ciclo criativo colocando o horário e o dono de cada etapa do ciclo criativo, então isso vai pro calendário dessa pessoa."
+
+**Migration `20260528400000_marketing_atribuir_orfaos_completos.sql`:**
+- Atribui os 4 cards concluídos sem dono pro Pedro (Spec 023 filtrou só ativos)
+- Zera os órfãos do módulo
+
+**Endpoints novos (`routes/marketing.js`):**
+- `GET /api/marketing/ciclo-criativo` (nível 1) · cards origem='evento' agrupados por evento → fase
+- `PATCH /api/marketing/ciclo-criativo/batch` (nível 5) · aplica `etiqueta_tipo_id` e/ou `atribuido_a` pra array de `card_ids`
+
+**Página nova `src/pages/marketing/MarketingCicloCriativo.jsx`:**
+- Rota `/marketing/ciclo-criativo` · `nivelMinimo=5` (só coord)
+- Layout accordion:
+  - Card por evento (collapsible · default expandido)
+  - Bloco roxo por fase (nome + numero + contador de tarefas)
+  - Linha por tarefa com:
+    - Título + descrição
+    - Select inline **etiqueta tipo** (mostra esforço · ex: "Banner / Lona · 6h")
+    - Select inline **dono** (membros · com habilidade)
+    - Link "Abrir no Eventos" pra tarefa específica
+- Botões batch por fase:
+  - "Aplicar etiqueta X pra toda a fase"
+  - "Atribuir membro Y pra toda a fase"
+  - Mostra confirmação com count antes de aplicar
+- Tarefas concluídas aparecem opaca · selects desabilitados (read-only)
+- Salvamento inline · sem botão "salvar" · PATCH dispara on change
+
+**`api.js`:** `marketing.ciclo.list()` + `marketing.ciclo.batch(cardIds, payload)`
+
+**`MarketingNav.jsx`:** item "Ciclo" entre Calendário e Analytics (só pra coord)
+
+**Fluxo operacional pro Pedro:**
+1. Cycle phase task criada no /eventos com area=marketing → trigger cria card
+2. Pedro abre `/marketing/ciclo-criativo`
+3. Vê evento "Retiro AMI 2026" → fase "Brainstorming" → 5 tarefas
+4. Aplica batch: "Atribuir Lorena pra todas" + "Etiqueta Story · 1h" (se cabível)
+5. Refina caso a caso por linha
+6. Cards atribuídos com etiqueta entram no calendário do membro automaticamente (Spec 005 + 020)
+
+**Edição preserva separação:** atribuição/etiqueta no Marketing NÃO toca `cycle_phase_tasks.responsavel_id` ou `cycle_phase_tasks.area`. Conteúdo da tarefa continua sendo editado no /eventos.
+
+## Marketing · Spec 023 · Pedro como membro + atribuição default órfãos (2026-05-28)
+
+Marcos: "coloque também Pedro Paiva como uma das pessoas nesse calendário e coloque todas as tarefas sem dono para ele · ele vai conseguir ver o que precisa ser entregue e que não tem dono."
+
+**Discussão sobre horas dos cards de ciclo criativo** (Marcos perguntou se valia botar no Eventos):
+- **Decisão:** manter no Marketing. Pedro classifica `etiqueta_tipo_id` ao atribuir → esforço vem da etiqueta (Spec 005+017 já fazem). Outros módulos não consomem · centralizar no Eventos é overhead sem benefício hoje.
+
+**Migration `20260528380000_marketing_pedro_membro_orfaos.sql`:**
+- CHECK constraint `marketing_membros.habilidade` ganha `'coordenador'` (Pedro não se encaixa nas 5 habilidades técnicas)
+- Mesma adição em `marketing_etiquetas_tipo.habilidade_padrao` (consistência · etiqueta pode sugerir coordenador)
+- `INSERT marketing_membros` · Pedro Paiva · `coordenador` · 40h · idempotent via ON CONFLICT
+- `UPDATE marketing_kanban_cards SET atribuido_a = pedro_membro_id WHERE atribuido_a IS NULL AND estado IN ('fila','em_producao','aguardando_solicitante')` · 105 cards do ciclo + qualquer outro órfão recebem Pedro como atribuído
+
+**Por que não estoura a capacidade do Pedro:**
+- Spec 018 fez `fn_marketing_calcular_capacidade_semana` somar cards via ROW_NUMBER ordenando por `ordem_fila` · só os primeiros cabem na capacidade · resto fica invisível no calendário (mas listado na Fila)
+- Pedro reordena ou reatribui conforme distribui · o que sobra na fila dele aguarda
+
+**Frontend (`MarketingAdmin.jsx`):**
+- Constante `HABILIDADES` ganha `'coordenador'` no topo
+
+## Marketing · Spec 022 · Ciclo criativo de Eventos aparece no Kanban (2026-05-28)
+
+Marcos: "as demandas de ciclo criativo que ficam no módulo de eventos devem ser listadas aqui também, por fases · pode ficar com o Pedro a responsabilidade de delegar · preenchimento continua no módulo de eventos, só um clique que abre lá."
+
+**Problema descoberto:** o trigger Spec 004 escutava `event_tasks` (tabela simples · 2 rows) mas o ciclo criativo real usa `cycle_phase_tasks` (689 rows · 105 com `area='marketing'`). Por isso 0 cards estavam materializando do ciclo.
+
+**Mudança estrutural:**
+- `marketing_kanban_cards` ganha coluna `cycle_phase_task_id uuid` (FK SET NULL)
+- UNIQUE parcial garante 1 card por cycle_phase_task
+- CHECK constraint atualizada · `origem='evento'` aceita `evento_task_id` OU `cycle_phase_task_id`
+- Trigger novo `fn_marketing_cards_cycle_phase_sync` em `cycle_phase_tasks`:
+  - AFTER INSERT/UPDATE OF area, status, titulo, descricao, prazo
+  - `area=marketing` + status=`pendente`/`em-andamento`/`concluida` → card com estado correspondente
+  - `area` mudou DE marketing → soft-delete do card (evita órfão)
+  - Atualizações no ciclo refletem no card automaticamente
+
+**Mapeamento status → estado:**
+| cycle_phase_tasks.status | marketing_kanban_cards.estado |
+|---|---|
+| `pendente` | `fila` |
+| `em-andamento` | `em_producao` |
+| `concluida` | `concluido` (+ `entregue_em` preenchido) |
+
+**Backfill (na migration):** 105 cards · 101 fila + 4 concluído.
+
+**Backend (`routes/marketing.js`):**
+- `enrichCards` resolve `cycle_phase_task_id` → objeto com:
+  - `event_name` (do evento pai)
+  - `fase` formatada `"3. Brainstorming e Conceito"`
+  - `is_critical`, `prioridade`
+  - `link` `/eventos/:event_id`
+
+**Frontend:**
+- `MarketingKanban` · drawer mostra bloco roxo "Origem · Ciclo criativo" com botão **"Abrir no Eventos"** (target=_blank)
+- Card mini ganha badge roxo da fase + nome do evento ao lado
+- `MarketingFila` · linha mostra "Fase · Evento" no segundo plano
+
+**Filosofia da integração:**
+- **Atribuição é local do Marketing** · Pedro define `atribuido_a` no card · NÃO toca `cycle_phase_tasks.responsavel_id`
+- **Estado/conclusão é local do Eventos** · trigger sincroniza pro card · UI Marketing mostra mas não edita
+- **Card é "espelho com atribuição local"** · vantagem dupla (visibilidade Marketing + autoridade Eventos)
+
+**Capacidade:** os 105 cards entram no cálculo de `fn_marketing_calcular_capacidade_semana` se tiverem `atribuido_a` preenchido. Como nenhum tem ainda (Pedro distribui), eles ficam invisíveis no calendário até Pedro atribuir.
+
+**Migration `20260528360000_marketing_cycle_phase_tasks.sql` aplicável depois da Spec 021.**
+
+## Marketing · Spec 021 · Cleanup legacy + Aline + Notificações (2026-05-28)
+
+Pós-auditoria · 3 ações Marcos:
+1. **Remover legacy do módulo** · 7 etiquetas inativas (hard-delete) + 5 KPIs MKT-ONL-* (soft-delete) + migrar 1 card antigo
+2. **Cadastrar Aline** sem e-mail · aparece pro Pedro (admin/calendário) e em RH com informações pendentes
+3. **Configurar notificações** pro Pedro Paiva + Marcos
+
+**Migration `20260528340000_marketing_cleanup_aline_notif.sql`:**
+
+| Ação | Detalhe |
+|---|---|
+| Migra card "Impressos campanha de serviço" pro tipo `banner_lona` (6h) · era `artes` legacy (10h) | UPDATE marketing_kanban_cards |
+| Hard-delete 7 tipos legacy (redes_sociais, artes, pecas_fisicas, videos, fotos, impressos, identidade_marca) · FK `ON DELETE SET NULL` em cards garante segurança | DELETE FROM marketing_etiquetas_tipo |
+| Soft-delete 5 KPIs MKT-ONL-* sem fonte_auto (preserva audit) | UPDATE kpi_indicadores_taticos |
+| Profile fantasma Aline · `role='assistente'` · `area='Criativo'` · email placeholder único | INSERT INTO profiles |
+| `rh_funcionarios` Aline · email NULL · cargo "Fotografa de domingo (cobertura cultos)" · tipo_contrato `PJ` · observações listam o que tá pendente | INSERT |
+| `marketing_membros` Aline · habilidade `fotografo` · `horas_semanais=6` | INSERT |
+| Recorrente domingo 08:30 6h "Cobertura cultos domingo (08:30 · 10:00 · 11:30 · 19:00)" vinculado a Aline | INSERT compromisso + junction |
+| Notificação · Pedro Paiva + Marcos recebem do módulo `marketing` | INSERT notificacao_regras |
+
+**Padrão "profile fantasma" pra Aline:**
+- Não existe em `auth.users` · não loga nunca
+- Email placeholder `aline.pendente@cbrio.org` (sem `UNIQUE` em profiles.email · idempotente via WHERE NOT EXISTS)
+- Aparece como pessoa normal no calendário (linha `Aline (fotografa domingo)` · habilidade `fotografo` · 6/6 alocadas via recorrente domingo)
+- RH tem entrada com `nome`/`cargo` preenchidos · resto pendente
+- Quando ganhar email/CPF, atualizar via UI normal de RH
+
+**Pós-migração esperado:**
+- Cauã passa de `10/40` pra `6/40` aloc (card "Impressos campanha de serviço" agora aponta pra banner_lona 6h)
+- Aline `6/6` aloc todo domingo
+- Etiquetas tipo · 16 ativas (sem inativas)
+- KPIs MKT-* · 4 (PRAZO/LEAD/THROUGHPUT/DEM-CAP) · sem MKT-ONL-* legacy
+
+## Marketing · Spec 020 · Recorrentes N:M (vários participantes) (2026-05-28)
+
+Marcos: "queria que voce pudesse adicionar tarefas recorrentes que podem mais de uma pessoa · reunião de todo marketing · reunião específica com designer e redes sociais."
+
+**Mudança estrutural · `marketing_compromissos_recorrentes` deixa de ser 1:1 e vira N:M:**
+- Coluna `membro_id` **removida** da tabela principal
+- Nova tabela junction `marketing_recorrentes_participantes` (`compromisso_id`, `membro_id` · PK composta)
+- Cada participante recebe `duracao_h` na alocação (reunião 1h com 5 → cada um +1h, não 0.2h cada)
+
+**Migration `20260528320000_marketing_recorrentes_nm.sql`:**
+- `CREATE TABLE marketing_recorrentes_participantes` + RLS pattern do módulo
+- Migra os 7 recorrentes existentes (1 participante cada) via `INSERT FROM`
+- `ALTER TABLE ... DROP COLUMN membro_id` da tabela principal
+- `CREATE OR REPLACE` da `fn_marketing_calcular_capacidade_semana` v4 · CTE `rec` faz JOIN com a junction
+
+**Backend (`routes/marketing.js`):**
+- `GET /compromissos-recorrentes` e `GET /admin/recorrentes` retornam `participantes_ids: uuid[]`
+- `POST /admin/recorrentes` exige `participantes_ids` array (≥1 obrigatório) · INSERT compromisso + INSERT junction · rollback (soft-delete) se junction falhar
+- `PATCH /admin/recorrentes/:id` aceita `participantes_ids` opcional · DELETE+INSERT na junction quando enviado
+
+**Frontend admin (`MarketingAdmin.jsx` aba Recorrentes):**
+- Linha mostra: dia · hora · duração · descrição · **chips de participantes** (1ª palavra do nome)
+- Form ganha bloco de **multi-select com checkboxes** (todos visíveis em scroll) + atalhos "Todos" / "Limpar"
+- Contador `Participantes * (3/5)` no label
+
+**Frontend calendário (`MarketingCalendario.jsx`):**
+- `recPorMembroDia` agora **expande** cada recorrente em N entradas (1 por participante)
+- Reunião de todo Marketing aparece em todas as 5 linhas no mesmo dia/horário
+- Sheet do membro mostra todos os recorrentes onde ele participa
+
+**Compatibilidade:**
+- Os 7 recorrentes existentes (Allan qua · Lorena seg-sáb) migram com 1 participante cada · UI mostra normalmente
+- Capacidade calculada continua correta (cada participante soma `duracao_h`)
+
+## Marketing · Spec 019 · Recorrentes como alocadas + sheet do membro (2026-05-28)
+
+Pós-piloto · 2 ajustes apontados pelo Marcos:
+
+**Fix · capacidade escondia recorrentes:**
+- Antes: Lorena aparecia `0/22` (0 cards / 22h após subtrair 18h de recorrentes)
+- Agora: Lorena aparece `18/40` (18h já alocadas com recorrentes / 40h base · 22h livre)
+- Lógica nova em `fn_marketing_calcular_capacidade_semana` v3:
+  - `horas_disponiveis = horas_base` (ou `override` se houver) · NÃO subtrai recorrentes
+  - `horas_alocadas = horas_recorrentes + horas_cards`
+  - `horas_livres = disponiveis − alocadas`
+- Cards na fila continuam usando "capacidade pra cards" interna (`base − recorrentes`) pra decidir quantos cabem na semana · só o **display** mudou pra transparência
+
+**Sheet de detalhe do membro (clique no nome):**
+- No `/marketing/calendario`, nome do membro agora é um `<button>` clicável
+- Abre `Sheet` lateral com:
+  - Barra de progresso de capacidade (cor: verde · âmbar >90% · vermelho sobrecarga)
+  - 3 stats em grid: horas Recorrentes / horas Cards / horas Livre
+  - Aviso se override está ativo
+  - Lista de compromissos recorrentes da semana
+  - Lista de cards atribuídos · clicáveis (abre o sheet do card original)
+- Cor primária no nome + hover underline indicam clicabilidade
+
+**Migration `20260528300000_marketing_recorrentes_como_alocadas.sql`:**
+- `CREATE OR REPLACE` da função · só mudança no SELECT final (disponiveis + alocadas)
+- Não recria CTEs nem trigger · zero impacto em outras consultas
+
+**Frontend:**
+- `MembroLinha` recebe `onClickMembro` · wrapper vira `<button>`
+- Display ganha texto secundário "(Xh recorr.)" quando há recorrentes
+- Novo componente `MembroDetalhe` dentro do `Sheet`
+
+## Marketing · Spec 018 · Fila de prioridade + nav unificada (2026-05-28)
+
+Resolve 2 problemas pós-piloto:
+- Botões de navegação inconsistentes entre as 4 telas
+- Capacidade alocada baseada no prazo escondia ociosidade · cards com prazo distante não entravam na semana atual mesmo com equipe livre
+
+### Item A · `MarketingNav` componente compartilhado
+
+Header padronizado nas **5 telas** (Kanban · Fila · Calendário · Analytics · Admin). Destaca a atual (variant `default`) e mostra link pras outras. Admin só aparece pra coordenador (nível ≥5). Substitui os botões hardcoded espalhados.
+
+### Item B · Fila de prioridade global (`/marketing/fila`)
+
+Nova página com lista ordenada por `ordem_fila`:
+- Cards em `em_producao` ficam no topo · não draggable (já sendo feitos)
+- Cards em `fila` abaixo · drag-and-drop (HTML5 nativo · mesmo padrão do Kanban)
+- Filtro: todos · sem atribuição · por membro
+- Realtime via Supabase channel
+
+**Decisões fechadas:**
+1. Fila **global** com filtro por membro (não tabs por pessoa)
+2. Cards sem atribuição entram na fila (Pedro distribui)
+3. Reordenar afeta só `ordem_fila` · prazo intacto · UI sinaliza desencontro (`prazo em 4d · fora da prioridade` ou `prazo em 6m · adiantando`)
+4. Só coord (nível 5) reordena · produtor vê só leitura
+5. Calendário **continua mostrando capacidade baseada na fila** (já refletido no item C)
+6. Solicitante vê posição (`Fila #3 de 12`) no `MarketingCardBlock`
+7. `MKT-DEM-CAP` mantém
+
+### Item C · Capacidade via fila (migration)
+
+`fn_marketing_calcular_capacidade_semana` v2:
+- Antes: somava `esforco_max_h` dos cards com `prazo_confirmado` na semana
+- Agora: usa **fila do membro** com `ROW_NUMBER` ordenando `em_producao` primeiro → `ordem_fila` ASC. Inclui cards até o **acumulado anterior** estourar a capacidade (último card cabe parcialmente · próximo já não entra na semana mesmo se houver folga marginal)
+
+Resultado: Pedro reordena a fila → calendário reflete imediatamente quem está ocupado com o que esta semana, sem depender do prazo.
+
+### Endpoints novos
+
+- `GET /api/marketing/fila` · lista cards fila + em_producao ordenados (nível ≥1, com filtro opcional `?atribuido_a=`)
+- `PATCH /api/marketing/fila/reordenar` · array `{ ordens: [{ id, ordem }, ...] }` (só coord ≥5)
+- `GET /api/marketing/fila/posicao/:cardId` · retorna `{ posicao, total, estado }` (solicitante do card OU membro Marketing OU admin)
+
+### Frontend
+
+- `api.js` ganha `marketing.fila.{list, reordenar, posicao}`
+- `MarketingFila.jsx` · nova página
+- `MarketingCardBlock` em Solicitacoes mostra badge "Fila #N de M" quando posicao retorna
+- 5 botões cross-link em todas as telas via `MarketingNav`
+
+### Migration `20260528280000_marketing_capacidade_via_fila.sql`
+
+- `CREATE OR REPLACE FUNCTION fn_marketing_calcular_capacidade_semana` (v2 · lógica de fila)
+- Backfill defensivo · normaliza `ordem_fila` pra inteiros sequenciais (em_producao primeiro · depois fila por ordem antiga)
+
+## Marketing · Spec 017 · Refator etiquetas tipo · 16 entregas concretas (2026-05-28)
+
+Marcos identificou que os 8 tipos guarda-chuva (Artes · Impressos · Mockup · etc) misturavam conceitos: "Artes" não é entrega, é produto base; "Impressos" = arte + impressão; esforço variava demais (post 30min vs banner 16h).
+
+**Mudança:** substituídos os 8 tipos por 16 **entregas concretas**, agrupadas em 5 canais via cor:
+
+| Canal | Cor | Entregas |
+|---|---|---|
+| Redes sociais | rosa (#EC4899/#F472B6) | Post · Carrossel · Story · Reels |
+| Audiovisual | azul (#0EA5E9/#0284C7/#38BDF8/#7DD3FC) | Vídeo curto · Aftermovie · Motion · Foto evento · Foto retrato |
+| Impressos | âmbar (#F59E0B/#FBBF24) | Cartaz/Folder · Banner/Lona · Adesivo |
+| Eventos físicos | roxo (#A855F7) | Mockup · Telão LED |
+| Marca | verde (#10B981/#059669) | Logo · Identidade visual completa |
+
+**SLAs preliminares** (Pedro/Marcos refina via `/marketing/admin`):
+
+| Entrega | esforco_max_h |
+|---|---|
+| Story | 1 |
+| Post · Adesivo | 2 |
+| Foto retrato | 3 |
+| Carrossel · Reels · Vídeo curto · Cartaz/Folder · Mockup · Telão LED | 4 |
+| Banner/Lona · Foto evento · Motion | 6 |
+| Aftermovie · Logo | 16 |
+| Identidade visual completa | 40 |
+
+**Migration `20260528260000_marketing_etiquetas_refator.sql`:**
+- `UPDATE ativo=false` nos 8 tipos antigos (preserva FK · 1 card existente continua referenciando · UI não mostra mais)
+- `INSERT` (ou UPDATE via ON CONFLICT) dos 16 tipos novos com SLAs sugeridos
+- Antigos vão pro fim da ordenação (cosmético)
+- Coluna `nome` ganha COMMENT explicativo do refator
+
+**Frontend/Backend · sem mudança de código.** Lista de tipos vem dinâmica do banco via `/api/marketing/etiquetas` (filtra `ativo=true`). Cores aplicadas inline a partir de `etiqueta_tipo.cor`. Estimativa preliminar (Spec 010) usa `esforco_max_h` (Spec 016) que já existe.
+
+**Eixo "destino"** (interno/externo/institucional/eventos_séries/campanhas) **intocado** — foco da Spec 017 foi só no eixo tipo.
+
+**Tipos antigos** (`ativo=false`): redes_sociais · artes · pecas_fisicas · mockup (slug antigo) · videos · fotos · impressos · identidade_marca. O slug `mockup` é reusado pelo tipo novo (CONFLICT DO UPDATE atualiza ele) · os outros 7 ficam dormentes.
+
+## Marketing · Spec 016 · Bugfix 3 telas + esforco_max (proposta A · 2026-05-28)
+
+Após o piloto começar, Marcos identificou 3 telas com crash + propôs trocar
+o conceito de `esforco_medio_h` (média histórica) por `esforco_max_h` (SLA acordado).
+
+**Bugs corrigidos:**
+
+1. **Calendário** (`/marketing/calendario`) crashava porque as funções SQL da Spec 005 (`fn_marketing_segunda_da_semana`, `fn_marketing_calcular_capacidade_semana`, `fn_marketing_estimar_prazo`) NÃO foram aplicadas em prod — a primeira aplicação da Spec 005 falhou em transação por causa do `tipo_kpi='tatico'`, e o fix subsequente só re-aplicou KPIs+trigger. Recriadas nesta migration.
+
+2. **Analytics** (`/marketing/analytics`) endpoint `/analytics/kpis` retornava 500 porque o backend selecionava colunas erradas de `kpi_valores_calculados`. Schema real: `kpi_id`, `periodo_referencia`, `valor_calculado`, `detalhes` (jsonb), `calculado_em` · não `periodo`, `valor`, `observacao`, `updated_at`. Backend agora normaliza pra shape estável.
+
+3. **Admin > Etiquetas** crashava porque o componente `TipoRow` tinha `<SelectItem value="">` (rejeitado pelo Radix Select). Trocado por sentinela `__none__` convertida pra string vazia no `setHab`.
+
+**Mudança conceitual `esforco_max_h` (proposta A):**
+
+- Renomeada coluna `marketing_etiquetas_tipo.esforco_medio_h` → `esforco_max_h`
+- Significado: tempo MÁXIMO acordado (SLA interno) · "story precisa ficar pronto em 3h"
+- Usado pra 3 coisas:
+  1. **Estimativa preliminar pessimista** · `fn_marketing_estimar_prazo` agora usa o `_max`
+  2. **Capacidade alocada conservadora** · soma os `_max` dos cards (não lota fácil)
+  3. **Badge SLA individual no card do Kanban** (novo):
+     - `(now − estado_atualizado_em) > esforco_max × 1.5` → badge vermelho `"12h · 2.0× SLA"`
+     - `> esforco_max` mas ≤ 1.5× → badge âmbar `"acima do SLA"`
+     - Aparece quando `estado='em_producao'` · prioriza sobre badge de prazo final
+
+**Migration `20260528240000_marketing_bugfix_e_esforco_max.sql`:**
+- Recria 3 funções SQL faltantes (idempotent · CREATE OR REPLACE)
+- `ALTER TABLE marketing_etiquetas_tipo RENAME COLUMN esforco_medio_h TO esforco_max_h`
+- Funções já usam o nome novo internamente
+
+**Backend (`routes/marketing.js`, `routes/solicitacoes.js`, `services/kpiAutoCollector.js`):** refs de `esforco_medio_h` → `esforco_max_h`.
+
+**Frontend:**
+- `MarketingAdmin` aba Etiquetas · label "Máx (h)" + descrição explicativa
+- `MarketingKanban` · novo `slaIndividual` no `KanbanCard` que prioriza sobre `atraso` quando `estado='em_producao'`
+
+## Marketing · Spec 015 · Testes E2E + Cutover (2026-05-28) · FIM DA FASE 9
+
+Conclui as 15 specs do módulo Marketing. Próxima fase é piloto interno + abertura
+pra igreja (ver `docs/modulo-marketing/15-cutover-plan.md`).
+
+**Suite Playwright (`e2e/tests/marketing.spec.ts`):**
+- `/marketing` carrega Kanban com 4 colunas
+- `/marketing/calendario` carrega com botão "Hoje"
+- `/marketing/analytics` carrega com 4 cards de KPI
+- Navegação header entre Kanban → Calendário → Analytics → Kanban
+
+Rodar: `npm run test:e2e -- marketing.spec.ts`. Requer `E2E_TEST_EMAIL` + `E2E_TEST_PASSWORD` (recomendado Pedro Paiva · nível 5).
+
+**Smoke manual obrigatório antes do go-live** (checklist completo em `15-cutover-plan.md` §2):
+- Permissões: Pedro/equipe vê tudo · produtor edita só estado do próprio · diretores read-only · sem-área não vê menu
+- Fluxo end-to-end: solicitação → aprovação Arthur → atribuição Pedro → trabalho Cauã → preview → aprovação solicitante → NPS → KPI atualizado
+- Casos especiais: diretor cria (dispensa) · membro sem RH (403) · evento gera card · task interna · rejeição imutável
+- Calendário + Analytics · variantes coordenador vs colaborador
+- **Smoke transversal**: solicitação cozinha + manutenção ainda funcionam (Spec 001 mexeu no backbone)
+
+**Plano de cutover (`15-cutover-plan.md` §3):**
+- T-7 dias: comunicação geral + Cérebro CBRio
+- T-3 dias: treinamento Pedro+equipe (15min) + diretores (5min cada)
+- T-0: soft launch · piloto interno 2 semanas só com Marketing usando
+- T+14: abertura oficial pra igreja
+
+**Pendências deferred (Fase 11):**
+- Aline cadastrada (Pedro/Marcos via admin)
+- Escalação automática >24h pra super-admin
+- Modo pico fev/mai (D-08)
+- Forecasting automático (D-08)
+- Auto-calibragem de `esforco_medio_h`
+
+**Critérios de "pronto pra abrir pra igreja"** (`15-cutover-plan.md` §5):
+- [x] 15 specs implementadas e mergeadas
+- [x] Migrations aplicadas em produção
+- [x] Smoke automatizado
+- [ ] Smoke manual completo
+- [ ] Piloto 2 semanas sem incidentes
+- [ ] `esforco_medio_h` calibrado
+- [ ] Pedro Paiva usa sem suporte
+- [ ] 3 diretores aprovaram ≥1 solicitação cada
+
+## Marketing · Spec 014 · Notificações (10 eventos) (2026-05-28)
+
+Spec 014 finaliza o sistema de notificações do módulo. Maioria já implementada nas specs anteriores · esta iteração fecha as 2 que faltavam + registra `marketing` no admin de regras.
+
+**Eventos implementados (10):**
+
+| # | Evento | Quem implementou | Trigger |
+|---|---|---|---|
+| 1 | Solicitação aguardando aprovação → diretor | Spec 001 | POST `/solicitacoes` |
+| 2 | Aprovada pelo diretor → solicitante + responsável | Spec 001 | PATCH `/aprovar-origem` |
+| 3 | Rejeitada pelo diretor → solicitante | Spec 001 | PATCH `/rejeitar-origem` |
+| 4 | Aguardando aprovação há 24h → diretor (cron) | Spec 001 | `gerarNotificacoesSolicitacoes` |
+| 5 | Card atribuído → produtor | Spec 004 | POST `/cards` + PATCH atribuir |
+| 6 | **Prazo confirmado** → solicitante | **Spec 014** | PATCH `/cards/:id` (prazo_confirmado mudou) |
+| 7 | Urgência aceita/recusada → solicitante | Spec 004 | PATCH `/decidir-urgencia` |
+| 8 | Preview pronto (aguardando_solicitante) → solicitante | Spec 004 | PATCH `/cards/:id` (estado mudou) |
+| 9 | Concluído → solicitante (pede NPS) | Spec 004 + Spec 012 | PATCH `/cards/:id` (estado=concluido) ou `/aprovar-entrega` |
+| 10 | **Aguardando solicitante há 24h → solicitante** (cron) | **Spec 014** | `gerarNotificacoesMarketing` |
+
+**Plus (não estavam na lista original mas valem):**
+- Revisão sugerida → produtor (Spec 004)
+- Aprovação hierárquica há 24h → diretor (Spec 001)
+- Arquivo final anexado → solicitante (Spec 006)
+- Entrega aprovada pelo solicitante → produtor (Spec 012)
+
+**Backend novo (`routes/marketing.js`):**
+- PATCH `/cards/:id` detecta `prazo_confirmado` mudando · dispara notificação se valor novo é não-nulo
+
+**Backend novo (`services/notificacaoGenerator.js`):**
+- `gerarNotificacoesMarketing()` busca cards `aguardando_solicitante` há ≥24h
+- Notifica solicitante (1x/dia/card via chaveDedup com data)
+- Registrado em `gerarTodasNotificacoes`
+
+**Frontend (`pages/admin/NotificacaoRegras.jsx`):** array `MODULOS` ganha entrada `marketing` (rosa) com descrição dos eventos · admin pode configurar quem recebe cada categoria de notificação.
+
+**Spec autônoma · sem migration.**
+
+## Marketing · Spec 013 · Analytics /marketing/analytics (2026-05-28)
+
+Dashboard de KPIs do módulo + bloco gargalo de aprovação dos diretores.
+
+**Endpoints novos em `backend/routes/marketing.js`:**
+- `GET /analytics/kpis?semanas=N` (nível 1) · retorna `{ snapshot, serie }` com os 4 KPIs MKT-* (last value + série temporal)
+- `GET /analytics/aprovacoes-origem?dias=N` (nível 1) · tempo médio que cada diretor leva pra aprovar solicitações da área Marketing (gargalo se > 24h)
+
+**Página nova: `src/pages/marketing/MarketingAnalytics.jsx`**
+- Rota: `/marketing/analytics` · `moduleSlug=marketing nivelMinimo=1`
+- 4 cards de snapshot · MKT-PRAZO · MKT-LEAD · MKT-THROUGHPUT · MKT-DEM-CAP
+  - Badge "fora da meta" quando o valor está pior que meta
+  - Ícone temático + cor por KPI
+  - Observação do coletor abaixo
+- Gráfico de linha temporal (recharts · LineChart) das 4 séries · seletor 4/8/12/24/52 semanas
+- Bloco "Tempo médio de aprovação por diretor de origem" · lista os 3 diretores com tempo médio em horas · badge "gargalo" quando > 24h
+- Header com botões Kanban/Calendário/(Admin)
+
+**Header do Kanban:** botão "Analytics" adicionado pro todo mundo (nível 1+) — substitui necessidade do solicitante navegar manualmente.
+
+**api.js:** namespace `marketing.analytics.{kpis,aprovacoesOrigem}`.
+
+**Spec autônoma · sem migration.**
+
+## Marketing · Spec 012 · Revisão (1x) + Aguardando + NPS (2026-05-28)
+
+Solicitante revisa preview, aprova entrega ou pede revisão direto na aba
+Minhas de `/solicitacoes`.
+
+**Endpoint novo · `PATCH /api/marketing/cards/:id/aprovar-entrega`:**
+- Permissão: solicitante do card (via `card.solicitacao.solicitante_id`) OU admin Marketing
+- Estado precisa estar em `aguardando_solicitante` ou `em_producao`
+- Move card pra `concluido` · notifica produtor · marca `solicitacao.status='concluido'` (acionando NPS via fluxo existente)
+
+**Backend (`routes/solicitacoes.js` GET /):**
+- Enriquece solicitações com `marketing_card` (id, estado, tem_revisao, prazo, atribuido, entregue_em) quando `area_responsavel='marketing'`
+
+**Frontend (`Solicitacoes.jsx`):**
+- Novo componente `MarketingCardBlock` dentro do DetailDialog (só aparece se `item.categoria='marketing'` e user é solicitante)
+- Mostra:
+  - Status do card (Na fila / Em produção / Aguardando sua revisão / Concluído)
+  - Selo "Já teve revisão (1x)" quando aplicável
+  - Lista de entregáveis (preview/download via signed URL do Graph)
+- Botões aparecem só quando `estado='aguardando_solicitante'`:
+  - **Aprovar entrega** → muda pra concluído + dispara NPS
+  - **Sugerir revisão (1x)** → modal de motivo · só aparece se `!card.tem_revisao` · após uso some
+- `api.js` ganha `marketing.aprovarEntrega(id)`
+
+**Integração com NPS existente:**
+- Quando solicitante aprova entrega · backend marca solicitação como `concluido`
+- O `NpsBlock` (já existia no Solicitacoes.jsx) detecta `status='concluido' + nps_nota IS NULL` e mostra o form de avaliação
+- KPIs `ADM-C-*-Q` alimentados automaticamente (trigger SQL existente)
+
+**Spec autônoma · sem migration.**
+
+## Marketing · Spec 011 · Aba Aprovar enriquecida com Marketing (2026-05-28)
+
+Spec 011 já estava implementada na Spec 001 (aba "Aprovar", badge contador, lista,
+botões Aprovar/Rejeitar com modal de motivo). Esta iteração agrega visibilidade do
+contexto Marketing pro diretor decidir com mais informação.
+
+**Backend (`routes/solicitacoes.js` GET /):**
+- Resposta enriquecida com `marketing_tipo` e `marketing_destino` (objetos com nome/cor/habilidade_padrao/esforco_medio_h)
+- Faz JOIN só quando há `marketing_tipo_id` ou `marketing_destino_id` no resultset
+
+**Frontend (`Solicitacoes.jsx` AprovacaoOrigemCard):**
+- Mostra área alvo (`area_responsavel`) e data necessária no subtitle do card
+- Badge das etiquetas Marketing (tipo+destino) quando `categoria='marketing'`, coloridas pelo cor do banco
+- Texto "sugere {habilidade}" derivado de `tipo.habilidade_padrao`
+
+**Spec autônoma · sem migration.**
+
+## Marketing · Spec 010 · Bloco Marketing em /solicitacoes/nova (2026-05-28)
+
+Estende form de criação de Solicitações com bloco específico para Marketing.
+
+**Migration `20260528220000_solicitacoes_marketing_etiquetas.sql`:**
+- 2 colunas em `solicitacoes`: `marketing_tipo_id` (FK marketing_etiquetas_tipo) + `marketing_destino_id` (FK marketing_etiquetas_destino) · ambas NULL aceito
+- Atualiza `fn_marketing_cards_solicitacao_sync` (Spec 004) para propagar etiquetas pro card automaticamente
+- Quando card é materializado · trigger chama `fn_marketing_estimar_prazo` e preenche `prazo_preliminar` no card
+- Backfill: cards já criados pegam etiquetas da solicitação correspondente se estavam vazias
+
+**Backend (`routes/solicitacoes.js`):** POST aceita os 2 campos novos quando `categoria='marketing'`.
+
+**Frontend (`pages/Solicitacoes.jsx`):**
+- Bloco rosa "Detalhes da demanda (Marketing)" aparece quando `categoria='marketing'`
+- Selects de tipo (8) + destino (5) · ambos opcionais (Pedro pode definir depois)
+- Texto "Habilidade sugerida: X" baseado em `tipo.habilidade_padrao`
+- **Estimativa preliminar** (debounce 350ms) chama `GET /api/marketing/estimar?tipo=X&data_alvo=Y`:
+  - Mostra "Estimativa preliminar: DD/MM/YYYY (N dias úteis)"
+  - Mostra observação do backend (cobrindo "tipo não calibrado" ou "equipe sem capacidade")
+- Etiquetas carregadas lazy (só quando categoria='marketing' selecionada)
+
+**Fluxo end-to-end:**
+1. Pr. Wesley cria solicitação categoria=marketing
+2. Pré-seleciona Tipo='Artes' Destino='Eventos e Séries'
+3. Vê estimativa preliminar antes de enviar
+4. Após aprovação do Pedro Menezes (Spec 001), trigger cria card com etiquetas + prazo preliminar já preenchidos
+5. Pedro Paiva ajusta no Kanban se necessário
+
+## Marketing · Spec 009 · Admin /marketing/admin (2026-05-28)
+
+CRUD admin pra Pedro/Marcos editarem o módulo sem precisar de migration.
+
+**Página nova: `src/pages/marketing/MarketingAdmin.jsx`** com 4 abas:
+
+| Aba | CRUD |
+|---|---|
+| **Membros** | listar · editar inline (horas/observação/ativo) · adicionar via Dialog · soft-delete |
+| **Etiquetas** | tipos (8) + destinos (5) · editar inline (esforço · habilidade · cor · ativo) · novos via futura iteração |
+| **Recorrentes** | listar · adicionar · remover (soft-delete) |
+| **Overrides** | listar · adicionar (membro · semana · horas · motivo) · remover · UNIQUE(membro, semana) |
+
+**Endpoints novos em `backend/routes/marketing.js` (todos exigem nível 5):**
+- `GET/POST/PATCH/DELETE /admin/membros[/:id]`
+- `GET/POST/PATCH /admin/etiquetas/tipo[/:id]`
+- `GET/POST/PATCH /admin/etiquetas/destino[/:id]`
+- `GET/POST/PATCH/DELETE /admin/recorrentes[/:id]`
+- `GET/POST/PATCH/DELETE /admin/overrides[/:id]`
+
+**Rotas:**
+- `/marketing/admin` · `moduleSlug=marketing nivelMinimo=5`
+
+**Header do Kanban:** botão "Admin" (só pra coordenador) ao lado de Calendário.
+
+**Calibragem do `esforco_medio_h`:** começa NULL nas 8 etiquetas (Spec 002). Aba Etiquetas permite Pedro/Marcos preencher após algumas semanas de cycle time real. NULL → estimativa volta "tipo não calibrado".
+
+**Novo membro:** dropdown filtra `profiles.area ILIKE 'criativo'` (Aline pendente vai aparecer aqui quando o profile dela existir).
+
+**API client (`src/api.js`):** `marketing.admin.{membros,etiquetasTipo,etiquetasDestino,recorrentes,overrides}.{list,create,update,remove}`.
+
+**Spec autônoma · sem migration.**
+
+## Marketing · Spec 008 · Frontend Calendário /marketing/calendario (2026-05-28)
+
+Visualização semanal de capacidade da equipe · grid 7 dias × N membros consumindo
+`GET /api/marketing/capacidade` (Spec 005).
+
+**Página nova: `src/pages/marketing/MarketingCalendario.jsx`**
+- Rota: `/marketing/calendario` · `moduleSlug=marketing nivelMinimo=1`
+- Grid: 1 linha por membro × 7 colunas (Seg-Dom · ISO week)
+- Linha do membro mostra: nome · habilidade · `horas_alocadas / horas_disponiveis · %` (vermelho se sobrecarga)
+- Célula do dia mostra:
+  - Compromissos recorrentes (Aline dom/Allan qua/Lorena seg-sáb) com ícone de repetição · cor cinza
+  - Cards com prazo (confirmado OU preliminar) naquele dia · cor da etiqueta tipo · selo ⚡ se urgente
+  - Vazio: cinza claro
+- Navegação ±semana + botão "Hoje"
+- Legenda visual no header (Recorrente · Urgente · Atrasado)
+- Variantes:
+  - **Coordenador (Pedro · admin)** vê todos os membros
+  - **Colaborador (nível 3 via boost)** vê só a própria linha (filtro client-side por `profile_id`)
+- Click num card abre Drawer com resumo · link "Abrir no Kanban" pra editar
+
+**Header do Kanban (`MarketingKanban.jsx`):** ganhou botão "Calendário" pra alternar entre as 2 views.
+
+**Realtime: não** (calendário é snapshot semanal · não precisa channel · usuário aperta "Atualizar" navegando).
+
+**Layout responsivo:** overflow-x-auto · grid mínimo 700px · mobile faz scroll horizontal preservando legibilidade. Mesmo padrão do calendário de cultos em `/integracao`.
+
+## Marketing · Spec 007 · Frontend Kanban /marketing (2026-05-28)
+
+Primeira tela do módulo · Kanban completo com 4 colunas, filtros, drawer de detalhe e upload SharePoint integrado.
+
+**Página nova: `src/pages/marketing/MarketingKanban.jsx`**
+- 4 colunas: Fila · Em produção · Aguardando solicitante · Concluído
+- Filtros (top): origem · tipo · destino · membro atribuído
+- Drag-and-drop (Pedro Paiva + admins) entre estados · realtime via Supabase channel
+- Card mostra: badge origem · etiqueta tipo+destino (com cor do banco) · atribuído · prazo · selos urgência/revisão · atraso em horas/dias
+- Drawer lateral (Sheet) de detalhe + edição com:
+  - Bloco "Origem · Solicitação" quando aplicável (mostra solicitante)
+  - Form de edição (título · descrição · tipo · destino · atribuído · prazo · estado · raia rápida)
+  - **Entregáveis** com upload (Spec 006 integrado) · link direto pra download Graph
+  - Botão "Salvar" · "Cancelar" · "Excluir" (só admin · nível 5)
+- Botão "+ Nova task interna" (só admin · nível 5) abre Dialog com form (origem='interna')
+- Borda do card colorida:
+  - Vermelha = urgente (`raia_rapida`)
+  - Âmbar = revisão (`tem_revisao`)
+  - Primary teal = padrão
+
+**Rotas (`src/App.tsx`):**
+- `/marketing` · `ModuleGuard moduleSlug="marketing" nivelMinimo=1` (read pra diretoria · 3+ pra equipe via boost)
+
+**Menu (`AppShell.jsx`):**
+- Item "Marketing" adicionado em Ministerial > Áreas (junto com Online/Kids/AMI/Bridge)
+- `module: 'marketing'` · aparece pra quem tem leitura ≥ 1
+- Item antigo `/criativo/marketing` removido (rota não existia)
+
+**Comportamento `produtor vs coordenador`:**
+- Coordenador (nível 5 via boost de área) · edita tudo · drag-and-drop · cria task interna · exclui
+- Produtor (nível 3 via boost · todos os assistentes-marketing) · vê tudo · só pode trocar **estado** dos próprios cards (RLS no SQL + check no backend duplicam · UI já bloqueia campos no Drawer)
+- Solicitante (nível 0 no módulo) · não acessa o Kanban · vê só preview do próprio card pelo módulo Solicitações (Spec 012)
+
+**Realtime:** Supabase channel em `marketing_kanban_cards` recarrega lista quando qualquer card muda (debounced 500ms).
+
+**Mobile responsivo:** colunas viram 1 (xs), 2 (md), 4 (xl). Drawer vira full-width no mobile.
+
+## Marketing · Spec 006 · Upload SharePoint via Microsoft Graph (2026-05-28)
+
+Spec 006 fecha o backend do módulo (Fase B Core). Entregáveis (arquivos finais
+dos cards) vão pra biblioteca **Criativo** do CBRio Hub via Microsoft Graph,
+reusando o pipeline do Cérebro/storageService.
+
+**Serviço novo · `backend/services/sharepointMarketing.js`:**
+- `uploadEntregavel({ cardId, userId, file })` · sobe pra `Criativo / Marketing / YYYY / YYYY-MM / <card-prefix>_<timestamp>_<nome>` + grava em `marketing_entregaveis`
+- `listarEntregaveis(cardId)` · select do banco
+- `getDownloadUrl(entregavelId)` · Graph retorna `@microsoft.graph.downloadUrl` com TTL ~1h
+- `removerEntregavel(entregavelId, userId)` · soft-delete via UPDATE
+- Retry exponencial (3 tentativas · 500ms / 1s / 2s) no upload
+- Limite: 50 MB por arquivo
+- Path sanitizado: tira acentos, troca espaços por `_`, max 120 chars
+
+**Endpoints adicionados em `backend/routes/marketing.js`:**
+
+| Endpoint | Nível min | Função |
+|---|---|---|
+| `GET /api/marketing/cards/:id/entregaveis` | 1 (com check de ownership do solicitante) | Lista arquivos do card |
+| `POST /api/marketing/cards/:id/entregaveis` | 3 | Upload multipart (campo `arquivo`) |
+| `GET /api/marketing/entregaveis/:id/download` | 1 (com ownership) | Redirect 302 pra signed URL do Graph |
+| `DELETE /api/marketing/entregaveis/:id` | 5 | Soft delete |
+
+**Ownership do solicitante:** RLS já bloqueia `marketing_entregaveis` pra quem não é da equipe Marketing, mas o backend duplica o check pra UX. Solicitante vê e baixa entregáveis dos próprios cards (`card.solicitacao_id` → `solicitacoes.solicitante_id = auth.uid()`).
+
+**Frontend (`src/api.js`):** `marketing.entregaveis.list(cardId)`, `marketing.entregaveis.upload(cardId, file)`, `marketing.entregaveis.download(id)` (retorna URL pra `<a href>`), `marketing.entregaveis.remove(id)`.
+
+**Notificação automática:** quando arquivo é anexado a um card já em `estado=concluido`, o solicitante recebe ping "Arquivo final pronto · disponível pra download".
+
+**Reuso de infra · sem novas envs:** consome `MICROSOFT_TENANT_ID`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `SHAREPOINT_SITE_ID` (mesmos do Cérebro). Bibliote `Criativo` no CBRio Hub já existe e está mapeada em `MODULE_LIBRARY_MAP`.
+
+**Fallback:** se SharePoint não estiver configurado, upload falha com erro claro (não usa Supabase Storage como fallback aqui · arquivo de marketing precisa estar no SharePoint pra equipe acessar).
+
+## Marketing · Spec 005 · Estimativa + capacidade + 4 KPIs (2026-05-28)
+
+Conclui a Fase B Core (parte backend) · agora o módulo tem inteligência operacional
+em cima do schema das specs 002-004.
+
+**Migration `20260528200000_marketing_kpis_capacidade.sql`:**
+- Helper `fn_marketing_segunda_da_semana(date)` · ISODOW → 1-7
+- `fn_marketing_calcular_capacidade_semana(p_data_ref)` → 1 linha por membro:
+  - `horas_base`, `horas_recorrentes`, `horas_override`, `horas_disponiveis`, `horas_alocadas`, `horas_livres`
+  - Lógica: `disponiveis = COALESCE(override, base - recorrentes)` · `livres = disponiveis - alocadas`
+- `fn_marketing_estimar_prazo(p_tipo_id, p_data_alvo)` → JSONB com `data_sugerida`, `dias_uteis`, `esforco_h`, `capacidade_dia`, `observacao`
+  - Heurística MVP: `dias = ceil(esforço / (capacidade_diária × 0.6))` · `data_sugerida = max(hoje + dias + 1, data_alvo)`
+  - Fator 60% reserva capacidade pra recorrentes + cards de evento
+  - Sem `esforco_medio_h` → retorna estimativa cruzada com "tipo não calibrado · Pedro confirma depois"
+- 4 KPIs novos (`valores='{}'::text[]` · não entram na mandala):
+
+| ID | Indicador | Periodicidade | Meta | Fonte auto |
+|---|---|---|---|---|
+| `MKT-PRAZO` | % de demandas no prazo | semanal | ≥85% | `marketing.prazo_no_alvo` |
+| `MKT-LEAD` | Lead time médio (dias) | semanal | ≤7 | `marketing.lead_time_medio` |
+| `MKT-THROUGHPUT` | Cards entregues/semana | semanal | ≥5 | `marketing.throughput` |
+| `MKT-DEM-CAP` | Razão demanda/capacidade (%) | semanal | ≤100 | `marketing.razao_demanda_capacidade` |
+
+- Trigger `tg_marketing_cards_recalc_kpis_{ins,upd,del}` (AFTER STATEMENT) chama `kpi_recalcular_para_data(CURRENT_DATE)` quando cards mudam · pattern de dados_brutos.
+
+**Coletores adicionados em `backend/services/kpiAutoCollector.js`:**
+- `marketing.prazo_no_alvo` · % `entregue_em <= prazo_confirmado` sobre total entregue na semana
+- `marketing.lead_time_medio` · avg `entregue_em - created_at` em dias
+- `marketing.throughput` · count cards entregues na semana
+- `marketing.razao_demanda_capacidade` · SNAPSHOT atual (não depende do período · soma esforço fila ÷ capacidade livre da semana corrente)
+
+**Endpoints novos em `backend/routes/marketing.js`:**
+- `GET /api/marketing/capacidade?semana=YYYY-MM-DD` · capacidade por membro (enriquecida com profile.name)
+- `GET /api/marketing/estimar?tipo=<uuid>&data_alvo=YYYY-MM-DD` · estimativa preliminar via RPC
+
+**Frontend (`src/api.js`):** namespace `marketing` ganhou `capacidade(semana)` e `estimar(tipo, dataAlvo)`.
+
+**Calibragem:** `esforco_medio_h` das etiquetas começa NULL (Spec 002). Pedro/Marcos preenche via UI admin (Spec 009) baseado em cycle time real após algumas semanas no ar.
+
+## Marketing · Spec 004 · Backend CRUD cards + sync triggers (2026-05-28)
+
+Backend completo do Kanban + 2 triggers SQL que materializam cards
+automaticamente a partir de Solicitações e do ciclo criativo de Eventos.
+
+**Migration `20260528180000_marketing_cards_sync_triggers.sql`:**
+- `fn_marketing_cards_solicitacao_sync` · AFTER INSERT/UPDATE em `solicitacoes`
+  - Dispara quando `area_responsavel='marketing'` E status muda pra `pendente`
+  - Cria card com `origem='solicitacao'` · idempotente via UNIQUE parcial
+  - `raia_rapida=true` se `urgencia_decisao='aceita'` (Pedro decide depois no card)
+- `fn_marketing_cards_evento_sync` · AFTER INSERT em `event_tasks`
+  - Dispara quando `area ILIKE 'marketing'`
+  - Cria card com `origem='evento'`, `prazo_preliminar = event_task.deadline`
+- Backfill defensivo · solicitações em `pendente` + event_tasks de marketing pré-existentes ganham card no momento da migration
+
+**Backend `backend/routes/marketing.js` (novo · montado em `/api/marketing`):**
+
+| Endpoint | Nível mínimo | Função |
+|---|---|---|
+| `GET /etiquetas` | 1 | Catálogo tipos + destinos (ativos) |
+| `GET /membros` | 1 | Equipe Marketing ativa (com profile.name) |
+| `GET /compromissos-recorrentes` | 1 | Slots fixos |
+| `GET /cards` | 1 | Lista (filtros: estado · origem · etiqueta · atribuido_a · raia_rapida) |
+| `GET /cards/:id` | 1 | Detalhe + entregáveis |
+| `POST /cards` | 5 | Task interna (origem='interna') |
+| `PATCH /cards/:id` | 3 | Atualizar (produtor edita só `estado` do próprio · admin edita tudo) |
+| `PATCH /cards/:id/sugerir-revisao` | qualquer | Solicitante OU produtor OU admin · 1x (D-14) |
+| `PATCH /cards/:id/decidir-urgencia` | 5 | Pedro aceita/recusa raia rápida com motivo |
+| `DELETE /cards/:id` | 5 | Soft delete via `app_soft_delete` |
+
+**Notificações disparadas pelo backend:**
+- Card atribuído → produtor
+- Card → `aguardando_solicitante` → solicitante (preview pronto)
+- Card → `concluido` → solicitante (pedir NPS)
+- Revisão sugerida → produtor (com motivo)
+- Urgência aceita/recusada → solicitante
+
+**Decisões de permissão:**
+- Produtor (`assistente-marketing` + área Marketing · nível 5 via boost) pode editar **apenas `estado`** dos próprios cards. RLS bloqueia outros campos pelo CHECK do middleware.
+- Coordenador (Pedro Paiva · nível 5 via boost) edita tudo.
+- POST `/cards` exige nível 5 (Pedro abre tasks internas)
+- RLS no SQL **também** bloqueia produtor editando outros cards · backend só duplica check pra mensagem clara.
+
+**Frontend (`src/api.js`):** namespace `marketing` com `etiquetas`, `membros`, `recorrentes`, `cards`, `card`, `criarCard`, `atualizarCard`, `removerCard`, `sugerirRevisao`, `decidirUrgencia`.
+
+**Notas operacionais:**
+- Solicitações criadas ANTES da migration ficam invisíveis ao Kanban a menos que estejam em `pendente` (backfill cobre).
+- Card `solicitacao_id IS NOT NULL` reflete a solicitação no Solicitações · update do card NÃO mexe na solicitação (status sincronizado só na conclusão final, na Spec 012).
+- Se solicitação for soft-deletada, FK fica com SET NULL (não quebra o card).
+
+## Marketing · Spec 003 · Seed inicial (2026-05-28)
+
+Spec 003 conclui a Fase A (Fundação). Após esta migration o módulo `/marketing`
+aparece no menu pra equipe e o Pedro Paiva ganha nível 5 automático via boost.
+
+**Migration `20260528160000_marketing_seed_inicial.sql`:**
+- INSERT módulo `marketing` em `public.modulos` (rota `/marketing`, categoria ministerial, ordem 390)
+- Seed matriz `cargo_modulo_permissao`:
+  - `dev` · 5 + exportar + aprovar
+  - `coordenador-marketing` (Pedro Paiva) · 3 base + boost via área Marketing → 5
+  - `assistente-marketing` (Allan/Cauã/Letícia/Lorena Pariz) · 3 + escopo_proprio + boost → 5
+  - `diretor-criativo` (Pedro Menezes) · 1 read
+  - `diretor-ministerial` (Arthur) · 1 read
+  - `diretor-administrativo` (Eduardo) · 1 read
+  - `coordenador-estrategia`, `pastor-senior`, `pastor-presidente` · 1 read
+  - Demais cargos · 0
+- Estende `current_user_module_level()` SQL: adiciona `'marketing'` na lista de boost por área
+- Seed `marketing_membros` (4 confirmados via pre-flight):
+  - Allan Santana (videomaker · 40h/sem)
+  - Cauã Pedreti (designer · 40h/sem · sem recorrente fixo)
+  - Letícia Baldner (social_media_assistente · 30h/sem · sem recorrente)
+  - Lorena Pariz (social_media · 40h/sem)
+- Seed `marketing_compromissos_recorrentes`:
+  - Allan · quarta 14:00 · 4h (preliminar · refinar)
+  - Lorena Pariz · seg-sáb 09:00 · 3h/dia
+- Aline (fotógrafa) · **PENDENTE** · sem profile/email · Pedro/Marcos cadastra via UI admin (Spec 009)
+
+**Backend `middleware/auth.js`:**
+- `ROUTE_MODULE_MAP['marketing']` = `['marketing']`
+- `ROUTE_MODULE_MAP['marketing-admin']` = `['marketing']`
+- `AREA_MODULO_BOOST['marketing']` = `'marketing'`
+
+**Após aplicar a migration:**
+1. Rodar bust de cache: `POST /api/permissoes/cache/bust` ou botão em `/admin/permissoes`
+2. Pedro Paiva + os 4 assistentes precisam fazer logout/login pra renovar JWT (novo módulo no perms cache)
+3. Item de menu "Marketing" começa a aparecer pra equipe
+
+**Fluxo de permissão pós-migration:**
+- Pedro Paiva (`coordenador-marketing` + área `Marketing`) → nível 5 (admin do módulo via boost)
+- Allan/Cauã/Letícia/Lorena Pariz (`assistente-marketing` + área `Marketing`) → nível 5 via boost (mesmo padrão de Kids/AMI/Bridge/Online)
+- Arthur Serpa / Eduardo / Pedro Menezes → nível 1 (read · analytics)
+- Pastores seniores → nível 1 (read)
+- Solicitante comum → 0 (não acessa o módulo · acompanha via `/solicitacoes` na aba "Minhas")
+
+## Marketing · Spec 002 · Schema base do Marketing (2026-05-28)
+
+7 tabelas novas + triggers + RLS + indices + whitelist soft-delete. Migration
+`20260528140000_marketing_schema.sql`.
+
+**Tabelas:**
+
+| Tabela | Propósito | Volume/ano |
+|---|---|---|
+| `marketing_membros` | Equipe + habilidade (1 por membro · UNIQUE profile_id + habilidade) | ~10 |
+| `marketing_etiquetas_tipo` | Catálogo 8 valores · `esforco_medio_h` editável (calibra via cycle time) | 8 |
+| `marketing_etiquetas_destino` | Catálogo 5 valores | 5 |
+| `marketing_kanban_cards` | 3 origens (solicitacao/evento/interna) + estado + ordem_fila bigserial | ~520 |
+| `marketing_entregaveis` | Arquivos SharePoint (Spec 006 popula) | ~520 |
+| `marketing_capacidade_override` | Férias/picos/atípicos por semana | ~50 |
+| `marketing_compromissos_recorrentes` | Slots fixos (Aline dom · Allan qua · Lorena diário) | 3-10 |
+
+**Decisões arquiteturais:**
+- `evento_task_id` referencia **`event_tasks`** (não "kanban_tasks" como doc original sugeria · confirmado via information_schema).
+- CHECK constraint forte em `marketing_kanban_cards`: a FK correta depende do `origem` (solicitacao_id NOT NULL apenas se origem='solicitacao' etc).
+- `ordem_fila bigserial` · revisão (D-14) atualiza pro fim da fila via trigger `fn_marketing_cards_estado_ts`.
+- UNIQUE parcial em `solicitacao_id` e `evento_task_id` (`deleted_at IS NULL`) garante **1 card por origem** (idempotência pros triggers de sync na Spec 004).
+- Soft-delete em 5 tabelas (etiquetas catálogo não · usar `ativo` boolean).
+- Audit log em `marketing_kanban_cards` (estado, atribuido_a, prazo_confirmado, tem_revisao, raia_rapida, deleted_at).
+
+**RLS por tabela:**
+
+| Tabela | SELECT | INSERT/UPDATE | DELETE |
+|---|---|---|---|
+| `marketing_membros` | nível≥1 OU super-admin | nível≥5 OU super-admin | super-admin |
+| `marketing_etiquetas_tipo` | todos auth (catálogo) | nível≥5 OU super-admin | super-admin |
+| `marketing_etiquetas_destino` | todos auth | nível≥5 OU super-admin | super-admin |
+| `marketing_kanban_cards` | nível≥3 OR card.solicitacao_id pertence ao auth.uid() | INSERT nível≥5 + origem='interna' / UPDATE nível≥5 OU produtor do card | super-admin |
+| `marketing_entregaveis` | nível≥3 OR via solicitacoes do auth.uid() | nível≥3 + enviado_por=auth.uid() | super-admin |
+| `marketing_capacidade_override` | nível≥1 | nível≥5 | super-admin |
+| `marketing_compromissos_recorrentes` | nível≥1 | nível≥5 | super-admin |
+
+Todas têm `service_role FOR ALL USING(true)` (backend bypassa RLS).
+
+**Trigger `fn_marketing_cards_estado_ts`:**
+- BEFORE UPDATE
+- Atualiza `estado_atualizado_em` quando muda estado (cycle time)
+- Preenche `entregue_em` na transição para `concluido`
+- Atualiza `ordem_fila` pro fim quando `tem_revisao` vira true (D-14)
+- Atualiza `updated_at`
+
+**Pendência (resolve na Spec 003):** seeds da equipe + módulo `marketing` em
+`public.modulos` + boost `AREA_MODULO_BOOST['marketing']` em
+`backend/middleware/auth.js`. Schema sozinho não dá acesso a ninguém.
+
+## Marketing · Spec 001 · Aprovação hierárquica no Solicitações (TRANSVERSAL · 2026-05-28)
+
+Primeira spec do módulo Marketing · **mudança transversal** no backbone de
+Solicitações que afeta TODAS as áreas (cozinha, manutenção, financeiro, etc),
+não só Marketing.
+
+**O que mudou:**
+- Toda nova solicitação **passa primeiro pelo diretor de origem** do setor do
+  solicitante antes de cair na fila da área responsável.
+- 3 setores oficiais (Marcos 2026-05-28):
+
+  | Setor | Diretor |
+  |---|---|
+  | Gestão | Eduardo Gnisci |
+  | Criativo | Pedro Menezes |
+  | Ministerial | Arthur Serpa |
+
+- `profile.area` mapeada pra setor via `fn_normalizar_setor()` (normaliza
+  acento + Voluntariado → Ministerial).
+- **Dispensam aprovação** (passa direto pra pendente):
+  - Diretores de setor (Eduardo, Pedro Menezes, Arthur)
+  - Diretoria geral (`is_diretoria_geral=true` · Pedrão, Juninho, etc)
+  - Service role + caller sem `auth.uid()`
+- **Fallback super-admins** (Marcos + Matheus) quando diretor não está
+  mapeado · solicitação é dispensada e fica como "pre-resolvida".
+- **Membros não-funcionários** (sem `rh_funcionarios` ativo) **não criam**
+  solicitação · trigger `BEFORE INSERT` lança 42501. Backend retorna 403
+  com mensagem clara.
+- **Rejeitada é imutável** (Marcos 2026-05-28: "não, não pode reabrir").
+  Solicitante cria nova com ajustes.
+
+**Schema · 8 colunas novas em `solicitacoes`:**
+`aprovacao_origem_diretor_id`, `aprovacao_origem_status` (pendente/aprovada/
+rejeitada/dispensada), `aprovacao_origem_em`, `aprovacao_origem_motivo`,
+`urgencia_decisao` (nao_aplicavel/pendente/aceita/recusada), `urgencia_decidida_por`,
+`urgencia_motivo_recusa`, `urgencia_decidida_em`.
+
+**Novo status no kanban:** `aguardando_aprovacao_origem` · vem antes de `pendente`.
+
+**Tabela `setor_diretor`:**
+- PK `setor` (text) · `diretor_id` UUID FK profiles · `diretor_nome` snapshot.
+- Apenas super-admin altera (RLS).
+
+**Backend (`backend/routes/solicitacoes.js`):**
+- `GET /api/solicitacoes?aba=aprovar` filtra a fila do diretor (`aprovacao_origem_diretor_id = me` AND status=pendente).
+- `PATCH /api/solicitacoes/:id/aprovar-origem` · diretor aprova → status='pendente'.
+- `PATCH /api/solicitacoes/:id/rejeitar-origem` · motivo obrigatório · status='rejeitado' imutável.
+- `GET /api/solicitacoes/meu-papel` agora retorna `eh_diretor_origem`, `setor_origem`, `pendentes_origem` (contador).
+- `isAdminFallback()` helper · super-admin pode aprovar/rejeitar como fallback.
+- Trigger lança 42501 pra não-funcionário · backend traduz pra HTTP 403.
+
+**Frontend (`src/pages/Solicitacoes.jsx`):**
+- Nova aba "Aprovar" com badge contador · visível só pra diretor de origem.
+- Componente `AprovacaoOrigemCard` · botões inline Aprovar/Rejeitar com modal de motivo.
+- View `aprovar` é default pro diretor com fila pendente > 0.
+- Status `aguardando_aprovacao_origem` mostrado em violeta no badge.
+- `api.js` ganhou `solicitacoes.aprovarOrigem(id)` e `solicitacoes.rejeitarOrigem(id, motivo)`.
+
+**Notificações novas (`notificacaoGenerator.js`):**
+- Imediata · `solicitacao_aprovacao_origem` quando solicitação cai no diretor.
+- Imediata · aprovada → solicitante + responsáveis da área alvo.
+- Imediata · rejeitada → solicitante com motivo.
+- Cron diário · `solicitacao_aprovacao_origem_lembrete` pra solicitações
+  paradas >24h aguardando diretor (1/dia por solicitação).
+
+**Audit log:** trigger `trg_audit_solicitacoes` agora captura mudanças em
+`aprovacao_origem_*`, `urgencia_*`, `status`, `deleted_at`, `nps_nota`.
+
+**Migration `20260528120000_solicitacoes_aprovacao_hierarquica.sql`:**
+- Idempotente · `IF NOT EXISTS`, `ON CONFLICT DO UPDATE`, `DROP IF EXISTS`.
+- Backfill: solicitações pré-existentes ficam `dispensada` com motivo "Pre-migration · backward compat".
+- Seta `is_diretoria_geral=true` em Eduardo e Pedro Menezes.
+
+**O que NÃO mudou:**
+- Fluxo pós-aprovação (pendente → em_atendimento → concluído → avaliado) idêntico.
+- Aprovação financeira por alçada continua funcionando como segunda etapa.
+- Solicitações abertas antes da migration seguem o fluxo antigo (status `aguardando_aprovacao_origem` não retroage).
+
+**Pendência da Spec 001:** Aline (fotógrafa) ainda não tem profile/email
+cadastrado · será resolvido na Spec 003 ou via admin Marketing (Spec 009).
+
 ## Bot WhatsApp · coleta passiva de dados de líderes (2026-05-27)
 
 Líder manda os números da semana em texto livre no WhatsApp · webhook
@@ -82,6 +2084,31 @@ mesmo padrão do mobile `cultos_dados_submissoes`). Cobaias: Grupos + Integraç�
 `WHATSAPP_APP_SECRET` (prod · valida HMAC). URL do webhook =
 `https://[dominio]/api/whatsapp/webhook`. Sem essas envs o backend sobe
 normal · só não envia/recebe (parser e tela funcionam pra teste).
+
+## ⚠️ Regra contábil · empréstimos NÃO são receita ordinária (2026-05-28)
+
+Decisão do Marcos: em qualquer cálculo, agregação, KPI ou visualização de
+**receita** da igreja, **empréstimos NÃO entram como receita ordinária**.
+
+- Empréstimo é **entrada de caixa** (cashflow financiamento), não receita.
+- Receita ordinária = dízimos, ofertas, contribuições, eventos pagos,
+  campanhas, vendas. Origem operacional/ministerial.
+- Receita extraordinária ≠ empréstimo. Doação grande extraordinária pode
+  entrar como extraordinária; empréstimo segue como movimentação financeira
+  separada (passivo a pagar).
+
+Onde aplicar a regra:
+- Dashboards/KPIs financeiros (DRE, "Receita total", "Receita do mês")
+- Categorizações automáticas (`fin_padroes_classificacao`, agente
+  executor financeiro)
+- Relatórios de governança e dízimo/oferta
+- Qualquer agregação `SUM(valor)` sobre lançamentos com tipo de
+  receita: filtrar/excluir categoria de empréstimo
+
+Quando criar nova view ou query de receita, garantir que a categoria
+empréstimo (e tipos correlatos como "captação", "financiamento", "mútuo")
+fique fora do total. Se houver dúvida sobre uma categoria nova, **perguntar
+antes** de incluí-la em "receita".
 
 ## Agente Executor Financeiro · Worker Railway (2026-05-26)
 
@@ -2628,9 +4655,19 @@ preenchidas pela **Alda Lorena** (responsavel da Integracao) em
   Pra evento atipico fora de janela, usar botao "Coletar pico agora"
   da UI em `/online`.
 - **ds-collect** · cron `0 10 * * *` · pra cultos de ontem com video_id,
-  grava `online_ds` via `youtubeAnalytics.reports.query` (views no dia D).
+  grava `online_ds` = **total acumulado de views do video** no momento da coleta
+  (snapshot da manha seguinte ao culto) via `videos.list?part=statistics`
+  (`fetchVideoStatistics` · Data API · quase tempo real, SEM o atraso de 1-2d da
+  Analytics que deixava o DS de ontem zerado). watch time / retencao do DS
+  seguem vindo da Analytics como best-effort (podem atrasar). Os endpoints
+  manuais `/coletar/ds` e `/coletar/ddus` rodam `backfillCultoVideoIds` antes,
+  pra vincular o video ao culto (o coletor so age em culto ja vinculado).
 - **ddus-collect** · cron `30 10 * * *` · pra cultos de 7 dias atras,
-  grava `online_ddus` (views D+1 ate D+7, on-demand).
+  grava `online_ddus` = **on-demand acumulado na semana** = `statistics.viewCount`
+  AGORA (>= D+7) **menos o DS** (snapshot da manha seguinte). Mesma fonte do DS
+  (Data API · sem o atraso da Analytics). So calcula se `online_ds` existe (o DS
+  e o ponto de partida da subtracao · sem ele pula com `ds_ausente`). watch time
+  / retencao do DDUS seguem da Analytics como best-effort.
 
 Override manual continua funcionando · coletor so atualiza se valor `null`
 ou `0` (DS/DDUS), ou se for `pico > online_pico atual`.

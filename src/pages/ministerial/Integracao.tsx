@@ -9,6 +9,7 @@ const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
 const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
 const HistoricoCultos        = lazy(() => import('./HistoricoCultos'));
 const ColetaPendentes        = lazy(() => import('./coleta/ColetaPendentes'));
+const JornadaConvertidos     = lazy(() => import('../../components/JornadaConvertidos'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Calendar, CheckCircle2, Heart, Smartphone, ClipboardCheck } from 'lucide-react';
@@ -52,7 +53,7 @@ export default function Integracao() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    if (t && ['batismos', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico', 'pendentes'].includes(t)) setTab(t);
+    if (t && ['batismos', 'next', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico', 'pendentes'].includes(t)) setTab(t);
   }, []);
 
   return (
@@ -100,6 +101,7 @@ export default function Integracao() {
           <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
           <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>
           <TabsTrigger value="batismos">Batismos</TabsTrigger>
+          <TabsTrigger value="next">Next</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
           {podeAprovar && (
             <TabsTrigger value="pendentes" className="gap-1.5">
@@ -140,6 +142,14 @@ export default function Integracao() {
             <Batismos />
           </Suspense>
         </TabsContent>
+        <TabsContent value="next" className="mt-4">
+          <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">Cobertura do Next nos primeiros 90 dias da conversão — quem já fez e quem ainda falta (de todas as áreas).</p>
+              <JornadaConvertidos view="next" />
+            </div>
+          </Suspense>
+        </TabsContent>
         <TabsContent value="historico" className="mt-4">
           <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
             <HistoricoCultos />
@@ -148,7 +158,7 @@ export default function Integracao() {
         {podeAprovar && (
           <TabsContent value="pendentes" className="mt-4">
             <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
-              <ColetaPendentes />
+              <ColetaPendentes onChange={reloadPendentes} />
             </Suspense>
           </TabsContent>
         )}

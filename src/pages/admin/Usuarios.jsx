@@ -62,13 +62,20 @@ export default function Usuarios() {
       const data = await api.usuario(colab.id);
       setUsuarioCarregado(data);
     } catch (e) {
-      toast.error(e.message || 'Erro ao carregar usuario');
+      toast.error(e.message || 'Erro ao carregar usuário');
     }
   }
 
   function fecharEdicao() {
     setEditando(null);
     setUsuarioCarregado(null);
+  }
+
+  // Atualiza um colaborador na lista + no diálogo aberto (ex: após mudar o role,
+  // que não vem do GET /usuario/:id) pra refletir sem recarregar tudo.
+  function patchColaborador(id, patch) {
+    setColaboradores(prev => prev.map(c => (c.id === id ? { ...c, ...patch } : c)));
+    setEditando(prev => (prev && prev.id === id ? { ...prev, ...patch } : prev));
   }
 
   useEffect(() => { loadColaboradores(); }, []);
@@ -200,15 +207,16 @@ export default function Usuarios() {
         {filtrados.length} {filtrados.length === 1 ? 'pessoa' : 'pessoas'}
       </p>
 
-      {/* Dialog de edicao */}
+      {/* Dialog de edição */}
       {editando && (
         <EditarUsuarioDialog
           colaborador={editando}
           dadosUsuario={usuarioCarregado}
           estrutura={estrutura}
           onClose={fecharEdicao}
+          onColaboradorChange={patchColaborador}
           onSaved={async () => {
-            // Recarrega dados do usuario pra refletir mudancas
+            // Recarrega dados do usuário pra refletir mudanças
             try {
               const data = await api.usuario(editando.id);
               setUsuarioCarregado(data);
@@ -220,13 +228,14 @@ export default function Usuarios() {
   );
 }
 
-function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, onSaved }) {
+function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, onSaved, onColaboradorChange }) {
   const carregando = !dadosUsuario;
   const usuario = dadosUsuario?.usuario;
   const areasUsuario = dadosUsuario?.areas || [];
   const overrides = dadosUsuario?.overrides || [];
 
   const [cargoId, setCargoId] = useState(usuario?.cargo_id || '');
+  const [role, setRole] = useState(colaborador.role || '');
   const [areasSelecionadas, setAreasSelecionadas] = useState(new Set());
   const [salvando, setSalvando] = useState(false);
   const [mostrarNovoOverride, setMostrarNovoOverride] = useState(false);
@@ -250,6 +259,20 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
       await onSaved();
     } catch (e) {
       toast.error(e.message || 'Erro ao salvar cargo');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function salvarRole(novoRole) {
+    setSalvando(true);
+    try {
+      await api.setRole(colaborador.id, novoRole);
+      setRole(novoRole);
+      onColaboradorChange?.(colaborador.id, { role: novoRole });
+      toast.success('Acesso base atualizado · a pessoa precisa sair e entrar de novo');
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar acesso base');
     } finally {
       setSalvando(false);
     }
@@ -329,6 +352,26 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
               </Select>
               <p className="text-xs text-muted-foreground mt-1.5">
                 Mudar o cargo aplica a matriz padrão dele · overrides individuais continuam valendo.
+              </p>
+            </section>
+
+            {/* Acesso base (role) */}
+            <section>
+              <h3 className="text-sm font-semibold text-foreground mb-2">Acesso base</h3>
+              <Select value={role || ''} onValueChange={salvarRole} disabled={salvando}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Definir acesso base..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="assistente">Assistente · segue a matriz do cargo</SelectItem>
+                  <SelectItem value="diretor">Diretor · vê o sistema inteiro</SelectItem>
+                  <SelectItem value="admin">Admin · vê o sistema inteiro</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                <strong>Admin</strong> e <strong>Diretor</strong> liberam o sistema todo — ignoram a matriz e
+                os módulos do cargo. <strong>Assistente</strong> só enxerga o que cargo + áreas + overrides
+                liberam. Depois de mudar, a pessoa precisa sair e entrar de novo pra renovar o acesso.
               </p>
             </section>
 

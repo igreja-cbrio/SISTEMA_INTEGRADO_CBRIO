@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import { nps as api } from '../../api';
 import { Loader2, CheckCircle2, MessageSquare } from 'lucide-react';
 import NpsForm from '../../components/nps/NpsForm';
+import AnimatedBackground from './AnimatedBackground';
+import { PublicThemeToggle } from './publicTheme';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)',
@@ -26,17 +28,6 @@ export default function NpsPublica() {
   const [enviado, setEnviado] = useState(false);
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
-
-  // Forca dark theme (consistente com outras paginas publicas)
-  useEffect(() => {
-    const html = document.documentElement;
-    const prev = html.getAttribute('data-theme');
-    html.setAttribute('data-theme', 'dark');
-    return () => {
-      if (prev) html.setAttribute('data-theme', prev);
-      else html.removeAttribute('data-theme');
-    };
-  }, []);
 
   useEffect(() => {
     (async () => {
@@ -64,8 +55,10 @@ export default function NpsPublica() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, padding: '40px 20px' }}>
-      <div style={{ maxWidth: 640, margin: '0 auto' }}>
+    <div style={{ minHeight: '100vh', background: C.bg, padding: '40px 20px', position: 'relative', overflow: 'hidden' }}>
+      <AnimatedBackground />
+      <PublicThemeToggle />
+      <div style={{ maxWidth: 640, margin: '0 auto', position: 'relative', zIndex: 1 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <img src="/logo-cbrio-text.png" alt="CBRio" style={{ height: 32 }} />
         </div>
@@ -88,7 +81,7 @@ export default function NpsPublica() {
           <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, padding: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
               <MessageSquare size={20} style={{ color: C.cyan }} />
-              <h1 style={{ margin: 0, fontSize: 22, color: C.text, fontWeight: 700 }}>{pesquisa.titulo}</h1>
+              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>{pesquisa.titulo}</h1>
             </div>
             {pesquisa.perguntas?.descricao_curta && (
               <p style={{ margin: '0 0 20px', fontSize: 13, color: C.t2, lineHeight: 1.5 }}>{pesquisa.perguntas.descricao_curta}</p>
@@ -99,7 +92,7 @@ export default function NpsPublica() {
               onSubmit={enviar}
               enviando={enviando}
               extraHeader={
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, paddingBottom: 16, borderBottom: `1px dashed ${C.border}` }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, paddingBottom: 16, borderBottom: `1px dashed ${C.border}` }}>
                   <div>
                     <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Seu nome *</label>
                     <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Como prefere ser chamado" style={inp} />

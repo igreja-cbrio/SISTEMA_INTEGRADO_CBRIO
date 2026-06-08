@@ -1,4 +1,4 @@
-// Handlers que APLICAM (executam) acoes propostas pelo agente executor
+// Handlers que APLICAM (executam) ações propostas pelo agente executor
 // financeiro depois que o humano aprovou via /api/agents/queue/:id/apply.
 //
 // Cada handler recebe { payload, reviewedBy } e devolve { ok, error?, info? }.
@@ -6,9 +6,9 @@
 // com apply_error preenchido.
 //
 // Regras:
-//   1. Idempotente · se ja foi aplicado por humano (status mudou), retorna
+//   1. Idempotente · se já foi aplicado por humano (status mudou), retorna
 //      ok com info.skipped=true em vez de erro.
-//   2. Respeita closing mensal · trigger SQL ja bloqueia, mas damos
+//   2. Respeita closing mensal · trigger SQL já bloqueia, mas damos
 //      mensagem clara se acontecer.
 //   3. Usa supabase service_role (bypass RLS) · vem de utils/supabase.
 
@@ -30,12 +30,12 @@ async function applyCategorizeTransaction({ payload, reviewedBy }) {
     .eq('id', fila_id)
     .maybeSingle();
   if (errFila) return { ok: false, error: `Erro lendo fila: ${errFila.message}` };
-  if (!fila) return { ok: false, error: 'Item de fila nao encontrado' };
+  if (!fila) return { ok: false, error: 'Item de fila não encontrado' };
   if (fila.status !== 'pendente') {
-    return { ok: true, info: { skipped: true, motivo: `fila ja com status=${fila.status}` } };
+    return { ok: true, info: { skipped: true, motivo: `fila já com status=${fila.status}` } };
   }
   const lanc = fila.lancamento;
-  if (!lanc) return { ok: false, error: 'Lancamento bruto nao encontrado' };
+  if (!lanc) return { ok: false, error: 'Lancamento bruto não encontrado' };
 
   // Determina tipo (receita/despesa) baseado no plano
   const { data: pc } = await supabase
@@ -57,7 +57,7 @@ async function applyCategorizeTransaction({ payload, reviewedBy }) {
     culto_slot_id = cultoId || null;
   }
 
-  // pix_detalhe linkado pra historico do pagador
+  // pix_detalhe linkado pra histórico do pagador
   let pixDetalheId = null;
   if (tipoTransacao === 'receita') {
     const { data: pd } = await supabase
@@ -68,13 +68,13 @@ async function applyCategorizeTransaction({ payload, reviewedBy }) {
     pixDetalheId = pd?.id || null;
   }
 
-  // Insere fin_transacoes (gatilho de closing bloqueia se mes fechado)
+  // Insere fin_transacoes (gatilho de closing bloqueia se mês fechado)
   const { data: transacao, error: errTrans } = await supabase
     .from('fin_transacoes')
     .insert({
       conta_id: lanc.conta_id,
       tipo: tipoTransacao,
-      descricao: lanc.memo || 'Sem descricao',
+      descricao: lanc.memo || 'Sem descrição',
       valor: Math.abs(lanc.valor),
       data_competencia: lanc.data_lancamento,
       data_pagamento: lanc.data_lancamento,
@@ -126,9 +126,9 @@ async function applyMarkPayablePaid({ payload, reviewedBy }) {
     .eq('id', conta_pagar_id)
     .maybeSingle();
   if (errConta) return { ok: false, error: errConta.message };
-  if (!conta) return { ok: false, error: 'Conta a pagar nao encontrada' };
+  if (!conta) return { ok: false, error: 'Conta a pagar não encontrada' };
   if (conta.status !== 'pendente') {
-    return { ok: true, info: { skipped: true, motivo: `conta ja com status=${conta.status}` } };
+    return { ok: true, info: { skipped: true, motivo: `conta já com status=${conta.status}` } };
   }
 
   const update = {
@@ -154,7 +154,7 @@ async function applyReimbursementDecision({ payload, reviewedBy }) {
   const { reembolso_id, decisao } = payload || {};
   if (!reembolso_id) return { ok: false, error: 'reembolso_id ausente' };
   if (!['aprovar', 'rejeitar'].includes(decisao)) {
-    return { ok: false, error: "decisao deve ser 'aprovar' ou 'rejeitar'" };
+    return { ok: false, error: "decisão deve ser 'aprovar' ou 'rejeitar'" };
   }
 
   const { data: r, error: errR } = await supabase
@@ -163,9 +163,9 @@ async function applyReimbursementDecision({ payload, reviewedBy }) {
     .eq('id', reembolso_id)
     .maybeSingle();
   if (errR) return { ok: false, error: errR.message };
-  if (!r) return { ok: false, error: 'Reembolso nao encontrado' };
+  if (!r) return { ok: false, error: 'Reembolso não encontrado' };
   if (r.status !== 'pendente') {
-    return { ok: true, info: { skipped: true, motivo: `reembolso ja com status=${r.status}` } };
+    return { ok: true, info: { skipped: true, motivo: `reembolso já com status=${r.status}` } };
   }
 
   const novoStatus = decisao === 'aprovar' ? 'aprovado' : 'rejeitado';
@@ -177,7 +177,7 @@ async function applyReimbursementDecision({ payload, reviewedBy }) {
       decidido_por: reviewedBy || null,
     })
     .eq('id', reembolso_id);
-  // Algumas instancias podem nao ter decidido_em/decidido_por · cair pra update minimo
+  // Algumas instancias podem não ter decidido_em/decidido_por · cair pra update mínimo
   if (error && /column .* does not exist/i.test(error.message)) {
     const fallback = await supabase
       .from('fin_reembolsos')
@@ -204,9 +204,9 @@ async function applyAtenderAlerta({ payload, reviewedBy }) {
     .eq('id', alerta_id)
     .maybeSingle();
   if (errA) return { ok: false, error: errA.message };
-  if (!a) return { ok: false, error: 'Alerta nao encontrado' };
+  if (!a) return { ok: false, error: 'Alerta não encontrado' };
   if (a.atendido_em) {
-    return { ok: true, info: { skipped: true, motivo: 'alerta ja atendido' } };
+    return { ok: true, info: { skipped: true, motivo: 'alerta já atendido' } };
   }
 
   const update = {
@@ -241,7 +241,7 @@ const HANDLERS = {
 };
 
 /**
- * Aplica uma acao da fila. NAO faz UPDATE em agent_queue (o caller controla).
+ * Aplica uma ação da fila. NÃO faz UPDATE em agent_queue (o caller controla).
  * Retorna sempre { ok, error?, info? } · nunca lanca.
  */
 async function applyQueueAction({ action_type, payload, reviewedBy }) {

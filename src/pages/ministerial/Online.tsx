@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { CultoYouTubePanel } from '@/components/online/CultoYouTubePanel';
 import { OnlineDebugPanel } from '@/components/online/OnlineDebugPanel';
+import JornadaConvertidos from '@/components/JornadaConvertidos';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -198,7 +199,7 @@ function SerieCard({ s }: { s: Serie }) {
         <div className="grid grid-cols-3 gap-2 text-center">
           <div>
             <div className="font-bold text-lg leading-none">{s.videos_publicados}</div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">videos</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">vídeos</div>
           </div>
           <div className="border-x border-border">
             <div className="font-bold text-lg leading-none">{formatNumber(s.total_views)}</div>
@@ -336,14 +337,14 @@ function ValorGroupCard({ valor, kpis, open, onOpenChange }: {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Pagina
+// Página
 // ────────────────────────────────────────────────────────────────────────────
 
 function OAuthStatusCard() {
   const { getAccessLevel, isAdmin } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
-  // Quem nao edita nao vê o card de admin · early return ANTES dos hooks
-  // de queries/mutations pra nao disparar fetches desnecessarios
+  // Quem não edita não vê o card de admin · early return ANTES dos hooks
+  // de queries/mutations pra não disparar fetches desnecessarios
   if (!podeEditarOnline) return null;
   return <OAuthStatusCardInner />;
 }
@@ -365,7 +366,7 @@ function OAuthStatusCardInner() {
       window.history.replaceState({}, '', url.pathname + url.search);
       refetch();
     } else if (url.searchParams.get('oauth_error')) {
-      toast.error(`Falha na conexao: ${url.searchParams.get('oauth_error')}`);
+      toast.error(`Falha na conexão: ${url.searchParams.get('oauth_error')}`);
       url.searchParams.delete('oauth_error');
       window.history.replaceState({}, '', url.pathname + url.search);
     }
@@ -374,7 +375,7 @@ function OAuthStatusCardInner() {
   const conectar = useMutation({
     mutationFn: () => online.oauth.authorize(),
     onSuccess: (r: any) => { if (r?.url) window.location.href = r.url; },
-    onError: (e: any) => toast.error(e?.message || 'Erro ao iniciar conexao'),
+    onError: (e: any) => toast.error(e?.message || 'Erro ao iniciar conexão'),
   });
 
   const desconectar = useMutation({
@@ -382,6 +383,7 @@ function OAuthStatusCardInner() {
     onSuccess: () => { toast.success('Canal desconectado.'); refetch(); },
   });
 
+  const queryClient = useQueryClient();
   const coletarLive = useMutation({
     mutationFn: () => online.coletar.live(),
     onSuccess: (r: any) => toast.success(r?.atualizou ? `Pico atualizado: ${r.viewers}` : (r?.reason || 'Coleta executada')),
@@ -389,12 +391,34 @@ function OAuthStatusCardInner() {
   });
   const coletarDs = useMutation({
     mutationFn: () => online.coletar.ds(),
-    onSuccess: (r: any) => toast.success(`DS · ${r?.processados || 0} cultos processados`),
+    onSuccess: (r: any) => {
+      const linkados = r?.backfill?.linkados || 0;
+      const sufixo = linkados ? ` (+${linkados} vídeo vinculado)` : '';
+      if (r?.coletados > 0) {
+        toast.success(`DS atualizado · ${r.coletados} culto(s)${sufixo}`);
+      } else if (r?.motivo === 'sem_cultos_com_video_vinculado') {
+        toast.message('Nenhum culto recente com vídeo vinculado. Clique "Sincronizar agora" ou "Recoletar tudo" primeiro.');
+      } else {
+        toast.message(`DS · nada novo para coletar${sufixo}.`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['online', 'cultos-metricas'] });
+    },
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
   });
   const coletarDdus = useMutation({
     mutationFn: () => online.coletar.ddus(),
-    onSuccess: (r: any) => toast.success(`DDUS · ${r?.processados || 0} cultos processados`),
+    onSuccess: (r: any) => {
+      const linkados = r?.backfill?.linkados || 0;
+      const sufixo = linkados ? ` (+${linkados} vídeo vinculado)` : '';
+      if (r?.coletados > 0) {
+        toast.success(`DDUS · ${r.coletados} culto(s)${sufixo}`);
+      } else if (r?.motivo === 'sem_cultos_d7_com_video') {
+        toast.message('Nenhum culto de ~7 dias atrás com vídeo vinculado.');
+      } else {
+        toast.message(`DDUS · nada novo para coletar${sufixo}.`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['online', 'cultos-metricas'] });
+    },
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
   });
 
@@ -414,7 +438,7 @@ function OAuthStatusCardInner() {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="font-bold text-base">Coleta automatica YouTube</h2>
+            <h2 className="font-bold text-base">Coleta automática YouTube</h2>
             {conectado ? (
               <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/40">
                 Conectado · {status?.channel_title || status?.channel_id}
@@ -427,12 +451,26 @@ function OAuthStatusCardInner() {
           </div>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
             {conectado ? (
-              <>Coleta automatica de <strong>pico online</strong> (5/5min · janela do culto),
+              <>Coleta automática de <strong>pico online</strong> (5/5min · janela do culto),
                 <strong> DS</strong> (todo dia 10h) e <strong>DDUS</strong> (10h30) ativa.</>
             ) : (
               <>Conecte o canal CBRio com OAuth pra automatizar pico online, DS e DDUS via YouTube Analytics API.</>
             )}
           </p>
+          {conectado && (status?.last_check_at || status?.last_error) && (
+            <div className="mt-1.5 text-[11px] leading-snug">
+              {status?.last_check_at && (
+                <span className="text-muted-foreground">
+                  Ultima verificacao: {new Date(status.last_check_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+              {status?.last_error && (
+                <span className="ml-2 text-amber-700 dark:text-amber-400">
+                  · {status.last_error}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {conectado ? (
@@ -475,12 +513,16 @@ export default function Online() {
     queryFn: () => online.dashboard(),
   });
 
-  const queryClient = useQueryClient();
+  // Engajamento de conteúdo (KPIs da cabeça do Juninho) · 0 até a API do YouTube alimentar
+  const { data: eng } = useQuery<any>({
+    queryKey: ['online', 'engajamento'],
+    queryFn: () => online.engajamento(),
+  });
 
   const syncMutation = useMutation({
     mutationFn: () => online.sync(),
     onSuccess: () => {
-      toast.success('Sincronizacao com YouTube concluida.');
+      toast.success('Sincronizacao com YouTube concluída.');
       refetch();
     },
     onError: (err: any) => toast.error(err?.message || 'Erro ao sincronizar'),
@@ -495,11 +537,11 @@ export default function Online() {
       const syncRes: any = await online.sync();
       const linkados = syncRes?.log?.etapas?.backfill_cultos?.linkados ?? 0;
 
-      // 2. catch-up em batches de 5 cultos por chamada · loop ate remaining=0
-      // pra nao estourar o limite de 60s da serverless do Vercel.
+      // 2. catch-up em batches de 5 cultos por chamada · loop até remaining=0
+      // pra não estourar o limite de 60s da serverless do Vercel.
       const acc = { processados: 0, pico: 0, ds: 0, ddus: 0, subs: 0, trafico: 0, retencao_curva: 0, sub_status: 0 };
       let batches = 0;
-      while (batches < 30) { // ~150 cultos no maximo
+      while (batches < 30) { // ~150 cultos no máximo
         const r: any = await online.coletar.catchUp(5);
         acc.processados   += r?.processados   ?? 0;
         acc.pico          += r?.pico          ?? 0;
@@ -595,7 +637,7 @@ export default function Online() {
                 variant="secondary"
                 size="lg"
                 className="gap-2 bg-red-700 text-white hover:bg-red-800 shadow-lg border border-white/20"
-                title="Linka cultos do passado por proximidade temporal com videos do canal + puxa todas as 7 metricas (pico ao vivo, DS, DDUS, watch time, retencao, subs, trafego, sub-status) onde estiver faltando dado. Pico recuperado via peakConcurrentViewers do Analytics (delay de 1-2 dias). Pode demorar 1-3min."
+                title="Linka cultos do passado por proximidade temporal com vídeos do canal + puxa todas as 7 metricas (pico ao vivo, DS, DDUS, watch time, retencao, subs, tráfego, sub-status) onde estiver faltando dado. Pico recuperado via peakConcurrentViewers do Analytics (delay de 1-2 dias). Pode demorar 1-3min."
               >
                 {recoletarMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Recoletar tudo
@@ -604,6 +646,20 @@ export default function Online() {
           )}
         </div>
       </div>
+
+      {/* Novos convertidos online · primeiros 90 dias (acompanhamento da Renata) */}
+      <Card>
+        <CardContent className="p-4 md:p-5 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-primary/10 p-2"><HeartHandshake className="h-5 w-5 text-primary" /></div>
+            <div>
+              <h2 className="text-base font-bold leading-tight">Novos convertidos · primeiros 90 dias</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Quem decidiu no Online: contato pastoral (3 dias), batismo e Next (90 dias). Atrasados em vermelho.</p>
+            </div>
+          </div>
+          <JornadaConvertidos area="online" />
+        </CardContent>
+      </Card>
 
       <OAuthStatusCard />
 
@@ -634,7 +690,29 @@ export default function Online() {
         </div>
       )}
 
-      {/* Top videos */}
+      {/* Engajamento de conteúdo · KPIs do Monitoramento OKR (Pr. Juninho).
+          Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}
+      <Card className="overflow-hidden">
+        <div className="p-4 md:p-5 flex items-center gap-3 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
+          <div className="rounded-xl bg-primary/10 p-2"><Youtube className="h-5 w-5 text-primary" /></div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-bold leading-tight">Engajamento de conteúdo</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Indicadores do Monitoramento OKR (Pr. Juninho).{' '}
+              {eng?.mes_label
+                ? `Referência ${eng.mes_label}.`
+                : 'Aguardando integração com a API do YouTube — exibindo 0 até a primeira coleta.'}
+            </p>
+          </div>
+        </div>
+        <CardContent className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <StatCard icon={Eye}          label="Retenção média em vídeos (alvo ≥40%)"        value={`${eng?.retencao ?? 0}%`}          accentClass="from-blue-500/15 to-cyan-500/5" />
+          <StatCard icon={ExternalLink} label="Taxa de compartilhamento (alvo ≥5%)"          value={`${eng?.compartilhamento ?? 0}%`}  accentClass="from-pink-500/15 to-rose-500/5" />
+          <StatCard icon={Zap}          label="Cliques em séries no YouTube (alvo ≥15%)"     value={`${eng?.cliques_series ?? 0}%`}    accentClass="from-amber-500/15 to-yellow-500/5" />
+        </CardContent>
+      </Card>
+
+      {/* Top vídeos */}
       {((data?.top_views_mes?.length || 0) > 0 || (data?.top_engajamento_mes?.length || 0) > 0) && (
         <Card className="overflow-hidden">
           <div className="p-4 md:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
@@ -643,7 +721,7 @@ export default function Online() {
                 <TrendingUp className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h2 className="text-base font-bold leading-tight">Top videos do mes</h2>
+                <h2 className="text-base font-bold leading-tight">Top vídeos do mês</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">Melhores performances de {new Date().toLocaleDateString('pt-BR', { month: 'long' })}</p>
               </div>
             </div>
@@ -702,7 +780,7 @@ export default function Online() {
         </Card>
       )}
 
-      {/* Series */}
+      {/* Séries */}
       {(data?.series?.length || 0) > 0 && (
         <Card className="overflow-hidden">
           <div className="p-4 md:p-5 flex items-center justify-between gap-3 border-b border-border bg-gradient-to-r from-purple-500/10 to-transparent">
@@ -711,7 +789,7 @@ export default function Online() {
                 <PlayCircle className="h-5 w-5 text-purple-600 dark:text-purple-400" />
               </div>
               <div>
-                <h2 className="text-base font-bold leading-tight">Series de pregacao</h2>
+                <h2 className="text-base font-bold leading-tight">Séries de pregacao</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {data?.series?.length || 0} serie(s) ativa(s) · ordenadas por views
                 </p>
@@ -768,7 +846,7 @@ export default function Online() {
       {/* Performance por Culto · novas metricas YT (PRs #524, #525, #527, #530, #531) */}
       <CultoYouTubePanel />
 
-      {/* Diagnostico · so admin · pra investigar zeros nas metricas */}
+      {/* Diagnóstico · so admin · pra investigar zeros nas metricas */}
       {isAdmin && <OnlineDebugPanel />}
 
       {/* Footer info */}

@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 // Sentry deve inicializar ANTES de qualquer require do app pra capturar
-// erros logo no boot. Se SENTRY_DSN nao estiver setado, vira no-op.
+// erros logo no boot. Se SENTRY_DSN não estiver setado, vira no-op.
 const { initSentryBackend, sentryRequestHandler, sentryErrorHandler } = require('./utils/sentry');
 initSentryBackend();
 
@@ -23,7 +23,7 @@ app.use(sentryRequestHandler());
 
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-// Dominios extras configuraveis via env (CSV) · ex: EXTRA_ALLOWED_ORIGINS="https://x.com,https://y.com"
+// Domínios extras configuraveis via env (CSV) · ex: EXTRA_ALLOWED_ORIGINS="https://x.com,https://y.com"
 const extraOrigins = (process.env.EXTRA_ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
@@ -42,7 +42,7 @@ app.use(cors({
       /\.vercel\.app$/.test(origin) ||
       /\.lovable\.app$/.test(origin) ||
       /\.lovableproject\.com$/.test(origin) ||
-      // Dominio proprio CBRio · cbrio.org + qualquer subdominio
+      // Domínio próprio CBRio · cbrio.org + qualquer subdominio
       /^https:\/\/(.+\.)?cbrio\.org$/.test(origin)
     ) {
       callback(null, true);
@@ -97,7 +97,7 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/notificacoes', require('./routes/notificacoes'));
 app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
-// Rate limit dedicado pros forms publicos (anti-spam · sem auth)
+// Rate limit dedicado pros forms públicos (anti-spam · sem auth)
 // Mais restritivo que o limiter global · 30 req/15min por IP em prod
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -114,11 +114,14 @@ app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
-// Webhook WhatsApp (publico · sem auth, fora do publicLimiter pra nao
+app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// Webhook WhatsApp (público · sem auth, fora do publicLimiter pra não
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
 app.use('/api/whatsapp', require('./routes/whatsapp'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
+app.use('/api/producao', require('./routes/producao'));
+app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));
@@ -126,12 +129,14 @@ app.use('/api/grupos', require('./routes/grupos'));
 app.use('/api/kpis/v2', require('./routes/kpisV2'));
 app.use('/api/kpis', require('./routes/kpis'));
 app.use('/api/online', require('./routes/online'));
+app.use('/api/wifi', require('./routes/wifi'));
 app.use('/api/cuidados', require('./routes/cuidados'));
 app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/next', require('./routes/next'));
 app.use('/api/governanca', require('./routes/governanca'));
 app.use('/api/processos', require('./routes/processos'));
 app.use('/api/jornada', require('./routes/jornada'));
+app.use('/api/encaminhamentos', require('./routes/encaminhamentos'));
 app.use('/api/devocionais', require('./routes/devocionais'));
 app.use('/api/devocional-planos', require('./routes/devocionalPlanos'));
 app.use('/api/devocional-membro', require('./routes/devocionalMembro'));
@@ -154,7 +159,7 @@ app.use('/api/apresentacoes', require('./routes/apresentacoes'));
 app.use('/api/lgpd', require('./routes/lgpd'));
 
 // ── Health check ──
-// Inclui status do Supabase client pra diagnostico de "Nao autorizado" em prod
+// Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
 app.get('/api/health', (req, res) => {
   const { supabase } = require('./utils/supabase');
   res.json({

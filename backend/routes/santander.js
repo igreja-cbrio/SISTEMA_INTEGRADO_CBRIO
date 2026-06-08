@@ -1,4 +1,4 @@
-// Rotas REST de integracao com Santander Open APIs
+// Rotas REST de integração com Santander Open APIs
 // Saldo + extrato (bank_account_information v1) + comprovantes (consult_payment_receipts v2)
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
@@ -68,7 +68,7 @@ router.get('/saldo/historico', async (req, res) => {
   }
 });
 
-// ── Culto ao Vivo · stats + ultimas transacoes ─────────────────────────────
+// ── Culto ao Vivo · stats + últimas transacoes ─────────────────────────────
 router.get('/pix/culto-atual', async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
@@ -80,8 +80,8 @@ router.get('/pix/culto-atual', async (req, res) => {
       .maybeSingle();
     if (errStats) console.warn('[culto-atual] view stats:', errStats.message);
 
-    // 2. Ultimas transacoes (creditos · dizimos/ofertas) · ordenadas por
-    // data_lancamento real (nao created_at · evita imports retroativos
+    // 2. Últimas transacoes (creditos · dizimos/ofertas) · ordenadas por
+    // data_lancamento real (não created_at · evita imports retroativos
     // virem antes de transacoes recentes)
     const { data: transacoes, error: errTrans } = await supabase
       .from('fin_lancamentos_brutos')
@@ -92,9 +92,9 @@ router.get('/pix/culto-atual', async (req, res) => {
       .limit(limit);
     if (errTrans) return res.status(500).json({ error: errTrans.message });
 
-    // 3. Soma do dia (fallback se nao ha culto ativo · stats fica null)
-    // Filtra por data_lancamento (data real da transacao) e nao created_at
-    // (data de importacao) · senao import retroativo conta como 'hoje'
+    // 3. Soma do dia (fallback se não ha culto ativo · stats fica null)
+    // Filtra por data_lancamento (data real da transacao) e não created_at
+    // (data de importação) · senao import retroativo conta como 'hoje'
     const hoje = new Date().toISOString().slice(0, 10);
     const { data: doDia } = await supabase
       .from('fin_lancamentos_brutos')
@@ -141,7 +141,7 @@ router.get('/extrato', async (req, res) => {
   try {
     const inicio = req.query.inicio;
     const fim = req.query.fim;
-    if (!inicio || !fim) return res.status(400).json({ error: 'Parametros inicio e fim sao obrigatorios (YYYY-MM-DD)' });
+    if (!inicio || !fim) return res.status(400).json({ error: 'Parametros início e fim são obrigatórios (YYYY-MM-DD)' });
     const usarCache = req.query.refresh !== '1';
     const data = await contas.consultarExtrato({ inicio, fim, usarCache, userId: userId(req) });
     res.json(data);
@@ -154,7 +154,7 @@ router.get('/extrato', async (req, res) => {
 router.get('/comprovantes', async (req, res) => {
   try {
     const { inicio, fim, categoria, beneficiario, limit, offset } = req.query;
-    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim sao obrigatorios' });
+    if (!inicio || !fim) return res.status(400).json({ error: 'início e fim são obrigatórios' });
 
     const data = await comprovantes.listReceipts({
       startDate: inicio,
@@ -168,7 +168,7 @@ router.get('/comprovantes', async (req, res) => {
       userId: userId(req),
     });
 
-    // Enriquece com status local (se ja foi baixado)
+    // Enriquece com status local (se já foi baixado)
     const ids = (data?.paymentsReceipts || [])
       .map((p) => p?.payment?.paymentId)
       .filter(Boolean);
@@ -211,7 +211,7 @@ router.get('/comprovantes/:paymentId/pdf-url', async (req, res) => {
   try {
     const { paymentId } = req.params;
     const url = await comprovantes.getSignedUrl(paymentId);
-    if (!url) return res.status(404).json({ error: 'Comprovante nao baixado ou nao encontrado' });
+    if (!url) return res.status(404).json({ error: 'Comprovante não baixado ou não encontrado' });
     res.json({ url });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -265,7 +265,7 @@ router.delete('/comprovantes/:paymentId/vincular', authorizeModule('santander', 
   }
 });
 
-// Listagem local (ja baixados / com vinculo)
+// Listagem local (já baixados / com vinculo)
 router.get('/comprovantes-local', async (req, res) => {
   try {
     const { vinculados, transacao_id, pagar_id } = req.query;
@@ -291,7 +291,7 @@ router.get('/comprovantes-local', async (req, res) => {
 router.post('/bulk', authorizeModule('santander', 3), async (req, res) => {
   try {
     const { alias, inicio, fim, categorias, beneficiario } = req.body || {};
-    if (!alias || !inicio || !fim) return res.status(400).json({ error: 'alias, inicio e fim obrigatorios' });
+    if (!alias || !inicio || !fim) return res.status(400).json({ error: 'alias, início e fim obrigatórios' });
     const resp = await comprovantes.createBulkOrder({
       alias,
       startDate: inicio,
@@ -346,7 +346,7 @@ router.get('/log', authorizeModule('santander', 3), async (req, res) => {
   }
 });
 
-// ── PIX API · diagnostico do produto PIX (descobre se Santander libera) ────
+// ── PIX API · diagnóstico do produto PIX (descobre se Santander libera) ────
 const pixApi = require('../services/santander/pixApiService');
 
 router.get('/pix-api/diagnostico', async (req, res) => {
@@ -368,7 +368,7 @@ router.get('/pix-api/diagnostico', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// PIX COBRANCA · gera QR Code de cobranca imediata (BR Code Open Finance)
+// PIX COBRANÇA · gera QR Code de cobrança imediata (BR Code Open Finance)
 // ════════════════════════════════════════════════════════════════════════════
 const pixCob = require('../services/santander/pixCobrancaService');
 
@@ -385,7 +385,7 @@ router.get('/pix-cob/health', async (req, res) => {
   });
 });
 
-// POST · cria cobranca + salva no banco
+// POST · cria cobrança + salva no banco
 router.post('/pix-cob', authorizeModule('financeiro', 3), async (req, res) => {
   try {
     const { valor, devedor, solicitacao, expiracao, origem, metadata } = req.body || {};
@@ -444,7 +444,7 @@ router.post('/pix-cob', authorizeModule('financeiro', 3), async (req, res) => {
   }
 });
 
-// GET · lista cobrancas do banco (com filtros)
+// GET · lista cobranças do banco (com filtros)
 router.get('/pix-cob', async (req, res) => {
   try {
     const { status, limit = 50, origem } = req.query;
@@ -469,7 +469,7 @@ router.get('/pix-cob/:txid', async (req, res) => {
     const { txid } = req.params;
     const { data: local } = await supabase
       .from('santander_pix_cob').select('*').eq('txid', txid).single();
-    if (!local) return res.status(404).json({ error: 'Cobranca nao encontrada' });
+    if (!local) return res.status(404).json({ error: 'Cobrança não encontrada' });
 
     // Se ainda esta ATIVA, atualiza status via API
     if (local.status === 'ATIVA' && pixCob.isEnabled()) {
@@ -497,7 +497,7 @@ router.get('/pix-cob/:txid', async (req, res) => {
   }
 });
 
-// PATCH · cancela cobranca
+// PATCH · cancela cobrança
 router.patch('/pix-cob/:txid/cancelar', authorizeModule('financeiro', 3), async (req, res) => {
   try {
     const { txid } = req.params;
@@ -651,7 +651,7 @@ router.get('/pagamentos/:id', async (req, res) => {
     const { id } = req.params;
     const { data: local } = await supabase
       .from('santander_pagamentos').select('*').eq('id', id).single();
-    if (!local) return res.status(404).json({ error: 'Pagamento nao encontrado' });
+    if (!local) return res.status(404).json({ error: 'Pagamento não encontrado' });
 
     // Refresh se ainda em fluxo
     const inFlight = ['AGENDADO', 'AGUARDANDO_APROVACAO', 'PENDENTE'];
@@ -682,9 +682,9 @@ router.patch('/pagamentos/:id/cancelar', authorizeModule('financeiro', 3), async
     const { id } = req.params;
     const { data: local } = await supabase
       .from('santander_pagamentos').select('*').eq('id', id).single();
-    if (!local) return res.status(404).json({ error: 'nao encontrado' });
+    if (!local) return res.status(404).json({ error: 'não encontrado' });
     if (!['AGENDADO', 'AGUARDANDO_APROVACAO', 'PENDENTE'].includes(local.status)) {
-      return res.status(400).json({ error: `Nao pode cancelar com status ${local.status}` });
+      return res.status(400).json({ error: `Não pode cancelar com status ${local.status}` });
     }
 
     if (local.payment_id && pagamentos.isEnabled()) {
@@ -834,7 +834,7 @@ router.get('/boletos/:id', async (req, res) => {
     const { id } = req.params;
     const { data: local } = await supabase
       .from('santander_boletos').select('*').eq('id', id).single();
-    if (!local) return res.status(404).json({ error: 'Boleto nao encontrado' });
+    if (!local) return res.status(404).json({ error: 'Boleto não encontrado' });
 
     if (['PENDENTE', 'REGISTRADO'].includes(local.status) && boletos.isEnabled()) {
       try {
@@ -863,9 +863,9 @@ router.patch('/boletos/:id/cancelar', authorizeModule('financeiro', 3), async (r
     const { id } = req.params;
     const { data: local } = await supabase
       .from('santander_boletos').select('*').eq('id', id).single();
-    if (!local) return res.status(404).json({ error: 'nao encontrado' });
+    if (!local) return res.status(404).json({ error: 'não encontrado' });
     if (['LIQUIDADO', 'BAIXADO', 'CANCELADO'].includes(local.status)) {
-      return res.status(400).json({ error: `Nao pode cancelar com status ${local.status}` });
+      return res.status(400).json({ error: `Não pode cancelar com status ${local.status}` });
     }
 
     if (local.bill_id && boletos.isEnabled()) {
@@ -888,19 +888,19 @@ router.patch('/boletos/:id/cancelar', authorizeModule('financeiro', 3), async (r
   }
 });
 
-// ── Sync manual do extrato pra fila de classificacao ─────────────────────
+// ── Sync manual do extrato pra fila de classificação ─────────────────────
 // Reusa o handler do cron internamente. Autenticado · so admin/financeiro >=3
 router.post('/sync-extrato-fila', authorizeModule('santander', 3), async (req, res) => {
   try {
     const { dias = 3 } = req.body || {};
-    // Faz a chamada interna via axios? Nao · vamos chamar a logica direto
-    // importando os modulos. Mais simples · evita HTTP interno.
+    // Faz a chamada interna via axios? Não · vamos chamar a lógica direto
+    // importando os módulos. Mais simples · evita HTTP interno.
     const contasService = require('../services/santander/contasService');
     const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
     const { CONTA, isConfigured, missingEnv } = require('../services/santander/httpClient');
 
     if (!isConfigured()) {
-      return res.json({ ok: false, erro: 'Santander nao configurado', missing: missingEnv() });
+      return res.json({ ok: false, erro: 'Santander não configurado', missing: missingEnv() });
     }
 
     const hoje = new Date();
@@ -990,9 +990,9 @@ router.get('/sync-extrato-historico', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Importar histórico completo · varios meses em fatias ─────────────────
+// ── Importar histórico completo · vários meses em fatias ─────────────────
 // Marcos pediu · importar desde 01/01/2026 (ou outra data) de uma vez.
-// API Santander limita janela por chamada · service ja fatia automaticamente.
+// API Santander limita janela por chamada · service já fatia automaticamente.
 router.post('/importar-historico', authorizeModule('santander', 3), async (req, res) => {
   try {
     const { desde, ate } = req.body || {};
@@ -1004,14 +1004,14 @@ router.post('/importar-historico', authorizeModule('santander', 3), async (req, 
     const { CONTA, isConfigured, missingEnv } = require('../services/santander/httpClient');
 
     if (!isConfigured()) {
-      return res.json({ ok: false, erro: 'Santander nao configurado', missing: missingEnv() });
+      return res.json({ ok: false, erro: 'Santander não configurado', missing: missingEnv() });
     }
 
     const { data: contas } = await supabase
       .from('fin_contas').select('*')
       .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
     const contaLocal = (contas || [])[0];
-    if (!contaLocal) return res.status(400).json({ ok: false, erro: 'Conta Santander nao cadastrada' });
+    if (!contaLocal) return res.status(400).json({ ok: false, erro: 'Conta Santander não cadastrada' });
 
     const extratoApi = await contasService.consultarExtrato({ inicio: desde, fim, usarCache: false });
     const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];

@@ -1,16 +1,16 @@
-// Impressao das etiquetas Kids · MVP usa window.print() do navegador.
+// Impressão das etiquetas Kids · MVP usa window.print() do navegador.
 //
 // Estrategia:
 //   1. Cria iframe oculto com HTML completo + CSS @page 62mmx100mm
 //   2. Aguarda load
 //   3. Chama iframe.contentWindow.print()
-//   4. Remove iframe apos delay
+//   4. Remove iframe após delay
 //   5. Loga em /api/totem-kids/etiquetas-log
 //
 // Pre-requisito (setup do totem · uma vez):
 //   - Brother QL-820NWB instalada no Windows do totem
-//   - Configurada como impressora padrao
-//   - Edge/Chrome com "sem dialogo de impressao" (ja default em printer kiosk)
+//   - Configurada como impressora padrão
+//   - Edge/Chrome com "sem dialogo de impressão" (já default em printer kiosk)
 
 import { totemKids } from '@/api';
 
@@ -28,14 +28,14 @@ export interface DadosImpressao {
     nome: string;
   };
   codigoSeguranca: string;
-  codigoBarras: string;       // mesmo do codigo, codificado pra Code128
+  codigoBarras: string;       // mesmo do código, codificado pra Code128
   dataHora: string;            // ISO ou label pronto
   cultoNome?: string;
 }
 
 // CSS comum das etiquetas · 90mm x 29mm (Brother DK-1201, paisagem)
-// Etiqueta de endereco · COMPRIDA na horizontal, estreita na vertical.
-// Layout em colunas: bloco esquerdo (identidade) | bloco direito (codigo).
+// Etiqueta de endereço · COMPRIDA na horizontal, estreita na vertical.
+// Layout em colunas: bloco esquerdo (identidade) | bloco direito (código).
 const CSS_ETIQUETA = `
   @page {
     size: 90mm 29mm;
@@ -229,7 +229,7 @@ function escapeHtml(s: string): string {
 
 function imprimirHtml(html: string, preview = false): Promise<void> {
   if (preview) {
-    // Modo preview · abre popup visivel pro usuario conferir layout antes de
+    // Modo preview · abre popup visível pro usuário conferir layout antes de
     // ir pra impressora. Útil pra teste/debug. Janela um pouco maior que
     // a etiqueta real (90x29mm ~ 340x110px paisagem) com margem pra borda.
     return new Promise((resolve) => {
@@ -248,7 +248,7 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
   return new Promise((resolve) => {
     const iframe = document.createElement('iframe');
     // Renderiza com tamanho real MAS fora da tela. Evita bugs de iframe 0x0
-    // em Chrome/Edge que ignoram print() quando o iframe nao tem dimensao.
+    // em Chrome/Edge que ignoram print() quando o iframe não tem dimensão.
     // Brother DK-1201 paisagem: 90mm largura x 29mm altura.
     iframe.style.position = 'fixed';
     iframe.style.top = '0';
@@ -276,9 +276,9 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
       } catch (e) {
         console.error('[totemKids/imprimir] erro print:', e);
       }
-      // Remove apos 3s (tempo do spool + confirmacao do dialogo)
+      // Remove após 3s (tempo do spool + confirmação do dialogo)
       setTimeout(() => {
-        try { document.body.removeChild(iframe); } catch { /* iframe ja removido */ }
+        try { document.body.removeChild(iframe); } catch { /* iframe já removido */ }
         resolve();
       }, 3000);
     }, 400);
@@ -310,7 +310,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Pro
 
   // Etiqueta do responsável
   await imprimirHtml(htmlEtiquetaResponsavel(d, barcodeSvg), preview);
-  if (preview) return;  // nao loga impressao em modo preview
+  if (preview) return;  // não loga impressão em modo preview
   totemKids.etiquetas.log({
     checkin_id: d.checkinId,
     estacao_id: d.estacaoId,

@@ -8,7 +8,7 @@ router.use(authenticate);
 // GET /api/tasks/all — todas as tarefas de todos os módulos
 // Query params:
 //   source: filtra por tipo (evento | ciclo | projeto | planejamento)
-//   area:   filtra por área
+//   área:   filtra por área
 //   finalized: hide (default) | show | only
 //     - hide: ignora tarefas com closed_with_event_at preenchido (lista limpa)
 //     - show: traz todas, marca is_finalized_with_event nas que estão fechadas
@@ -146,7 +146,7 @@ router.patch('/:source/:taskId/status', async (req, res) => {
             }
           }
         } else {
-          // Saiu de concluida → marca reopened nas completions ativas
+          // Saiu de concluída → marca reopened nas completions ativas
           await supabase.from('card_completions').update({
             reopened_at: new Date().toISOString(),
             reopened_by: req.user.userId,

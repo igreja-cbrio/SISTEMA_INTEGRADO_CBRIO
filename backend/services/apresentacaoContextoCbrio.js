@@ -1,13 +1,13 @@
 // =====================================================================
 // Base de conhecimento CBRio · injetada no prompt do gerador
 // =====================================================================
-// Fatos sobre a organizacao que a IA precisa saber pra nao alucinar
-// quando o usuario pede algo como "5 valores da CBRio", "as 6 areas",
+// Fatos sobre a organização que a IA precisa saber pra não alucinar
+// quando o usuário pede algo como "5 valores da CBRio", "as 6 áreas",
 // "diretoria geral", etc.
 //
 // Editar AQUI quando algo mudar · versionado no git, sem necessidade
-// de UI/banco. Cada entry tem titulo (vira ## no prompt) e conteudo
-// (markdown texto livre). Apenas entries com ativo!=false sao injetadas.
+// de UI/banco. Cada entry tem título (vira ## no prompt) e conteúdo
+// (markdown texto livre). Apenas entries com ativo!=false são injetadas.
 // =====================================================================
 
 const CONTEXTO_CBRIO = [
@@ -24,42 +24,42 @@ Identidade visual:
   {
     chave: 'valores',
     titulo: 'Os 5 valores da CBRio (Jornada do Membro)',
-    conteudo: `A CBRio organiza a vida do membro em torno de 5 valores. Um "Membro Modelo" pratica >=2 desses 5 valores. Sao eles:
+    conteudo: `A CBRio organiza a vida do membro em torno de 5 valores. Um "Membro Modelo" pratica >=2 desses 5 valores. São eles:
 
-1. **Seguir Jesus** - decisao + primeiro contato + batismo. Alimentado por decisoes registradas nos cultos (presencial, online, kids).
+1. **Seguir Jesus** - decisão + primeiro contato + batismo. Alimentado por decisões registradas nos cultos (presencial, online, kids).
 
-2. **Conectar** - participacao ativa em grupo de conexao (grupo pequeno semanal).
+2. **Conectar** - participação ativa em grupo de conexão (grupo pequeno semanal).
 
 3. **Investir Tempo com Deus** - devocional diario + jornada 180 + encontros pessoais com Deus.
 
-4. **Servir** - voluntariado ativo em algum ministerio (Kids/AMI/Bridge/Producao/Marketing/Recepcao/Cuidado/etc).
+4. **Servir** - voluntariado ativo em algum ministério (Kids/AMI/Bridge/Producao/Marketing/Recepcao/Cuidado/etc).
 
-5. **Generosidade** - contribuicao recorrente (dizimo ou oferta).`,
+5. **Generosidade** - contribuição recorrente (dizimo ou oferta).`,
   },
 
   {
     chave: 'areas',
     titulo: 'As 6 áreas ministeriais (matriz Valor × Área)',
-    conteudo: `O sistema tem 6 areas ministeriais que cruzam com os 5 valores formando uma matriz 6×5 de ~150 KPIs.
+    conteudo: `O sistema tem 6 áreas ministeriais que cruzam com os 5 valores formando uma matriz 6×5 de ~150 KPIs.
 
 - **Sede**: culto principal CBRio (Domingo 8h30/10h/11h30/19h + Quarta com Deus 20h).
-- **Online**: transmissao YouTube (somente leitura · decisoes preenchidas pela Alda Lorena).
-- **Kids**: ministerio infantil. Lider: Mariane Gaia.
-- **AMI**: culto de adolescentes/jovens, sabado 20h. Lider: Arthur Cecconi.
-- **Bridge**: culto pra novos, sabado 17h. Lider: Lillian Xavier.
+- **Online**: transmissão YouTube (somente leitura · decisões preenchidas pela Alda Lorena).
+- **Kids**: ministério infantil. Líder: Mariane Gaia.
+- **AMI**: culto de adolescentes/jovens, sábado 20h. Líder: Arthur Cecconi.
+- **Bridge**: culto pra novos, sábado 17h. Líder: Lillian Xavier.
 - **CBA**: igrejas externas acompanhadas pelo CBRio.`,
   },
 
   {
     chave: 'lideranca',
     titulo: 'Liderança · Diretoria Geral (5 nominais)',
-    conteudo: `A diretoria geral da CBRio sao 5 pessoas nominais:
+    conteudo: `A diretoria geral da CBRio são 5 pessoas nominais:
 
 - **Pr. Pedrão** · Pastor Senior
 - **Pr. Juninho** · Pastor Presidente
-- **Eduardo Gnisci** · Lider de Gestão
-- **Arthur Serpa** · Lider Ministerial
-- **Pedro Menezes (Pepe)** · Lider Criativo`,
+- **Eduardo Gnisci** · Líder de Gestão
+- **Arthur Serpa** · Líder Ministerial
+- **Pedro Menezes (Pepe)** · Líder Criativo`,
   },
 
   {
@@ -67,26 +67,26 @@ Identidade visual:
     titulo: 'Time de desenvolvimento do sistema interno',
     conteudo: `O sistema integrado CBRio foi construido por:
 
-- **Marcos Paulo Almeida** · Backend, integracoes, modulos Administracao (RH/Patrimonio/Solicitacoes), Eventos com ciclo criativo, Painel CBRio.
-- **Matheus Toscano** · UI complementar, modulo Online (YouTube + Analytics + OAuth), Devocional com IA, NPS gerado por IA, Financeiro, NEXT, Grupos.`,
+- **Marcos Paulo Almeida** · Backend, integracoes, módulos Administracao (RH/Patrimonio/Solicitacoes), Eventos com ciclo criativo, Painel CBRio.
+- **Matheus Toscano** · UI complementar, módulo Online (YouTube + Analytics + OAuth), Devocional com IA, NPS gerado por IA, Financeiro, NEXT, Grupos.`,
   },
 
   {
     chave: 'jornada_180',
     titulo: 'Programa Jornada 180',
-    conteudo: `Programa de discipulado de 180 dias pra novos convertidos. Vincula pessoa a um lider espiritual que faz encontros pessoais regulares. Alimenta o valor "Investir Tempo com Deus" da Jornada do Membro.`,
+    conteudo: `Programa de discipulado de 180 dias pra novos convertidos. Vincula pessoa a um líder espiritual que faz encontros pessoais regulares. Alimenta o valor "Investir Tempo com Deus" da Jornada do Membro.`,
   },
 
   {
     chave: 'nps_culto',
     titulo: 'NPS de Culto',
-    conteudo: `A cada culto, a CBRio coleta NPS dos participantes (0-10 + comentario). NPS positivo = vai dizer pra amigos · alimenta a frequencia futura.`,
+    conteudo: `A cada culto, a CBRio coleta NPS dos participantes (0-10 + comentário). NPS positivo = vai dizer pra amigos · alimenta a frequência futura.`,
   },
 
   {
     chave: 'modulos_sistema',
     titulo: 'Módulos do sistema CBRio',
-    conteudo: `O sistema esta organizado em 6 modulos macro:
+    conteudo: `O sistema esta organizado em 6 módulos macro:
 
 1. **Administração** · RH, Financeiro, Logística, Patrimônio, Solicitações, Permissões
 2. **Inteligência** · Painel CBRio (NSM), Dashboard Semanal, KPIs, NPS, Assistente IA, Apresentações
@@ -112,8 +112,8 @@ function getContextoAtivo() {
 // "Cerebro CBRio" e injeta como contexto adicional. Permite Marcos
 // adicionar/atualizar contexto sem precisar deploy.
 //
-// Cache 5min em memoria · evita 1 chamada Graph por apresentacao.
-// Falha silenciosa · se Graph nao responder, usa so o hardcoded.
+// Cache 5min em memória · evita 1 chamada Graph por apresentação.
+// Falha silenciosa · se Graph não responder, usa so o hardcoded.
 // =====================================================================
 
 const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
@@ -145,7 +145,7 @@ async function lerContextoSharePoint() {
     const drives = await drivesRes.json();
     const vault = drives.value?.find(d => d.name === VAULT_DRIVE_NAME);
     if (!vault) {
-      console.warn(`[apresentacoes-ctx] drive "${VAULT_DRIVE_NAME}" nao encontrado`);
+      console.warn(`[apresentacoes-ctx] drive "${VAULT_DRIVE_NAME}" não encontrado`);
       return [];
     }
 
@@ -156,7 +156,7 @@ async function lerContextoSharePoint() {
     );
     if (!listRes.ok) {
       if (listRes.status === 404) {
-        console.log(`[apresentacoes-ctx] pasta /${CONTEXTO_FOLDER}/ nao existe no vault · ok, sem contexto extra`);
+        console.log(`[apresentacoes-ctx] pasta /${CONTEXTO_FOLDER}/ não existe no vault · ok, sem contexto extra`);
       } else {
         console.warn('[apresentacoes-ctx] falha ao listar pasta:', listRes.status);
       }
@@ -167,7 +167,7 @@ async function lerContextoSharePoint() {
     const list = await listRes.json();
     const mdFiles = (list.value || []).filter(f => f.file && /\.md$/i.test(f.name));
 
-    // Baixa conteudo de cada
+    // Baixa conteúdo de cada
     const entries = [];
     let totalChars = 0;
     for (const f of mdFiles) {

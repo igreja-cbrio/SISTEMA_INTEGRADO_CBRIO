@@ -1,16 +1,14 @@
 const router = require('express').Router();
 const multer = require('multer');
 const XLSX = require('xlsx');
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-const CRON_SECRET_FIN = process.env.CRON_SECRET;
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // ── Cron · alertas (definido ANTES de router.use(authenticate)) ──
 router.get('/alertas/cron-gerar', async (req, res) => {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET_FIN && auth !== `Bearer ${CRON_SECRET_FIN}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ erro: 'Nao autorizado' });
   }
   try {
@@ -268,6 +266,11 @@ router.patch('/reembolsos/:id', async (req, res) => {
   try {
     const { status } = req.body;
     if (!['aprovado', 'rejeitado', 'pago'].includes(status)) return res.status(400).json({ error: 'Status inválido' });
+    // Aprovar/pagar reembolso e decisao de gasto · exige nivel alto (>=4) ou
+    // admin/diretor. Nivel 2 (lancamento de numeros) NAO libera dinheiro.
+    if (!['admin', 'diretor'].includes(req.user.role) && getEffectiveLevel(req, 'financeiro') < 4) {
+      return res.status(403).json({ error: 'Sem permissão para aprovar/pagar reembolsos' });
+    }
     const { data, error } = await supabase.from('fin_reembolsos')
       .update({ status, aprovado_por: req.user.userId })
       .eq('id', req.params.id).select().single();
@@ -299,7 +302,7 @@ const DRE_EXCLUSOES_PLANO = new Set([
   'Ir Retido Na Fonte Sobre Prebenda',
 ]);
 
-// Tenta extrair (ano, mes) de um valor de célula. Aceita:
+// Tenta extrair (ano, mês) de um valor de célula. Aceita:
 // - Date nativo (xlsx com cellDates:true)
 // - número serial (xlsx com cellDates:false) → converte
 // - string "DD/MM/YYYY" ou "YYYY-MM-DD"
@@ -355,13 +358,13 @@ const DRE_PAIS_DESC = {
   '4.01.04': 'BENEFICIOS',
   '4.02': 'DESPESAS PREDIAIS',
   '4.03': 'SERVICOS TERCEIRIZADOS',
-  '4.04': 'REPASSE AS MISSOES',
+  '4.04': 'REPASSE AS MISSÕES',
   '4.05': 'ACAO SOCIAL',
   '4.06': 'MATERIAIS DE CONSUMO',
   '4.07': 'VIAGENS E DESLOCAMENTOS',
-  '4.08': 'DESPESAS COM VEICULOS',
+  '4.08': 'DESPESAS COM VEÍCULOS',
   '4.09': 'DESPESAS PATRIMONIAIS',
-  '4.10': 'ORGANIZACAO DE EVENTOS',
+  '4.10': 'ORGANIZAÇÃO DE EVENTOS',
   '4.11': 'MARKETING E PUBLICIDADE',
   '4.12': 'OUTRAS DESPESAS',
   '4.13': 'IMPOSTOS, TAXAS E TRIBUTOS',
@@ -374,7 +377,7 @@ router.post('/dre/processar', dreUpload.array('arquivos', 20), async (req, res) 
     const files = req.files || [];
     if (!files.length) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
-    const valores = new Map();          // chave "cod|ano|mes" → soma
+    const valores = new Map();          // chave "cod|ano|mês" → soma
     const contas = new Map();           // cod → descrição (da folha)
     const seenCodigos = new Set();      // dedup por Código
     let totalLinhas = 0;
@@ -443,7 +446,7 @@ router.post('/dre/processar', dreUpload.array('arquivos', 20), async (req, res) 
     estrutura.push(
       { cod: 'TOTAL_REC',  desc: 'TOTAL RECEITAS',     level: 0, tipo: 'total' },
       { cod: 'TOTAL_DESP', desc: 'TOTAL DESPESAS',     level: 0, tipo: 'total' },
-      { cod: 'RESULTADO',  desc: 'RESULTADO DO PERIODO', level: 0, tipo: 'total' },
+      { cod: 'RESULTADO',  desc: 'RESULTADO DO PERÍODO', level: 0, tipo: 'total' },
     );
 
     const valoresLista = [];
@@ -494,7 +497,7 @@ router.post('/recorrentes', async (req, res) => {
       gera_n_dias_antes, proxima_estimada,
     } = req.body || {};
     if (!descricao || !valor_medio) {
-      return res.status(400).json({ error: 'descricao e valor_medio sao obrigatorios' });
+      return res.status(400).json({ error: 'descrição e valor_medio são obrigatórios' });
     }
     const valor = Number(valor_medio);
     const { data, error } = await supabase.from('fin_despesas_recorrentes').insert({
@@ -586,7 +589,7 @@ router.get('/generosidade/overview', async (req, res) => {
       ? Number(mesAtual.dizimo || 0) / Number(mesAtual.qtd_doadores_unicos)
       : 0;
 
-    // % membros doando · doadores unicos com membro_id / total membros ativos
+    // % membros doando · doadores únicos com membro_id / total membros ativos
     const { count: membrosAtivos } = await supabase
       .from('mem_membros')
       .select('id', { count: 'exact', head: true })
@@ -683,7 +686,7 @@ router.get('/fila-classificacao/items', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Aprova em massa todas as fila pendentes com confianca >= X
+// Aprova em massa todas as fila pendentes com confiança >= X
 router.post('/fila-classificacao/aprovar-massa', async (req, res) => {
   try {
     const { confianca_min = 0.8 } = req.body || {};
@@ -728,7 +731,7 @@ router.post('/fila-classificacao/:id/decidir', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Re-roda classificacao em toda fila pendente (apos cadastrar regra nova)
+// Re-roda classificação em toda fila pendente (após cadastrar regra nova)
 router.post('/fila-classificacao/reclassificar', async (req, res) => {
   try {
     const { data, error } = await supabase.rpc('reclassificar_fila_pendente');
@@ -786,7 +789,7 @@ router.post('/alertas/gerar', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// CALENDARIO FINANCEIRO
+// CALENDÁRIO FINANCEIRO
 // ══════════════════════════════════════════════════════════════════════════
 
 router.get('/calendario', async (req, res) => {
@@ -819,7 +822,7 @@ router.get('/centros-custo', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Ranking do mes corrente · receita+despesa por centro
+// Ranking do mês corrente · receita+despesa por centro
 router.get('/dre-centro-custo/atual', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -859,12 +862,12 @@ const TABELAS_FIN_AUDITAVEIS = [
   'fin_closing_mensal', 'fin_despesas_recorrentes',
 ];
 
-// Historico de 1 registro especifico
+// Histórico de 1 registro especifico
 router.get('/audit/:tabela/:row_id', async (req, res) => {
   try {
     const { tabela, row_id } = req.params;
     if (!TABELAS_FIN_AUDITAVEIS.includes(tabela)) {
-      return res.status(400).json({ error: 'Tabela nao auditavel' });
+      return res.status(400).json({ error: 'Tabela não auditavel' });
     }
     const { data, error } = await supabase
       .from('app_audit_log')
@@ -932,12 +935,12 @@ router.get('/closing', async (req, res) => {
 router.post('/closing/fechar', authorizeModule('financeiro', 4), async (req, res) => {
   try {
     const { ano, mes, observacao } = req.body || {};
-    if (!ano || !mes) return res.status(400).json({ error: 'ano e mes obrigatorios' });
-    // Nao fecha mes corrente nem futuro
+    if (!ano || !mes) return res.status(400).json({ error: 'ano e mês obrigatórios' });
+    // Não fecha mês corrente nem futuro
     const hoje = new Date();
     if (Number(ano) > hoje.getFullYear() ||
         (Number(ano) === hoje.getFullYear() && Number(mes) >= hoje.getMonth() + 1)) {
-      return res.status(400).json({ error: 'Nao eh possivel fechar mes corrente ou futuro' });
+      return res.status(400).json({ error: 'Não eh possível fechar mês corrente ou futuro' });
     }
     const { data, error } = await supabase.rpc('fechar_mes_financeiro', {
       p_ano: Number(ano), p_mes: Number(mes),
@@ -952,19 +955,19 @@ router.post('/closing/fechar', authorizeModule('financeiro', 4), async (req, res
 router.post('/closing/reabrir', authorizeModule('financeiro', 5), async (req, res) => {
   try {
     const { ano, mes, motivo } = req.body || {};
-    if (!ano || !mes) return res.status(400).json({ error: 'ano e mes obrigatorios' });
+    if (!ano || !mes) return res.status(400).json({ error: 'ano e mês obrigatórios' });
     if (!motivo || motivo.length < 5) return res.status(400).json({ error: 'motivo obrigatorio (>=5 chars)' });
     const { data, error } = await supabase.rpc('reabrir_mes_financeiro', {
       p_ano: Number(ano), p_mes: Number(mes),
       p_reaberto_por: req.user.userId, p_motivo: motivo,
     });
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Mes nao estava fechado' });
+    if (!data) return res.status(404).json({ error: 'Mês não estava fechado' });
     res.json({ reaberto: true, ano, mes });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Historico 12 meses de 1 centro
+// Histórico 12 meses de 1 centro
 router.get('/dre-centro-custo/:id/historico', async (req, res) => {
   try {
     const desde = new Date();
@@ -976,7 +979,7 @@ router.get('/dre-centro-custo/:id/historico', async (req, res) => {
       .gte('mes', desde.toISOString().slice(0, 10))
       .order('mes');
     if (error) throw error;
-    // Pivot · 1 linha por mes com receita+despesa
+    // Pivot · 1 linha por mês com receita+despesa
     const byMes = {};
     (data || []).forEach(r => {
       const k = r.mes;

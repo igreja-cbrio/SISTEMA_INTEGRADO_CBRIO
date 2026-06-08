@@ -263,6 +263,13 @@ table tbody tr:hover {
 }
 .cbrio-loading-logo { animation: cbrio-pulse 2s ease-in-out infinite; }
 
+/* ── Loading do coracao · luz tracando o contorno ── */
+@keyframes cbrio-heart-trace {
+  0%   { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -100; }
+}
+.cbrio-heart-trace { animation: cbrio-heart-trace 2s linear infinite; }
+
 /* ── Mobile responsive ── */
 @media (max-width: 768px) {
   .cbrio-page { padding: 0 12px; }

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { publicVoluntariado } from '../../api';
-import { LoginShapesBackground } from '../../components/ui/shape-landing-hero';
+import AnimatedBackground from './AnimatedBackground';
+import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 
 // ── Helpers ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -36,43 +37,48 @@ function cpfValido(v: string) {
   return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
 }
 
-// ── Catalogos (espelham os valores reais que ja existem em vol_inscricoes) ──
-const AREAS = [
-  { value: 'sede', label: 'Sede (cultos do domingo · Quarta com Deus)' },
-  { value: 'kids', label: 'Kids (criancas)' },
-  { value: 'ami', label: 'AMI (adolescentes)' },
-  { value: 'bridge', label: 'Bridge (jovens)' },
-  { value: 'online', label: 'Online' },
-];
-
+// ── Catalogos (espelham os valores reais que já existem em vol_inscricoes) ──
 const DONS = [
-  'Encorajamento', 'Hospitalidade', 'Ensino', 'Lideranca', 'Ajuda',
-  'Generosidade', 'Misericordia', 'Cura', 'Fe', 'Sabedoria',
-  'Conhecimento', 'Profecia', 'Discernimento', 'Servico',
-  'Administracao', 'Pastoreio', 'Evangelismo', 'Criatividade Artistica',
-  'Nao sei ainda',
+  'Encorajamento', 'Hospitalidade', 'Ensino', 'Liderança', 'Ajuda',
+  'Generosidade', 'Misericórdia', 'Cura', 'Fé', 'Sabedoria',
+  'Conhecimento', 'Profecia', 'Discernimento', 'Serviço',
+  'Administração', 'Pastoreio', 'Evangelismo', 'Criatividade Artística',
+  'Não sei ainda',
 ];
 
-const MINISTERIOS = [
-  'Kids',
-  'AMI',
-  'Bridge',
-  'Online',
-  'Recepcao - Integracao',
-  'Estacionamento - Integracao',
-  'Integracao',
-  'Check-in do voluntariado',
-  'Cozinha do voluntariado',
-  'Capelania - Cuidados',
-  'Aconselhamento - Cuidados',
-  'Producao',
-  'Marketing',
-  'Logistica',
-  'CBA - NEXT',
-  'Grupos',
-  'Generosidade',
-  'Oracao',
-  'Onde for mais necessario',
+interface OpcaoServir {
+  label: string;
+  area_canonica: string;
+  exige_dados_menor: boolean;
+  aviso_titulo?: string | null;
+  aviso_texto?: string | null;
+}
+
+// Fallback usado se o endpoint não responder (ex: migration ainda não aplicada).
+// As opções "de verdade" vem de GET /public/voluntariado/form-opcoes e são
+// gerenciadas em /ministerial/voluntariado/admin (ativar/desativar/adicionar).
+const OPCOES_FALLBACK: OpcaoServir[] = [
+  { label: 'Kids', area_canonica: 'kids', exige_dados_menor: true,
+    aviso_titulo: 'Para servir no CBKids, precisamos de algumas informações específicas',
+    aviso_texto: 'Prezamos pelo bem-estar e segurança das nossas crianças, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo de nossos pequenos.' },
+  { label: 'AMI', area_canonica: 'ami', exige_dados_menor: false },
+  { label: 'Bridge', area_canonica: 'bridge', exige_dados_menor: true,
+    aviso_titulo: 'Para servir no Bridge, precisamos de algumas informações específicas',
+    aviso_texto: 'Prezamos pelo bem-estar e segurança dos nossos adolescentes, e para garantir que estamos proporcionando um ambiente seguro e confiável, realizamos a verificação de antecedentes criminais de todos os envolvidos. Assim, reforçamos nosso compromisso com a proteção e o cuidado contínuo dos nossos jovens.' },
+  { label: 'Online', area_canonica: 'online', exige_dados_menor: false },
+  { label: 'Recepção - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Estacionamento - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Intercessão - Integração', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Check-in do voluntariado', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Cozinha do voluntariado', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Cuidados', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Louvor', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Produção', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Marketing - Fotografia', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Marketing - Vídeo', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Next', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Grupos', area_canonica: 'sede', exige_dados_menor: false },
+  { label: 'Onde for mais necessário', area_canonica: 'sede', exige_dados_menor: false },
 ];
 
 // ── Componentes de UI (estilo identico ao InscricaoNext) ──
@@ -86,7 +92,10 @@ function Field({
   maxLength?: number; autoComplete?: string; inputMode?: any;
 }) {
   const [focused, setFocused] = useState(false);
-  const active = focused || (value !== undefined && value !== null && String(value).length > 0);
+  const C = usePublicPalette();
+  // type=date sempre exibe placeholder nativo (dd/mm/aaaa) · label flutua
+  // pra não sobrepor.
+  const active = focused || type === 'date' || (value !== undefined && value !== null && String(value).length > 0);
   const Tag: any = as;
   return (
     <div style={{ position: 'relative', marginBottom: 20 }}>
@@ -108,10 +117,10 @@ function Field({
           display: 'block', width: '100%',
           padding: as === 'textarea' ? '14px 0 8px' : '10px 0',
           fontSize: 14,
-          color: 'var(--cbrio-text)',
+          color: C.text,
           background: 'transparent',
           border: 'none',
-          borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
+          borderBottom: `2px solid ${focused ? '#00B39D' : C.inputBorder}`,
           outline: 'none',
           transition: 'border-color 0.3s',
           boxSizing: 'border-box',
@@ -123,7 +132,7 @@ function Field({
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
         fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : 'var(--cbrio-text3)',
+        color: focused ? '#00B39D' : C.text3,
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
         {label}{required && <span style={{ color: '#ef4444' }}> *</span>}
@@ -140,6 +149,7 @@ function SelectField({
   options: { value: string; label: string }[]; required?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
+  const C = usePublicPalette();
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
   return (
     <div style={{ position: 'relative', marginBottom: 20 }}>
@@ -153,8 +163,8 @@ function SelectField({
         required={required}
         style={{
           display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
-          color: 'var(--cbrio-text)', background: 'transparent', border: 'none',
-          borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
+          color: C.text, background: 'transparent', border: 'none',
+          borderBottom: `2px solid ${focused ? '#00B39D' : C.inputBorder}`,
           outline: 'none', transition: 'border-color 0.3s',
           appearance: 'none', WebkitAppearance: 'none',
           boxSizing: 'border-box', cursor: 'pointer',
@@ -162,7 +172,7 @@ function SelectField({
       >
         <option value=""></option>
         {options.map((o) => (
-          <option key={o.value} value={o.value} style={{ background: '#161616', color: '#e5e5e5' }}>
+          <option key={o.value} value={o.value} style={{ background: C.optionBg, color: C.text }}>
             {o.label}
           </option>
         ))}
@@ -171,26 +181,27 @@ function SelectField({
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
         fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : 'var(--cbrio-text3)',
+        color: focused ? '#00B39D' : C.text3,
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
         {label}{required && <span style={{ color: '#ef4444' }}> *</span>}
       </label>
       <span style={{
         position: 'absolute', right: 4, bottom: 12,
-        pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12,
+        pointerEvents: 'none', color: C.text3, fontSize: 12,
       }}>▾</span>
     </div>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
+  const C = usePublicPalette();
   return (
     <h2 style={{
       fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
       letterSpacing: 1.2, color: '#00B39D',
       margin: '8px 0 14px', paddingBottom: 6,
-      borderBottom: '1px solid var(--cbrio-border)',
+      borderBottom: `1px solid ${C.inputBorder}`,
     }}>
       {children}
     </h2>
@@ -208,6 +219,7 @@ function Row({ children }: { children: React.ReactNode }) {
 function ChipToggle({ checked, onChange, label }: {
   checked: boolean; onChange: () => void; label: string;
 }) {
+  const C = usePublicPalette();
   return (
     <button
       type="button"
@@ -215,8 +227,8 @@ function ChipToggle({ checked, onChange, label }: {
       style={{
         padding: '8px 12px', fontSize: 12, fontWeight: 600,
         background: checked ? '#00B39D' : 'transparent',
-        color: checked ? '#fff' : 'var(--cbrio-text2)',
-        border: `1px solid ${checked ? '#00B39D' : 'var(--cbrio-border)'}`,
+        color: checked ? '#fff' : C.text2,
+        border: `1px solid ${checked ? '#00B39D' : C.inputBorder}`,
         borderRadius: 999, cursor: 'pointer',
         transition: 'all 0.15s',
       }}
@@ -229,16 +241,48 @@ function ChipToggle({ checked, onChange, label }: {
 export default function InscricaoVoluntariado() {
   const [form, setForm] = useState({
     nome: '', sobrenome: '', email: '', telefone: '',
-    cpf: '', data_nascimento: '',
-    area: '',
+    cpf: '', data_nascimento: '', nome_mae: '',
     participou_next: '',
     dom_predominante: '',
     website: '', // honeypot
   });
   const [ministerios, setMinisterios] = useState<string[]>([]);
+  const [opcoes, setOpcoes] = useState<OpcaoServir[]>(OPCOES_FALLBACK);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const { C } = usePublicTheme();
+
+  // Opções vem do banco (gerenciadas no módulo de voluntariado). Fallback fica
+  // valendo se o endpoint não responder.
+  useEffect(() => {
+    publicVoluntariado.formOpcoes()
+      .then((data: any[]) => {
+        if (Array.isArray(data) && data.length) {
+          setOpcoes(data.map(o => ({
+            label: o.label,
+            area_canonica: o.area_canonica || 'sede',
+            exige_dados_menor: !!o.exige_dados_menor,
+            aviso_titulo: o.aviso_titulo,
+            aviso_texto: o.aviso_texto,
+          })));
+        }
+      })
+      .catch(() => { /* mantem fallback */ });
+  }, []);
+
+  const MAX_MINISTERIOS = 3;
+  const selecionadas = opcoes.filter(o => ministerios.includes(o.label));
+  // Opções que exigem dados do menor (LGPD · CPF + nome da mae): Kids/Bridge.
+  const precisaDadosMenor = selecionadas.some(o => o.exige_dados_menor);
+  // Deriva a área canonica (vol_inscricoes.area) a partir das opções marcadas.
+  const deriveArea = (mins: string[]): string => {
+    const areas = opcoes.filter(o => mins.includes(o.label)).map(o => o.area_canonica);
+    for (const a of ['kids', 'bridge', 'ami', 'online']) {
+      if (areas.includes(a)) return a;
+    }
+    return 'sede';
+  };
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     let v = e.target.value;
@@ -248,7 +292,15 @@ export default function InscricaoVoluntariado() {
   };
 
   const toggleMinisterio = (m: string) => {
-    setMinisterios(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]);
+    setMinisterios(prev => {
+      if (prev.includes(m)) return prev.filter(x => x !== m);
+      if (prev.length >= MAX_MINISTERIOS) {
+        setError(`Você pode escolher até ${MAX_MINISTERIOS} áreas.`);
+        return prev;
+      }
+      setError('');
+      return [...prev, m];
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -256,10 +308,13 @@ export default function InscricaoVoluntariado() {
     setError('');
     if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
     if (!form.sobrenome || form.sobrenome.trim().length < 1) return setError('Informe seu sobrenome');
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email invalido');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone invalido');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF invalido');
-    if (!form.area) return setError('Selecione uma area');
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido');
+    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
+    if (precisaDadosMenor && !form.cpf) return setError('Informe seu CPF');
+    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido');
+    if (!form.data_nascimento) return setError('Informe sua data de nascimento');
+    if (ministerios.length === 0) return setError('Escolha ao menos uma área pra servir');
+    if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mãe obrigatório para Kids/Bridge');
 
     setLoading(true);
     try {
@@ -270,7 +325,8 @@ export default function InscricaoVoluntariado() {
         telefone: form.telefone,
         cpf: form.cpf || null,
         data_nascimento: form.data_nascimento || null,
-        area: form.area,
+        nome_mae: form.nome_mae || null,
+        area: deriveArea(ministerios),
         participou_next: form.participou_next || null,
         dom_predominante: form.dom_predominante || null,
         ministerios_interesse: ministerios,
@@ -278,24 +334,26 @@ export default function InscricaoVoluntariado() {
       });
       setSent(true);
     } catch (err: any) {
-      setError(err?.message || 'Erro ao enviar inscricao');
+      setError(err?.message || 'Erro ao enviar inscrição');
     }
     setLoading(false);
   };
 
   return (
+    <PublicPaletteCtx.Provider value={C}>
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
-      padding: '40px 16px', background: '#0a0a0a',
+      padding: '40px 16px', background: C.pageBg,
     }}>
-      <LoginShapesBackground />
+      <AnimatedBackground />
+      <PublicThemeToggle />
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 640,
-        background: 'rgba(22,22,22,0.78)', backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20,
-        padding: '40px 36px',
+        background: C.card, backdropFilter: 'blur(24px)',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 20,
+        padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img
@@ -303,12 +361,12 @@ export default function InscricaoVoluntariado() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>
-            Quero ser voluntario
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
+            Quero ser voluntário
           </h1>
-          <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 6, lineHeight: 1.5 }}>
-            Sirva com a gente · cada dom encontra um lugar. Conte um pouco sobre voce
-            e nossa equipe entra em contato pra te conectar com a area certa.
+          <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
+            Sirva com a gente · cada dom encontra um lugar. Conte um pouco sobre você
+            e nossa equipe entra em contato pra te conectar com a área certa.
           </p>
         </div>
 
@@ -323,14 +381,36 @@ export default function InscricaoVoluntariado() {
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e5e5e5', margin: 0 }}>
-              Inscricao recebida!
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
+              Inscrição recebida!
             </h2>
-            <p style={{ fontSize: 13, color: '#a3a3a3', marginTop: 10, lineHeight: 1.5 }}>
-              Recebemos sua inscricao. Em ate 7 dias nossa equipe entra em contato
-              pelo WhatsApp ou email pra falar dos proximos passos. Obrigado por
+            <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
+              Recebemos sua inscrição. Em até 7 dias nossa equipe entra em contato
+              pelo WhatsApp ou e-mail pra falar dos próximos passos. Obrigado por
               querer servir com a gente!
             </p>
+
+            <div style={{
+              marginTop: 24, padding: '24px 22px', textAlign: 'center',
+              background: 'linear-gradient(160deg, #0e7c8e, #0a5f70)',
+              borderRadius: 16, color: '#fff',
+            }}>
+              <h3 style={{
+                fontSize: 15, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase',
+                margin: '0 0 14px', color: '#fff',
+              }}>
+                Servir em Comunidade
+              </h3>
+              <p style={{ fontSize: 14, lineHeight: 1.6, margin: 0, color: 'rgba(255,255,255,0.95)' }}>
+                "Porém vocês, irmãos, foram chamados para serem livres. Mas não deixem que essa
+                liberdade se torne uma desculpa para permitir que a natureza humana domine vocês.
+                Pelo contrário, que o amor faça com que vocês sirvam uns aos outros. Pois a lei
+                inteira se resume em um mandamento só: 'Ame os outros como você ama a você mesmo'."
+              </p>
+              <p style={{ fontSize: 13, fontWeight: 700, marginTop: 12, marginBottom: 0, color: '#fff' }}>
+                Gálatas 5:13-14
+              </p>
+            </div>
           </div>
         ) : (
           <>
@@ -356,32 +436,72 @@ export default function InscricaoVoluntariado() {
                 <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
                 <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
               </Row>
-              <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
+              <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone (WhatsApp)" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
-                <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
+                <Field id="cpf" label={precisaDadosMenor ? 'CPF' : 'CPF (opcional)'} value={form.cpf} onChange={set('cpf')} required={precisaDadosMenor} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
               </Row>
-              <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
-
-              <SectionTitle>Onde voce quer servir</SectionTitle>
-              <SelectField
-                id="area"
-                label="Em qual area voce gostaria de servir?"
-                value={form.area}
-                onChange={set('area') as any}
-                options={AREAS}
+              <Field
+                id="data_nascimento"
+                label="Data de nascimento"
+                type="date"
+                value={form.data_nascimento}
+                onChange={set('data_nascimento')}
                 required
+                autoComplete="bday"
               />
 
-              <SectionTitle>Sua historia com a gente</SectionTitle>
+              <SectionTitle>Onde você quer servir</SectionTitle>
+              <p style={{ fontSize: 12, color: C.text3, marginTop: -6, marginBottom: 14 }}>
+                Marque até {MAX_MINISTERIOS} áreas ({ministerios.length}/{MAX_MINISTERIOS}). Em dúvida, marque "Onde for mais necessário".
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+                {opcoes.map(o => {
+                  const m = o.label;
+                  const checked = ministerios.includes(m);
+                  const atingiuLimite = !checked && ministerios.length >= MAX_MINISTERIOS;
+                  return (
+                    <span key={m} style={{ opacity: atingiuLimite ? 0.4 : 1 }}>
+                      <ChipToggle label={m} checked={checked} onChange={() => toggleMinisterio(m)} />
+                    </span>
+                  );
+                })}
+              </div>
+
+              {selecionadas.filter(o => o.aviso_titulo).map((o, i) => (
+                <div key={i} style={{
+                  background: '#00B39D14', border: '1px solid #00B39D40',
+                  borderRadius: 12, padding: '14px 16px', marginBottom: 16,
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+                    {o.aviso_titulo}
+                  </div>
+                  {o.aviso_texto && (
+                    <p style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55, margin: 0 }}>
+                      {o.aviso_texto}
+                    </p>
+                  )}
+                </div>
+              ))}
+              {precisaDadosMenor && (
+                <Field
+                  id="nome_mae"
+                  label="Nome da mãe"
+                  value={form.nome_mae}
+                  onChange={set('nome_mae')}
+                  required
+                />
+              )}
+
+              <SectionTitle>Sua história com a gente</SectionTitle>
               <SelectField
                 id="participou_next"
-                label="Voce ja participou do NEXT?"
+                label="Você já participou do NEXT?"
                 value={form.participou_next}
                 onChange={set('participou_next') as any}
                 options={[
-                  { value: 'Sim', label: 'Sim, ja participei' },
-                  { value: 'Nao', label: 'Ainda nao' },
+                  { value: 'Sim', label: 'Sim, já participei' },
+                  { value: 'Nao', label: 'Ainda não' },
                 ]}
               />
               <SelectField
@@ -391,21 +511,6 @@ export default function InscricaoVoluntariado() {
                 onChange={set('dom_predominante') as any}
                 options={DONS.map(d => ({ value: d, label: d }))}
               />
-
-              <SectionTitle>Ministerios de interesse</SectionTitle>
-              <p style={{ fontSize: 12, color: '#a3a3a3', marginTop: -6, marginBottom: 14 }}>
-                Pode marcar quantos quiser. Se tiver duvida, marca "Onde for mais necessario".
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
-                {MINISTERIOS.map(m => (
-                  <ChipToggle
-                    key={m}
-                    label={m}
-                    checked={ministerios.includes(m)}
-                    onChange={() => toggleMinisterio(m)}
-                  />
-                ))}
-              </div>
 
               <button
                 type="submit"
@@ -418,13 +523,13 @@ export default function InscricaoVoluntariado() {
                   marginTop: 12, transition: 'background 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Confirmar inscricao'}
+                {loading ? 'Enviando...' : 'Confirmar inscrição'}
               </button>
 
               <p style={{
-                fontSize: 11, color: '#737373', textAlign: 'center', marginTop: 16, lineHeight: 1.5,
+                fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
-                Ao se inscrever, voce concorda em receber contato da equipe da CBRio sobre
+                Ao se inscrever, você concorda em receber contato da equipe da CBRio sobre
                 voluntariado e oportunidades de servir.
               </p>
             </form>
@@ -432,5 +537,6 @@ export default function InscricaoVoluntariado() {
         )}
       </div>
     </div>
+    </PublicPaletteCtx.Provider>
   );
 }

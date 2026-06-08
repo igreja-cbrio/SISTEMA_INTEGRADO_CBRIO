@@ -1,13 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { dashboardSemanal as api } from '../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Loader2, ToggleLeft, ToggleRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList,
-  LineChart, Line, AreaChart, Area,
+  LineChart, Line, AreaChart, Area, ReferenceLine,
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 
@@ -19,7 +19,7 @@ export default function DashMensalAba() {
   const anoAtual = new Date().getFullYear();
   const [indicador, setIndicador] = useState('aceitacoes');
   const [culto, setCulto] = useState('todos');
-  const [tipoGrafico, setTipoGrafico] = useState('barra'); // barra | linha | area
+  const [tipoGrafico, setTipoGrafico] = useState('barra'); // barra | linha | área
   const [anos, setAnos] = useState([anoAtual - 2, anoAtual - 1, anoAtual]);
   const [mesesAtivos, setMesesAtivos] = useState([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 
@@ -42,6 +42,54 @@ export default function DashMensalAba() {
 
   const indDef = INDICADORES.find(i => i.key === indicador);
   const series = data?.series || [];
+
+  // Mês selecionado pra comparar entre anos (clique no gráfico ou no select)
+  const [mesSel, setMesSel] = useState(null);
+
+  // So meses que tem ao menos 1 ano com dado (>0 OR != null)
+  const mesesComDado = useMemo(
+    () => series.filter(r => anos.some(a => r[String(a)] != null && r[String(a)] > 0)),
+    [series, anos]
+  );
+
+  // Mantem seleção valida · default = último mês com dado
+  useEffect(() => {
+    if (!mesesComDado.length) { setMesSel(null); return; }
+    setMesSel(prev => {
+      if (prev != null && mesesComDado.some(r => r.mes === prev)) return prev;
+      return mesesComDado[mesesComDado.length - 1].mes;
+    });
+  }, [mesesComDado]);
+
+  const linhaSel = useMemo(
+    () => series.find(r => r.mes === mesSel) || null,
+    [series, mesSel]
+  );
+
+  // Cards comparativos · 1 por ano (ordem do gráfico) com valor + Δ% vs ano
+  // anterior comparado que tem dado naquele mês.
+  const cardsComparativo = useMemo(() => {
+    if (!linhaSel) return [];
+    return anos.map((ano, idx) => {
+      const valor = linhaSel[String(ano)] ?? null;
+      let deltaPct = null;
+      let baseAno = null;
+      for (let j = idx - 1; j >= 0; j--) {
+        const prev = linhaSel[String(anos[j])];
+        if (valor != null && prev != null && prev !== 0) {
+          deltaPct = ((valor - prev) / prev) * 100;
+          baseAno = anos[j];
+          break;
+        }
+      }
+      return { ano, valor, deltaPct, baseAno, cor: CORES_ANO[idx % CORES_ANO.length] };
+    });
+  }, [linhaSel, anos]);
+
+  const onClickGrafico = (state) => {
+    const p = state?.activePayload?.[0]?.payload;
+    if (p?.mes != null) setMesSel(p.mes);
+  };
 
   const toggleMes = (m) => {
     setMesesAtivos(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m].sort((a, b) => a - b));
@@ -179,10 +227,11 @@ export default function DashMensalAba() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.25 }}
                 className="h-[420px]"
+                style={{ cursor: 'pointer' }}
               >
                 <ResponsiveContainer width="100%" height="100%">
                   {tipoGrafico === 'barra' ? (
-                    <BarChart data={series} margin={{ top: 24, right: 20, left: 0, bottom: 20 }}>
+                    <BarChart data={series} margin={{ top: 24, right: 20, left: 0, bottom: 20 }} onClick={onClickGrafico}>
                       <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                       <XAxis dataKey="mes_nome" tick={{ fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -192,6 +241,9 @@ export default function DashMensalAba() {
                         formatter={(v, name) => [Number(v).toLocaleString('pt-BR'), name]}
                       />
                       <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                      {linhaSel && (
+                        <ReferenceLine x={linhaSel.mes_nome} stroke="#00B39D" strokeDasharray="4 4" strokeWidth={1.5} />
+                      )}
                       {anos.map((a, idx) => (
                         <Bar
                           key={a}
@@ -211,7 +263,7 @@ export default function DashMensalAba() {
                       ))}
                     </BarChart>
                   ) : tipoGrafico === 'linha' ? (
-                    <LineChart data={series} margin={{ top: 24, right: 20, left: 0, bottom: 20 }}>
+                    <LineChart data={series} margin={{ top: 24, right: 20, left: 0, bottom: 20 }} onClick={onClickGrafico}>
                       <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                       <XAxis dataKey="mes_nome" tick={{ fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -220,6 +272,9 @@ export default function DashMensalAba() {
                         formatter={(v, name) => [Number(v).toLocaleString('pt-BR'), name]}
                       />
                       <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                      {linhaSel && (
+                        <ReferenceLine x={linhaSel.mes_nome} stroke="#00B39D" strokeDasharray="4 4" strokeWidth={1.5} />
+                      )}
                       {anos.map((a, idx) => (
                         <Line
                           key={a}
@@ -235,7 +290,7 @@ export default function DashMensalAba() {
                       ))}
                     </LineChart>
                   ) : (
-                    <AreaChart data={series} margin={{ top: 24, right: 20, left: 0, bottom: 20 }}>
+                    <AreaChart data={series} margin={{ top: 24, right: 20, left: 0, bottom: 20 }} onClick={onClickGrafico}>
                       <defs>
                         {anos.map((a, idx) => (
                           <linearGradient key={a} id={`g-${a}`} x1="0" y1="0" x2="0" y2="1">
@@ -252,6 +307,9 @@ export default function DashMensalAba() {
                         formatter={(v, name) => [Number(v).toLocaleString('pt-BR'), name]}
                       />
                       <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                      {linhaSel && (
+                        <ReferenceLine x={linhaSel.mes_nome} stroke="#00B39D" strokeDasharray="4 4" strokeWidth={1.5} />
+                      )}
                       {anos.map((a, idx) => (
                         <Area
                           key={a}
@@ -272,6 +330,67 @@ export default function DashMensalAba() {
           )}
         </CardContent>
       </Card>
+
+      {/* Comparativo entre anos · mês selecionado */}
+      {mesesComDado.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 space-y-0">
+            <CardTitle className="text-sm font-medium capitalize">
+              Comparativo entre anos {linhaSel ? `· ${linhaSel.mes_nome}` : ''}
+            </CardTitle>
+            <div className="w-[180px]">
+              <Select
+                value={mesSel != null ? String(mesSel) : ''}
+                onValueChange={v => setMesSel(Number(v))}
+              >
+                <SelectTrigger className="h-8 text-xs capitalize"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent>
+                  {mesesComDado.map(r => (
+                    <SelectItem key={r.mes} value={String(r.mes)} className="capitalize">{r.mes_nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className={`grid gap-3 ${
+              cardsComparativo.length <= 2 ? 'grid-cols-2'
+              : cardsComparativo.length === 3 ? 'grid-cols-3'
+              : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-5'
+            }`}>
+              {cardsComparativo.map(c => (
+                <div key={c.ano} className="rounded-lg border border-border bg-card p-3">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: c.cor }} />
+                    <span className="text-xs font-medium text-muted-foreground">{c.ano}</span>
+                  </div>
+                  <div className="text-2xl font-bold tabular-nums">
+                    {c.valor != null ? Number(c.valor).toLocaleString('pt-BR') : '—'}
+                  </div>
+                  {c.deltaPct != null ? (
+                    <div className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                      c.deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                    }`}>
+                      {c.deltaPct >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                      {c.deltaPct >= 0 ? '+' : ''}{c.deltaPct.toFixed(1)}%
+                      <span className="text-muted-foreground font-normal">vs {c.baseAno}</span>
+                    </div>
+                  ) : (
+                    <div className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Minus className="h-3.5 w-3.5" />
+                      {c.valor != null ? 'base' : 'sem dado'}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-3">
+              Acumulado do {indDef?.label} no mês. Clique numa barra/ponto do gráfico (ou escolha acima)
+              pra trocar o mês. A variação % compara cada ano com o anterior que tem dado no mesmo mês.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabela resumo */}
       <Card>

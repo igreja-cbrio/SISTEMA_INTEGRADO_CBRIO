@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
 const { parseConversa, responderInstitucional } = require('../services/whatsappParser');
+const { safeEqual } = require('../utils/cronAuth');
 
 const JANELA_CONVERSA_MIN = 30; // tempo pra considerar mensagens da mesma "sessao"
 
@@ -22,7 +23,8 @@ router.get('/', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-  if (mode === 'subscribe' && token && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+  const verify = process.env.WHATSAPP_VERIFY_TOKEN;
+  if (mode === 'subscribe' && verify && token && safeEqual(String(token), verify)) {
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
@@ -34,9 +36,15 @@ router.post('/', (req, res) => {
   processarEvento(req).catch(e => console.error('[whatsapp webhook] processar:', e.message));
 });
 
+// Validação HMAC · so se o APP_SECRET estiver configurado (prod).
 function assinaturaValida(req) {
   const secret = process.env.WHATSAPP_APP_SECRET;
-  if (!secret) return true; // teste · sem validacao
+  if (!secret) {
+    // Fail-CLOSED em producao: sem o secret nao da pra provar que a Meta enviou.
+    // Aceitar sem assinatura abriria injecao de coletas/spam de mensagens + custo
+    // de LLM. Em dev/teste (sem NODE_ENV=production) ainda deixamos passar.
+    return process.env.NODE_ENV !== 'production';
+  }
   const assinatura = req.headers['x-hub-signature-256'];
   if (!assinatura || !req.rawBody) return false;
   const esperado = 'sha256=' + crypto.createHmac('sha256', secret).update(req.rawBody).digest('hex');
@@ -54,11 +62,20 @@ async function processarEvento(req) {
   if (cfg && cfg.ia_ativa === false) return;
 
   const entry = req.body?.entry || [];
+  // Cap defensivo · um unico POST forjado nao deve disparar N inserts + N
+  // chamadas de LLM + N envios de WhatsApp (amplificacao de custo/DoS).
+  let processadas = 0;
+  const MAX_MSGS = 20;
   for (const e of entry) {
     for (const ch of (e.changes || [])) {
-      const mensagens = ch.value?.messages || [];
+      const value = ch.value || {};
+      const mensagens = value.messages || [];
       for (const m of mensagens) {
         if (m.type !== 'text') continue; // MVP · so texto
+        if (++processadas > MAX_MSGS) {
+          console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
+          return;
+        }
         await processarMensagem(m, cfg).catch(err =>
           console.error('[whatsapp webhook] mensagem:', err.message));
       }
@@ -69,7 +86,8 @@ async function processarEvento(req) {
 async function processarMensagem(m, cfg) {
   const messageId = m.id;
   const telefone = normalizarTelefone(m.from);
-  const texto = m.text?.body || '';
+  // Cap de tamanho · evita mandar payload gigante pro parser (LLM) e pro banco.
+  const texto = (m.text?.body || '').slice(0, 2000);
 
   // Idempotencia · se ja gravamos esse message_id, ignora reentrega
   const { data: jaVisto } = await supabase

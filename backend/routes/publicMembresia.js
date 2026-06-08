@@ -110,14 +110,14 @@ router.get('/verificar-familia', cadastroLimiter, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────
 // GET /api/public/membresia/lookup-nome-telefone?nome=...&telefone=...
 //
-// Lookup proativo enquanto a pessoa preenche nome + celular no formulario.
-// Caso de uso: novos convertidos importados (planilha) ja existem como
+// Lookup proativo enquanto a pessoa preenche nome + celular no formulário.
+// Caso de uso: novos convertidos importados (planilha) já existem como
 // mem_membros status='visitante'. Quando a pessoa volta pra completar o
 // cadastro, o sistema reconhece e vincula automaticamente em vez de
 // criar duplicata.
 //
-// Privacidade: retorna celular MASCARADO (ultimos 2 digitos antes do hifen
-// + ultimos 2 do final) para confirmacao visual. Nao expoe email/CPF/end.
+// Privacidade: retorna celular MASCARADO (últimos 2 digitos antes do hifen
+// + últimos 2 do final) para confirmação visual. Não expoe email/CPF/end.
 // Match key = primeiro_nome (case-insensitive) + telefone (digitos exatos).
 // ─────────────────────────────────────────────────────────────────────────
 function mascararTelefone(telefone) {
@@ -147,7 +147,7 @@ router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
 
     // Busca candidatos em mem_membros ativos pelo primeiro nome — depois
     // filtra por telefone (digitos exatos) em JS. Lista curta porque o
-    // primeiro nome ja restringe bem.
+    // primeiro nome já restringe bem.
     const { data: candidatos } = await supabase
       .from('mem_membros')
       .select('id, nome, telefone, status, cpf, data_nascimento')
@@ -167,7 +167,7 @@ router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
         .map((p) => p[0]?.toUpperCase() || '')
         .join('. ')
         .trim();
-      // Indica se ja tem cadastro completo (cpf+nascimento) ou se ainda
+      // Indica se já tem cadastro completo (cpf+nascimento) ou se ainda
       // e visitante/importado — UI usa para mensagem diferente.
       const cadastroCompleto = !!(match.cpf && match.data_nascimento);
       return res.json({
@@ -191,10 +191,10 @@ router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────
 // GET /api/public/membresia/lookup-cpf?cpf=...
 //
-// Lookup proativo enquanto o usuario digita CPF no formulario publico.
-// Por privacidade NAO retorna dados sensiveis (telefone/email/endereco):
+// Lookup proativo enquanto o usuário digita CPF no formulário público.
+// Por privacidade NÃO retorna dados sensiveis (telefone/email/endereco):
 // retorna apenas { found, primeiroNome, iniciaisSobrenome, fonte } pra
-// confirmacao visual. Se confirmar, o backend ja faz o de-dup correto
+// confirmação visual. Se confirmar, o backend já faz o de-dup correto
 // na submissao via duplicado_de_id.
 // ─────────────────────────────────────────────────────────────────────────
 router.get('/lookup-cpf', cadastroLimiter, async (req, res) => {
@@ -281,15 +281,15 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       consentimento_texto,
       familia_sugerida_id,
       foto_url,
-      // grupo de conexao opcional — cria pedido apos cadastro
+      // grupo de conexão opcional — cria pedido após cadastro
       grupo_id,
       grupo_observacao,
-      // match confirmado pelo usuario via lookup-nome-telefone
+      // match confirmado pelo usuário via lookup-nome-telefone
       // (pessoa reconheceu seu cadastro pre-existente e clicou "sou eu")
       match_membro_id,
       // OPCIONAL: criar conta de acesso (senha · /devocional/login depois)
       // Quando preenchido + email valido, cria auth user com senha pra
-      // permitir login com email+senha (alem do magic link).
+      // permitir login com email+senha (além do magic link).
       senha,
       // honeypot (não deve ser preenchido por humanos)
       website,
@@ -324,7 +324,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         return res.status(400).json({ error: 'Senha precisa ter pelo menos 6 caracteres.' });
       }
       if (!email) {
-        return res.status(400).json({ error: 'Email obrigatorio quando criar senha.' });
+        return res.status(400).json({ error: 'Email obrigatório quando criar senha.' });
       }
     }
     if (!aceita_termos) {
@@ -340,7 +340,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     const telefoneLimpo = soDigitos(telefone);
     const cpfLimpo = soDigitos(cpf);
 
-    // Se o usuario confirmou um match via lookup-nome-telefone, usa direto
+    // Se o usuário confirmou um match via lookup-nome-telefone, usa direto
     // (e valida que o id existe e o telefone bate — defesa contra forja).
     if (match_membro_id && typeof match_membro_id === 'string') {
       const { data: confirmado } = await supabase
@@ -448,7 +448,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
 
     // Se a pessoa indicou grupo, cria pedido vinculado (cadastro_pendente_id ou
-    // membro_id se ja existe duplicado).
+    // membro_id se já existe duplicado).
     if (grupo_id) {
       try {
         const pedidoBase = {
@@ -467,7 +467,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         }
         const { data: pedido } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
         if (pedido) {
-          // Notifica o(s) lider(es) do grupo
+          // Notifica o(s) líder(es) do grupo
           const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupo_id).maybeSingle();
           notificar({
             modulo: 'grupos',
@@ -480,14 +480,14 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
           }).catch(err => console.error('[PUBLIC CADASTRO pedido grupo notify]', err.message));
         }
       } catch (pedidoErr) {
-        // Nao bloqueia o cadastro — so loga
+        // Não bloqueia o cadastro — so loga
         console.error('[PUBLIC CADASTRO pedido grupo]', pedidoErr.message);
       }
     }
 
     // Cria conta de acesso (auth user + profile) se a pessoa preencheu senha.
-    // - Se ja existe membro vinculado (duplicadoDeId) · profile aponta pra ele
-    //   e a pessoa ja tem acesso ao devocional imediatamente.
+    // - Se já existe membro vinculado (duplicadoDeId) · profile aponta pra ele
+    //   e a pessoa já tem acesso ao devocional imediatamente.
     // - Se for cadastro novo (sem match) · cria auth user + profile com
     //   membro_id=null. Acesso ao devocional vai depender do admin promover
     //   o cadastro_pendente pra mem_membros depois.
@@ -541,10 +541,10 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
               .eq('id', authUserId);
           }
           accountCreated = true;
-          canLoginDevocional = !!duplicadoDeId; // so quem ja e membro entra no devocional na hora
+          canLoginDevocional = !!duplicadoDeId; // so quem já e membro entra no devocional na hora
         }
       } catch (accErr) {
-        // Nao bloqueia o cadastro · so loga · admin pode criar acesso depois
+        // Não bloqueia o cadastro · so loga · admin pode criar acesso depois
         console.error('[PUBLIC CADASTRO] criar conta falhou:', accErr.message);
       }
     }
@@ -560,11 +560,11 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 //  WALLET PASS (Google Wallet / QR) — membros
 // ═══════════════════════════════════════════════════════════════════
-// Arquitetura: token do QR eh deterministico (SHA256 CPF + salt), entao
-// nao precisa de coluna nova em mem_membros. Quem conhece CPF + data de
+// Arquitetura: token do QR eh deterministico (SHA256 CPF + salt), então
+// não precisa de coluna nova em mem_membros. Quem conhece CPF + data de
 // nascimento pode gerar/regenerar o passe — usado em 2 fluxos:
-//   1. Logo apos o cadastro (CadastroMembresia.jsx) — temos CPF+DOB
-//   2. "Ja fiz meu cadastro" — usuario digita CPF+DOB para recuperar
+//   1. Logo após o cadastro (CadastroMembresia.jsx) — temos CPF+DOB
+//   2. "Já fiz meu cadastro" — usuário digita CPF+DOB para recuperar
 
 function primeiroNome(nomeCompleto) {
   if (!nomeCompleto) return 'Membro';
@@ -578,7 +578,7 @@ function memberQrToken(cpfLimpo) {
 }
 
 function memberIdFromCpf(cpfLimpo) {
-  // ID legivel derivado do hash (estavel, nao expoe CPF)
+  // ID legivel derivado do hash (estavel, não expoe CPF)
   const hash = crypto.createHash('sha256').update(cpfLimpo).digest('hex').slice(0, 8).toUpperCase();
   return `CBR-M-${hash}`;
 }
@@ -596,7 +596,7 @@ async function registerQrToken(token, cpfLimpo) {
 }
 
 // Busca cadastro por CPF+DOB em mem_membros e, como fallback, em mem_cadastros_pendentes
-// Retorna { found, nome, pending } — resposta neutra quando nao encontra
+// Retorna { found, nome, pending } — resposta neutra quando não encontra
 async function lookupCadastro(cpfLimpo, dataNascimento) {
   if (!cpfLimpo || cpfLimpo.length !== 11 || !dataNascimento) {
     return { found: false };
@@ -613,7 +613,7 @@ async function lookupCadastro(cpfLimpo, dataNascimento) {
     return { found: true, nome: membro.nome, pending: false };
   }
 
-  // mem_cadastros_pendentes (ainda nao aprovado)
+  // mem_cadastros_pendentes (ainda não aprovado)
   const { data: pendente } = await supabase
     .from('mem_cadastros_pendentes')
     .select('id, nome, data_nascimento')
@@ -628,17 +628,17 @@ async function lookupCadastro(cpfLimpo, dataNascimento) {
 
 // POST /api/public/membresia/wallet/verify
 // Body: { cpf, data_nascimento } — valida se existe cadastro com esse par.
-// Usado pelo fluxo "Ja fiz meu cadastro" antes de oferecer o botao da wallet.
+// Usado pelo fluxo "Já fiz meu cadastro" antes de oferecer o botao da wallet.
 router.post('/wallet/verify', cadastroLimiter, async (req, res) => {
   try {
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
     if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
-    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatória' });
 
     const r = await lookupCadastro(cleanCpf, data_nascimento);
     if (!r.found) {
-      // Resposta neutra — nao revela se CPF existe com DOB diferente
+      // Resposta neutra — não revela se CPF existe com DOB diferente
       return res.json({ found: false });
     }
     res.json({ found: true, nome: primeiroNome(r.nome), pending: r.pending });
@@ -656,10 +656,10 @@ router.post('/wallet/qr-token', cadastroLimiter, async (req, res) => {
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
     if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
-    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatória' });
 
     const r = await lookupCadastro(cleanCpf, data_nascimento);
-    if (!r.found) return res.status(404).json({ error: 'Cadastro nao encontrado' });
+    if (!r.found) return res.status(404).json({ error: 'Cadastro não encontrado' });
 
     const qr = memberQrToken(cleanCpf);
     await registerQrToken(qr, cleanCpf);
@@ -685,16 +685,16 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
     const privateKey = rawKey.replace(/\\n/g, '\n');
 
     if (!issuerId || !serviceAccountEmail || !privateKey) {
-      return res.status(503).json({ error: 'Google Wallet nao configurado' });
+      return res.status(503).json({ error: 'Google Wallet não configurado' });
     }
 
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
     if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
-    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatória' });
 
     const r = await lookupCadastro(cleanCpf, data_nascimento);
-    if (!r.found) return res.status(404).json({ error: 'Cadastro nao encontrado' });
+    if (!r.found) return res.status(404).json({ error: 'Cadastro não encontrado' });
 
     const jwt = require('jsonwebtoken');
     const qrToken = memberQrToken(cleanCpf);
@@ -702,7 +702,7 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
     await registerQrToken(qrToken, cleanCpf);
 
     const classId = `${issuerId}.cbrio_membro_v1`;
-    // objectId precisa ser unico por passe — hash do CPF mantem estabilidade sem expor PII
+    // objectId precisa ser único por passe — hash do CPF mantem estabilidade sem expor PII
     const objectId = `${issuerId}.mem_${qrToken}`;
 
     const frontendUrl = (process.env.FRONTEND_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')).replace(/\/+$/, '');
@@ -712,7 +712,7 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
       id: objectId,
       classId,
       genericType: 'GENERIC_OTHER',
-      hexBackgroundColor: '#eae3da',
+      hexBackgroundColor: '#408097',
       logo: {
         sourceUri: { uri: logoUrl },
         contentDescription: { defaultValue: { language: 'pt-BR', value: 'CBRio' } },
@@ -751,10 +751,10 @@ router.post('/wallet/apple', cadastroLimiter, async (req, res) => {
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
     if (!cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF invalido' });
-    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatoria' });
+    if (!data_nascimento) return res.status(400).json({ error: 'Data de nascimento obrigatória' });
 
     const r = await lookupCadastro(cleanCpf, data_nascimento);
-    if (!r.found) return res.status(404).json({ error: 'Cadastro nao encontrado' });
+    if (!r.found) return res.status(404).json({ error: 'Cadastro não encontrado' });
 
     const qrToken = memberQrToken(cleanCpf);
     const memberId = memberIdFromCpf(cleanCpf);
@@ -772,7 +772,7 @@ router.post('/wallet/apple', cadastroLimiter, async (req, res) => {
     res.send(pkpassBuffer);
   } catch (err) {
     console.error('[PUBLIC MEM WALLET] apple error:', err.message);
-    res.status(503).json({ error: 'Apple Wallet indisponivel no momento. Use o QR acima.' });
+    res.status(503).json({ error: 'Apple Wallet indisponível no momento. Use o QR acima.' });
   }
 });
 

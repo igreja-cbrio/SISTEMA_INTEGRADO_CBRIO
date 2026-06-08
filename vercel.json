@@ -38,6 +38,10 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/wifi/cron/sync",
+      "schedule": "0 2 * * 0,1,4"
+    },
+    {
       "path": "/api/online/cron/sync",
       "schedule": "0 6 * * *"
     },
@@ -68,6 +72,10 @@
     {
       "path": "/api/online/cron/catch-up",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/online/cron/verificar",
+      "schedule": "0 14 * * *"
     },
     {
       "path": "/api/devocional-planos/cron/enviar-diario",

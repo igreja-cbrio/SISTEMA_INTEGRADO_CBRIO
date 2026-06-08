@@ -1,7 +1,7 @@
 // ============================================================================
 // Totem Kids · Tela de Check-in (manned)
 // ============================================================================
-// Voluntario opera. Busca pelo nome da criança, encontra, confirma com a mãe,
+// Voluntário opera. Busca pelo nome da criança, encontra, confirma com a mãe,
 // imprime 2 etiquetas (criança + responsável). Equivalente ao PC Check-Ins.
 // ============================================================================
 
@@ -54,7 +54,7 @@ export default function TotemKidsCheckin() {
   const [resultados, setResultados] = useState<Crianca[]>([]);
   const [buscando, setBuscando] = useState(false);
 
-  // Selecao
+  // Seleção
   const [crianca, setCrianca] = useState<Crianca | null>(null);
   const [salaSelecionada, setSalaSelecionada] = useState<string>('');
   const [responsavelSelecionado, setResponsavelSelecionado] = useState<string>('');
@@ -62,6 +62,10 @@ export default function TotemKidsCheckin() {
   const [respManualTel, setRespManualTel] = useState('');
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
+
+  // Pagers (pulseira/coaster entregue a família · opcional)
+  const [pagers, setPagers] = useState<any[]>([]);
+  const [pagerSelecionado, setPagerSelecionado] = useState<string>('');
 
   // Modal de cadastro novo
   const [modalNovo, setModalNovo] = useState(false);
@@ -76,9 +80,22 @@ export default function TotemKidsCheckin() {
         setSalas(sl);
       })
       .finally(() => setCarregando(false));
+    carregarPagers();
   }, []);
 
-  // Foco no input apos limpar selecao
+  // Pagers disponíveis = ativos e não em uso por outra criança agora
+  async function carregarPagers() {
+    try {
+      const [lista, uso] = await Promise.all([
+        totemKids.pagers.list({ ativo: 'true' }),
+        totemKids.pagers.emUso().catch(() => ({})),
+      ]);
+      const disponiveis = (lista || []).filter((p: any) => !uso?.[p.id]);
+      setPagers(disponiveis);
+    } catch { setPagers([]); }
+  }
+
+  // Foco no input após limpar seleção
   useEffect(() => {
     if (!crianca) {
       setTimeout(() => buscaRef.current?.focus(), 50);
@@ -137,6 +154,7 @@ export default function TotemKidsCheckin() {
         crianca_id: crianca.id,
         sala_id: salaSelecionada,
         estacao_id: estacao?.id || null,
+        pager_id: pagerSelecionado || null,
       };
       if (usarRespManual) {
         payload.responsavel_nome_manual = respManualNome.trim();
@@ -178,7 +196,9 @@ export default function TotemKidsCheckin() {
       setUsarRespManual(false);
       setRespManualNome('');
       setRespManualTel('');
+      setPagerSelecionado('');
       setResultados([]);
+      carregarPagers();          // o pager usado some da lista de disponíveis
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro no check-in');
     } finally {
@@ -338,6 +358,9 @@ export default function TotemKidsCheckin() {
           setSalaSelecionada={setSalaSelecionada}
           responsavelSelecionado={responsavelSelecionado}
           setResponsavelSelecionado={setResponsavelSelecionado}
+          pagers={pagers}
+          pagerSelecionado={pagerSelecionado}
+          setPagerSelecionado={setPagerSelecionado}
           usarRespManual={usarRespManual}
           setUsarRespManual={setUsarRespManual}
           respManualNome={respManualNome}
@@ -348,7 +371,7 @@ export default function TotemKidsCheckin() {
           onConfirmar={confirmarCheckin}
           imprimindo={imprimindo}
           onResponsavelCadastrado={async () => {
-            // Recarrega dados da crianca (com os responsaveis novos)
+            // Recarrega dados da criança (com os responsáveis novos)
             try {
               const fresh = await totemKids.criancas.get(crianca.id);
               setCrianca({ ...crianca, responsaveis: fresh.responsaveis || [] });
@@ -379,6 +402,9 @@ function CheckinSelecao(props: {
   setSalaSelecionada: (s: string) => void;
   responsavelSelecionado: string;
   setResponsavelSelecionado: (s: string) => void;
+  pagers: any[];
+  pagerSelecionado: string;
+  setPagerSelecionado: (s: string) => void;
   usarRespManual: boolean;
   setUsarRespManual: (b: boolean) => void;
   respManualNome: string;
@@ -392,11 +418,12 @@ function CheckinSelecao(props: {
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
+    pagers, pagerSelecionado, setPagerSelecionado,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     onCancelar, onConfirmar, imprimindo, onResponsavelCadastrado } = props;
 
-  // Auto-abre modal de cadastro se crianca chegar sem responsavel
+  // Auto-abre modal de cadastro se criança chegar sem responsável
   const [modalCadResp, setModalCadResp] = useState(false);
   useEffect(() => {
     if (crianca.responsaveis.filter(r => r.autorizado_buscar).length === 0) {
@@ -459,6 +486,27 @@ function CheckinSelecao(props: {
             </SelectContent>
           </Select>
         </div>
+
+        {pagers.length > 0 && (
+          <div>
+            <label className="text-sm font-medium block mb-2">
+              Pager da família <span className="text-muted-foreground font-normal">(opcional · vibra no pickup)</span>
+            </label>
+            <Select value={pagerSelecionado || 'nenhum'} onValueChange={(v) => setPagerSelecionado(v === 'nenhum' ? '' : v)}>
+              <SelectTrigger className="h-12">
+                <SelectValue placeholder="Sem pager" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="nenhum">Sem pager</SelectItem>
+                {pagers.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.rotulo || `Pager ${p.numero}`} <span className="text-muted-foreground text-xs ml-1">(nº {p.numero})</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <div>
           <label className="text-sm font-medium block mb-2">Quem está trazendo</label>
@@ -664,7 +712,7 @@ function ModalNovaCrianca(props: {
                 </SelectContent>
               </Select>
             </div>
-            <Input placeholder="Alergia / medicação (opcional)" value={criancaObsMed} onChange={e => setCriancaObsMed(e.target.value)} />
+            <Input placeholder="Alergia / médicação (opcional)" value={criancaObsMed} onChange={e => setCriancaObsMed(e.target.value)} />
           </div>
           <div className="space-y-2">
             <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Responsável</div>
@@ -700,7 +748,7 @@ function ModalNovaCrianca(props: {
   );
 }
 
-// ── Modal: cadastrar responsavel rápido (auto-abre se criança sem responsável) ──
+// ── Modal: cadastrar responsável rápido (auto-abre se criança sem responsável) ──
 function ModalCadastrarResponsavel(props: {
   open: boolean;
   onClose: () => void;

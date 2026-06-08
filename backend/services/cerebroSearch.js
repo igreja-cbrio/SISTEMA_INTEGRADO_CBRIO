@@ -8,7 +8,7 @@
  *
  * Fontes atualmente indexadas:
  *  - cerebro_entidades_indice (notas geradas pelo sync reverso ERP → vault)
- *  - cerebro_fila (status='concluido', notas geradas pelo processamento
+ *  - cerebro_fila (status='concluído', notas geradas pelo processamento
  *    de documentos do SharePoint — trazem resumo + tags)
  */
 
@@ -80,7 +80,7 @@ function extractTerms(query) {
  * @param {string} query — pergunta do usuário
  * @param {object} req — Express request (com req.user)
  * @param {number} limit — máximo de resultados devolvidos
- * @returns {Promise<Array>} [{ titulo, resumo, area_vault, url, origem }]
+ * @returns {Promise<Array>} [{ título, resumo, area_vault, url, origem }]
  */
 async function searchVault(query, req, limit = MAX_RESULTS_DEFAULT) {
   const terms = extractTerms(query);
@@ -88,9 +88,9 @@ async function searchVault(query, req, limit = MAX_RESULTS_DEFAULT) {
 
   const results = [];
 
-  // ── 1. cerebro_entidades_indice: busca por titulo (ilike) ─────────
+  // ── 1. cerebro_entidades_indice: busca por título (ilike) ─────────
   try {
-    // ilike %termo% em titulo para cada termo, combinados via OR.
+    // ilike %termo% em título para cada termo, combinados via OR.
     const orCondition = terms.map((t) => `titulo.ilike.%${t}%`).join(',');
     const { data } = await supabase
       .from('cerebro_entidades_indice')

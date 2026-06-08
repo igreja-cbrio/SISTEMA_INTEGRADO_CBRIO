@@ -106,7 +106,7 @@ router.post('/', authorizeModule('nps', 3), async (req, res) => {
   try {
     const d = req.body || {};
     if (!d.titulo || !d.objetivo || !d.perguntas) {
-      return res.status(400).json({ error: 'titulo, objetivo e perguntas são obrigatórios' });
+      return res.status(400).json({ error: 'título, objetivo e perguntas são obrigatórios' });
     }
     const areaNormalizada = (d.area || 'geral').toLowerCase().slice(0, 60);
     const valorNormalizado = d.valor || null;

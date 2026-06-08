@@ -10,8 +10,8 @@ const PALETA = ['#00B39D', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'
 const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 
 /**
- * Renderiza um preview chart baseado no tipo de grafico sugerido pela IA.
- * Usa dados placeholder de exemplo · serve como referencia visual do que
+ * Renderiza um preview chart baseado no tipo de gráfico sugerido pela IA.
+ * Usa dados placeholder de exemplo · serve como referência visual do que
  * o indicador ficaria quando implementado.
  */
 export default function PreviewChartIA({ tipoGrafico, height = 160, semente = 1 }) {

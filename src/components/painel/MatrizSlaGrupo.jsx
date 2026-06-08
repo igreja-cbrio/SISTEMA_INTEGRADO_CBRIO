@@ -1,20 +1,20 @@
 // ============================================================================
-// MatrizSlaGrupo · componente generico de matriz SLA (grupos × areas-cliente)
+// MatrizSlaGrupo · componente genérico de matriz SLA (grupos × areas-cliente)
 //
 // Usado por:
-// - MatrizGestaoArea (5 grupos adm: hospitalidade, logistica, ti, rh, financeiro)
-// - MatrizCriativoArea (3 grupos: producao, adoracao, marketing)
+// - MatrizGestaoArea (5 grupos adm: hospitalidade, logística, ti, rh, financeiro)
+// - MatrizCriativoArea (3 grupos: produção, adoracao, marketing)
 //
-// Cada celula = saude do servico daquele grupo para aquela area-cliente nos
-// ultimos 30 dias (% no SLA + alerta) + count de KPIs vinculados ao grupo.
-// Click numa celula abre modal com solicitacoes + KPIs especificos da area.
+// Cada celula = saúde do serviço daquele grupo para aquela area-cliente nos
+// últimos 30 dias (% no SLA + alerta) + count de KPIs vinculados ao grupo.
+// Click numa celula abre modal com solicitações + KPIs especificos da área.
 // Visual identico ao MatrizValorArea (mesmo card, mesmo cell style, legenda).
 //
 // Props:
-//   titulo · "Matriz Gestão × Área" ou "Matriz Criativo × Área"
-//   subtitulo · descricao curta abaixo do titulo
-//   loadMatriz · funcao () => Promise<{ grupos_adm, areas_cliente, cells, desde }>
-//   loadCelula · funcao (grupoKey, clienteKey) => Promise<{ solicitacoes, kpis }>
+//   título · "Matriz Gestão × Área" ou "Matriz Criativo × Área"
+//   subtitulo · descrição curta abaixo do título
+//   loadMatriz · função () => Promise<{ grupos_adm, areas_cliente, cells, desde }>
+//   loadCelula · função (grupoKey, clienteKey) => Promise<{ solicitações, kpis }>
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -140,8 +140,8 @@ export default function MatrizSlaGrupo({ titulo, subtitulo, loadMatriz, loadCelu
                     const cell = cells[`${grupo.key}:${cli.id}`];
                     const cor = STATUS_COR[cell?.status] || STATUS_COR.sem_dado;
                     const semDado = cell?.status === 'sem_dado';
-                    // Todas as celulas sao clicaveis · sempre mostra os KPIs do grupo
-                    // mesmo quando nao tem solicitacao no periodo
+                    // Todas as celulas são clicaveis · sempre mostra os KPIs do grupo
+                    // mesmo quando não tem solicitação no período
                     return (
                       <td
                         key={cli.id}
@@ -170,7 +170,7 @@ export default function MatrizSlaGrupo({ titulo, subtitulo, loadMatriz, loadCelu
                           e.currentTarget.style.boxShadow = 'none';
                         }}
                         title={semDado
-                          ? 'Sem solicitacao no periodo · clique pra ver os KPIs desta area'
+                          ? 'Sem solicitação no período · clique pra ver os KPIs desta área'
                           : `${cell.no_prazo}/${cell.concluidos} no SLA · ${cell.atrasados} atrasados · ${cell.em_andamento} em andamento`}
                       >
                         {semDado ? (
@@ -201,7 +201,7 @@ export default function MatrizSlaGrupo({ titulo, subtitulo, loadMatriz, loadCelu
           </table>
         </div>
 
-        {/* Legenda · mesmo padrao do MatrizValorArea */}
+        {/* Legenda · mesmo padrão do MatrizValorArea */}
         <div style={{
           display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 14, paddingTop: 12,
           borderTop: `1px solid ${C.border}`,
@@ -293,7 +293,7 @@ function ModalCelulaAdm({ cell, loadCelula, onClose }) {
         </header>
 
         <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* KPIs especificos da area · clicaveis */}
+          {/* KPIs especificos da área · clicaveis */}
           {!loading && kpis.length > 0 && (
             <section>
               <h4 style={{ fontSize: 11, fontWeight: 700, color: C.t3, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -308,7 +308,7 @@ function ModalCelulaAdm({ cell, loadCelula, onClose }) {
             </section>
           )}
 
-          {/* Solicitacoes */}
+          {/* Solicitações */}
           <section>
             <h4 style={{ fontSize: 11, fontWeight: 700, color: C.t3, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
               Solicitacoes recentes · {solicitacoes.length}
@@ -406,7 +406,7 @@ function LinhaSolicitacao({ sol }) {
           {sol.area_responsavel && <strong style={{ textTransform: 'capitalize' }}>{sol.area_responsavel.replace('_', ' ')}</strong>}
           {sol.area_responsavel && ' · '}
           {new Date(sol.created_at).toLocaleDateString('pt-BR')}
-          {sol.concluido_em && ` · concluido em ${new Date(sol.concluido_em).toLocaleDateString('pt-BR')}`}
+          {sol.concluido_em && ` · concluído em ${new Date(sol.concluido_em).toLocaleDateString('pt-BR')}`}
           {sol.horas_total != null && ` · ${Math.round(sol.horas_total)}h`}
         </div>
       </div>
