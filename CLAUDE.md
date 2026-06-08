@@ -417,14 +417,35 @@ API.Bible key hardcoded. Relatório completo arquivado.
   ignora o parâmetro de área (`20260508170000:91-100`) → baseline igual em todas as áreas.
   Fica pra uma próxima (precisa investigar por que o ramo ignora a área).
 
+### Leva 5 · pool-pg → cliente supabase REST (2026-06-08 · sem migration · PR #920)
+O pool pg direto (`utils/db`) **não conecta no serverless do Vercel** (mesma lição do
+`fn_monitoramento_okr_raw`). Rotas que liam/gravavam por `db.query()` sem fallback
+estavam **quebradas em prod (500)**. Migradas pro cliente `supabase` (REST · service_role):
+- **`agents.js`**: `GET /sessions`, `GET /sessions/:id/messages`, `DELETE /sessions/:id`,
+  `PATCH /queue/:id/{approve,reject}` e `GET /log` (histórico do chat IA + **reject da fila
+  de aprovação do agente financeiro** · eram 500 em prod). `GET /queue` perdeu a tentativa
+  pg-first (ia sempre pro fallback). Persist de sessão/mensagens + log de uso idem.
+  `dbInsert` virou REST puro; `agent_log.details` é jsonb → passa objeto (sem `JSON.stringify`).
+- **`meetings.js`**: rota inteira (`meetings` + `pendencies`) → REST. `participants` (array pg)
+  passa array JS nativo; UPDATE/PATCH retornam null se o id não existe (paridade com `RETURNING *`).
+- Sem mudança de autorização (guards `authorize`/`authenticate` idênticos · service_role
+  bypassa RLS nos 2 canais).
+- **`bible.js` #913 MERGED** (chave API.Bible hardcoded removida · `BIBLE_API_KEY` setada no
+  Vercel + chave rotacionada · fail-closed 503 se faltar a env).
+
 ### Remediação · ainda em aberto (2026-06-08)
-Levas 1-4 cobriram os 4 críticos + os altos/médios discretos. Resta (heavier · vale
-sessão dedicada): **pool-pg no serverless** — `agents.js` (histórico de sessões · alto,
-provavelmente quebrado em prod) e `meetings.js` (rota inteira · médio) precisam migrar
-de `query()`/pool pra cliente `supabase` REST (refactor, não 1 linha); **RLS de
-`mem_cadastros_pendentes`** (form público com anon insert · alto · exige mover o form
-pro backend `/api/public/*` + migration); e baixos (`MEM_QR_SALT` fallback — depende de
-env como o bible; cron morto em `voluntariado-sync.js`). `bible.js` segue represado no PR #913.
+Levas 1-5 + bible #913 cobriram os 4 críticos + altos/médios discretos + o pool-pg do
+agents/meetings + a chave da api.bible. Resta (heavier · vale sessão dedicada):
+- **RLS de `mem_cadastros_pendentes`** (form público com anon insert · alto · exige mover o
+  form pro backend `/api/public/*` + migration de lockdown).
+- **`_kpi_agregar_dado`** ignora o param de área no baseline de `batismos`/`novos_convertidos_atend`
+  (`20260508170000:91-100` · médio · investigar por que o ramo ignora a área).
+- **pool-pg restante (baixo)**: `projects.js` (/views, /workload) e `patrimonio.js` (/dashboard
+  fallback) ainda usam `query()` — mesmo padrão do agents/meetings, menor impacto.
+- **Baixos**: `MEM_QR_SALT` fallback literal (`publicMembresia.js:576` · depende de env, como o
+  bible); cron morto/não-timing-safe em `voluntariado-sync.js`.
+- **Soft-deletes AGREGADOS** (cultos/kpi_taticos/decisões/encontros/devocionais/famílias) ·
+  exigem varredura de filtro `deleted_at` em todos os read-sites + funções SQL (não é swap).
 
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 

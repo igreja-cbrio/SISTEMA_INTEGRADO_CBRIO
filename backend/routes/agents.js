@@ -1,42 +1,17 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
-const db = require('../utils/db');
 const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
 const { ENVIRONMENT_ID, getAgentId, listModulesForUser, canUseAgent } = require('../config/managedAgents');
 const { buildContext, serializeContext } = require('../services/agentContext');
 
-// Helper: persist to DB with supabase fallback
+// Persistência via cliente supabase (REST · service_role). O pool pg direto não
+// conecta no serverless do Vercel, então toda a leitura/escrita aqui usa REST.
 async function dbInsert(table, data) {
-  try {
-    const cols = Object.keys(data);
-    const vals = Object.values(data);
-    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-    const result = await db.query(
-      `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
-      vals
-    );
-    return result.rows[0];
-  } catch (pgErr) {
-    console.warn(`[AGENTS] pg INSERT into ${table} failed:`, pgErr.message);
-    // Fallback to supabase client
-    if (supabase) {
-      const { data: row, error } = await supabase.from(table).insert(data).select().single();
-      if (error) throw new Error(`Supabase fallback failed: ${error.message}`);
-      return row;
-    }
-    throw pgErr;
-  }
-}
-
-async function dbQuery(text, params) {
-  try {
-    return await db.query(text, params);
-  } catch (pgErr) {
-    console.warn('[AGENTS] pg query failed:', pgErr.message);
-    throw pgErr;
-  }
+  const { data: row, error } = await supabase.from(table).insert(data).select().single();
+  if (error) throw new Error(`Insert em ${table} falhou: ${error.message}`);
+  return row;
 }
 
 // Autenticação é obrigatória em todas as rotas.
@@ -139,12 +114,16 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
       sendEvent('session', { sessionId: activeSessionId, dbSessionId, module: agentModule });
     } else {
-      // Update last_message_at
+      // Update last_message_at (preenche title só se ainda estiver vazio · COALESCE)
       try {
-        await dbQuery(
-          `UPDATE agent_sessions SET last_message_at = NOW(), title = COALESCE(title, $1) WHERE anthropic_session_id = $2`,
-          [message.slice(0, 80), activeSessionId]
-        );
+        const { data: sessRows } = await supabase
+          .from('agent_sessions')
+          .select('title')
+          .eq('anthropic_session_id', activeSessionId)
+          .limit(1);
+        const patch = { last_message_at: new Date().toISOString() };
+        if (sessRows?.[0] && !sessRows[0].title) patch.title = message.slice(0, 80);
+        await supabase.from('agent_sessions').update(patch).eq('anthropic_session_id', activeSessionId);
       } catch (e) { console.warn('[AGENTS] Failed to update session timestamp:', e.message); }
     }
 
@@ -341,11 +320,12 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
     // 6. Persist messages in DB
     try {
-      const sessRow = await dbQuery(
-        `SELECT id FROM agent_sessions WHERE anthropic_session_id = $1 LIMIT 1`,
-        [activeSessionId]
-      );
-      const dbSessId = sessRow.rows[0]?.id;
+      const { data: sessRows } = await supabase
+        .from('agent_sessions')
+        .select('id')
+        .eq('anthropic_session_id', activeSessionId)
+        .limit(1);
+      const dbSessId = sessRows?.[0]?.id;
       if (dbSessId) {
         await dbInsert('agent_messages', { session_id: dbSessId, role: 'user', content: message });
         if (fullText) {
@@ -359,10 +339,11 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
     // 7. Log usage
     try {
-      await db.query(
-        'INSERT INTO agent_log (agent, action, details) VALUES ($1,$2,$3)',
-        [agentModule, `Chat: ${message.slice(0, 80)}`, JSON.stringify({ session: activeSessionId, response_length: fullText.length })]
-      );
+      await supabase.from('agent_log').insert({
+        agent: agentModule,
+        action: `Chat: ${message.slice(0, 80)}`,
+        details: { session: activeSessionId, response_length: fullText.length },
+      });
     } catch (e) { /* ignore */ }
 
     sendEvent('done', { sessionId: activeSessionId });
@@ -380,12 +361,14 @@ router.post('/chat', chatLimiter, async (req, res) => {
 // GET /api/agents/sessions — lista sessões do usuário
 router.get('/sessions', async (req, res) => {
   try {
-    const r = await dbQuery(
-      `SELECT id, anthropic_session_id, agent_module, title, created_at, last_message_at
-       FROM agent_sessions WHERE user_id = $1 ORDER BY last_message_at DESC LIMIT 30`,
-      [req.user.userId]
-    );
-    res.json(r.rows);
+    const { data, error } = await supabase
+      .from('agent_sessions')
+      .select('id, anthropic_session_id, agent_module, title, created_at, last_message_at')
+      .eq('user_id', req.user.userId)
+      .order('last_message_at', { ascending: false })
+      .limit(30);
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     console.error('[AGENTS] Sessions list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar sessões' });
@@ -395,21 +378,24 @@ router.get('/sessions', async (req, res) => {
 // GET /api/agents/sessions/:id/messages — histórico de mensagens (com validação de ownership)
 router.get('/sessions/:id/messages', async (req, res) => {
   try {
-    // Validate session belongs to user
-    const sessCheck = await dbQuery(
-      `SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
-      [req.params.id, req.user.userId]
-    );
-    if (!sessCheck.rows.length) {
+    // Valida que a sessão pertence ao usuário
+    const { data: sessRows } = await supabase
+      .from('agent_sessions')
+      .select('id')
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.userId)
+      .limit(1);
+    if (!sessRows || !sessRows.length) {
       return res.status(404).json({ error: 'Sessão não encontrada' });
     }
 
-    const r = await dbQuery(
-      `SELECT id, role, content, created_at FROM agent_messages
-       WHERE session_id = $1 ORDER BY created_at ASC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
+    const { data, error } = await supabase
+      .from('agent_messages')
+      .select('id, role, content, created_at')
+      .eq('session_id', req.params.id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     console.error('[AGENTS] Messages list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar mensagens' });
@@ -419,10 +405,12 @@ router.get('/sessions/:id/messages', async (req, res) => {
 // DELETE /api/agents/sessions/:id — remove sessão
 router.delete('/sessions/:id', async (req, res) => {
   try {
-    await db.query(
-      'DELETE FROM agent_sessions WHERE id = $1 AND user_id = $2',
-      [req.params.id, req.user.userId]
-    );
+    const { error } = await supabase
+      .from('agent_sessions')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.userId);
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao remover sessão' });
@@ -459,10 +447,11 @@ router.post('/generate', authorize('admin', 'diretor'), aiLimiter, async (req, r
     const text = data.content?.[0]?.text || 'Sem resposta';
 
     // Log da ação
-    await db.query(
-      'INSERT INTO agent_log (agent, action, details) VALUES ($1,$2,$3)',
-      [agent || 'general', `Gerou resposta: ${prompt.slice(0, 100)}`, JSON.stringify({ prompt_length: prompt.length })]
-    );
+    await supabase.from('agent_log').insert({
+      agent: agent || 'general',
+      action: `Gerou resposta: ${prompt.slice(0, 100)}`,
+      details: { prompt_length: prompt.length },
+    });
 
     res.json({ text, usage: data.usage });
   } catch (e) {
@@ -476,29 +465,14 @@ router.get('/queue', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const status = req.query.status || 'pending';
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-    try {
-      const r = await db.query(
-        `SELECT id, run_id, agent_type, action_type, action_label, description,
-                reasoning, payload, status, reviewed_by, reviewed_at,
-                applied_at, apply_error, created_at
-           FROM agent_queue
-          WHERE status = $1
-          ORDER BY created_at DESC
-          LIMIT $2`,
-        [status, limit]
-      );
-      return res.json(r.rows);
-    } catch (pgErr) {
-      console.warn('[AGENTS] /queue pg falhou, fallback supabase:', pgErr.message);
-      const { data, error } = await supabase
-        .from('agent_queue')
-        .select('id, run_id, agent_type, action_type, action_label, description, reasoning, payload, status, reviewed_by, reviewed_at, applied_at, apply_error, created_at')
-        .eq('status', status)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      if (error) throw error;
-      return res.json(data || []);
-    }
+    const { data, error } = await supabase
+      .from('agent_queue')
+      .select('id, run_id, agent_type, action_type, action_label, description, reasoning, payload, status, reviewed_by, reviewed_at, applied_at, apply_error, created_at')
+      .eq('status', status)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     console.error('[AGENTS] /queue error:', e.message);
     res.status(500).json({ error: 'Erro ao listar fila' });
@@ -509,10 +483,11 @@ router.get('/queue', authorize('admin', 'diretor'), async (req, res) => {
 // Mantido por backward-compat. Pra aplicar, use POST /queue/:id/apply.
 router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    await db.query(
-      'UPDATE agent_queue SET status=$1, reviewed_by=$2, reviewed_at=NOW() WHERE id=$3',
-      ['approved', req.user.userId, req.params.id]
-    );
+    const { error } = await supabase
+      .from('agent_queue')
+      .update({ status: 'approved', reviewed_by: req.user.userId, reviewed_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -521,13 +496,10 @@ router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, re
 router.patch('/queue/:id/reject', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const motivo = (req.body || {}).motivo || null;
-    await db.query(
-      `UPDATE agent_queue
-          SET status='rejected', reviewed_by=$1, reviewed_at=NOW(),
-              apply_error = COALESCE($2, apply_error)
-        WHERE id=$3`,
-      [req.user.userId, motivo, req.params.id]
-    );
+    const patch = { status: 'rejected', reviewed_by: req.user.userId, reviewed_at: new Date().toISOString() };
+    if (motivo) patch.apply_error = motivo; // COALESCE: só sobrescreve se veio motivo
+    const { error } = await supabase.from('agent_queue').update(patch).eq('id', req.params.id);
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -635,8 +607,13 @@ router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) =
 // GET /api/agents/log
 router.get('/log', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM agent_log ORDER BY created_at DESC LIMIT 50');
-    res.json(r.rows);
+    const { data, error } = await supabase
+      .from('agent_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
