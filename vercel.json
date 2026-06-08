@@ -92,6 +92,7 @@
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/privacidade", "destination": "/privacidade.html" },
     { "source": "/((?!api/|assets/|_vercel/).*)", "destination": "/index.html" }
   ],
   "headers": [
