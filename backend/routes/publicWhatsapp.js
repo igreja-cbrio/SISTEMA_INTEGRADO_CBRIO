@@ -1,25 +1,24 @@
-// Webhook público do WhatsApp Cloud API (Meta). SEM auth ERP · a Meta
-// chama esse endpoint. Segurança = verify_token (GET) + HMAC opcional (POST).
+// Webhook publico do WhatsApp Cloud API (Meta). SEM auth ERP.
+// GET  /api/whatsapp/webhook · verificacao (handshake da Meta)
+// POST /api/whatsapp/webhook · recebimento de mensagens
 //
-// GET  /api/public/whatsapp · verificacao do webhook (handshake da Meta)
-// POST /api/public/whatsapp · recebimento de mensagens
-//
-// Fluxo do POST (responde 200 IMEDIATO · Meta da timeout em ~5s):
-//   1. valida HMAC (se WHATSAPP_APP_SECRET setado)
-//   2. pra cada mensagem de texto:
-//      a. idempotencia (whatsapp_message_id UNIQUE)
-//      b. identifica líder por telefone
-//      c. parseia com Claude Haiku
-//      d. grava em whatsapp_coletas (status 'parseado' ou 'recebido')
-//      e. responde o líder (ack) via Graph API · cai na fila pro coord aplicar
+// Duas personas (responde 200 imediato · processa async):
+//   - Lider/assistente cadastrado -> coleta CONVERSACIONAL (multi-turno):
+//     entende texto livre, pergunta o que faltou, quando completa marca
+//     'parseado' (cai na fila do coordenador). Mantem estado em uma coleta
+//     'aguardando_info' por ate 30 min.
+//   - Numero desconhecido -> assistente INSTITUCIONAL (missao/visao/horarios).
+//     NAO coleta dado · so responde.
 const router = require('express').Router();
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
-const { parseMensagem } = require('../services/whatsappParser');
+const { parseConversa, responderInstitucional } = require('../services/whatsappParser');
 const { safeEqual } = require('../utils/cronAuth');
 
-// ── GET · verificacao do webhook ────────────────────────────────────
+const JANELA_CONVERSA_MIN = 30; // tempo pra considerar mensagens da mesma "sessao"
+
+// ── GET · verificacao ───────────────────────────────────────────────
 router.get('/', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -33,13 +32,11 @@ router.get('/', (req, res) => {
 
 // ── POST · recebimento ──────────────────────────────────────────────
 router.post('/', (req, res) => {
-  // Responde rapido · processa async (Meta reentrega se demorar)
   res.sendStatus(200);
   processarEvento(req).catch(e => console.error('[whatsapp webhook] processar:', e.message));
 });
 
 // Validação HMAC · so se o APP_SECRET estiver configurado (prod).
-// Em teste (sem secret) deixamos passar pra não travar o MVP.
 function assinaturaValida(req) {
   const secret = process.env.WHATSAPP_APP_SECRET;
   if (!secret) {
@@ -51,11 +48,8 @@ function assinaturaValida(req) {
   const assinatura = req.headers['x-hub-signature-256'];
   if (!assinatura || !req.rawBody) return false;
   const esperado = 'sha256=' + crypto.createHmac('sha256', secret).update(req.rawBody).digest('hex');
-  try {
-    return crypto.timingSafeEqual(Buffer.from(assinatura), Buffer.from(esperado));
-  } catch {
-    return false;
-  }
+  try { return crypto.timingSafeEqual(Buffer.from(assinatura), Buffer.from(esperado)); }
+  catch { return false; }
 }
 
 async function processarEvento(req) {
@@ -63,6 +57,10 @@ async function processarEvento(req) {
     console.warn('[whatsapp webhook] assinatura HMAC invalida · ignorando');
     return;
   }
+  // Respeita o toggle global da IA
+  const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, institucional').eq('id', 1).maybeSingle();
+  if (cfg && cfg.ia_ativa === false) return;
+
   const entry = req.body?.entry || [];
   // Cap defensivo · um unico POST forjado nao deve disparar N inserts + N
   // chamadas de LLM + N envios de WhatsApp (amplificacao de custo/DoS).
@@ -78,82 +76,89 @@ async function processarEvento(req) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
         }
-        await processarMensagem(m, value);
+        await processarMensagem(m, cfg).catch(err =>
+          console.error('[whatsapp webhook] mensagem:', err.message));
       }
     }
   }
 }
 
-async function processarMensagem(m, value) {
+async function processarMensagem(m, cfg) {
   const messageId = m.id;
   const telefone = normalizarTelefone(m.from);
   // Cap de tamanho · evita mandar payload gigante pro parser (LLM) e pro banco.
   const texto = (m.text?.body || '').slice(0, 2000);
 
-  // a. Idempotencia · insere já como 'recebido'. Se UNIQUE bate, já vimos.
-  const { data: coleta, error: insErr } = await supabase
-    .from('whatsapp_coletas')
-    .insert({
-      whatsapp_message_id: messageId,
-      telefone,
-      raw_text: texto,
-      status: 'recebido',
-    })
-    .select('id')
-    .single();
-  if (insErr) {
-    if (insErr.code === '23505') return; // duplicada · já processada
-    console.error('[whatsapp webhook] insert coleta:', insErr.message);
-    return;
-  }
+  // Idempotencia · se ja gravamos esse message_id, ignora reentrega
+  const { data: jaVisto } = await supabase
+    .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
+  if (jaVisto) return;
 
-  // b. Identifica líder por telefone
+  // Identifica lider/assistente cadastrado
   const { data: lider } = await supabase
     .from('whatsapp_lideres')
     .select('id, nome_exibicao, escopo, grupo_id')
-    .eq('telefone', telefone)
-    .eq('ativo', true)
-    .is('deleted_at', null)
+    .eq('telefone', telefone).eq('ativo', true).is('deleted_at', null)
     .maybeSingle();
 
-  // Número não reconhecido · responde educado + marca ignorado
+  // ── Persona 1 · numero desconhecido -> assistente institucional ────
   if (!lider) {
-    await supabase.from('whatsapp_coletas')
-      .update({ status: 'ignorado', erro: 'telefone_nao_vinculado' })
-      .eq('id', coleta.id);
-    await enviarTexto(telefone,
-      'Olá! Esse número ainda não esta vinculado a um líder no sistema da CBRio. '
-      + 'Fale com a equipe pra liberar o seu acesso. 🙏');
+    const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });
+    await supabase.from('whatsapp_coletas').insert({
+      whatsapp_message_id: messageId, telefone, raw_text: texto,
+      status: 'ignorado', erro: 'institucional', modulo_destino: 'institucional',
+    });
+    await enviarTexto(telefone, resposta);
     return;
   }
 
-  // c. Parseia com Claude · dica de módulo se o líder so tem 1 escopo
+  // ── Persona 2 · lider/assistente -> coleta conversacional ──────────
   const dica = (lider.escopo || []).length === 1 ? lider.escopo[0] : undefined;
-  const parsed = await parseMensagem(texto, dica);
 
-  // d. Atualiza coleta com o resultado
-  const modulo = parsed.modulo && parsed.modulo !== 'desconhecido' ? parsed.modulo : 'desconhecido';
-  const aplicavel = parsed.intent === 'reportar_dado' && modulo !== 'desconhecido';
-  await supabase.from('whatsapp_coletas')
-    .update({
-      lider_id: lider.id,
-      parsed,
-      modulo_destino: modulo,
-      status: aplicavel ? 'parseado' : 'recebido',
-    })
-    .eq('id', coleta.id);
+  // Procura sessao aberta (aguardando_info) recente desse lider
+  const limite = new Date(Date.now() - JANELA_CONVERSA_MIN * 60 * 1000).toISOString();
+  const { data: aberta } = await supabase
+    .from('whatsapp_coletas')
+    .select('id, parsed, modulo_destino')
+    .eq('lider_id', lider.id).eq('status', 'aguardando_info')
+    .gte('created_at', limite)
+    .order('created_at', { ascending: false })
+    .limit(1).maybeSingle();
 
-  // e. Ack pro líder
-  const nome = (lider.nome_exibicao || '').split(' ')[0];
-  let resposta;
-  if (aplicavel) {
-    const resumo = parsed.resumo || 'dados do encontro';
-    resposta = `Recebi${nome ? ', ' + nome : ''}! 📋 Entendi: ${resumo}. `
-      + 'Um líder vai confirmar e lancar no sistema. Obrigado! 🙌';
+  const dadosColetados = aberta?.parsed?.dados || {};
+  const dicaEfetiva = (aberta?.modulo_destino && aberta.modulo_destino !== 'desconhecido')
+    ? aberta.modulo_destino : dica;
+
+  const r = await parseConversa({ texto, dicaModulo: dicaEfetiva, dadosColetados });
+
+  // Status resultante
+  let status;
+  if (r.pronto) status = 'parseado';                       // completo · vai pra fila
+  else if (r.intent === 'reportar_dado') status = 'aguardando_info'; // falta dado · continua
+  else status = 'recebido';                                // saudacao/duvida · so conversa
+
+  const parsedToStore = {
+    intent: r.intent, modulo: r.modulo, dados: r.dados,
+    pronto: r.pronto, faltando: r.faltando, resumo: r.resumo,
+  };
+
+  if (aberta) {
+    // Continua a sessao · atualiza a mesma coleta (e o message_id pro dedup)
+    await supabase.from('whatsapp_coletas').update({
+      whatsapp_message_id: messageId, raw_text: texto, parsed: parsedToStore,
+      modulo_destino: r.modulo, status,
+    }).eq('id', aberta.id);
   } else {
-    resposta = `Oi${nome ? ', ' + nome : ''}! Não consegui identificar números na sua mensagem. `
-      + 'Tente algo como: "12 presentes, 2 visitantes, 1 decisao". 🙏';
+    await supabase.from('whatsapp_coletas').insert({
+      whatsapp_message_id: messageId, telefone, lider_id: lider.id, raw_text: texto,
+      parsed: parsedToStore, modulo_destino: r.modulo, status,
+    });
   }
+
+  // Resposta da IA (pergunta o que falta / confirma / tira duvida)
+  const resposta = r.resposta || (r.pronto
+    ? 'Recebi! Um lider vai conferir e lancar no sistema. Obrigado! 🙌'
+    : 'Pode me mandar os numeros do encontro? Ex: "12 presentes, 2 visitantes, 1 decisao". 🙏');
   await enviarTexto(telefone, resposta);
 }
 

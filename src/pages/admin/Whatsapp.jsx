@@ -11,8 +11,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
 import { Checkbox } from '../../components/ui/checkbox';
+import { Textarea } from '../../components/ui/textarea';
+import { Switch } from '../../components/ui/switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
-import { Plus, Trash2, Check, X, MessageCircle, RefreshCw, Power } from 'lucide-react';
+import { Plus, Trash2, Check, X, MessageCircle, RefreshCw, Power, Save } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ESCOPOS = [
@@ -21,11 +23,12 @@ const ESCOPOS = [
 ];
 
 const STATUS_LABEL = {
-  recebido: { txt: 'Recebido', cor: 'bg-slate-100 text-slate-700' },
+  recebido: { txt: 'Conversa', cor: 'bg-slate-100 text-slate-700' },
+  aguardando_info: { txt: 'Coletando…', cor: 'bg-sky-100 text-sky-800' },
   parseado: { txt: 'Aguardando', cor: 'bg-amber-100 text-amber-800' },
   aplicado: { txt: 'Aplicado', cor: 'bg-emerald-100 text-emerald-700' },
   rejeitado: { txt: 'Rejeitado', cor: 'bg-rose-100 text-rose-700' },
-  ignorado: { txt: 'Ignorado', cor: 'bg-slate-100 text-slate-500' },
+  ignorado: { txt: 'Institucional', cor: 'bg-violet-100 text-violet-700' },
 };
 
 function telefoneBonito(t) {
@@ -57,9 +60,11 @@ export default function Whatsapp() {
         <TabsList>
           <TabsTrigger value="coletas">Coletas</TabsTrigger>
           <TabsTrigger value="lideres">Líderes vinculados</TabsTrigger>
+          <TabsTrigger value="config">Configuração</TabsTrigger>
         </TabsList>
         <TabsContent value="coletas"><AbaColetas /></TabsContent>
         <TabsContent value="lideres"><AbaLideres /></TabsContent>
+        <TabsContent value="config"><AbaConfig /></TabsContent>
       </Tabs>
     </div>
   );
@@ -275,6 +280,7 @@ function AbaLideres() {
                   <span className="font-medium text-foreground">
                     {l.nome_exibicao || l.profile?.name || 'Sem nome'}
                   </span>
+                  {l.papel && <Badge variant="outline" className="capitalize">{l.papel}</Badge>}
                   {!l.ativo && <Badge variant="outline" className="text-muted-foreground">Inativo</Badge>}
                   {(l.escopo || []).map(s => (
                     <Badge key={s} variant="outline">
@@ -312,6 +318,7 @@ function DialogVincular({ onClose, onSaved }) {
   const [telefone, setTelefone] = useState('');
   const [escopo, setEscopo] = useState([]);
   const [grupoId, setGrupoId] = useState('');
+  const [papel, setPapel] = useState('lider');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -337,6 +344,7 @@ function DialogVincular({ onClose, onSaved }) {
         telefone: tel,
         escopo,
         grupo_id: grupoId || null,
+        papel: papel || null,
       });
       toast.success('Líder vinculado');
       onSaved();
@@ -358,6 +366,19 @@ function DialogVincular({ onClose, onSaved }) {
                 {profiles.map(p => (
                   <SelectItem key={p.id} value={p.id}>{p.name || p.email}</SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Papel</label>
+            <Select value={papel} onValueChange={setPapel}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="lider">Líder</SelectItem>
+                <SelectItem value="assistente">Assistente</SelectItem>
+                <SelectItem value="coordenador">Coordenador</SelectItem>
+                <SelectItem value="outro">Outro</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -408,5 +429,98 @@ function DialogVincular({ onClose, onSaved }) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Aba Configuração (institucional + toggle IA) ────────────────────
+function AbaConfig() {
+  const [cfg, setCfg] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.getConfig().then(d => {
+      const inst = d?.institucional || {};
+      setCfg({
+        ia_ativa: d?.ia_ativa !== false,
+        missao: inst.missao || '',
+        visao: inst.visao || '',
+        valores: Array.isArray(inst.valores) ? inst.valores.join('\n') : (inst.valores || ''),
+        horarios: inst.horarios || '',
+        endereco: inst.endereco || '',
+        sobre: inst.sobre || '',
+        instrucoes_extra: inst.instrucoes_extra || '',
+      });
+    }).catch(e => toast.error(e.message || 'Erro ao carregar config'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  function set(k, v) { setCfg(c => ({ ...c, [k]: v })); }
+
+  async function salvar() {
+    setSaving(true);
+    try {
+      await api.saveConfig({
+        ia_ativa: cfg.ia_ativa,
+        institucional: {
+          missao: cfg.missao,
+          visao: cfg.visao,
+          valores: cfg.valores.split('\n').map(s => s.trim()).filter(Boolean),
+          horarios: cfg.horarios,
+          endereco: cfg.endereco,
+          sobre: cfg.sobre,
+          instrucoes_extra: cfg.instrucoes_extra,
+        },
+      });
+      toast.success('Configuração salva');
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar');
+    } finally { setSaving(false); }
+  }
+
+  if (loading || !cfg) return <p className="text-sm text-muted-foreground mt-4">Carregando…</p>;
+
+  return (
+    <div className="space-y-5 mt-4">
+      <Card className="p-4 flex items-center justify-between">
+        <div>
+          <p className="font-medium text-foreground">Bot ativo</p>
+          <p className="text-xs text-muted-foreground">Desligue pra pausar o bot sem mexer no webhook.</p>
+        </div>
+        <Switch checked={cfg.ia_ativa} onCheckedChange={v => set('ia_ativa', v)} />
+      </Card>
+
+      <Card className="p-4 space-y-4">
+        <div>
+          <p className="font-medium text-foreground">Conteúdo institucional</p>
+          <p className="text-xs text-muted-foreground">
+            Usado pra responder quem <strong>não é cadastrado</strong> (visitantes). A IA só usa o que estiver aqui — não inventa.
+          </p>
+        </div>
+
+        <Campo label="Sobre a igreja" v={cfg.sobre} onChange={v => set('sobre', v)} rows={2} />
+        <Campo label="Missão" v={cfg.missao} onChange={v => set('missao', v)} rows={2} />
+        <Campo label="Visão" v={cfg.visao} onChange={v => set('visao', v)} rows={2} />
+        <Campo label="Valores (um por linha)" v={cfg.valores} onChange={v => set('valores', v)} rows={4} />
+        <Campo label="Horários de culto" v={cfg.horarios} onChange={v => set('horarios', v)} rows={4} />
+        <Campo label="Endereço" v={cfg.endereco} onChange={v => set('endereco', v)} rows={2} />
+        <Campo label="Instruções extras pra IA (opcional)" v={cfg.instrucoes_extra} onChange={v => set('instrucoes_extra', v)} rows={3} />
+
+        <div className="flex justify-end">
+          <Button onClick={salvar} disabled={saving}>
+            <Save className="h-4 w-4 mr-1" /> {saving ? 'Salvando…' : 'Salvar'}
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function Campo({ label, v, onChange, rows }) {
+  return (
+    <div>
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <Textarea value={v} onChange={e => onChange(e.target.value)} rows={rows} className="mt-1" />
+    </div>
   );
 }
