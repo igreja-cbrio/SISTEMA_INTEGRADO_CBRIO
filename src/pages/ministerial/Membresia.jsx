@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
@@ -650,25 +650,17 @@ export default function Membresia() {
   const [loadingVolStatus, setLoadingVolStatus] = useState(false);
   const [indicandoServir, setIndicandoServir] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  // Só a lista de membros depende da busca/filtros · roda 1 request por busca
+  // (não recarrega KPIs/famílias/grupos/ministérios a cada tecla)
+  const fetchMembros = useCallback(async () => {
     try {
       setError('');
       const params = {};
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
       if (filterPapel) params.papel = filterPapel;
-      const [m, k, f, g, mi] = await Promise.all([
-        membresia.membros.list(Object.keys(params).length ? params : null),
-        membresia.kpis(),
-        membresia.familias.list(),
-        membresia.grupos.list({ ativo: 'true' }).catch(() => []),
-        membresia.ministerios.list({ ativo: 'true' }).catch(() => []),
-      ]);
+      const m = await membresia.membros.list(Object.keys(params).length ? params : null);
       setMembros(m);
-      setKpis(k);
-      setFamilias(f);
-      setGrupos(g);
-      setMinisteriosList(mi);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -676,7 +668,43 @@ export default function Membresia() {
     }
   }, [busca, filterStatus, filterPapel]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Dados auxiliares · carregam uma vez (não mudam com a busca)
+  const fetchAux = useCallback(async () => {
+    try {
+      const [k, f, g, mi] = await Promise.all([
+        membresia.kpis(),
+        membresia.familias.list(),
+        membresia.grupos.list({ ativo: 'true' }).catch(() => []),
+        membresia.ministerios.list({ ativo: 'true' }).catch(() => []),
+      ]);
+      setKpis(k);
+      setFamilias(f);
+      setGrupos(g);
+      setMinisteriosList(mi);
+    } catch (e) {
+      setError(e.message);
+    }
+  }, []);
+
+  // Refresh completo · usado após mutações (criar/editar/excluir)
+  const fetchData = useCallback(async () => {
+    await Promise.all([fetchMembros(), fetchAux()]);
+  }, [fetchMembros, fetchAux]);
+
+  // Carga inicial dos auxiliares
+  useEffect(() => { fetchAux(); }, [fetchAux]);
+
+  // Busca/filtros · debounce de 300ms (1ª carga é imediata · evita o "quicando")
+  const primeiraBusca = useRef(true);
+  useEffect(() => {
+    if (primeiraBusca.current) {
+      primeiraBusca.current = false;
+      fetchMembros();
+      return;
+    }
+    const t = setTimeout(() => { fetchMembros(); }, 300);
+    return () => clearTimeout(t);
+  }, [fetchMembros]);
 
   const loadVolStatus = async (membroId) => {
     setLoadingVolStatus(true);
