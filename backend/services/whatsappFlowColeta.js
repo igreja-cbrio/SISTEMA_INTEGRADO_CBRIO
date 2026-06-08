@@ -29,13 +29,19 @@ function cpf11(raw) {
   return d.length === 11 ? d : null;
 }
 
-// Heuristica simples · lider PEDIU pra preencher (nao mandou os numeros soltos).
+// Decide se o bot deve OFERECER o formulário (Flow) pra esse texto do líder.
+// Regra simples e robusta (instantânea · sem LLM): se o líder NÃO mandou
+// números soltos, ele está pedindo pra reportar ou só cumprimentando — nos
+// dois casos o caminho rápido é o formulário. Se mandou número, deixa a
+// coleta conversacional (Haiku) extrair os dados do texto.
+//
+// O gatilho antigo exigia verbo (lançar/preencher) E substantivo (culto/
+// decisão/...) na mesma frase · "quero o formulário" não casava e caía na
+// conversa lenta que perguntava "grupos ou integração?". Corrigido 2026-06-08.
 function pedeFormulario(texto) {
-  const t = (texto || '').toLowerCase();
-  if (/\d/.test(t)) return false; // se ja mandou numero, deixa o parser conversar
-  return /(preencher|lancar|lançar|registrar|formul|lançamento|lancamento)/.test(t)
-    && /(dado|frequ|decis|culto|present)/.test(t)
-    || /(frequ.*decis|decis.*frequ)/.test(t);
+  const t = (texto || '').trim();
+  if (!t) return false;
+  return !/\d/.test(t);
 }
 
 // Parse seguro do response_json do nfm_reply (vem string).

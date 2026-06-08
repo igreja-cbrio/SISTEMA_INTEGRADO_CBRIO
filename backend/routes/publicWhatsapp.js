@@ -125,27 +125,52 @@ async function processarMensagem(m, cfg) {
     return;
   }
 
-  // ── Atalho · FORMULÁRIO (Flow) quando o líder PEDE pra lançar ──────
-  // Só quando os Flows estão publicados (env) e o texto é um pedido (sem
-  // números soltos). Senão, segue a coleta conversacional de sempre.
-  if (flowColeta.flowsConfigurados() && flowColeta.pedeFormulario(texto)) {
-    await enviarTexto(telefone, 'Boa! Já te mando o formulário pra preencher. 📋');
-    await flowColeta.enviarFormularioCulto(telefone);
+  // ── Caminho rápido (SEM LLM) · líder sem números soltos ────────────
+  // Regra desenhada com o Marcos (2026-06-08): o formulário (Flow) é o
+  // caminho principal e INSTANTÂNEO. Líder que manda mensagem SEM números
+  // está pedindo pra reportar (ou cumprimentando) → mandamos o formulário
+  // na hora. Só caímos na coleta conversacional (Haiku · mais lenta) quando
+  // o líder DIGITA números soltos no texto.
+  if (flowColeta.pedeFormulario(texto)) {
+    const podeForm = flowColeta.flowsConfigurados() && (lider.escopo || []).includes('integracao');
+    // Dedup defensivo (reentrega da Meta): claim do message_id antes de responder.
+    const { error: dupErr } = await supabase.from('whatsapp_coletas').insert({
+      whatsapp_message_id: messageId, telefone, lider_id: lider.id, raw_text: texto,
+      status: 'recebido', modulo_destino: podeForm ? 'integracao' : 'desconhecido',
+      erro: podeForm ? 'form_enviado' : 'orientacao',
+    });
+    if (dupErr) {
+      if (dupErr.code === '23505') return; // já respondemos a essa mensagem
+      console.error('[whatsapp webhook] dedup form:', dupErr.message);
+    }
+    if (podeForm) {
+      await flowColeta.enviarFormularioCulto(telefone);
+    } else {
+      // Líder só de grupos (ou Flows não configurados): grupos não tem
+      // formulário (encontro exige lista nominal) → orientação templated.
+      const primeiro = (lider.nome_exibicao || '').split(' ')[0];
+      await enviarTexto(telefone,
+        `Oi${primeiro ? ', ' + primeiro : ''}! Me manda os números do encontro que eu registro. `
+        + 'Ex: "12 presentes, 2 visitantes, 1 decisão". 🙏');
+    }
     return;
   }
 
-  // ── Persona 2 · lider/assistente -> coleta conversacional ──────────
+  // ── Coleta conversacional (Haiku) · o líder digitou números ────────
   const dica = (lider.escopo || []).length === 1 ? lider.escopo[0] : undefined;
 
-  // Procura sessao aberta (aguardando_info) recente desse lider
+  // Procura sessao aberta (aguardando_info) recente desse lider. Ignora
+  // coletas de FORMULÁRIO (fonte:'flow' · loop de pessoas) pra os dois
+  // modos não colidirem.
   const limite = new Date(Date.now() - JANELA_CONVERSA_MIN * 60 * 1000).toISOString();
-  const { data: aberta } = await supabase
+  let { data: aberta } = await supabase
     .from('whatsapp_coletas')
     .select('id, parsed, modulo_destino')
     .eq('lider_id', lider.id).eq('status', 'aguardando_info')
     .gte('created_at', limite)
     .order('created_at', { ascending: false })
     .limit(1).maybeSingle();
+  if (aberta?.parsed?.fonte === 'flow') aberta = null; // sessão de formulário · não mistura
 
   const dadosColetados = aberta?.parsed?.dados || {};
   const dicaEfetiva = (aberta?.modulo_destino && aberta.modulo_destino !== 'desconhecido')
