@@ -3,7 +3,7 @@ const { supabase } = require('../utils/supabase');
 const { getGraphToken } = require('../services/storageService');
 const { processarFila } = require('../services/cerebroProcessor');
 const { processSyncFila, upsertNoteForEntity, getSupportedEntityTypes } = require('../services/cerebroSync');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -32,7 +32,12 @@ router.post('/webhook', async (req, res) => {
     const notifications = req.body?.value || [];
     console.log(`[CEREBRO WEBHOOK] ${notifications.length} notificacao(es) recebida(s)`);
 
+    const expectedClientState = CRON_SECRET || 'cbrio-cerebro';
     for (const notif of notifications) {
+      // Anti-forja: o Graph ecoa o clientState que setamos ao criar a subscription
+      // (ver POST /subscriptions). Ignora notificação sem o segredo certo (evita
+      // disparo de processamento caro — Graph delta + Haiku — por quem chuta a URL).
+      if (notif.clientState !== expectedClientState) continue;
       const resource = notif.resource || '';
       // resource format: drives/{driveId}/root
       const driveMatch = resource.match(/drives\/([^\/]+)/);
@@ -168,8 +173,9 @@ router.all('/processar', async (req, res) => {
   }
 });
 
-// GET /api/cerebro/status
-router.get('/status', async (req, res) => {
+// GET /api/cerebro/status · exige login + módulo cerebro (era público → vazava
+// resumos/estatísticas de documentos internos · auditoria 2026-06-08)
+router.get('/status', authenticate, authorizeModule('cerebro', 1), async (req, res) => {
   try {
     const { data: stats } = await supabase.from('cerebro_stats').select('*');
     const { data: ultimos } = await supabase.from('cerebro_fila')

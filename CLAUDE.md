@@ -374,6 +374,21 @@ API.Bible key hardcoded. Relatório completo arquivado.
 - Lição reforçada: validar achado contra o **schema/uso vivo**, não só o arquivo
   (ver o caso `cui_atendimentos`, que nem existe em prod).
 
+### Leva 2 · fixes discretos de auth/secret (2026-06-08 · sem migration)
+- **`cerebro.js` `/status`**: era público (vazava estatísticas + resumos de docs) →
+  agora `authenticate` + `authorizeModule('cerebro', 1)`.
+- **`cerebro.js` webhook**: passa a validar `clientState` (o Graph ecoa o
+  `CRON_SECRET || 'cbrio-cerebro'` setado na subscription) — ignora notificação forjada
+  (evitava disparo de Graph delta + Haiku por quem chutasse a URL).
+- **`online.js` OAuth**: `signState`/`verifyState` falham fechado (sem `CRON_SECRET` não
+  assina/valida) — removido o fallback literal `'dev'`. `CRON_SECRET` é env obrigatória
+  em prod, então sem efeito lá.
+- **`membresia.js` `/totem/next/status`**: `membro_id`/`email` no `.or()` passam por
+  `escapePostgrestValue` (injeção PostgREST · cpf é digit-only).
+- **`bible.js`**: removida a **chave da API.Bible hardcoded** (`process.env.BIBLE_API_KEY`
+  sem fallback literal; `fetchBible` falha 503 se faltar). ⚠️ **AÇÃO MARCOS antes do merge:**
+  garantir `BIBLE_API_KEY` no Vercel **e rotacionar** a chave exposta (estava no git).
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
