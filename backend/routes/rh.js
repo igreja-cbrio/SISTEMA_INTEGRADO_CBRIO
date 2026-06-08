@@ -59,6 +59,7 @@ router.get('/dashboard', async (req, res) => {
     const { data: docsVencendo } = await supabase
       .from('rh_documentos')
       .select('*, rh_funcionarios(nome)')
+      .is('deleted_at', null)
       .lte('data_expiracao', em60)
       .gte('data_expiracao', hoje)
       .order('data_expiracao');
@@ -113,7 +114,7 @@ router.get('/funcionarios/:id', async (req, res) => {
 
     // Buscar dados relacionados
     const [docs, treinamentos, ferias] = await Promise.all([
-      supabase.from('rh_documentos').select('*').eq('funcionario_id', req.params.id).order('created_at', { ascending: false }),
+      supabase.from('rh_documentos').select('*').eq('funcionario_id', req.params.id).is('deleted_at', null).order('created_at', { ascending: false }),
       supabase.from('rh_treinamentos_funcionarios')
         .select('*, rh_treinamentos(*)')
         .eq('funcionario_id', req.params.id)
@@ -342,10 +343,11 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
 // DELETE /api/rh/documentos/:id
 router.delete('/documentos/:id', async (req, res) => {
   try {
-    const { error } = await supabase
-      .from('rh_documentos')
-      .delete()
-      .eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'rh_documentos',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
 
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });

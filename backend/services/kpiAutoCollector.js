@@ -132,8 +132,8 @@ async function cohortNoPrazoPct({ inicio, fim, area, marco }) {
       q => q.eq('status', 'realizado').is('deleted_at', null).not('data_batismo', 'is', null));
     for (const b of rows) { put(byMembro, b.membro_id, b.data_batismo); put(byCpf, dig(b.cpf).length === 11 ? dig(b.cpf) : null, b.data_batismo); put(byNome, String(b.nome || '').trim().toLowerCase() || null, b.data_batismo); }
   } else {
-    const rows = await fetchAll('next_inscricoes', 'membro_id, nome, check_in_at', q => q.not('check_in_at', 'is', null));
-    for (const n of rows) { const d = String(n.check_in_at).slice(0, 10); put(byMembro, n.membro_id, d); put(byNome, String(n.nome || '').trim().toLowerCase() || null, d); }
+    const rows = await fetchAll('next_inscricoes', 'membro_id, nome, cpf, check_in_at', q => q.not('check_in_at', 'is', null));
+    for (const n of rows) { const d = String(n.check_in_at).slice(0, 10); put(byMembro, n.membro_id, d); put(byCpf, dig(n.cpf).length === 11 ? dig(n.cpf) : null, d); put(byNome, String(n.nome || '').trim().toLowerCase() || null, d); }
   }
   const dataEventoDe = (c) => {
     const cands = [c.membro_id ? byMembro.get(c.membro_id) : null, dig(c.cpf).length === 11 ? byCpf.get(dig(c.cpf)) : null, byNome.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
