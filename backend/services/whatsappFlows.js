@@ -37,6 +37,10 @@ async function enviarFlow(telefone, opts) {
           flow_id: opts.flowId,
           flow_cta: opts.cta || 'Preencher',
           flow_action: 'navigate',
+          // WHATSAPP_FLOW_MODE=draft permite testar como admin antes do app ir Live
+          // (a publicação dos Flows fica bloqueada por "integridade" enquanto o app
+          // estiver em modo desenvolvimento). Em produção, deixe sem essa env.
+          ...(process.env.WHATSAPP_FLOW_MODE === 'draft' ? { mode: 'draft' } : {}),
           flow_action_payload: {
             screen: opts.screen,
             ...(opts.data ? { data: opts.data } : {}),
