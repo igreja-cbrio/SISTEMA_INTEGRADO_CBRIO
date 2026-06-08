@@ -254,10 +254,12 @@ ao banco só com a RLS no caminho. Esta entrega corrige **só os 4 críticos**.
   anon key (**escalonamento de privilégio**). Dropadas; write recriado com
   `is_super_admin()`; SELECT segue aberto (ModuleGuard lê o cargo); `usuarios_service`
   FOR ALL pro backend. + trigger `trg_audit_usuarios` (`audit_log_changes('cargo_id,deleted_at')`).
-- **#2 `cui_atendimentos`** (timeline pastoral · PII): policies `USING(true)` (escapou
-  da Onda 2). Travadas por nível de módulo (`cuidados`/`integracao`: SELECT≥1, INSERT≥2,
-  UPDATE≥3), DELETE só `is_super_admin()`, + `service_role FOR ALL`. (Follow-up: `deleted_at`
-  + whitelist — não feito agora pra não mexer nas leituras.)
+- **#2 `cui_atendimentos`** (timeline pastoral · PII): a auditoria viu `USING(true)` no
+  **arquivo** da migration `20260420151621`, mas a tabela **não existe em prod** (aquela
+  parte nunca foi aplicada · drift git↔prod). Então a trava roda **guardada por
+  `to_regclass`**: no-op se a tabela não existir, lockdown por módulo (`cuidados`/`integracao`:
+  SELECT≥1, INSERT≥2, UPDATE≥3, DELETE só super-admin) se existir. ⚠️ Drift a investigar:
+  `notificacaoGenerator.js:519` lê `cui_atendimentos` (tabela ausente) — query latente morta.
 - **#4 `fin_metas_progresso`**: a 20260529070000 recriou com 3º param (`p_meta_id` DEFAULT)
   sem dropar a versão `(date,date)` → overload ambíguo (o RPC do Dashboard Financeiro
   podia resolver errado). `DROP FUNCTION ...(date,date)` deixa só a de 3 args.
