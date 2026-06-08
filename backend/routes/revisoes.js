@@ -235,21 +235,15 @@ router.delete('/projeto/:id', authorize('admin', 'diretor'), async (req, res) =>
     const { data: item } = await supabase.from('projects').select('id, name').eq('id', req.params.id).single();
     if (!item) return res.status(404).json({ error: 'Projeto não encontrado' });
 
-    // Cascade: tarefas, fases, milestones, riscos, kpis, budget, retrospectiva
-    const { data: tasks } = await supabase.from('project_tasks').select('id').eq('project_id', req.params.id);
-    const taskIds = (tasks || []).map(t => t.id);
-    if (taskIds.length > 0) {
-      await supabase.from('project_task_subtasks').delete().in('task_id', taskIds).catch(() => {});
-      await supabase.from('project_task_comments').delete().in('task_id', taskIds).catch(() => {});
-      await supabase.from('project_tasks').delete().eq('project_id', req.params.id);
-    }
-    await supabase.from('project_phases').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_milestones').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_risks').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_kpis').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_budget_items').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_retrospectives').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('projects').delete().eq('id', req.params.id);
+    // Soft-delete reversível do projeto (consistente com routes/projects.js, que
+    // já usa app_soft_delete + filtra deleted_at nas leituras). Não destrói mais as
+    // tabelas-filhas: o projeto soft-deletado some das listas e leva os filhos junto
+    // (e volta inteiro se restaurado). Antes era hard-delete em cascata (auditoria 2026-06-08).
+    await supabase.rpc('app_soft_delete', {
+      p_table_name: 'projects',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.userId ?? null,
+    });
 
     // Log
     await supabase.from('revision_log').insert({

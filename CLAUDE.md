@@ -390,6 +390,21 @@ API.Bible key hardcoded. Relatório completo arquivado.
   Vercel + **rotacionar** a chave exposta `4CAuTct2…` (está no histórico do git → comprometida).
   Mergear só depois disso, senão `/bible` → 503 e o devocional para de puxar o texto bíblico.
 
+### Leva 3 · soft-deletes seguros + medição (2026-06-08 · sem migration)
+- **`rh_documentos`** (`rh.js`): hard-delete → `app_soft_delete`; as 2 leituras (docs
+  vencendo + lista por funcionário) passam a filtrar `deleted_at IS NULL`. Documentos
+  não são agregados em KPI → conversão segura.
+- **`projects`** (`revisoes.js` `DELETE /projeto/:id`): a cascata de hard-deletes virou
+  `app_soft_delete('projects')` — alinhado com `projects.js` (que já faz soft-delete +
+  filtra `deleted_at`). Preserva os filhos e é reversível.
+- **`next_90d_pct`** (`kpiAutoCollector.js`): o coletor de coorte agora **seleciona e
+  popula `cpf`** no marco `next` (antes consultava `byCpf` sem popular → subcontagem do
+  KR/KPI de Next 90d). Match por membro_id/cpf/nome, como o marco batismo.
+- ⚠️ **Soft-deletes AGREGADOS pendentes** (NÃO fazer swap ingênuo): `cultos`,
+  `kpi_indicadores_taticos`, `cultos_decisoes_pessoas`, `mem_grupo_encontros`,
+  `mem_devocionais`, `mem_familias` — exigem varredura de filtro `deleted_at` em todos
+  os read-sites + funções SQL antes de converter (senão poluem KPI). Tarefa deliberada.
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
