@@ -405,6 +405,27 @@ API.Bible key hardcoded. Relatório completo arquivado.
   `mem_devocionais`, `mem_familias` — exigem varredura de filtro `deleted_at` em todos
   os read-sites + funções SQL antes de converter (senão poluem KPI). Tarefa deliberada.
 
+### Leva 4 · guarda na cascata de meta (OKR/medição · COM migration)
+- **Migration `20260608140000_cascata_meta_guarda_percentual.sql`** (CREATE OR REPLACE
+  de `aplicar_meta_institucional` + re-run): KPI de **percentual** (`unidade='%'` ·
+  BAT90/NEXT90/reunião) **não recebe mais `meta_valor_absoluto` da cascata** — fica NULL
+  (a view cai no `meta_valor` = o alvo %). Antes a cascata gravava uma contagem anual
+  (baseline×1.3) nesses, e a normalização quebrava o semáforo. Só não estourava por
+  acidente (baseline `frequencia_next`=0). A re-run zera o absoluto herrado por engano.
+  ⚠️ **Aplicar a migration.** Protege os coorte KRs do funil conversão→batismo/Next.
+- **Pendente (OKR/medição · médio):** `_kpi_agregar_dado('batismos'/'novos_convertidos_atend')`
+  ignora o parâmetro de área (`20260508170000:91-100`) → baseline igual em todas as áreas.
+  Fica pra uma próxima (precisa investigar por que o ramo ignora a área).
+
+### Remediação · ainda em aberto (2026-06-08)
+Levas 1-4 cobriram os 4 críticos + os altos/médios discretos. Resta (heavier · vale
+sessão dedicada): **pool-pg no serverless** — `agents.js` (histórico de sessões · alto,
+provavelmente quebrado em prod) e `meetings.js` (rota inteira · médio) precisam migrar
+de `query()`/pool pra cliente `supabase` REST (refactor, não 1 linha); **RLS de
+`mem_cadastros_pendentes`** (form público com anon insert · alto · exige mover o form
+pro backend `/api/public/*` + migration); e baixos (`MEM_QR_SALT` fallback — depende de
+env como o bible; cron morto em `voluntariado-sync.js`). `bible.js` segue represado no PR #913.
+
 ## ⚠️ REGRA GLOBAL · acentuação correta do português do Brasil (SEMPRE)
 
 **Toda vez** que implementar QUALQUER coisa neste sistema (nova feature, fix,
