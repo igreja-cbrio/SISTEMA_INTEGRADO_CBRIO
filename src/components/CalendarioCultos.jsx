@@ -966,10 +966,29 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
       email: m.email || '',
       data_nascimento: m.data_nascimento || '',
       cpf: m.cpf || '',
-      membro_id: m.id,
+      // resultado do WiFi sem vínculo de membro entra como pessoa nova (membro_id null)
+      membro_id: m.membro_id ?? (m.origem === 'wifi' ? null : m.id),
       tipo_decisao: form.tipo_decisao,
       observacoes: form.observacoes,
     });
+    setMostrarBusca(false);
+    setBusca('');
+    setResultados([]);
+  };
+
+  // Ao pular a busca, leva o que foi digitado pro campo certo (nome, telefone ou CPF)
+  const pularBusca = () => {
+    const t = busca.trim();
+    if (t) {
+      const digits = t.replace(/\D/g, '');
+      if (/[a-zA-ZÀ-ÿ]/.test(t)) {
+        set('nome', t);
+      } else if (digits.length === 11) {
+        set('telefone', digits);
+      } else if (digits.length >= 2) {
+        set('cpf', digits);
+      }
+    }
     setMostrarBusca(false);
     setBusca('');
     setResultados([]);
@@ -1082,7 +1101,17 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
                     fontSize: 11, color: C.text, display: 'flex', flexDirection: 'column', gap: 2,
                   }}
                 >
-                  <div style={{ fontWeight: 600 }}>{m.nome}</div>
+                  <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {m.nome}
+                    {m.origem === 'wifi' && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+                        padding: '1px 5px', borderRadius: 4, background: '#0EA5E915', color: '#0284C7',
+                      }}>
+                        WiFi
+                      </span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 10, color: C.t3 }}>
                     {m.cpf && <>CPF {m.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}{' · '}</>}
                     {m.email && <>{m.email}{' · '}</>}
@@ -1099,7 +1128,7 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
           )}
           <button
             type="button"
-            onClick={() => setMostrarBusca(false)}
+            onClick={pularBusca}
             style={{ ...btnGhost, fontSize: 10, padding: '4px 8px', alignSelf: 'flex-start' }}
           >
             Pular busca e cadastrar nova pessoa
