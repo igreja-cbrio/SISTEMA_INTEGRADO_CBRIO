@@ -244,25 +244,67 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
 
   const cpfLimpo = q.replace(/\D/g, '');
   const isCpf = cpfLimpo.length >= 5 && /^\d+$/.test(cpfLimpo);
+  const escaped = q.replace(/[%_,()]/g, '\\$&');
 
-  let query = supabase
+  // 1) Membros cadastrados
+  let memQuery = supabase
     .from('mem_membros')
     .select('id, nome, email, telefone, cpf, data_nascimento, status')
+    .is('deleted_at', null)
     .limit(10);
 
+  // 2) Pessoas da lista do WiFi (portal · podem ainda não ser membros)
+  let wifiQuery = supabase
+    .from('wifi_visitantes')
+    .select('nome, email, telefone, cpf, cpf_norm, tel_norm, membro_id, data_acesso')
+    .is('deleted_at', null)
+    .order('data_acesso', { ascending: false, nullsFirst: false })
+    .limit(30);
+
   if (isCpf) {
-    query = query.ilike('cpf', `${cpfLimpo}%`);
+    memQuery = memQuery.ilike('cpf', `${cpfLimpo}%`);
+    wifiQuery = wifiQuery.ilike('cpf_norm', `${cpfLimpo}%`);
   } else {
-    const escaped = q.replace(/[%_,()]/g, '\\$&');
-    query = query.or(`nome.ilike.%${escaped}%,email.ilike.%${escaped}%,telefone.ilike.%${escaped}%`);
+    memQuery = memQuery.or(`nome.ilike.%${escaped}%,email.ilike.%${escaped}%,telefone.ilike.%${escaped}%`);
+    wifiQuery = wifiQuery.or(`nome.ilike.%${escaped}%,email.ilike.%${escaped}%,telefone.ilike.%${escaped}%`);
   }
 
-  const { data, error } = await query;
-  if (error) {
-    console.error('[kpis/decisoes-pessoas buscar-membro]', error.message);
-    return res.status(500).json({ error: error.message });
+  const [memRes, wifiRes] = await Promise.all([memQuery, wifiQuery]);
+
+  if (memRes.error) {
+    console.error('[kpis/decisoes-pessoas buscar-membro]', memRes.error.message);
+    return res.status(500).json({ error: memRes.error.message });
   }
-  res.json(data || []);
+  if (wifiRes.error) {
+    // WiFi é complementar · não derruba a busca de membros
+    console.error('[kpis/decisoes-pessoas buscar-membro wifi]', wifiRes.error.message);
+  }
+
+  const out = (memRes.data || []).map(m => ({ ...m, membro_id: m.id, origem: 'membro' }));
+  const idsMembro = new Set(out.map(m => m.id));
+  const vistosWifi = new Set();
+
+  for (const w of (wifiRes.data || [])) {
+    // se já está vinculada a um membro que veio na busca de membros, evita duplicar
+    if (w.membro_id && idsMembro.has(w.membro_id)) continue;
+    const chave = w.cpf_norm || w.tel_norm || (w.nome || '').toLowerCase().trim();
+    if (!chave || vistosWifi.has(chave)) continue;
+    vistosWifi.add(chave);
+    out.push({
+      id: w.membro_id || `wifi:${chave}`,
+      membro_id: w.membro_id || null,
+      nome: w.nome,
+      email: w.email,
+      telefone: w.telefone,
+      cpf: w.cpf_norm || (w.cpf || '').replace(/\D/g, '') || null,
+      data_nascimento: null,
+      status: w.membro_id ? null : 'visitante',
+      origem: 'wifi',
+    });
+    if (out.length >= 25) break;
+  }
+
+  res.json(out);
 });
 
 router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
