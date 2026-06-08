@@ -125,13 +125,28 @@ async function processarMensagem(m, cfg) {
     return;
   }
 
-  // ── Caminho rápido (SEM LLM) · líder sem números soltos ────────────
+  // ── Sessão conversacional aberta? (líder mid-coleta por texto) ─────
+  // Se há uma coleta conversacional em aberto desse líder, a próxima
+  // mensagem CONTINUA ela — mesmo sem números (ex: "nenhuma", "só isso") —
+  // pra não interromper a coleta com o formulário. Ignora sessões de
+  // FORMULÁRIO (fonte:'flow' · loop de pessoas) pra os dois modos não colidirem.
+  const limite = new Date(Date.now() - JANELA_CONVERSA_MIN * 60 * 1000).toISOString();
+  let { data: aberta } = await supabase
+    .from('whatsapp_coletas')
+    .select('id, parsed, modulo_destino')
+    .eq('lider_id', lider.id).eq('status', 'aguardando_info')
+    .gte('created_at', limite)
+    .order('created_at', { ascending: false })
+    .limit(1).maybeSingle();
+  if (aberta?.parsed?.fonte === 'flow') aberta = null; // sessão de formulário · não mistura
+
+  // ── Caminho rápido (SEM LLM) · sem sessão aberta + sem números ─────
   // Regra desenhada com o Marcos (2026-06-08): o formulário (Flow) é o
-  // caminho principal e INSTANTÂNEO. Líder que manda mensagem SEM números
-  // está pedindo pra reportar (ou cumprimentando) → mandamos o formulário
-  // na hora. Só caímos na coleta conversacional (Haiku · mais lenta) quando
-  // o líder DIGITA números soltos no texto.
-  if (flowColeta.pedeFormulario(texto)) {
+  // caminho principal e INSTANTÂNEO. Líder cadastrado SEM coleta em aberto
+  // que manda mensagem SEM números está pedindo pra reportar (ou só
+  // cumprimentando) → mandamos o formulário na hora. Só caímos no Haiku
+  // (mais lento) quando há sessão aberta OU o líder DIGITA números soltos.
+  if (!aberta && flowColeta.pedeFormulario(texto)) {
     const podeForm = flowColeta.flowsConfigurados() && (lider.escopo || []).includes('integracao');
     // Dedup defensivo (reentrega da Meta): claim do message_id antes de responder.
     const { error: dupErr } = await supabase.from('whatsapp_coletas').insert({
@@ -156,21 +171,8 @@ async function processarMensagem(m, cfg) {
     return;
   }
 
-  // ── Coleta conversacional (Haiku) · o líder digitou números ────────
+  // ── Coleta conversacional (Haiku) ──────────────────────────────────
   const dica = (lider.escopo || []).length === 1 ? lider.escopo[0] : undefined;
-
-  // Procura sessao aberta (aguardando_info) recente desse lider. Ignora
-  // coletas de FORMULÁRIO (fonte:'flow' · loop de pessoas) pra os dois
-  // modos não colidirem.
-  const limite = new Date(Date.now() - JANELA_CONVERSA_MIN * 60 * 1000).toISOString();
-  let { data: aberta } = await supabase
-    .from('whatsapp_coletas')
-    .select('id, parsed, modulo_destino')
-    .eq('lider_id', lider.id).eq('status', 'aguardando_info')
-    .gte('created_at', limite)
-    .order('created_at', { ascending: false })
-    .limit(1).maybeSingle();
-  if (aberta?.parsed?.fonte === 'flow') aberta = null; // sessão de formulário · não mistura
 
   const dadosColetados = aberta?.parsed?.dados || {};
   const dicaEfetiva = (aberta?.modulo_destino && aberta.modulo_destino !== 'desconhecido')
