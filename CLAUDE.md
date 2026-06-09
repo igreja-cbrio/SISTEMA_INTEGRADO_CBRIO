@@ -5431,12 +5431,15 @@ quando `service_type.has_kids = true`. Layout adaptativo:
   com nome/telefone/CPF do responsável · esconde CPF/nascimento/email
   da criança
 
-### Cutoff temporal · "de hoje pra cá"
+### Cutoff temporal · "de hoje pra cá" · ⚠️ REVERTIDO em 2026-06-09
 
-Marcos: "usa a data de hoje como base, não vamos conseguir pegar os
-dados passados". A view `vw_nsm_sem_dados` filtra `c.data >= DATE '2026-05-18'`,
-escondendo gaps históricos impossíveis de preencher. Cultos anteriores
-ao cutoff não aparecem mais como pendentes na aba Pessoas.
+Marcos (2026-05-18): "usa a data de hoje como base, não vamos conseguir pegar os
+dados passados". A view `vw_nsm_sem_dados` filtrava `c.data >= DATE '2026-05-18'`.
+**REVERTIDO** (migration `20260609160000_nsm_sem_dados_sem_cutoff.sql`): depois
+que a NSM passou a contar fantasmas no denominador (janela móvel de 90d ·
+20260515400000), o cutoff escondia gap que JÁ contava no card — a NSM mostrava
+240 decisões e a aba Sem dados só 44 de gap. A view voltou a cobrir tudo; o
+recorte de período é do consumidor (`?dias` no endpoint / janela na página).
 
 ### Membros duplicados · detecção + merge
 
@@ -5750,6 +5753,18 @@ endpoint `GET /api/painel/nsm/pessoas`):
 - **Aba "Sem dados" só lista pendência**: cultos `gap_status='completo'`
   ficam fora da lista (nota informa quantos foram ocultados) · os 4 cards
   seguem resumindo o recorte inteiro (decisões × registradas × gap).
+- **Reconciliação com o card NSM (2026-06-09)**: a aba Sem dados abre com um
+  bloco fixo usando a janela OFICIAL do `nsm_estado` (móvel · 90d · via
+  `nsm.painel()`): "X decisões no denominador · Y com pessoa cadastrada · Z
+  sem dados" — bate com o card do `/painel` por construção. Exigiu remover o
+  cutoff de 18/05 da `vw_nsm_sem_dados` (migration `20260609160000` · ver
+  seção "Cutoff temporal · REVERTIDO"). O denominador da NSM (ex.: 240) NÃO é
+  meta — é o total de decisões agregadas dos cultos nos últimos 90d; a meta da
+  NSM é `meta_percentual` (50%). ⚠️ O numerador do card conta pessoa nominal
+  com QUALQUER etapa concluída na trilha — como a etapa 'conversao' nasce
+  concluída no ato, hoje ele mede na prática "decisões com pessoa cadastrada"
+  (21/240), não engajamento pós-decisão (critério mais exigente da tela de
+  pessoas). Alinhamento do numerador fica como decisão futura do Marcos.
 
 ### Carrossel de valores (tendencias temporais · `/painel`)
 

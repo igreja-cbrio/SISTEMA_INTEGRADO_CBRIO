@@ -21,12 +21,15 @@
 // (useMemo espelhando a janela de engajamento e o matchFiltro do backend),
 // então trocar Janela/Origem/Engajamento/valores é instantâneo; só trocar o
 // Ano refaz o fetch. A aba Sem dados lista SÓ culto com pessoa faltando
-// (parcial/nenhuma registrada) · completos ficam fora (nota mostra quantos).
+// (parcial/nenhuma registrada) · completos ficam fora (nota mostra quantos)
+// e abre com um bloco de RECONCILIAÇÃO com o card NSM do /painel: usa a
+// janela oficial do nsm_estado (móvel · 90d) pra mostrar decisões ·
+// com pessoa cadastrada · sem dados — os números que formam o denominador.
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { painel as painelApi } from '../api';
+import { painel as painelApi, nsm as nsmApi } from '../api';
 import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X } from 'lucide-react';
 
 const C = {
@@ -90,6 +93,10 @@ const addDias = (iso, n) => {
   return d.toISOString().slice(0, 10);
 };
 
+const fmtDia = (iso) => iso
+  ? new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+  : '—';
+
 export default function PainelNsmPessoas() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -148,6 +155,17 @@ export default function PainelNsmPessoas() {
       .then(d => { if (vivo) setSemDadosRaw(d); })
       .catch(e => { if (vivo) setErroSemDados(e?.message || 'Erro ao carregar'); })
       .finally(() => { if (vivo) setLoadingSemDados(false); });
+    return () => { vivo = false; };
+  }, []);
+
+  // NSM oficial (nsm_estado · segmento central) · alimenta o bloco de
+  // reconciliação da aba Sem dados com a MESMA janela do card do /painel.
+  const [nsmCentral, setNsmCentral] = useState(null);
+  useEffect(() => {
+    let vivo = true;
+    nsmApi.painel()
+      .then(d => { if (vivo) setNsmCentral((d || []).find(s => s.segmento === 'central') || null); })
+      .catch(() => { /* bloco de reconciliação é opcional · falha silenciosa */ });
     return () => { vivo = false; };
   }, []);
 
@@ -247,6 +265,21 @@ export default function PainelNsmPessoas() {
       },
     };
   }, [semDadosRaw, janela]);
+
+  // Reconciliação com o card NSM do /painel: recorta a view pela janela
+  // OFICIAL do nsm_estado (não pela janela selecionada na página), então os
+  // números batem com o denominador do card por construção.
+  const nsmJanela = useMemo(() => {
+    if (!nsmCentral?.janela_inicio || !nsmCentral?.janela_fim || !semDadosRaw?.items) return null;
+    const ini = nsmCentral.janela_inicio;
+    const fim = nsmCentral.janela_fim;
+    const naJanela = semDadosRaw.items.filter(c => c.data_culto >= ini && c.data_culto <= fim);
+    const registradas = naJanela.reduce((s, c) => s + (c.total_registradas || 0), 0);
+    const total = nsmCentral.total_convertidos_periodo
+      ?? naJanela.reduce((s, c) => s + (c.total_decisoes || 0), 0);
+    const dias = Math.round((new Date(fim + 'T12:00:00') - new Date(ini + 'T12:00:00')) / 86400000);
+    return { ini, fim, dias, total, registradas, semDados: Math.max(0, total - registradas) };
+  }, [nsmCentral, semDadosRaw]);
 
   const toggleValor = (v) => {
     setValoresSel(prev => {
@@ -423,6 +456,19 @@ export default function PainelNsmPessoas() {
 
       {tab === 'sem_dados' && (
         <>
+          {/* Reconciliação com o card NSM do /painel (janela oficial · móvel) */}
+          {nsmJanela && (
+            <div style={{
+              background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.primary}`,
+              borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: C.t2, lineHeight: 1.7,
+            }}>
+              <strong style={{ color: C.text }}>Janela da NSM</strong> ({fmtDia(nsmJanela.ini)} → {fmtDia(nsmJanela.fim)} · últimos {nsmJanela.dias} dias):{' '}
+              <strong style={{ color: C.text }}>{nsmJanela.total}</strong> decisões no denominador do painel ·{' '}
+              <strong style={{ color: '#10B981' }}>{nsmJanela.registradas}</strong> com pessoa cadastrada ·{' '}
+              <strong style={{ color: '#EF4444' }}>{nsmJanela.semDados}</strong> sem dados.
+              {' '}Selecione a janela de <strong>90 dias</strong> acima para listar exatamente esses cultos.
+            </div>
+          )}
           {semDadosView?.resumo && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
               <Stat label="Cultos com decisões" value={semDadosView.resumo.total_cultos} cor={C.t2} />
