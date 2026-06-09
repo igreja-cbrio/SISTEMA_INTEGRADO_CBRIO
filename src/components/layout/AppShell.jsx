@@ -240,7 +240,16 @@ export default function AppShell() {
     // O canal Realtime abaixo entrega INSERTs em < 1s · o polling so existe pra
     // ressincronizar se algum evento for perdido.
     const interval = setInterval(loadNotifCount, 30000);
-    return () => clearInterval(interval);
+    // Ao voltar pra aba (que estava em segundo plano · WebSocket pode ter
+    // hibernado e perdido eventos), ressincroniza na hora — sem esperar o poll.
+    const onVisible = () => { if (document.visibilityState === 'visible') loadNotifCount(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
   }, []);
 
   // Realtime · escuta INSERTs em `notificações` filtrado pelo usuário logado.
@@ -275,7 +284,11 @@ export default function AppShell() {
           });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // A cada (re)conexão do canal, ressincroniza o contador pra recuperar
+        // eventos que tenham chegado enquanto o socket estava fora do ar.
+        if (status === 'SUBSCRIBED') loadNotifCount();
+      });
     return () => {
       supabase.removeChannel(channel);
     };
