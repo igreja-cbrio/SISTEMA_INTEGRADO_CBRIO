@@ -170,6 +170,95 @@ router.delete('/acompanhamentos/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Pedidos de Cuidados vindos do app (aconselhamento / oração / SOS)
+// Fila pra equipe pastoral · alimentada por POST /api/app/inscricoes.
+// ─────────────────────────────────────────────────────────────
+const TIPOS_PEDIDO_APP = ['aconselhamento', 'oracao', 'sos'];
+const TRATAMENTO_STATUS = ['pendente', 'em_andamento', 'concluido'];
+
+function extrairMensagemPedido(d) {
+  if (!d || typeof d !== 'object') return null;
+  return d.mensagem || d.message || d.texto || d.descricao || d.obs || d.observacao || null;
+}
+
+// GET /api/cuidados/pedidos-app?status=pendente|em_andamento|concluido
+router.get('/pedidos-app', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase
+      .from('app_inscricoes')
+      .select('id, tipo, dados, membro_id, status, tratamento_status, tratado_em, created_at')
+      .in('tipo', TIPOS_PEDIDO_APP)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (status && TRATAMENTO_STATUS.includes(status)) q = q.eq('tratamento_status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Enriquece com nome/telefone frescos do membro (snapshot em dados é fallback)
+    const ids = [...new Set((data || []).map(r => r.membro_id).filter(Boolean))];
+    let membros = {};
+    if (ids.length) {
+      const { data: ms } = await supabase
+        .from('mem_membros')
+        .select('id, nome, telefone, email')
+        .in('id', ids)
+        .is('deleted_at', null);
+      membros = Object.fromEntries((ms || []).map(m => [m.id, m]));
+    }
+
+    const items = (data || []).map(r => {
+      const d = r.dados || {};
+      const m = r.membro_id ? membros[r.membro_id] : null;
+      return {
+        id: r.id,
+        tipo: r.tipo,
+        membro_id: r.membro_id || null,
+        nome: m?.nome || d.nome || null,
+        telefone: m?.telefone || d.telefone || null,
+        email: m?.email || d.email || null,
+        mensagem: extrairMensagemPedido(d),
+        tratamento_status: r.tratamento_status || 'pendente',
+        tratado_em: r.tratado_em || null,
+        created_at: r.created_at,
+      };
+    });
+    res.json(items);
+  } catch (e) {
+    console.error('[CUIDADOS] pedidos-app:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/cuidados/pedidos-app/:id — atualiza status de tratamento
+router.patch('/pedidos-app/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { tratamento_status } = req.body || {};
+    if (!TRATAMENTO_STATUS.includes(tratamento_status)) {
+      return res.status(400).json({ error: 'Status de tratamento inválido' });
+    }
+    const patch = {
+      tratamento_status,
+      tratado_por: req.user?.id || null,
+      tratado_em: tratamento_status === 'pendente' ? null : new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from('app_inscricoes')
+      .update(patch)
+      .eq('id', req.params.id)
+      .in('tipo', TIPOS_PEDIDO_APP)
+      .select('id, tratamento_status, tratado_em')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[CUIDADOS] pedidos-app patch:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // Jornada 180
 // ─────────────────────────────────────────────────────────────
 router.get('/jornada180', async (req, res) => {
