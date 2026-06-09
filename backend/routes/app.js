@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { dispararAuto } = require('../services/whatsappAuto');
+const { analisarOracao } = require('../services/oracaoAnalise');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -307,6 +308,15 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (!membroId && typeof extras.membro_id === 'string' && UUID_RE.test(extras.membro_id)) {
         membroId = extras.membro_id;
+      }
+    }
+
+    // Pedido de oração: a IA classifica o tema (pra insights) já no insert.
+    if (tipo === 'oracao') {
+      const msgOra = extrairMensagem(extras);
+      if (msgOra) {
+        const analise = await analisarOracao(msgOra).catch(() => null);
+        if (analise) dados.analise = analise;
       }
     }
 

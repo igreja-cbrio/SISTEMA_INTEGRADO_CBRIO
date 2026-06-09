@@ -697,6 +697,13 @@ export default function Membresia() {
   // Carga inicial dos auxiliares
   useEffect(() => { fetchAux(); }, [fetchAux]);
 
+  // Deep-link: ?membro=<id> abre a ficha direto (ex.: vindo dos pedidos de oração)
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('membro');
+    if (id) openDetail(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Busca/filtros · debounce de 300ms (1ª carga é imediata · evita o "quicando")
   const primeiraBusca = useRef(true);
   useEffect(() => {

@@ -5,6 +5,7 @@ import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
+import OracaoPanel from '../../components/OracaoPanel';
 import JornadaConvertidos from '../../components/JornadaConvertidos';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
@@ -804,6 +805,7 @@ export default function Cuidados() {
         <TabsList>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="acomp">Acompanhamentos</TabsTrigger>
+          <TabsTrigger value="oracao">Oração</TabsTrigger>
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Convertidos</TabsTrigger>
           <TabsTrigger value="primeiros-passos">Primeiros passos</TabsTrigger>
@@ -985,6 +987,11 @@ export default function Cuidados() {
               </TableBody>
             </Table>
           </div>
+        </TabsContent>
+
+        {/* Oração */}
+        <TabsContent value="oracao" className="space-y-4">
+          <OracaoPanel canWrite={podeEditarCuidados} />
         </TabsContent>
 
         {/* Jornada 180 */}

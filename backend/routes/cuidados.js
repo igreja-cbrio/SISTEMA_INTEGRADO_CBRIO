@@ -264,6 +264,99 @@ router.patch('/pedidos-app/:id', authorizeModule('cuidados', 3), async (req, res
 });
 
 // ─────────────────────────────────────────────────────────────
+// Pedidos de oração · lista + insights por IA (tema de cada pedido)
+// ─────────────────────────────────────────────────────────────
+const { analisarOracao, CATEGORIAS } = require('../services/oracaoAnalise');
+
+async function carregarOracoes(limit = 1000) {
+  const { data, error } = await supabase
+    .from('app_inscricoes')
+    .select('id, dados, membro_id, tratamento_status, created_at')
+    .eq('tipo', 'oracao')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
+// GET /api/cuidados/oracoes — lista de pedidos de oração (com tema e vínculo a membro)
+router.get('/oracoes', authorizeModule('cuidados', 1), async (_req, res) => {
+  try {
+    const rows = await carregarOracoes(500);
+    const ids = [...new Set(rows.map(r => r.membro_id).filter(Boolean))];
+    let membros = {};
+    if (ids.length) {
+      const { data: ms } = await supabase
+        .from('mem_membros').select('id, nome, telefone, email').in('id', ids).is('deleted_at', null);
+      membros = Object.fromEntries((ms || []).map(m => [m.id, m]));
+    }
+    const items = rows.map(r => {
+      const d = r.dados || {};
+      const m = r.membro_id ? membros[r.membro_id] : null;
+      const a = d.analise || null;
+      return {
+        id: r.id,
+        membro_id: r.membro_id || null,
+        nome: m?.nome || d.nome || null,
+        telefone: m?.telefone || d.telefone || null,
+        mensagem: extrairMensagemPedido(d),
+        categoria: a?.categoria || null,
+        categoria_label: a?.categoria ? (CATEGORIAS[a.categoria] || a.categoria) : null,
+        resumo: a?.resumo || null,
+        tratamento_status: r.tratamento_status || 'pendente',
+        created_at: r.created_at,
+      };
+    });
+    res.json(items);
+  } catch (e) {
+    console.error('[CUIDADOS] oracoes:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/cuidados/oracoes/insights — agregação por tema (pra tirar insights)
+router.get('/oracoes/insights', authorizeModule('cuidados', 1), async (_req, res) => {
+  try {
+    const rows = await carregarOracoes(2000);
+    const cont = {};
+    let analisados = 0;
+    for (const r of rows) {
+      const cat = r.dados?.analise?.categoria;
+      if (cat) { cont[cat] = (cont[cat] || 0) + 1; analisados++; }
+    }
+    const total = rows.length;
+    const temas = Object.entries(cont)
+      .map(([slug, count]) => ({ slug, label: CATEGORIAS[slug] || slug, count, pct: total ? Math.round((count / analisados) * 100) : 0 }))
+      .sort((a, b) => b.count - a.count);
+    res.json({ total, analisados, nao_analisados: total - analisados, temas });
+  } catch (e) {
+    console.error('[CUIDADOS] oracoes insights:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/cuidados/oracoes/analisar — classifica com IA os pedidos ainda sem análise
+router.post('/oracoes/analisar', authorizeModule('cuidados', 2), async (_req, res) => {
+  try {
+    const rows = await carregarOracoes(2000);
+    const pendentes = rows.filter(r => !r.dados?.analise && extrairMensagemPedido(r.dados)).slice(0, 30);
+    let ok = 0;
+    for (const r of pendentes) {
+      const a = await analisarOracao(extrairMensagemPedido(r.dados));
+      if (!a) continue;
+      const novoDados = { ...(r.dados || {}), analise: a };
+      const { error } = await supabase.from('app_inscricoes').update({ dados: novoDados }).eq('id', r.id);
+      if (!error) ok++;
+    }
+    res.json({ analisados: ok, pendentes_restantes: Math.max(0, pendentes.length - ok), total_pendentes: rows.filter(r => !r.dados?.analise && extrairMensagemPedido(r.dados)).length - ok });
+  } catch (e) {
+    console.error('[CUIDADOS] oracoes analisar:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // Jornada 180
 // ─────────────────────────────────────────────────────────────
 router.get('/jornada180', async (req, res) => {
