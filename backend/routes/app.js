@@ -302,6 +302,11 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
         if (!dados.nome && membro.nome) dados.nome = membro.nome;
         if (!dados.telefone && membro.telefone) dados.telefone = membro.telefone;
       }
+      // Fallback: o app também envia membro_id no corpo (já autenticado por JWT).
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!membroId && typeof extras.membro_id === 'string' && UUID_RE.test(extras.membro_id)) {
+        membroId = extras.membro_id;
+      }
     }
 
     const { data: inserted, error } = await supabase
