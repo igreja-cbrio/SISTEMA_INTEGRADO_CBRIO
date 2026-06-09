@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi, users as usersApi } from '../../api';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
@@ -14,11 +14,21 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ClipboardCheck, ArrowRight } from 'lucide-react';
+import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ClipboardCheck, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
+
+// Pedidos de Cuidados vindos do app
+const PEDIDO_META: Record<string, { label: string; color: string }> = {
+  sos: { label: 'SOS', color: '#ef4444' },
+  aconselhamento: { label: 'Aconselhamento', color: '#f59e0b' },
+  oracao: { label: 'Oração', color: '#00B39D' },
+};
+const TRAT_LABEL: Record<string, string> = {
+  pendente: 'Pendente', em_andamento: 'Em andamento', concluido: 'Concluído',
+};
 
 function maskCpf(v: string) {
   const d = String(v || '').replace(/\D/g, '').slice(0, 11);
@@ -652,6 +662,7 @@ export default function Cuidados() {
   const [loading, setLoading] = useState(true);
 
   const [acomp, setAcomp] = useState<any[]>([]);
+  const [pedidosApp, setPedidosApp] = useState<any[]>([]);
   const [jornada, setJornada] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
   const [agregado, setAgregado] = useState<any[]>([]);
@@ -682,15 +693,16 @@ export default function Cuidados() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [d, a, j, c, ag, dm] = await Promise.all([
+      const [d, a, pa, j, c, ag, dm] = await Promise.all([
         cuidadosApi.dashboard().catch(() => null),
         cuidadosApi.acompanhamentos.list().catch(() => []),
+        cuidadosApi.pedidosApp.list().catch(() => []),
         cuidadosApi.jornada180.list().catch(() => []),
         cuidadosApi.convertidos.list().catch(() => []),
         cuidadosApi.agregado.list(agMes).catch(() => []),
         devPlanosApi.metricasCuidados().catch(() => null),
       ]);
-      setDash(d); setAcomp(a); setJornada(j); setConvertidos(c); setAgregado(ag); setDevMetrics(dm);
+      setDash(d); setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c); setAgregado(ag); setDevMetrics(dm);
       const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
       setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
       setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
@@ -770,6 +782,11 @@ export default function Cuidados() {
     if (!search) return acomp;
     return acomp.filter(a => (a.nome || '').toLowerCase().includes(search.toLowerCase()));
   }, [acomp, search]);
+
+  const pedidosPendentes = useMemo(
+    () => pedidosApp.filter((p: any) => p.tratamento_status === 'pendente').length,
+    [pedidosApp]
+  );
 
   const a = dash?.atual || {};
   const ant = dash?.anterior || {};
@@ -857,6 +874,72 @@ export default function Cuidados() {
 
         {/* Acompanhamentos */}
         <TabsContent value="acomp" className="space-y-4">
+          {/* Pedidos pelo app · "Quero conversar com um pastor" / oração / SOS */}
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <HeartHandshake className="h-4 w-4 text-primary" />
+              <h3 className="font-semibold text-sm">Pedidos pelo app</h3>
+              {pedidosPendentes > 0 && (
+                <Badge variant="destructive" className="ml-1">{pedidosPendentes} pendente{pedidosPendentes > 1 ? 's' : ''}</Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">"Quero conversar com um pastor", pedidos de oração e SOS enviados pelo aplicativo de membros.</p>
+            <div className="rounded-lg border border-border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Pessoa</TableHead><TableHead>Tipo</TableHead><TableHead>Mensagem</TableHead><TableHead>Quando</TableHead><TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pedidosApp.length === 0 ? (
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Nenhum pedido pelo app.</TableCell></TableRow>
+                  ) : pedidosApp.map(p => {
+                    const meta = PEDIDO_META[p.tipo] || { label: p.tipo, color: '#64748b' };
+                    const tel = String(p.telefone || '').replace(/\D/g, '');
+                    const urgentePend = p.tipo === 'sos' && p.tratamento_status === 'pendente';
+                    return (
+                      <TableRow key={p.id} className={urgentePend ? 'bg-red-50/60 dark:bg-red-950/20' : ''}>
+                        <TableCell>
+                          <div className="font-medium flex items-center gap-1.5">
+                            {p.tipo === 'sos' && <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0" />}
+                            {p.membro_id ? (
+                              <Link to={`/ministerial/membresia?q=${encodeURIComponent(p.nome || '')}`} className="text-primary hover:underline">{p.nome || 'Membro'}</Link>
+                            ) : (p.nome || '—')}
+                            {p.membro_id && <Badge variant="secondary" className="text-[10px]">membro</Badge>}
+                          </div>
+                          {p.telefone && (
+                            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                              <a href={`tel:${tel}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{p.telefone}</a>
+                              {tel && <a href={`https://wa.me/55${tel}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</a>}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell><Badge style={{ backgroundColor: meta.color, color: '#fff' }}>{meta.label}</Badge></TableCell>
+                        <TableCell className="max-w-[260px]"><span className="text-sm text-muted-foreground line-clamp-2">{p.mensagem || '—'}</span></TableCell>
+                        <TableCell className="whitespace-nowrap text-sm">{new Date(p.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</TableCell>
+                        <TableCell>
+                          {podeEditarCuidados ? (
+                            <Select value={p.tratamento_status} onValueChange={async (v) => { await cuidadosApi.pedidosApp.updateStatus(p.id, v); loadAll(); }}>
+                              <SelectTrigger className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="pendente">Pendente</SelectItem>
+                                <SelectItem value="em_andamento">Em andamento</SelectItem>
+                                <SelectItem value="concluido">Concluído</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Badge variant={p.tratamento_status === 'concluido' ? 'secondary' : 'default'}>{TRAT_LABEL[p.tratamento_status] || p.tratamento_status}</Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between gap-3">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

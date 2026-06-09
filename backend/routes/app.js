@@ -5,6 +5,7 @@
 const router   = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -263,26 +264,89 @@ router.get('/voluntariado/status/:userId', authApp, async (req, res) => {
 });
 
 // ── Inscrições ────────────────────────────────────────────────────────────
+// Tipos aceitos pelo app. Os pastorais (Cuidados) notificam a equipe e
+// entram na fila da aba "Acompanhamentos" do módulo Cuidados.
+const TIPOS_INSCRICAO = new Set([
+  'grupos', 'batismo', 'retiro', 'cursos', 'next', 'voluntariado', 'eventos',
+  'aconselhamento', 'oracao', 'sos',
+]);
+const TIPOS_CUIDADOS = new Set(['aconselhamento', 'oracao', 'sos']);
+const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
+// Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
+const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
+
+function extrairMensagem(d) {
+  return d.mensagem || d.message || d.texto || d.descricao || d.obs || d.observacao || null;
+}
+
 router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
   try {
-    const { tipo, ...extras } = req.body;
+    const { tipo, ...extras } = req.body || {};
     if (!tipo) return res.status(400).json({ error: 'Tipo de inscrição é obrigatório' });
+    if (!TIPOS_INSCRICAO.has(tipo)) {
+      console.warn('[APP] inscricoes · tipo não reconhecido:', tipo);
+      return res.status(400).json({ error: `Tipo de inscrição não reconhecido: ${tipo}` });
+    }
 
-    const { error } = await supabase
+    const ehCuidados = TIPOS_CUIDADOS.has(tipo);
+    const dados = { ...extras };
+    let membroId = null;
+
+    // Pedidos pastorais: resolve o membro logado pra vincular a ficha +
+    // guarda um snapshot de nome/telefone pra exibir mesmo se o cadastro mudar.
+    if (ehCuidados) {
+      const membro = await resolveMembroApp(req).catch(() => null);
+      if (membro) {
+        membroId = membro.id;
+        dados.membro_id = membro.id;
+        if (!dados.nome && membro.nome) dados.nome = membro.nome;
+        if (!dados.telefone && membro.telefone) dados.telefone = membro.telefone;
+      }
+      // Fallback: o app também envia membro_id no corpo (já autenticado por JWT).
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!membroId && typeof extras.membro_id === 'string' && UUID_RE.test(extras.membro_id)) {
+        membroId = extras.membro_id;
+      }
+    }
+
+    const { data: inserted, error } = await supabase
       .from('app_inscricoes')
       .insert({
         tipo,
         auth_user_id: req.user?.id || null,
-        dados: extras || {},
+        membro_id: membroId,
+        dados,
         status: 'pendente',
-      });
+      })
+      .select('id')
+      .single();
 
+    // Erro de gravação NÃO devolve 200 silencioso — o app precisa saber.
     if (error) {
-      // Tabela ainda não existe ou outro erro não-crítico
-      console.warn('[APP] inscricoes:', error.message);
+      console.error('[APP] inscricoes · falha ao gravar:', error.message);
+      return res.status(500).json({ error: 'Não foi possível registrar sua solicitação. Tente novamente.' });
     }
-    res.status(201).json({ ok: true, message: 'Inscrição recebida! Nossa equipe entrará em contato.' });
+
+    // Notifica a equipe de Cuidados (in-app + push). SOS é urgente.
+    if (ehCuidados) {
+      const nome = dados.nome || req.user?.email || 'Alguém';
+      const label = LABEL_CUIDADOS[tipo] || tipo;
+      const msg = extrairMensagem(extras);
+      const urgente = tipo === 'sos';
+      notificar({
+        modulo: 'cuidados',
+        tipo: `app_pedido_${tipo}`,
+        titulo: urgente ? `🆘 SOS — ${nome}` : `Novo pedido de ${label} — ${nome}`,
+        mensagem: `${nome} pediu ${label} pelo app${msg ? `: "${String(msg).slice(0, 180)}"` : '.'}`,
+        link: '/ministerial/cuidados?tab=acomp',
+        severidade: SEV_CUIDADOS[tipo] || 'info',
+        chaveDedup: `app_pedido_${inserted.id}`,
+      }).catch(e => console.warn('[APP] inscricoes · notificar:', e.message));
+    }
+
+    res.status(201).json({ ok: true, id: inserted.id, message: 'Solicitação recebida! Nossa equipe entrará em contato.' });
   } catch (e) {
+    console.error('[APP] inscricoes:', e.message);
     res.status(500).json({ error: 'Erro ao registrar inscrição' });
   }
 });
