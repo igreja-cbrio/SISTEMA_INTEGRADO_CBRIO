@@ -66,7 +66,7 @@ export default function CarrosselMandalas() {
       tipo: 'por_valor',
       key: v,
       titulo: data.por_valor[v]?.label || v,
-      sub: 'Total do valor no centro · KPIs no alvo por área',
+      sub: 'Total no centro · cascata por área (— sem dado)',
       cor: data.por_valor[v]?.cor,
     })),
   ] : [];

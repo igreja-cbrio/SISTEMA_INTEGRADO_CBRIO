@@ -3,7 +3,7 @@
 //
 // Modos:
 //   - geral: 5 petalas (valores), pétala = número absoluto do valor (mês), centro "5 valores"
-//   - por_valor: 6 petalas (áreas), pétala = "X/Y no alvo", centro = número absoluto do valor (mês)
+//   - por_valor: 6 petalas (áreas), pétala = número do indicador por área (cascata · "—" se sem dado por área), centro = total do valor (mês)
 //
 // Cada petala tem cor base do valor (no modo geral, cor própria de cada valor;
 // no modo por_valor, cor única do valor com opacidade variando por status).
@@ -168,15 +168,15 @@ export default function MandalaSlide({ modo, data, onPetalClick, mes }) {
                 }}>
                   {isGeral
                     ? fmt(s.numero)
-                    : (s.total_kpis > 0 ? `${s.em_dia}/${s.total_kpis}` : '—')}
+                    : (s.numero_area != null ? fmt(s.numero_area) : '—')}
                 </div>
-                {(isGeral ? s.unidade : (s.total_kpis > 0 ? 'no alvo' : '')) && (
+                {isGeral && s.unidade && (
                   <div style={{
                     fontSize: 7.5, fontWeight: 600, lineHeight: 1.1,
                     marginTop: 1.5, opacity: 0.82,
                     textShadow: s.opacity > 0.45 ? '0 1px 1px rgba(0,0,0,0.18)' : 'none',
                   }}>
-                    {isGeral ? s.unidade : 'no alvo'}
+                    {s.unidade}
                   </div>
                 )}
               </div>

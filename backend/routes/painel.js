@@ -101,6 +101,58 @@ async function indicadorPrincipalMes(valor, range) {
   }
 }
 
+// ----------------------------------------------------------------------------
+// Cascata por ÁREA do indicador principal (pedido do Marcos · 2026-06-09):
+// a mandala focada num valor abre o total (centro) no número de cada área.
+// Só dado de CULTO tem recorte por área → hoje só "Seguir" (decisões) cascateia.
+// Os demais valores mostram "—" nas áreas (sem dado por área · cliente decide
+// quando a fonte ganhar a dimensão de área). Kids fica FORA da jornada: criança
+// convertida não avança (não vai a grupo / não loga devocional / não serve /
+// não dá pra trackear dízimo) → decisões kids não entram em Seguir.
+//
+// Filtros de culto espelham kpiAutoCollector.js (service_type_name · fallback nome).
+// ----------------------------------------------------------------------------
+function _isAmiCulto(c) {
+  const t = (c.service_type_name || '').toLowerCase();
+  if (t) return t === 'ami';
+  const n = (c.nome || '').toLowerCase();
+  return (n.includes('ami') || n.includes('sabado') || n.includes('sábado')) && !n.includes('bridge');
+}
+function _isBridgeCulto(c) {
+  const t = (c.service_type_name || '').toLowerCase();
+  if (t) return t === 'bridge';
+  return (c.nome || '').toLowerCase().includes('bridge');
+}
+function _isSedeCulto(c) {
+  const t = (c.service_type_name || '').toLowerCase();
+  return t.startsWith('domingo') || t === 'quarta com deus';
+}
+
+// Decisões do mês repartidas por área de culto (presencial → sede/ami/bridge ·
+// online → área própria · kids excluído). Retorna { porArea, total } · total =
+// soma das áreas (garante que centro == soma das pétalas na cascata).
+async function decisoesPorAreaMes(range) {
+  const { data, error } = await supabase.from('vw_culto_stats')
+    .select('nome, service_type_name, decisoes_presenciais, decisoes_online')
+    .gte('data', range.inicio).lte('data', range.fim);
+  if (error) throw error;
+  const porArea = { sede: 0, ami: 0, bridge: 0, online: 0 };
+  (data || []).forEach((c) => {
+    const pres = Number(c.decisoes_presenciais) || 0;
+    porArea.online += Number(c.decisoes_online) || 0; // online (stream) = área própria
+    if (_isSedeCulto(c)) porArea.sede += pres;
+    else if (_isAmiCulto(c)) porArea.ami += pres;
+    else if (_isBridgeCulto(c)) porArea.bridge += pres;
+    // culto não classificado: presencial não entra em nenhuma área (raro)
+  });
+  const total = porArea.sede + porArea.ami + porArea.bridge + porArea.online;
+  return { porArea, total };
+}
+
+// Áreas cujo indicador principal já tem recorte por área (cascata real). Hoje só
+// Seguir (decisões por culto). Os demais → null nas pétalas ("—").
+const AREAS_DECISOES = ['sede', 'ami', 'bridge', 'online'];
+
 function calcStatus(percentual, totalAvaliados) {
   if (totalAvaliados === 0) return 'sem_dado';
   if (percentual >= 70) return 'verde';
@@ -189,6 +241,16 @@ router.get('/mandalas', async (req, res) => {
       indicadores[v] = await indicadorPrincipalMes(v, _range);
     }));
 
+    // 3.6 Cascata por área (só Seguir hoje · decisões por culto). O total de
+    // Seguir passa a ser a SOMA das áreas → garante centro == soma das pétalas.
+    let decisoesArea = { porArea: {}, total: null };
+    try {
+      decisoesArea = await decisoesPorAreaMes(_range);
+      indicadores.seguir = { numero: decisoesArea.total, unidade: 'decisões' };
+    } catch (e) {
+      console.error('decisoesPorAreaMes:', e.message);
+    }
+
     // 4. Mandala 0 (geral): 5 valores agregados
     const geral_valores = VALORES.map(v => {
       const kpisDoValor = (kpis || []).filter(k =>
@@ -219,10 +281,16 @@ router.get('/mandalas', async (req, res) => {
           String(k.area || '').toLowerCase() === area.id
         );
         const tab = tabularKpis(kpisArea, statusByKpi);
+        // Número do indicador principal repartido por área (cascata). Só Seguir
+        // tem recorte por área hoje (decisões por culto) → demais ficam null ("—").
+        const numero_area = (v === 'seguir' && AREAS_DECISOES.includes(area.id))
+          ? (decisoesArea.porArea[area.id] ?? 0)
+          : null;
         return {
           id: area.id,
           nome: area.nome,
           cor_hex: area.cor_hex,
+          numero_area,
           ...tab,
         };
       }).filter(a => a.total_kpis > 0); // so áreas que tem KPI desse valor
