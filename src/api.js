@@ -1916,6 +1916,11 @@ export const cuidados = {
     list: (params) => get('/cuidados/pedidos-app' + (params ? '?' + new URLSearchParams(params) : '')),
     updateStatus: (id, tratamento_status) => patch(`/cuidados/pedidos-app/${id}`, { tratamento_status }),
   },
+  oracoes: {
+    list: () => get('/cuidados/oracoes'),
+    insights: () => get('/cuidados/oracoes/insights'),
+    analisar: () => post('/cuidados/oracoes/analisar', {}),
+  },
   // Mensagem automática de WhatsApp (quando o membro pede aconselhamento pastoral)
   whatsappAuto: {
     config: () => get('/cuidados/whatsapp-auto/config'),
