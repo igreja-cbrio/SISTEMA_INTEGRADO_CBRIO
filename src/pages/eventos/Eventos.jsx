@@ -466,17 +466,23 @@ export default function Eventos() {
 
   // ── Event CRUD ──
   async function saveEvent(data) {
-    try {
-      const ativarCiclo = data.ativar_ciclo === 'true';
-      delete data.ativar_ciclo;
+    const ativarCiclo = data.ativar_ciclo === 'true';
+    delete data.ativar_ciclo;
+    const editing = !!data.id;
 
-      if (data.id) {
-        // Se a data mudou, confirmar com o usuário (recalcula ciclo inteiro)
-        if (selectedEvent?.date && data.date && selectedEvent.date !== data.date) {
-          if (!window.confirm('Ao alterar a data do evento, todas as datas das fases e tarefas do ciclo criativo serão recalculadas automaticamente. Deseja continuar?')) return;
-        }
+    // Se a data mudou, confirmar com o usuário (recalcula ciclo inteiro)
+    if (editing && selectedEvent?.date && data.date && selectedEvent.date !== data.date) {
+      if (!window.confirm('Ao alterar a data do evento, todas as datas das fases e tarefas do ciclo criativo serão recalculadas automaticamente. Deseja continuar?')) return;
+    }
+
+    // Captura o erro mas não desiste: uma falha lateral pós-commit no backend
+    // (recálculo de ciclo, audit, trigger) pode retornar 500 mesmo com o evento
+    // já gravado. Mesmo padrão do toggle de status — refetch confirma se o banco
+    // realmente mudou antes de mostrar erro ("atualiza ao recarregar a página").
+    let apiError = null;
+    try {
+      if (editing) {
         await events.update(data.id, data);
-        // Ativar ciclo no editar se marcado e evento ainda não tem
         if (ativarCiclo && !hasCycle) {
           try { await cyclesApi.activate(data.id); setHasCycle(true); } catch(e) { console.error('Erro ao ativar ciclo:', e.message); }
         }
@@ -486,11 +492,22 @@ export default function Eventos() {
           try { await cyclesApi.activate(created.id); } catch(e) { console.error('Erro ao ativar ciclo:', e.message); }
         }
       }
-      setModalEvent(null);
-      loadEvents();
-      loadDash();
-      if (data.id && selectedEvent?.id === data.id) refreshDetail();
-    } catch (e) { setError(e.message); }
+    } catch (e) { apiError = e; }
+
+    // Edição que falhou com erro de servidor: confere se gravou assim mesmo.
+    if (apiError && editing && (apiError.status === undefined || apiError.status >= 500)) {
+      try {
+        const fresh = await events.get(data.id);
+        if (fresh && (data.name == null || fresh.name === data.name)) apiError = null;
+      } catch { /* refetch falhou → mantém o erro */ }
+    }
+
+    if (apiError) { setError(apiError.message); return; }
+
+    setModalEvent(null);
+    loadEvents();
+    loadDash();
+    if (data.id && selectedEvent?.id === data.id) refreshDetail();
   }
 
   async function toggleEventStatus(id, currentStatus) {
