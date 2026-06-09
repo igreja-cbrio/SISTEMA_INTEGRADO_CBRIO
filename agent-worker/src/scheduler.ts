@@ -13,10 +13,17 @@ import { runNextWatcher } from "./agents/nextWatcher.js";
 import { runGruposWatcher } from "./agents/gruposWatcher.js";
 import { runNpsWatcher } from "./agents/npsWatcher.js";
 import { runProjetosWatcher } from "./agents/projetosWatcher.js";
+import { runPilotoTriageWatcher } from "./agents/pilotoTriageWatcher.js";
 
 // Cron expressions assumem TZ=America/Sao_Paulo (definido no env do Railway).
 // Por enquanto: 1x/semana · segunda-feira as 06:00 SP.
 const SCHEDULE = "0 6 * * 1";
+
+// Agentes DIÁRIOS (cadência própria · triagem do piloto manda o relatório do dia).
+const SCHEDULE_DIARIO = "0 7 * * *"; // todo dia 07:00 SP
+const SCHEDULED_AGENTS_DIARIOS: Array<{ type: string; runner: (opts: any) => Promise<any> }> = [
+  { type: "piloto_triage_watcher", runner: runPilotoTriageWatcher },
+];
 
 const SCHEDULED_AGENTS: Array<{
   type: string;
@@ -44,26 +51,24 @@ export function startScheduler() {
     return;
   }
 
+  const tz = process.env.TZ || "America/Sao_Paulo";
   console.log(
-    `[scheduler] cron registrado: ${SCHEDULE} (TZ=${process.env.TZ || "default"}) · agentes: ${SCHEDULED_AGENTS.map((a) => a.type).join(", ")}`
+    `[scheduler] semanal ${SCHEDULE}: ${SCHEDULED_AGENTS.map((a) => a.type).join(", ")} · diário ${SCHEDULE_DIARIO}: ${SCHEDULED_AGENTS_DIARIOS.map((a) => a.type).join(", ")} (TZ=${tz})`
   );
 
-  cron.schedule(
-    SCHEDULE,
-    async () => {
-      const now = new Date().toISOString();
-      console.log(`[scheduler] ${now} disparando ${SCHEDULED_AGENTS.length} agente(s)`);
-      for (const agent of SCHEDULED_AGENTS) {
-        try {
-          const r = await agent.runner({ config: { trigger: "cron" } });
-          console.log(
-            `[scheduler] ${agent.type} ${r.runId} ${r.status} · $${(r.cost_usd || 0).toFixed(4)}`
-          );
-        } catch (e) {
-          console.error(`[scheduler] ${agent.type} excecao:`, (e as Error).message);
-        }
+  const dispara = async (lista: typeof SCHEDULED_AGENTS) => {
+    const now = new Date().toISOString();
+    console.log(`[scheduler] ${now} disparando ${lista.length} agente(s)`);
+    for (const agent of lista) {
+      try {
+        const r = await agent.runner({ config: { trigger: "cron" } });
+        console.log(`[scheduler] ${agent.type} ${r.runId} ${r.status} · $${(r.cost_usd || 0).toFixed(4)}`);
+      } catch (e) {
+        console.error(`[scheduler] ${agent.type} excecao:`, (e as Error).message);
       }
-    },
-    { timezone: process.env.TZ || "America/Sao_Paulo" }
-  );
+    }
+  };
+
+  cron.schedule(SCHEDULE, () => dispara(SCHEDULED_AGENTS), { timezone: tz });
+  cron.schedule(SCHEDULE_DIARIO, () => dispara(SCHEDULED_AGENTS_DIARIOS), { timezone: tz });
 }

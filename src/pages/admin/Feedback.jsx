@@ -43,6 +43,7 @@ export default function FeedbackAdmin() {
   const [aba, setAba] = useState('feedback');
   const [itens, setItens] = useState([]);
   const [erros, setErros] = useState([]);
+  const [relatorios, setRelatorios] = useState([]);
   const [resumo, setResumo] = useState(null);
   const [filtro, setFiltro] = useState('todos');
   const [loading, setLoading] = useState(true);
@@ -50,14 +51,16 @@ export default function FeedbackAdmin() {
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const [lista, res, errs] = await Promise.all([
+      const [lista, res, errs, rels] = await Promise.all([
         feedbackApi.list(filtro === 'todos' ? undefined : { status: filtro }),
         feedbackApi.resumo(),
         feedbackApi.erros(),
+        feedbackApi.relatorios().catch(() => []),
       ]);
       setItens(lista || []);
       setResumo(res || null);
       setErros(errs || []);
+      setRelatorios(rels || []);
     } catch (e) {
       toast.error(e?.message || 'Erro ao carregar.');
     } finally {
@@ -106,7 +109,7 @@ export default function FeedbackAdmin() {
 
       {/* Abas */}
       <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
-        {[['feedback', 'Feedback'], ['erros', `Erros do servidor (${erros.length})`]].map(([k, lbl]) => (
+        {[['feedback', 'Feedback'], ['erros', `Erros do servidor (${erros.length})`], ['relatorio', 'Relatório do agente']].map(([k, lbl]) => (
           <button key={k} onClick={() => setAba(k)}
             style={{
               padding: '8px 16px', border: 'none', background: 'transparent', cursor: 'pointer',
@@ -186,6 +189,34 @@ export default function FeedbackAdmin() {
                 <div style={{ fontSize: 13, color: C.text }}>{e.mensagem}</div>
               </div>
             ))}
+          </div>
+        )
+      )}
+
+      {aba === 'relatorio' && (
+        loading ? (
+          <p style={{ color: C.t3, fontSize: 13 }}>Carregando…</p>
+        ) : relatorios.length === 0 ? (
+          <p style={{ color: C.t3, fontSize: 13 }}>
+            Nenhum relatório ainda. O agente roda 1x/dia (07:00), resume os reportes + erros do dia aqui e te avisa no sino. Pra ver agora, dispare uma vez no worker.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {relatorios.map((r) => {
+              const at = r.actions_taken || {};
+              return (
+                <div key={r.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8, fontSize: 11, color: C.t3 }}>
+                    <span style={{ fontWeight: 700, color: C.text, fontSize: 13 }}>{quando(r.created_at)}</span>
+                    {typeof at.feedbacks === 'number' && <span>· {at.feedbacks} reporte(s)</span>}
+                    {typeof at.erros === 'number' && <span>· {at.erros} erro(s)</span>}
+                    {at.criticos ? <span style={{ color: '#ef4444', fontWeight: 700 }}>· {at.criticos} crítico(s)</span> : null}
+                    {r.status === 'failed' && <span style={{ color: '#ef4444' }}>· falhou</span>}
+                  </div>
+                  <div style={{ fontSize: 13.5, color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{r.summary || '(sem conteúdo)'}</div>
+                </div>
+              );
+            })}
           </div>
         )
       )}
