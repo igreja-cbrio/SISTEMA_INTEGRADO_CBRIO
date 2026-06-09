@@ -8,6 +8,7 @@ const C = {
 };
 
 const MODULOS = [
+  { id: 'piloto', label: 'Piloto (testes)', desc: 'Relatório diário do agente · feedback dos testadores + erros capturados', color: '#00B39D' },
   { id: 'rh', label: 'Recursos Humanos', desc: 'Férias, documentos, experiência CLT, admissões', color: '#8b5cf6' },
   { id: 'financeiro', label: 'Financeiro', desc: 'Contas a pagar, reembolsos, vencimentos', color: '#10b981' },
   { id: 'logistica', label: 'Logística', desc: 'Pedidos atrasados, solicitações pendentes', color: '#3b82f6' },

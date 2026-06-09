@@ -97,6 +97,22 @@ router.get('/erros', async (req, res) => {
   }
 });
 
+// Relatórios diários do agente de triagem (piloto_triage_watcher · agent_runs)
+router.get('/relatorios', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('agent_runs')
+      .select('id, summary, actions_taken, status, cost_usd, created_at, completed_at')
+      .eq('agent_type', 'piloto_triage_watcher')
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[feedback relatorios]', e.message);
+    res.status(500).json({ error: 'Erro ao listar relatórios.' });
+  }
+});
+
 router.patch('/:id', async (req, res) => {
   try {
     const patch = {};

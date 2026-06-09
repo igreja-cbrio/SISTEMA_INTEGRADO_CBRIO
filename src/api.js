@@ -65,6 +65,7 @@ export const feedback = {
   list: (params) => get('/feedback' + (params ? '?' + new URLSearchParams(params) : '')),
   resumo: () => get('/feedback/resumo'),
   erros: () => get('/feedback/erros'),
+  relatorios: () => get('/feedback/relatorios'),
   atualizar: (id, data) => patch(`/feedback/${id}`, data),
 };
 
