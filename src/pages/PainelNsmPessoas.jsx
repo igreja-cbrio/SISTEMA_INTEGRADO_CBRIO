@@ -7,13 +7,18 @@
 // Filtros:
 //   - Ano + Janela (30/60/90/Ano acumulado) · a janela vale pra tudo: quem
 //     decidiu no recorte E o horizonte de engajamento.
+//   - Origem da decisão: Todos / Presencial / Online. Aceita deep link
+//     (?tipo=online ou ?segmento=online · os cards NSM do /painel usam).
 //   - 5 cards de valores (multi-seleção) · cada um abre nas atividades.
+//     "Seguir a Jesus" sem atividade não filtra ninguém: a própria conversão
+//     já cumpre o valor — as atividades (1º Contato/Batismo/Next) refinam.
 //   - Status: Todos / Engajados / Não engajados.
 //   - E entre valores, OU entre atividades do mesmo valor.
+//   - Os 4 cards de números acompanham o filtro ativo (match_* do backend).
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { painel as painelApi } from '../api';
 import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X } from 'lucide-react';
 
@@ -65,14 +70,33 @@ const STATUS_OPCOES = [
   { id: 'nao_engajados', label: 'Não engajados' },
 ];
 
+const TIPO_OPCOES = [
+  { id: 'todos', label: 'Todos' },
+  { id: 'presencial', label: 'Presencial' },
+  { id: 'online', label: 'Online' },
+];
+
 export default function PainelNsmPessoas() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const anoAtual = new Date().getFullYear();
 
   const [tab, setTab] = useState('pessoas');            // pessoas | sem_dados
   const [ano, setAno] = useState(anoAtual);
   const [janela, setJanela] = useState('60');
-  const [statusF, setStatusF] = useState('todos');
+  // Deep links do /painel: ?segmento=online (card NSM Online) e ?engajados=false
+  const [statusF, setStatusF] = useState(() => {
+    const s = (searchParams.get('status') || '').toLowerCase();
+    if (STATUS_OPCOES.some(o => o.id === s)) return s;
+    const eng = searchParams.get('engajados');
+    if (eng === 'false') return 'nao_engajados';
+    if (eng === 'true') return 'engajados';
+    return 'todos';
+  });
+  const [tipoF, setTipoF] = useState(() => {
+    const t = (searchParams.get('tipo') || searchParams.get('segmento') || '').toLowerCase();
+    return ['presencial', 'online'].includes(t) ? t : 'todos';
+  });
   const [valoresSel, setValoresSel] = useState(() => new Set());
   const [atividadesSel, setAtividadesSel] = useState(() => new Set()); // "valor:atividade"
 
@@ -94,14 +118,14 @@ export default function PainelNsmPessoas() {
     if (tab !== 'pessoas') return;
     setLoading(true); setErro(null);
     painelApi.nsmPessoas({
-      ano, janela, status: statusF,
+      ano, janela, status: statusF, tipo: tipoF,
       valores: valoresKey,
       atividades: atividadesKey,
     })
       .then(setData)
       .catch(e => setErro(e?.message || 'Erro ao carregar'))
       .finally(() => setLoading(false));
-  }, [tab, ano, janela, statusF, valoresKey, atividadesKey]);
+  }, [tab, ano, janela, statusF, tipoF, valoresKey, atividadesKey]);
 
   useEffect(() => {
     if (tab !== 'sem_dados') return;
@@ -138,13 +162,18 @@ export default function PainelNsmPessoas() {
 
   const limparFiltros = () => { setValoresSel(new Set()); setAtividadesSel(new Set()); };
   const temFiltro = valoresSel.size > 0 || atividadesSel.size > 0;
+  // Filtros que recortam DENTRO do universo de convertidos (origem muda o
+  // próprio universo na fonte, então não entra aqui).
+  const filtraDentro = temFiltro || statusF !== 'todos';
 
   const descricaoRecorte = useMemo(() => {
-    if (janela === 'acumulado') {
-      return ano === anoAtual ? `${ano} acumulado (até hoje)` : `${ano} (ano completo)`;
-    }
-    return `${ano} · últimos ${janela} dias`;
-  }, [ano, janela, anoAtual]);
+    const base = janela === 'acumulado'
+      ? (ano === anoAtual ? `${ano} acumulado (até hoje)` : `${ano} (ano completo)`)
+      : `${ano} · últimos ${janela} dias`;
+    if (tipoF === 'online') return `${base} · decisões online`;
+    if (tipoF === 'presencial') return `${base} · decisões presenciais`;
+    return base;
+  }, [ano, janela, anoAtual, tipoF]);
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
@@ -193,6 +222,11 @@ export default function PainelNsmPessoas() {
           <Segmented value={janela} onChange={setJanela} options={JANELAS} />
         </Campo>
         {tab === 'pessoas' && (
+          <Campo label="Origem da decisão">
+            <Segmented value={tipoF} onChange={setTipoF} options={TIPO_OPCOES} />
+          </Campo>
+        )}
+        {tab === 'pessoas' && (
           <Campo label="Engajamento">
             <Segmented value={statusF} onChange={setStatusF} options={STATUS_OPCOES} />
           </Campo>
@@ -225,6 +259,7 @@ export default function PainelNsmPessoas() {
                   atividadesSel={atividadesSel}
                   onToggleValor={toggleValor}
                   onToggleAtividade={toggleAtividade}
+                  hint={v === 'seguir' ? 'A própria conversão já cumpre este valor — todos entram. Marque uma atividade para refinar.' : null}
                 />
               ))}
             </div>
@@ -235,20 +270,26 @@ export default function PainelNsmPessoas() {
             )}
           </div>
 
-          {/* Stats */}
+          {/* Stats · acompanham o filtro ativo (status + valores/atividades) */}
           {data && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
-              <Stat label="Convertidos no recorte" value={data.total_convertidos} cor={C.t2} />
-              <Stat label="Engajados" value={data.total_engajados} cor="#10B981" />
-              <Stat label="Não engajados" value={data.total_nao_engajados} cor="#EF4444" />
-              <Stat label="% engajamento" value={(data.pct_engajamento ?? 0) + '%'} cor={C.primary} />
-            </div>
-          )}
-
-          {/* Resultado do filtro */}
-          {data && temFiltro && (
-            <div style={{ fontSize: 13, color: C.t2, marginBottom: 10 }}>
-              <strong style={{ color: C.text }}>{data.total_match}</strong> {data.total_match === 1 ? 'pessoa corresponde' : 'pessoas correspondem'} ao filtro
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+                <Stat
+                  label={filtraDentro ? 'Pessoas no filtro' : 'Convertidos no recorte'}
+                  value={data.total_match ?? data.total_convertidos}
+                  cor={C.t2}
+                />
+                <Stat label="Engajados" value={data.match_engajados ?? data.total_engajados} cor="#10B981" />
+                <Stat label="Não engajados" value={data.match_nao_engajados ?? data.total_nao_engajados} cor="#EF4444" />
+                <Stat label="% engajamento" value={(data.match_pct ?? data.pct_engajamento ?? 0) + '%'} cor={C.primary} />
+              </div>
+              {filtraDentro && (
+                <p style={{ fontSize: 11, color: C.t3, margin: '8px 0 0' }}>
+                  Números do filtro atual · o recorte completo tem <strong>{data.total_convertidos}</strong>{' '}
+                  {data.total_convertidos === 1 ? 'convertido' : 'convertidos'} ({data.total_engajados}{' '}
+                  {data.total_engajados === 1 ? 'engajado' : 'engajados'}, {data.pct_engajamento ?? 0}%).
+                </p>
+              )}
             </div>
           )}
 
@@ -331,7 +372,7 @@ function Segmented({ value, onChange, options }) {
   );
 }
 
-function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggleValor, onToggleAtividade }) {
+function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggleValor, onToggleAtividade, hint }) {
   return (
     <div style={{
       background: C.card, border: `1.5px solid ${ativo ? cor : C.border}`,
@@ -365,6 +406,9 @@ function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggl
             );
           })}
         </div>
+      )}
+      {ativo && hint && (
+        <p style={{ fontSize: 10, color: C.t3, margin: '8px 0 0', lineHeight: 1.4 }}>{hint}</p>
       )}
     </div>
   );
