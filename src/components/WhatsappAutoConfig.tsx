@@ -127,6 +127,9 @@ export default function WhatsappAutoConfig({ api }: { api: Api }) {
           <p className="text-[11px] text-muted-foreground mt-1">
             Prévia: {cfg.mensagem?.replace(/\{nome\}/gi, 'Maria') || '—'}
           </p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            ✨ Palavras como <code className="px-1 rounded bg-muted">sozinho(a)</code> / <code className="px-1 rounded bg-muted">bem-vindo(a)</code> são flexionadas automaticamente pelo nome (a IA detecta o gênero · mantém o "(a)" quando o nome é ambíguo).
+          </p>
         </div>
 
         {/* Modo de envio */}

@@ -37,7 +37,10 @@ function normalizarBR(raw) {
 
 // Faz o envio de fato conforme o modo configurado. Retorna shape normalizado.
 async function enviarPorConfig(cfg, telefone, nome) {
-  const texto = render(cfg.mensagem, nome);
+  // IA infere o gênero pelo nome e flexiona "sozinho(a)" → "sozinha"/"sozinho"
+  // (mantém o neutro quando o nome é ambíguo). Só chama a IA se houver "(a)".
+  const { flexionarPorNome } = require('./generoNome');
+  const texto = await flexionarPorNome(render(cfg.mensagem, nome), nome);
   if (cfg.modo === 'texto') {
     const { enviarTexto } = require('./whatsappSend');
     const r = await enviarTexto(telefone, texto);
