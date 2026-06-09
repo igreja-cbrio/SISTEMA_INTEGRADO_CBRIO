@@ -652,12 +652,23 @@ router.post('/next/inscrever', authApp, limiterStrict, async (req, res) => {
     if (ja) return res.json({ ok: true, evento: prox, jaInscrito: true });
 
     const { nome, sobrenome } = partesNome(membro.nome);
-    const { error } = await supabase.from('next_inscricoes').insert({
+    const { data: nova, error } = await supabase.from('next_inscricoes').insert({
       evento_id: prox.id, nome, sobrenome,
       cpf: membro.cpf || null, email: membro.email || req.user.email || null,
       telefone: membro.telefone || null, membro_id: membro.id, origem: 'app',
-    });
+    }).select('id').single();
     if (error) throw error;
+
+    // Notifica os responsáveis do NEXT (sino + push) — espelha o form público.
+    notificar({
+      modulo: 'next',
+      tipo: 'next_nova_inscricao',
+      titulo: 'Nova inscrição no NEXT',
+      mensagem: `${membro.nome || nome} se inscreveu no NEXT pelo app${prox.titulo ? ` (${prox.titulo})` : ''}.`,
+      link: '/ministerial/next?tab=inscritos',
+      chaveDedup: nova?.id ? `next_insc_${nova.id}` : undefined,
+    }).catch(e => console.warn('[APP next/inscrever] notificar:', e.message));
+
     res.status(201).json({ ok: true, evento: prox, message: 'Inscrição no NEXT confirmada!' });
   } catch (e) {
     console.error('[APP next/inscrever]', e.message);
@@ -706,8 +717,19 @@ router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (
       cpf: membro.cpf || null, email: membro.email || req.user.email || null,
       telefone: membro.telefone || null, membro_id: membro.id, origem: 'app',
       check_in_at: agora, check_in_by: req.user.id,
-    }).select('check_in_at').single();
+    }).select('id, check_in_at').single();
     if (error) throw error;
+
+    // Inscrição nova surgida no check-in pelo app → notifica o NEXT.
+    notificar({
+      modulo: 'next',
+      tipo: 'next_nova_inscricao',
+      titulo: 'Nova inscrição no NEXT',
+      mensagem: `${membro.nome || nome} se inscreveu no NEXT pelo app (check-in${ev.titulo ? ` · ${ev.titulo}` : ''}).`,
+      link: '/ministerial/next?tab=inscritos',
+      chaveDedup: novo?.id ? `next_insc_${novo.id}` : undefined,
+    }).catch(e => console.warn('[APP next/checkin] notificar:', e.message));
+
     res.status(201).json({ ok: true, check_in_at: novo.check_in_at });
   } catch (e) {
     console.error('[APP next/checkin]', e.message);

@@ -13,7 +13,7 @@ import {
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
-  TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck,
+  TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -617,6 +617,7 @@ export default function Membresia() {
   const [kpis, setKpis] = useState({ total: 0, byStatus: {}, familias: 0 });
   const [familias, setFamilias] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const [busca, setBusca] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -655,6 +656,7 @@ export default function Membresia() {
   const fetchMembros = useCallback(async () => {
     try {
       setError('');
+      setSearching(true);
       const params = {};
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
@@ -665,6 +667,7 @@ export default function Membresia() {
       setError(e.message);
     } finally {
       setLoading(false);
+      setSearching(false);
     }
   }, [busca, filterStatus, filterPapel]);
 
@@ -1109,11 +1112,24 @@ export default function Membresia() {
         <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
           <Search style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 16, height: 16, color: C.text3, zIndex: 1 }} />
           <Input
-            placeholder="Buscar membro..."
+            placeholder="Buscar por nome (ex: matheus toscano)..."
             value={busca}
             onChange={e => setBusca(e.target.value)}
-            style={{ paddingLeft: 36 }}
+            style={{ paddingLeft: 36, paddingRight: busca ? 60 : 12 }}
           />
+          {busca && (
+            <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', gap: 6, zIndex: 1 }}>
+              {searching && <Loader2 className="animate-spin" style={{ width: 15, height: 15, color: C.text3 }} />}
+              <button
+                type="button"
+                onClick={() => setBusca('')}
+                aria-label="Limpar busca"
+                style={{ display: 'flex', background: 'none', border: 'none', cursor: 'pointer', color: C.text3, padding: 0 }}
+              >
+                <X style={{ width: 15, height: 15 }} />
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ minWidth: 180 }}>
           <Select value={filterStatus || '__all__'} onValueChange={v => setFilterStatus(v === '__all__' ? '' : v)}>

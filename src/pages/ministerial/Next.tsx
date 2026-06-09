@@ -40,6 +40,7 @@ type Inscricao = {
   cpf?: string; telefone?: string; email?: string; data_nascimento?: string;
   observacoes?: string;
   origem_lista?: 'impressa' | 'manuscrito' | null;
+  origem?: string | null;
   ja_batizado?: boolean; ja_voluntario?: boolean; ja_doador?: boolean;
   check_in_at?: string | null;
   indicou_batismo?: boolean; indicou_servir?: boolean; indicou_grupo?: boolean; indicou_dizimo?: boolean;
@@ -593,6 +594,14 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
                   <TableRow key={i.id}>
                     <TableCell>
                       <p className="font-medium text-foreground">{i.nome} {i.sobrenome || ''}</p>
+                      {i.created_at && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
+                          <Clock className="h-3 w-3" />
+                          Inscrito em {new Date(i.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          {i.origem === 'app' && <Badge className="text-[9px] bg-[#00B39D] text-white">app</Badge>}
+                          {i.origem === 'formulario' && <Badge variant="outline" className="text-[9px]">site</Badge>}
+                        </p>
+                      )}
                       {i.ja_batizado || i.ja_voluntario || i.ja_doador ? (
                         <div className="flex gap-1 mt-1">
                           {i.ja_batizado && <Badge variant="outline" className="text-[9px]">batizado</Badge>}
