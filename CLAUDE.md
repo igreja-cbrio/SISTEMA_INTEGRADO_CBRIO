@@ -5684,6 +5684,26 @@ SELECT * FROM vw_nsm_painel;
 - `GET /api/painel/serie-temporal?valor=&dado=&culto=&inicio=&fim=&granularidade=`
    → serie agregada `[{periodo, valor}]` pra carrossel de tendencias
 
+### NSM pessoas (camada 4) · filtros v2 (2026-06-09)
+
+Ajustes do Marcos no drilldown `/painel/nsm/pessoas` (`PainelNsmPessoas.jsx` +
+endpoint `GET /api/painel/nsm/pessoas`):
+- **"Seguir a Jesus" marcado SEM atividade não exclui ninguém**: a própria
+  conversão (que põe a pessoa na lista) já cumpre o valor · as atividades
+  (1º Contato/Batismo/Next) refinam. Implementado no `matchFiltro` do backend
+  + hint no card. ⚠️ NÃO muda o cálculo de `engajado` (engajamento segue sendo
+  sinal pós-decisão · senão a NSM viraria 100% sempre).
+- **Cards seguem o filtro**: endpoint devolve `match_engajados` /
+  `match_nao_engajados` / `match_pct` (totais da lista filtrada por
+  status+valores/atividades) além dos `total_*` do recorte; os 4 cards da UI
+  usam os `match_*` (label vira "Pessoas no filtro") com nota do recorte
+  completo embaixo.
+- **Origem da decisão**: filtro Todos/Presencial/Online (`?tipo=` · filtra
+  `cultos_decisoes_pessoas.tipo_decisao` na fonte, então muda o próprio
+  universo). `?segmento=online` legado segue aceito. A página agora LÊ os
+  query params da URL — os deep links dos cards NSM do `/painel`
+  (`?segmento=online&engajados=false`) passaram a funcionar (antes ignorados).
+
 ### Carrossel de valores (tendencias temporais · `/painel`)
 
 Abaixo do carrossel de mandalas tem o `<CarrosselValores>` · um slide

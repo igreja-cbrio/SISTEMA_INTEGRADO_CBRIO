@@ -1074,13 +1074,18 @@ async function nsmAtividades(ids, inicio, fim) {
 //   ?status=todos|engajados|nao_engajados   (default todos)
 //   ?valores=seguir,investir       valores marcados (CSV)
 //   ?atividades=seguir:next,investir:aconselhamento   atividades marcadas (CSV "valor:atividade")
-//   ?segmento=central|online       (online filtra decisões online · default central)
+//   ?tipo=todos|presencial|online  origem da decisão (default todos)
+//   ?segmento=central|online       (legado · segmento=online equivale a tipo=online)
 //   ?limit=300                     max de pessoas retornadas
 //
 // Fonte = cultos_decisoes_pessoas (substitui a antiga int_visitantes). A janela
 // vale pra tudo: define quem decidiu no recorte E o horizonte de engajamento
 // (30->30d após a decisão · acumulado->até o fim do período). Filtro = E entre
-// valores, OU entre atividades do mesmo valor.
+// valores, OU entre atividades do mesmo valor. Exceção: "seguir" marcado SEM
+// atividade não exclui ninguém — a própria conversão já cumpre Seguir a Jesus
+// (toda pessoa desta lista decidiu por Jesus); as atividades refinam.
+// Resposta: totais do recorte (total_*) + totais da lista filtrada (match_*),
+// pros cards da UI acompanharem o filtro ativo.
 // ----------------------------------------------------------------------------
 router.get('/nsm/pessoas', async (req, res) => {
   try {
@@ -1088,6 +1093,8 @@ router.get('/nsm/pessoas', async (req, res) => {
     const janelaRaw = String(req.query.janela || '60').toLowerCase();
     const janela = ['30', '60', '90', 'acumulado'].includes(janelaRaw) ? janelaRaw : '60';
     const status = String(req.query.status || 'todos').toLowerCase();
+    const tipoRaw = String(req.query.tipo || (segmento === 'online' ? 'online' : 'todos')).toLowerCase();
+    const tipoDecisao = ['presencial', 'online'].includes(tipoRaw) ? tipoRaw : 'todos';
     const limit = Math.min(Number(req.query.limit) || 300, 1000);
 
     const valoresSel = String(req.query.valores || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -1115,7 +1122,7 @@ router.get('/nsm/pessoas', async (req, res) => {
         .gte('cultos.data', periodo.inicio)
         .lte('cultos.data', periodo.fim)
         .range(from, from + page - 1);
-      if (segmento === 'online') q = q.eq('tipo_decisao', 'online');
+      if (tipoDecisao !== 'todos') q = q.eq('tipo_decisao', tipoDecisao);
       const { data, error } = await q;
       if (error) throw error;
       decisoes = decisoes.concat(data || []);
@@ -1146,14 +1153,16 @@ router.get('/nsm/pessoas', async (req, res) => {
     const baseResp = {
       segmento, ano: periodo.ano, janela, periodo,
       atividades_catalogo: NSM_ATIVIDADES,
-      filtro: { valores: valoresFiltro, atividades: atividadesSel, status },
+      filtro: { valores: valoresFiltro, atividades: atividadesSel, status, tipo: tipoDecisao },
     };
 
     if (totalConvertidos === 0) {
       return res.json({
         ...baseResp,
         total_convertidos: 0, total_engajados: 0, total_nao_engajados: 0,
-        pct_engajamento: 0, total_match: 0, pessoas: [],
+        pct_engajamento: 0, total_match: 0,
+        match_engajados: 0, match_nao_engajados: 0, match_pct: 0,
+        pessoas: [],
       });
     }
 
@@ -1186,12 +1195,16 @@ router.get('/nsm/pessoas', async (req, res) => {
 
     const totalEngajados = enriquecidos.filter(p => p.engajado).length;
 
-    // 4. Filtro de valores/atividades · E entre valores, OU dentro do mesmo valor
+    // 4. Filtro de valores/atividades · E entre valores, OU dentro do mesmo valor.
+    //    "seguir" sem atividade marcada passa todo mundo: a conversão (que põe a
+    //    pessoa nesta lista) já cumpre o valor Seguir a Jesus.
     const matchFiltro = (p) => {
       for (const v of valoresFiltro) {
         const atvsDoValor = p.atividades.filter(a => a.valor === v);
         if (atvPorValor[v] && atvPorValor[v].length) {
           if (!atvsDoValor.some(a => atvPorValor[v].includes(a.atividade))) return false;
+        } else if (v === 'seguir') {
+          continue;
         } else if (atvsDoValor.length === 0) {
           return false;
         }
@@ -1206,6 +1219,8 @@ router.get('/nsm/pessoas', async (req, res) => {
 
     lista.sort((a, b) => (a.data_decisao < b.data_decisao ? 1 : -1)); // mais recentes primeiro
 
+    const matchEngajados = lista.filter(p => p.engajado).length;
+
     res.json({
       ...baseResp,
       total_convertidos: totalConvertidos,
@@ -1213,6 +1228,9 @@ router.get('/nsm/pessoas', async (req, res) => {
       total_nao_engajados: totalConvertidos - totalEngajados,
       pct_engajamento: totalConvertidos > 0 ? Math.round((totalEngajados / totalConvertidos) * 100) : 0,
       total_match: lista.length,
+      match_engajados: matchEngajados,
+      match_nao_engajados: lista.length - matchEngajados,
+      match_pct: lista.length > 0 ? Math.round((matchEngajados / lista.length) * 100) : 0,
       pessoas: lista.slice(0, limit),
     });
   } catch (e) {
