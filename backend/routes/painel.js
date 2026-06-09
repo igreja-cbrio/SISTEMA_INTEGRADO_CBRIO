@@ -57,6 +57,50 @@ const VALOR_CORES = {
   generosidade: '#EC4899',
 };
 
+// ----------------------------------------------------------------------------
+// Indicador principal (número absoluto · "pessoas engajadas") por valor.
+// Vira o headline da mandala no lugar da % de KPIs no alvo (pedido do Marcos ·
+// 2026-06-09): número absoluto comunica o tamanho real melhor que o placar de
+// cumprimento. A COR da pétala continua vindo da saúde dos KPIs (status).
+//
+// Mês corrente · reusa calcularSerie() (mesma lógica do carrossel de tendências
+// · função declarada mais abaixo, hoisted). Estes totais são da igreja inteira
+// (não há recorte por Kids/AMI/Bridge/Sede/Online/CBA pra grupos/devocionais/
+// voluntários/dízimo) · por isso as 6 áreas da mandala focada mostram "X/Y no
+// alvo" e não o número por área.
+// ----------------------------------------------------------------------------
+const PRINCIPAL_INDICADOR = {
+  seguir:       { dado: 'conversoes',         unidade: 'decisões' },
+  conectar:     { dado: 'membros_em_grupos',  unidade: 'em grupos' },
+  investir:     { dado: 'devocionais',        unidade: 'devocionais' },
+  servir:       { dado: 'voluntarios_ativos', unidade: 'voluntários' },
+  generosidade: { dado: 'dizimistas',         unidade: 'dizimistas' },
+};
+
+const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+function mesCorrenteRange() {
+  const now = new Date();
+  const inicio = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  const fim = now.toISOString().slice(0, 10);
+  return { inicio, fim, mesLabel: MESES_PT[now.getMonth()] };
+}
+
+async function indicadorPrincipalMes(valor, range) {
+  const cfg = PRINCIPAL_INDICADOR[valor];
+  if (!cfg) return { numero: null, unidade: null };
+  try {
+    const serie = await calcularSerie(valor, cfg.dado, {
+      inicio: range.inicio, fim: range.fim, culto: null, granularidade: 'mes',
+    });
+    const numero = (serie || []).reduce((s, p) => s + (Number(p.valor) || 0), 0);
+    return { numero, unidade: cfg.unidade };
+  } catch (e) {
+    console.error(`indicadorPrincipalMes(${valor}):`, e.message);
+    return { numero: null, unidade: cfg.unidade };
+  }
+}
+
 function calcStatus(percentual, totalAvaliados) {
   if (totalAvaliados === 0) return 'sem_dado';
   if (percentual >= 70) return 'verde';
@@ -137,6 +181,14 @@ router.get('/mandalas', async (req, res) => {
       .eq('ativa', true)
       .order('ordem');
 
+    // 3.5 Indicador principal (número absoluto · pessoas engajadas) por valor ·
+    // mês corrente. Headline da mandala no lugar da %.
+    const _range = mesCorrenteRange();
+    const indicadores = {};
+    await Promise.all(VALORES.map(async (v) => {
+      indicadores[v] = await indicadorPrincipalMes(v, _range);
+    }));
+
     // 4. Mandala 0 (geral): 5 valores agregados
     const geral_valores = VALORES.map(v => {
       const kpisDoValor = (kpis || []).filter(k =>
@@ -147,6 +199,8 @@ router.get('/mandalas', async (req, res) => {
         key: v,
         label: VALOR_LABELS[v],
         cor: VALOR_CORES[v],
+        numero: indicadores[v]?.numero ?? null,
+        unidade: indicadores[v]?.unidade ?? null,
         ...tab,
       };
     });
@@ -177,6 +231,8 @@ router.get('/mandalas', async (req, res) => {
         key: v,
         label: VALOR_LABELS[v],
         cor: VALOR_CORES[v],
+        numero: indicadores[v]?.numero ?? null,
+        unidade: indicadores[v]?.unidade ?? null,
         percentual_geral: tabValor.percentual,
         total_kpis: tabValor.total_kpis,
         em_dia: tabValor.em_dia,
@@ -189,6 +245,7 @@ router.get('/mandalas', async (req, res) => {
     const _resp = {
       geral: { valores: geral_valores },
       por_valor,
+      mes: _range.mesLabel,
     };
     cacheSet('mandalas', _resp);
     res.json(_resp);
