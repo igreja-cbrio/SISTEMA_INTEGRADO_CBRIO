@@ -233,7 +233,7 @@ function KpiBar({ items }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TAB_LABELS = ['Visão Geral', 'Timeline', 'Marcos', 'Gantt'];
+const TAB_LABELS = ['Visão Geral', 'Timeline', 'Marcos', 'Gantt', 'Acompanhamento'];
 
 // ═══════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -287,15 +287,22 @@ export default function Expansao() {
   // Confirm dialog
   const [confirmMsg, setConfirmMsg] = useState(null); // { message, onConfirm }
 
+  // Planos · aba Acompanhamento (camada cíclica · não toca marcos/tarefas)
+  const [planos, setPlanos] = useState([]);
+  const [selectedPlano, setSelectedPlano] = useState(null); // plano aberto no detalhe
+  const [planoModal, setPlanoModal] = useState(null);       // novo/editar plano
+  const [encerrarPlano, setEncerrarPlano] = useState(null); // plano sendo encerrado
+
   // ── Loaders ──
   const load = useCallback(async () => {
     try {
       setError('');
-      const [msRes, db] = await Promise.all([expansion.milestones(), expansion.dashboard()]);
+      const [msRes, db, pl] = await Promise.all([expansion.milestones(), expansion.dashboard(), expansion.planos().catch(() => [])]);
       // API agora retorna { milestones, accessLevel, ... } ou array (backward compat)
       const ms = msRes?.milestones || (Array.isArray(msRes) ? msRes : []);
       setMilestones(Array.isArray(ms) ? ms : []);
       setDashboard(db);
+      setPlanos(Array.isArray(pl) ? pl : []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -443,13 +450,18 @@ export default function Expansao() {
 
   // Helper to refresh milestones + detail in one go
   const refreshAll = async () => {
-    const [msRes, db] = await Promise.all([expansion.milestones(), expansion.dashboard()]);
+    const [msRes, db, pl] = await Promise.all([expansion.milestones(), expansion.dashboard(), expansion.planos().catch(() => [])]);
     const ms = msRes?.milestones || (Array.isArray(msRes) ? msRes : []);
     setMilestones(Array.isArray(ms) ? ms : []);
     setDashboard(db);
+    const pls = Array.isArray(pl) ? pl : [];
+    setPlanos(pls);
     if (selectedMilestone) {
       const updated = ms.find(m => m.id === selectedMilestone.id);
       setSelectedMilestone(updated || null);
+    }
+    if (selectedPlano) {
+      setSelectedPlano(pls.find(p => p.id === selectedPlano.id) || null);
     }
   };
 
@@ -477,7 +489,75 @@ export default function Expansao() {
 
   const openDetail = (mi) => {
     setSelectedMilestone(mi);
-    setTab(4);
+    setTab(5);
+  };
+
+  // ── Planos (Acompanhamento) ──
+  // Progresso de um plano: usa o snapshot congelado (se encerrado) ou agrega
+  // os marcos do período ao vivo (sem tocar na lógica de marcos).
+  const planoProgresso = (plano) => {
+    if (plano?.snapshot && typeof plano.snapshot === 'object') {
+      const s = plano.snapshot;
+      return { total: s.total || 0, concluido: s.concluido || 0, atrasado: s.atrasado || 0, pct: s.pct || 0, fonte: 'snapshot' };
+    }
+    const yi = plano?.periodo_inicio ? Number(String(plano.periodo_inicio).slice(0, 4)) : null;
+    const yf = plano?.periodo_fim ? Number(String(plano.periodo_fim).slice(0, 4)) : null;
+    const ms = visibleMilestones.filter(m => {
+      if (yi == null || yf == null) return true;
+      return m.year != null && m.year >= yi && m.year <= yf;
+    });
+    const total = ms.length;
+    const concluido = ms.filter(m => m.status === 'concluido').length;
+    const atrasado = ms.filter(m => {
+      const d = normDate(m.date_end || m.expected_delivery);
+      return d && m.status !== 'concluido' && new Date(d + 'T12:00:00') < new Date();
+    }).length;
+    const pct = total ? Math.round((concluido / total) * 100) : 0;
+    return { total, concluido, atrasado, pct, fonte: 'vivo' };
+  };
+
+  const savePlano = async (form) => {
+    if (!form.nome || !form.nome.trim()) { setError('Nome do plano é obrigatório'); return; }
+    setSaving(true);
+    try {
+      if (form.id) await expansion.updatePlano(form.id, form);
+      else await expansion.createPlano(form);
+      setPlanoModal(null);
+      await refreshAll();
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+
+  const confirmarEncerramento = async (id, payload) => {
+    setSaving(true);
+    try {
+      await expansion.encerrarPlano(id, payload);
+      setEncerrarPlano(null);
+      await refreshAll();
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+
+  const reabrirPlanoFn = (plano) => {
+    setConfirmMsg({
+      message: `Reabrir o plano "${plano.nome}"? Ele volta para "em execução".`,
+      onConfirm: async () => {
+        setConfirmMsg(null);
+        try { await expansion.reabrirPlano(plano.id); await refreshAll(); } catch (err) { setError(err.message); }
+      },
+    });
+  };
+
+  const deletePlanoFn = (plano) => {
+    setConfirmMsg({
+      message: `Excluir o plano "${plano.nome}"? (reversível por um admin)`,
+      onConfirm: async () => {
+        setConfirmMsg(null);
+        try {
+          await expansion.removePlano(plano.id);
+          setSelectedPlano(null);
+          await refreshAll();
+        } catch (err) { setError(err.message); }
+      },
+    });
   };
 
   // ── KPI drill-down ──
@@ -1235,7 +1315,88 @@ export default function Expansao() {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // RENDER — TAB 4: DETAIL (hidden tab)
+  // RENDER — TAB 4: ACOMPANHAMENTO (planos em execução + já executados)
+  // ═══════════════════════════════════════════════════════════
+  function renderAcompanhamento() {
+    const emExec = planos.filter(p => p.status !== 'encerrado');
+    const encerrados = planos.filter(p => p.status === 'encerrado');
+    const AVAL = {
+      atingido: { label: 'Atingido', c: C.green, bg: C.greenBg },
+      parcial: { label: 'Parcial', c: C.amber, bg: C.amberBg },
+      nao_atingido: { label: 'Não atingido', c: C.red, bg: C.redBg },
+    };
+
+    const PlanoCard = ({ p }) => {
+      const prog = planoProgresso(p);
+      const av = AVAL[p.avaliacao];
+      const encerrado = p.status === 'encerrado';
+      return (
+        <div onClick={() => setSelectedPlano(p)}
+          style={{ ...styles.card, padding: '18px 20px', cursor: 'pointer', borderLeft: `4px solid ${encerrado ? C.t3 : C.primary}` }}
+          onMouseEnter={e => e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.10)'}
+          onMouseLeave={e => e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{p.nome}</div>
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>
+                {p.periodo_inicio ? String(p.periodo_inicio).slice(0, 4) : '—'}{'–'}{p.periodo_fim ? String(p.periodo_fim).slice(0, 4) : '—'}
+                {p.lider_nome ? ` · ${p.lider_nome}` : ''}
+              </div>
+            </div>
+            {encerrado
+              ? (av ? <span style={styles.badge(av.c, av.bg)}>{av.label}</span> : <span style={styles.badge(C.t3, '#f3f4f6')}>Encerrado</span>)
+              : <span style={styles.badge(C.primary, C.primaryBg)}>Em execução</span>}
+          </div>
+          <ProgressBar pct={prog.pct} height={8} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.t3, marginTop: 6 }}>
+            <span>{prog.concluido}/{prog.total} marcos concluídos{prog.atrasado ? ` · ${prog.atrasado} atrasado(s)` : ''}</span>
+            <span>{prog.fonte === 'snapshot' ? 'congelado no encerramento' : 'ao vivo'}</span>
+          </div>
+          {encerrado && p.parecer && (
+            <div style={{ marginTop: 10, fontSize: 12, color: C.t2, lineHeight: 1.5 }}>
+              {p.parecer.slice(0, 180)}{p.parecer.length > 180 ? '…' : ''}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: 13, color: C.t2, maxWidth: 700, lineHeight: 1.5 }}>
+            Acompanhe os <b>planos estratégicos</b> da CBRio: o que está <b>em execução</b> e os que já foram
+            <b> executados</b> (com o parecer documental do que foi entregue em cada etapa). Os marcos de cada
+            plano continuam nas outras abas.
+          </div>
+          {canEdit && <button style={styles.btn('primary')} onClick={() => setPlanoModal({})}>+ Novo plano</button>}
+        </div>
+
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}><span>Em execução ({emExec.length})</span></div>
+          {emExec.length === 0 ? <div style={styles.empty}>Nenhum plano em execução.</div> : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
+              {emExec.map(p => <PlanoCard key={p.id} p={p} />)}
+            </div>
+          )}
+        </div>
+
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}><span>Já executados ({encerrados.length})</span></div>
+          {encerrados.length === 0 ? (
+            <div style={styles.empty}>Nenhum plano encerrado ainda. Ao encerrar um plano, ele vira uma retrospectiva documentada aqui.</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
+              {encerrados.map(p => <PlanoCard key={p.id} p={p} />)}
+            </div>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // RENDER — TAB 5: DETAIL (hidden tab)
   // ═══════════════════════════════════════════════════════════
   function renderDetail() {
     const mi = selectedMilestone;
@@ -1418,7 +1579,7 @@ export default function Expansao() {
       )}
 
       {/* Tabs — assistente (nível 2) não vê Visão Geral nem Timeline */}
-      {tab !== 4 && (
+      {tab !== 5 && (
         <div style={styles.tabs}>
           {TAB_LABELS.map((label, i) => {
             if (accessLevel <= 2 && (i === 0 || i === 1)) return null; // esconder Visão Geral e Timeline para assistente
@@ -1432,7 +1593,8 @@ export default function Expansao() {
       {tab === 1 && renderTimeline()}
       {tab === 2 && renderMarcos()}
       {tab === 3 && renderGantt()}
-      {tab === 4 && renderDetail()}
+      {tab === 4 && renderAcompanhamento()}
+      {tab === 5 && renderDetail()}
 
       {/* Milestone Modal */}
       <MilestoneFormModal
@@ -1461,6 +1623,36 @@ export default function Expansao() {
         details={confirmMsg?.details}
         onConfirm={confirmMsg?.onConfirm}
         onCancel={() => setConfirmMsg(null)}
+      />
+
+      {/* Plano · detalhe + parecer */}
+      <PlanoDetailModal
+        plano={selectedPlano}
+        progresso={selectedPlano ? planoProgresso(selectedPlano) : null}
+        canEdit={canEdit}
+        onClose={() => setSelectedPlano(null)}
+        onEdit={() => { const p = selectedPlano; setSelectedPlano(null); setPlanoModal(p); }}
+        onEncerrar={() => { const p = selectedPlano; setSelectedPlano(null); setEncerrarPlano(p); }}
+        onReabrir={() => reabrirPlanoFn(selectedPlano)}
+        onDelete={() => deletePlanoFn(selectedPlano)}
+      />
+
+      {/* Plano · novo/editar */}
+      <PlanoFormModal
+        open={planoModal !== null}
+        data={planoModal?.id ? planoModal : null}
+        saving={saving}
+        onSave={savePlano}
+        onClose={() => setPlanoModal(null)}
+      />
+
+      {/* Plano · encerrar (parecer documental) */}
+      <EncerrarPlanoModal
+        plano={encerrarPlano}
+        progresso={encerrarPlano ? planoProgresso(encerrarPlano) : null}
+        saving={saving}
+        onConfirm={confirmarEncerramento}
+        onClose={() => setEncerrarPlano(null)}
       />
 
       <div style={{ height: 40 }} />
@@ -1778,6 +1970,166 @@ function TaskFormModal({ open, data, milestoneId, saving, onSave, onClose, users
           <textarea style={styles.textarea} value={form.description || ''} onChange={e => set('description', e.target.value)} />
         </Field>
       </form>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// Plano · Modal de detalhe + parecer
+// ═══════════════════════════════════════════════════════════
+function PlanoDetailModal({ plano, progresso, canEdit, onClose, onEdit, onEncerrar, onReabrir, onDelete }) {
+  if (!plano) return null;
+  const encerrado = plano.status === 'encerrado';
+  const AVAL = { atingido: 'Atingido', parcial: 'Parcial', nao_atingido: 'Não atingido' };
+  return (
+    <Modal open={!!plano} onClose={onClose} title={plano.nome}
+      footer={canEdit ? (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', width: '100%' }}>
+          <button style={styles.btn('danger')} onClick={onDelete}>Excluir</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={styles.btn('secondary')} onClick={onEdit}>Editar</button>
+            {encerrado
+              ? <button style={styles.btn('secondary')} onClick={onReabrir}>Reabrir</button>
+              : <button style={styles.btn('primary')} onClick={onEncerrar}>Encerrar plano</button>}
+          </div>
+        </div>
+      ) : null}>
+      <div style={styles.infoGrid}>
+        <div>
+          <div style={styles.infoLabel}>Período</div>
+          <div style={styles.infoValue}>{fmtDate(plano.periodo_inicio)} {'→'} {fmtDate(plano.periodo_fim)}</div>
+        </div>
+        <div>
+          <div style={styles.infoLabel}>Líder</div>
+          <div style={styles.infoValue}>{plano.lider_nome || '—'}</div>
+        </div>
+        <div>
+          <div style={styles.infoLabel}>Status</div>
+          <div style={styles.infoValue}>{encerrado ? 'Encerrado' : 'Em execução'}</div>
+        </div>
+        {encerrado && (
+          <div>
+            <div style={styles.infoLabel}>Avaliação</div>
+            <div style={styles.infoValue}>{AVAL[plano.avaliacao] || '—'}{plano.score_pct != null ? ` · ${plano.score_pct}%` : ''}</div>
+          </div>
+        )}
+      </div>
+      {plano.descricao && <div style={{ fontSize: 13, color: C.t2, lineHeight: 1.5, marginBottom: 14 }}>{plano.descricao}</div>}
+      {progresso && (
+        <div style={{ ...styles.card, padding: '14px 16px', marginBottom: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Entregas (marcos)</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: progressColor(progresso.pct) }}>{progresso.pct}%</span>
+          </div>
+          <ProgressBar pct={progresso.pct} height={8} showLabel={false} />
+          <div style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>
+            {progresso.concluido}/{progresso.total} concluídos{progresso.atrasado ? ` · ${progresso.atrasado} atrasado(s)` : ''} {'·'} {progresso.fonte === 'snapshot' ? 'congelado no encerramento' : 'ao vivo'}
+          </div>
+        </div>
+      )}
+      <div style={styles.infoLabel}>Parecer documental</div>
+      <div style={{ fontSize: 13, color: plano.parecer ? C.text : C.t3, lineHeight: 1.6, whiteSpace: 'pre-line', marginTop: 4 }}>
+        {plano.parecer || (encerrado ? 'Sem parecer registrado.' : 'O parecer é escrito ao encerrar o plano.')}
+      </div>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// Plano · Modal de criação/edição
+// ═══════════════════════════════════════════════════════════
+function PlanoFormModal({ open, data, saving, onSave, onClose }) {
+  const isEdit = data?.id;
+  const [form, setForm] = useState({});
+  useEffect(() => {
+    if (open) setForm({
+      id: data?.id || null,
+      nome: data?.nome || '',
+      descricao: data?.descricao || '',
+      periodo_inicio: data?.periodo_inicio ? normDate(data.periodo_inicio) : '',
+      periodo_fim: data?.periodo_fim ? normDate(data.periodo_fim) : '',
+      lider_nome: data?.lider_nome || '',
+    });
+  }, [open, data]);
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  return (
+    <Modal open={open} onClose={onClose} title={isEdit ? 'Editar plano' : 'Novo plano'}
+      footer={
+        <>
+          <button type="button" style={styles.btn('ghost')} onClick={onClose}>Cancelar</button>
+          <button type="button" style={styles.btn('primary')} disabled={saving} onClick={() => onSave(form)}>{saving ? 'Salvando...' : 'Salvar'}</button>
+        </>
+      }>
+      <Field label="Nome *">
+        <input style={styles.input} value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Expansão" />
+      </Field>
+      <Field label="Descrição">
+        <textarea style={styles.textarea} value={form.descricao || ''} onChange={e => set('descricao', e.target.value)} />
+      </Field>
+      <div style={styles.formRow}>
+        <Field label="Início">
+          <input type="date" style={styles.input} value={form.periodo_inicio || ''} onChange={e => set('periodo_inicio', e.target.value)} />
+        </Field>
+        <Field label="Fim">
+          <input type="date" style={styles.input} value={form.periodo_fim || ''} onChange={e => set('periodo_fim', e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Líder">
+        <input style={styles.input} value={form.lider_nome || ''} onChange={e => set('lider_nome', e.target.value)} placeholder="Ex: Pr. Pedrão" />
+      </Field>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// Plano · Modal de encerramento (parecer documental)
+// ═══════════════════════════════════════════════════════════
+function EncerrarPlanoModal({ plano, progresso, saving, onConfirm, onClose }) {
+  const [parecer, setParecer] = useState('');
+  const [avaliacao, setAvaliacao] = useState('');
+  const [score, setScore] = useState('');
+  useEffect(() => {
+    if (plano) {
+      setParecer(plano.parecer || '');
+      setAvaliacao(plano.avaliacao || '');
+      setScore(plano.score_pct != null ? String(plano.score_pct) : (progresso ? String(progresso.pct) : ''));
+    }
+  }, [plano]);
+  if (!plano) return null;
+  return (
+    <Modal open={!!plano} onClose={onClose} title={`Encerrar plano · ${plano.nome}`}
+      footer={
+        <>
+          <button type="button" style={styles.btn('ghost')} onClick={onClose}>Cancelar</button>
+          <button type="button" style={styles.btn('primary')} disabled={saving} onClick={() => onConfirm(plano.id, {
+            parecer,
+            avaliacao: avaliacao || null,
+            score_pct: score === '' ? null : Number(score),
+            snapshot: progresso ? { total: progresso.total, concluido: progresso.concluido, atrasado: progresso.atrasado, pct: progresso.pct } : null,
+          })}>{saving ? 'Encerrando...' : 'Encerrar e registrar parecer'}</button>
+        </>
+      }>
+      <div style={{ fontSize: 12, color: C.t2, marginBottom: 12, lineHeight: 1.5 }}>
+        Ao encerrar, o plano vai para <b>"Já executados"</b> com o parecer abaixo. As entregas atuais
+        {progresso ? ` (${progresso.concluido}/${progresso.total} marcos · ${progresso.pct}%)` : ''} ficam <b>congeladas</b> como retrospectiva.
+      </div>
+      <Field label="Parecer documental (o que houve · entregas por etapa · aprendizados)">
+        <textarea style={{ ...styles.textarea, minHeight: 160 }} value={parecer} onChange={e => setParecer(e.target.value)}
+          placeholder="Resumo do ciclo, o que foi entregue em cada etapa, o que ficou pendente e por quê, recomendações para o próximo plano..." />
+      </Field>
+      <div style={styles.formRow}>
+        <Field label="Avaliação geral">
+          <select style={{ ...styles.select, width: '100%' }} value={avaliacao} onChange={e => setAvaliacao(e.target.value)}>
+            <option value="">{'—'}</option>
+            <option value="atingido">Atingido</option>
+            <option value="parcial">Parcial</option>
+            <option value="nao_atingido">Não atingido</option>
+          </select>
+        </Field>
+        <Field label="Score (% atingimento)">
+          <input type="number" min="0" max="100" style={styles.input} value={score} onChange={e => setScore(e.target.value)} />
+        </Field>
+      </div>
     </Modal>
   );
 }

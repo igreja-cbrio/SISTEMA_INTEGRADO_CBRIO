@@ -142,6 +142,13 @@ export const expansion = {
   removeSubtask: (id) => del(`/expansion/subtasks/${id}`),
   getDependents: (id) => get(`/expansion/milestones/${id}/dependents`),
   getDependencies: (id) => get(`/expansion/milestones/${id}/dependencies`),
+  // Planos · camada cíclica (aba Acompanhamento)
+  planos: () => get('/expansion/planos'),
+  createPlano: (data) => post('/expansion/planos', data),
+  updatePlano: (id, data) => put(`/expansion/planos/${id}`, data),
+  encerrarPlano: (id, data) => post(`/expansion/planos/${id}/encerrar`, data),
+  reabrirPlano: (id) => post(`/expansion/planos/${id}/reabrir`, {}),
+  removePlano: (id) => del(`/expansion/planos/${id}`),
 };
 
 // Decisão online · formulário público "Eu aceito Jesus" (sem auth)

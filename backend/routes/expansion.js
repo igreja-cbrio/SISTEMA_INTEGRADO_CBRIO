@@ -171,4 +171,86 @@ router.get('/milestones/:id/dependencies', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar dependências' }); }
 });
 
+// ══════════════════════════════════════════════
+// PLANOS — camada cíclica (aba "Acompanhamento")
+// Não toca marcos/tarefas: só a metadata + parecer do plano plurianual.
+// ══════════════════════════════════════════════
+
+// GET /api/expansion/planos — lista planos ativos (não-deletados)
+router.get('/planos', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('pe_planos').select('*').is('deleted_at', null).order('periodo_inicio', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { console.error('[Expansion planos]', e.message); res.status(500).json({ error: 'Erro ao buscar planos' }); }
+});
+
+// POST /api/expansion/planos — novo plano
+router.post('/planos', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body || {};
+    if (!d.nome || !String(d.nome).trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    const { data, error } = await supabase.from('pe_planos').insert({
+      nome: String(d.nome).trim(), descricao: d.descricao || null,
+      periodo_inicio: d.periodo_inicio || null, periodo_fim: d.periodo_fim || null,
+      lider_id: d.lider_id || null, lider_nome: d.lider_nome || null,
+      status: d.status === 'encerrado' ? 'encerrado' : 'em_execucao',
+      created_by: req.user.userId,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Expansion plano create]', e.message); res.status(500).json({ error: 'Erro ao criar plano' }); }
+});
+
+// PUT /api/expansion/planos/:id — editar
+router.put('/planos/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body || {};
+    const allowed = ['nome', 'descricao', 'periodo_inicio', 'periodo_fim', 'lider_id', 'lider_nome', 'status', 'parecer', 'avaliacao', 'score_pct', 'snapshot'];
+    const update = {};
+    for (const k of allowed) { if (d[k] !== undefined) update[k] = d[k] === '' ? null : d[k]; }
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('pe_planos').update(update).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Expansion plano update]', e.message); res.status(500).json({ error: 'Erro ao atualizar plano' }); }
+});
+
+// POST /api/expansion/planos/:id/encerrar — fecha o plano + parecer documental + snapshot
+router.post('/planos/:id/encerrar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const d = req.body || {};
+    const { data, error } = await supabase.from('pe_planos').update({
+      status: 'encerrado',
+      parecer: d.parecer || null,
+      avaliacao: d.avaliacao || null,
+      score_pct: (d.score_pct === '' || d.score_pct == null) ? null : Number(d.score_pct),
+      snapshot: d.snapshot || null,
+      encerrado_em: new Date().toISOString(),
+      encerrado_por: req.user.userId,
+    }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Expansion plano encerrar]', e.message); res.status(500).json({ error: 'Erro ao encerrar plano' }); }
+});
+
+// POST /api/expansion/planos/:id/reabrir — reverte o encerramento
+router.post('/planos/:id/reabrir', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('pe_planos').update({
+      status: 'em_execucao', encerrado_em: null, encerrado_por: null,
+    }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao reabrir plano' }); }
+});
+
+// DELETE /api/expansion/planos/:id — soft delete (UPDATE deleted_at)
+router.delete('/planos/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    await supabase.from('pe_planos').update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao excluir plano' }); }
+});
+
 module.exports = router;
