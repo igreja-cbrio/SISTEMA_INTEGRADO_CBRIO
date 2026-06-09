@@ -41,7 +41,7 @@ gate de *abrir pra igreja*, **não** do piloto interno.
 | Cuidados | Marcelo Soares | Registrar encontro pastoral + encaminhar 1 convertido | [ ] |
 | Marketing | Pedro Paiva + equipe | Triagem → Kanban → entregar 1 campanha real | [ ] |
 | Solicitações | transversal (Amaury + Yago respondem) | Abrir 1 de cada tipo → diretor aprova → área atende → avaliar | [ ] |
-| Grupos | _líder de Grupos (confirmar)_ | Registrar encontro + presença + marcar líder em treino | [ ] |
+| Grupos | Pr. Nélio + Natasha (acesso total) | Registrar encontro + presença + marcar líder em treino | [ ] |
 
 ### Leva B — semana 2 (ou Onda 1.5)
 
@@ -51,7 +51,11 @@ gate de *abrir pra igreja*, **não** do piloto interno.
 | Financeiro | Yago Torres | Sensível; inclui a fila do agente executor | [ ] |
 | Painel/NSM + Dashboard Semanal | Marcos · Matheus · Juninho | Read-only → seguro de abrir pra diretoria | [ ] |
 | Eventos / Projetos | PMO | Ciclo criativo de 1 evento real ponta a ponta | [ ] |
-| Membresia | _confirmar (Matheus?)_ | Cadastro + jornada + merge de duplicados | [ ] |
+| Membresia | Matheus + Marcelo Soares | Cadastro + jornada + merge de duplicados · Marcelo confere dados (líder de jornada) | [ ] |
+
+### Acessos a configurar (antes de soltar)
+- **Grupos · Pr. Nélio + Natasha → acesso total (nível 5).** Em `/admin/permissoes` → aba Usuários → cada um → atribuir a **área "Grupos"** (o boost por área dá admin do módulo automático). Se ainda não têm login, criar a conta antes. Depois: logout/login pra renovar o acesso.
+- **Membresia · Matheus + Marcelo Soares.** Matheus (admin) já vê tudo; Marcelo (supervisor-jornada) já tem membresia nível 3 → confere dados de pessoas. Provável que nada precise mudar — confirmar em prod.
 
 ### Cadência
 - **Dia 0:** dar o link + 1 frase a cada dono — *"Usa normal. Quando travar ou confundir, clica em Reportar."*
