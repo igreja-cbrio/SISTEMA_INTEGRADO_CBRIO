@@ -2,8 +2,8 @@
 // MandalaSlide — uma mandala do carrossel do /painel
 //
 // Modos:
-//   - geral: 5 petalas (valores), centro mostra "5 valores"
-//   - por_valor: 6 petalas (áreas), centro mostra % geral do valor
+//   - geral: 5 petalas (valores), pétala = número absoluto do valor (mês), centro "5 valores"
+//   - por_valor: 6 petalas (áreas), pétala = "X/Y no alvo", centro = número absoluto do valor (mês)
 //
 // Cada petala tem cor base do valor (no modo geral, cor própria de cada valor;
 // no modo por_valor, cor única do valor com opacidade variando por status).
@@ -53,8 +53,9 @@ function annularSector(rOuter, rInner, startAngle, endAngle) {
  *   data: dados da mandala (depende do modo)
  *   onPetalClick?: (item) => void
  */
-export default function MandalaSlide({ modo, data, onPetalClick }) {
+export default function MandalaSlide({ modo, data, onPetalClick, mes }) {
   const isGeral = modo === 'geral';
+  const fmt = (v) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toLocaleString('pt-BR'));
 
   // Petalas: 5 (valores) ou 6 (áreas) ou N
   const items = isGeral ? data.valores : data.areas;
@@ -99,13 +100,13 @@ export default function MandalaSlide({ modo, data, onPetalClick }) {
   }
 
   // Centro: depende do modo
+  // geral  -> "5 / valores monitorados" (não soma · unidades diferentes por valor)
+  // por_valor -> número absoluto do valor no mês + "unidade · mês"
   const centroLabel = isGeral ? 'CBRio · 5 Valores' : data.label;
-  const centroValor = isGeral
-    ? `${items.length}`
-    : data.tem_dados ? `${data.percentual_geral}%` : '—';
+  const centroValor = isGeral ? `${items.length}` : fmt(data.numero);
   const centroSub = isGeral
     ? 'valores monitorados'
-    : data.tem_dados ? `${data.em_dia} de ${data.total_kpis} em dia` : 'aguardando dados';
+    : ([data.unidade, mes].filter(Boolean).join(' · ') || 'sem dado');
 
   return (
     <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
@@ -140,10 +141,10 @@ export default function MandalaSlide({ modo, data, onPetalClick }) {
               filter={`url(#petal-shadow-${modo})`}
             />
             <foreignObject
-              x={s.labelX - 50}
-              y={s.labelY - 26}
-              width="100"
-              height="52"
+              x={s.labelX - 52}
+              y={s.labelY - 30}
+              width="104"
+              height="60"
               style={{ pointerEvents: 'none' }}
             >
               <div style={{
@@ -154,19 +155,30 @@ export default function MandalaSlide({ modo, data, onPetalClick }) {
                 textAlign: 'center', padding: '0 4px',
               }}>
                 <div style={{
-                  fontSize: 9.5, fontWeight: 700, lineHeight: 1.15,
+                  fontSize: 9, fontWeight: 700, lineHeight: 1.1,
                   marginBottom: 1.5,
                   textShadow: s.opacity > 0.45 ? '0 1px 2px rgba(0,0,0,0.18)' : 'none',
                 }}>
                   {(s.label || s.nome || '').replace(/\s+/g, ' ').slice(0, 16)}
                 </div>
                 <div style={{
-                  fontSize: 14, fontWeight: 800, lineHeight: 1,
+                  fontSize: 16, fontWeight: 800, lineHeight: 1,
                   fontVariantNumeric: 'tabular-nums',
                   textShadow: s.opacity > 0.45 ? '0 1px 2px rgba(0,0,0,0.2)' : 'none',
                 }}>
-                  {s.tem_dados ? `${s.percentual}%` : '—'}
+                  {isGeral
+                    ? fmt(s.numero)
+                    : (s.total_kpis > 0 ? `${s.em_dia}/${s.total_kpis}` : '—')}
                 </div>
+                {(isGeral ? s.unidade : (s.total_kpis > 0 ? 'no alvo' : '')) && (
+                  <div style={{
+                    fontSize: 7.5, fontWeight: 600, lineHeight: 1.1,
+                    marginTop: 1.5, opacity: 0.82,
+                    textShadow: s.opacity > 0.45 ? '0 1px 1px rgba(0,0,0,0.18)' : 'none',
+                  }}>
+                    {isGeral ? s.unidade : 'no alvo'}
+                  </div>
+                )}
               </div>
             </foreignObject>
           </g>

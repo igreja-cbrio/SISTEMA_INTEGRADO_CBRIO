@@ -61,12 +61,12 @@ export default function CarrosselMandalas() {
 
   // Slides: [geral, seguir, conectar, investir, servir, generosidade]
   const slides = data ? [
-    { tipo: 'geral', titulo: 'Visao Geral', sub: '5 valores da CBRio · agregado da igreja' },
+    { tipo: 'geral', titulo: 'Visao Geral', sub: '5 valores · pessoas engajadas neste mês' },
     ...VALORES_ORDEM.map(v => ({
       tipo: 'por_valor',
       key: v,
       titulo: data.por_valor[v]?.label || v,
-      sub: '6 áreas · % de KPIs em dia neste valor',
+      sub: 'Total do valor no centro · KPIs no alvo por área',
       cor: data.por_valor[v]?.cor,
     })),
   ] : [];
@@ -180,8 +180,8 @@ export default function CarrosselMandalas() {
             {/* Mandala */}
             <div style={{ width: '100%', maxWidth: 480, padding: '0 40px' }}>
               {slideAtual.tipo === 'geral'
-                ? <MandalaSlide modo="geral" data={data.geral} />
-                : <MandalaSlide modo="por_valor" data={data.por_valor[slideAtual.key]} />
+                ? <MandalaSlide modo="geral" data={data.geral} mes={data.mes} />
+                : <MandalaSlide modo="por_valor" data={data.por_valor[slideAtual.key]} mes={data.mes} />
               }
             </div>
 
