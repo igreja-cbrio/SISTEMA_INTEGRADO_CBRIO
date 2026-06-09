@@ -59,6 +59,15 @@ export const users = {
   me: () => get('/auth/me'),
 };
 
+// Onda 0 · loop de feedback do piloto
+export const feedback = {
+  enviar: (data) => post('/feedback', data),
+  list: (params) => get('/feedback' + (params ? '?' + new URLSearchParams(params) : '')),
+  resumo: () => get('/feedback/resumo'),
+  erros: () => get('/feedback/erros'),
+  atualizar: (id, data) => patch(`/feedback/${id}`, data),
+};
+
 export const events = {
   list: (params) => get('/events' + (params ? '?' + new URLSearchParams(params) : '')),
   dashboard: () => get('/events/dashboard'),

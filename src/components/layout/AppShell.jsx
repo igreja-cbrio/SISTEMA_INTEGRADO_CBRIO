@@ -5,6 +5,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
 import { supabase } from '../../supabaseClient';
 import ChatIAFloating from './ChatIAFloating';
+import FeedbackButton from '../FeedbackButton';
 import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
 import { playNotificationSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
@@ -56,6 +57,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
           { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao' },
+          { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
         ],
       },
     ],
@@ -484,6 +486,7 @@ export default function AppShell() {
       </main>
 
       <ChatIAFloating />
+      <FeedbackButton />
       <PrimeiroAcessoSenhaModal />
     </div>
   );
