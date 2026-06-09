@@ -96,7 +96,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
-          { label: 'Expansão', description: 'Marcos estratégicos · cascata até 2029', icon: Map, path: '/expansao', module: 'expansao' },
+          { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
         ],
       },
     ],
