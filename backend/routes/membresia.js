@@ -336,7 +336,12 @@ router.get('/membros', async (req, res) => {
       .order('nome');
 
     if (status) query = query.eq('status', status);
-    if (busca) query = query.ilike('nome', `%${busca}%`);
+    // Busca por tokens: "matheus toscano" casa "Matheus Ribeiro Toscano".
+    // Cada palavra vira um ILIKE (AND), case-insensitive, em qualquer ordem.
+    if (busca) {
+      const tokens = String(busca).trim().split(/\s+/).filter(Boolean).slice(0, 6);
+      for (const t of tokens) query = query.ilike('nome', `%${t}%`);
+    }
 
     const { data: membros, error } = await query;
     if (error) throw error;
