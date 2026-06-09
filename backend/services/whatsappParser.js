@@ -106,8 +106,28 @@ async function parseConversa({ texto, dicaModulo, dadosColetados }) {
 }
 
 // ── Assistente institucional (numeros desconhecidos) ────────────────
+// FAQ por palavra-chave · responde NA HORA (sem IA) as perguntas mais comuns,
+// usando so o conteudo cadastrado. Retorna null se nao casar (ai cai no Haiku).
+// As CHAVES sao sem acento (o texto do usuario e normalizado); as RESPOSTAS
+// (texto exibido) levam acentuacao correta do pt-BR.
+function faqInstitucional(texto, c) {
+  const norm = (texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!norm) return null;
+  const tem = (...ks) => ks.some(k => norm.includes(k));
+  if (c.horarios && tem('horario', 'que horas', 'quando', 'culto', 'programacao'))
+    return `Nossos horários de culto:\n${c.horarios}\n\nTe esperamos! 🙏`;
+  if (c.endereco && tem('endereco', 'onde fica', 'onde e', 'onde voces', 'como chegar', 'localizacao', 'mapa'))
+    return `Estamos em: ${c.endereco}\n\nTe esperamos! 🙏`;
+  if ((c.sobre || c.missao) && tem('missao', 'visao', 'quem sao', 'quem e a', 'sobre a igreja', 'valores'))
+    return [c.sobre, c.missao && `Nossa missão: ${c.missao}`].filter(Boolean).join('\n\n')
+      + '\n\nQualquer dúvida, é só chamar! 🙏';
+  return null;
+}
+
 async function responderInstitucional({ texto, institucional }) {
   const c = institucional || {};
+  const faq = faqInstitucional(texto, c);
+  if (faq) return faq; // resposta instantanea (sem IA) pras perguntas comuns
   const generico = 'Ola! Que bom falar com voce. 🙏 Sou o assistente da CBRio. '
     + 'Posso te ajudar com horarios de culto e informacoes sobre a igreja. '
     + (c.horarios ? `\n\nNossos cultos:\n${c.horarios}` : '');

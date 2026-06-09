@@ -2,50 +2,14 @@
   "version": "7.0",
   "screens": [
     {
-      "id": "SELECIONAR_CULTO",
-      "title": "Qual culto?",
+      "id": "FREQUENCIA",
+      "title": "Frequência",
       "data": {
         "cultos": {
           "type": "array",
           "items": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" } } },
-          "__example__": [
-            { "id": "exemplo", "title": "Domingo 10:00 · 08/06" }
-          ]
+          "__example__": [ { "id": "exemplo", "title": "Domingo 10:00 · 08/06" } ]
         }
-      },
-      "layout": {
-        "type": "SingleColumnLayout",
-        "children": [
-          {
-            "type": "Form",
-            "name": "form_culto",
-            "children": [
-              {
-                "type": "Dropdown",
-                "name": "culto_id",
-                "label": "Culto",
-                "required": true,
-                "data-source": "${data.cultos}"
-              },
-              {
-                "type": "Footer",
-                "label": "Continuar",
-                "on-click-action": {
-                  "name": "navigate",
-                  "next": { "type": "screen", "name": "FREQUENCIA" },
-                  "payload": { "culto_id": "${form.culto_id}" }
-                }
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "FREQUENCIA",
-      "title": "Frequência",
-      "data": {
-        "culto_id": { "type": "string", "__example__": "x" }
       },
       "layout": {
         "type": "SingleColumnLayout",
@@ -57,7 +21,6 @@
               { "type": "TextSubheading", "text": "Quantas pessoas no culto?" },
               { "type": "TextInput", "name": "presencial", "label": "Presencial (adultos)", "input-type": "number", "required": false },
               { "type": "TextInput", "name": "kids", "label": "Kids", "input-type": "number", "required": false },
-              { "type": "TextInput", "name": "online", "label": "Online (pico)", "input-type": "number", "required": false },
               {
                 "type": "Footer",
                 "label": "Continuar",
@@ -65,10 +28,9 @@
                   "name": "navigate",
                   "next": { "type": "screen", "name": "DECISOES" },
                   "payload": {
-                    "culto_id": "${data.culto_id}",
+                    "cultos": "${data.cultos}",
                     "presencial": "${form.presencial}",
-                    "kids": "${form.kids}",
-                    "online": "${form.online}"
+                    "kids": "${form.kids}"
                   }
                 }
               }
@@ -80,12 +42,14 @@
     {
       "id": "DECISOES",
       "title": "Decisões",
-      "terminal": true,
       "data": {
-        "culto_id": { "type": "string", "__example__": "x" },
+        "cultos": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" } } },
+          "__example__": [ { "id": "exemplo", "title": "Domingo 10:00 · 08/06" } ]
+        },
         "presencial": { "type": "number", "__example__": 0 },
-        "kids": { "type": "number", "__example__": 0 },
-        "online": { "type": "number", "__example__": 0 }
+        "kids": { "type": "number", "__example__": 0 }
       },
       "layout": {
         "type": "SingleColumnLayout",
@@ -100,17 +64,68 @@
               { "type": "TextInput", "name": "dec_kids", "label": "Decisões Kids", "input-type": "number", "required": false },
               {
                 "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": { "type": "screen", "name": "SELECIONAR_CULTO" },
+                  "payload": {
+                    "cultos": "${data.cultos}",
+                    "presencial": "${data.presencial}",
+                    "kids": "${data.kids}",
+                    "dec_presencial": "${form.dec_presencial}",
+                    "dec_online": "${form.dec_online}",
+                    "dec_kids": "${form.dec_kids}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SELECIONAR_CULTO",
+      "title": "Qual culto?",
+      "terminal": true,
+      "data": {
+        "cultos": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" } } },
+          "__example__": [ { "id": "exemplo", "title": "Domingo 10:00 · 08/06" } ]
+        },
+        "presencial": { "type": "number", "__example__": 0 },
+        "kids": { "type": "number", "__example__": 0 },
+        "dec_presencial": { "type": "number", "__example__": 0 },
+        "dec_online": { "type": "number", "__example__": 0 },
+        "dec_kids": { "type": "number", "__example__": 0 }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "form_culto",
+            "children": [
+              { "type": "TextSubheading", "text": "De qual culto são esses dados?" },
+              {
+                "type": "Dropdown",
+                "name": "culto_id",
+                "label": "Culto",
+                "required": true,
+                "data-source": "${data.cultos}"
+              },
+              {
+                "type": "Footer",
                 "label": "Enviar",
                 "on-click-action": {
                   "name": "complete",
                   "payload": {
-                    "culto_id": "${data.culto_id}",
+                    "culto_id": "${form.culto_id}",
                     "presencial": "${data.presencial}",
                     "kids": "${data.kids}",
-                    "online": "${data.online}",
-                    "dec_presencial": "${form.dec_presencial}",
-                    "dec_online": "${form.dec_online}",
-                    "dec_kids": "${form.dec_kids}"
+                    "dec_presencial": "${data.dec_presencial}",
+                    "dec_online": "${data.dec_online}",
+                    "dec_kids": "${data.dec_kids}"
                   }
                 }
               }

@@ -2,6 +2,50 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Bot WhatsApp · Flows — REDESENHO + root cause do bloqueio (2026-06-09)
+
+**ROOT CAUSE do `Integrity requirements not met`:** a **WABA estava BLOCKED por
+falta de método de pagamento** (`error 141006`) — NÃO era app não-publicado
+(FLOW/APP/BUSINESS = AVAILABLE no `health_status`). Marcos adicionou cartão → WABA
+virou AVAILABLE. Resta a trava de integridade de **publicar/enviar Flow**
+(139000/4233020), provável **propagação pós-pagamento** (cai em horas/~48h após a
+conta ficar 100% conforme). Diagnóstico via scripts (untracked-ish · só ops, não
+runtime): `backend/scripts/_publish_flows_existentes.js` (GET `health_status` +
+publish dos flows existentes), `_diag_whatsapp.js` (coletas · timestamps em **UTC**,
+BRT = −3), `_atualizar_flow_culto.js` (sobe o JSON novo pro flow existente). HMAC,
+webhook, campo `messages` e `ia_ativa` estão OK (a msg chega e grava coleta).
+
+**REDESENHO do fluxo (decisões do Marcos · 2026-06-09):**
+- **Cadastro de pessoa SAIU do WhatsApp.** O Flow coleta só os **números**
+  (frequência + nº de decisões). O cadastro nominal das pessoas que decidiram é no
+  **computador** (aba Decisões → Pessoas do `/integracao` · reusa o que já existe).
+  `flow-pessoa.json` e o loop `enviarFormularioPessoa`/token `pessoa:` foram
+  **REMOVIDOS** · a coleta do culto vira `parseado` direto. `parsed.a_cadastrar` =
+  nº de decisões a cadastrar no desktop. `aplicarColetaFlow` (routes/whatsapp.js)
+  só cria as submissões templo/kids (não cria mais `cultos_decisoes_pessoas`).
+- **Formulário do culto reordenado** (`flow-culto.json` · 1 Flow, 3 telas):
+  **Frequência** (presencial + kids) → **Decisões** (presencial + online + kids) →
+  **Qual culto?** (dropdown com as datas, no fim). Cultos vão **pré-carregados no
+  envio** e a navegação entre telas é **local/instantânea** — por isso 1 Flow é
+  melhor que 2 formulários (que pagariam a entrega da Meta 2×; não há latência entre
+  telas pra esconder). **Frequência ONLINE removida** do form (vem da API ·
+  `online_pico`). **Decisões online** ficam no form mas NÃO viram submissão
+  (`cultos_dados_submissoes.ambiente` só aceita templo/kids) → vão na **observação**
+  pro coordenador lançar na aba Online. ⚠️ números encadeados entre telas = `type:number`.
+- **Mensagens padrão (sem IA · corta latência):** saudação + confirmação
+  **personalizadas com o 1º nome** (`whatsappFlowColeta.js`); **FAQ institucional
+  por palavra-chave** (`whatsappParser.js` `faqInstitucional()` · horários/endereço/
+  missão) responde na hora sem Haiku · IA só pra texto livre com números ou pergunta
+  institucional fora do padrão. (Form-trigger `pedeFormulario` já era sem-LLM.)
+- `flowsConfigurados()` deixou de exigir `WHATSAPP_FLOW_PESSOA_ID` (só `FLOW_CULTO_ID`).
+- ⚠️ **Pra ativar quando a Meta liberar (em ordem):** (1) `node
+  backend/scripts/_atualizar_flow_culto.js` (sobe o JSON novo no flow
+  `1163668689265932` · precisa `WHATSAPP_ACCESS_TOKEN` no .env); (2)
+  `_publish_flows_existentes.js` ou publicar pela UI; (3) **remover
+  `WHATSAPP_FLOW_MODE=draft` do Vercel**; (4) redeploy; (5) testar
+  ("quero lançar culto" → deve abrir o formulário). Enquanto isso, o bot **já coleta
+  por TEXTO** (fallback conversacional).
+
 ## Bot WhatsApp · coleta por FORMULÁRIO (WhatsApp Flows · 2026-06-08)
 
 Marcos pediu um **formulário nativo** (WhatsApp Flows) pra facilitar o
