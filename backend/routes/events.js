@@ -200,30 +200,63 @@ router.put('/:id', authorize('diretor', 'admin'), async (req, res) => {
     if (d.project_id !== undefined) updatePayload.project_id = d.project_id || null;
     if (d.status !== undefined && VALID_EVENT_STATUS.includes(d.status)) updatePayload.status = d.status;
 
-    const { data, error } = await supabase.from('events').update(updatePayload).eq('id', req.params.id).select().single();
-    if (error) throw error;
+    // ── UPDATE PRIMÁRIO — único que pode retornar 500 ──
+    // Mesma política do PATCH /:id/status: o write primário decide a resposta;
+    // tudo que vem depois (recálculo de ciclo, audit, sync, select) é
+    // best-effort e só LOGA. Antes, uma falha lateral (ex: data inválida numa
+    // fase/tarefa do ciclo durante o recálculo → RangeError em toISOString)
+    // caía no catch genérico → 500, MAS o evento já tinha sido gravado → UX
+    // confusa ("Erro ao atualizar evento" porém a mudança aparece ao recarregar).
+    const { error: updErr } = await supabase.from('events').update(updatePayload).eq('id', req.params.id);
+    if (updErr) {
+      console.error('[Events PUT] update primário:', { id: req.params.id, message: updErr.message, code: updErr.code, details: updErr.details, hint: updErr.hint });
+      return res.status(500).json({ error: `Erro ao atualizar evento: ${updErr.message}`, code: updErr.code });
+    }
 
-    // Se a data mudou, recalcular ciclo criativo
+    // ── Daqui pra frente: tudo best-effort (não derruba a resposta) ──
+
+    // Se a data mudou, recalcular ciclo criativo (datas inválidas não quebram)
     if (oldEvent.date && d.date && oldEvent.date !== d.date) {
-      const diffDays = Math.round((new Date(d.date) - new Date(oldEvent.date)) / 86400000);
-      if (diffDays !== 0) {
-        const { data: phases } = await supabase.from('event_cycle_phases').select('id, data_inicio_prevista, data_fim_prevista').eq('event_id', req.params.id);
-        for (const phase of (phases || [])) {
-          const updates = {};
-          if (phase.data_inicio_prevista) { const nd = new Date(phase.data_inicio_prevista); nd.setDate(nd.getDate() + diffDays); updates.data_inicio_prevista = nd.toISOString().split('T')[0]; }
-          if (phase.data_fim_prevista) { const nd = new Date(phase.data_fim_prevista); nd.setDate(nd.getDate() + diffDays); updates.data_fim_prevista = nd.toISOString().split('T')[0]; }
-          if (Object.keys(updates).length > 0) await supabase.from('event_cycle_phases').update(updates).eq('id', phase.id);
+      try {
+        const diffDays = Math.round((new Date(d.date) - new Date(oldEvent.date)) / 86400000);
+        const shiftDate = (val) => {
+          const base = new Date(val);
+          if (isNaN(base.getTime())) return null;
+          base.setDate(base.getDate() + diffDays);
+          return base.toISOString().split('T')[0];
+        };
+        if (Number.isFinite(diffDays) && diffDays !== 0) {
+          const { data: phases } = await supabase.from('event_cycle_phases').select('id, data_inicio_prevista, data_fim_prevista').eq('event_id', req.params.id);
+          for (const phase of (phases || [])) {
+            const updates = {};
+            const ini = phase.data_inicio_prevista ? shiftDate(phase.data_inicio_prevista) : null;
+            const fim = phase.data_fim_prevista ? shiftDate(phase.data_fim_prevista) : null;
+            if (ini) updates.data_inicio_prevista = ini;
+            if (fim) updates.data_fim_prevista = fim;
+            if (Object.keys(updates).length > 0) await supabase.from('event_cycle_phases').update(updates).eq('id', phase.id);
+          }
+          const { data: tasks } = await supabase.from('cycle_phase_tasks').select('id, prazo').eq('event_id', req.params.id).not('prazo', 'is', null);
+          for (const task of (tasks || [])) { const novo = shiftDate(task.prazo); if (novo) await supabase.from('cycle_phase_tasks').update({ prazo: novo }).eq('id', task.id); }
         }
-        const { data: tasks } = await supabase.from('cycle_phase_tasks').select('id, prazo').eq('event_id', req.params.id).not('prazo', 'is', null);
-        for (const task of (tasks || [])) { const nd = new Date(task.prazo); nd.setDate(nd.getDate() + diffDays); await supabase.from('cycle_phase_tasks').update({ prazo: nd.toISOString().split('T')[0] }).eq('id', task.id); }
+      } catch (cascErr) {
+        console.error('[Events PUT] recalcular ciclo (não-bloqueante):', cascErr?.message);
       }
     }
 
-    await supabase.from('audit_log').insert({ table_name: 'events', record_id: req.params.id, event_id: req.params.id, action: 'update', description: `Evento "${oldEvent.name}" atualizado`, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+    try {
+      await supabase.from('audit_log').insert({ table_name: 'events', record_id: req.params.id, event_id: req.params.id, action: 'update', description: `Evento "${oldEvent.name}" atualizado`, changed_by: req.user.userId, changed_by_name: req.user.name });
+    } catch (auditErr) { console.error('[Events PUT] audit_log (não-bloqueante):', auditErr?.message); }
 
     enqueueSync('evento', req.params.id, 'upsert').catch(() => {});
 
-    res.json(data);
+    // Select pós-update best-effort — se falhar, devolve o payload aplicado.
+    let data = null;
+    try {
+      const sel = await supabase.from('events').select().eq('id', req.params.id).single();
+      data = sel.data;
+    } catch (selErr) { console.error('[Events PUT] select pós-update (não-bloqueante):', selErr?.message); }
+
+    res.json(data || { id: req.params.id, ...updatePayload });
   } catch (e) { console.error('[Events PUT]', e.message); res.status(500).json({ error: 'Erro ao atualizar evento' }); }
 });
 
@@ -360,51 +393,69 @@ router.patch('/:id/status', async (req, res) => {
 
 // DELETE /api/events/:id — excluir evento (diretor+) com cascade
 router.delete('/:id', authorize('diretor', 'admin'), async (req, res) => {
+  const eid = req.params.id;
   try {
-    if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
-    const eid = req.params.id;
+    if (!isUUID(eid)) return res.status(400).json({ error: 'ID inválido' });
 
-    // Cascade: limpar tabelas dependentes
+    // Cascade best-effort: a falha de um passo dependente só LOGA, nunca derruba
+    // a exclusão. O DELETE primário (events) é o único que decide a resposta —
+    // evita "Erro ao excluir evento" depois do banco já ter apagado o registro.
+    const safe = async (label, q) => {
+      try { const r = await q; if (r?.error) console.error(`[Events DELETE] ${label} (não-bloqueante):`, r.error.message); }
+      catch (e) { console.error(`[Events DELETE] ${label} (não-bloqueante):`, e?.message); }
+    };
+
     await Promise.all([
-      supabase.from('event_task_attachments').delete().eq('event_id', eid),
-      supabase.from('card_completions').delete().eq('event_id', eid),
-      supabase.from('event_reports').delete().eq('event_id', eid),
-      supabase.from('event_risks').delete().eq('event_id', eid),
-      supabase.from('event_retrospectives').delete().eq('event_id', eid),
-      supabase.from('audit_log').delete().eq('event_id', eid),
-    ]).catch(() => {});
+      safe('event_task_attachments', supabase.from('event_task_attachments').delete().eq('event_id', eid)),
+      safe('card_completions', supabase.from('card_completions').delete().eq('event_id', eid)),
+      safe('event_reports', supabase.from('event_reports').delete().eq('event_id', eid)),
+      safe('event_risks', supabase.from('event_risks').delete().eq('event_id', eid)),
+      safe('event_retrospectives', supabase.from('event_retrospectives').delete().eq('event_id', eid)),
+      safe('audit_log', supabase.from('audit_log').delete().eq('event_id', eid)),
+    ]);
 
     // Tarefas do ciclo e subtarefas
-    const { data: cycleTasks } = await supabase.from('cycle_phase_tasks').select('id').eq('event_id', eid);
-    if (cycleTasks?.length > 0) {
-      const ctIds = cycleTasks.map(t => t.id);
-      await supabase.from('cycle_task_subtasks').delete().in('task_id', ctIds).catch(() => {});
-      await supabase.from('cycle_phase_tasks').delete().eq('event_id', eid);
-    }
-    await supabase.from('event_cycle_phases').delete().eq('event_id', eid).catch(() => {});
-    await supabase.from('event_cycles').delete().eq('event_id', eid).catch(() => {});
+    try {
+      const { data: cycleTasks } = await supabase.from('cycle_phase_tasks').select('id').eq('event_id', eid);
+      if (cycleTasks?.length > 0) {
+        await safe('cycle_task_subtasks', supabase.from('cycle_task_subtasks').delete().in('task_id', cycleTasks.map(t => t.id)));
+        await safe('cycle_phase_tasks', supabase.from('cycle_phase_tasks').delete().eq('event_id', eid));
+      }
+    } catch (e) { console.error('[Events DELETE] cycle tasks (não-bloqueante):', e?.message); }
+    await safe('event_cycle_phases', supabase.from('event_cycle_phases').delete().eq('event_id', eid));
+    await safe('event_cycles', supabase.from('event_cycles').delete().eq('event_id', eid));
 
     // Tarefas do evento e subtarefas
-    const { data: evTasks } = await supabase.from('event_tasks').select('id').eq('event_id', eid);
-    if (evTasks?.length > 0) {
-      const etIds = evTasks.map(t => t.id);
-      await supabase.from('event_task_subtasks').delete().in('task_id', etIds).catch(() => {});
-      await supabase.from('event_task_comments').delete().in('task_id', etIds).catch(() => {});
-      await supabase.from('event_tasks').delete().eq('event_id', eid);
-    }
+    try {
+      const { data: evTasks } = await supabase.from('event_tasks').select('id').eq('event_id', eid);
+      if (evTasks?.length > 0) {
+        const etIds = evTasks.map(t => t.id);
+        await safe('event_task_subtasks', supabase.from('event_task_subtasks').delete().in('task_id', etIds));
+        await safe('event_task_comments', supabase.from('event_task_comments').delete().in('task_id', etIds));
+        await safe('event_tasks', supabase.from('event_tasks').delete().eq('event_id', eid));
+      }
+    } catch (e) { console.error('[Events DELETE] event tasks (não-bloqueante):', e?.message); }
 
     // Reuniões e pendências
-    const { data: meets } = await supabase.from('meetings').select('id').eq('event_id', eid);
-    if (meets?.length > 0) {
-      await supabase.from('pendencies').delete().in('meeting_id', meets.map(m => m.id)).catch(() => {});
-      await supabase.from('meetings').delete().eq('event_id', eid);
+    try {
+      const { data: meets } = await supabase.from('meetings').select('id').eq('event_id', eid);
+      if (meets?.length > 0) {
+        await safe('pendencies', supabase.from('pendencies').delete().in('meeting_id', meets.map(m => m.id)));
+        await safe('meetings', supabase.from('meetings').delete().eq('event_id', eid));
+      }
+    } catch (e) { console.error('[Events DELETE] meetings (não-bloqueante):', e?.message); }
+
+    await safe('event_occurrences', supabase.from('event_occurrences').delete().eq('event_id', eid));
+
+    // ── DELETE PRIMÁRIO — único que decide sucesso/erro ──
+    const { error: delErr } = await supabase.from('events').delete().eq('id', eid);
+    if (delErr) {
+      console.error('[Events DELETE] delete primário:', { eid, message: delErr.message, code: delErr.code, details: delErr.details, hint: delErr.hint });
+      return res.status(500).json({ error: `Erro ao excluir evento: ${delErr.message}`, code: delErr.code });
     }
 
-    await supabase.from('event_occurrences').delete().eq('event_id', eid).catch(() => {});
-    await supabase.from('events').delete().eq('id', eid);
-
     res.json({ success: true });
-  } catch (e) { console.error('[Events DELETE]', e.message); res.status(500).json({ error: 'Erro ao excluir evento' }); }
+  } catch (e) { console.error('[Events DELETE]', e?.message); res.status(500).json({ error: 'Erro ao excluir evento' }); }
 });
 
 // Helper: recalcular status do evento
