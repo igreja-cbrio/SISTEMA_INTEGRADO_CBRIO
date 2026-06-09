@@ -491,6 +491,16 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
       console.error('[PublicVol/inscrever-form] notificar:', e.message);
     }
 
+    // Mensagem automática de boas-vindas no WhatsApp (se ligada na config).
+    try {
+      const { dispararAuto } = require('../services/whatsappAuto');
+      await dispararAuto('voluntariado_inscricao', {
+        refId: insc.id, telefone: cleanTelefone, nome: nomeCompleto, origem: 'formulario_publico',
+      });
+    } catch (e) {
+      console.error('[PublicVol/inscrever-form] whatsapp:', e.message);
+    }
+
     return res.json({ ok: true, id: insc.id });
   } catch (err) {
     console.error('[PublicVol/inscrever-form] error:', err.message);

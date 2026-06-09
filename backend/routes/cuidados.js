@@ -3,8 +3,13 @@ const { authenticate, authorize, authorizeModule } = require('../middleware/auth
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
+const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 
 router.use(authenticate);
+
+// Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
+// (config/edição em /whatsapp-auto/* · gerencia a chave 'cuidados_aconselhamento')
+mountWhatsappAuto(router, { chave: 'cuidados_aconselhamento', modulo: 'cuidados', authorizeModule });
 
 // Helper: limpa CPF (somente dígitos)
 function cleanCpf(cpf) {

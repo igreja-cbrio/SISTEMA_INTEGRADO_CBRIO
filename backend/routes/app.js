@@ -6,6 +6,7 @@ const router   = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { dispararAuto } = require('../services/whatsappAuto');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -344,6 +345,15 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       }).catch(e => console.warn('[APP] inscricoes · notificar:', e.message));
     }
 
+    // Mensagem automática de WhatsApp pro membro que pediu aconselhamento pastoral.
+    if (tipo === 'aconselhamento') {
+      try {
+        await dispararAuto('cuidados_aconselhamento', {
+          refId: inserted.id, telefone: dados.telefone, nome: dados.nome, origem: 'app',
+        });
+      } catch (e) { console.warn('[APP] aconselhamento whatsapp:', e.message); }
+    }
+
     res.status(201).json({ ok: true, id: inserted.id, message: 'Solicitação recebida! Nossa equipe entrará em contato.' });
   } catch (e) {
     console.error('[APP] inscricoes:', e.message);
@@ -479,6 +489,21 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
       },
     });
     if (error) throw error;
+
+    // A trigger de fan-out já criou a inscrição em vol_inscricoes · busca o id
+    // pra logar/idempotência e dispara a mensagem de boas-vindas no WhatsApp.
+    try {
+      const { data: vi } = await supabase.from('vol_inscricoes')
+        .select('id').eq('membro_id', membro.id).eq('status', 'inscrito')
+        .order('data_inscricao', { ascending: false }).limit(1).maybeSingle();
+      await dispararAuto('voluntariado_inscricao', {
+        refId: vi?.id || null,
+        telefone: membro.telefone,
+        nome: membro.nome,
+        origem: 'app',
+      });
+    } catch (e) { console.warn('[APP vol/solicitar-area] whatsapp:', e.message); }
+
     res.status(201).json({ ok: true, message: 'Pedido enviado! A coordenação de voluntários vai falar com você.' });
   } catch (e) {
     console.error('[APP vol/solicitar-area]', e.message);

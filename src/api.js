@@ -1612,6 +1612,13 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)
+  whatsappAuto: {
+    config: () => get('/voluntariado/whatsapp-auto/config'),
+    saveConfig: (data) => put('/voluntariado/whatsapp-auto/config', data),
+    testar: (telefone, nome) => post('/voluntariado/whatsapp-auto/testar', { telefone, nome }),
+    envios: () => get('/voluntariado/whatsapp-auto/envios'),
+  },
   // Opções do formulário público ("Onde você quer servir")
   formOpcoes: {
     list: () => get('/voluntariado/form-opcoes'),
@@ -1898,6 +1905,13 @@ export const cuidados = {
   pedidosApp: {
     list: (params) => get('/cuidados/pedidos-app' + (params ? '?' + new URLSearchParams(params) : '')),
     updateStatus: (id, tratamento_status) => patch(`/cuidados/pedidos-app/${id}`, { tratamento_status }),
+  },
+  // Mensagem automática de WhatsApp (quando o membro pede aconselhamento pastoral)
+  whatsappAuto: {
+    config: () => get('/cuidados/whatsapp-auto/config'),
+    saveConfig: (data) => put('/cuidados/whatsapp-auto/config', data),
+    testar: (telefone, nome) => post('/cuidados/whatsapp-auto/testar', { telefone, nome }),
+    envios: () => get('/cuidados/whatsapp-auto/envios'),
   },
   jornada180: {
     list: (params) => get('/cuidados/jornada180' + (params ? '?' + new URLSearchParams(params) : '')),
