@@ -28,7 +28,7 @@ const PAGES: SearchItem[] = [
   { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos' },
   { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos' },
   { label: 'Planejamento', description: 'Visão consolidada PMO', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
-  { label: 'Expansão', description: 'Metas de expansão', path: '/expansao', icon: Map, category: 'Projetos e Eventos' },
+  { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos' },
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial' },
   { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial' },
 ]

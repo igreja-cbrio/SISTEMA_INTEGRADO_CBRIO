@@ -203,7 +203,7 @@ export function AuthProvider({ children }) {
   const canPatrimonio = canAccessModule(['patrimonio', 'Patrimônio']);
   const canMembresia = canAccessModule(['membresia', 'Membresia']);
   const canProjetos = canAccessModule(['projetos', 'Projetos', 'Tarefas']);
-  const canExpansao = canAccessModule(['expansao', 'Expansão', 'Projetos']);
+  const canExpansao = canAccessModule(['expansao', 'Planejamento Estratégico', 'Expansão', 'Projetos']);
   const canAgenda = canAccessModule(['eventos', 'Eventos', 'Agenda']);
   const canIAModulo = canAccessModule(['assistente-ia', 'Assistente IA', 'IA / Agentes']);
   const canKPIs = isAdmin || canAccessModule(['minha-area', 'Minha Área', 'KPIs', 'Indicadores']);

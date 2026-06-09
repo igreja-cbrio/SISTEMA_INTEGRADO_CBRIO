@@ -233,7 +233,7 @@ function KpiBar({ items }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TAB_LABELS = ['Visao Geral', 'Timeline', 'Marcos', 'Gantt'];
+const TAB_LABELS = ['Visão Geral', 'Timeline', 'Marcos', 'Gantt'];
 
 // ═══════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -1389,7 +1389,7 @@ export default function Expansao() {
     <div style={styles.page}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 60, gap: 12 }}>
         <div style={{ width: 28, height: 28, border: `3px solid ${C.border}`, borderTopColor: C.primary, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <span style={{ fontSize: 13, color: C.t3 }}>Carregando plano de expansão...</span>
+        <span style={{ fontSize: 13, color: C.t3 }}>Carregando planejamento estratégico...</span>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     </div>
@@ -1400,8 +1400,8 @@ export default function Expansao() {
       {/* Header */}
       <div style={styles.header}>
         <div>
-          <div style={styles.title}>Plano de Expansão 2026-2029</div>
-          <div style={styles.subtitle}>Quadrienio estrategico {'\u2014'} Pr. Pedrao</div>
+          <div style={styles.title}>Planejamento Estratégico</div>
+          <div style={styles.subtitle}>Plano vigente: Expans\u00e3o {'\u00b7'} Quadri\u00eanio 2026{'\u2013'}2029 {'\u00b7'} Pr. Pedr\u00e3o</div>
         </div>
         {canEdit && (
           <button style={styles.btn('primary')} onClick={() => setModalMilestone({})}>

@@ -62,7 +62,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
       { label: "Projetos", path: "/projetos", icon: FolderKanban, roles: ["admin", "diretor"] },
-      { label: "Expansão", path: "/expansao", icon: Map, roles: ["admin", "diretor"] },
+      { label: "Planejamento Estratégico", path: "/expansao", icon: Map, roles: ["admin", "diretor"] },
     ],
   },
   {
