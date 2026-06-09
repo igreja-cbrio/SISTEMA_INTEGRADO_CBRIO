@@ -5703,6 +5703,18 @@ endpoint `GET /api/painel/nsm/pessoas`):
   universo). `?segmento=online` legado segue aceito. A página agora LÊ os
   query params da URL — os deep links dos cards NSM do `/painel`
   (`?segmento=online&engajados=false`) passaram a funcionar (antes ignorados).
+- **v3 · fetch único + filtros instantâneos (2026-06-09)**: a página busca
+  TUDO 1x no mount (universo do ano com `janela=acumulado&limit=1000` + a aba
+  Sem dados com `dias=366`, em paralelo) e deriva Janela/Origem/Engajamento/
+  valores client-side — useMemo espelhando o `matchFiltro` e a janela de
+  engajamento do backend (recorte 30/60/90 = decisões em [fim−N, fim] ·
+  atividades contam em [decisão, min(decisão+N, fim)]). Trocar filtro não faz
+  round-trip; só trocar o **Ano** refaz o fetch. Backend intocado (os params
+  do endpoint seguem suportados). ⚠️ payload capado em 1000 pessoas/ano —
+  revisitar se um ano passar disso (paginação server-side).
+- **Aba "Sem dados" só lista pendência**: cultos `gap_status='completo'`
+  ficam fora da lista (nota informa quantos foram ocultados) · os 4 cards
+  seguem resumindo o recorte inteiro (decisões × registradas × gap).
 
 ### Carrossel de valores (tendencias temporais · `/painel`)
 

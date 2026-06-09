@@ -14,7 +14,14 @@
 //     já cumpre o valor — as atividades (1º Contato/Batismo/Next) refinam.
 //   - Status: Todos / Engajados / Não engajados.
 //   - E entre valores, OU entre atividades do mesmo valor.
-//   - Os 4 cards de números acompanham o filtro ativo (match_* do backend).
+//   - Os 4 cards de números acompanham o filtro ativo.
+//
+// Dados (v3): fetch ÚNICO no mount — universo do ano (janela=acumulado) +
+// aba Sem dados (366d), em paralelo. Todos os filtros derivam client-side
+// (useMemo espelhando a janela de engajamento e o matchFiltro do backend),
+// então trocar Janela/Origem/Engajamento/valores é instantâneo; só trocar o
+// Ano refaz o fetch. A aba Sem dados lista SÓ culto com pessoa faltando
+// (parcial/nenhuma registrada) · completos ficam fora (nota mostra quantos).
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
@@ -76,6 +83,13 @@ const TIPO_OPCOES = [
   { id: 'online', label: 'Online' },
 ];
 
+// Soma N dias (negativo subtrai) numa data ISO YYYY-MM-DD.
+const addDias = (iso, n) => {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
 export default function PainelNsmPessoas() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -100,10 +114,17 @@ export default function PainelNsmPessoas() {
   const [valoresSel, setValoresSel] = useState(() => new Set());
   const [atividadesSel, setAtividadesSel] = useState(() => new Set()); // "valor:atividade"
 
-  const [data, setData] = useState(null);
-  const [semDados, setSemDados] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [erro, setErro] = useState(null);
+  // Fetch ÚNICO por ano: busca o universo inteiro (janela=acumulado, sem
+  // filtros) e deriva janela/origem/engajamento/valores client-side — trocar
+  // filtro não faz round-trip nenhum. ⚠️ payload capado em 1000 pessoas/ano.
+  const [universo, setUniverso] = useState(null);
+  const [loadingPessoas, setLoadingPessoas] = useState(true);
+  const [erroPessoas, setErroPessoas] = useState(null);
+
+  // Aba Sem dados: 1 fetch de 366d no mount · a janela recorta client-side.
+  const [semDadosRaw, setSemDadosRaw] = useState(null);
+  const [loadingSemDados, setLoadingSemDados] = useState(true);
+  const [erroSemDados, setErroSemDados] = useState(null);
 
   const anos = useMemo(() => {
     const arr = [];
@@ -111,31 +132,121 @@ export default function PainelNsmPessoas() {
     return arr;
   }, [anoAtual]);
 
-  const valoresKey = [...valoresSel].sort().join(',');
-  const atividadesKey = [...atividadesSel].sort().join(',');
+  useEffect(() => {
+    let vivo = true;
+    setLoadingPessoas(true); setErroPessoas(null); setUniverso(null);
+    painelApi.nsmPessoas({ ano, janela: 'acumulado', status: 'todos', tipo: 'todos', limit: 1000 })
+      .then(d => { if (vivo) setUniverso(d); })
+      .catch(e => { if (vivo) setErroPessoas(e?.message || 'Erro ao carregar'); })
+      .finally(() => { if (vivo) setLoadingPessoas(false); });
+    return () => { vivo = false; };
+  }, [ano]);
 
   useEffect(() => {
-    if (tab !== 'pessoas') return;
-    setLoading(true); setErro(null);
-    painelApi.nsmPessoas({
-      ano, janela, status: statusF, tipo: tipoF,
-      valores: valoresKey,
-      atividades: atividadesKey,
-    })
-      .then(setData)
-      .catch(e => setErro(e?.message || 'Erro ao carregar'))
-      .finally(() => setLoading(false));
-  }, [tab, ano, janela, statusF, tipoF, valoresKey, atividadesKey]);
+    let vivo = true;
+    painelApi.nsmSemDados({ dias: 366 })
+      .then(d => { if (vivo) setSemDadosRaw(d); })
+      .catch(e => { if (vivo) setErroSemDados(e?.message || 'Erro ao carregar'); })
+      .finally(() => { if (vivo) setLoadingSemDados(false); });
+    return () => { vivo = false; };
+  }, []);
 
-  useEffect(() => {
-    if (tab !== 'sem_dados') return;
-    setLoading(true); setErro(null);
+  // Recorte = ano (fetch) + janela + origem · espelha o nsmPeriodo e o
+  // enriquecimento do backend: decisões em [fim-N, fim] (sem escapar do ano)
+  // e engajamento contando atividades em [decisão, min(decisão+N, fim)].
+  const recorte = useMemo(() => {
+    if (!universo?.pessoas) return null;
+    const fim = universo.periodo?.fim;
+    const inicioAno = universo.periodo?.inicio;
+    const janelaDias = janela === 'acumulado' ? null : Number(janela);
+    let inicioRecorte = inicioAno;
+    if (janelaDias && fim) {
+      const calc = addDias(fim, -janelaDias);
+      if (calc > inicioRecorte) inicioRecorte = calc;
+    }
+    const pessoas = [];
+    for (const p of universo.pessoas) {
+      if (!p.data_decisao || p.data_decisao < inicioRecorte) continue;
+      if (tipoF !== 'todos' && p.tipo_decisao !== tipoF) continue;
+      let atividades = p.atividades || [];
+      if (janelaDias && fim) {
+        const lim = addDias(p.data_decisao, janelaDias);
+        const limiteEng = lim < fim ? lim : fim;
+        atividades = atividades.filter(a => a.data <= limiteEng);
+      }
+      const valoresEng = [...new Set(atividades.map(a => a.valor))];
+      pessoas.push({ ...p, atividades, valores_engajados: valoresEng, engajado: valoresEng.length > 0 });
+    }
+    const engajados = pessoas.filter(p => p.engajado).length;
+    return {
+      pessoas,
+      total: pessoas.length,
+      engajados,
+      pct: pessoas.length > 0 ? Math.round((engajados / pessoas.length) * 100) : 0,
+    };
+  }, [universo, janela, tipoF]);
+
+  // Lista final = recorte + engajamento + valores/atividades (instantâneo).
+  const lista = useMemo(() => {
+    if (!recorte) return null;
+    const atvPorValor = {};
+    for (const k of atividadesSel) {
+      const [v, id] = k.split(':');
+      if (v && id) (atvPorValor[v] = atvPorValor[v] || []).push(id);
+    }
+    const valoresFiltro = [...new Set([...valoresSel, ...Object.keys(atvPorValor)])];
+    // Espelha o matchFiltro do backend · "seguir" sem atividade não exclui
+    // ninguém (a própria conversão já cumpre o valor).
+    const matchFiltro = (p) => {
+      for (const v of valoresFiltro) {
+        const atvs = p.atividades.filter(a => a.valor === v);
+        if (atvPorValor[v] && atvPorValor[v].length) {
+          if (!atvs.some(a => atvPorValor[v].includes(a.atividade))) return false;
+        } else if (v === 'seguir') {
+          continue;
+        } else if (atvs.length === 0) {
+          return false;
+        }
+      }
+      return true;
+    };
+    let out = recorte.pessoas;
+    if (statusF === 'engajados') out = out.filter(p => p.engajado);
+    else if (statusF === 'nao_engajados') out = out.filter(p => !p.engajado);
+    if (valoresFiltro.length) out = out.filter(matchFiltro);
+    return [...out].sort((a, b) => (a.data_decisao < b.data_decisao ? 1 : -1));
+  }, [recorte, statusF, valoresSel, atividadesSel]);
+
+  const stats = useMemo(() => {
+    if (!lista) return null;
+    const eng = lista.filter(p => p.engajado).length;
+    return {
+      total: lista.length, eng, nao: lista.length - eng,
+      pct: lista.length > 0 ? Math.round((eng / lista.length) * 100) : 0,
+    };
+  }, [lista]);
+
+  // Aba Sem dados: recorta pela janela e lista SÓ culto com pendência
+  // (gap_status != completo) · o resumo dos cards segue cobrindo o recorte
+  // inteiro (accountability decisões × registradas × gap).
+  const semDadosView = useMemo(() => {
+    if (!semDadosRaw?.items) return null;
     const diasMap = { '30': 30, '60': 60, '90': 90, acumulado: 366 };
-    painelApi.nsmSemDados({ dias: diasMap[janela] || 90 })
-      .then(setSemDados)
-      .catch(e => setErro(e?.message || 'Erro ao carregar'))
-      .finally(() => setLoading(false));
-  }, [tab, janela]);
+    const dias = diasMap[janela] || 90;
+    const corte = addDias(new Date().toISOString().slice(0, 10), -dias);
+    const noRecorte = semDadosRaw.items.filter(c => (c.data_culto || '') >= corte);
+    const pendentes = noRecorte.filter(c => c.gap_status !== 'completo');
+    return {
+      pendentes,
+      completos: noRecorte.length - pendentes.length,
+      resumo: {
+        total_cultos: noRecorte.length,
+        total_decisoes: noRecorte.reduce((s, c) => s + (c.total_decisoes || 0), 0),
+        total_registradas: noRecorte.reduce((s, c) => s + (c.total_registradas || 0), 0),
+        total_sem_dados: noRecorte.reduce((s, c) => s + (c.sem_dados || 0), 0),
+      },
+    };
+  }, [semDadosRaw, janela]);
 
   const toggleValor = (v) => {
     setValoresSel(prev => {
@@ -271,40 +382,40 @@ export default function PainelNsmPessoas() {
           </div>
 
           {/* Stats · acompanham o filtro ativo (status + valores/atividades) */}
-          {data && (
+          {stats && recorte && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
                 <Stat
                   label={filtraDentro ? 'Pessoas no filtro' : 'Convertidos no recorte'}
-                  value={data.total_match ?? data.total_convertidos}
+                  value={stats.total}
                   cor={C.t2}
                 />
-                <Stat label="Engajados" value={data.match_engajados ?? data.total_engajados} cor="#10B981" />
-                <Stat label="Não engajados" value={data.match_nao_engajados ?? data.total_nao_engajados} cor="#EF4444" />
-                <Stat label="% engajamento" value={(data.match_pct ?? data.pct_engajamento ?? 0) + '%'} cor={C.primary} />
+                <Stat label="Engajados" value={stats.eng} cor="#10B981" />
+                <Stat label="Não engajados" value={stats.nao} cor="#EF4444" />
+                <Stat label="% engajamento" value={stats.pct + '%'} cor={C.primary} />
               </div>
               {filtraDentro && (
                 <p style={{ fontSize: 11, color: C.t3, margin: '8px 0 0' }}>
-                  Números do filtro atual · o recorte completo tem <strong>{data.total_convertidos}</strong>{' '}
-                  {data.total_convertidos === 1 ? 'convertido' : 'convertidos'} ({data.total_engajados}{' '}
-                  {data.total_engajados === 1 ? 'engajado' : 'engajados'}, {data.pct_engajamento ?? 0}%).
+                  Números do filtro atual · o recorte completo tem <strong>{recorte.total}</strong>{' '}
+                  {recorte.total === 1 ? 'convertido' : 'convertidos'} ({recorte.engajados}{' '}
+                  {recorte.engajados === 1 ? 'engajado' : 'engajados'}, {recorte.pct}%).
                 </p>
               )}
             </div>
           )}
 
           {/* Lista */}
-          {loading ? (
+          {loadingPessoas ? (
             <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
-          ) : erro ? (
-            <div style={{ padding: 30, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{erro}</div>
-          ) : !data?.pessoas?.length ? (
+          ) : erroPessoas ? (
+            <div style={{ padding: 30, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{erroPessoas}</div>
+          ) : !lista?.length ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13, background: C.card, borderRadius: 10, border: `1px dashed ${C.border}` }}>
               {temFiltro ? 'Ninguém corresponde a essa combinação no recorte.' : 'Sem convertidos nesse recorte.'}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {data.pessoas.map(p => <PessoaCard key={p.id} pessoa={p} />)}
+              {lista.map(p => <PessoaCard key={p.id} pessoa={p} />)}
             </div>
           )}
         </>
@@ -312,25 +423,32 @@ export default function PainelNsmPessoas() {
 
       {tab === 'sem_dados' && (
         <>
-          {semDados?.resumo && (
+          {semDadosView?.resumo && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
-              <Stat label="Cultos com decisões" value={semDados.resumo.total_cultos} cor={C.t2} />
-              <Stat label="Total decisões" value={semDados.resumo.total_decisoes} cor="#3B82F6" />
-              <Stat label="Pessoas registradas" value={semDados.resumo.total_registradas} cor="#10B981" />
-              <Stat label="Sem dados (gap)" value={semDados.resumo.total_sem_dados} cor="#EF4444" />
+              <Stat label="Cultos com decisões" value={semDadosView.resumo.total_cultos} cor={C.t2} />
+              <Stat label="Total decisões" value={semDadosView.resumo.total_decisoes} cor="#3B82F6" />
+              <Stat label="Pessoas registradas" value={semDadosView.resumo.total_registradas} cor="#10B981" />
+              <Stat label="Sem dados (gap)" value={semDadosView.resumo.total_sem_dados} cor="#EF4444" />
             </div>
           )}
-          {loading ? (
+          {semDadosView && semDadosView.completos > 0 && (
+            <p style={{ fontSize: 11, color: C.t3, margin: '-8px 0 12px' }}>
+              {semDadosView.completos === 1
+                ? '1 culto com todas as decisões registradas não aparece na lista.'
+                : `${semDadosView.completos} cultos com todas as decisões registradas não aparecem na lista.`}
+            </p>
+          )}
+          {loadingSemDados ? (
             <div style={{ padding: 30, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>
-          ) : erro ? (
-            <div style={{ padding: 30, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{erro}</div>
-          ) : !semDados?.items?.length ? (
+          ) : erroSemDados ? (
+            <div style={{ padding: 30, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{erroSemDados}</div>
+          ) : !semDadosView?.pendentes?.length ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13, background: C.card, borderRadius: 10, border: `1px dashed ${C.border}` }}>
-              Todas as decisões do recorte têm pessoa registrada.
+              Nenhum culto com dados faltando no recorte — todas as decisões têm pessoa registrada.
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {semDados.items.map(c => <CultoSemDadosCard key={c.culto_id} culto={c} navigate={navigate} />)}
+              {semDadosView.pendentes.map(c => <CultoSemDadosCard key={c.culto_id} culto={c} navigate={navigate} />)}
             </div>
           )}
         </>
