@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
-const { supabase, query: dbQuery } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate);
@@ -28,9 +28,28 @@ router.get('/dashboard', async (req, res) => {
 // ── WORKLOAD VIEW ──
 router.get('/views/workload', async (req, res) => {
   try {
-    const r = await dbQuery('SELECT responsible, count(*) as active FROM project_tasks WHERE status NOT IN (\'concluida\',\'concluido\') GROUP BY responsible ORDER BY active DESC');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+    // Pool pg não conecta no serverless do Vercel → REST + agregação em JS.
+    // Paginado pra não cair no cap de 1000 linhas do PostgREST.
+    let tasks = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('project_tasks')
+        .select('responsible')
+        .not('status', 'in', '("concluida","concluido")')
+        .range(from, from + 999);
+      if (error) throw error;
+      tasks = tasks.concat(data || []);
+      if (!data || data.length < 1000) break;
+    }
+    const counts = {};
+    for (const t of tasks) {
+      const r = t.responsible || '';
+      counts[r] = (counts[r] || 0) + 1;
+    }
+    const rows = Object.entries(counts)
+      .map(([responsible, active]) => ({ responsible, active }))
+      .sort((a, b) => b.active - a.active);
+    res.json(rows);
+  } catch (e) { console.error('[Projects workload]', e.message); res.status(500).json({ error: 'Erro ao calcular workload' }); }
 });
 
 // ── LIST ──
