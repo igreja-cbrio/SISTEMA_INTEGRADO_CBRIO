@@ -2,6 +2,41 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
+
+Sintoma recorrente: **"Erro ao atualizar/excluir evento"** mas a mudança
+**persistia** (aparecia ao recarregar). Causa: `PUT /events/:id` e
+`DELETE /events/:id` (`routes/events.js`) misturavam o **write primário** (que
+já commita) com **operações secundárias** num único `try/catch` — uma falha
+lateral retornava **500 com o dado já gravado**. Gatilho mais comum no PUT: o
+`EventFormModal` sempre manda `date`, então diferença de formato dispara o
+recálculo do ciclo, e um `new Date(prazo).toISOString()` numa fase/tarefa com
+data inválida estoura `RangeError`. Mesma classe de bug já resolvida só no
+`PATCH /:id/status` (tag `patch-status-resilient-v1`). **PR #940** estendeu o
+padrão a update/delete:
+- **PUT**: só o `update` primário pode retornar 500; recálculo de ciclo (com
+  guarda `isNaN` contra data inválida), `audit_log`, `enqueueSync` e o `select`
+  pós-update viram **best-effort** (só logam). Resposta = linha atualizada ou,
+  se o select falhar, o próprio payload aplicado.
+- **DELETE**: cascata de dependências best-effort via helper `safe()`; só o
+  `delete` primário de `events` decide sucesso/erro.
+- **Frontend** (`Eventos.jsx` `saveEvent`): em erro de servidor numa edição,
+  refaz o `GET` e confirma se gravou antes de exibir erro (igual ao
+  `toggleEventStatus`). **Regra do módulo**: write primário decide a resposta;
+  o resto é best-effort.
+
+**Filtro série vs evento robusto (`routes/cycles.js` `GET /kpis/cross`):** antes
+discriminava por `event_categories.name === 'Série'` (string exata, por evento)
+→ quebrava com acento/caixa e ao renomear a categoria. Agora resolve o
+`category_id` da categoria "Série" **uma vez** (lookup tolerante · `unaccent` +
+`lower` via `normalize('NFD')`) e compara por id; o filtro de `concluido` ficou
+consistente nos 3 modos (todos/serie/evento). Renomear um **evento** nunca
+afeta a classificação (sempre foi por UUID). ⚠️ Não há coluna `slug`/flag em
+`event_categories` — a categoria "Série" segue identificada pelo nome
+normalizado; renomeá-la pra algo sem relação com "serie" ainda mudaria o
+conjunto (improvável · é categoria estrutural). Renomear séries/eventos é
+seguro: nada no código depende do nome (tudo liga por `events.id`).
+
 ## Bot WhatsApp · Flows — REDESENHO + root cause do bloqueio (2026-06-09)
 
 **ROOT CAUSE do `Integrity requirements not met`:** a **WABA estava BLOCKED por

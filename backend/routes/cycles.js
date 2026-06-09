@@ -659,16 +659,20 @@ router.get('/kpis/cross', async (req, res) => {
     let q = supabase.from('event_cycles').select('event_id, events(id, name, status, date, category_id, event_categories(name))').eq('status', 'ativo');
     const { data: cycles } = await q;
 
-    let eventIds = (cycles || [])
-      .filter(c => c.events?.status !== 'concluido')
-      .map(c => c.event_id);
+    // Discriminar série vs evento por category_id (estável), e não pelo nome
+    // string por evento: assim renomear um evento jamais afeta a classificação,
+    // e variações de acento/caixa ("Serie", "série", "SÉRIE") na própria
+    // categoria são toleradas (resolução via unaccent/lower, uma vez só).
+    const { data: cats } = await supabase.from('event_categories').select('id, name');
+    const normNome = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    const serieIds = new Set((cats || []).filter(c => normNome(c.name) === 'serie').map(c => c.id));
+    const ehSerie = (c) => !!c.events?.category_id && serieIds.has(c.events.category_id);
 
-    // Filtrar por tipo (série vs evento)
-    if (tipo === 'serie') {
-      eventIds = (cycles || []).filter(c => c.events?.event_categories?.name === 'Série').map(c => c.event_id);
-    } else if (tipo === 'evento') {
-      eventIds = (cycles || []).filter(c => c.events?.event_categories?.name !== 'Série').map(c => c.event_id);
-    }
+    // Sempre exclui eventos concluídos (consistente nos 3 modos: todos/serie/evento)
+    let base = (cycles || []).filter(c => c.events?.status !== 'concluido');
+    if (tipo === 'serie') base = base.filter(ehSerie);
+    else if (tipo === 'evento') base = base.filter(c => !ehSerie(c));
+    const eventIds = base.map(c => c.event_id);
 
     if (eventIds.length === 0) return res.json({ eventos: [], kpi_medio: 0, ranking_areas: [], ranking_responsaveis: [] });
 
