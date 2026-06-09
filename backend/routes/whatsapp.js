@@ -149,17 +149,22 @@ router.get('/coletas', podeGerir, async (req, res) => {
 });
 
 // Aplica uma coleta vinda do FORMULÁRIO (Flow): usa o culto escolhido pelo
-// líder, cria submissão(ões) de frequência (templo/kids · fila de pendentes)
-// e materializa cada pessoa que decidiu em cultos_decisoes_pessoas (entra na
-// jornada/NSM · trigger resolve membro). Pessoas já vêm normalizadas no parsed.
+// líder e cria submissão(ões) de frequência (templo/kids · fila de pendentes).
+// As PESSOAS que decidiram NÃO são criadas aqui — o cadastro nominal é no
+// computador (aba Decisões → Pessoas do /integracao). O WhatsApp coleta só as
+// contagens; `a_cadastrar` indica quantas decisões aguardam cadastro lá.
 async function aplicarColetaFlow(coleta, req, res) {
   const p = coleta.parsed || {};
   if (!p.culto_id) {
     return res.status(422).json({ error: 'Formulário sem culto vinculado. Lance manualmente.' });
   }
-  const obs = 'Via WhatsApp (formulário) · ' + (p.resumo || '');
   const freq = p.freq || {};
   const dec = p.dec || {};
+  // Decisões online não viram submissão (ambiente só aceita templo/kids · a
+  // frequência online vem da API). Fica na observação pro coordenador lançar
+  // na aba Online do /integracao.
+  const notaOnline = dec.online ? ` · ⚠ ${dec.online} decisão(ões) online (lançar na aba Online)` : '';
+  const obs = 'Via WhatsApp (formulário) · ' + (p.resumo || '') + notaOnline;
   const submissoes = [];
   async function criarSub(ambiente, presencial, decisoes) {
     if ((presencial === null || presencial === undefined) && !decisoes) return;
@@ -174,31 +179,12 @@ async function aplicarColetaFlow(coleta, req, res) {
     if (sub) submissoes.push(sub.id);
   }
   await criarSub('templo', freq.presencial, dec.presencial);
-  if (freq.kids !== null && freq.kids !== undefined || dec.kids) await criarSub('kids', freq.kids, dec.kids);
-
-  // Pessoas que decidiram · 1 row por pessoa (não bloqueia se uma falhar)
-  let pessoasOk = 0, pessoasErro = 0;
-  const pessoas = Array.isArray(p.pessoas) ? p.pessoas : [];
-  for (const pe of pessoas) {
-    if (!pe?.nome) { pessoasErro++; continue; }
-    const { error } = await supabase.from('cultos_decisoes_pessoas').insert({
-      culto_id: p.culto_id,
-      tipo_decisao: ['presencial', 'online', 'kids'].includes(pe.tipo) ? pe.tipo : 'presencial',
-      nome: pe.nome,
-      telefone: pe.telefone || null,
-      cpf: pe.cpf || null,
-      responsavel_nome: pe.responsavel_nome || null,
-      responsavel_telefone: pe.responsavel_telefone || null,
-      responsavel_cpf: pe.responsavel_cpf || null,
-    });
-    if (error) { pessoasErro++; console.error('[whatsapp] decisao pessoa', error.message); }
-    else pessoasOk++;
-  }
+  if ((freq.kids !== null && freq.kids !== undefined) || dec.kids) await criarSub('kids', freq.kids, dec.kids);
 
   await supabase.from('whatsapp_coletas')
     .update({ status: 'aplicado', aplicado_em: new Date().toISOString(), aplicado_por: req.user?.userId || null, destino_ref: submissoes[0] || null })
     .eq('id', coleta.id);
-  return res.json({ ok: true, destino: 'submissao_pendente', submissoes, pessoas_ok: pessoasOk, pessoas_erro: pessoasErro });
+  return res.json({ ok: true, destino: 'submissao_pendente', submissoes, a_cadastrar: p.a_cadastrar || 0 });
 }
 
 // POST /api/whatsapp/coletas/:id/aplicar

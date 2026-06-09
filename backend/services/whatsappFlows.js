@@ -4,13 +4,12 @@
 //
 // Envs (além das do whatsappSend):
 //   WHATSAPP_FLOW_CULTO_ID   · id do Flow "Lançamento do culto" (publicado na Meta)
-//   WHATSAPP_FLOW_PESSOA_ID  · id do Flow "Dados da pessoa que decidiu"
-// Sem esses ids o bot NÃO oferece formulário (cai no fluxo de texto livre).
+// Sem esse id o bot NÃO oferece formulário (cai no fluxo de texto livre).
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v21.0';
 
 function flowsConfigurados() {
   return !!(process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_ACCESS_TOKEN
-    && process.env.WHATSAPP_FLOW_CULTO_ID && process.env.WHATSAPP_FLOW_PESSOA_ID);
+    && process.env.WHATSAPP_FLOW_CULTO_ID);
 }
 
 function soDigitos(raw) { return (raw || '').toString().replace(/\D+/g, ''); }

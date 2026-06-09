@@ -159,7 +159,7 @@ async function processarMensagem(m, cfg) {
       console.error('[whatsapp webhook] dedup form:', dupErr.message);
     }
     if (podeForm) {
-      const fres = await flowColeta.enviarFormularioCulto(telefone);
+      const fres = await flowColeta.enviarFormularioCulto(telefone, lider.nome_exibicao);
       // Diagnóstico: se o Flow não abriu (estado draft/publish na Meta, etc),
       // grava o erro da Graph na própria coleta pra inspeção via banco.
       if (fres && fres.ok === false && fres.error !== 'sem_cultos') {
