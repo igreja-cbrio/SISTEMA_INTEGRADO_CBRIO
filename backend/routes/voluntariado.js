@@ -5,8 +5,13 @@ const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTe
 const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
 const { notificar } = require('../services/notificar');
+const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 
 router.use(authenticate, authorizeModule('membresia', 1));
+
+// Mensagem automática de WhatsApp · boas-vindas ao voluntário que se inscreve
+// (config/edição em /whatsapp-auto/* · gerencia a chave 'voluntariado_inscricao')
+mountWhatsappAuto(router, { chave: 'voluntariado_inscricao', modulo: 'voluntariado', authorizeModule });
 
 // ══════════════════════════════════════════════════════════════
 // VOLUNTEER PORTAL — endpoints for logged-in volunteers
