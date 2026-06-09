@@ -157,6 +157,7 @@ app.use('/api/public/nps', require('./routes/publicNps'));
 app.use('/api/planejamento', require('./routes/planejamento'));
 app.use('/api/apresentacoes', require('./routes/apresentacoes'));
 app.use('/api/lgpd', require('./routes/lgpd'));
+app.use('/api/feedback', require('./routes/feedback'));
 
 // ── Health check ──
 // Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
@@ -197,6 +198,20 @@ app.use(sentryErrorHandler());
 // ── Error handler ──
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err.message);
+  // Sink de telemetria (Onda 0) · fire-and-forget · NUNCA quebra a resposta ·
+  // sem query/body pra não vazar PII (só rota, método, mensagem e stack).
+  try {
+    const { supabase } = require('./utils/supabase');
+    supabase.from('app_erros_servidor').insert({
+      user_id: req.user?.id || null,
+      user_email: req.user?.email || null,
+      metodo: req.method,
+      rota: String(req.path || req.originalUrl || '').slice(0, 300),
+      mensagem: String(err.message || '').slice(0, 1000),
+      stack: String(err.stack || '').slice(0, 4000),
+      status: err.status || 500,
+    }).then(() => {}, (e) => console.warn('[app_erros_servidor]', e.message));
+  } catch (_) { /* tabela ausente / supabase off · ignora */ }
   res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
