@@ -26,6 +26,15 @@ async function getConfig(chave) {
 
 function soDigitos(t) { return String(t || '').replace(/\D/g, ''); }
 
+// Normaliza pra E.164-BR (55 + DDD + número). Adiciona o 55 quando faltar.
+function normalizarBR(raw) {
+  const d = soDigitos(raw);
+  if (!d) return '';
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) return d; // já tem DDI
+  if (d.length === 10 || d.length === 11) return '55' + d;                   // DDD + número
+  return d;                                                                  // best-effort
+}
+
 // Faz o envio de fato conforme o modo configurado. Retorna shape normalizado.
 async function enviarPorConfig(cfg, telefone, nome) {
   const texto = render(cfg.mensagem, nome);
@@ -63,7 +72,7 @@ async function dispararAuto(chave, opts = {}) {
     const cfg = await getConfig(chave);
     if (!cfg || !cfg.ativo) return { sent: false, reason: 'desabilitado' };
 
-    const tel = soDigitos(opts.telefone);
+    const tel = normalizarBR(opts.telefone);
     if (!tel) {
       await registrar(chave, { ...opts, telefone: null, status: 'sem_telefone' });
       return { sent: false, reason: 'sem_telefone' };
@@ -93,7 +102,7 @@ async function dispararAuto(chave, opts = {}) {
 async function enviarTeste(chave, telefone, nome) {
   const cfg = await getConfig(chave);
   if (!cfg) return { sent: false, erro: 'sem_config' };
-  const tel = soDigitos(telefone);
+  const tel = normalizarBR(telefone);
   if (!tel) return { sent: false, erro: 'sem_telefone' };
   const r = await enviarPorConfig(cfg, tel, nome || 'Fulano de Tal');
   await registrar(chave, {
