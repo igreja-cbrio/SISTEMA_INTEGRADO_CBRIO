@@ -9,6 +9,7 @@ import { useAllVolUsers, useAddVolRole, useRemoveVolRole, useSyncHistorical } fr
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import FormOpcoesManager from './components/FormOpcoesManager';
+import WhatsappAutoConfig from '@/components/WhatsappAutoConfig';
 
 export default function VolAdmin() {
   const { data: users = [], isLoading } = useAllVolUsers();
@@ -73,6 +74,7 @@ export default function VolAdmin() {
 
   return (
     <div className="space-y-6">
+      <WhatsappAutoConfig api={voluntariado.whatsappAuto} />
       <h1 className="text-2xl font-bold text-foreground">Administracao</h1>
 
       {/* Opções do formulário público */}

@@ -4,6 +4,7 @@ import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi, users as use
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
+import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
 import JornadaConvertidos from '../../components/JornadaConvertidos';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
@@ -939,6 +940,12 @@ export default function Cuidados() {
               </Table>
             </div>
           </div>
+
+          {podeEditarCuidados && (
+            <div className="pt-1">
+              <WhatsappAutoConfig api={cuidadosApi.whatsappAuto} />
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-3">
             <div className="relative flex-1 max-w-sm">
