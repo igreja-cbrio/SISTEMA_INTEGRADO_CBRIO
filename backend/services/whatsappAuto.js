@@ -34,18 +34,14 @@ async function enviarPorConfig(cfg, telefone, nome) {
     const r = await enviarTexto(telefone, texto);
     return { sent: !!r.ok, message_id: r.message_id || null, erro: r.ok ? null : (r.error || 'erro') };
   }
-  // modo template
+  // modo template · usa as MESMAS credenciais do bot (WHATSAPP_ACCESS_TOKEN)
   if (!cfg.template_nome) return { sent: false, message_id: null, erro: 'template_nao_configurado' };
-  const { sendTemplate } = require('./whatsappService');
+  const { enviarTemplate } = require('./whatsappSend');
   const params = cfg.usa_nome
     ? [primeiroNome(nome) || 'tudo bem', texto]
     : [texto];
-  const r = await sendTemplate(telefone, cfg.template_nome, cfg.idioma || 'pt_BR', params);
-  return {
-    sent: !!r.sent,
-    message_id: r.messageId || null,
-    erro: r.sent ? null : (r.reason || (r.detail ? JSON.stringify(r.detail).slice(0, 300) : 'erro')),
-  };
+  const r = await enviarTemplate(telefone, cfg.template_nome, cfg.idioma || 'pt_BR', params);
+  return { sent: !!r.ok, message_id: r.message_id || null, erro: r.ok ? null : (r.error || 'erro') };
 }
 
 async function registrar(chave, { refId, telefone, nome, origem, status, message_id, erro }) {
