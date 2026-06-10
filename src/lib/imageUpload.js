@@ -73,3 +73,39 @@ export async function processarImagemPerfil(file, opts = {}) {
   onProgress?.('comprimindo');
   return redimensionarEComprimir(trabalho, { maxDim, quality });
 }
+
+// Prepara o arquivo pra abrir no editor de recorte: converte HEIC (browser não
+// exibe) e pré-reduz fotos gigantes (ex.: 50 MP de celular) pra edição fluida.
+// maxDim 2048 mantém folga de qualidade pro recorte final de 1024.
+export async function prepararParaEdicao(file, opts = {}) {
+  const { maxDim = 2048, quality = 0.92, onProgress } = opts;
+  let trabalho = file;
+  if (isHeic(file)) {
+    onProgress?.('convertendo');
+    trabalho = await heicParaJpeg(file);
+  }
+  const img = await carregarImagem(trabalho);
+  if (Math.max(img.width, img.height) <= maxDim) return trabalho;
+  return redimensionarEComprimir(trabalho, { maxDim, quality });
+}
+
+// Recorta a área escolhida no editor (pixels da imagem original) e devolve um
+// File JPEG quadrado, limitado a maxDim (downscale se o recorte for maior).
+export async function recortarImagem(file, areaPixels, opts = {}) {
+  const { maxDim = 1024, quality = 0.85 } = opts;
+  const img = await carregarImagem(file);
+  const lado = Math.round(Math.min(maxDim, Math.max(1, areaPixels.width)));
+  const canvas = document.createElement('canvas');
+  canvas.width = lado;
+  canvas.height = lado;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(
+    img,
+    areaPixels.x, areaPixels.y, areaPixels.width, areaPixels.height,
+    0, 0, lado, lado,
+  );
+  const blob = await canvasParaBlob(canvas, 'image/jpeg', quality);
+  const baseNome = (file.name || 'foto').replace(/\.[^.]+$/, '') || 'foto';
+  return new File([blob], baseNome + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+}

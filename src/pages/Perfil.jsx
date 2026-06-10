@@ -10,7 +10,9 @@ import { toast } from 'sonner';
 import { auth } from '../api';
 import { Camera, ShieldCheck, FileText, KeyRound, GraduationCap, Check, RotateCcw } from 'lucide-react';
 import TrocarSenhaForm from '../components/auth/TrocarSenhaForm';
-import { processarImagemPerfil, isHeic } from '../lib/imageUpload';
+import { isHeic } from '../lib/imageUpload';
+import FotoCropper from '../components/FotoCropper';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { getQualifyingTours } from '../data/tutorials';
 
 function mascaraTelefone(v) {
@@ -32,6 +34,7 @@ export default function Perfil() {
   const [savingTel, setSavingTel] = useState(false);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [statusFoto, setStatusFoto] = useState('');
+  const [fotoParaEditar, setFotoParaEditar] = useState(null);
   const fileInputRef = useRef(null);
 
   const initials = (profile?.name || '??')
@@ -41,7 +44,7 @@ export default function Perfil() {
     .join('')
     .toUpperCase();
 
-  async function handleFotoChange(e) {
+  function handleFotoChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     const ehHeic = isHeic(file);
@@ -53,25 +56,24 @@ export default function Perfil() {
       toast.error('Imagem precisa ter no máximo 25 MB');
       return;
     }
+    // Abre o editor (cortar/zoom/enquadrar) · o upload acontece após o recorte
+    setFotoParaEditar(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function enviarFotoRecortada(recortada) {
     setUploadingFoto(true);
-    setStatusFoto(ehHeic ? 'Convertendo foto do iPhone...' : 'Preparando foto...');
+    setStatusFoto('Enviando foto...');
     try {
-      const pronto = await processarImagemPerfil(file, {
-        onProgress: (etapa) => {
-          if (etapa === 'convertendo') setStatusFoto('Convertendo foto do iPhone...');
-          else if (etapa === 'comprimindo') setStatusFoto('Otimizando foto...');
-        },
-      });
-      setStatusFoto('Enviando foto...');
-      await auth.uploadFoto(pronto);
+      await auth.uploadFoto(recortada);
       await refreshProfile?.();
+      setFotoParaEditar(null);
       toast.success('Foto atualizada');
     } catch (err) {
       toast.error(err.message || 'Erro ao enviar foto');
     } finally {
       setUploadingFoto(false);
       setStatusFoto('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
 
@@ -127,6 +129,22 @@ export default function Perfil() {
               onChange={handleFotoChange}
               className="hidden"
             />
+            <Dialog open={!!fotoParaEditar} onOpenChange={(v) => { if (!v && !uploadingFoto) setFotoParaEditar(null); }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Ajustar foto de perfil</DialogTitle>
+                  <DialogDescription>Corte, dê zoom e enquadre a foto como preferir.</DialogDescription>
+                </DialogHeader>
+                {fotoParaEditar ? (
+                  <FotoCropper
+                    file={fotoParaEditar}
+                    confirmando={uploadingFoto}
+                    onCancelar={() => setFotoParaEditar(null)}
+                    onConfirmar={enviarFotoRecortada}
+                  />
+                ) : null}
+              </DialogContent>
+            </Dialog>
           </div>
           <div>
             <h2 className="text-lg font-semibold text-foreground">{profile?.name || '—'}</h2>
