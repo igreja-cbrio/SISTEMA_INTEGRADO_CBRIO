@@ -326,19 +326,25 @@ export default function GruposVisitas({ onOpenGrupo }) {
         )}
       </div>
 
-      {/* Stats */}
+      {/* Stats · clicar no card aplica o filtro correspondente na lista */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 14 }}>
         {[
-          { label: 'Grupos ativos', value: stats.total, color: C.primary },
-          { label: 'Sem visita há 2+ meses', value: stats.sem60, color: C.red },
-          { label: 'Nunca visitados', value: stats.nunca, color: C.amber },
-          { label: 'Visitas agendadas', value: stats.agendadas, color: C.blue },
-        ].map(k => (
-          <div key={k.label} style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: k.color }}>{k.value}</div>
-            <div style={{ fontSize: 11, color: C.t3 }}>{k.label}</div>
-          </div>
-        ))}
+          { key: 'todos', label: 'Grupos ativos', value: stats.total, color: C.primary },
+          { key: 'sem60', label: 'Sem visita há 2+ meses', value: stats.sem60, color: C.red },
+          { key: 'nunca', label: 'Nunca visitados', value: stats.nunca, color: C.amber },
+          { key: 'agendadas', label: 'Com visita agendada', value: stats.agendadas, color: C.blue },
+        ].map(k => {
+          const ativo = filtro === k.key;
+          return (
+            <button key={k.key} onClick={() => setFiltro(k.key)} title="Clique pra filtrar a lista" style={{
+              background: ativo ? `${k.color}10` : C.card, borderRadius: 12, padding: 14, textAlign: 'left',
+              border: ativo ? `2px solid ${k.color}` : `1px solid ${C.border}`, cursor: 'pointer', transition: 'border-color 0.12s',
+            }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: k.color }}>{k.value}</div>
+              <div style={{ fontSize: 11, color: ativo ? k.color : C.t3, fontWeight: ativo ? 600 : 400 }}>{k.label}</div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Próximas visitas agendadas */}

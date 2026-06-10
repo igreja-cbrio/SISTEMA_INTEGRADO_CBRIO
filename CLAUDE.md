@@ -101,6 +101,25 @@ visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
   sub-aba certa pré-selecionada). `PedidosGrupo` ganhou prop `embedded`
   (esconde o h1 quando dentro da Caixa de entrada). Decisão: NÃO juntar
   Grupos/Relatórios/Mapa/Materiais/Visitas/QR (públicos e usos distintos).
+- **Aba "Pessoas" (2026-06-10 · pedido do Marcos):** o papel vive em 3
+  lugares (`mem_grupo_membros.funcao` · `mem_grupos.lider_id` ·
+  `mem_grupos.supervisor_id`) — por isso "é difícil ver quem é o quê".
+  `GET /grupos/pessoas/papeis` agrega 1 linha por pessoa com papel efetivo
+  (rank: coordenador>supervisor>líder>co-líder>treinamento>membro>visitante;
+  visitante = frequentador com <3 presenças, mesma régua do detalhe).
+  Participações paginadas (cap 1000 do PostgREST) + `.in()` em chunks.
+  `GruposPessoas.jsx`: cards-filtro clicáveis por papel + busca + sinal
+  "candidato a promoção" (frequentador 8+ presenças → treinamento ·
+  treinamento → co-líder/líder · líder de 2+ grupos → supervisor · regras no
+  front, fáceis de ajustar) + modal **Promover** (muda `funcao` via PUT
+  /membros/:id/funcao; promover a supervisor também vincula grupos via PUT
+  /:id/supervisor — exige nível 5). ⚠️ NÃO há histórico de quando a função
+  mudou (sem coluna `funcao_desde`) — "tempo em treinamento" exigiria
+  migration futura.
+- **Ajustes 2026-06-10:** filtro "Local" REMOVIDO da lista de grupos (era o
+  texto livre `local`, cheio de endereço; o filtro de Bairro já cobre).
+  Cards de resumo da aba Visitas viraram BOTÕES-FILTRO (clique em "Sem
+  visita há 2+ meses" filtra a lista · Marcos não tinha achado as pills).
 
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 

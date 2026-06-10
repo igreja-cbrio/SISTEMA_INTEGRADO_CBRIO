@@ -15,6 +15,7 @@ import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
+import GruposPessoas from './GruposPessoas';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { StatisticsCard } from '../../components/ui/statistics-card';
@@ -44,7 +45,7 @@ const RECORRENCIAS = [
 
 const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais', 'Jovens', 'Mulheres', 'Homens', 'Misto'];
 
-const PAGE_TABS = ['grupos', 'relatorios', 'mapa', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
+const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'mapa', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
 // Chaves antigas de aba (links/notificações) → aba nova
 const TAB_LEGADO = { pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas', geocode: 'config', temporadas: 'config' };
 
@@ -77,7 +78,6 @@ export default function Grupos() {
   const [gruposForSelect, setGruposForSelect] = useState([]);
   const [filterTipo, setFilterTipo] = useState('all');
   const [filterDia, setFilterDia] = useState('all');
-  const [filterLocal, setFilterLocal] = useState('all');
   const [filterTema, setFilterTema] = useState('all');
   const [filterBairro, setFilterBairro] = useState('all');
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
@@ -389,7 +389,6 @@ export default function Grupos() {
 
   // Extrair opções únicas para filtros
   const tiposUnicos = [...new Set(gruposList.map(g => g.categoria).filter(Boolean))].sort();
-  const locaisUnicos = [...new Set(gruposList.map(g => g.local).filter(Boolean))].sort();
   const temasUnicos = [...new Set(gruposList.map(g => g.tema).filter(Boolean))].sort();
   const bairrosUnicos = [...new Set(gruposList.map(g => g.bairro).filter(Boolean))].sort();
 
@@ -400,14 +399,13 @@ export default function Grupos() {
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
     if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
-    if (filterLocal !== 'all' && g.local !== filterLocal) return false;
     if (filterTema !== 'all' && g.tema !== filterTema) return false;
     if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
     if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
     return true;
   });
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterLocal !== 'all' || filterTema !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all';
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterTema !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all';
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -805,6 +803,7 @@ export default function Grupos() {
       <div className="cbrio-grupos-tabs" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
+          { key: 'pessoas', label: 'Pessoas', icon: UserCog },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
@@ -1033,6 +1032,15 @@ export default function Grupos() {
         </div>
       )}
 
+      {/* ═══ TAB PESSOAS ═══ */}
+      {tabAtiva === 'pessoas' && (
+        <GruposPessoas
+          onOpenGrupo={openGrupoById}
+          podeEditar={podeEditarGrupos}
+          gruposOptions={gruposList.filter(g => g.ativo)}
+        />
+      )}
+
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
 
@@ -1132,14 +1140,6 @@ export default function Grupos() {
           </SelectContent>
         </ShadSelect>
 
-        <ShadSelect value={filterLocal} onValueChange={setFilterLocal}>
-          <SelectTrigger className="w-[160px] h-8 text-xs"><SelectValue placeholder="Local" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os locais</SelectItem>
-            {locaisUnicos.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}
-          </SelectContent>
-        </ShadSelect>
-
         <ShadSelect value={filterTema} onValueChange={setFilterTema}>
           <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Tema" /></SelectTrigger>
           <SelectContent>
@@ -1181,7 +1181,7 @@ export default function Grupos() {
         )}
 
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterLocal('all'); setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all'); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all'); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -1211,7 +1211,7 @@ export default function Grupos() {
               <div>Nenhum grupo nos filtros aplicados.</div>
               <button
                 onClick={() => {
-                  setFilterTipo('all'); setFilterDia('all'); setFilterLocal('all');
+                  setFilterTipo('all'); setFilterDia('all');
                   setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all');
                   setFilterTemporada('');
                 }}
