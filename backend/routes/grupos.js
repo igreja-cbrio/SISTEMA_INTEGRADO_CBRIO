@@ -8,6 +8,18 @@ const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 
+// Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
+// troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
+// após criar/editar grupo (a rede de segurança é o cron diário do bot).
+function syncWhatsappLideres() {
+  setImmediate(() => {
+    try {
+      require('../services/whatsappGrupos').sincronizarLideresGrupos()
+        .catch(e => console.warn('[grupos] sync whatsapp líderes:', e.message));
+    } catch (e) { console.warn('[grupos] sync whatsapp líderes:', e.message); }
+  });
+}
+
 const uploadMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const sanitizePath = (s) => (s || '').replace(/[^a-zA-Z0-9\-_ ]/g, '').trim();
 
@@ -494,6 +506,67 @@ router.get('/kpis/relatorio', async (req, res) => {
   } catch (e) {
     console.error('[Grupos relatorio kpis]', e.message);
     res.status(500).json({ error: 'Erro ao gerar relatório de KPIs' });
+  }
+});
+
+// GET /api/grupos/kpis/sem-relato · grupos ativos com o último encontro
+// registrado (qualquer via: sistema ou WhatsApp aplicado) e há quantos dias.
+// Alimenta o bloco "Grupos sem relatório" da aba Relatórios (visão do Pr.
+// Nélio: quem não está reportando).
+router.get('/kpis/sem-relato', async (req, res) => {
+  try {
+    const { data: grupos, error } = await supabase
+      .from('mem_grupos')
+      .select('id, nome, bairro, dia_semana, lider_id')
+      .eq('ativo', true).is('deleted_at', null)
+      .order('nome');
+    if (error) throw error;
+
+    // Último encontro por grupo · janela de 1 ano, paginado (cap do PostgREST)
+    const desde = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+    const ultimo = {};
+    let offset = 0;
+    while (true) {
+      const { data: page, error: eE } = await supabase
+        .from('mem_grupo_encontros')
+        .select('grupo_id, data')
+        .gte('data', desde)
+        .order('data', { ascending: false })
+        .range(offset, offset + 999);
+      if (eE) throw eE;
+      (page || []).forEach(e => { if (!ultimo[e.grupo_id]) ultimo[e.grupo_id] = e.data; });
+      if (!page || page.length < 1000) break;
+      offset += 1000;
+    }
+
+    const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
+    const nomes = {};
+    for (let i = 0; i < liderIds.length; i += 400) {
+      const { data: ms } = await supabase
+        .from('mem_membros').select('id, nome').in('id', liderIds.slice(i, i + 400));
+      (ms || []).forEach(m => { nomes[m.id] = m.nome; });
+    }
+
+    const agora = Date.now();
+    const lista = (grupos || []).map(g => {
+      const ult = ultimo[g.id] || null;
+      const dias = ult ? Math.floor((agora - new Date(ult + 'T12:00:00').getTime()) / 86400000) : null;
+      return {
+        id: g.id, nome: g.nome, bairro: g.bairro, dia_semana: g.dia_semana,
+        lider_nome: nomes[g.lider_id] || null,
+        ultimo_encontro: ult,
+        dias_sem_relato: dias, // null = nenhum encontro registrado no último ano
+      };
+    }).sort((a, b) => (b.dias_sem_relato ?? 99999) - (a.dias_sem_relato ?? 99999));
+
+    res.json({
+      total: lista.length,
+      sem_relato_4s: lista.filter(g => g.dias_sem_relato === null || g.dias_sem_relato >= 28).length,
+      grupos: lista,
+    });
+  } catch (e) {
+    console.error('[grupos] kpis/sem-relato:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar relatos' });
   }
 });
 
@@ -1205,6 +1278,7 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
       descricao: d.descricao || '', ativo: true,
     }).select().single();
     if (error) throw error;
+    syncWhatsappLideres();
     res.json(data);
   } catch (e) { console.error('[Grupos create]', e.message); res.status(500).json({ error: 'Erro ao criar grupo' }); }
 });
@@ -1228,6 +1302,7 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       descricao: d.descricao || '', ativo: d.ativo ?? true,
     }).eq('id', req.params.id).select().single();
     if (error) throw error;
+    syncWhatsappLideres();
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar grupo' }); }
 });

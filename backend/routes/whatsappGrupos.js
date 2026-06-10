@@ -16,15 +16,24 @@ const svc = require('../services/whatsappGrupos');
 const DIA_ESTUDO = Number(process.env.WHATSAPP_ESTUDO_DIA ?? 1);
 
 // ── Cron diário (sem login · CRON_SECRET) ───────────────────────────────────
+// Ordem: sincroniza líderes (auto-vínculos a partir de mem_grupos.lider_id) →
+// lembrete semanal (SÓ se WHATSAPP_LEMBRETE_SEMANAL=1 · decisão de custo
+// pendente com o gestor) → cobrança dos grupos há 4+ semanas sem relato
+// (modo padrão · Marcos) → estudo da semana no dia configurado.
 router.get('/cron/diario', requireCron, async (req, res) => {
   try {
-    const lembretes = await svc.enviarLembretesEncontro();
+    const sync = await svc.sincronizarLideresGrupos();
+    let lembretes = null;
+    if (process.env.WHATSAPP_LEMBRETE_SEMANAL === '1') {
+      lembretes = await svc.enviarLembretesEncontro();
+    }
+    const cobrancas = await svc.enviarCobrancasSemRelato();
     let estudo = null;
     if (new Date().getDay() === DIA_ESTUDO) {
       estudo = await svc.enviarEstudoSemanal();
     }
-    console.log('[whatsapp-grupos cron]', JSON.stringify({ lembretes, estudo }));
-    res.json({ ok: true, lembretes, estudo });
+    console.log('[whatsapp-grupos cron]', JSON.stringify({ sync, lembretes, cobrancas, estudo }));
+    res.json({ ok: true, sync, lembretes, cobrancas, estudo });
   } catch (e) {
     console.error('[whatsapp-grupos cron]', e.message);
     res.status(500).json({ error: e.message });
@@ -69,6 +78,22 @@ router.post('/enviar-estudo', podeGerir, async (req, res) => {
 router.post('/enviar-lembretes', podeGerir, async (req, res) => {
   try {
     const r = await svc.enviarLembretesEncontro();
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/whatsapp-grupos/enviar-cobrancas · disparo manual (teste)
+router.post('/enviar-cobrancas', podeGerir, async (req, res) => {
+  try {
+    const r = await svc.enviarCobrancasSemRelato();
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/whatsapp-grupos/sincronizar-lideres · disparo manual do auto-sync
+router.post('/sincronizar-lideres', podeGerir, async (req, res) => {
+  try {
+    const r = await svc.sincronizarLideresGrupos();
     res.json({ ok: true, ...r });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
