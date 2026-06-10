@@ -11,7 +11,7 @@
 //   - Desempenho (KPIs próprios + SLA + NPS vs outras áreas criativas)
 // ============================================================================
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save,
   Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2, TrendingUp,
@@ -243,6 +243,8 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const [form, setForm] = useState({ duracao_minutos: '', pontualidade_obs: '', observacoes: '' });
   const [marks, setMarks] = useState({}); // item_id -> {feito, observação}
   const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
+  const inicialRef = useRef(null); // snapshot do estado carregado · detecta alterações não salvas
+  const mousedownNoBackdropRef = useRef(false); // só fecha se o clique COMEÇOU no backdrop (não em seleção de texto arrastada pra fora)
 
   const meta = det?.culto?.meta_duracao_min ?? culto.producao?.meta_duracao_min ?? 60;
 
@@ -251,18 +253,28 @@ function ModalProducao({ culto, onClose, onSaved }) {
     try {
       const d = await prodApi.culto(culto.id);
       setDet(d);
-      setForm({
+      const formInicial = {
         duracao_minutos: d.producao?.duracao_minutos ?? '',
         pontualidade_obs: d.producao?.pontualidade_obs ?? '',
         observacoes: d.producao?.observacoes ?? '',
-      });
+      };
+      setForm(formInicial);
       const m = {};
       (d.checklist || []).forEach(it => { m[it.item_id] = { feito: it.feito, observacao: it.observacao || '' }; });
       setMarks(m);
+      inicialRef.current = JSON.stringify({ form: formInicial, marks: m });
     } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
   }, [culto.id]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  const temAlteracoes =
+    (inicialRef.current !== null && JSON.stringify({ form, marks }) !== inicialRef.current) ||
+    novaOcorr.descricao.trim() !== '' || novaOcorr.momento.trim() !== '';
+  const tentarFechar = () => {
+    if (temAlteracoes && !window.confirm('Tem certeza que deseja sair? As alterações não salvas serão perdidas.')) return;
+    onClose();
+  };
 
   const dur = Number(form.duracao_minutos);
   const atrasou = form.duracao_minutos !== '' && !Number.isNaN(dur) && dur > meta;
@@ -305,7 +317,11 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const checklistTotal = det?.checklist?.length || 0;
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+    <div
+      onMouseDown={e => { mousedownNoBackdropRef.current = e.target === e.currentTarget; }}
+      onClick={e => { if (e.target === e.currentTarget && mousedownNoBackdropRef.current) tentarFechar(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
       <div onClick={e => e.stopPropagation()} style={{ background: C.modalBg, borderRadius: 12, maxWidth: 620, width: '100%', maxHeight: '92vh', overflow: 'auto' }}>
         <header style={{ padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <div>
@@ -315,7 +331,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
               {culto.hora && <> · {culto.hora.slice(0, 5)}</>}
             </p>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}><X size={18} /></button>
+          <button onClick={tentarFechar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}><X size={18} /></button>
         </header>
 
         {loading ? <div style={{ ...loadingBox, margin: 16 }}>Carregando…</div> : (
@@ -394,7 +410,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
         )}
 
         <footer style={{ padding: 14, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} disabled={saving} style={btnGhost}>Cancelar</button>
+          <button onClick={tentarFechar} disabled={saving} style={btnGhost}>Cancelar</button>
           <button onClick={submit} disabled={saving || loading} style={{ ...btnPrimary, opacity: (saving || loading) ? 0.5 : 1 }}>
             <Save size={13} /> {saving ? 'Salvando…' : 'Salvar'}
           </button>
