@@ -40,12 +40,36 @@ mesmo, até que o convertido entre em outro valor"). Auditoria completa em
 - **Generosidade**: fica pra unificação futura com o sistema financeiro
   externo (decisão do Marcos · base com entradas/saídas/transações será
   unificada depois). O critério da NSM já lê mem_contribuicoes quando vier.
-- **PENDENTE (próxima leva · mapa entregue ao Marcos)**: KPIs dos 4 valores
-  que não enchem com o uso nativo do módulo — gatilhos de recálculo nas
-  tabelas nativas + ramos novos no `_kpi_agregar_dado` (lideres_treinados via
-  `funcao='lider_treinamento'`, vol_checkin via vol_checkins, frequencia_next
-  via next_inscricoes, batismos por área, capelania/aconselhamento via
-  cui_acompanhamentos) + decisões de produto (NPS, treinamento de voluntários).
+- **KPIs nativos dos 4 valores (leva aprovada · migration `20260610180000`)**:
+  "usar o módulo preenche o KPI". 3 pernas:
+  (1) **10 ramos nativos novos** no `_kpi_agregar_dado`: lideres_treinados
+  (`mem_grupo_membros.funcao='lider_treinamento'` · snapshot fim do período),
+  lideres_acompanhados (`grupo_supervisao_visitas`×`mem_grupos.lider_id`),
+  voluntarios_checkin (% `vol_schedules` com `vol_check_ins` · igreja toda),
+  solicitacoes_servir_recebidas/alocadas (`vol_inscricoes` · funil por área
+  própria · alocada = enviado_ministerio/integrado/kids),
+  solicitacoes_capelania*/aconselh* (`cui_acompanhamentos` · capelania = motivo
+  ILIKE '%capelania%' · atendida = responsavel_id preenchido · ⚠️ sem fila
+  própria o % tende a 100 — ganha sentido com canal de solicitação futuro),
+  frequencia_next (`next_inscricoes` com check-in · igreja toda · sem área);
+  o ramo `batismos` passou a respeitar `area_kpi`.
+  (2) **Área do batismo herdada da conversão**: trigger
+  `fn_batismo_area_da_conversao` (BEFORE INSERT/UPDATE de batismo_inscricoes ·
+  area_kpi 'sede' default vira a área de `cui_convertidos` quando
+  ami/bridge/online) + backfill → liga os coletores `batismos.{ami,bridge,online}`.
+  (3) **Gatilhos de recálculo**: trigger genérico `tg_kpi_recalc_nativo`
+  (statement-level · TG_ARGV = CSV de dado_tipos · pula depth>1) em 12 tabelas
+  nativas (mem_grupos, mem_grupo_membros, mem_voluntarios, mem_devocionais,
+  cui_jornada180, cui_acompanhamentos, cui_convertidos, next_inscricoes,
+  vol_check_ins, vol_inscricoes, grupo_supervisao_visitas, batismo_inscricoes)
+  + `kpi_recalcular_todos()` como rede de segurança no cron diário
+  `/api/kpis/v2/cron/coletar` (que TAMBÉM não estava agendado — agora está no
+  vercel.json `0 7 * * *` · coleta fonte_auto + recalcula tudo).
+  **Fora da leva (por design/decisão)**: 19 KPIs de NPS aguardam o módulo NPS;
+  voluntarios_treinamento (5) sem fonte no vol_*; AMI-06/SED-15 manuais a
+  redefinir; limitação documentada: frequencia_next/voluntarios_checkin e os
+  ramos antigos de grupos/devocionais/jornada são da igreja toda (KPIs por
+  área repetem o valor global).
 
 ## Planejamento Estratégico × Gestão Anual · virada conceitual (2026-06-10)
 

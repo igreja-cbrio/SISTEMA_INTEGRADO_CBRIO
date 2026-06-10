@@ -35,11 +35,25 @@ async function autorizaCron(req, res, next) {
   next();
 }
 
+// Após coletar (fonte_auto · kpi_registros), recalcula TODOS os KPIs
+// calculados (dado_tipo · kpi_valores_calculados) — rede de segurança pros
+// gatilhos por tabela (cobre cascatas em trigger depth>1 e fontes sem gatilho).
+async function coletarERecalcular() {
+  const resultados = await coletarTodos();
+  const ok = resultados.filter(r => r.status === 'ok').length;
+  let recalculo = null;
+  try {
+    const { data, error } = await supabase.rpc('kpi_recalcular_todos');
+    recalculo = error ? { error: error.message } : data;
+  } catch (e) {
+    recalculo = { error: e.message };
+  }
+  return { ok, total: resultados.length, recalculo, resultados };
+}
+
 router.get('/cron/coletar', autorizaCron, async (_req, res) => {
   try {
-    const resultados = await coletarTodos();
-    const ok = resultados.filter(r => r.status === 'ok').length;
-    res.json({ ok, total: resultados.length, resultados });
+    res.json(await coletarERecalcular());
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -47,9 +61,7 @@ router.get('/cron/coletar', autorizaCron, async (_req, res) => {
 
 router.post('/cron/coletar', autorizaCron, async (_req, res) => {
   try {
-    const resultados = await coletarTodos();
-    const ok = resultados.filter(r => r.status === 'ok').length;
-    res.json({ ok, total: resultados.length, resultados });
+    res.json(await coletarERecalcular());
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
