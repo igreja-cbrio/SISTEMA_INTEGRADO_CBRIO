@@ -224,12 +224,21 @@ router.post('/:id/contato', async (req, res) => {
 });
 
 // PATCH /api/encaminhamentos/:id  → ajuste manual de status
+// "engajou" também materializa o vínculo aqui (mesma regra do fluxo de
+// contato) — senão o ajuste manual deixava a pessoa "solta" pra NSM.
 router.patch('/:id', async (req, res) => {
   try {
     const { status } = req.body;
     if (status && !STATUS_TODOS.includes(status)) return res.status(400).json({ error: 'Status inválido' });
-    const { data: enc } = await supabase.from('jornada_encaminhamentos').select('destino').eq('id', req.params.id).single();
+    const { data: enc } = await supabase.from('jornada_encaminhamentos').select('*').eq('id', req.params.id).single();
     if (!enc || !podeVerDestino(req, enc.destino)) return res.status(403).json({ error: 'Sem acesso' });
+
+    let vinculo = null;
+    let aviso = null;
+    if (status === 'engajou') {
+      ({ vinculo, aviso } = await materializarEngajamento(enc, req.body));
+    }
+
     const patch = { updated_at: new Date().toISOString() };
     if (status) {
       patch.status = status;
@@ -237,8 +246,10 @@ router.patch('/:id', async (req, res) => {
     }
     const { data, error } = await supabase.from('jornada_encaminhamentos').update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json({ ...data, vinculo, aviso });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 module.exports = router;
