@@ -119,6 +119,8 @@ app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
 app.use('/api/whatsapp', require('./routes/whatsapp'));
+// Bot WhatsApp · grupos de conexão (cron estudo/lembretes + admin do estudo)
+app.use('/api/whatsapp-grupos', require('./routes/whatsappGrupos'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/producao', require('./routes/producao'));
 app.use('/api/marketing', require('./routes/marketing'));

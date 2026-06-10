@@ -803,6 +803,59 @@ vivo. Aparar quando der.
 PRs: #938 (rename PE), #944 (Acompanhamento), #948 (rename Gestão Anual), #951 (hub), #952
 (recorte de ano), #954 (limpeza · DROP). Migrations aplicadas em prod por Marcos.
 
+## Grupos × Bot WhatsApp · estudo semanal + relato do encontro (2026-06-10)
+
+Marcos: o bot manda o ESTUDO DA SEMANA pros líderes de grupos e, no dia
+seguinte ao encontro, o líder responde por TEXTO ou ÁUDIO quantos foram,
+QUEM foi e um resumo (+ FOTO) — vira histórico por grupo e alimenta a aba
+Relatórios. Áudio: decisão do Marcos = código pronto agora, a chave de
+transcrição ele cria depois.
+
+- **Limitação Meta:** a Cloud API NÃO posta em grupo de WhatsApp → estudo é
+  broadcast **1:1** pros líderes com escopo `grupos`. Fora da janela de 24h
+  exige TEMPLATE aprovado: envs opcionais `WHATSAPP_TEMPLATE_ESTUDO_GRUPO` e
+  `WHATSAPP_TEMPLATE_LEMBRETE_GRUPO` (fallback automático; sem elas tenta
+  texto livre e loga a falha na coleta).
+- **Serviço `services/whatsappGrupos.js`** (arquivo novo · não mexe nos do
+  fluxo de culto): `enviarEstudoSemanal()` (material `estudo_semana=true` em
+  `mem_grupo_documentos` · marca-se na aba Materiais · 1 por vez),
+  `enviarLembretesEncontro()` (grupos com `dia_semana` = ontem → pergunta ao
+  líder · líder resolvido por `whatsapp_lideres.grupo_id` OU profile→membro
+  = `mem_grupos.lider_id`), `tratarMensagemGrupos()` (interceptor do webhook),
+  `aplicarColetaGrupoEncontro()` (fila → RPC `registrar_encontro_grupo` =
+  encontro real + presenças nominais; fotos/visitantes/não-reconhecidos vão
+  nas observações), `transcreverAudio()` (OpenAI Whisper · env
+  `OPENAI_API_KEY` opcional + `OPENAI_TRANSCRIBE_MODEL` default whisper-1 ·
+  sem chave o bot pede texto).
+- **Sessão de relato** = `whatsapp_coletas` (SEM migration de estado):
+  `parsed={fonte:'grupo_encontro', grupo_id, data_encontro, presentes,
+  visitantes, resumo, nomes_presentes:[{membro_id,nome}], nao_reconhecidos,
+  fotos[]}`. Dedup por `whatsapp_message_id` sintético:
+  `lembrete:<grupoId>:<data>` e `estudo:<AAAA-Wss>:<liderId>`.
+- **Match nominal**: Haiku recebe a LISTA de membros do grupo e devolve os
+  nomes casados (apelido/typo ok); o JS revalida contra a lista (não confia
+  100% no modelo) e o que não casa vira `nao_reconhecidos` (provável
+  visitante). Revisão-antes-de-aplicar mantida (fila /admin/whatsapp).
+- **Webhook (`publicWhatsapp.js`)**: aceita `audio`/`image` além de texto;
+  interceptor de grupos roda DEPOIS do institucional e ANTES do fast-path do
+  formulário: assume quando (a) há sessão `grupo_encontro` aberta, (b) mídia
+  de líder com escopo grupos, ou (c) texto de líder SÓ-grupos (substitui a
+  orientação templated antiga). Multi-escopo digitando texto sem sessão segue
+  o fluxo de culto. Foto → Storage `eventos-anexos` + `mem_grupo_documentos`
+  (etiqueta "Fotos de grupos", `grupo_ids=[grupo]`) → aparece em Materiais.
+- **Rotas `routes/whatsappGrupos.js`** (`/api/whatsapp-grupos` · server.js):
+  `GET /cron/diario` (CRON_SECRET · vercel.json `0 12 * * *` = 9h BRT ·
+  lembretes diários + estudo no dia `WHATSAPP_ESTUDO_DIA` default 1=segunda),
+  `PATCH /materiais/:docId/estudo-semana` e `POST /enviar-estudo|lembretes`
+  (manual · grupos≥3). Aba Materiais ganhou botão/badge 📖 "Estudo da semana"
+  (`api.grupos.marcarEstudoSemana`).
+- **Migration `20260610220000`**: só `mem_grupo_documentos.estudo_semana
+  boolean default false`. ⚠️ Aplicar antes do merge.
+- **Envs**: `OPENAI_API_KEY` (áudio · Marcos cria depois) ·
+  `WHATSAPP_TEMPLATE_*` (proativo fora da janela 24h · criar na Meta) ·
+  `WHATSAPP_ESTUDO_DIA` (opcional). Sem nenhuma delas o resto funciona
+  (texto/foto dentro da janela de 24h).
+
 ## Grupos · aba Visitas (agendar + registrar) + guards por módulo (2026-06-10)
 
 Marcos: abas do `/grupos` centralizadas (estouravam a largura) e a aba

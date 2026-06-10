@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Settings, HeartHandshake } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Settings, HeartHandshake, BookOpen } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -378,6 +378,17 @@ export default function Grupos() {
       toast.success('Material removido');
       loadMateriais();
     } catch { toast.error('Erro ao remover'); }
+  };
+
+  // Marca o material que o bot do WhatsApp envia aos líderes de grupos (1 por vez)
+  const handleMarcarEstudo = async (doc) => {
+    try {
+      await api.marcarEstudoSemana(doc.id, !doc.estudo_semana);
+      toast.success(!doc.estudo_semana
+        ? 'Marcado como estudo da semana — o bot envia pros líderes no WhatsApp'
+        : 'Desmarcado como estudo da semana');
+      loadMateriais();
+    } catch (e) { toast.error(e?.response?.data?.error || e.message || 'Erro ao marcar estudo'); }
   };
 
   const loadMembros = async () => {
@@ -986,6 +997,11 @@ export default function Grupos() {
             <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{materiais.length} materiais</span>
           </div>
 
+          <p style={{ fontSize: 11, color: C.t3, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <BookOpen size={12} style={{ color: '#8b5cf6' }} />
+            O material marcado como <strong>Estudo da semana</strong> é enviado pelo bot do WhatsApp aos líderes de grupos toda semana.
+          </p>
+
           {/* Lista */}
           <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
             {materiais.length === 0 ? (
@@ -1020,6 +1036,18 @@ export default function Grupos() {
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
+                    {doc.estudo_semana && (
+                      <span style={{ fontSize: 10, padding: '2px 9px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <BookOpen size={11} /> Estudo da semana
+                      </span>
+                    )}
+                    {podeEditarGrupos && (
+                      <button onClick={() => handleMarcarEstudo(doc)}
+                        title={doc.estudo_semana ? 'Desmarcar estudo da semana' : 'Marcar como estudo da semana (o bot envia pros líderes no WhatsApp)'}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: doc.estudo_semana ? '#8b5cf6' : C.t3 }}>
+                        <BookOpen size={14} />
+                      </button>
+                    )}
                     {doc.sharepoint_url && <a href={doc.sharepoint_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: C.primary, fontWeight: 600 }}>SharePoint</a>}
                     {podeEditarGrupos && (
                       <button onClick={() => handleDeleteMaterial(doc.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red }}><Trash2 size={14} /></button>

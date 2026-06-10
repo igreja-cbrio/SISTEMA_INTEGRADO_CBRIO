@@ -92,6 +92,10 @@
     {
       "path": "/api/kpis/v2/cron/coletar",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/whatsapp-grupos/cron/diario",
+      "schedule": "0 12 * * *"
     }
   ],
   "rewrites": [
