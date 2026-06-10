@@ -2606,14 +2606,9 @@ export default function Eventos() {
 
         {/* Filtros */}
         <div style={styles.filterRow}>
-          <ShadSelect value={String(filtroAno)} onValueChange={v => setFiltroAno(parseInt(v, 10))}>
-            <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1, new Date().getFullYear() + 2].map(y => (
-                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-              ))}
-            </SelectContent>
-          </ShadSelect>
+          <span title="Eventos de outros anos: módulo Gestão Anual" style={{ display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 12px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)', color: 'var(--cbrio-text2)', fontSize: 13, fontWeight: 600 }}>
+            {new Date().getFullYear()} {'·'} ano corrente
+          </span>
           <ShadSelect value={filtroStatus || '__all__'} onValueChange={v => setFiltroStatus(v === '__all__' ? '' : v)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Todos os status" />

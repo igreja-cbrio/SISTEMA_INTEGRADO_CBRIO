@@ -814,11 +814,9 @@ export default function Projetos() {
 
         {/* Filters */}
         <div style={styles.filterRow}>
-          <select style={styles.select} value={fYear} onChange={e => setFYear(parseInt(e.target.value, 10))}>
-            {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1, new Date().getFullYear() + 2].map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
+          <span style={{ ...styles.select, cursor: 'default' }} title="Projetos de outros anos: módulo Gestão Anual">
+            {new Date().getFullYear()} {'·'} ano corrente
+          </span>
           <select style={styles.select} value={fStatus} onChange={e => setFStatus(e.target.value)}>
             <option value="">Todos os status</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
