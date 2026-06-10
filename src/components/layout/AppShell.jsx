@@ -7,6 +7,7 @@ import { supabase } from '../../supabaseClient';
 import ChatIAFloating from './ChatIAFloating';
 import FeedbackButton from '../FeedbackButton';
 import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
+import PrimeiroAcessoFotoModal from '../auth/PrimeiroAcessoFotoModal';
 import { playNotificationSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
@@ -501,6 +502,7 @@ export default function AppShell() {
       <ChatIAFloating />
       <FeedbackButton />
       <PrimeiroAcessoSenhaModal />
+      <PrimeiroAcessoFotoModal />
     </div>
   );
 }
