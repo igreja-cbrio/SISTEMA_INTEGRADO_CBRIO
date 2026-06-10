@@ -146,11 +146,17 @@ async function materializarEngajamento(enc, body) {
         ministerioId = novo.id;
       }
     }
+    // área de culto do voluntário = área da conversão (cascata da mandala Servir)
+    const { data: conv } = await supabase.from('cui_convertidos')
+      .select('area').eq('membro_id', membroId).is('deleted_at', null)
+      .in('area', ['kids', 'sede', 'ami', 'bridge', 'online'])
+      .order('data_culto', { ascending: false }).limit(1).maybeSingle();
     const { error } = await supabase.from('mem_voluntarios').insert({
       membro_id: membroId,
       ministerio_id: ministerioId,
       papel: 'Voluntário',
       desde: dataRef,
+      area: conv?.area || null,
       observacoes: `Via encaminhamento da jornada (${enc.id})`,
     });
     if (error) throw error;
