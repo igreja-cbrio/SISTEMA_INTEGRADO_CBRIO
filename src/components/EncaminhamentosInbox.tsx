@@ -53,34 +53,56 @@ function StatusBadge({ s }: { s: string }) {
   );
 }
 
+// O que o "Engajou" registra de verdade, por destino (fecha o loop da NSM)
+const ENGAJOU_HINT: Record<string, string> = {
+  grupos: 'Registra a pessoa como membro do grupo escolhido — passa a contar no valor Conectar e na NSM.',
+  voluntarios: 'Registra a pessoa como voluntária (ministério "Voluntariado (geral)" · ajuste depois na Membresia) — conta no valor Servir e na NSM.',
+  jornada180: 'Registra o 1º encontro da Jornada 180 na data de hoje — conta no valor Investir e na NSM.',
+};
+
 function ContatoDialog({ enc, canWrite, onClose, onChanged }: {
   enc: any | null; canWrite: boolean; onClose: () => void; onChanged: () => void;
 }) {
   const [detail, setDetail] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ canal: 'ligacao', observacao: '', devolutiva: '' });
+  const [form, setForm] = useState({ canal: 'ligacao', observacao: '', devolutiva: '', grupo_id: '' });
+  const [grupos, setGrupos] = useState<any[] | null>(null); // lazy · só destino=grupos
 
   useEffect(() => {
     if (!enc) { setDetail(null); return; }
     setLoading(true);
-    setForm({ canal: 'ligacao', observacao: '', devolutiva: '' });
+    setForm({ canal: 'ligacao', observacao: '', devolutiva: '', grupo_id: '' });
     api.get(enc.id).then(setDetail).catch(() => {}).finally(() => setLoading(false));
   }, [enc]);
 
+  const precisaGrupo = enc?.destino === 'grupos' && form.devolutiva === 'engajou';
+
+  // carrega a lista de grupos na 1ª vez que o select é necessário
+  useEffect(() => {
+    if (precisaGrupo && grupos === null) {
+      api.auxGrupos().then(setGrupos).catch(() => setGrupos([]));
+    }
+  }, [precisaGrupo, grupos]);
+
   async function registrar() {
     if (!form.observacao.trim() && !form.devolutiva) return toast.error('Escreva a observação ou marque a devolutiva');
+    if (precisaGrupo && !form.grupo_id) return toast.error('Escolha em qual grupo a pessoa engajou');
     setSaving(true);
     try {
-      await api.contato(enc.id, {
+      const resp = await api.contato(enc.id, {
         canal: form.canal,
         observacao: form.observacao.trim() || null,
         devolutiva: form.devolutiva || null,
+        grupo_id: precisaGrupo ? form.grupo_id : undefined,
       });
-      toast.success('Contato registrado');
+      if (resp?.aviso) toast.warning(resp.aviso);
+      else if (resp?.vinculo?.ja_existia) toast.success('Contato registrado — a pessoa já tinha esse vínculo ativo.');
+      else if (resp?.vinculo) toast.success('Contato registrado e engajamento materializado — já conta na NSM.');
+      else toast.success('Contato registrado');
       const fresh = await api.get(enc.id).catch(() => null);
       if (fresh) setDetail(fresh);
-      setForm({ canal: 'ligacao', observacao: '', devolutiva: '' });
+      setForm({ canal: 'ligacao', observacao: '', devolutiva: '', grupo_id: '' });
       onChanged();
     } catch (e: any) { toast.error(e.message); }
     finally { setSaving(false); }
@@ -167,6 +189,26 @@ function ContatoDialog({ enc, canWrite, onClose, onChanged }: {
                   </Select>
                 </div>
               </div>
+              {form.devolutiva === 'engajou' && (
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-2.5 space-y-2">
+                  {precisaGrupo && (
+                    <div>
+                      <Label className="text-xs">Em qual grupo? *</Label>
+                      <Select value={form.grupo_id || '__none'} onValueChange={(v) => setForm(f => ({ ...f, grupo_id: v === '__none' ? '' : v }))}>
+                        <SelectTrigger><SelectValue placeholder={grupos === null ? 'Carregando grupos...' : 'Escolha o grupo'} /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none">Escolha o grupo</SelectItem>
+                          {(grupos || []).map((g: any) => <SelectItem key={g.id} value={g.id}>{g.nome}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      {grupos !== null && grupos.length === 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">Nenhum grupo ativo encontrado — cadastre o grupo em /grupos primeiro.</p>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">{ENGAJOU_HINT[enc.destino] || ''}</p>
+                </div>
+              )}
               <div>
                 <Label className="text-xs">Observação (fica na ficha)</Label>
                 <textarea

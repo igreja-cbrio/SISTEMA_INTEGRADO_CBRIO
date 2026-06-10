@@ -1969,6 +1969,8 @@ export const encaminhamentos = {
   get: (id) => get(`/encaminhamentos/${id}`),
   contato: (id, data) => post(`/encaminhamentos/${id}/contato`, data),
   updateStatus: (id, status) => patch(`/encaminhamentos/${id}`, { status }),
+  // grupos ativos pro select do "Engajou" (destino=grupos)
+  auxGrupos: () => get('/encaminhamentos/aux/grupos'),
 };
 
 export const processos = {
