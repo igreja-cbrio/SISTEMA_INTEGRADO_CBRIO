@@ -319,6 +319,15 @@ async function authenticate(req, res, next) {
         areas,
       });
 
+      // Módulos explicitamente BLOQUEADOS por override (nivel_leitura = 0).
+      // É um "deny" intencional que vence até o bypass de admin/diretor —
+      // permite esconder um módulo específico de alguém que vê o resto.
+      const modulosById = new Map(modulos.map(m => [m.id, m]));
+      const modulosBloqueados = validOverrides
+        .filter(o => (o.nivel_leitura ?? 1) === 0)
+        .map(o => modulosById.get(o.modulo_id)?.slug)
+        .filter(Boolean);
+
       granular = {
         usuarioId: permUser.id,
         cargoId: permUser.cargo_id,
@@ -327,6 +336,7 @@ async function authenticate(req, res, next) {
         cargoNivelLeitura: permUser.cargos?.nivel_padrao_leitura ?? 1,
         cargoNivelEscrita: permUser.cargos?.nivel_padrao_escrita ?? 1,
         modulePerms,
+        modulosBloqueados, // ['rh', ...] · deny explícito (vence admin)
         areas,    // ['Marketing', 'Louvor', ...]
         setores,  // ['Criativo', 'Administrativo', ...]
       };
@@ -474,6 +484,12 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
 
+    // Bloqueio explícito de módulo (deny por usuário) · vence até admin/diretor.
+    const bloqueados = req.user.granular?.modulosBloqueados || [];
+    if (moduleNames.length && moduleNames.some(m => bloqueados.includes(m))) {
+      return res.status(403).json({ error: 'Acesso bloqueado para este módulo.', modulos: moduleNames });
+    }
+
     // Admin/Diretor sempre passam (backward compatibility com profiles.role)
     if (['admin', 'diretor'].includes(req.user.role)) return next();
 
@@ -555,6 +571,7 @@ async function getMyPermissions(req, res) {
       cargoNivelLeitura: req.user.granular.cargoNivelLeitura,
       cargoNivelEscrita: req.user.granular.cargoNivelEscrita,
       modulePerms: req.user.granular.modulePerms,
+      modulosBloqueados: req.user.granular.modulosBloqueados || [],
       areas: req.user.granular.areas || [],
       setores: req.user.granular.setores || [],
     } : null,

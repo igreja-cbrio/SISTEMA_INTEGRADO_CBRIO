@@ -303,6 +303,17 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
 function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; nivelMinimo?: number; children: ReactNode }) {
   const auth = useAuth();
   if (auth.loading) return <Loading />;
+
+  // Deny explícito de módulo (override nível 0) · vence até o bypass de admin.
+  const PERM_SLUG: Record<string, string> = {
+    canRH: 'rh', canFinanceiro: 'financeiro', canLogistica: 'logistica',
+    canPatrimonio: 'patrimonio', canMembresia: 'membresia', canProjetos: 'projetos',
+    canExpansao: 'expansao', canAgenda: 'eventos', canIA: 'assistente-ia', canCuidados: 'cuidados',
+  };
+  const slugAlvo = moduleSlug || (permKey ? PERM_SLUG[permKey] : undefined);
+  const bloqueados = ((auth as Record<string, unknown>).modulosBloqueados as string[] | undefined) || [];
+  if (slugAlvo && bloqueados.includes(slugAlvo)) return <Navigate to="/dashboard" replace />;
+
   if (auth.isAdmin) return <>{children}</>;
 
   if (moduleSlug) {

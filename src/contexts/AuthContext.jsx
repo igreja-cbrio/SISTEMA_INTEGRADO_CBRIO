@@ -164,7 +164,11 @@ export function AuthProvider({ children }) {
     if (supabase) await supabase.auth.signOut();
   }
 
+  // Módulos com deny explícito (override nível 0) · vence o bypass de admin/diretor.
+  const modulosBloqueados = permData?.modulosBloqueados || [];
+
   function canAccessModule(moduleNames, tipo = 'leitura', nivelMinimo = 2) {
+    if (moduleNames.some((n) => modulosBloqueados.includes(n))) return false;
     if (['admin', 'diretor'].includes(profile?.role)) return true;
     if (!modulePerms) return false;
     for (const name of moduleNames) {
@@ -175,6 +179,7 @@ export function AuthProvider({ children }) {
   }
 
   function getAccessLevel(moduleNames) {
+    if (moduleNames.some((n) => modulosBloqueados.includes(n))) return 0;
     if (profile?.role === 'admin') return 5;
     if (profile?.role === 'diretor') return 4;
     if (!modulePerms) return 1;
@@ -232,6 +237,7 @@ export function AuthProvider({ children }) {
     isMembroOnly,
     isColaborador,
     modulePerms,
+    modulosBloqueados,
     canAccessModule,
     canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs, canCuidados, canProcessos, canSolicitacoes, canNPS, canDadosBrutos, canPainel,
     getAccessLevel,
