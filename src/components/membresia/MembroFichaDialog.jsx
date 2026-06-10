@@ -116,7 +116,7 @@ function HeaderMembro({ membro }) {
     <div className="px-6 py-5 flex items-start gap-4 border-b">
       <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-lg overflow-hidden shrink-0">
         {membro.foto_url ? (
-          <img src={membro.foto_url} alt={membro.nome} className="w-full h-full object-cover" />
+          <img data-foto-avatar="" src={membro.foto_url} alt={membro.nome} className="w-full h-full object-cover" />
         ) : iniciais}
       </div>
       <div className="flex-1 min-w-0">

@@ -348,7 +348,7 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
             <div key={m.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card">
               <div className="flex items-center gap-3">
                 {m.profile?.avatar_url ? (
-                  <img src={m.profile.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+                  <img data-foto-avatar="" src={m.profile.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
                 ) : (
                   <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium">
                     {m.volunteer_name.charAt(0)}

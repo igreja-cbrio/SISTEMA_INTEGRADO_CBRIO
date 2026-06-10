@@ -318,7 +318,7 @@ export default function CruzamentosPessoas() {
                     padding: '10px 16px', borderTop: `1px solid ${C.border}`,
                   }}>
                     {m.foto_url ? (
-                      <img src={m.foto_url} alt={m.nome} style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} />
+                      <img data-foto-avatar="" src={m.foto_url} alt={m.nome} style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} />
                     ) : (
                       <div style={{
                         width: 32, height: 32, borderRadius: '50%',

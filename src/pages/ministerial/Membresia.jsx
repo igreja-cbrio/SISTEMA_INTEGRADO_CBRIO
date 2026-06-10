@@ -1186,7 +1186,7 @@ export default function Membresia() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 13, flexShrink: 0, overflow: 'hidden' }}>
                       {m.foto_url ? (
-                        <img src={m.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img data-foto-avatar="" src={m.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
                         m.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
                       )}
@@ -1258,7 +1258,7 @@ export default function Membresia() {
               <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
                 <div style={{ width: 56, height: 56, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 20, overflow: 'hidden' }}>
                   {selectedMembro.foto_url ? (
-                    <img src={selectedMembro.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <img data-foto-avatar="" src={selectedMembro.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
                     selectedMembro.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
                   )}
@@ -1465,7 +1465,7 @@ export default function Membresia() {
                           >
                             <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
                               {f.foto_url ? (
-                                <img src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                               ) : (
                                 f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
                               )}

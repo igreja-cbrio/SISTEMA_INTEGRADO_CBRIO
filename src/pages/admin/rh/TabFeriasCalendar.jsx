@@ -323,7 +323,7 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
                       onClick={() => setSelectedVacation(v)}
                     >
                       {v.rh_funcionarios?.foto_url ? (
-                        <img src={v.rh_funcionarios.foto_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                        <img data-foto-avatar="" src={v.rh_funcionarios.foto_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
                       ) : (
                         <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
                           style={{ background: C.primaryBg, color: C.primary }}>
@@ -374,7 +374,7 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
                   onClick={() => setSelectedVacation(v)}
                 >
                   {v.rh_funcionarios?.foto_url ? (
-                    <img src={v.rh_funcionarios.foto_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                    <img data-foto-avatar="" src={v.rh_funcionarios.foto_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                   ) : (
                     <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
                       style={{ background: C.primaryBg, color: C.primary }}>
@@ -413,7 +413,7 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   {v.rh_funcionarios?.foto_url ? (
-                    <img src={v.rh_funcionarios.foto_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                    <img data-foto-avatar="" src={v.rh_funcionarios.foto_url} alt="" className="w-10 h-10 rounded-full object-cover" />
                   ) : (
                     <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
                       style={{ background: C.primaryBg, color: C.primary }}>

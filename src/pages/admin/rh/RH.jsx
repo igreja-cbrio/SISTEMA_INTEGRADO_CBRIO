@@ -708,7 +708,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                   <td style={{ ...styles.td, fontWeight: 600 }}>
                     <div className="flex items-center gap-3">
                       {f.foto_url ? (
-                        <img src={f.foto_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                        <img data-foto-avatar="" src={f.foto_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold shrink-0">
                           {(f.nome || '?')[0].toUpperCase()}
@@ -944,7 +944,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                   <div key={tf.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: `1px solid ${C.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {tf.rh_funcionarios?.foto_url ? (
-                        <img src={tf.rh_funcionarios.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+                        <img data-foto-avatar="" src={tf.rh_funcionarios.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
                       ) : (
                         <div style={{ width: 24, height: 24, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
                           {(tf.rh_funcionarios?.nome || '?')[0].toUpperCase()}
@@ -1052,7 +1052,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                                 <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                     {d.funcionario?.foto_url ? (
-                                      <img src={d.funcionario.foto_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
+                                      <img data-foto-avatar="" src={d.funcionario.foto_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
                                     ) : (
                                       <div style={{ width: 28, height: 28, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>
                                         {(d.funcionario?.nome || '?')[0].toUpperCase()}
@@ -1090,7 +1090,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                                     <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: jaEnviado ? 'default' : 'pointer', opacity: jaEnviado ? 0.5 : 1 }}>
                                       <input type="checkbox" disabled={jaEnviado} checked={jaEnviado || enviarSel.includes(f.id)} onChange={() => toggleFuncSel(f.id)} />
                                       {f.foto_url ? (
-                                        <img src={f.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+                                        <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
                                       ) : (
                                         <div style={{ width: 24, height: 24, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
                                           {(f.nome || '?')[0].toUpperCase()}
@@ -1238,7 +1238,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
         <div className="px-6 pt-6 pb-4 border-b border-border flex items-start justify-between">
           <div className="flex items-center gap-4">
             {func.foto_url ? (
-              <img src={func.foto_url} alt="" className="w-16 h-16 rounded-full object-cover border-[3px] border-primary" />
+              <img data-foto-avatar="" src={func.foto_url} alt="" className="w-16 h-16 rounded-full object-cover border-[3px] border-primary" />
             ) : (
               <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center text-2xl font-bold border-[3px] border-primary">
                 {func.nome[0]?.toUpperCase()}
@@ -1289,7 +1289,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
                 onClick={() => onDetail(gestor.id)}
               >
                 {gestor.foto_url ? (
-                  <img src={gestor.foto_url} alt="" className="w-8 h-8 rounded-full object-cover border border-primary/40" />
+                  <img data-foto-avatar="" src={gestor.foto_url} alt="" className="w-8 h-8 rounded-full object-cover border border-primary/40" />
                 ) : (
                   <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
                     {gestor.nome[0]?.toUpperCase()}
@@ -1317,7 +1317,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
                     onClick={() => onDetail(s.id)}
                   >
                     {s.foto_url ? (
-                      <img src={s.foto_url} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
+                      <img data-foto-avatar="" src={s.foto_url} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
                     ) : (
                       <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">
                         {s.nome[0]?.toUpperCase()}
@@ -1437,7 +1437,7 @@ function OrgChartTab({ funcs, onDetail }) {
           style={{ minWidth: 240, maxWidth: 280 }}
         >
           {func.foto_url ? (
-            <img src={func.foto_url} alt="" className="w-20 h-20 rounded-full object-cover mx-auto mb-3 border-[3px] border-primary shadow-md group-hover:scale-105 transition-transform" />
+            <img data-foto-avatar="" src={func.foto_url} alt="" className="w-20 h-20 rounded-full object-cover mx-auto mb-3 border-[3px] border-primary shadow-md group-hover:scale-105 transition-transform" />
           ) : (
             <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center text-3xl font-bold mx-auto mb-3 border-[3px] border-primary">
               {func.nome[0]?.toUpperCase()}
@@ -1466,7 +1466,7 @@ function OrgChartTab({ funcs, onDetail }) {
           style={{ minWidth: 220, maxWidth: 260 }}
         >
           {func.foto_url ? (
-            <img src={func.foto_url} alt="" className="w-12 h-12 rounded-full object-cover border-2 border-primary/60 shrink-0 group-hover:scale-105 transition-transform" />
+            <img data-foto-avatar="" src={func.foto_url} alt="" className="w-12 h-12 rounded-full object-cover border-2 border-primary/60 shrink-0 group-hover:scale-105 transition-transform" />
           ) : (
             <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center text-lg font-bold shrink-0 border-2 border-primary/60">
               {func.nome[0]?.toUpperCase()}
@@ -1493,7 +1493,7 @@ function OrgChartTab({ funcs, onDetail }) {
         style={{ minWidth: 160, maxWidth: 180 }}
       >
         {func.foto_url ? (
-          <img src={func.foto_url} alt="" className="w-10 h-10 rounded-full object-cover mx-auto mb-2 border-2 border-border group-hover:border-primary/40 transition-colors" />
+          <img data-foto-avatar="" src={func.foto_url} alt="" className="w-10 h-10 rounded-full object-cover mx-auto mb-2 border-2 border-border group-hover:border-primary/40 transition-colors" />
         ) : (
           <div className="w-10 h-10 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-bold mx-auto mb-2 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
             {func.nome[0]?.toUpperCase()}
@@ -2370,7 +2370,7 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
         <div style={{ position: 'relative', flexShrink: 0 }}>
           {data.foto_url ? (
-            <img src={data.foto_url} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}` }} />
+            <img data-foto-avatar="" src={data.foto_url} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}` }} />
           ) : (
             <div style={{ width: 72, height: 72, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>
               {(data.nome || '?')[0].toUpperCase()}

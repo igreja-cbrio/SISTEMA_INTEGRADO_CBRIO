@@ -276,7 +276,7 @@ function MembroLado({ membro, lado, onMerge }) {
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           {membro.foto_url
-            ? <img src={membro.foto_url} alt="" className="size-8 rounded-full object-cover" />
+            ? <img data-foto-avatar="" src={membro.foto_url} alt="" className="size-8 rounded-full object-cover" />
             : <div className="size-8 rounded-full bg-muted flex items-center justify-center"><UserIcon className="size-4 text-muted-foreground" /></div>
           }
           <div>

@@ -119,7 +119,7 @@ export default function VolQrCodes() {
           {pcSearch.data?.people?.map((person: any) => (
             <div key={person.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
               <div className="flex items-center gap-3">
-                {person.avatar_url && <img src={person.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />}
+                {person.avatar_url && <img data-foto-avatar="" src={person.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />}
                 <div>
                   <span className="font-medium">{person.full_name}</span>
                   <p className="text-xs text-muted-foreground">PC ID: {person.id}</p>
