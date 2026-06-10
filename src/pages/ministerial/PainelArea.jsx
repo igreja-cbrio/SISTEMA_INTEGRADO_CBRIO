@@ -1,15 +1,15 @@
 // ============================================================================
-// PainelArea v3 · drill-down de KPIs + CULTOS + DADOS BRUTOS + saúde por área
+// PainelArea v4 · visualização de culto + KPIs agrupados por valor da Jornada
 // ============================================================================
-// Mudanças v3 (2026-05-21 · varredura fina):
-//   - Nova aba "Cultos" (default) · puxa cultos recentes da área direto da
-//     vw_culto_stats · resolve o problema "aba Dados sempre vazia"
-//   - Filtro de período (30d/90d/180d/365d) no header · backend respeita
-//   - Score com label maior + diagnóstico em destaque
-//   - Botao "Voltar ao painel mestre" no header
-//   - Variacao % nos KPIs (mesma lógica dos dados)
-//   - Sparkline com hover tooltip
-//   - Filtro "Sem valor" so aparece quando > 0
+// Mudanças v4 (2026-06-10 · pedido do Marcos · "UI/UX podem ser melhor"):
+//   - Aba Cultos: cards de resumo com MÉDIA POR CULTO + tendência vs mês
+//     anterior, gráfico mensal (barras de frequência média + linha de
+//     decisões · serie_cultos do backend) e tabela de cultos com barra
+//     comparativa (de relance: acima/abaixo da média)
+//   - Aba Indicadores: filtro de pills REMOVIDO · KPIs agrupados em seções
+//     por valor da Jornada, em cards com cor de status + progresso vs meta
+//   - NPS destacado: nota grande em escala 0-10 visual
+//   - Aba Dados: mesmo agrupamento por valor (sem pills)
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
@@ -23,8 +23,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { ArrowLeft, ChevronRight, Plus } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Plus, TrendingUp, TrendingDown, Minus, Users, Sparkles, CalendarDays, Trophy } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis,
+  Tooltip as RTooltip, CartesianGrid, Legend,
+} from 'recharts';
 import JornadaConvertidos from '../../components/JornadaConvertidos';
 
 const AREA_META = {
@@ -74,11 +78,13 @@ const VALOR_CORES = {
   generosidade: '#EC4899',
 };
 
+const ORDEM_VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
+
 const STATUS_META = {
-  no_alvo:   { label: 'No alvo',  className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
-  atrasado:  { label: 'Atrasado', className: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
-  critico:   { label: 'Crítico',  className: 'bg-red-500/15 text-red-700 dark:text-red-400' },
-  sem_dado:  { label: 'Sem dado', className: 'bg-muted text-muted-foreground' },
+  no_alvo:   { label: 'No alvo',  color: '#10b981', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+  atrasado:  { label: 'Atrasado', color: '#f59e0b', className: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  critico:   { label: 'Crítico',  color: '#ef4444', className: 'bg-red-500/15 text-red-700 dark:text-red-400' },
+  sem_dado:  { label: 'Sem dado', color: '#94a3b8', className: 'bg-muted text-muted-foreground' },
 };
 
 const SAUDE_META = {
@@ -94,6 +100,9 @@ const PERIODOS = [
   { id: '180d', label: '6 meses' },
   { id: '365d', label: '1 ano' },
 ];
+
+const MESES_CURTOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
 function statusKey(traj) {
   if (!traj || traj.ultimo_valor == null) return 'sem_dado';
@@ -119,6 +128,33 @@ function formatDataCompleta(d) {
     const [a, m, dia] = d.split('-');
     return `${dia}/${m}/${a}`;
   } catch { return d; }
+}
+
+function formatMes(mes) {
+  if (!mes) return '';
+  try {
+    const [a, m] = mes.split('-');
+    return `${MESES_CURTOS[Number(m) - 1]}/${a.slice(2)}`;
+  } catch { return mes; }
+}
+
+function diaSemana(d) {
+  try {
+    const dt = new Date(`${d}T12:00:00`);
+    return DIAS_SEMANA[dt.getDay()];
+  } catch { return ''; }
+}
+
+// Frequência/decisões "da área" pra um culto (mesma regra do backend)
+function freqDoCulto(c, area) {
+  if (area === 'kids') return c.presencial_kids;
+  if (area === 'online') return c.online_pico;
+  return c.presencial_adulto;
+}
+function decisoesDoCulto(c, area) {
+  if (area === 'kids') return c.decisoes_kids ?? 0;
+  if (area === 'online') return c.decisoes_online ?? 0;
+  return (c.decisoes_presenciais ?? 0) + (c.decisoes_online ?? 0);
 }
 
 export default function PainelArea({ area }) {
@@ -173,6 +209,7 @@ export default function PainelArea({ area }) {
   const saudeMeta = SAUDE_META[saude.diagnostico] || SAUDE_META.atencao;
   const cultos = data.cultos_recentes || [];
   const totaisCultos = data.totais_cultos;
+  const serieCultos = data.serie_cultos || [];
   const temCultos = cultos.length > 0;
 
   return (
@@ -221,10 +258,10 @@ export default function PainelArea({ area }) {
           </div>
         </div>
 
-        {/* Score de saúde · agora com diagnóstico em destaque */}
+        {/* Score de saúde */}
         <div className="flex items-center gap-4">
           <div
-            className="w-32 h-32 rounded-full flex flex-col items-center justify-center border-4"
+            className="w-28 h-28 rounded-full flex flex-col items-center justify-center border-4"
             style={{
               borderColor: saudeMeta.color,
               background: saudeMeta.bg,
@@ -256,18 +293,18 @@ export default function PainelArea({ area }) {
             key={p.id}
             onClick={() => setPeriodo(p.id)}
             disabled={loading}
-            className="px-2.5 py-1 rounded-md border transition-colors disabled:opacity-50"
+            className="px-3 py-1.5 rounded-full border font-medium transition-colors disabled:opacity-50"
             style={
               periodo === p.id
                 ? { background: meta.accent, color: '#fff', borderColor: meta.accent }
-                : { background: 'transparent', borderColor: 'rgb(226, 232, 240)' }
+                : { background: 'transparent', borderColor: 'var(--cbrio-border, rgb(226, 232, 240))' }
             }
           >
             {p.label}
           </button>
         ))}
         {data.periodo && (
-          <span className="text-muted-foreground ml-auto">
+          <span className="text-muted-foreground ml-auto hidden sm:inline">
             {formatDataCompleta(data.periodo.desde)} → {formatDataCompleta(data.periodo.ate)}
           </span>
         )}
@@ -275,28 +312,14 @@ export default function PainelArea({ area }) {
 
       {/* ─────────────────────── NPS DESTACADO ─────────────────────── */}
       {npsDestaque.length > 0 && (
-        <Card
-          className="overflow-hidden"
-          style={{ borderColor: meta.accentBorder, borderWidth: 2 }}
-        >
-          <div className="p-4 border-b border-border flex items-center justify-between" style={{ background: meta.accentSoft }}>
-            <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: meta.accent }}>
-              NPS do culto · avaliação dos participantes
-            </h2>
-            {podePreencher && (
-              <NpsRegistrarButton
-                area={area}
-                accent={meta.accent}
-                onSaved={() => api.get(area, { periodo }).then(setData)}
-              />
-            )}
-          </div>
-          <div className="divide-y divide-border">
-            {npsDestaque.map(k => (
-              <KpiRow key={k.id} kpi={k} onClick={() => navigate(`/painel/kpi/${k.id}`)} />
-            ))}
-          </div>
-        </Card>
+        <NpsDestaque
+          kpis={npsDestaque}
+          meta={meta}
+          area={area}
+          podePreencher={podePreencher}
+          onSaved={() => api.get(area, { periodo }).then(setData)}
+          onOpenKpi={(id) => navigate(`/painel/kpi/${id}`)}
+        />
       )}
 
       {/* ─────────────────────── TABS PRINCIPAIS ─────────────────────── */}
@@ -327,9 +350,12 @@ export default function PainelArea({ area }) {
         {temCultos && (
           <TabsContent value="cultos" className="mt-6 space-y-4">
             {totaisCultos && (
-              <TotaisCultoCards totais={totaisCultos} area={area} accent={meta.accent} />
+              <CultosResumo totais={totaisCultos} serie={serieCultos} cultos={cultos} area={area} accent={meta.accent} />
             )}
-            <CultosLista cultos={cultos} area={area} accent={meta.accent} />
+            {serieCultos.length > 1 && (
+              <GraficoCultos serie={serieCultos} area={area} accent={meta.accent} />
+            )}
+            <CultosTabela cultos={cultos} area={area} accent={meta.accent} />
           </TabsContent>
         )}
 
@@ -340,7 +366,7 @@ export default function PainelArea({ area }) {
               Nenhum indicador cadastrado pra esta área ainda.
             </Card>
           ) : (
-            <IndicadoresPorValor kpis={kpisRegulares} porValor={data.por_valor} semValor={data.sem_valor} navigate={navigate} accent={meta.accent} />
+            <IndicadoresAgrupados kpis={kpisRegulares} navigate={navigate} />
           )}
         </TabsContent>
 
@@ -352,7 +378,7 @@ export default function PainelArea({ area }) {
               usam só os números dos cultos (aba "Cultos").
             </Card>
           ) : (
-            <DadosPorValor dados={data.dados || []} accent={meta.accent} />
+            <DadosAgrupados dados={data.dados || []} accent={meta.accent} />
           )}
           <p className="text-xs text-muted-foreground mt-3">
             <strong>Dados brutos</strong> são números preenchidos por área em <span className="font-mono">/dados-brutos</span>
@@ -434,6 +460,297 @@ export default function PainelArea({ area }) {
 
 // ─────────────────────────── COMPONENTES ───────────────────────────
 
+// Seta de tendência (compara dois valores · ex.: média do mês vs mês anterior)
+function Tendencia({ atual, anterior, sufixo = 'vs mês anterior' }) {
+  if (atual == null || anterior == null || anterior === 0) return null;
+  const pct = ((atual - anterior) / anterior) * 100;
+  const Icon = pct > 2 ? TrendingUp : pct < -2 ? TrendingDown : Minus;
+  const cor = pct > 2 ? 'text-emerald-600 dark:text-emerald-400'
+    : pct < -2 ? 'text-red-600 dark:text-red-400'
+    : 'text-muted-foreground';
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${cor}`}>
+      <Icon className="h-3 w-3" />
+      {pct >= 0 ? '+' : ''}{Math.round(pct)}% {sufixo}
+    </span>
+  );
+}
+
+// Cards de resumo da aba Cultos · média por culto é o número que importa
+function CultosResumo({ totais, serie, cultos, area, accent }) {
+  const freqTotal = area === 'kids' ? totais.presencial_kids
+    : area === 'online' ? totais.online_pico_total
+    : totais.presencial_adulto;
+  const decTotal = area === 'kids' ? totais.decisoes_kids
+    : area === 'online' ? totais.decisoes_online
+    : totais.decisoes_total;
+  const n = totais.total_cultos || 0;
+  const mediaFreq = n > 0 ? Math.round(freqTotal / n) : 0;
+  const mediaDec = n > 0 ? (decTotal / n) : 0;
+
+  // Tendência: média por culto do último mês da série vs mês anterior
+  // (média é robusta a mês parcial · total não seria)
+  const ultimo = serie[serie.length - 1];
+  const penultimo = serie[serie.length - 2];
+
+  // Melhor culto do período (entre os recentes carregados)
+  const melhor = cultos.reduce((best, c) => {
+    const f = Number(freqDoCulto(c, area)) || 0;
+    return (!best || f > best.f) ? { c, f } : best;
+  }, null);
+
+  const labelFreq = area === 'online' ? 'Pico médio por culto' : 'Frequência média por culto';
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <Card className="p-4" style={{ borderLeft: `3px solid ${accent}` }}>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">
+          <Users className="h-3.5 w-3.5" /> {labelFreq}
+        </div>
+        <p className="text-3xl font-bold text-foreground mt-1">{formatNum(mediaFreq)}</p>
+        <div className="mt-1 flex flex-col gap-0.5">
+          <Tendencia atual={ultimo?.media_freq} anterior={penultimo?.media_freq} />
+          <span className="text-[11px] text-muted-foreground">{formatNum(freqTotal)} no período</span>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">
+          <Sparkles className="h-3.5 w-3.5" /> Decisões no período
+        </div>
+        <p className="text-3xl font-bold text-foreground mt-1">{formatNum(decTotal)}</p>
+        <div className="mt-1 flex flex-col gap-0.5">
+          <Tendencia atual={ultimo?.decisoes} anterior={penultimo?.decisoes} />
+          <span className="text-[11px] text-muted-foreground">
+            {mediaDec.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} por culto
+          </span>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">
+          <CalendarDays className="h-3.5 w-3.5" /> Cultos realizados
+        </div>
+        <p className="text-3xl font-bold text-foreground mt-1">{formatNum(n)}</p>
+        <span className="text-[11px] text-muted-foreground">no período selecionado</span>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">
+          <Trophy className="h-3.5 w-3.5" /> Melhor culto
+        </div>
+        {melhor && melhor.f > 0 ? (
+          <>
+            <p className="text-3xl font-bold mt-1" style={{ color: accent }}>{formatNum(melhor.f)}</p>
+            <span className="text-[11px] text-muted-foreground">
+              {formatDataCompleta(melhor.c.data)} · {melhor.c.nome}
+            </span>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground mt-2 italic">sem dado ainda</p>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// Gráfico mensal · barras = frequência média por culto · linha = decisões
+function GraficoCultos({ serie, area, accent }) {
+  const dataChart = serie.map(m => ({
+    label: formatMes(m.mes),
+    media: m.media_freq,
+    decisoes: m.decisoes,
+    cultos: m.cultos,
+  }));
+  const labelFreq = area === 'online' ? 'Pico médio' : 'Frequência média';
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-foreground">Evolução mensal</h3>
+        <span className="text-[11px] text-muted-foreground">
+          barras = {labelFreq.toLowerCase()} por culto · linha = decisões no mês
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={260}>
+        <ComposedChart data={dataChart} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--cbrio-border, #e2e8f0)" />
+          <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="freq" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="dec" orientation="right" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={36} />
+          <RTooltip
+            contentStyle={{ fontSize: 12, borderRadius: 8 }}
+            formatter={(value, name, props) => {
+              if (name === labelFreq) {
+                return [`${formatNum(value)} (${props.payload.cultos} culto${props.payload.cultos !== 1 ? 's' : ''})`, name];
+              }
+              return [formatNum(value), name];
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar yAxisId="freq" dataKey="media" name={labelFreq} fill={accent} radius={[4, 4, 0, 0]} maxBarSize={48} fillOpacity={0.85} />
+          <Line yAxisId="dec" dataKey="decisoes" name="Decisões" stroke="#F59E0B" strokeWidth={2.5} dot={{ r: 3 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}
+
+// Tabela de cultos com barra comparativa · de relance: acima/abaixo da média
+function CultosTabela({ cultos, area, accent }) {
+  const freqs = cultos.map(c => Number(freqDoCulto(c, area)) || 0);
+  const maxFreq = Math.max(...freqs, 1);
+  const comDado = freqs.filter(f => f > 0);
+  const media = comDado.length > 0 ? comDado.reduce((a, b) => a + b, 0) / comDado.length : 0;
+  const labelFreq = area === 'online' ? 'Pico' : area === 'kids' ? 'Crianças' : 'Presentes';
+
+  return (
+    <Card>
+      <div className="p-4 border-b border-border flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-sm font-semibold text-foreground">Culto a culto</h3>
+        <span className="text-xs text-muted-foreground">
+          média do período: <strong className="text-foreground">{formatNum(Math.round(media))}</strong> · mais recentes primeiro
+        </span>
+      </div>
+
+      {/* Cabeçalho (só desktop) */}
+      <div className="hidden md:grid grid-cols-[150px_1fr_90px] gap-4 px-4 py-2 border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+        <span>Culto</span>
+        <span>{labelFreq}</span>
+        <span className="text-right">Decisões</span>
+      </div>
+
+      <div className="divide-y divide-border">
+        {cultos.map(c => {
+          const f = Number(freqDoCulto(c, area)) || 0;
+          const dec = Number(decisoesDoCulto(c, area)) || 0;
+          const semDado = freqDoCulto(c, area) == null || (f === 0 && dec === 0);
+          const pct = Math.round((f / maxFreq) * 100);
+          const acimaDaMedia = media > 0 && f >= media;
+          return (
+            <div key={c.id} className={`px-4 py-3 grid grid-cols-1 md:grid-cols-[150px_1fr_90px] gap-2 md:gap-4 items-center ${semDado ? 'opacity-60' : ''}`}>
+              {/* Data + nome */}
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">
+                  {formatData(c.data)} <span className="text-muted-foreground font-normal">· {diaSemana(c.data)}</span>
+                </p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  {c.nome}{c.hora ? ` · ${c.hora.slice(0, 5)}` : ''}
+                </p>
+              </div>
+
+              {/* Barra de frequência comparativa */}
+              <div className="flex items-center gap-2 min-w-0">
+                {semDado ? (
+                  <span className="text-xs text-muted-foreground italic">sem dado lançado</span>
+                ) : (
+                  <>
+                    <div className="flex-1 h-5 bg-muted/60 rounded overflow-hidden">
+                      <div
+                        className="h-full rounded transition-all"
+                        style={{
+                          width: `${Math.max(pct, 2)}%`,
+                          background: accent,
+                          opacity: acimaDaMedia ? 0.9 : 0.45,
+                        }}
+                      />
+                    </div>
+                    <span className="text-sm font-bold tabular-nums w-14 text-right" style={{ color: acimaDaMedia ? accent : undefined }}>
+                      {formatNum(f)}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* Decisões */}
+              <div className="md:text-right">
+                {dec > 0 ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                    <Sparkles className="h-3 w-3" /> {dec}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="px-4 py-2 border-t border-border text-[11px] text-muted-foreground">
+        Barra cheia = melhor culto do período · barra clara = abaixo da média
+      </div>
+    </Card>
+  );
+}
+
+// ─────────────── NPS DESTACADO · nota grande em escala 0-10 ───────────────
+
+function NpsDestaque({ kpis, meta, area, podePreencher, onSaved, onOpenKpi }) {
+  return (
+    <Card className="overflow-hidden" style={{ borderColor: meta.accentBorder, borderWidth: 2 }}>
+      <div className="p-4 border-b border-border flex items-center justify-between" style={{ background: meta.accentSoft }}>
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: meta.accent }}>
+          NPS do culto · avaliação dos participantes
+        </h2>
+        {podePreencher && (
+          <NpsRegistrarButton area={area} accent={meta.accent} onSaved={onSaved} />
+        )}
+      </div>
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {kpis.map(k => {
+          const traj = k.trajetoria || {};
+          const valor = traj.ultimo_valor;
+          const metaNps = traj.checkpoint_meta ?? k.meta_valor;
+          const corNota = valor == null ? '#94a3b8'
+            : metaNps != null
+              ? (valor >= metaNps ? '#10b981' : valor >= metaNps * 0.85 ? '#f59e0b' : '#ef4444')
+              : meta.accent;
+          return (
+            <button
+              key={k.id}
+              onClick={() => onOpenKpi(k.id)}
+              className="text-left rounded-lg border border-border p-4 hover:bg-accent/30 transition-colors"
+            >
+              <p className="text-xs text-muted-foreground">{k.indicador}</p>
+              <div className="flex items-end gap-1.5 mt-1">
+                {valor == null ? (
+                  <span className="text-sm text-muted-foreground italic">sem avaliação ainda</span>
+                ) : (
+                  <>
+                    <span className="text-4xl font-bold leading-none" style={{ color: corNota }}>
+                      {Number(valor).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}
+                    </span>
+                    <span className="text-sm text-muted-foreground mb-0.5">/ 10</span>
+                  </>
+                )}
+              </div>
+              {/* Escala 0-10 com marcador de meta */}
+              <div className="relative mt-3 h-2 bg-muted rounded-full overflow-visible">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full"
+                  style={{ width: `${Math.max(0, Math.min(100, (Number(valor) || 0) * 10))}%`, background: corNota }}
+                />
+                {metaNps != null && (
+                  <div
+                    className="absolute -top-1 h-4 w-0.5 bg-foreground/60 rounded"
+                    style={{ left: `${Math.max(0, Math.min(100, Number(metaNps) * 10))}%` }}
+                    title={`Meta: ${formatNum(metaNps)}`}
+                  />
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-2">
+                {metaNps != null ? `meta ${formatNum(metaNps)}` : 'sem meta definida'}
+                {traj.ultimo_periodo ? ` · referência ${traj.ultimo_periodo}` : ''}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function NpsRegistrarButton({ area, accent, onSaved }) {
   const [open, setOpen] = useState(false);
   const [nota, setNota] = useState('');
@@ -483,7 +800,7 @@ function NpsRegistrarButton({ area, accent, onSaved }) {
         </DialogHeader>
         <div className="space-y-3 py-2">
           <p className="text-xs text-muted-foreground">
-            Nota média (0-10) das avaliações pos-culto do mes selecionado.
+            Nota média (0-10) das avaliações pós-culto do mês selecionado.
             Substitui registro existente · idempotente.
           </p>
           <div>
@@ -539,92 +856,145 @@ function NpsRegistrarButton({ area, accent, onSaved }) {
   );
 }
 
-function TotaisCultoCards({ totais, area, accent }) {
-  const cards = [
-    { label: 'Cultos no período', value: totais.total_cultos, full: true },
-    { label: 'Frequência total', value: totais.presencial_adulto + totais.presencial_kids },
-    { label: 'Decisões total', value: totais.decisoes_total },
-  ];
-  // Cards extras especificos por área
-  if (area === 'online') {
-    cards.push({ label: 'Pico online (soma)', value: totais.online_pico_total });
-    cards.push({ label: 'Views D+7 (DDUS)', value: totais.online_ddus_total });
-  } else if (area === 'kids') {
-    cards.push({ label: 'Frequência Kids', value: totais.presencial_kids });
-    cards.push({ label: 'Decisões Kids', value: totais.decisoes_kids });
-  } else {
-    cards.push({ label: 'Decisões presenciais', value: totais.decisoes_presenciais });
-    cards.push({ label: 'Decisões online', value: totais.decisoes_online });
-  }
+// ─────────── INDICADORES · agrupados por valor da Jornada (sem pills) ───────────
+
+function agruparPorValor(items, getValores) {
+  const grupos = ORDEM_VALORES
+    .map(v => ({ valor: v, items: items.filter(i => (getValores(i) || []).includes(v)) }))
+    .filter(g => g.items.length > 0);
+  const semValor = items.filter(i => (getValores(i) || []).length === 0);
+  if (semValor.length > 0) grupos.push({ valor: null, items: semValor });
+  return grupos;
+}
+
+function GrupoHeader({ valor, count, sufixo }) {
+  const cor = valor ? (VALOR_CORES[valor] || '#94a3b8') : '#94a3b8';
+  const label = valor ? (VALOR_LABELS[valor] || valor) : 'Outros indicadores';
+  return (
+    <div className="flex items-center gap-2">
+      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: cor }} />
+      <h3 className="text-sm font-semibold text-foreground">{label}</h3>
+      <span className="text-xs text-muted-foreground">
+        {count} {sufixo}{count !== 1 ? 's' : ''}
+      </span>
+      <div className="flex-1 h-px bg-border ml-1" />
+    </div>
+  );
+}
+
+function IndicadoresAgrupados({ kpis, navigate }) {
+  const grupos = useMemo(
+    () => agruparPorValor(kpis, k => k.valores),
+    [kpis]
+  );
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-      {cards.map((c, i) => (
-        <Card
-          key={i}
-          className={`p-4 ${c.full ? 'md:col-span-1' : ''}`}
-          style={i === 0 ? { borderLeft: `3px solid ${accent}` } : undefined}
-        >
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">{c.label}</p>
-          <p className="text-2xl font-bold text-foreground mt-1">{formatNum(c.value)}</p>
-        </Card>
+    <div className="space-y-6">
+      {grupos.map(g => (
+        <div key={g.valor || 'outros'} className="space-y-3">
+          <GrupoHeader valor={g.valor} count={g.items.length} sufixo="indicador" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {g.items.map(k => (
+              <KpiCard key={`${g.valor}-${k.id}`} kpi={k} onClick={() => navigate(`/painel/kpi/${k.id}`)} />
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   );
 }
 
-function CultosLista({ cultos, area, accent }) {
+function KpiCard({ kpi, onClick }) {
+  const sKey = statusKey(kpi.trajetoria);
+  const sMeta = STATUS_META[sKey];
+  const traj = kpi.trajetoria || {};
+  const valor = traj.ultimo_valor;
+  const metaV = traj.checkpoint_meta;
+  const pct = traj.percentual_meta;
+
   return (
-    <Card>
-      <div className="p-4 border-b border-border flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">Cultos do período</h3>
-        <span className="text-xs text-muted-foreground">mais recentes primeiro</span>
+    <Card
+      className="p-4 cursor-pointer hover:shadow-md transition-shadow border-l-4 flex flex-col"
+      style={{ borderLeftColor: sMeta.color }}
+      onClick={onClick}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-mono text-muted-foreground truncate">{kpi.id}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          {kpi.is_okr && <Badge variant="secondary" className="text-[9px] px-1.5">OKR</Badge>}
+          <Badge className={`text-[10px] ${sMeta.className}`}>{sMeta.label}</Badge>
+        </div>
       </div>
-      <div className="divide-y divide-border">
-        {cultos.map(c => (
-          <CultoRow key={c.id} culto={c} area={area} accent={accent} />
-        ))}
+
+      <p className="text-sm font-medium text-foreground mt-2 line-clamp-2 flex-1">{kpi.indicador}</p>
+
+      <div className="mt-3 flex items-end justify-between gap-2">
+        {valor != null ? (
+          <span className="text-2xl font-bold leading-none text-foreground">
+            {formatNum(valor)}
+            {kpi.unidade && kpi.unidade !== 'unidade' && (
+              <span className="text-xs font-normal text-muted-foreground ml-1">{kpi.unidade}</span>
+            )}
+          </span>
+        ) : (
+          <span className="text-sm text-muted-foreground italic">sem dado</span>
+        )}
+        {metaV != null && (
+          <span className="text-[11px] text-muted-foreground text-right">
+            meta {formatNum(metaV)}
+            {pct != null && (
+              <span
+                className="block font-semibold"
+                style={{ color: pct >= 100 ? '#10b981' : pct >= 70 ? '#f59e0b' : '#ef4444' }}
+              >
+                {Math.round(pct)}% da meta
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+
+      {/* Barra de progresso vs meta */}
+      {valor != null && metaV != null && pct != null && (
+        <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${Math.max(2, Math.min(100, pct))}%`,
+              background: pct >= 100 ? '#10b981' : pct >= 70 ? '#f59e0b' : '#ef4444',
+            }}
+          />
+        </div>
+      )}
+
+      <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+        <span>{kpi.periodicidade || ''}</span>
+        {kpi.lider?.nome && <span className="truncate ml-2">Líder: {kpi.lider.nome}</span>}
       </div>
     </Card>
   );
 }
 
-function CultoRow({ culto, area, accent }) {
-  const items = [];
-  if (area === 'online') {
-    items.push({ label: 'Pico', v: culto.online_pico });
-    items.push({ label: 'D+1', v: culto.online_ds });
-    items.push({ label: 'D+7', v: culto.online_ddus });
-    items.push({ label: 'Dec.', v: culto.decisoes_online });
-  } else if (area === 'kids') {
-    items.push({ label: 'Kids', v: culto.presencial_kids });
-    items.push({ label: 'Dec. kids', v: culto.decisoes_kids });
-  } else {
-    items.push({ label: 'Presencial', v: culto.presencial_adulto });
-    items.push({ label: 'Dec. pres.', v: culto.decisoes_presenciais });
-    items.push({ label: 'Dec. onl.', v: culto.decisoes_online });
-  }
+// ─────────── DADOS BRUTOS · mesmo agrupamento por valor (sem pills) ───────────
+
+function DadosAgrupados({ dados, accent }) {
+  const grupos = useMemo(
+    () => agruparPorValor(dados, d => d.valores_jornada),
+    [dados]
+  );
+
   return (
-    <div className="p-4 flex items-center gap-4 flex-wrap">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground">{culto.nome}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {formatDataCompleta(culto.data)}{culto.hora ? ` · ${culto.hora.slice(0, 5)}` : ''}
-        </p>
-        {culto.observacoes && (
-          <p className="text-[11px] text-muted-foreground italic mt-1 line-clamp-2">{culto.observacoes}</p>
-        )}
-      </div>
-      <div className="flex items-center gap-4">
-        {items.map((it, i) => (
-          <div key={i} className="text-right min-w-[60px]">
-            <p className="text-lg font-bold" style={{ color: it.v > 0 ? accent : 'rgb(148, 163, 184)' }}>
-              {it.v == null ? '—' : formatNum(it.v)}
-            </p>
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{it.label}</p>
-          </div>
-        ))}
-      </div>
+    <div className="space-y-6">
+      {grupos.map(g => (
+        <div key={g.valor || 'outros'} className="space-y-3">
+          <GrupoHeader valor={g.valor} count={g.items.length} sufixo="tipo de dado" />
+          <Card className="divide-y divide-border">
+            {g.items.map(d => (
+              <DadoRow key={`${g.valor}-${d.tipo_id}`} dado={d} accent={accent} />
+            ))}
+          </Card>
+        </div>
+      ))}
     </div>
   );
 }
@@ -718,8 +1088,6 @@ function DadoRow({ dado, accent }) {
     : variacao <= -10 ? 'text-red-600 dark:text-red-400'
     : 'text-muted-foreground';
 
-  const valoresJornada = dado.valores_jornada || [];
-
   return (
     <div className={`p-4 flex items-start gap-4 flex-wrap ${vazio ? 'opacity-75' : ''}`}>
       <div className="flex-1 min-w-0">
@@ -749,23 +1117,6 @@ function DadoRow({ dado, accent }) {
             </span>
           )}
         </div>
-        {valoresJornada.length > 0 && (
-          <div className="flex items-center gap-1 mt-2 flex-wrap">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Alimenta:</span>
-            {valoresJornada.map(v => (
-              <span
-                key={v}
-                className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                style={{
-                  background: (VALOR_CORES[v] || '#94a3b8') + '20',
-                  color: VALOR_CORES[v] || '#475569',
-                }}
-              >
-                {VALOR_LABELS[v]?.split(' ')[0] || v}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
       <Sparkline historico={dado.historico_6} accent={accent} />
@@ -781,192 +1132,6 @@ function DadoRow({ dado, accent }) {
               <p className={`text-[11px] mt-1 ${variacaoColor}`}>{variacaoTexto}</p>
             )}
           </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DadosPorValor({ dados, accent }) {
-  const [filtro, setFiltro] = useState('todos');
-
-  const contagem = useMemo(() => {
-    const c = { todos: dados.length, sem_valor: 0 };
-    for (const d of dados) {
-      const vals = d.valores_jornada || [];
-      if (vals.length === 0) c.sem_valor++;
-      for (const v of vals) c[v] = (c[v] || 0) + 1;
-    }
-    return c;
-  }, [dados]);
-
-  const ordemValores = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
-  const valoresDisp = useMemo(
-    () => ordemValores.filter(v => contagem[v] > 0),
-    [contagem]
-  );
-
-  const dadosFiltrados = useMemo(() => {
-    if (filtro === 'todos') return dados;
-    if (filtro === 'sem-valor') return dados.filter(d => !d.valores_jornada || d.valores_jornada.length === 0);
-    return dados.filter(d => (d.valores_jornada || []).includes(filtro));
-  }, [filtro, dados]);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <FilterPill active={filtro === 'todos'} onClick={() => setFiltro('todos')} accent={accent}>
-          Todos ({contagem.todos})
-        </FilterPill>
-        {valoresDisp.map(v => (
-          <FilterPill key={v} active={filtro === v} onClick={() => setFiltro(v)} accent={VALOR_CORES[v] || accent}>
-            {VALOR_LABELS[v] || v} ({contagem[v]})
-          </FilterPill>
-        ))}
-        {/* So mostra "Sem valor" quando ha tipos sem valor */}
-        {contagem.sem_valor > 0 && (
-          <FilterPill active={filtro === 'sem-valor'} onClick={() => setFiltro('sem-valor')} accent={accent}>
-            Sem valor ({contagem.sem_valor})
-          </FilterPill>
-        )}
-      </div>
-
-      <Card className="divide-y divide-border">
-        {dadosFiltrados.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">
-            Nenhum dado neste filtro.
-          </div>
-        ) : (
-          dadosFiltrados.map(d => (
-            <DadoRow key={d.tipo_id} dado={d} accent={accent} />
-          ))
-        )}
-      </Card>
-    </div>
-  );
-}
-
-function IndicadoresPorValor({ kpis, porValor, semValor, navigate, accent }) {
-  const [filtro, setFiltro] = useState('todos');
-
-  const semValorFiltered = (semValor || []).filter(k => !/^CULTO-NPS-/i.test(k.id));
-
-  const kpisFiltrados = useMemo(() => {
-    if (filtro === 'todos') return kpis;
-    if (filtro === 'sem-valor') return semValorFiltered;
-    return (porValor?.[filtro] || []).filter(k => !/^CULTO-NPS-/i.test(k.id));
-  }, [filtro, kpis, porValor, semValor, semValorFiltered]);
-
-  const ordemValores = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
-  const valoresDisp = porValor
-    ? ordemValores.filter(v => (porValor[v] || []).some(k => !/^CULTO-NPS-/i.test(k.id)))
-    : [];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <FilterPill active={filtro === 'todos'} onClick={() => setFiltro('todos')} accent={accent}>
-          Todos ({kpis.length})
-        </FilterPill>
-        {valoresDisp.map(v => {
-          const count = (porValor[v] || []).filter(k => !/^CULTO-NPS-/i.test(k.id)).length;
-          return (
-            <FilterPill key={v} active={filtro === v} onClick={() => setFiltro(v)} accent={VALOR_CORES[v] || accent}>
-              {VALOR_LABELS[v] || v} ({count})
-            </FilterPill>
-          );
-        })}
-        {/* So mostra "Sem valor" quando ha KPIs sem valor */}
-        {semValorFiltered.length > 0 && (
-          <FilterPill active={filtro === 'sem-valor'} onClick={() => setFiltro('sem-valor')} accent={accent}>
-            Sem valor ({semValorFiltered.length})
-          </FilterPill>
-        )}
-      </div>
-
-      <Card className="divide-y divide-border">
-        {kpisFiltrados.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">
-            Nenhum indicador neste filtro.
-          </div>
-        ) : (
-          kpisFiltrados.map(k => (
-            <KpiRow key={k.id} kpi={k} onClick={() => navigate(`/painel/kpi/${k.id}`)} />
-          ))
-        )}
-      </Card>
-    </div>
-  );
-}
-
-function FilterPill({ active, onClick, accent, children }) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-3 py-1.5 rounded-full text-xs font-medium border transition-colors"
-      style={
-        active
-          ? { background: accent, color: '#fff', borderColor: accent }
-          : { background: 'transparent', color: 'inherit', borderColor: 'rgb(226, 232, 240)' }
-      }
-    >
-      {children}
-    </button>
-  );
-}
-
-function KpiRow({ kpi, onClick }) {
-  const sKey = statusKey(kpi.trajetoria);
-  const sMeta = STATUS_META[sKey];
-  const traj = kpi.trajetoria || {};
-  const valor = traj.ultimo_valor;
-  const meta = traj.checkpoint_meta;
-  const pct = traj.percentual_meta;
-
-  return (
-    <div
-      className="p-4 hover:bg-accent/30 transition-colors cursor-pointer flex items-start justify-between gap-3"
-      onClick={onClick}
-    >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-mono text-muted-foreground">{kpi.id}</span>
-          {kpi.is_okr && <Badge variant="secondary" className="text-[10px]">OKR</Badge>}
-          <Badge className={`text-[10px] ${sMeta.className}`}>{sMeta.label}</Badge>
-          {kpi.periodicidade && (
-            <span className="text-[10px] text-muted-foreground">{kpi.periodicidade}</span>
-          )}
-        </div>
-        <p className="text-sm font-medium text-foreground mt-1">{kpi.indicador}</p>
-        {kpi.descricao && (
-          <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{kpi.descricao}</p>
-        )}
-        {kpi.lider?.nome && (
-          <p className="text-[11px] text-muted-foreground mt-1">
-            <span className="opacity-70">Líder:</span> {kpi.lider.nome}
-          </p>
-        )}
-      </div>
-      <div className="text-right shrink-0">
-        {valor != null ? (
-          <>
-            <p className="text-lg font-bold">
-              {formatNum(valor)}
-              {kpi.unidade && kpi.unidade !== 'unidade' ? ` ${kpi.unidade}` : ''}
-            </p>
-            {meta != null && (
-              <p className="text-[11px] text-muted-foreground">
-                meta {formatNum(meta)}
-                {pct != null && (
-                  <span className={pct >= 100 ? 'text-emerald-600 ml-1' : pct >= 70 ? 'text-amber-600 ml-1' : 'text-red-600 ml-1'}>
-                    ({Math.round(pct)}%)
-                  </span>
-                )}
-              </p>
-            )}
-          </>
-        ) : (
-          <span className="text-xs text-muted-foreground italic">sem dado</span>
         )}
       </div>
     </div>
