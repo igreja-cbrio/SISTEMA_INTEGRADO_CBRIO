@@ -40,7 +40,11 @@ visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
   página 1100→1240px e padding 32→20px, "Validar endereços"→"Endereços",
   bleeds das abas embutidas corrigidos no mobile (`.cbrio-grupos-bleed`).
 - ⚠️ Aplicar a migration `20260610130000` antes do merge (o painel e o POST
-  com status quebram sem as colunas).
+  com status quebram sem as colunas). APLICADA em prod 2026-06-10.
+- **Abas Endereços e Temporadas só aparecem pra quem edita** (`soEditor` +
+  filtro por `podeEditarGrupos`; deep-link `?tab=` de não-editor cai em
+  Grupos via `tabAtiva`). **QR Inscrição fica visível a todos** — decisão do
+  Marcos: qualquer um pode mandar o QR de um grupo quando precisar.
 
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 
