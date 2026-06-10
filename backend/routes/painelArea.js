@@ -241,6 +241,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     // hoje, NÃO dados_brutos).
     let cultosRecentes = [];
     let totaisCultos = null;
+    let serieCultos = [];
     if (area !== 'sede' && area !== 'cba') {
       const { data: cultosRaw } = await supabase
         .from('vw_culto_stats')
@@ -274,6 +275,27 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
           online_ddus_total: total_ddus,
         };
       }
+
+      // Série mensal agregada · cobre o período INTEIRO (cultos_recentes é
+      // limitado a 60 e truncaria o gráfico em períodos longos)
+      const freqDe = (c) => area === 'kids' ? (Number(c.presencial_kids) || 0)
+        : area === 'online' ? (Number(c.online_pico) || 0)
+        : (Number(c.presencial_adulto) || 0);
+      const decDe = (c) => area === 'kids' ? (Number(c.decisoes_kids) || 0)
+        : area === 'online' ? (Number(c.decisoes_online) || 0)
+        : (Number(c.decisoes_presenciais) || 0) + (Number(c.decisoes_online) || 0);
+      const porMes = new Map();
+      for (const c of cultosArea) {
+        const mes = String(c.data).slice(0, 7);
+        if (!porMes.has(mes)) porMes.set(mes, { mes, cultos: 0, frequencia: 0, decisoes: 0 });
+        const m = porMes.get(mes);
+        m.cultos += 1;
+        m.frequencia += freqDe(c);
+        m.decisoes += decDe(c);
+      }
+      serieCultos = Array.from(porMes.values())
+        .sort((a, b) => a.mes.localeCompare(b.mes))
+        .map(m => ({ ...m, media_freq: m.cultos > 0 ? Math.round(m.frequencia / m.cultos) : 0 }));
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -332,6 +354,7 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
       saude,
       cultos_recentes: cultosRecentes,
       totais_cultos: totaisCultos,
+      serie_cultos: serieCultos,
     });
   } catch (e) {
     console.error('painel-area:', e.message);
