@@ -45,6 +45,19 @@ visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
   filtro por `podeEditarGrupos`; deep-link `?tab=` de não-editor cai em
   Grupos via `tabAtiva`). **QR Inscrição fica visível a todos** — decisão do
   Marcos: qualquer um pode mandar o QR de um grupo quando precisar.
+- **Consolidação de abas (2026-06-10 · aprovada pelo Marcos):** 8 abas.
+  **"Caixa de entrada"** = Pedidos + Encaminhados em sub-abas (pills), com a
+  distinção EXPLÍCITA que o Marcos pediu: *pedido* = a própria pessoa pediu
+  (viu o QR, escolheu, preencheu → líder aprova) · *encaminhado* = sugestão
+  do cuidado pastoral (a pessoa NÃO pediu; precisa de contato explicando o
+  que é grupo de conexão + devolutiva). Badge da aba = pedidos pendentes +
+  encaminhados sem desfecho (`encaminhamentos.resumo('grupos')`).
+  **"Configurações"** (soEditor) = Temporadas + Endereços em sub-abas.
+  Chaves antigas de URL seguem funcionando (`TAB_LEGADO`: pedidos/
+  encaminhados→entrada · geocode/temporadas→config · tarefas→visitas, com a
+  sub-aba certa pré-selecionada). `PedidosGrupo` ganhou prop `embedded`
+  (esconde o h1 quando dentro da Caixa de entrada). Decisão: NÃO juntar
+  Grupos/Relatórios/Mapa/Materiais/Visitas/QR (públicos e usos distintos).
 
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 

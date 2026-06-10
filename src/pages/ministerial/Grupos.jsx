@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { grupos as api, membresia } from '../../api';
+import { grupos as api, membresia, encaminhamentos } from '../../api';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Settings, HeartHandshake } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -44,7 +44,13 @@ const RECORRENCIAS = [
 
 const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais', 'Jovens', 'Mulheres', 'Homens', 'Misto'];
 
-const PAGE_TABS = ['grupos', 'relatorios', 'mapa', 'pedidos', 'encaminhados', 'materiais', 'visitas', 'qrcode', 'geocode', 'temporadas'];
+const PAGE_TABS = ['grupos', 'relatorios', 'mapa', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
+// Chaves antigas de aba (links/notificações) → aba nova
+const TAB_LEGADO = { pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas', geocode: 'config', temporadas: 'config' };
+
+function tabDaUrl() {
+  try { return new URLSearchParams(window.location.search).get('tab'); } catch { return null; }
+}
 
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
 
@@ -77,19 +83,23 @@ export default function Grupos() {
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
-  // Aba inicial pode vir da URL (/grupos?tab=visitas · usado por notificações)
+  // Aba inicial pode vir da URL (/grupos?tab=visitas · usado por notificações).
+  // Chaves antigas (pedidos/encaminhados/geocode/temporadas) caem na aba nova
+  // certa, com a sub-aba correspondente já selecionada.
   const [pageTab, setPageTab] = useState(() => {
-    try {
-      const t = new URLSearchParams(window.location.search).get('tab');
-      return PAGE_TABS.includes(t) ? t : 'grupos';
-    } catch { return 'grupos'; }
+    const t = tabDaUrl();
+    if (PAGE_TABS.includes(t)) return t;
+    return TAB_LEGADO[t] || 'grupos';
   });
+  const [entradaTab, setEntradaTab] = useState(() => (tabDaUrl() === 'encaminhados' ? 'encaminhados' : 'pedidos'));
+  const [configTab, setConfigTab] = useState(() => (tabDaUrl() === 'geocode' ? 'geocode' : 'temporadas'));
   const [visitaOpen, setVisitaOpen] = useState(false);
-  // Abas de configuração (Endereços/Temporadas) só aparecem pra quem edita o
+  // A aba Configurações (Temporadas + Endereços) só aparece pra quem edita o
   // módulo; QR Inscrição fica visível a todos (mandar o QR dos grupos).
   // Deep-link (?tab=) de quem não edita cai na aba Grupos.
-  const tabAtiva = (pageTab === 'geocode' || pageTab === 'temporadas') && !podeEditarGrupos ? 'grupos' : pageTab;
+  const tabAtiva = pageTab === 'config' && !podeEditarGrupos ? 'grupos' : pageTab;
   const [pedidosCount, setPedidosCount] = useState(0);
+  const [encPendentes, setEncPendentes] = useState(0);
   const [historicoMembros, setHistoricoMembros] = useState([]);
   const [materiais, setMateriais] = useState([]);
   const [materiaisFilter, setMateriaisFilter] = useState('all');
@@ -137,6 +147,15 @@ export default function Grupos() {
     } catch {}
   }, []);
   useEffect(() => { loadPedidosCount(); }, [loadPedidosCount, pageTab]);
+
+  // Encaminhados do cuidado pastoral ainda sem desfecho (badge da Caixa de entrada)
+  const loadEncPendentes = useCallback(async () => {
+    try {
+      const r = await encaminhamentos.resumo('grupos');
+      setEncPendentes(r?.pendentes || 0);
+    } catch {}
+  }, []);
+  useEffect(() => { loadEncPendentes(); }, [loadEncPendentes, pageTab]);
 
   const loadDetail = useCallback(async (id) => {
     setDetailLoading(true);
@@ -788,13 +807,11 @@ export default function Grupos() {
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
-          { key: 'pedidos', label: 'Pedidos', icon: Inbox, badge: pedidosCount },
-          { key: 'encaminhados', label: 'Encaminhados', icon: UserPlus },
+          { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
           { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
-          { key: 'geocode', label: 'Endereços', icon: Compass, soEditor: true },
-          { key: 'temporadas', label: 'Temporadas', icon: Calendar, soEditor: true },
+          { key: 'config', label: 'Configurações', icon: Settings, soEditor: true },
         ].filter(tab => !tab.soEditor || podeEditarGrupos).map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
             padding: '10px 13px', background: 'none', border: 'none', cursor: 'pointer',
@@ -814,14 +831,46 @@ export default function Grupos() {
         ))}
       </div>
 
-      {/* ═══ TAB ENCAMINHADOS ═══ */}
-      {tabAtiva === 'encaminhados' && (
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20 }}>
-          <div style={{ marginBottom: 12 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Encaminhados pra Grupos</h3>
-            <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0' }}>Pessoas que o cuidado pastoral encaminhou pra conectar num grupo. Faça o primeiro contato e registre a devolutiva.</p>
+      {/* ═══ TAB CAIXA DE ENTRADA · pedidos (a pessoa pediu) × encaminhados (sugestão do cuidado) ═══ */}
+      {tabAtiva === 'entrada' && (
+        <div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {[
+              { key: 'pedidos', label: 'Pedidos de inscrição', Icon: Inbox, badge: pedidosCount },
+              { key: 'encaminhados', label: 'Encaminhados do cuidado', Icon: HeartHandshake, badge: encPendentes },
+            ].map(st => {
+              const ativo = entradaTab === st.key;
+              return (
+                <button key={st.key} onClick={() => setEntradaTab(st.key)} style={{
+                  padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
+                  border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                  background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}>
+                  <st.Icon size={13} /> {st.label}
+                  {st.badge > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99, background: '#ef4444', color: '#fff', minWidth: 18, textAlign: 'center' }}>
+                      {st.badge > 99 ? '99+' : st.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
-          <EncaminhamentosInbox destino="grupos" canWrite={podeEditarGrupos} />
+          <p style={{ fontSize: 12, color: C.t3, margin: '10px 0 0', maxWidth: 760 }}>
+            {entradaTab === 'pedidos'
+              ? 'A própria pessoa pediu pra entrar: viu o QR ou o link do grupo, escolheu e preencheu o formulário. Aqui o líder aprova (ou recusa) e ela entra no grupo.'
+              : 'A pessoa NÃO pediu — é sugestão de quem a atendeu no cuidado pastoral. Alguém precisa entrar em contato, explicar o que é um grupo de conexão, mostrar os disponíveis e registrar a devolutiva.'}
+          </p>
+          {entradaTab === 'pedidos' ? (
+            <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
+              <PedidosGrupo embedded />
+            </div>
+          ) : (
+            <div style={{ marginTop: 14 }}>
+              <EncaminhamentosInbox destino="grupos" canWrite={podeEditarGrupos} />
+            </div>
+          )}
         </div>
       )}
 
@@ -987,13 +1036,6 @@ export default function Grupos() {
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
 
-      {/* ═══ TAB PEDIDOS ═══ */}
-      {tabAtiva === 'pedidos' && (
-        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-          <PedidosGrupo />
-        </div>
-      )}
-
       {/* ═══ TAB QR INSCRIÇÃO ═══ */}
       {tabAtiva === 'qrcode' && (
         <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
@@ -1001,17 +1043,30 @@ export default function Grupos() {
         </div>
       )}
 
-      {/* ═══ TAB ENDEREÇOS (geocode) ═══ */}
-      {tabAtiva === 'geocode' && (
-        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-          <GruposGeocode />
-        </div>
-      )}
-
-      {/* ═══ TAB TEMPORADAS ═══ */}
-      {tabAtiva === 'temporadas' && (
-        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-          <TemporadasGrupos />
+      {/* ═══ TAB CONFIGURAÇÕES · Temporadas + Endereços (só quem edita) ═══ */}
+      {tabAtiva === 'config' && (
+        <div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {[
+              { key: 'temporadas', label: 'Temporadas', Icon: Calendar },
+              { key: 'geocode', label: 'Endereços (validação no mapa)', Icon: Compass },
+            ].map(st => {
+              const ativo = configTab === st.key;
+              return (
+                <button key={st.key} onClick={() => setConfigTab(st.key)} style={{
+                  padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
+                  border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                  background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}>
+                  <st.Icon size={13} /> {st.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
+            {configTab === 'temporadas' ? <TemporadasGrupos /> : <GruposGeocode />}
+          </div>
         </div>
       )}
 
