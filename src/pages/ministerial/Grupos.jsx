@@ -85,6 +85,10 @@ export default function Grupos() {
     } catch { return 'grupos'; }
   });
   const [visitaOpen, setVisitaOpen] = useState(false);
+  // Abas de configuração (Endereços/Temporadas) só aparecem pra quem edita o
+  // módulo; QR Inscrição fica visível a todos (mandar o QR dos grupos).
+  // Deep-link (?tab=) de quem não edita cai na aba Grupos.
+  const tabAtiva = (pageTab === 'geocode' || pageTab === 'temporadas') && !podeEditarGrupos ? 'grupos' : pageTab;
   const [pedidosCount, setPedidosCount] = useState(0);
   const [historicoMembros, setHistoricoMembros] = useState([]);
   const [materiais, setMateriais] = useState([]);
@@ -239,7 +243,7 @@ export default function Grupos() {
   };
 
   useEffect(() => { loadList(); }, [loadList]);
-  useEffect(() => { if (pageTab === 'materiais') loadMateriais(); }, [pageTab, loadMateriais]);
+  useEffect(() => { if (tabAtiva === 'materiais') loadMateriais(); }, [tabAtiva, loadMateriais]);
 
   useEffect(() => {
     if (selectedGrupo) {
@@ -253,8 +257,8 @@ export default function Grupos() {
   }, [selectedGrupo, loadDetail, loadEncontros, loadMetricas]);
 
   useEffect(() => {
-    if (pageTab === 'grupos' && !selectedGrupo) loadSaudeAgregada();
-  }, [pageTab, selectedGrupo, loadSaudeAgregada, gruposList.length]);
+    if (tabAtiva === 'grupos' && !selectedGrupo) loadSaudeAgregada();
+  }, [tabAtiva, selectedGrupo, loadSaudeAgregada, gruposList.length]);
 
   const openCreate = () => { setEditData(null); setModalOpen(true); };
   const openEdit = () => { setEditData(detailData); setModalOpen(true); };
@@ -775,7 +779,7 @@ export default function Grupos() {
     <div className="cbrio-grupos-page" style={{ padding: '24px 20px', maxWidth: 1240, margin: '0 auto' }}>
       <div className="cbrio-grupos-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
-        {pageTab === 'grupos' && podeEditarGrupos && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
+        {tabAtiva === 'grupos' && podeEditarGrupos && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
       </div>
 
       {/* Tabs principais · centralizadas; quebram em 2 linhas se faltar espaço */}
@@ -789,14 +793,14 @@ export default function Grupos() {
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
           { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
-          { key: 'geocode', label: 'Endereços', icon: Compass },
-          { key: 'temporadas', label: 'Temporadas', icon: Calendar },
-        ].map(tab => (
+          { key: 'geocode', label: 'Endereços', icon: Compass, soEditor: true },
+          { key: 'temporadas', label: 'Temporadas', icon: Calendar, soEditor: true },
+        ].filter(tab => !tab.soEditor || podeEditarGrupos).map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
             padding: '10px 13px', background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 13.5, fontWeight: pageTab === tab.key ? 700 : 400,
-            color: pageTab === tab.key ? C.primary : C.t3,
-            borderBottom: pageTab === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
+            fontSize: 13.5, fontWeight: tabAtiva === tab.key ? 700 : 400,
+            color: tabAtiva === tab.key ? C.primary : C.t3,
+            borderBottom: tabAtiva === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
             display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.15s', whiteSpace: 'nowrap',
           }}>
             <tab.icon size={16} /> {tab.label}
@@ -811,7 +815,7 @@ export default function Grupos() {
       </div>
 
       {/* ═══ TAB ENCAMINHADOS ═══ */}
-      {pageTab === 'encaminhados' && (
+      {tabAtiva === 'encaminhados' && (
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20 }}>
           <div style={{ marginBottom: 12 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Encaminhados pra Grupos</h3>
@@ -822,7 +826,7 @@ export default function Grupos() {
       )}
 
       {/* ═══ TAB MAPA ═══ */}
-      {pageTab === 'mapa' && (
+      {tabAtiva === 'mapa' && (
         <div style={{ height: 'calc(100vh - 220px)', minHeight: 500, borderRadius: 12, overflow: 'hidden', border: `1px solid ${C.border}` }}>
           {loading ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
@@ -839,7 +843,7 @@ export default function Grupos() {
       )}
 
       {/* ═══ TAB MATERIAIS ═══ */}
-      {pageTab === 'materiais' && (
+      {tabAtiva === 'materiais' && (
         <div>
           {/* Upload · so quem edita */}
           {podeEditarGrupos && (
@@ -981,43 +985,43 @@ export default function Grupos() {
       )}
 
       {/* ═══ TAB VISITAS ═══ */}
-      {pageTab === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
+      {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
 
       {/* ═══ TAB PEDIDOS ═══ */}
-      {pageTab === 'pedidos' && (
+      {tabAtiva === 'pedidos' && (
         <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <PedidosGrupo />
         </div>
       )}
 
       {/* ═══ TAB QR INSCRIÇÃO ═══ */}
-      {pageTab === 'qrcode' && (
+      {tabAtiva === 'qrcode' && (
         <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <InscricaoGruposQRCode />
         </div>
       )}
 
       {/* ═══ TAB ENDEREÇOS (geocode) ═══ */}
-      {pageTab === 'geocode' && (
+      {tabAtiva === 'geocode' && (
         <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <GruposGeocode />
         </div>
       )}
 
       {/* ═══ TAB TEMPORADAS ═══ */}
-      {pageTab === 'temporadas' && (
+      {tabAtiva === 'temporadas' && (
         <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <TemporadasGrupos />
         </div>
       )}
 
       {/* ═══ TAB RELATÓRIOS ═══ */}
-      {pageTab === 'relatorios' && (
+      {tabAtiva === 'relatorios' && (
         <RelatorioGrupos temporada={filterTemporada} />
       )}
 
       {/* ═══ TAB GRUPOS ═══ */}
-      {pageTab === 'grupos' && <>
+      {tabAtiva === 'grupos' && <>
       {/* Resumo de saúde */}
       {saudeAgregada && saudeAgregada.total > 0 && (
         <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
