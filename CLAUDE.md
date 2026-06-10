@@ -2,6 +2,46 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Grupos · aba Visitas (agendar + registrar) + guards por módulo (2026-06-10)
+
+Marcos: abas do `/grupos` centralizadas (estouravam a largura) e a aba
+**Tarefas** virou **Visitas** — supervisores, coordenadores e os donos do
+módulo (Pr. Nélio + Natasha) **programam** e registram visitas aos grupos de
+conexão. Botão **"Agendar visita"** em toda página de grupo; filtro **"Sem
+visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
+
+- **Reusa a infra da supervisão** (`grupo_supervisao_visitas` +
+  `vw_grupos_supervisao` · 20260513140000) — NÃO criou tabela nova. Migration
+  `20260610130000`: coluna `status` (`agendada|realizada|cancelada` · default
+  `realizada`), `responsavel_id` (FK profiles · quem vai visitar),
+  `supervisor_id` nullable, `updated_at`. A view conta `ultima_visita`/
+  `visitas_mes_atual` **só com status='realizada'** (agendada futura não zera
+  o semáforo) + nova `proxima_visita` (min agendada >= hoje).
+- **Backend** (`routes/grupos.js`): `GET /visitas/painel` (grupos + agenda +
+  histórico + papel), `POST /:id/visitas` aceita `status`/`responsavel_id`
+  (agendar pra outra pessoa → `notificar()` o designado), `PATCH
+  /visitas/:visitaId` (concluir/cancelar/reagendar). Coletor
+  `grupos.lideres_acompanhados` filtra `status='realizada'`. Cron
+  (`notificacaoGenerator.gerarNotificacoesGrupos`) ganhou alerta **agregado
+  semanal** "N grupos sem visita há 60+ dias" → módulo grupos.
+- **`getMeuPerfilGrupo` agora recebe `req.user`** e dá papel `admin` pra quem
+  tem **nível >=3 no módulo grupos** (boost de área) — Nélio/Natasha enxergam
+  tudo na supervisão/visitas sem precisar de funcao na hierarquia.
+- **⚠️ Guards trocados** (achado de auditoria): rotas de escrita usavam
+  `authorize('admin','diretor')` (role/nível global · bloqueava os donos do
+  módulo) e várias estavam SEM guard (aprovar/rejeitar pedido — cria membro!,
+  remover membro, encontros, materiais). Tudo virou
+  `authorizeModule('grupos', N)`: CRUD/aprovações=3 · lançar encontro/
+  material=2 · temporadas/supervisor=5. UI esconde remover membro/encontro de
+  quem não edita (`podeEditarGrupos`).
+- **Frontend**: `GruposVisitas.jsx` (aba + `AgendarVisitaModal` exportado,
+  usado no detalhe do grupo). Aba antiga Tarefas (`ProcessosTarefas`) saiu do
+  Grupos (segue em Cuidados/NEXT). Abas centralizadas (`flexWrap` + center),
+  página 1100→1240px e padding 32→20px, "Validar endereços"→"Endereços",
+  bleeds das abas embutidas corrigidos no mobile (`.cbrio-grupos-bleed`).
+- ⚠️ Aplicar a migration `20260610130000` antes do merge (o painel e o POST
+  com status quebram sem as colunas).
+
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 
 Sintoma recorrente: **"Erro ao atualizar/excluir evento"** mas a mudança

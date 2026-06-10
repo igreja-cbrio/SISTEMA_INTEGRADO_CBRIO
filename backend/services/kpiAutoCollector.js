@@ -424,9 +424,11 @@ const COLLECTORS = {
 
   'grupos.lideres_acompanhados': async ({ inicio, fim }) => {
     // Count distinct grupo_id visitado no período (cada supervisor visitou X grupos distintos)
+    // Só status='realizada' conta · visita agendada (futura) não é acompanhamento feito
     const { data } = await supabase
       .from('grupo_supervisao_visitas')
       .select('grupo_id')
+      .eq('status', 'realizada')
       .gte('data_visita', inicio)
       .lt('data_visita', fim);
     const distinct = new Set((data || []).map(v => v.grupo_id));

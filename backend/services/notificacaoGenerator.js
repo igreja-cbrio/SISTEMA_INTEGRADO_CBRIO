@@ -707,6 +707,34 @@ async function gerarNotificacoesGrupos() {
     }
   }
 
+  // 3. Grupos sem visita de supervisão há 60+ dias (agregado · 1 notificação
+  //    semanal pro módulo, não 1 por grupo — alimenta a aba Visitas do /grupos)
+  const { data: supGrupos } = await supabase
+    .from('vw_grupos_supervisao')
+    .select('id, nome, ultima_visita');
+
+  if (supGrupos?.length) {
+    const semVisita = supGrupos.filter(g => {
+      if (!g.ultima_visita) return true;
+      const dias = Math.floor((now - new Date(g.ultima_visita + 'T12:00:00').getTime()) / 86400000);
+      return dias > 60;
+    });
+    if (semVisita.length) {
+      const nomes = semVisita.slice(0, 5).map(g => g.nome).join(', ');
+      const resto = semVisita.length > 5 ? ` e mais ${semVisita.length - 5}` : '';
+      const semana = Math.floor(now / (7 * 86400000)); // dedup semanal
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'grupos_sem_visita',
+        titulo: `${semVisita.length} grupo${semVisita.length !== 1 ? 's' : ''} sem visita há mais de 2 meses`,
+        mensagem: `Sem visita de supervisão há mais de 60 dias: ${nomes}${resto}. Agende as visitas na aba Visitas de Grupos.`,
+        link: '/grupos?tab=visitas',
+        severidade: 'aviso',
+        chaveDedup: `grupos_sem_visita_w${semana}`,
+      });
+    }
+  }
+
   return count;
 }
 

@@ -1,5 +1,8 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+// authorizeModule('grupos', N) respeita a matriz cargo×módulo + boost de área
+// (Nélio/Natasha, donos do módulo, têm nível 5 via área Grupos mas role
+// 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
@@ -87,7 +90,7 @@ router.get('/materiais', async (req, res) => {
 });
 
 // POST /api/grupos/materiais — upload central
-router.post('/materiais', uploadMw.single('arquivo'), async (req, res) => {
+router.post('/materiais', authorizeModule('grupos', 2), uploadMw.single('arquivo'), async (req, res) => {
   try {
     const { nome, comentario, etiquetas, grupo_ids } = req.body;
     if (!req.file) return res.status(400).json({ error: 'Arquivo não fornecido' });
@@ -152,7 +155,7 @@ router.post('/materiais', uploadMw.single('arquivo'), async (req, res) => {
 });
 
 // DELETE /api/grupos/materiais/:docId
-router.delete('/materiais/:docId', authorize('admin', 'diretor'), async (req, res) => {
+router.delete('/materiais/:docId', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('mem_grupo_documentos').delete().eq('id', req.params.docId);
     if (error) throw error;
@@ -165,7 +168,7 @@ router.delete('/materiais/:docId', authorize('admin', 'diretor'), async (req, re
 // ══════════════════════════════════════════════
 
 // PATCH /api/grupos/participacao/:id/sair — remover membro
-router.patch('/participacao/:id/sair', async (req, res) => {
+router.patch('/participacao/:id/sair', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { data, error } = await supabase.from('mem_grupo_membros').update({
       saiu_em: new Date().toISOString().split('T')[0],
@@ -221,7 +224,7 @@ router.get('/:id/encontros', async (req, res) => {
 });
 
 // POST /api/grupos/:id/encontros — registrar encontro com chamada
-router.post('/:id/encontros', async (req, res) => {
+router.post('/:id/encontros', authorizeModule('grupos', 2), async (req, res) => {
   try {
     const { data, tema, observacoes, membros_presentes } = req.body;
     if (!data) return res.status(400).json({ error: 'data obrigatoria' });
@@ -262,7 +265,7 @@ router.get('/encontros/:encontroId', async (req, res) => {
 });
 
 // PATCH /api/grupos/encontros/:encontroId — editar encontro (tema, observações, data, presenças)
-router.patch('/encontros/:encontroId', async (req, res) => {
+router.patch('/encontros/:encontroId', authorizeModule('grupos', 2), async (req, res) => {
   try {
     const { data: dataEncontro, tema, observacoes, membros_presentes } = req.body;
     if (membros_presentes !== undefined && !Array.isArray(membros_presentes)) {
@@ -285,7 +288,7 @@ router.patch('/encontros/:encontroId', async (req, res) => {
 });
 
 // DELETE /api/grupos/encontros/:encontroId — remove encontro (decrementa contadores)
-router.delete('/encontros/:encontroId', authorize('admin', 'diretor'), async (req, res) => {
+router.delete('/encontros/:encontroId', authorizeModule('grupos', 3), async (req, res) => {
   try {
     // Buscar membros presentes para reverter contador
     const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
@@ -949,7 +952,7 @@ router.get('/:id/historico-membros', async (req, res) => {
 });
 
 // POST /api/grupos/pedidos/:pedidoId/aprovar
-router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
+router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { data: pedido, error: ePedido } = await supabase.from('mem_grupo_pedidos')
       .select('*').eq('id', req.params.pedidoId).single();
@@ -1079,7 +1082,7 @@ router.post('/pedidos/:pedidoId/aprovar', async (req, res) => {
 });
 
 // POST /api/grupos/pedidos/:pedidoId/rejeitar — body: { motivo? }
-router.post('/pedidos/:pedidoId/rejeitar', async (req, res) => {
+router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { motivo } = req.body || {};
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
@@ -1183,7 +1186,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/grupos
-router.post('/', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('mem_grupos').insert({
@@ -1207,7 +1210,7 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // PUT /api/grupos/:id
-router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
+router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('mem_grupos').update({
@@ -1240,7 +1243,7 @@ router.get('/temporadas/list', async (req, res) => {
 });
 
 // PATCH /api/grupos/temporadas/:id — admin/diretor altera inscricoes_abertas (e outros campos)
-router.patch('/temporadas/:id', authorize('admin', 'diretor'), async (req, res) => {
+router.patch('/temporadas/:id', authorizeModule('grupos', 5), async (req, res) => {
   try {
     const allowed = ['inscricoes_abertas', 'ativa', 'data_inicio', 'data_fim', 'label'];
     const update = {};
@@ -1279,7 +1282,7 @@ router.get('/bairros/list', async (req, res) => {
 // Rate-limit interno: 1.1s entre chamadas (Nominatim policy).
 //
 // Retorna { ok: [...], falhas: [{id, código, nome, motivo, local, bairro}] }
-router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/geocode-batch', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { temporada, somente_sem_coords, limit, offset } = req.body || {};
     // Limita o lote para não estourar timeout do Vercel (60s).
@@ -1410,7 +1413,7 @@ router.post('/geocode-batch', authorize('admin', 'diretor'), async (req, res) =>
 });
 
 // DELETE /api/grupos/:id — soft delete
-router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
+router.delete('/:id', authorizeModule('grupos', 3), async (req, res) => {
   try {
     await supabase.from('mem_grupos').update({ ativo: false }).eq('id', req.params.id);
     res.json({ success: true });
@@ -1418,7 +1421,7 @@ router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // POST /api/grupos/:id/membros — adicionar membro
-router.post('/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { membro_id } = req.body;
     if (!membro_id) return res.status(400).json({ error: 'membro_id obrigatorio' });
@@ -1468,24 +1471,35 @@ router.post('/:id/membros', authorize('admin', 'diretor'), async (req, res) => {
 //   - outros → 403
 // ============================================================================
 
-// Helper · resolve membro_id e papel mais alto do user logado
-async function getMeuPerfilGrupo(userId, role) {
+// Helper · resolve membro_id e papel mais alto do user logado.
+// papel 'admin' cobre role admin/diretor E quem tem nível >=3 no módulo grupos
+// (donos do módulo via matriz/boost de área · ex.: Pr. Nélio e Natasha), pra
+// eles enxergarem/agendarem visitas em todos os grupos sem precisar de cargo
+// na hierarquia (coordenador/supervisor em mem_grupo_membros).
+async function getMeuPerfilGrupo(user) {
+  const { userId, role } = user;
   // Pega membro vinculado ao user
   const { data: profile } = await supabase
     .from('profiles')
     .select('email, name')
     .eq('id', userId)
     .maybeSingle();
-  if (!profile?.email) return { papel: null, membro_id: null };
 
-  const { data: membro } = await supabase
-    .from('mem_membros')
-    .select('id')
-    .eq('email', profile.email)
-    .maybeSingle();
-  const meuMembroId = membro?.id || null;
+  let meuMembroId = null;
+  if (profile?.email) {
+    const { data: membro } = await supabase
+      .from('mem_membros')
+      .select('id')
+      .eq('email', profile.email)
+      .maybeSingle();
+    meuMembroId = membro?.id || null;
+  }
 
-  if (['admin', 'diretor'].includes(role)) return { papel: 'admin', membro_id: meuMembroId };
+  const gp = user.granular?.modulePerms?.grupos || {};
+  const editaModuloGrupos = (gp.escrita ?? 0) >= 3 || (gp.leitura ?? 0) >= 3;
+  if (['admin', 'diretor'].includes(role) || editaModuloGrupos) {
+    return { papel: 'admin', membro_id: meuMembroId };
+  }
 
   if (!meuMembroId) return { papel: null, membro_id: null };
 
@@ -1516,7 +1530,7 @@ async function getMeuPerfilGrupo(userId, role) {
 // GET /api/grupos/supervisao/me · papel + grupos visíveis na hierarquia
 router.get('/supervisao/me', async (req, res) => {
   try {
-    const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user);
     if (!papel) return res.status(403).json({ error: 'Você não tem papel ativo nos grupos (supervisor/coordenador/admin)' });
 
     let grupos = [];
@@ -1567,24 +1581,111 @@ router.get('/supervisao/me', async (req, res) => {
   }
 });
 
+// Helper · anexa responsavel_nome (profiles) e supervisor_nome (mem_membros)
+// a uma lista de visitas
+async function enriquecerVisitas(visitas) {
+  const lista = visitas || [];
+  const respIds = [...new Set(lista.map(v => v.responsavel_id).filter(Boolean))];
+  const supIds = [...new Set(lista.map(v => v.supervisor_id).filter(Boolean))];
+  const respMap = {};
+  const supMap = {};
+  if (respIds.length) {
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', respIds);
+    (profs || []).forEach(p => { respMap[p.id] = p.name; });
+  }
+  if (supIds.length) {
+    const { data: sups } = await supabase.from('mem_membros').select('id, nome').in('id', supIds);
+    (sups || []).forEach(s => { supMap[s.id] = s.nome; });
+  }
+  return lista.map(v => ({
+    ...v,
+    responsavel_nome: respMap[v.responsavel_id] || supMap[v.supervisor_id] || null,
+    supervisor_nome: supMap[v.supervisor_id] || null,
+  }));
+}
+
+// GET /api/grupos/visitas/painel · visão geral da aba Visitas do /grupos:
+// todos os grupos ativos (última visita realizada + próxima agendada), as
+// visitas agendadas e o histórico recente. Read-only · a escrita é autorizada
+// nos POST/PATCH. `papel` null = usuário só visualiza.
+router.get('/visitas/painel', async (req, res) => {
+  try {
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user);
+
+    const { data: grupos, error } = await supabase
+      .from('vw_grupos_supervisao')
+      .select('*')
+      .order('nome');
+    if (error) throw error;
+
+    const { data: agendadas } = await supabase
+      .from('grupo_supervisao_visitas')
+      .select('id, grupo_id, data_visita, observacao, status, responsavel_id, supervisor_id, created_at')
+      .eq('status', 'agendada')
+      .order('data_visita', { ascending: true })
+      .limit(300);
+
+    const { data: historico } = await supabase
+      .from('grupo_supervisao_visitas')
+      .select('id, grupo_id, data_visita, observacao, status, responsavel_id, supervisor_id, created_at')
+      .neq('status', 'agendada')
+      .order('data_visita', { ascending: false })
+      .limit(60);
+
+    const gMap = {};
+    (grupos || []).forEach(g => { gMap[g.id] = g; });
+
+    // Grupos fora da view (arquivados) que ainda têm visita listada
+    const faltando = [...new Set(
+      [...(agendadas || []), ...(historico || [])]
+        .map(v => v.grupo_id)
+        .filter(id => id && !gMap[id])
+    )];
+    if (faltando.length) {
+      const { data: extras } = await supabase
+        .from('mem_grupos').select('id, nome, bairro').in('id', faltando);
+      (extras || []).forEach(g => { gMap[g.id] = g; });
+    }
+
+    const comGrupo = (lista) => (lista || []).map(v => ({
+      ...v,
+      grupo_nome: gMap[v.grupo_id]?.nome || null,
+      grupo_bairro: gMap[v.grupo_id]?.bairro || null,
+    }));
+
+    res.json({
+      papel,
+      membro_id,
+      grupos: grupos || [],
+      agendadas: await enriquecerVisitas(comGrupo(agendadas)),
+      historico: await enriquecerVisitas(comGrupo(historico)),
+    });
+  } catch (e) {
+    console.error('[grupos] visitas/painel:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar painel de visitas' });
+  }
+});
+
 // GET /api/grupos/:id/visitas
 router.get('/:id/visitas', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('grupo_supervisao_visitas')
-      .select('id, data_visita, observacao, supervisor_id, created_at')
+      .select('id, data_visita, observacao, status, supervisor_id, responsavel_id, created_at')
       .eq('grupo_id', req.params.id)
       .order('data_visita', { ascending: false });
     if (error) throw error;
-    res.json(data || []);
+    res.json(await enriquecerVisitas(data || []));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/grupos/:id/visitas
+// POST /api/grupos/:id/visitas · registra (status=realizada, default) ou
+// AGENDA (status=agendada) uma visita ao grupo. responsavel_id = quem fará a
+// visita (default: quem está criando).
 router.post('/:id/visitas', async (req, res) => {
   try {
-    const { data_visita, observacao } = req.body || {};
-    const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    const { data_visita, observacao, status, responsavel_id } = req.body || {};
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user);
     if (!papel) return res.status(403).json({ error: 'Sem permissão' });
 
     // Supervisor só registra nos seus grupos
@@ -1595,11 +1696,16 @@ router.post('/:id/visitas', async (req, res) => {
         .eq('id', req.params.id)
         .maybeSingle();
       if (!g || g.supervisor_id !== membro_id) {
-        return res.status(403).json({ error: 'Você so registra visitas nos grupos que supervisiona' });
+        return res.status(403).json({ error: 'Você só registra visitas nos grupos que supervisiona' });
       }
     }
 
-    // Descobre supervisor_id efetivo (admin pode passar; senao usa o do grupo)
+    const statusFinal = ['agendada', 'realizada'].includes(status) ? status : 'realizada';
+    const responsavelFinal = responsavel_id || req.user.userId;
+
+    // Descobre supervisor_id (vínculo a mem_membros) quando existir: o meu
+    // membro ou o supervisor do grupo. Pode ficar null (pastor/coordenador
+    // agendando em grupo sem supervisor definido).
     let supervisorIdRow = req.body?.supervisor_id || membro_id;
     if (!supervisorIdRow) {
       const { data: g } = await supabase
@@ -1607,9 +1713,8 @@ router.post('/:id/visitas', async (req, res) => {
         .select('supervisor_id')
         .eq('id', req.params.id)
         .maybeSingle();
-      supervisorIdRow = g?.supervisor_id;
+      supervisorIdRow = g?.supervisor_id || null;
     }
-    if (!supervisorIdRow) return res.status(400).json({ error: 'Grupo sem supervisor definido' });
 
     const { data, error } = await supabase
       .from('grupo_supervisao_visitas')
@@ -1618,11 +1723,33 @@ router.post('/:id/visitas', async (req, res) => {
         supervisor_id: supervisorIdRow,
         data_visita: data_visita || new Date().toISOString().slice(0, 10),
         observacao: observacao || null,
+        status: statusFinal,
+        responsavel_id: responsavelFinal,
         registrado_por: req.user.userId,
       })
       .select()
       .single();
     if (error) throw error;
+
+    // Agendou pra outra pessoa → avisa o responsável designado
+    if (statusFinal === 'agendada' && responsavelFinal && responsavelFinal !== req.user.userId) {
+      try {
+        const { data: gInfo } = await supabase
+          .from('mem_grupos').select('nome').eq('id', req.params.id).maybeSingle();
+        const dataFmt = (data.data_visita || '').split('-').reverse().join('/');
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'visita_agendada',
+          titulo: `Visita agendada — ${gInfo?.nome || 'grupo'}`,
+          mensagem: `Você foi designado(a) pra visitar o grupo ${gInfo?.nome || ''} em ${dataFmt}.`,
+          link: '/grupos?tab=visitas',
+          severidade: 'info',
+          targetIds: [responsavelFinal],
+          chaveDedup: `visita_agendada_${data.id}`,
+        });
+      } catch (nErr) { console.warn('[grupos] notificar visita agendada:', nErr.message); }
+    }
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[grupos] post visita:', e.message);
@@ -1630,10 +1757,62 @@ router.post('/:id/visitas', async (req, res) => {
   }
 });
 
+// PATCH /api/grupos/visitas/:visitaId · concluir/cancelar/reagendar uma visita
+router.patch('/visitas/:visitaId', async (req, res) => {
+  try {
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user);
+    if (!papel) return res.status(403).json({ error: 'Sem permissão' });
+
+    const { data: visita } = await supabase
+      .from('grupo_supervisao_visitas')
+      .select('id, grupo_id, status')
+      .eq('id', req.params.visitaId)
+      .maybeSingle();
+    if (!visita) return res.status(404).json({ error: 'Visita não encontrada' });
+
+    if (papel === 'supervisor') {
+      const { data: g } = await supabase
+        .from('mem_grupos')
+        .select('supervisor_id')
+        .eq('id', visita.grupo_id)
+        .maybeSingle();
+      if (!g || g.supervisor_id !== membro_id) {
+        return res.status(403).json({ error: 'Você só edita visitas dos grupos que supervisiona' });
+      }
+    }
+
+    const body = req.body || {};
+    const patch = {};
+    if (body.status) {
+      if (!['agendada', 'realizada', 'cancelada'].includes(body.status)) {
+        return res.status(400).json({ error: 'status inválido' });
+      }
+      patch.status = body.status;
+    }
+    if (body.data_visita) patch.data_visita = body.data_visita;
+    if ('observacao' in body) patch.observacao = body.observacao || null;
+    if ('responsavel_id' in body) patch.responsavel_id = body.responsavel_id || null;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+    patch.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('grupo_supervisao_visitas')
+      .update(patch)
+      .eq('id', req.params.visitaId)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[grupos] patch visita:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/grupos/visitas/:visitaId
 router.delete('/visitas/:visitaId', async (req, res) => {
   try {
-    const { papel } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    const { papel } = await getMeuPerfilGrupo(req.user);
     if (!['admin', 'coordenador', 'supervisor'].includes(papel)) {
       return res.status(403).json({ error: 'Sem permissão' });
     }
@@ -1665,7 +1844,7 @@ router.put('/:id/observacoes/:periodo', async (req, res) => {
       return res.status(400).json({ error: 'período deve ser YYYY-MM' });
     }
 
-    const { papel, membro_id } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+    const { papel, membro_id } = await getMeuPerfilGrupo(req.user);
     if (!papel) return res.status(403).json({ error: 'Sem permissão' });
 
     if (papel === 'supervisor') {
@@ -1710,7 +1889,7 @@ router.put('/:id/observacoes/:periodo', async (req, res) => {
 });
 
 // PUT /api/grupos/:id/supervisor · admin define supervisor do grupo
-router.put('/:id/supervisor', authorize('admin', 'diretor'), async (req, res) => {
+router.put('/:id/supervisor', authorizeModule('grupos', 5), async (req, res) => {
   try {
     const { supervisor_id } = req.body || {};
     const { data, error } = await supabase
@@ -1740,7 +1919,7 @@ router.put('/membros/:membroRowId/funcao', async (req, res) => {
     const editaGrupos = isAdminRole || (gp.escrita ?? 0) >= 3 || (gp.leitura ?? 0) >= 3;
     let autorizado = editaGrupos;
     if (!autorizado) {
-      const { papel } = await getMeuPerfilGrupo(req.user.userId, req.user.role);
+      const { papel } = await getMeuPerfilGrupo(req.user);
       autorizado = ['admin', 'coordenador', 'supervisor'].includes(papel);
     }
     if (!autorizado) {
