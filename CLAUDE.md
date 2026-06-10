@@ -28,14 +28,94 @@ TypeScript/JSX (misto), Express.js backend, Supabase
 (PostgreSQL + Auth + RLS), deploy no Vercel (frontend estático +
 serverless functions via `api/index.js`).
 
-Módulos principais: Dashboard, Eventos, Projetos, Planejamento,
-Expansão, RH, Financeiro, Logística, Patrimônio, **Membresia**,
-Solicitações, Assistente IA, Permissões, **Cérebro CBRio**.
-
 > **Processos**: removido na reuniao de permissoes (2026-05-18).
 > A rota `/processos` foi descontinuada e redireciona pra `/eventos`. Schema
 > da tabela `processos` permanece no banco mas o modulo nao aparece mais no
 > menu nem no sistema de permissoes (linha marcada como obsoleta na matriz).
+
+## Mapa do sistema · o que cada módulo faz, quem usa e o que alimenta
+
+Visão de helicóptero (formato: o que faz · quem usa · **impacto** = o que
+alimenta no sistema). Detalhes nas seções de cada módulo abaixo. A tese do
+sistema inteiro: **a operação dos módulos ministeriais alimenta a NSM e os
+~150 KPIs da matriz Valor × Área automaticamente** — usar o módulo É medir.
+
+**Núcleo estratégico (OKR/NSM):**
+- `/painel` · NSM + mandalas + matriz 6 áreas × 5 valores + alertas · diretoria
+  e qualquer autenticado (leitura) · **é o destino final de todos os dados**.
+- `/minha-area` · KPIs da própria área agrupados por valor · líderes de área.
+- `/gestao` · configurar OKRs/metas/saúde do sistema · Marcos, Matheus, Eduardo.
+- `/ritual` · fluxo guiado da reunião mensal (causa-decisão-responsável) ·
+  diretoria geral (5 nominais).
+- `/monitoramento-okr` · ótica enxuta da planilha do Pr. Juninho · leitura
+  macro · paralela ao /painel por decisão (não integrar).
+- `/dados-brutos` · líder lança número absoluto; o sistema calcula o KPI ·
+  líderes com kpi_areas · **alimenta kpi_valores_calculados via trigger**.
+
+**Jornada do convertido (a esteira que move a NSM):**
+- `/integracao` · cultos, frequência, decisões (pessoas nominais), batismos ·
+  equipe de Integração (Lorena) · **gera o DENOMINADOR da NSM (decisões) +
+  KPIs Seguir de todas as áreas + dispara a trilha do convertido**.
+- `/ministerial/cuidados` · encontro pastoral, jornada 90d (contato≤3d,
+  batismo≤90d, Next≤90d), desfecho → encaminhamentos · Marcelo Soares
+  (supervisor-jornada) + líderes de área · **devolutiva "engajou" materializa
+  o vínculo real = NUMERADOR da NSM**.
+- `/grupos` · grupos de conexão, caixa de entrada (pedidos+encaminhados),
+  visitas de supervisão, pessoas/papéis · Pr. Nélio + Natasha · **alimenta
+  Conectar (mem_grupo_membros) + KPIs de líderes**.
+- `/voluntariado` · perfis, inscrições, escalas, totem check-in · coordenação
+  de voluntários · **alimenta Servir (ponte vol_* → mem_voluntarios)**.
+- `/devocionais` (webapp pública) · planos de leitura + check-in diário ·
+  membros; admin é do Matheus · **alimenta Investir**.
+- `/next` · eventos Next (inscrição/check-in) · admin de eventos · **alimenta
+  o marco Next≤90d**; a cobertura aparece na aba Next da Integração.
+- `/ministerial/membresia` · cadastro de membros, duplicados/merge, trilha ·
+  secretaria/ministerial · **é a base de pessoas que todos os valores cruzam**.
+
+**Áreas de culto (painéis read-only por área):**
+- `/online` · canal YouTube (séries, DS/DDUS, pico via OAuth) · Renata ·
+  coleta automática; frequência/decisões online quem lança é a Integração.
+- `/kids` `/ami` `/bridge` · saúde + cultos + indicadores da área · Mariane /
+  Arthur Cecconi / Lillian · leitura; preenchimento via /integracao.
+- **Totem Kids** (`/ministerial/totem-kids`) · check-in/out infantil com
+  etiqueta e pager · voluntários do Kids · **consolida presencial_kids e
+  decisões kids nos cultos** (aguardando hardware pro go-live).
+
+**Operação administrativa:**
+- `/solicitacoes` · backbone único adm↔ministérios (TI, compras, reembolso,
+  pagamento, reserva, manutenção, marketing, RH) com 2 portões de aprovação ·
+  todo funcionário · **fonte única dos KPIs ADM (SLA/NPS) — interação fora
+  daqui não é medida**.
+- `/marketing` · kanban/planner da equipe criativa (campanhas por dor,
+  capacidade em slots/dia) · Pedro Paiva + equipe · alimenta KPIs MKT-*.
+- `/producao` · KPIs técnicos por culto (pontualidade, checklist, ocorrências)
+  · Pedro Fernandes · alimenta PROD-CULTO-* (fora da matriz NSM).
+- `/eventos` · eventos + ciclo criativo por fases · áreas operacionais ·
+  tarefas de marketing espelham no kanban do Pedro.
+- `/projetos` · projetos do ANO CORRENTE · PMO/líderes (escopo por área).
+- `/expansao` (= Planejamento Estratégico) · plurianual/marcos · diretoria.
+- `/planejamento` (= Gestão Anual) · rascunhar próximo ano + resultados de
+  anos fechados · PMO · grava direto em projects/events (fonte única).
+- `/rh` `/financeiro-v2` `/logistica` `/patrimonio` · operação de gestão ·
+  equipes respectivas · RH/financeiro alimentam rotatividade e DRE.
+- `/governanca` · ciclo mensal OKR→DRE→KPI→Conselho · diretoria.
+- `/revisao-estrategica` · editar projeto/marco vendo a cascata de impacto ·
+  PMO · pouco usado (aba Acompanhamento do PE cobre a leitura).
+
+**IA e automação (agem sobre os outros módulos):**
+- **Bot WhatsApp** (webhook público) · líder reporta números do culto por
+  formulário/texto; institucional responde dúvidas · líderes cadastrados ·
+  **vira fila de revisão — nada entra direto no banco**.
+- **Agente Executor Financeiro** (Railway) · propõe categorizações/pagamentos
+  → fila de aprovação humana em `/assistente-ia` · Yago/financeiro aprova.
+- `/cerebro` · SharePoint → notas Obsidian classificadas por Haiku · todos via
+  OneDrive · memória institucional de documentos.
+- `/admin/*` · permissões (matriz cargo×módulo), usuários, WhatsApp, regras de
+  notificação, totem kids · Marcos/admins.
+
+**Públicos (fora do AppShell):** webapp devocional, cadastro de membresia,
+inscrição em grupos/Next/batismo, `/privacidade` (exigência Meta/LGPD),
+`/novosite` (teste de layout · não listado).
 
 ## Deploy autônomo (fluxo padrão)
 
