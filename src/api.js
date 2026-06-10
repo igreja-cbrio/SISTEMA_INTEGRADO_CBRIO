@@ -2261,43 +2261,11 @@ export const wifi = {
   sync: () => post('/wifi/sync', {}),
 };
 
-// ─── Planejamento Anual ────────────────────────────────────────────────
+// ─── Planejamento · litúrgicos (usado pelo hub "Gestão Anual") ────────────
+// O fluxo antigo de Planejamento Anual (setores/ciclos/propostas/aprovação
+// diretor→diretoria) foi removido em 2026-06-10 — nunca usado, tabelas dropadas.
+// Sobrou só a geração do calendário litúrgico do ano.
 export const planejamento = {
-  // Setores (Criativo, Ministerial, Gestão)
-  listSetores: () => get('/planejamento/setores'),
-  updateSetor: (id, data) => patch(`/planejamento/setores/${id}`, data),
-  listAreasSetor: () => get('/planejamento/areas-setor'),
-
-  // Ciclos (janela do ano N+1)
-  listCiclos: () => get('/planejamento/ciclos'),
-  getCiclo: (id) => get(`/planejamento/ciclos/${id}`),
-  createCiclo: (data) => post('/planejamento/ciclos', data),
-  updateCiclo: (id, data) => patch(`/planejamento/ciclos/${id}`, data),
-
-  // Propostas
-  listPropostas: (filters = {}) => {
-    const q = new URLSearchParams();
-    if (filters.ciclo_id) q.set('ciclo_id', filters.ciclo_id);
-    if (filters.status) q.set('status', filters.status);
-    if (filters.tipo) q.set('tipo', filters.tipo);
-    if (filters.setor_id) q.set('setor_id', filters.setor_id);
-    if (filters.mine) q.set('mine', '1');
-    const qs = q.toString();
-    return get('/planejamento/propostas' + (qs ? '?' + qs : ''));
-  },
-  getProposta: (id) => get(`/planejamento/propostas/${id}`),
-  createProposta: (data) => post('/planejamento/propostas', data),
-
-  // Filas de aprovação (PR-B)
-  filaDiretor: () => get('/planejamento/filas/diretor'),
-  filaDiretoria: () => get('/planejamento/filas/diretoria'),
-
-  // Decisões
-  decidirDiretor: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretor`, data),
-  decidirDiretoria: (id, data) => patch(`/planejamento/propostas/${id}/decidir-diretoria`, data),
-
-  // Litúrgicos (PR-C)
-  listLiturgiaTemplates: () => get('/planejamento/liturgia/templates'),
   gerarLiturgia: (year) => post(`/planejamento/liturgia/gerar/${year}`, {}),
 };
 
