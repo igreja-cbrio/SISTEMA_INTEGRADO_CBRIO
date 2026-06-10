@@ -15,6 +15,30 @@ const uploadMw = multer({
 // Admin e Diretor passam automaticamente
 router.use(authenticate, authorizeModule('rh'));
 
+// Quando o funcionário não tem foto cadastrada no RH, usa a foto que ele
+// mesmo subiu no perfil (profiles.avatar_url), casando por e-mail. Assim a
+// foto que o colaborador adiciona reflete na lista de colaboradores do RH.
+async function preencherFotoDoPerfil(funcs) {
+  const lista = Array.isArray(funcs) ? funcs : [funcs];
+  const semFoto = lista.filter((f) => f && !f.foto_url && f.email);
+  if (!semFoto.length) return;
+  const brutos = semFoto.map((f) => f.email).filter(Boolean);
+  const emails = [...new Set([...brutos, ...brutos.map((e) => e.toLowerCase().trim())])];
+  const { data: profs } = await supabase
+    .from('profiles')
+    .select('email, avatar_url')
+    .in('email', emails)
+    .not('avatar_url', 'is', null);
+  if (!profs || !profs.length) return;
+  const porEmail = new Map(
+    profs.map((p) => [(p.email || '').toLowerCase().trim(), p.avatar_url])
+  );
+  for (const f of semFoto) {
+    const url = porEmail.get((f.email || '').toLowerCase().trim());
+    if (url) f.foto_url = url;
+  }
+}
+
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
@@ -96,6 +120,7 @@ router.get('/funcionarios', async (req, res) => {
 
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
+    await preencherFotoDoPerfil(data);
     res.json(data);
   } catch (e) {
     console.error('[RH] Listar funcionários:', e.message);
@@ -122,6 +147,7 @@ router.get('/funcionarios/:id', async (req, res) => {
       supabase.from('rh_ferias_licencas').select('*').eq('funcionario_id', req.params.id).order('data_inicio', { ascending: false }),
     ]);
 
+    await preencherFotoDoPerfil(func);
     res.json({
       ...func,
       documentos: docs.data || [],
