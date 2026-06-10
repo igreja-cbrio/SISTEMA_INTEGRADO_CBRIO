@@ -5,6 +5,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { normalizarTelefone } = require('../services/whatsappSend');
+const { aplicarColetaGrupoEncontro } = require('../services/whatsappGrupos');
 
 router.use(authenticate);
 
@@ -252,7 +253,17 @@ router.post('/coletas/:id/aplicar', podeGerir, async (req, res) => {
       return res.json({ ok: true, destino: 'submissao_pendente', submissao_id: sub.id });
     }
 
-    // grupos (ou qualquer outro) · so marca aplicado (lancamento manual)
+    // grupos · relato de encontro (texto/áudio do líder) → cria o ENCONTRO
+    // real com presenças nominais (RPC registrar_encontro_grupo) e alimenta
+    // o histórico do grupo + aba Relatórios.
+    if (coleta.modulo_destino === 'grupos' && coleta.parsed?.fonte === 'grupo_encontro') {
+      const r = await aplicarColetaGrupoEncontro(coleta, req.user?.userId || null);
+      if (!r.ok) return res.status(r.status || 400).json({ error: r.error });
+      return res.json({ ok: true, destino: r.destino, encontro_id: r.encontro_id, presencas: r.presencas });
+    }
+
+    // grupos legado (números soltos sem nominal) ou qualquer outro · so marca
+    // aplicado (lancamento manual)
     await supabase.from('whatsapp_coletas')
       .update({ status: 'aplicado', aplicado_em: new Date().toISOString(), aplicado_por: req.user?.userId || null })
       .eq('id', coleta.id);

@@ -16,6 +16,7 @@ const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
 const { parseConversa, responderInstitucional } = require('../services/whatsappParser');
 const { safeEqual } = require('../utils/cronAuth');
 const flowColeta = require('../services/whatsappFlowColeta');
+const whatsappGrupos = require('../services/whatsappGrupos');
 
 // Janela da "sessao" de coleta: enquanto houver uma coleta em aberto
 // (status='aguardando_info') do lider, a proxima mensagem CONTINUA ela e
@@ -79,7 +80,10 @@ async function processarEvento(req) {
       for (const m of mensagens) {
         const ehTexto = m.type === 'text';
         const ehFlowReply = m.type === 'interactive' && m.interactive?.type === 'nfm_reply';
-        if (!ehTexto && !ehFlowReply) continue; // MVP · texto ou resposta de formulário
+        // Áudio e foto são aceitos pro fluxo de GRUPOS (relato do encontro ·
+        // transcrição/foto tratadas em services/whatsappGrupos).
+        const ehMidia = m.type === 'audio' || m.type === 'image';
+        if (!ehTexto && !ehFlowReply && !ehMidia) continue;
         if (++processadas > MAX_MSGS) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
@@ -116,6 +120,7 @@ async function processarMensagem(m, cfg) {
 
   // ── Persona 1 · numero desconhecido -> assistente institucional ────
   if (!lider) {
+    if (m.type !== 'text') return; // mídia de desconhecido · ignora (não custa LLM)
     const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });
     await supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto,
@@ -124,6 +129,17 @@ async function processarMensagem(m, cfg) {
     await enviarTexto(telefone, resposta);
     return;
   }
+
+  // ── GRUPOS DE CONEXÃO · relato do encontro (texto/áudio/foto) ──────
+  // Sessão de relato aberta (lembrete do cron), mídia de líder com escopo
+  // grupos, ou texto de líder SÓ-grupos → o fluxo de grupos assume aqui
+  // (extrai presenças nominais + resumo · fila de revisão). Senão, segue
+  // o fluxo existente (formulário de culto / conversa).
+  const tratadoGrupos = await whatsappGrupos
+    .tratarMensagemGrupos({ m, lider, telefone, messageId })
+    .catch(err => { console.error('[whatsapp webhook] grupos:', err.message); return false; });
+  if (tratadoGrupos) return;
+  if (m.type !== 'text') return; // mídia que o fluxo de grupos não assumiu · para aqui
 
   // ── Sessão conversacional aberta? (líder mid-coleta por texto) ─────
   // Se há uma coleta conversacional em aberto desse líder, a próxima
@@ -139,6 +155,7 @@ async function processarMensagem(m, cfg) {
     .order('created_at', { ascending: false })
     .limit(1).maybeSingle();
   if (aberta?.parsed?.fonte === 'flow') aberta = null; // sessão de formulário · não mistura
+  if (aberta?.parsed?.fonte === 'grupo_encontro') aberta = null; // sessão de relato de grupo · tratada acima
 
   // ── Caminho rápido (SEM LLM) · sem sessão aberta + sem números ─────
   // Regra desenhada com o Marcos (2026-06-08): o formulário (Flow) é o
