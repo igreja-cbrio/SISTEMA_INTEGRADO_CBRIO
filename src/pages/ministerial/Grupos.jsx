@@ -1871,6 +1871,7 @@ function RelatorioGrupos({ temporada }) {
   const [meses, setMeses] = useState(12);
   const [data, setData] = useState(null);
   const [treino, setTreino] = useState([]);
+  const [semRelato, setSemRelato] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1882,8 +1883,9 @@ function RelatorioGrupos({ temporada }) {
     Promise.all([
       api.relatorioKpis(params),
       api.lideresTreinamento(treinoParams).catch(() => []),
+      api.semRelato().catch(() => null),
     ])
-      .then(([d, t]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); } })
+      .then(([d, t, sr]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); setSemRelato(sr); } })
       .catch(() => { if (alive) { setData(null); setTreino([]); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -1970,6 +1972,59 @@ function RelatorioGrupos({ temporada }) {
               )}
             </CardContent>
           </Card>
+
+          {/* Grupos sem relatório de encontro · visão de cobrança (Pr. Nélio) */}
+          {semRelato && (() => {
+            const atrasados = (semRelato.grupos || []).filter(g => g.dias_sem_relato === null || g.dias_sem_relato >= 14);
+            return (
+              <Card>
+                <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                    Grupos sem relatório de encontro
+                  </CardTitle>
+                  <span className="text-xs text-muted-foreground">
+                    {semRelato.sem_relato_4s} há 4+ semanas · de {semRelato.total} ativos
+                  </span>
+                </CardHeader>
+                <CardContent>
+                  <p style={{ fontSize: 11, color: C.t3, margin: '0 0 10px' }}>
+                    Conta qualquer relato que vira encontro registrado: chamada feita no sistema ou relato do líder pelo bot do WhatsApp (depois de aplicado na fila). O bot cobra automaticamente o líder após 4 semanas sem relato.
+                  </p>
+                  {atrasados.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 13 }}>
+                      Todos os grupos têm relato nas últimas 2 semanas. 🎉
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {atrasados.map(g => {
+                        const nunca = g.dias_sem_relato === null;
+                        const critico = nunca || g.dias_sem_relato >= 28;
+                        const cor = critico ? C.red : C.amber;
+                        return (
+                          <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: `${cor}0d`, border: `1px solid ${cor}30`, flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1, minWidth: 180 }}>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{g.nome}</span>
+                              <span style={{ fontSize: 11, color: C.t3, marginLeft: 8 }}>
+                                {g.lider_nome ? `Líder: ${g.lider_nome}` : 'Sem líder'}
+                                {g.dia_semana != null ? ` · ${DIAS[g.dia_semana]}` : ''}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 99, background: `${cor}20`, color: cor, fontWeight: 700, flexShrink: 0 }}>
+                              {nunca ? 'Nenhum relato no último ano' : `${Math.floor(g.dias_sem_relato / 7)} semana(s) sem relato`}
+                            </span>
+                            {g.ultimo_encontro && (
+                              <span style={{ fontSize: 10, color: C.t3, flexShrink: 0 }}>último: {fmtDate(g.ultimo_encontro)}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Líderes em treinamento · quem está em formação, por grupo */}
           <Card>

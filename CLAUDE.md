@@ -856,6 +856,35 @@ transcrição ele cria depois.
   `WHATSAPP_ESTUDO_DIA` (opcional). Sem nenhuma delas o resto funciona
   (texto/foto dentro da janela de 24h).
 
+### Refinamentos (2026-06-10 · 2ª rodada do Marcos)
+
+- **Auto-sync de líderes** (`sincronizarLideresGrupos()`): vínculo no bot é
+  AUTOMÁTICO a partir de `mem_grupos.lider_id` + `mem_membros.telefone`
+  (normalizado pra 55+DDD). Colunas novas em `whatsapp_lideres` (migration
+  `20260610230000`): `origem` manual|auto (o sync SÓ gerencia os 'auto' —
+  cria, troca grupo_id, desativa quando deixa de ser líder; manual é
+  intocável) e `recebe_lembretes` (opt-out). Roda no cron diário + hook
+  fire-and-forget após POST/PUT de grupo (`syncWhatsappLideres` em grupos.js)
+  + `POST /api/whatsapp-grupos/sincronizar-lideres` manual.
+- **Estudo da semana vai pro GRUPO de WhatsApp via coordenador**: a Cloud API
+  não posta em grupo → o bot manda pro(s) vínculo(s) com `papel='coordenador'`
+  (ex.: Pr. Nélio) a mensagem pronta com "👉 Encaminhe no grupo dos líderes".
+  NÃO é mais broadcast por líder (decisão do Marcos: "não há necessidade").
+- **Modo padrão do relato = espontâneo + cobrança 4 semanas**: o líder manda
+  1x/semana por conta própria; `enviarCobrancasSemRelato()` só cobra grupos
+  há 28+ dias SEM encontro registrado E SEM relato no WhatsApp (dedup mensal
+  `cobranca:<grupoId>:<AAAA-MM>` · cap `WHATSAPP_COBRANCA_CAP` default 40/dia
+  · abre a sessão de relato pra resposta cair certa). O lembrete SEMANAL
+  pós-encontro continua implementado mas DESLIGADO atrás de
+  `WHATSAPP_LEMBRETE_SEMANAL=1` (aguardando validação de custo com o gestor).
+- **Opt-out**: o extrator Haiku devolve `opt_out` quando o líder pede pra
+  parar → `recebe_lembretes=false` + confirmação (responder/registrar segue
+  funcionando · coordenador religa via PUT /api/whatsapp/lideres/:id).
+- **Visão do Pr. Nélio**: aba Relatórios do /grupos ganhou o card "Grupos sem
+  relatório de encontro" (`GET /grupos/kpis/sem-relato` · conta encontro
+  registrado por QUALQUER via · destaque vermelho 4+ semanas/nunca, âmbar
+  2-4 · mostra líder, dia e último relato).
+
 ## Grupos · aba Visitas (agendar + registrar) + guards por módulo (2026-06-10)
 
 Marcos: abas do `/grupos` centralizadas (estouravam a largura) e a aba

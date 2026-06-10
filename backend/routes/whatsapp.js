@@ -23,7 +23,7 @@ router.get('/lideres', podeGerir, async (req, res) => {
     const { data, error } = await supabase
       .from('whatsapp_lideres')
       .select(`
-        id, telefone, nome_exibicao, escopo, grupo_id, papel, ativo, created_at,
+        id, telefone, nome_exibicao, escopo, grupo_id, papel, ativo, created_at, recebe_lembretes, origem,
         profile:profiles!whatsapp_lideres_profile_id_fkey(id, name, email, avatar_url),
         grupo:mem_grupos(id, nome)
       `)
@@ -95,6 +95,7 @@ router.put('/lideres/:id', podeGerir, async (req, res) => {
     if ('grupo_id' in (req.body || {})) patch.grupo_id = req.body.grupo_id || null;
     if ('papel' in (req.body || {})) patch.papel = req.body.papel || null;
     if (typeof req.body?.ativo === 'boolean') patch.ativo = req.body.ativo;
+    if (typeof req.body?.recebe_lembretes === 'boolean') patch.recebe_lembretes = req.body.recebe_lembretes;
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
 
     const { error } = await supabase.from('whatsapp_lideres').update(patch).eq('id', req.params.id);
