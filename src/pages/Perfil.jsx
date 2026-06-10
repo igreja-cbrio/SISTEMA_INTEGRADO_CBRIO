@@ -35,6 +35,7 @@ export default function Perfil() {
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [statusFoto, setStatusFoto] = useState('');
   const [fotoParaEditar, setFotoParaEditar] = useState(null);
+  const [verFoto, setVerFoto] = useState(false);
   const fileInputRef = useRef(null);
 
   const initials = (profile?.name || '??')
@@ -107,12 +108,20 @@ export default function Perfil() {
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-center gap-4 mb-6">
           <div className="relative group">
-            <Avatar className="h-20 w-20">
-              {profile?.avatar_url ? <AvatarImage src={profile.avatar_url} alt={profile.name || ''} /> : null}
-              <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
-                {initials}
-              </AvatarFallback>
-            </Avatar>
+            <button
+              type="button"
+              onClick={() => profile?.avatar_url && setVerFoto(true)}
+              className={`block rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${profile?.avatar_url ? 'cursor-zoom-in' : 'cursor-default'}`}
+              title={profile?.avatar_url ? 'Ver foto' : undefined}
+              aria-label={profile?.avatar_url ? 'Ver foto de perfil ampliada' : undefined}
+            >
+              <Avatar className="h-20 w-20">
+                {profile?.avatar_url ? <AvatarImage src={profile.avatar_url} alt={profile.name || ''} /> : null}
+                <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+            </button>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -129,6 +138,29 @@ export default function Perfil() {
               onChange={handleFotoChange}
               className="hidden"
             />
+            <Dialog open={verFoto} onOpenChange={setVerFoto}>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Foto de perfil</DialogTitle>
+                </DialogHeader>
+                {profile?.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt={profile?.name || 'Foto de perfil'}
+                    className="w-full max-h-[70vh] object-contain rounded-lg bg-muted"
+                  />
+                ) : null}
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setVerFoto(false)}>
+                    Fechar
+                  </Button>
+                  <Button className="flex-1" onClick={() => { setVerFoto(false); fileInputRef.current?.click(); }}>
+                    <Camera className="h-4 w-4 mr-2" />
+                    Trocar foto
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
             <Dialog open={!!fotoParaEditar} onOpenChange={(v) => { if (!v && !uploadingFoto) setFotoParaEditar(null); }}>
               <DialogContent className="max-w-md">
                 <DialogHeader>
