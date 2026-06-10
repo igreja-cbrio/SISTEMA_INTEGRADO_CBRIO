@@ -2,6 +2,49 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Planejamento Estratégico × Gestão Anual · virada conceitual (2026-06-10)
+
+Reorganização por **horizonte de tempo** (Marcos). Dois módulos distintos — não
+confundir, não misturar estratégico com rotina:
+
+- **`expansao` (rota `/expansao`) = "Planejamento Estratégico"** (era "Expansão"). É o
+  **plurianual / macro‑eixo**. "Expansão" virou só o nome do **plano vigente** (Quadriênio
+  2026–2029 · Pr. Pedrão), não do módulo. Marcos/tarefas/Gantt/Timeline seguem iguais. Ganhou
+  a aba **Acompanhamento** (tabela `pe_planos` · migration `20260609130000`): planos **em
+  execução** (progresso agregado dos marcos do período) e **já executados** (com **parecer
+  documental** + avaliação · snapshot congelado no encerramento). Encerrar/Reabrir/Novo plano.
+- **`planejamento` (rota `/planejamento`) = "Gestão Anual"** (era o painel PMO consolidado).
+  Página `src/pages/GestaoAnual.jsx`. Hub do que está **fora do ano corrente**: aba **Próximo
+  ano** (rascunhar projetos/eventos do ano seguinte · criação **direta, sem aprovação** · botão
+  "Gerar litúrgicos" via `event_liturgia_templates`) + **Resultados** (anos fechados ·
+  planejado×realizado, read‑only). **Fonte única, duas lentes:** grava nos próprios
+  `projects`/`events` por `year`/`date` — sem tabela paralela, sem "aprovar e copiar".
+- **Projetos / Eventos = só o ANO CORRENTE.** O seletor de ano saiu dos dois (virou chip "ano
+  corrente"); planejar/revisar outros anos é na Gestão Anual. `projects.year` / `events.date`→ano
+  continuam; o filtro fica travado no ano atual.
+
+⚠️ **Slugs e rotas NÃO mudaram** (`expansao`/`planejamento`) — só o `modulos.nome` de exibição
+(migrations `20260609120000` e `20260610120000`). Nunca renomear slug/rota (quebra
+ROUTE_MODULE_MAP, matriz de permissões e bookmarks).
+
+### Legado REMOVIDO (não funciona mais assim · não tratar como ativo)
+O antigo **"Planejamento Anual"** (propostas → aprovação diretor→diretoria → materializa em
+event/project) foi **aposentado** — nunca foi usado (0 propostas). Removidos: telas
+`/planejamento/anual` (`AnualCiclos.jsx` + `AnualCicloDetalhe.jsx`) e `Planejamento.jsx` (PMO);
+tabelas `planejamento_propostas`/`_audit`/`_setores`/`_areas_setor` **dropadas** (migration
+`20260610130000`). **Mantidos:** `event_liturgia_templates` (o hub usa) e `planejamento_ciclos`
+(dormente · pode virar portão "ano aberto/fechado"). As colunas `events.proposta_id`/
+`projects.proposta_id` ficaram (só a FK saiu · inócuas).
+
+### Dívida técnica (código morto · sem chamador · NÃO é referência viva)
+Para não arriscar a liturgia (arquivo de 760 linhas), ficaram intactos mas **órfãos**: o
+namespace `planejamento` em `api.js` (exceto `gerarLiturgia`, que o hub usa) e os endpoints de
+propostas/setores/ciclos em `backend/routes/planejamento.js`. Só `/planejamento/liturgia/*` é
+vivo. Aparar quando der.
+
+PRs: #938 (rename PE), #944 (Acompanhamento), #948 (rename Gestão Anual), #951 (hub), #952
+(recorte de ano), #954 (limpeza · DROP). Migrations aplicadas em prod por Marcos.
+
 ## Grupos · aba Visitas (agendar + registrar) + guards por módulo (2026-06-10)
 
 Marcos: abas do `/grupos` centralizadas (estouravam a largura) e a aba
@@ -5066,6 +5109,11 @@ popular dados reais de função/supervisor pra verificar permissões.
 
 Modulo para revisar projetos e marcos de expansao com visualizacao de
 cascata. **Nao usa workflow de aprovacao** — o PMO edita direto.
+
+> ⚠️ 2026-06-10: "marcos de expansao" = os marcos do **Planejamento Estratégico**
+> (ex-"Expansão" · slug `expansao`). Módulo **pouco usado** — a aba Acompanhamento
+> (planos + parecer) cobre a leitura/retrospectiva. Ver a seção "Planejamento
+> Estratégico × Gestão Anual" no topo deste arquivo.
 
 ### Fluxo
 1. Diagnostico: KPIs + lista filtrada de itens atrasados/pendentes
