@@ -135,9 +135,13 @@ export default function PainelNsmPessoas() {
   const [loadingSemDados, setLoadingSemDados] = useState(true);
   const [erroSemDados, setErroSemDados] = useState(null);
 
+  // A medição nominal da NSM começou em 2026 (anos anteriores não têm dado ·
+  // Marcos 2026-06-10: "retirar 2024 e 2025"). Próximos anos já aparecem
+  // (vazios) até 2030; depois disso a lista acompanha o ano corrente sozinha.
   const anos = useMemo(() => {
+    const fim = Math.max(anoAtual, 2030);
     const arr = [];
-    for (let y = anoAtual; y >= 2024; y--) arr.push(y);
+    for (let y = 2026; y <= fim; y++) arr.push(y);
     return arr;
   }, [anoAtual]);
 
