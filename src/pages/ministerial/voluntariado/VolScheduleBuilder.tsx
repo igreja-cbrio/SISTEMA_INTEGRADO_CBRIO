@@ -398,7 +398,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, onClose }: {
                     {/* Avatar */}
                     <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden">
                       {vol.avatar_url
-                        ? <img src={vol.avatar_url} alt={vol.full_name} className="h-full w-full object-cover" />
+                        ? <img data-foto-avatar="" src={vol.avatar_url} alt={vol.full_name} className="h-full w-full object-cover" />
                         : vol.full_name.charAt(0).toUpperCase()}
                     </div>
                     {/* Info */}

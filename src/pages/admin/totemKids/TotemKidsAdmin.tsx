@@ -757,7 +757,7 @@ function AbaCriancas() {
             {filtradas.map(c => (
               <div key={c.id} className="flex items-center gap-3 p-3 border rounded-lg">
                 {c.foto_url ? (
-                  <img src={c.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
+                  <img data-foto-avatar="" src={c.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
                 ) : (
                   <div className="h-10 w-10 rounded-full bg-pink-100 flex items-center justify-center">
                     <Baby className="h-5 w-5 text-pink-500" />

@@ -8,6 +8,7 @@ import ChatIAFloating from './ChatIAFloating';
 import FeedbackButton from '../FeedbackButton';
 import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
 import PrimeiroAcessoFotoModal from '../auth/PrimeiroAcessoFotoModal';
+import FotoLightboxGlobal from '../FotoLightboxGlobal';
 import { playNotificationSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
@@ -505,6 +506,7 @@ export default function AppShell() {
       <FeedbackButton />
       <PrimeiroAcessoSenhaModal />
       <PrimeiroAcessoFotoModal />
+      <FotoLightboxGlobal />
     </div>
   );
 }
