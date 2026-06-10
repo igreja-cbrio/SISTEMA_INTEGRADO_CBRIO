@@ -9,11 +9,8 @@
 // O papel vive em 3 lugares (funcao da participação · lider_id do grupo ·
 // supervisor_id do grupo); GET /grupos/pessoas/papeis unifica em 1 linha por
 // pessoa com o papel efetivo. Os cards de resumo são clicáveis e FILTRAM.
-//
-// "Candidato a promoção" (análise simples · regras no front, fáceis de
-// ajustar): frequentador com 8+ presenças → líder em treinamento · líder em
-// treinamento → pronto pra co-liderar/liderar · líder de 2+ grupos →
-// candidato a supervisor.
+// (2026-06-10 · Marcos: o card "Candidatos a promoção" saiu — o destaque é
+// "Líderes em treinamento"; a promoção fica no botão Promover.)
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -24,7 +21,7 @@ import { Label } from '../../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye, Lightbulb, ArrowUpRight } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye, ArrowUpRight } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -45,20 +42,6 @@ const PAPEIS = {
 };
 
 const fmtData = (d) => { if (!d) return null; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } };
-
-// Análise simples · sinal de promoção (regras ajustáveis)
-function sugestaoPromocao(p) {
-  if (p.papel === 'frequentador' && p.presencas_total >= 8) {
-    return `${p.presencas_total} presenças — candidato(a) a líder em treinamento`;
-  }
-  if (p.papel === 'lider_treinamento') {
-    return 'Em formação — avaliar promover a co-líder ou líder';
-  }
-  if (p.papel === 'lider' && p.lidera.length >= 2) {
-    return `Lidera ${p.lidera.length} grupos — candidato(a) a supervisor`;
-  }
-  return null;
-}
 
 // ============================================================================
 // Modal · promover / mudar função
@@ -185,7 +168,7 @@ function PromoverModal({ pessoa, gruposOptions, onClose, onSaved }) {
 export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions = [] }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState('todos'); // todos | <papel> | candidatos
+  const [filtro, setFiltro] = useState('todos'); // todos | <papel>
   const [busca, setBusca] = useState('');
   const [promover, setPromover] = useState(null);
 
@@ -203,11 +186,10 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
   const pessoas = dados?.pessoas || [];
 
   const contagens = useMemo(() => {
-    const c = { candidatos: 0 };
+    const c = {};
     Object.keys(PAPEIS).forEach(k => { c[k] = 0; });
     for (const p of pessoas) {
       c[p.papel] = (c[p.papel] || 0) + 1;
-      if (sugestaoPromocao(p)) c.candidatos++;
     }
     // Líderes + co-líderes num card só (visão do Marcos: líder é líder)
     c.lideres_total = (c.lider || 0) + (c.co_lider || 0);
@@ -224,8 +206,7 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
         p.lidera.some(g => g.nome?.toLowerCase().includes(s)) ||
         p.supervisiona.some(g => g.nome?.toLowerCase().includes(s)));
     }
-    if (filtro === 'candidatos') lista = lista.filter(p => sugestaoPromocao(p));
-    else if (filtro === 'lideres') lista = lista.filter(p => p.papel === 'lider' || p.papel === 'co_lider');
+    if (filtro === 'lideres') lista = lista.filter(p => p.papel === 'lider' || p.papel === 'co_lider');
     else if (filtro !== 'todos') lista = lista.filter(p => p.papel === filtro);
     return lista;
   }, [pessoas, busca, filtro]);
@@ -238,10 +219,9 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
     { key: 'coordenador', label: 'Coordenadores', value: contagens.coordenador || 0, cor: PAPEIS.coordenador.cor },
     { key: 'supervisor', label: 'Supervisores', value: contagens.supervisor || 0, cor: PAPEIS.supervisor.cor },
     { key: 'lideres', label: 'Líderes', value: contagens.lideres_total || 0, cor: PAPEIS.lider.cor },
-    { key: 'lider_treinamento', label: 'Em treinamento', value: contagens.lider_treinamento || 0, cor: PAPEIS.lider_treinamento.cor },
+    { key: 'lider_treinamento', label: 'Líderes em treinamento', value: contagens.lider_treinamento || 0, cor: PAPEIS.lider_treinamento.cor },
     { key: 'frequentador', label: 'Membros', value: contagens.frequentador || 0, cor: PAPEIS.frequentador.cor },
     { key: 'visitante', label: 'Visitantes', value: contagens.visitante || 0, cor: PAPEIS.visitante.cor },
-    { key: 'candidatos', label: 'Candidatos a promoção', value: contagens.candidatos || 0, cor: C.amber },
   ];
 
   return (
@@ -285,7 +265,6 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
           <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Ninguém nesse filtro.</div>
         ) : filtradas.map(p => {
           const pap = PAPEIS[p.papel] || PAPEIS.frequentador;
-          const sugestao = sugestaoPromocao(p);
           return (
             <div key={p.membro_id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <div style={{ width: 36, height: 36, borderRadius: '50%', background: p.foto_url ? `url(${p.foto_url}) center/cover` : `${pap.cor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: pap.cor }}>
@@ -327,11 +306,6 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
                   {p.entrou_em && <span> · desde {fmtData(p.entrou_em)}</span>}
                   {p.presencas_total > 0 && <span> · {p.presencas_total} presença{p.presencas_total !== 1 ? 's' : ''}</span>}
                 </div>
-                {sugestao && (
-                  <div style={{ fontSize: 11, color: C.amber, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4, fontWeight: 600 }}>
-                    <Lightbulb size={11} /> {sugestao}
-                  </div>
-                )}
               </div>
 
               {podeEditar && (
