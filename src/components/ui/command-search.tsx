@@ -27,7 +27,7 @@ const PAGES: SearchItem[] = [
   { label: 'Assistente IA', description: 'Agentes de auditoria e análise', path: '/assistente-ia', icon: Bot, category: 'Administrativo' },
   { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos' },
   { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos' },
-  { label: 'Planejamento', description: 'Visão consolidada PMO', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
+  { label: 'Gestão Anual', description: 'Próximo ano e resultados · eventos e projetos', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
   { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos' },
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial' },
   { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial' },

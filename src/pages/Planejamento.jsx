@@ -210,8 +210,8 @@ export default function Planejamento() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>Planejamento</div>
-          <div style={{ fontSize: 13, color: C.t2, marginTop: 2 }}>Visão consolidada de eventos, projetos e planejamento estratégico</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>Gestão Anual</div>
+          <div style={{ fontSize: 13, color: C.t2, marginTop: 2 }}>Planejamento do próximo ano e resultados dos anos fechados · eventos e projetos</div>
         </div>
       </div>
 
