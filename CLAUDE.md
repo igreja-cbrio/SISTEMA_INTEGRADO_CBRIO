@@ -759,6 +759,20 @@ mesmo, até que o convertido entre em outro valor"). Auditoria completa em
   redefinir; limitação documentada: frequencia_next/voluntarios_checkin e os
   ramos antigos de grupos/devocionais/jornada são da igreja toda (KPIs por
   área repetem o valor global).
+- **Mandalas · Servir e Generosidade cascateiam por área (2026-06-10 ·
+  migration `20260610220000`)**: `mem_voluntarios.area` +
+  `mem_contribuicoes.area` (kids/sede/ami/bridge/online · nullable). Backfill
+  de voluntários em 2 passes: área da `vol_inscricoes` da pessoa → senão a
+  área onde MAIS SERVE nas escalas (vol_schedules×vol_services · team "kid"→
+  kids · AMI/Bridge/Domingo/Quarta). Sync vol_profiles e o "Engajou"
+  (encaminhamentos) preenchem a área daqui pra frente (engajou usa a área da
+  conversão). Mandala: pétalas de Servir = voluntários por área · Generosidade
+  = dizimistas por área · **sem área conta no CENTRO mas não nas pétalas**
+  (não chutamos área · soma das pétalas pode ser < centro). Ramos de
+  voluntários/doações no `_kpi_agregar_dado` respeitam a área do registro →
+  KPIs por área param de repetir o global. `mem_contribuicoes.area` é
+  estrutura pronta pra unificação financeira. Conectar/Investir seguem "—"
+  nas pétalas (grupos/devocionais não têm dimensão de área de culto).
 
 ## Planejamento Estratégico × Gestão Anual · virada conceitual (2026-06-10)
 

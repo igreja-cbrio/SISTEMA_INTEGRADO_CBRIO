@@ -149,9 +149,56 @@ async function decisoesPorAreaMes(range) {
   return { porArea, total };
 }
 
-// Áreas cujo indicador principal já tem recorte por área (cascata real). Hoje só
-// Seguir (decisões por culto). Os demais → null nas pétalas ("—").
+// Voluntários ativos no fim do mês repartidos por área (mem_voluntarios.area ·
+// 2026-06-10). Sem área mapeada conta no TOTAL (centro) mas não nas pétalas —
+// honesto: não chutamos a área de ninguém.
+async function voluntariosPorAreaMes(range) {
+  const { data, error } = await supabase.from('mem_voluntarios')
+    .select('area')
+    .is('deleted_at', null)
+    .lte('desde', range.fim)
+    .or(`ate.is.null,ate.gt.${range.fim}`);
+  if (error) throw error;
+  const porArea = { kids: 0, sede: 0, ami: 0, bridge: 0, online: 0 };
+  let semArea = 0;
+  (data || []).forEach((v) => {
+    if (v.area && porArea[v.area] !== undefined) porArea[v.area] += 1;
+    else semArea += 1;
+  });
+  const total = porArea.kids + porArea.sede + porArea.ami + porArea.bridge + porArea.online + semArea;
+  return { porArea, semArea, total };
+}
+
+// Dizimistas do mês repartidos por área (mem_contribuicoes.area · estrutura
+// pronta pra unificação financeira — preenche quando a importação chegar).
+async function generosidadePorAreaMes(range) {
+  const { data, error } = await supabase.from('mem_contribuicoes')
+    .select('membro_id, area')
+    .is('deleted_at', null)
+    .eq('tipo', 'dizimo')
+    .gte('data', range.inicio).lte('data', range.fim)
+    .limit(10000);
+  if (error) throw error;
+  const setPorArea = { kids: new Set(), sede: new Set(), ami: new Set(), bridge: new Set(), online: new Set() };
+  const semAreaSet = new Set();
+  const totalSet = new Set();
+  (data || []).forEach((c) => {
+    if (!c.membro_id) return;
+    totalSet.add(c.membro_id);
+    if (c.area && setPorArea[c.area]) setPorArea[c.area].add(c.membro_id);
+    else semAreaSet.add(c.membro_id);
+  });
+  const porArea = {};
+  Object.keys(setPorArea).forEach(a => { porArea[a] = setPorArea[a].size; });
+  return { porArea, semArea: semAreaSet.size, total: totalSet.size };
+}
+
+// Áreas cujo indicador principal já tem recorte por área (cascata real):
+// Seguir (decisões por culto) · Servir (mem_voluntarios.area) · Generosidade
+// (mem_contribuicoes.area). Conectar/Investir seguem "—" nas pétalas (grupos e
+// devocionais não têm dimensão de área de culto na fonte).
 const AREAS_DECISOES = ['sede', 'ami', 'bridge', 'online'];
+const AREAS_5 = ['kids', 'sede', 'ami', 'bridge', 'online'];
 
 function calcStatus(percentual, totalAvaliados) {
   if (totalAvaliados === 0) return 'sem_dado';
@@ -241,14 +288,30 @@ router.get('/mandalas', async (req, res) => {
       indicadores[v] = await indicadorPrincipalMes(v, _range);
     }));
 
-    // 3.6 Cascata por área (só Seguir hoje · decisões por culto). O total de
-    // Seguir passa a ser a SOMA das áreas → garante centro == soma das pétalas.
+    // 3.6 Cascata por área. Seguir: decisões por culto (total = soma das
+    // pétalas). Servir/Generosidade (2026-06-10): área do registro
+    // (mem_voluntarios.area / mem_contribuicoes.area) · registro sem área
+    // conta no centro mas não nas pétalas (não chutamos área).
     let decisoesArea = { porArea: {}, total: null };
     try {
       decisoesArea = await decisoesPorAreaMes(_range);
       indicadores.seguir = { numero: decisoesArea.total, unidade: 'decisões' };
     } catch (e) {
       console.error('decisoesPorAreaMes:', e.message);
+    }
+    let servirArea = { porArea: {}, semArea: 0, total: null };
+    try {
+      servirArea = await voluntariosPorAreaMes(_range);
+      indicadores.servir = { numero: servirArea.total, unidade: 'voluntários' };
+    } catch (e) {
+      console.error('voluntariosPorAreaMes:', e.message);
+    }
+    let generosidadeArea = { porArea: {}, semArea: 0, total: null };
+    try {
+      generosidadeArea = await generosidadePorAreaMes(_range);
+      indicadores.generosidade = { numero: generosidadeArea.total, unidade: 'dizimistas' };
+    } catch (e) {
+      console.error('generosidadePorAreaMes:', e.message);
     }
 
     // 4. Mandala 0 (geral): 5 valores agregados
@@ -281,11 +344,18 @@ router.get('/mandalas', async (req, res) => {
           String(k.area || '').toLowerCase() === area.id
         );
         const tab = tabularKpis(kpisArea, statusByKpi);
-        // Número do indicador principal repartido por área (cascata). Só Seguir
-        // tem recorte por área hoje (decisões por culto) → demais ficam null ("—").
-        const numero_area = (v === 'seguir' && AREAS_DECISOES.includes(area.id))
-          ? (decisoesArea.porArea[area.id] ?? 0)
-          : null;
+        // Número do indicador principal repartido por área (cascata):
+        // Seguir = decisões por culto · Servir = voluntários por área ·
+        // Generosidade = dizimistas por área · Conectar/Investir ficam null
+        // ("—" · grupos/devocionais não têm dimensão de área de culto).
+        let numero_area = null;
+        if (v === 'seguir' && AREAS_DECISOES.includes(area.id)) {
+          numero_area = decisoesArea.porArea[area.id] ?? 0;
+        } else if (v === 'servir' && AREAS_5.includes(area.id)) {
+          numero_area = servirArea.porArea[area.id] ?? 0;
+        } else if (v === 'generosidade' && AREAS_5.includes(area.id)) {
+          numero_area = generosidadeArea.porArea[area.id] ?? 0;
+        }
         return {
           id: area.id,
           nome: area.nome,
