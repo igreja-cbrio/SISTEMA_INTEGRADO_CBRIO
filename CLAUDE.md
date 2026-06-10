@@ -5765,6 +5765,13 @@ endpoint `GET /api/painel/nsm/pessoas`):
   concluída no ato, hoje ele mede na prática "decisões com pessoa cadastrada"
   (21/240), não engajamento pós-decisão (critério mais exigente da tela de
   pessoas). Alinhamento do numerador fica como decisão futura do Marcos.
+- **Filtro de origem na aba Sem dados (2026-06-10)**: o segmented Origem
+  (Todos/Presencial/Online) passou a valer pras 2 abas. A view ganhou
+  `registradas_presencial/online` + `sem_dados_presencial/online` (migration
+  `20260610120000` · colunas no FINAL · CREATE OR REPLACE) e o front projeta
+  cards/lista/gap_status pela origem. Vínculo de membro não é separado por
+  origem (oculto no modo filtrado). Fix junto: culto só-kids
+  (`gap_status='sem_decisoes'`) não vaza mais como pendente na lista.
 
 ### Carrossel de valores (tendencias temporais · `/painel`)
 
