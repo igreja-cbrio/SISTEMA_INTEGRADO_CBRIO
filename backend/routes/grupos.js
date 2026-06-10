@@ -1462,6 +1462,131 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
 });
 
 // ============================================================================
+// PESSOAS · visão unificada de quem é quem nos grupos (aba Pessoas do /grupos)
+//
+// O papel de uma pessoa vive em 3 lugares: mem_grupo_membros.funcao
+// (participação), mem_grupos.lider_id (líder responsável) e
+// mem_grupos.supervisor_id (supervisor). Este endpoint agrega tudo em 1 linha
+// por pessoa com o papel efetivo (o mais alto entre os 3).
+// ============================================================================
+
+// GET /api/grupos/pessoas/papeis
+router.get('/pessoas/papeis', async (req, res) => {
+  try {
+    const { data: grupos, error: eG } = await supabase
+      .from('mem_grupos')
+      .select('id, nome, lider_id, supervisor_id')
+      .eq('ativo', true)
+      .is('deleted_at', null);
+    if (eG) throw eG;
+    const grupoIds = (grupos || []).map(g => g.id);
+    const gMap = {};
+    (grupos || []).forEach(g => { gMap[g.id] = g; });
+
+    // Participações ativas · paginado (pode passar do cap de 1000 do PostgREST)
+    let participacoes = [];
+    if (grupoIds.length) {
+      let offset = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: page, error: eP } = await supabase
+          .from('mem_grupo_membros')
+          .select('id, grupo_id, membro_id, funcao, presencas, entrou_em')
+          .is('saiu_em', null)
+          .in('grupo_id', grupoIds)
+          .range(offset, offset + pageSize - 1);
+        if (eP) throw eP;
+        participacoes = participacoes.concat(page || []);
+        if (!page || page.length < pageSize) break;
+        offset += pageSize;
+      }
+    }
+
+    // Pessoas = participantes ∪ líderes (lider_id) ∪ supervisores (supervisor_id)
+    const pessoaIds = new Set(participacoes.map(p => p.membro_id).filter(Boolean));
+    (grupos || []).forEach(g => {
+      if (g.lider_id) pessoaIds.add(g.lider_id);
+      if (g.supervisor_id) pessoaIds.add(g.supervisor_id);
+    });
+
+    // Dados básicos · .in() em chunks (URL tem limite de tamanho)
+    const ids = [...pessoaIds];
+    const membrosMap = {};
+    for (let i = 0; i < ids.length; i += 400) {
+      const { data: ms } = await supabase
+        .from('mem_membros')
+        .select('id, nome, foto_url, telefone')
+        .in('id', ids.slice(i, i + 400))
+        .is('deleted_at', null);
+      (ms || []).forEach(m => { membrosMap[m.id] = m; });
+    }
+
+    const RANK = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
+    const pessoas = {};
+    const garante = (mid) => {
+      if (!pessoas[mid]) {
+        const m = membrosMap[mid] || {};
+        pessoas[mid] = {
+          membro_id: mid,
+          nome: m.nome || '—',
+          foto_url: m.foto_url || null,
+          telefone: m.telefone || null,
+          papel: null,
+          rank: 0,
+          grupos: [],
+          lidera: [],
+          supervisiona: [],
+          presencas_total: 0,
+          entrou_em: null,
+        };
+      }
+      return pessoas[mid];
+    };
+
+    for (const p of participacoes) {
+      if (!p.membro_id) continue;
+      const pe = garante(p.membro_id);
+      pe.grupos.push({
+        participacao_id: p.id,
+        grupo_id: p.grupo_id,
+        grupo_nome: gMap[p.grupo_id]?.nome || null,
+        funcao: p.funcao,
+        presencas: p.presencas || 0,
+        entrou_em: p.entrou_em,
+      });
+      pe.presencas_total += (p.presencas || 0);
+      if (!pe.entrou_em || (p.entrou_em && p.entrou_em < pe.entrou_em)) pe.entrou_em = p.entrou_em;
+      const r = RANK[p.funcao] || 0;
+      if (r > pe.rank) { pe.rank = r; pe.papel = p.funcao; }
+    }
+    for (const g of grupos || []) {
+      if (g.lider_id) {
+        const pe = garante(g.lider_id);
+        pe.lidera.push({ id: g.id, nome: g.nome });
+        if (RANK.lider > pe.rank) { pe.rank = RANK.lider; pe.papel = 'lider'; }
+      }
+      if (g.supervisor_id) {
+        const pe = garante(g.supervisor_id);
+        pe.supervisiona.push({ id: g.id, nome: g.nome });
+        if (RANK.supervisor > pe.rank) { pe.rank = RANK.supervisor; pe.papel = 'supervisor'; }
+      }
+    }
+    // Mesma régua do detalhe do grupo: frequentador com <3 presenças = visitante
+    Object.values(pessoas).forEach(pe => {
+      if (!pe.papel) pe.papel = 'frequentador';
+      if (pe.papel === 'frequentador' && pe.presencas_total < 3) pe.papel = 'visitante';
+    });
+
+    const lista = Object.values(pessoas)
+      .sort((a, b) => b.rank - a.rank || (a.nome || '').localeCompare(b.nome || ''));
+    res.json({ total: lista.length, pessoas: lista });
+  } catch (e) {
+    console.error('[grupos] pessoas/papeis:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar pessoas' });
+  }
+});
+
+// ============================================================================
 // SUPERVISAO · funções hierarquicas + visitas + observações mensais
 //
 // Modelo de papéis (na pratica · descobrimos pelo membro_id do user):

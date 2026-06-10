@@ -301,6 +301,7 @@ export const grupos = {
   updateVisita: (visitaId, body) => patch(`/grupos/visitas/${visitaId}`, body),
   removeVisita: (visitaId) => del(`/grupos/visitas/${visitaId}`),
   visitasPainel: () => get('/grupos/visitas/painel'),
+  pessoasPapeis: () => get('/grupos/pessoas/papeis'),
   listObservacoes: (grupoId) => get(`/grupos/${grupoId}/observacoes`),
   setObservacao: (grupoId, periodo, observacao) => put(`/grupos/${grupoId}/observacoes/${periodo}`, { observacao }),
 };
