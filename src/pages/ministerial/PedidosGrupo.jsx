@@ -30,7 +30,9 @@ const STATUS_LABEL = {
   cancelado: { label: 'Cancelado', cor: C.t3, bg: C.bg },
 };
 
-export default function PedidosGrupo() {
+// embedded: renderizado dentro da Caixa de entrada do /grupos (a aba já tem
+// título/explicação — esconde o cabeçalho próprio, mantém a linha de escopo).
+export default function PedidosGrupo({ embedded = false }) {
   const { profile } = useAuth();
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
   const [pedidos, setPedidos] = useState([]);
@@ -76,10 +78,10 @@ export default function PedidosGrupo() {
   };
 
   return (
-    <div className="cbrio-grupos-page" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Pedidos de inscrição em grupos</h1>
-        <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
+    <div className="cbrio-grupos-page" style={{ padding: embedded ? '14px 32px 24px' : '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ marginBottom: embedded ? 12 : 20 }}>
+        {!embedded && <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Pedidos de inscrição em grupos</h1>}
+        <p style={{ fontSize: 13, color: C.t3, marginTop: embedded ? 0 : 6 }}>
           {showAll
             ? <>Vendo <strong>todos os pedidos</strong> da igreja (admin/diretor).</>
             : <>Vendo apenas pedidos dos grupos que <strong>você lidera</strong>.</>
