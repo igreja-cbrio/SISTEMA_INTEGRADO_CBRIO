@@ -7,7 +7,9 @@
 // Filtros:
 //   - Ano + Janela (30/60/90/Ano acumulado) · a janela vale pra tudo: quem
 //     decidiu no recorte E o horizonte de engajamento.
-//   - Origem da decisão: Todos / Presencial / Online. Aceita deep link
+//   - Origem da decisão: Todos / Presencial / Online — vale pras DUAS abas
+//     (na aba Sem dados projeta decisões/registradas/gap pela origem, via
+//     registradas_presencial/online da view). Aceita deep link
 //     (?tipo=online ou ?segmento=online · os cards NSM do /painel usam).
 //   - 5 cards de valores (multi-seleção) · cada um abre nas atividades.
 //     "Seguir a Jesus" sem atividade não filtra ninguém: a própria conversão
@@ -244,16 +246,52 @@ export default function PainelNsmPessoas() {
     };
   }, [lista]);
 
-  // Aba Sem dados: recorta pela janela e lista SÓ culto com pendência
-  // (gap_status != completo) · o resumo dos cards segue cobrindo o recorte
-  // inteiro (accountability decisões × registradas × gap).
+  // Aba Sem dados: recorta pela janela, PROJETA pela origem selecionada
+  // (todos/presencial/online · usa registradas_presencial/online da view) e
+  // lista SÓ culto com pendência. O resumo dos cards cobre o recorte inteiro
+  // na origem escolhida (accountability decisões × registradas × gap).
   const semDadosView = useMemo(() => {
     if (!semDadosRaw?.items) return null;
     const diasMap = { '30': 30, '60': 60, '90': 90, acumulado: 366 };
     const dias = diasMap[janela] || 90;
     const corte = addDias(new Date().toISOString().slice(0, 10), -dias);
-    const noRecorte = semDadosRaw.items.filter(c => (c.data_culto || '') >= corte);
-    const pendentes = noRecorte.filter(c => c.gap_status !== 'completo');
+
+    // Reprojeta o culto pra origem: decisões/registradas/gap/status do recorte.
+    const projeta = (c) => {
+      let dec, reg, vinc;
+      if (tipoF === 'presencial') {
+        dec = c.decisoes_presenciais || 0;
+        reg = c.registradas_presencial ?? 0;
+        vinc = 0; // a view não separa vínculo por origem · oculta no modo filtrado
+      } else if (tipoF === 'online') {
+        dec = c.decisoes_online || 0;
+        reg = c.registradas_online ?? 0;
+        vinc = 0;
+      } else {
+        dec = c.total_decisoes || 0;
+        reg = c.total_registradas || 0;
+        vinc = c.com_membro_vinculado || 0;
+      }
+      const status = dec === 0 ? 'sem_decisoes'
+        : reg === 0 ? 'nenhuma_registrada'
+        : reg < dec ? 'parcial'
+        : 'completo';
+      return {
+        ...c,
+        total_decisoes: dec,
+        total_registradas: reg,
+        com_membro_vinculado: vinc,
+        sem_dados: Math.max(0, dec - reg),
+        gap_status: status,
+      };
+    };
+
+    const noRecorte = semDadosRaw.items
+      .filter(c => (c.data_culto || '') >= corte)
+      .map(projeta)
+      .filter(c => c.gap_status !== 'sem_decisoes'); // sem decisão nessa origem → fora
+
+    const pendentes = noRecorte.filter(c => c.gap_status === 'nenhuma_registrada' || c.gap_status === 'parcial');
     return {
       pendentes,
       completos: noRecorte.length - pendentes.length,
@@ -264,7 +302,7 @@ export default function PainelNsmPessoas() {
         total_sem_dados: noRecorte.reduce((s, c) => s + (c.sem_dados || 0), 0),
       },
     };
-  }, [semDadosRaw, janela]);
+  }, [semDadosRaw, janela, tipoF]);
 
   // Reconciliação com o card NSM do /painel: recorta a view pela janela
   // OFICIAL do nsm_estado (não pela janela selecionada na página), então os
@@ -365,11 +403,9 @@ export default function PainelNsmPessoas() {
         <Campo label="Janela">
           <Segmented value={janela} onChange={setJanela} options={JANELAS} />
         </Campo>
-        {tab === 'pessoas' && (
-          <Campo label="Origem da decisão">
-            <Segmented value={tipoF} onChange={setTipoF} options={TIPO_OPCOES} />
-          </Campo>
-        )}
+        <Campo label="Origem da decisão">
+          <Segmented value={tipoF} onChange={setTipoF} options={TIPO_OPCOES} />
+        </Campo>
         {tab === 'pessoas' && (
           <Campo label="Engajamento">
             <Segmented value={statusF} onChange={setStatusF} options={STATUS_OPCOES} />
@@ -467,16 +503,22 @@ export default function PainelNsmPessoas() {
               <strong style={{ color: '#10B981' }}>{nsmJanela.registradas}</strong> com pessoa cadastrada ·{' '}
               <strong style={{ color: '#EF4444' }}>{nsmJanela.semDados}</strong> sem dados.
               {' '}Selecione a janela de <strong>90 dias</strong> acima para listar exatamente esses cultos.
+              {tipoF !== 'todos' && (
+                <> Origem filtrada (<strong>{tipoF === 'online' ? 'online' : 'presencial'}</strong>): os cards e a lista abaixo mostram só essa fatia.</>
+              )}
             </div>
           )}
-          {semDadosView?.resumo && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
-              <Stat label="Cultos com decisões" value={semDadosView.resumo.total_cultos} cor={C.t2} />
-              <Stat label="Total decisões" value={semDadosView.resumo.total_decisoes} cor="#3B82F6" />
-              <Stat label="Pessoas registradas" value={semDadosView.resumo.total_registradas} cor="#10B981" />
-              <Stat label="Sem dados (gap)" value={semDadosView.resumo.total_sem_dados} cor="#EF4444" />
-            </div>
-          )}
+          {semDadosView?.resumo && (() => {
+            const sufixo = tipoF === 'todos' ? '' : tipoF === 'online' ? ' · online' : ' · presencial';
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+                <Stat label={`Cultos com decisões${sufixo}`} value={semDadosView.resumo.total_cultos} cor={C.t2} />
+                <Stat label={`Total decisões${sufixo}`} value={semDadosView.resumo.total_decisoes} cor="#3B82F6" />
+                <Stat label={`Pessoas registradas${sufixo}`} value={semDadosView.resumo.total_registradas} cor="#10B981" />
+                <Stat label={`Sem dados (gap)${sufixo}`} value={semDadosView.resumo.total_sem_dados} cor="#EF4444" />
+              </div>
+            );
+          })()}
           {semDadosView && semDadosView.completos > 0 && (
             <p style={{ fontSize: 11, color: C.t3, margin: '-8px 0 12px' }}>
               {semDadosView.completos === 1
