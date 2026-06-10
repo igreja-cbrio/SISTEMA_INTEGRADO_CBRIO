@@ -380,10 +380,19 @@ function TabVisitas({ grupo, visitas, onChanged }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {visitas.map(v => (
-            <div key={v.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: C.inputBg, borderRadius: 8 }}>
-              <Calendar size={14} style={{ color: C.primary, marginTop: 2, flexShrink: 0 }} />
+            <div key={v.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: C.inputBg, borderRadius: 8, opacity: v.status === 'cancelada' ? 0.55 : 1 }}>
+              <Calendar size={14} style={{ color: v.status === 'agendada' ? '#3b82f6' : C.primary, marginTop: 2, flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{formatDate(v.data_visita)}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.text, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {formatDate(v.data_visita)}
+                  {v.status === 'agendada' && (
+                    <span style={{ fontSize: 9, padding: '1px 8px', borderRadius: 99, background: '#3b82f620', color: '#3b82f6', fontWeight: 700, textTransform: 'uppercase' }}>Agendada</span>
+                  )}
+                  {v.status === 'cancelada' && (
+                    <span style={{ fontSize: 9, padding: '1px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700, textTransform: 'uppercase' }}>Cancelada</span>
+                  )}
+                </div>
+                {v.responsavel_nome && <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>{v.responsavel_nome}</div>}
                 {v.observacao && <div style={{ fontSize: 11, color: C.t2, marginTop: 4, lineHeight: 1.4 }}>{v.observacao}</div>}
               </div>
               <button onClick={() => remover(v.id)} title="Remover" style={{ background: 'none', border: 'none', color: C.t3, cursor: 'pointer', padding: 2 }}>

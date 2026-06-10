@@ -298,7 +298,9 @@ export const grupos = {
   setFuncaoMembro: (membroRowId, funcao) => put(`/grupos/membros/${membroRowId}/funcao`, { funcao }),
   listVisitas: (grupoId) => get(`/grupos/${grupoId}/visitas`),
   addVisita: (grupoId, body) => post(`/grupos/${grupoId}/visitas`, body),
+  updateVisita: (visitaId, body) => patch(`/grupos/visitas/${visitaId}`, body),
   removeVisita: (visitaId) => del(`/grupos/visitas/${visitaId}`),
+  visitasPainel: () => get('/grupos/visitas/painel'),
   listObservacoes: (grupoId) => get(`/grupos/${grupoId}/observacoes`),
   setObservacao: (grupoId, periodo, observacao) => put(`/grupos/${grupoId}/observacoes/${periodo}`, { observacao }),
 };

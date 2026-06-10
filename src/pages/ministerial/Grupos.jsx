@@ -8,13 +8,13 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, ListChecks, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
-import ProcessosTarefas from '../../components/ProcessosTarefas';
+import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { StatisticsCard } from '../../components/ui/statistics-card';
@@ -43,6 +43,8 @@ const RECORRENCIAS = [
 ];
 
 const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais', 'Jovens', 'Mulheres', 'Homens', 'Misto'];
+
+const PAGE_TABS = ['grupos', 'relatorios', 'mapa', 'pedidos', 'encaminhados', 'materiais', 'visitas', 'qrcode', 'geocode', 'temporadas'];
 
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
 
@@ -75,7 +77,14 @@ export default function Grupos() {
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
-  const [pageTab, setPageTab] = useState('grupos');
+  // Aba inicial pode vir da URL (/grupos?tab=visitas · usado por notificações)
+  const [pageTab, setPageTab] = useState(() => {
+    try {
+      const t = new URLSearchParams(window.location.search).get('tab');
+      return PAGE_TABS.includes(t) ? t : 'grupos';
+    } catch { return 'grupos'; }
+  });
+  const [visitaOpen, setVisitaOpen] = useState(false);
   const [pedidosCount, setPedidosCount] = useState(0);
   const [historicoMembros, setHistoricoMembros] = useState([]);
   const [materiais, setMateriais] = useState([]);
@@ -387,7 +396,7 @@ export default function Grupos() {
     const totalMembros = isOptimistic ? (g.membros_count ?? null) : membrosAtivos.length;
 
     return (
-      <div key={selectedGrupo} className="cbrio-grupos-page" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto', animation: 'cbrio-stagger-in 0.18s ease-out' }}>
+      <div key={selectedGrupo} className="cbrio-grupos-page" style={{ padding: '24px 20px', maxWidth: 1240, margin: '0 auto', animation: 'cbrio-stagger-in 0.18s ease-out' }}>
         <button onClick={() => { setSelectedGrupo(null); setDetailData(null); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
           <ChevronLeft size={16} /> Voltar para grupos
         </button>
@@ -438,6 +447,9 @@ export default function Grupos() {
           <div className="cbrio-grupos-detail-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
             <Button size="sm" variant="outline" onClick={() => setQrOpen(true)}>
               <QrCode size={14} style={{ marginRight: 4 }} /> QR / Link
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setVisitaOpen(true)}>
+              <CalendarPlus size={14} style={{ marginRight: 4 }} /> Agendar visita
             </Button>
             {podeEditarGrupos && (
               <>
@@ -591,7 +603,9 @@ export default function Grupos() {
                       })()}
                     </td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-                      <button onClick={() => handleRemoveMembro(m.participacao_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 11 }}><X size={14} /></button>
+                      {podeEditarGrupos && (
+                        <button onClick={() => handleRemoveMembro(m.participacao_id)} title="Remover do grupo" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 11 }}><X size={14} /></button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -633,7 +647,9 @@ export default function Grupos() {
                       </div>
                       {enc.observacoes && <div style={{ fontSize: 11, color: C.t2, marginTop: 4 }}>{enc.observacoes}</div>}
                     </div>
-                    <button onClick={e => { e.stopPropagation(); handleRemoverEncontro(enc.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }} title="Remover encontro"><Trash2 size={14} /></button>
+                    {podeEditarGrupos && (
+                      <button onClick={e => { e.stopPropagation(); handleRemoverEncontro(enc.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }} title="Remover encontro"><Trash2 size={14} /></button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -743,20 +759,27 @@ export default function Grupos() {
           copied={qrCopied}
           setCopied={setQrCopied}
         />
+
+        {/* Modal agendar/registrar visita · aparece depois na aba Visitas */}
+        <AgendarVisitaModal
+          open={visitaOpen}
+          onClose={() => setVisitaOpen(false)}
+          grupo={g}
+        />
       </div>
     );
   }
 
   // ── LISTA DE GRUPOS ──
   return (
-    <div className="cbrio-grupos-page" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+    <div className="cbrio-grupos-page" style={{ padding: '24px 20px', maxWidth: 1240, margin: '0 auto' }}>
       <div className="cbrio-grupos-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
         {pageTab === 'grupos' && podeEditarGrupos && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
       </div>
 
-      {/* Tabs principais: Grupos | Mapa | Materiais */}
-      <div className="cbrio-grupos-tabs" style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+      {/* Tabs principais · centralizadas; quebram em 2 linhas se faltar espaço */}
+      <div className="cbrio-grupos-tabs" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
@@ -764,17 +787,17 @@ export default function Grupos() {
           { key: 'pedidos', label: 'Pedidos', icon: Inbox, badge: pedidosCount },
           { key: 'encaminhados', label: 'Encaminhados', icon: UserPlus },
           { key: 'materiais', label: 'Materiais', icon: FileText },
-          { key: 'tarefas', label: 'Tarefas', icon: ListChecks },
+          { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
           { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
-          { key: 'geocode', label: 'Validar endereços', icon: Compass },
+          { key: 'geocode', label: 'Endereços', icon: Compass },
           { key: 'temporadas', label: 'Temporadas', icon: Calendar },
         ].map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
-            padding: '10px 24px', background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 14, fontWeight: pageTab === tab.key ? 700 : 400,
+            padding: '10px 13px', background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 13.5, fontWeight: pageTab === tab.key ? 700 : 400,
             color: pageTab === tab.key ? C.primary : C.t3,
             borderBottom: pageTab === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
-            display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.15s',
+            display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.15s', whiteSpace: 'nowrap',
           }}>
             <tab.icon size={16} /> {tab.label}
             {tab.badge > 0 && (
@@ -957,33 +980,33 @@ export default function Grupos() {
         </div>
       )}
 
-      {/* ═══ TAB TAREFAS ═══ */}
-      {pageTab === 'tarefas' && <ProcessosTarefas area="Grupos" />}
+      {/* ═══ TAB VISITAS ═══ */}
+      {pageTab === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
 
       {/* ═══ TAB PEDIDOS ═══ */}
       {pageTab === 'pedidos' && (
-        <div style={{ margin: '0 -32px' }}>
+        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <PedidosGrupo />
         </div>
       )}
 
       {/* ═══ TAB QR INSCRIÇÃO ═══ */}
       {pageTab === 'qrcode' && (
-        <div style={{ margin: '0 -32px' }}>
+        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <InscricaoGruposQRCode />
         </div>
       )}
 
-      {/* ═══ TAB VALIDAR ENDEREÇOS ═══ */}
+      {/* ═══ TAB ENDEREÇOS (geocode) ═══ */}
       {pageTab === 'geocode' && (
-        <div style={{ margin: '0 -32px' }}>
+        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <GruposGeocode />
         </div>
       )}
 
       {/* ═══ TAB TEMPORADAS ═══ */}
       {pageTab === 'temporadas' && (
-        <div style={{ margin: '0 -32px' }}>
+        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
           <TemporadasGrupos />
         </div>
       )}

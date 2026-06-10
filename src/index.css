@@ -325,4 +325,8 @@ table tbody tr:hover {
 
   /* Tabela de historico permanece com overflow */
   .cbrio-grupos-page table { font-size: 12px !important; }
+
+  /* Abas embutidas (Pedidos/QR/Enderecos/Temporadas) sangram so o padding
+     mobile da pagina (12px), nao o desktop (20px) */
+  .cbrio-grupos-bleed { margin: 0 -12px !important; }
 }
