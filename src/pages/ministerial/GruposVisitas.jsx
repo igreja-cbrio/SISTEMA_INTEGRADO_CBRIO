@@ -13,8 +13,9 @@
 // nos próprios grupos) — o backend autoriza; aqui só escondemos os botões.
 // ============================================================================
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { grupos as api, users } from '../../api';
+import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -60,16 +61,27 @@ export function AgendarVisitaModal({ open, onClose, grupo, gruposOptions = [], m
   const [usersList, setUsersList] = useState([]);
   const [saving, setSaving] = useState(false);
 
+  // Snapshot do estado inicial · tirado DEPOIS da pré-população ao abrir
+  // (mesmos valores que o useEffect seta) — abrir e fechar sem mexer em nada
+  // não pergunta. usersList fica fora: é carregada por fetch, não é edição.
+  const snapshotRef = useRef(null);
+
   useEffect(() => {
     if (open) {
-      setModo(modoInicial);
-      setGrupoId(grupo?.id || '');
-      setData(hojeISO());
-      setResponsavelId('me');
-      setObs('');
+      const inicial = { modo: modoInicial, grupoId: grupo?.id || '', data: hojeISO(), responsavelId: 'me', obs: '' };
+      setModo(inicial.modo);
+      setGrupoId(inicial.grupoId);
+      setData(inicial.data);
+      setResponsavelId(inicial.responsavelId);
+      setObs(inicial.obs);
+      snapshotRef.current = JSON.stringify(inicial);
       users.list().then(d => setUsersList(d || [])).catch(() => setUsersList([]));
     }
   }, [open, grupo?.id, modoInicial]);
+
+  const temAlteracoes = snapshotRef.current !== null &&
+    JSON.stringify({ modo, grupoId, data, responsavelId, obs }) !== snapshotRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
   const submit = async () => {
     if (!grupoId) { toast.error('Escolha o grupo'); return; }
@@ -93,7 +105,7 @@ export function AgendarVisitaModal({ open, onClose, grupo, gruposOptions = [], m
   const nomeGrupo = grupo?.nome || gruposOptions.find(g => g.id === grupoId)?.nome;
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+    <Dialog open={open} onOpenChange={v => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
@@ -164,7 +176,7 @@ export function AgendarVisitaModal({ open, onClose, grupo, gruposOptions = [], m
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
+            <Button variant="outline" size="sm" onClick={tentarFechar}>Cancelar</Button>
             <Button size="sm" onClick={submit} disabled={saving}>
               {saving ? 'Salvando...' : modo === 'agendar' ? 'Agendar visita' : 'Registrar visita'}
             </Button>
@@ -184,6 +196,15 @@ function ConcluirVisitaModal({ visita, onClose, onSaved }) {
   const [obs, setObs] = useState(visita?.observacao || '');
   const [saving, setSaving] = useState(false);
 
+  // Snapshot na montagem (o modal monta a cada visita aberta) · compara contra
+  // os valores com que os campos foram pré-populados — abrir e fechar sem
+  // alterar nada não pergunta.
+  const snapshotRef = useRef(null);
+  if (snapshotRef.current === null) snapshotRef.current = JSON.stringify({ data, obs });
+
+  const temAlteracoes = JSON.stringify({ data, obs }) !== snapshotRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   const submit = async () => {
     setSaving(true);
     try {
@@ -197,7 +218,7 @@ function ConcluirVisitaModal({ visita, onClose, onSaved }) {
   };
 
   return (
-    <Dialog open={!!visita} onOpenChange={v => { if (!v) onClose(); }}>
+    <Dialog open={!!visita} onOpenChange={v => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Concluir visita — {visita?.grupo_nome || 'grupo'}</DialogTitle>
@@ -213,7 +234,7 @@ function ConcluirVisitaModal({ visita, onClose, onSaved }) {
               placeholder="Pontos de atenção, vitórias, próximos passos..." />
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button variant="outline" size="sm" onClick={onClose}>Voltar</Button>
+            <Button variant="outline" size="sm" onClick={tentarFechar}>Voltar</Button>
             <Button size="sm" onClick={submit} disabled={saving}>
               {saving ? 'Salvando...' : 'Confirmar visita realizada'}
             </Button>

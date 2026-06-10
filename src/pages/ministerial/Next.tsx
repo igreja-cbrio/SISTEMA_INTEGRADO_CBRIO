@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { next as nextApi } from '../../api';
+import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
@@ -721,6 +722,12 @@ function ModalNovaInscricao({
   const [saving, setSaving] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
+  // Snapshot do form no 1º render (já inicializado com o evento default) —
+  // abrir e fechar sem digitar nada NÃO dispara confirmação.
+  const snapshotInicialRef = useRef(JSON.stringify(form));
+  const temAlteracoes = JSON.stringify(form) !== snapshotInicialRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     let v = e.target.value;
     if (k === 'cpf') v = mascaraCpf(v);
@@ -760,7 +767,7 @@ function ModalNovaInscricao({
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
+    <Dialog open onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -850,7 +857,7 @@ function ModalNovaInscricao({
         </div>
 
         <DialogFooter className="pt-3">
-          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar} disabled={saving}>Cancelar</Button>
           <Button onClick={handleSubmit} disabled={saving} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             Cadastrar

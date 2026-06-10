@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi, users as usersApi } from '../../api';
+import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
@@ -74,6 +75,16 @@ function AcompanhamentoModal({ open, onClose, onSaved }: { open: boolean; onClos
   const [membro, setMembro] = useState<any>(null);
   const [saving, setSaving] = useState(false);
 
+  // Snapshot do form ao abrir (não há effect que popule o form aqui, então o
+  // estado no momento da abertura é a baseline) · membro (lookup) fica fora.
+  const snapRef = useRef<string>(JSON.stringify(form));
+  useEffect(() => {
+    if (open) snapRef.current = JSON.stringify(form);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const temAlteracoes = JSON.stringify(form) !== snapRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   async function save() {
     if (!form.nome) return toast.error('Nome obrigatório');
     setSaving(true);
@@ -98,7 +109,7 @@ function AcompanhamentoModal({ open, onClose, onSaved }: { open: boolean; onClos
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Novo Acompanhamento</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -122,7 +133,7 @@ function AcompanhamentoModal({ open, onClose, onSaved }: { open: boolean; onClos
           <div><Label>Observações</Label><Input value={form.observacoes} onChange={e => setForm({ ...form, observacoes: e.target.value })} /></div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button>
         </DialogFooter>
       </DialogContent>
@@ -134,6 +145,15 @@ function JornadaModal({ open, onClose, onSaved }: { open: boolean; onClose: () =
   const [form, setForm] = useState({ nome: '', cpf: '', etapa: 1, data_encontro: new Date().toISOString().slice(0, 10), presente: true, observacoes: '' });
   const [membro, setMembro] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+
+  // Snapshot do form ao abrir (sem effect de população aqui) · membro fora.
+  const snapRef = useRef<string>(JSON.stringify(form));
+  useEffect(() => {
+    if (open) snapRef.current = JSON.stringify(form);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const temAlteracoes = JSON.stringify(form) !== snapRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
   async function save() {
     if (!form.nome) return toast.error('Nome obrigatório');
@@ -152,7 +172,7 @@ function JornadaModal({ open, onClose, onSaved }: { open: boolean; onClose: () =
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Registrar Encontro Jornada 180</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -172,7 +192,7 @@ function JornadaModal({ open, onClose, onSaved }: { open: boolean; onClose: () =
           <div><Label>Observações</Label><Input value={form.observacoes} onChange={e => setForm({ ...form, observacoes: e.target.value })} /></div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button>
         </DialogFooter>
       </DialogContent>
@@ -247,24 +267,31 @@ function ConvertidoModal({
   const [saving, setSaving] = useState(false);
   const editing = !!initial?.id;
 
+  // Snapshot tirado sobre o MESMO objeto que popula o form (dentro do effect
+  // de abertura/edição) · refeito a cada open/initial · membro (lookup) fora.
+  const snapRef = useRef<string>(JSON.stringify(emptyConvertidoForm()));
+
   useEffect(() => {
     if (!open) return;
-    if (initial) {
-      setForm({
-        nome: initial.nome || '',
-        cpf: initial.cpf || '',
-        telefone: initial.telefone || '',
-        data_culto: initial.data_culto || new Date().toISOString().slice(0, 10),
-        atendido_apos_culto: !!initial.atendido_apos_culto,
-        cadastrado: !!initial.cadastrado,
-        tags: Array.isArray(initial.tags) ? initial.tags : [],
-        observacoes: initial.observacoes || '',
-      });
-    } else {
-      setForm(emptyConvertidoForm());
-    }
+    const next = initial
+      ? {
+          nome: initial.nome || '',
+          cpf: initial.cpf || '',
+          telefone: initial.telefone || '',
+          data_culto: initial.data_culto || new Date().toISOString().slice(0, 10),
+          atendido_apos_culto: !!initial.atendido_apos_culto,
+          cadastrado: !!initial.cadastrado,
+          tags: Array.isArray(initial.tags) ? initial.tags : [],
+          observacoes: initial.observacoes || '',
+        }
+      : emptyConvertidoForm();
+    setForm(next);
     setMembro(null);
+    snapRef.current = JSON.stringify(next);
   }, [open, initial]);
+
+  const temAlteracoes = JSON.stringify(form) !== snapRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
   function toggleTag(t: string) {
     setForm(f => ({
@@ -293,7 +320,7 @@ function ConvertidoModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>{editing ? 'Editar Convertido' : 'Registrar Convertido pós-culto'}</DialogTitle>
@@ -350,7 +377,7 @@ function ConvertidoModal({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Registrar'}</Button>
         </DialogFooter>
       </DialogContent>
@@ -510,13 +537,24 @@ function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }:
   const [form, setForm] = useState({ data_encontro: '', encontro_hora: '', responsavel_id: '' });
   const [saving, setSaving] = useState(false);
 
+  // Snapshot tirado sobre o MESMO objeto que popula o form ao abrir/reabrir
+  // com outro convertido · baseline = form já populado.
+  const snapRef = useRef<string>(JSON.stringify({ data_encontro: '', encontro_hora: '', responsavel_id: '' }));
+
   useEffect(() => {
-    if (open && convertido) setForm({
-      data_encontro: convertido.data_encontro || new Date().toISOString().slice(0, 10),
-      encontro_hora: convertido.encontro_hora ? String(convertido.encontro_hora).slice(0, 5) : '',
-      responsavel_id: convertido.encontro_responsavel_id || '',
-    });
+    if (open && convertido) {
+      const next = {
+        data_encontro: convertido.data_encontro || new Date().toISOString().slice(0, 10),
+        encontro_hora: convertido.encontro_hora ? String(convertido.encontro_hora).slice(0, 5) : '',
+        responsavel_id: convertido.encontro_responsavel_id || '',
+      };
+      setForm(next);
+      snapRef.current = JSON.stringify(next);
+    }
   }, [open, convertido]);
+
+  const temAlteracoes = JSON.stringify(form) !== snapRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
   async function save() {
     if (!form.data_encontro) return toast.error('Escolha a data do encontro');
@@ -537,7 +575,7 @@ function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }:
 
   if (!convertido) return null;
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Agendar encontro — {convertido.nome}</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -557,7 +595,7 @@ function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }:
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Agendar'}</Button>
         </DialogFooter>
       </DialogContent>
@@ -576,9 +614,20 @@ function DesfechoModal({ open, convertido, onClose, onSaved }: {
   const [obs, setObs] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Snapshot = exatamente os valores do reset feito ao abrir (effect abaixo).
+  const snapRef = useRef<string>(
+    JSON.stringify({ compareceu: true, destinos: {}, notas: {}, obs: '' })
+  );
+
   useEffect(() => {
-    if (open) { setCompareceu(true); setDestinos({}); setNotas({}); setObs(''); }
+    if (open) {
+      setCompareceu(true); setDestinos({}); setNotas({}); setObs('');
+      snapRef.current = JSON.stringify({ compareceu: true, destinos: {}, notas: {}, obs: '' });
+    }
   }, [open]);
+
+  const temAlteracoes = JSON.stringify({ compareceu, destinos, notas, obs }) !== snapRef.current;
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
   async function save() {
     if (compareceu && !DESTINOS_ENC.some(d => destinos[d.v])) {
@@ -598,7 +647,7 @@ function DesfechoModal({ open, convertido, onClose, onSaved }: {
 
   if (!convertido) return null;
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>Desfecho do encontro — {convertido.nome}</DialogTitle></DialogHeader>
         <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
@@ -636,7 +685,7 @@ function DesfechoModal({ open, convertido, onClose, onSaved }: {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar desfecho'}</Button>
         </DialogFooter>
       </DialogContent>

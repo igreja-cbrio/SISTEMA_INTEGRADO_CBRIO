@@ -20,6 +20,7 @@ import {
 import { toast } from 'sonner';
 import { producao as prodApi, solicitacoes as solicApi } from '../../api';
 import { formatErro } from '../../lib/formatErro';
+import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -244,7 +245,6 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const [marks, setMarks] = useState({}); // item_id -> {feito, observação}
   const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
   const inicialRef = useRef(null); // snapshot do estado carregado · detecta alterações não salvas
-  const mousedownNoBackdropRef = useRef(false); // só fecha se o clique COMEÇOU no backdrop (não em seleção de texto arrastada pra fora)
 
   const meta = det?.culto?.meta_duracao_min ?? culto.producao?.meta_duracao_min ?? 60;
 
@@ -271,10 +271,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const temAlteracoes =
     (inicialRef.current !== null && JSON.stringify({ form, marks }) !== inicialRef.current) ||
     novaOcorr.descricao.trim() !== '' || novaOcorr.momento.trim() !== '';
-  const tentarFechar = () => {
-    if (temAlteracoes && !window.confirm('Tem certeza que deseja sair? As alterações não salvas serão perdidas.')) return;
-    onClose();
-  };
+  const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
 
   const dur = Number(form.duracao_minutos);
   const atrasou = form.duracao_minutos !== '' && !Number.isNaN(dur) && dur > meta;
@@ -318,8 +315,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
 
   return (
     <div
-      onMouseDown={e => { mousedownNoBackdropRef.current = e.target === e.currentTarget; }}
-      onClick={e => { if (e.target === e.currentTarget && mousedownNoBackdropRef.current) tentarFechar(); }}
+      {...backdropProps}
       style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
     >
       <div onClick={e => e.stopPropagation()} style={{ background: C.modalBg, borderRadius: 12, maxWidth: 620, width: '100%', maxHeight: '92vh', overflow: 'auto' }}>
