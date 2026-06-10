@@ -5,6 +5,8 @@
 > Tom: **build in public** (não é tutorial). Estrutura de cada post: gancho na 1ª linha → corpo curto em linguagem de benefício → frase de fecho memorável → hashtags.
 >
 > Tudo aqui é baseado no que **realmente existe** no código do sistema (um ERP completo de gestão para uma igreja). Ajuste nomes/links (ex.: seu @, o nome do projeto) à vontade antes de publicar.
+>
+> 🎨 **Imagens:** cada post tem um prompt de imagem correspondente (mesma numeração) em **`docs/linkedin-prompts-imagens.md`** — gere todas no mesmo modelo/sessão pra manter a série visualmente coesa.
 
 ---
 
