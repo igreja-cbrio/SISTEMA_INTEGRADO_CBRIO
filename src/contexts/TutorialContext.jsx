@@ -105,6 +105,15 @@ export function TutorialProvider({ children }) {
     if (completedTours === null) return; // ainda carregando
     if (activeTour) return; // já tem um rodando
 
+    // Não iniciar tutorial enquanto o modal de primeiro acesso (troca de senha)
+    // ainda está pendente · senão o tour rouba o foco e fecha o modal (ele
+    // "aparece e some"). Espera a senha ser tratada (ou o modal ser dispensado).
+    const prov = auth.user?.app_metadata?.provider;
+    const senhaPendente = auth.profile && !auth.profile.password_changed_at && (!prov || prov === 'email');
+    let senhaDispensada = false;
+    try { senhaDispensada = sessionStorage.getItem('cbrio_primeiro_acesso_dismissed') === '1'; } catch { /* ignore */ }
+    if (senhaPendente && !senhaDispensada) return;
+
     const tour = findTourForRoute(location.pathname, auth);
     if (!tour) return;
     if (completedTours.has(tour.id)) return;
