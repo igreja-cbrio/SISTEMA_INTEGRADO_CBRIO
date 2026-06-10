@@ -157,7 +157,7 @@ const NAV_ITEMS = [
 ];
 
 export default function AppShell() {
-  const { profile, role, signOut, isAdmin, isVoluntario, isColaborador, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, canProcessos } = useAuth();
+  const { profile, role, signOut, isAdmin, isVoluntario, isColaborador, modulePerms, modulosBloqueados, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, canProcessos } = useAuth();
   const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, canProcessos, isColaborador, isAdmin };
 
   // If permissions haven't loaded yet (modulePerms is null), show all items
@@ -167,8 +167,10 @@ export default function AppShell() {
   // module com nível leitura >= 1 (admin sempre passa)
   function itemAllowed(item) {
     if (!permsLoaded) return true;
-    if (isAdmin) return true;
+    // Deny explícito de módulo (override nível 0) vence até o bypass de admin
     if (item.perm && permMap[item.perm] === false) return false;
+    if (item.module && (modulosBloqueados || []).includes(item.module)) return false;
+    if (isAdmin) return true;
     if (item.module && modulePerms) {
       const m = modulePerms[item.module];
       const leitura = m?.leitura ?? 0;
