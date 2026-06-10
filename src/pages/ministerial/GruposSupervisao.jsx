@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { grupos as gruposApi } from '../../api';
+import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { toast } from 'sonner';
 import {
   ChevronDown, ChevronRight, Calendar, MessageSquare, Plus, X,
@@ -229,6 +230,9 @@ function ModalGrupo({ grupo, papel, onClose, onChanged }) {
   const [visitas, setVisitas] = useState([]);
   const [observacoes, setObservacoes] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Dirty levantado pelo filho (TabObservacao) · texto digitado e não salvo
+  const [temAlteracoes, setTemAlteracoes] = useState(false);
+  const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -249,13 +253,13 @@ function ModalGrupo({ grupo, papel, onClose, onChanged }) {
   useEffect(() => { reload(); }, [reload]);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') tentarFechar(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [tentarFechar]);
 
   return (
-    <div onClick={onClose} style={{
+    <div {...backdropProps} style={{
       position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay,
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
     }}>
@@ -272,7 +276,7 @@ function ModalGrupo({ grupo, papel, onClose, onChanged }) {
               Supervisor {grupo.supervisor_nome || '—'}
             </p>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3 }}>
+          <button onClick={tentarFechar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3 }}>
             <X size={20} />
           </button>
         </header>
@@ -303,7 +307,7 @@ function ModalGrupo({ grupo, papel, onClose, onChanged }) {
           ) : tab === 'visitas' ? (
             <TabVisitas grupo={grupo} visitas={visitas} onChanged={() => { reload(); onChanged(); }} />
           ) : (
-            <TabObservacao grupo={grupo} observacoes={observacoes} onChanged={() => { reload(); onChanged(); }} />
+            <TabObservacao grupo={grupo} observacoes={observacoes} onChanged={() => { reload(); onChanged(); }} onDirtyChange={setTemAlteracoes} />
           )}
         </div>
       </div>
@@ -409,7 +413,7 @@ function TabVisitas({ grupo, visitas, onChanged }) {
 // ============================================================================
 // TabObservacao · 1 textarea por mês (upsert)
 // ============================================================================
-function TabObservacao({ grupo, observacoes, onChanged }) {
+function TabObservacao({ grupo, observacoes, onChanged, onDirtyChange }) {
   const periodo = periodoAtual();
   const atual = observacoes.find(o => o.periodo === periodo);
   const [texto, setTexto] = useState(atual?.observacao || '');
@@ -417,12 +421,25 @@ function TabObservacao({ grupo, observacoes, onChanged }) {
 
   useEffect(() => { setTexto(atual?.observacao || ''); }, [atual?.observacao, atual?.periodo]);
 
+  // Levanta o dirty pro pai (ModalGrupo) · compara contra o valor com que o
+  // textarea foi populado (observação existente ou vazio). Abrir e fechar sem
+  // digitar nada não dispara confirmação; salvar zera (reload traz o texto
+  // salvo como novo valor inicial).
+  const textoInicial = atual?.observacao || '';
+  useEffect(() => {
+    onDirtyChange?.(texto.trim() !== textoInicial.trim());
+  }, [texto, textoInicial, onDirtyChange]);
+
+  // Ao sair da aba (desmonte), o texto não salvo se perde · zera o dirty
+  useEffect(() => () => { onDirtyChange?.(false); }, [onDirtyChange]);
+
   const submit = async () => {
     if (!texto.trim()) { toast.error('Escreva algo antes de salvar'); return; }
     setSaving(true);
     try {
       await gruposApi.setObservacao(grupo.id, periodo, texto);
       toast.success('Observação salva');
+      onDirtyChange?.(false);
       onChanged();
     } catch (e) { toast.error(e?.message || 'Erro'); }
     finally { setSaving(false); }

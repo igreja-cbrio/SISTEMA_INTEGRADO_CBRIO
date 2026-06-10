@@ -3,7 +3,7 @@
 // batismos, doacoes, etc). KPIs com tipo_calculo automático leem daqui.
 // ============================================================================
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { dadosBrutos as dadosApi } from '../api';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import EmptyState from '../components/EmptyState';
 import CalendarioCultos from '../components/CalendarioCultos';
 import { formatErro } from '../lib/formatErro';
+import useConfirmarSaida from '../hooks/useConfirmarSaida';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -513,6 +514,13 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Snapshot do form na montagem (estado inicial vem síncrono das props ·
+  // sem auto-preenchimento posterior). Abrir e fechar sem digitar não pergunta.
+  const snapshotInicialRef = useRef(null);
+  if (snapshotInicialRef.current === null) snapshotInicialRef.current = JSON.stringify(form);
+  const temAlteracoes = JSON.stringify(form) !== snapshotInicialRef.current;
+  const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
+
   const tipoSelecionado = tipos.find(t => t.id === form.tipo_id);
 
   const submit = async () => {
@@ -544,7 +552,7 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
   };
 
   return (
-    <div onClick={onClose}
+    <div {...backdropProps}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay,
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -557,7 +565,7 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
           <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
             {isNovo ? 'Registrar dado' : 'Editar dado'}
           </h2>
-          <button onClick={onClose} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}>
+          <button onClick={tentarFechar} disabled={saving} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}>
             <X size={18} />
           </button>
         </header>
@@ -605,7 +613,7 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
         </div>
 
         <footer style={{ padding: 14, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} disabled={saving} style={btnGhost}>Cancelar</button>
+          <button onClick={tentarFechar} disabled={saving} style={btnGhost}>Cancelar</button>
           <button onClick={submit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.5 : 1 }}>
             <Save size={13} /> {saving ? 'Salvando...' : 'Salvar'}
           </button>

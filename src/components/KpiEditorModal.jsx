@@ -13,8 +13,9 @@
 //   responsavel_area, apuracao, sort_order, ativo, valores[].
 // ============================================================================
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useKpis } from '../hooks/useKpis';
+import useConfirmarSaida from '../hooks/useConfirmarSaida';
 import { AREAS } from '../data/indicadores';
 import { rh as rhApi, estrategia as estrategiaApi, dadosBrutos as dadosBrutosApi } from '../api';
 import { Plus, Pencil, Trash2, X, Save, Calculator, Info } from 'lucide-react';
@@ -182,11 +183,15 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
   }, [isEdit, kpi?.id]);
   useEffect(() => { if (open) loadKrs(); }, [open, loadKrs]);
 
+  // Snapshot do form no ponto da inicialização (regra de ouro: abrir e
+  // fechar sem mexer em nada não pode perguntar).
+  const snapshotRef = useRef(null);
+
   useEffect(() => {
     if (!open) return;
     setErr(null);
-    if (kpi) {
-      setForm({
+    const init = kpi
+      ? {
         id: kpi.id,
         area: kpi.area || '',
         indicador: kpi.indicador || kpi.nome || '',
@@ -209,10 +214,10 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
         observacoes: kpi.observacoes || '',
         tipo_calculo: kpi.tipo_calculo || 'manual',
         formula_config: kpi.formula_config || null,
-      });
-    } else {
-      setForm({ ...EMPTY, area: defaultArea || '' });
-    }
+      }
+      : { ...EMPTY, area: defaultArea || '' };
+    setForm(init);
+    snapshotRef.current = JSON.stringify(init);
   }, [open, kpi, defaultArea]);
 
   const removerKr = async (kr) => {
@@ -225,6 +230,9 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
   };
 
   const offsetOpts = useMemo(() => offsetOptionsFor(form.periodicidade), [form.periodicidade]);
+
+  const temAlteracoes = snapshotRef.current != null && JSON.stringify(form) !== snapshotRef.current;
+  const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
 
   if (!open) return null;
 
@@ -273,11 +281,11 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay }} onClick={onClose}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay }} {...backdropProps}>
       <div style={{ background: C.modalBg, borderRadius: 12, width: 720, maxHeight: '92vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>{isEdit ? `Editar ${kpi.id}` : 'Novo KPI'}</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3 }}>×</button>
+          <button onClick={tentarFechar} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3 }}>×</button>
         </div>
 
         {err && (
@@ -549,7 +557,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
 
         {/* Footer */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-          <button onClick={onClose} disabled={saving}
+          <button onClick={tentarFechar} disabled={saving}
             style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', background: 'transparent', color: C.t2, border: `1px solid ${C.border}` }}>
             Cancelar
           </button>
@@ -589,6 +597,13 @@ function KrEditorInline({ kr, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Snapshot no 1º render (form inicializa síncrono a partir de `kr`) —
+  // abrir e fechar sem digitar nada não pergunta.
+  const snapshotRef = useRef(null);
+  if (snapshotRef.current === null) snapshotRef.current = JSON.stringify(form);
+  const temAlteracoes = JSON.stringify(form) !== snapshotRef.current;
+  const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
+
   const submit = async () => {
     if (!form.titulo.trim()) return toast.error('Titulo obrigatorio');
     setSaving(true);
@@ -614,7 +629,7 @@ function KrEditorInline({ kr, onClose, onSaved }) {
   };
 
   return (
-    <div onClick={onClose}
+    <div {...backdropProps}
       style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()}
         style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: 520, maxHeight: '85vh', overflow: 'auto' }}>
@@ -622,7 +637,7 @@ function KrEditorInline({ kr, onClose, onSaved }) {
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
             {isNovo ? 'Novo KR especifico' : 'Editar KR'}
           </h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--cbrio-text3)', padding: 4 }}>
+          <button onClick={tentarFechar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--cbrio-text3)', padding: 4 }}>
             <X size={18} />
           </button>
         </header>
@@ -651,7 +666,7 @@ function KrEditorInline({ kr, onClose, onSaved }) {
           </Field>
         </div>
         <footer style={{ padding: 14, borderTop: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} disabled={saving}
+          <button onClick={tentarFechar} disabled={saving}
             style={{ padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'transparent', color: 'var(--cbrio-text2)', border: '1px solid var(--cbrio-border)', cursor: 'pointer' }}>
             Cancelar
           </button>

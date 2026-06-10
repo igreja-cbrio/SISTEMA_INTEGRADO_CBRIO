@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { kpis as kpisApi } from '../../api';
+import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -644,6 +645,16 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
   const [deficienciaDescricao, setDeficienciaDescricao] = useState(batismo.deficiencia_descricao || '');
   const [saving, setSaving] = useState(false);
 
+  // Confirmação de saída · snapshot do estado inicial (1º render, logo após a
+  // inicialização a partir da inscrição) vs estado atual. Abrir e fechar sem
+  // mexer em nada não pergunta (snapshot === atual).
+  const snapshotAtual = JSON.stringify({
+    status, dataBatismo, observacoes, endereco, tamanhoCamisa,
+    ehCrianca, possuiDeficiencia, deficienciaDescricao,
+  });
+  const snapshotInicialRef = useRef(snapshotAtual);
+  const { tentarFechar } = useConfirmarSaida(snapshotAtual !== snapshotInicialRef.current, onClose);
+
   // Tempo de conversao até o batismo deste membro · recalcula ao vivo conforme
   // a data do batismo e editada. data_conversao vem da jornada (trilha).
   const diasConversao = useMemo(() => {
@@ -677,7 +688,7 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
+    <Dialog open onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -865,7 +876,7 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
         </div>
 
         <DialogFooter className="pt-3">
-          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar} disabled={saving}>Cancelar</Button>
           <Button
             onClick={handleSave}
             disabled={saving}
@@ -928,6 +939,12 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
   const [saving, setSaving] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
+  // Confirmação de saída · snapshot do form vazio na montagem vs estado atual.
+  // Abrir e fechar sem digitar nada não pergunta (snapshot === atual).
+  const snapshotAtual = JSON.stringify(form);
+  const snapshotInicialRef = useRef(snapshotAtual);
+  const { tentarFechar } = useConfirmarSaida(snapshotAtual !== snapshotInicialRef.current, onClose);
+
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     let v = e.target.value;
     if (k === 'cpf') v = mascaraCpf(v);
@@ -971,7 +988,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
+    <Dialog open onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -1109,7 +1126,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
         </div>
 
         <DialogFooter className="pt-3">
-          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button variant="outline" onClick={tentarFechar} disabled={saving}>Cancelar</Button>
           <Button onClick={handleSubmit} disabled={saving} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             Cadastrar

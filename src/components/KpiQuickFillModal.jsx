@@ -17,8 +17,9 @@
 //   onSaved: (registro) => void
 // ============================================================================
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { kpis as kpisApi, dadosBrutos as dadosBrutosApi } from '../api';
+import useConfirmarSaida from '../hooks/useConfirmarSaida';
 
 // Converte periodKey ('2026-05', '2026-W19', '2026-Q2'…) em data ISO 'YYYY-MM-DD'
 // Pra escrever em dados_brutos · usamos o 1o dia do período
@@ -132,6 +133,10 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
   const [selectedPeriod, setSelectedPeriod] = useState(periodKey);
   const [editPeriod, setEditPeriod] = useState(false);
 
+  // Snapshot dos estados digitáveis no ponto da inicialização (regra de ouro:
+  // abrir e fechar sem digitar nada não pode perguntar).
+  const snapshotRef = useRef(null);
+
   useEffect(() => {
     if (!open) return;
     setValor('');
@@ -140,12 +145,18 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
     setDone(false);
     setEditPeriod(false);
     setSelectedPeriod(periodKey);
+    snapshotRef.current = JSON.stringify({ valor: '', obs: '', selectedPeriod: periodKey });
   }, [open, kpi?.id, periodKey]);
 
   const periodOptions = useMemo(() => {
     if (!kpi) return [];
     return gerarPeriodosPassados(kpi.periodicidade || 'mensal', 12);
   }, [kpi]);
+
+  const temAlteracoes = !done
+    && snapshotRef.current != null
+    && JSON.stringify({ valor, obs, selectedPeriod }) !== snapshotRef.current;
+  const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
 
   if (!open || !kpi) return null;
 
@@ -192,13 +203,14 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
 
   const onKey = (e) => {
     if (e.key === 'Enter' && !saving && !done) submit();
-    if (e.key === 'Escape') onClose?.();
+    if (e.key === 'Escape' && !saving) tentarFechar();
   };
 
   return (
     <div
       style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay }}
-      onClick={() => !saving && onClose?.()}
+      {...backdropProps}
+      onClick={(e) => { if (saving) return; backdropProps.onClick(e); }}
     >
       <div
         style={{ background: C.modalBg, borderRadius: 12, width: 460, padding: 20, boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}
@@ -305,7 +317,7 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
-                onClick={onClose}
+                onClick={tentarFechar}
                 disabled={saving}
                 style={{ padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', background: 'transparent', color: C.t2, border: `1px solid ${C.border}` }}
               >
