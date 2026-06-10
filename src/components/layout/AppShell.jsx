@@ -58,7 +58,7 @@ const NAV_ITEMS = [
         title: 'Configurações',
         items: [
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
-          { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao' },
+          { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao', moduleMin: 3 },
           { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
         ],
       },
@@ -165,7 +165,7 @@ export default function AppShell() {
   const permsLoaded = modulePerms !== null || isAdmin;
 
   // Item passa se: sem perm + sem module · OU perm explicita true · OU
-  // module com nível leitura >= 1 (admin sempre passa)
+  // module com nível leitura >= moduleMin (default 1 · admin sempre passa)
   function itemAllowed(item) {
     if (!permsLoaded) return true;
     // Deny explícito de módulo (override nível 0) vence até o bypass de admin
@@ -175,7 +175,7 @@ export default function AppShell() {
     if (item.module && modulePerms) {
       const m = modulePerms[item.module];
       const leitura = m?.leitura ?? 0;
-      if (leitura < 1) return false;
+      if (leitura < (item.moduleMin ?? 1)) return false;
     }
     return true;
   }
