@@ -153,10 +153,10 @@ visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
   (rank: coordenador>supervisor>líder>co-líder>treinamento>membro>visitante;
   visitante = frequentador com <3 presenças, mesma régua do detalhe).
   Participações paginadas (cap 1000 do PostgREST) + `.in()` em chunks.
-  `GruposPessoas.jsx`: cards-filtro clicáveis por papel + busca + sinal
-  "candidato a promoção" (frequentador 8+ presenças → treinamento ·
-  treinamento → co-líder/líder · líder de 2+ grupos → supervisor · regras no
-  front, fáceis de ajustar) + modal **Promover** (muda `funcao` via PUT
+  `GruposPessoas.jsx`: cards-filtro clicáveis por papel + busca + card
+  destacado **"Líderes em treinamento"** (Marcos trocou o card "Candidatos a
+  promoção"/sinais de sugestão por esse · 2026-06-10) + modal **Promover**
+  (muda `funcao` via PUT
   /membros/:id/funcao; promover a supervisor também vincula grupos via PUT
   /:id/supervisor — exige nível 5). ⚠️ NÃO há histórico de quando a função
   mudou (sem coluna `funcao_desde`) — "tempo em treinamento" exigiria
