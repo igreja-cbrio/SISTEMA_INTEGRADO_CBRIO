@@ -231,6 +231,8 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 // Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
+// Política de Privacidade / Termos / Exclusão de dados · exigência da Meta (app CBRio Bot)
+const Privacidade = lazyWithRetry(() => import('./pages/public/Privacidade'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
 const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
@@ -384,6 +386,8 @@ function AppRoutes() {
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
       <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
+      {/* Política de Privacidade, Termos e Exclusão de dados (LGPD · exigência da Meta) */}
+      <Route path="/privacidade" element={<Suspense fallback={<Loading />}><Privacidade /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
