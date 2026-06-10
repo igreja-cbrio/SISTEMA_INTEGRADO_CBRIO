@@ -62,6 +62,20 @@ router.get('/resumo', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/encaminhamentos/aux/grupos → grupos ativos pro select do "Engajou"
+// (precisa vir ANTES de /:id · senão o Express casa 'aux' como id)
+router.get('/aux/grupos', async (req, res) => {
+  try {
+    if (!podeVerDestino(req, 'grupos')) return res.status(403).json({ error: 'Sem acesso' });
+    const { data, error } = await supabase.from('mem_grupos')
+      .select('id, nome')
+      .eq('ativo', true).is('deleted_at', null)
+      .order('nome').limit(500);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/encaminhamentos/:id  → encaminhamento + log de contatos (a ficha)
 router.get('/:id', async (req, res) => {
   try {
@@ -75,6 +89,93 @@ router.get('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// "Engajou" fecha o loop: materializa o vínculo REAL do valor (é o que a NSM
+// e os KPIs leem) — antes só mudava o status e a pessoa ficava "solta".
+//   grupos      → mem_grupo_membros (exige grupo_id · select na UI)
+//   voluntarios → mem_voluntarios (ministério "Voluntariado (geral)" por padrão)
+//   jornada180  → cui_jornada180 (1º encontro na data do contato)
+// Idempotente: se a pessoa já tem o vínculo ativo, não duplica.
+// ─────────────────────────────────────────────────────────────────────────
+async function materializarEngajamento(enc, body) {
+  let membroId = enc.membro_id || null;
+  if (!membroId && enc.convertido_id) {
+    const { data: conv } = await supabase.from('cui_convertidos')
+      .select('membro_id').eq('id', enc.convertido_id).maybeSingle();
+    membroId = conv?.membro_id || null;
+  }
+  if (!membroId) {
+    return { vinculo: null, aviso: 'Encaminhamento sem pessoa vinculada — devolutiva registrada, mas o engajamento não conta na NSM até vincular o membro.' };
+  }
+
+  const dataRef = body.data_contato || new Date().toISOString().slice(0, 10);
+
+  if (enc.destino === 'grupos') {
+    const { data: atual } = await supabase.from('mem_grupo_membros')
+      .select('id, grupo_id')
+      .eq('membro_id', membroId).is('saiu_em', null).is('deleted_at', null)
+      .limit(1).maybeSingle();
+    if (atual) return { vinculo: { tipo: 'grupo', ja_existia: true } };
+    if (!body.grupo_id) {
+      const err = new Error('Informe em qual grupo a pessoa engajou');
+      err.status = 400;
+      throw err;
+    }
+    const { error } = await supabase.from('mem_grupo_membros')
+      .insert({ grupo_id: body.grupo_id, membro_id: membroId, entrou_em: dataRef });
+    if (error) throw error;
+    return { vinculo: { tipo: 'grupo', grupo_id: body.grupo_id } };
+  }
+
+  if (enc.destino === 'voluntarios') {
+    const { data: atual } = await supabase.from('mem_voluntarios')
+      .select('id')
+      .eq('membro_id', membroId).is('ate', null).is('deleted_at', null)
+      .limit(1).maybeSingle();
+    if (atual) return { vinculo: { tipo: 'voluntario', ja_existia: true } };
+    let ministerioId = body.ministerio_id || null;
+    if (!ministerioId) {
+      const { data: min } = await supabase.from('mem_ministerios')
+        .select('id').eq('nome', 'Voluntariado (geral)').limit(1).maybeSingle();
+      ministerioId = min?.id || null;
+      if (!ministerioId) {
+        const { data: novo, error: eMin } = await supabase.from('mem_ministerios')
+          .insert({ nome: 'Voluntariado (geral)', descricao: 'Ministério guarda-chuva do voluntariado · ajuste o ministério específico pela Membresia.' })
+          .select('id').single();
+        if (eMin) throw eMin;
+        ministerioId = novo.id;
+      }
+    }
+    const { error } = await supabase.from('mem_voluntarios').insert({
+      membro_id: membroId,
+      ministerio_id: ministerioId,
+      papel: 'Voluntário',
+      desde: dataRef,
+      observacoes: `Via encaminhamento da jornada (${enc.id})`,
+    });
+    if (error) throw error;
+    return { vinculo: { tipo: 'voluntario' } };
+  }
+
+  if (enc.destino === 'jornada180') {
+    const { data: existente } = await supabase.from('cui_jornada180')
+      .select('id').eq('membro_id', membroId).limit(1).maybeSingle();
+    if (existente) return { vinculo: { tipo: 'jornada180', ja_existia: true } };
+    const { error } = await supabase.from('cui_jornada180').insert({
+      membro_id: membroId,
+      nome: enc.nome,
+      etapa: 1,
+      data_encontro: dataRef,
+      presente: true,
+      observacoes: `Via encaminhamento da jornada (${enc.id})`,
+    });
+    if (error) throw error;
+    return { vinculo: { tipo: 'jornada180' } };
+  }
+
+  return { vinculo: null };
+}
+
 // POST /api/encaminhamentos/:id/contato  → registra contato + atualiza status (devolutiva)
 router.post('/:id/contato', async (req, res) => {
   try {
@@ -87,6 +188,14 @@ router.post('/:id/contato', async (req, res) => {
     if (!enc || !podeVerDestino(req, enc.destino)) return res.status(403).json({ error: 'Sem acesso' });
     if (devolutiva && !DEVOLUTIVAS.includes(devolutiva)) return res.status(400).json({ error: 'Devolutiva inválida' });
     if (!observacao && !devolutiva) return res.status(400).json({ error: 'Informe a observação ou a devolutiva' });
+
+    // "Engajou" materializa o vínculo ANTES de gravar o contato (se faltar o
+    // grupo, devolve 400 e nada é gravado · vínculo é idempotente)
+    let vinculo = null;
+    let aviso = null;
+    if (devolutiva === 'engajou') {
+      ({ vinculo, aviso } = await materializarEngajamento(enc, req.body));
+    }
 
     const { data: contato, error } = await supabase.from('jornada_encaminhamento_contatos').insert({
       encaminhamento_id: req.params.id,
@@ -108,8 +217,10 @@ router.post('/:id/contato', async (req, res) => {
     }
     await supabase.from('jornada_encaminhamentos').update(patch).eq('id', req.params.id);
 
-    res.status(201).json(contato);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.status(201).json({ ...contato, vinculo, aviso });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // PATCH /api/encaminhamentos/:id  → ajuste manual de status

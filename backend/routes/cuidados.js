@@ -17,16 +17,17 @@ function cleanCpf(cpf) {
 }
 
 // Helper: tenta encontrar membro pelo CPF
+// (fix 2026-06-10: buscava o CPF no campo TELEFONE — mem_membros tem coluna
+// cpf de verdade · sem o vínculo certo, jornada180/aconselhamento nasciam
+// sem membro_id e o sinal "Investir" não contava na NSM)
 async function findMembroByCpf(cpf) {
   const clean = cleanCpf(cpf);
   if (!clean || clean.length !== 11) return null;
-  // mem_membros não tem coluna cpf no schema atual — busca por observações ou foto_url? Não.
-  // Buscar via mem_membros direto se tiver coluna cpf, senão retorna null.
-  // Adaptamos: tentamos por colunas "cpf" se existir.
   const { data, error } = await supabase
     .from('mem_membros')
     .select('id, nome, telefone, email')
-    .or(`telefone.eq.${clean}`)
+    .eq('cpf', clean)
+    .is('deleted_at', null)
     .limit(1)
     .maybeSingle();
   if (error || !data) return null;

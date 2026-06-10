@@ -2,6 +2,51 @@
 
 Guia operacional para o Claude Code quando trabalhar neste repositório.
 
+## Jornada NSM · engajamento de verdade (2026-06-10)
+
+Contexto: Marcos vai liberar os módulos ministeriais dos 4 primeiros valores
+(hoje só Integração usa de verdade) e pediu números honestos ("precisa ser 0
+mesmo, até que o convertido entre em outro valor"). Auditoria completa em
+2026-06-10 achou os fios soltos; esta leva liga os de código:
+
+- **Numerador do card NSM = engajamento REAL** (migration `20260610160000`):
+  `recalcular_nsm()` v3 conta engajado = sinal real em ≥1 valor em
+  [decisão, decisão+60d] via `fn_nsm_valores_engajados(membro, decisão, dias)`
+  (helper SQL · critério ÚNICO, espelha a tela /painel/nsm/pessoas: trilha
+  1º contato/batismo · batismo realizado · Next check-in · grupo · devocional ·
+  jornada180 · aconselhamento · voluntário · dízimo/oferta). `por_valor` do
+  nsm_estado agora tem chaves = 5 valores (antes eram etapas da trilha · nada
+  no front consumia). Antes o numerador aceitava QUALQUER etapa da trilha — e
+  a etapa 'conversao' nasce concluída no ato → media "% com cadastro" (21/240
+  falsos). Efeito: card foi a 0% até a esteira rodar — decisão do Marcos.
+  ⚠️ Sinais novos (entrar em grupo etc.) só refletem no card no cron horário
+  da NSM ou recálculo manual (os triggers do recalc são em cultos/cdp).
+- **"Engajou" fecha o loop** (`encaminhamentos.js` + `EncaminhamentosInbox.tsx`):
+  devolutiva 'engajou' materializa o vínculo REAL — grupos→`mem_grupo_membros`
+  (UI exige escolher o grupo · `GET /encaminhamentos/aux/grupos`),
+  voluntarios→`mem_voluntarios` (ministério "Voluntariado (geral)"),
+  jornada180→`cui_jornada180` (1º encontro na data do contato). Idempotente
+  (vínculo ativo existente não duplica). Encaminhamento sem membro → registra
+  devolutiva + aviso (não conta na NSM até vincular).
+- **Ponte Servir** (migration `20260610150000`): trigger sync
+  `vol_profiles.membresia_id` → `mem_voluntarios` (ministério guarda-chuva
+  "Voluntariado (geral)" · desde = criação do perfil) + backfills: vincula
+  `vol_profiles`/`vol_inscricoes` órfãos a membros EXISTENTES por CPF/e-mail
+  (nunca cria membro) e materializa `mem_voluntarios` dos perfis vinculados.
+  O voluntariado real vive em vol_* — sem a ponte, Servir nunca etiquetava.
+- **`findMembroByCpf` consertado** (`cuidados.js`): buscava o CPF no campo
+  TELEFONE (mem_membros TEM coluna cpf) → jornada180/aconselhamento nasciam
+  sem membro_id. Agora `.eq('cpf', clean)` + `deleted_at IS NULL`.
+- **Generosidade**: fica pra unificação futura com o sistema financeiro
+  externo (decisão do Marcos · base com entradas/saídas/transações será
+  unificada depois). O critério da NSM já lê mem_contribuicoes quando vier.
+- **PENDENTE (próxima leva · mapa entregue ao Marcos)**: KPIs dos 4 valores
+  que não enchem com o uso nativo do módulo — gatilhos de recálculo nas
+  tabelas nativas + ramos novos no `_kpi_agregar_dado` (lideres_treinados via
+  `funcao='lider_treinamento'`, vol_checkin via vol_checkins, frequencia_next
+  via next_inscricoes, batismos por área, capelania/aconselhamento via
+  cui_acompanhamentos) + decisões de produto (NPS, treinamento de voluntários).
+
 ## Planejamento Estratégico × Gestão Anual · virada conceitual (2026-06-10)
 
 Reorganização por **horizonte de tempo** (Marcos). Dois módulos distintos — não
