@@ -119,7 +119,14 @@ function PrioBadge({ p }) {
   return <span style={{ padding: '1px 6px', borderRadius: 6, fontSize: 9, fontWeight: 700, color: pr.c, background: pr.bg }}>{pr.label}</span>;
 }
 
-export default function ProcessosTarefas({ area }) {
+// Props opcionais (usadas pelo Cuidados · "Visitas agendadas"):
+//  titulo        · troca o "Tarefas - Área" do header
+//  fetchEventos  · async (dataInicio, dataFim) => [{ id, data, horario, titulo,
+//                  subtitulo, cor, statusLabel, raw }] · eventos externos
+//                  renderizados na grade (ex.: visitas pastorais agendadas)
+//  onEventoClick · click no card do evento (ex.: abrir a ficha da pessoa)
+//  eventosKey    · mudar o valor força recarregar os eventos da semana
+export default function ProcessosTarefas({ area, titulo, fetchEventos, onEventoClick, eventosKey }) {
   const { isAdmin, isDiretor } = useAuth();
   const canWrite = isAdmin || isDiretor;
   const { byId: kpiById, isLoading: kpisLoading } = useKpis();
@@ -175,6 +182,17 @@ export default function ProcessosTarefas({ area }) {
 
   useEffect(() => { if (!initialLoading) loadWeek(); }, [loadWeek, initialLoading]);
 
+  // Eventos externos da semana (ex.: visitas agendadas do Cuidados)
+  const [eventos, setEventos] = useState([]);
+  useEffect(() => {
+    if (!fetchEventos) return;
+    let cancel = false;
+    fetchEventos(fmtDate(weekStart), fmtDate(weekEnd))
+      .then(evs => { if (!cancel) setEventos(Array.isArray(evs) ? evs : []); })
+      .catch(() => { if (!cancel) setEventos([]); });
+    return () => { cancel = true; };
+  }, [fetchEventos, weekStart, weekEnd, eventosKey]);
+
   const agendaMap = useMemo(() => { const m = {}; agenda.forEach(a => { m[a.indicador_id] = a.dia_semana; }); return m; }, [agenda]);
 
   // Mapa de "já preenchido neste período": { indicadorId|periodKey -> registro }
@@ -218,6 +236,13 @@ export default function ProcessosTarefas({ area }) {
   }), [weekDates, weekStart, processos, agendaMap, fillByPeriod, kpiById]);
 
   const dayTarefas = useMemo(() => weekDates.map(date => tarefas.filter(t => t.data === fmtDate(date))), [weekDates, tarefas]);
+
+  const dayEventos = useMemo(() => weekDates.map(date => {
+    const ds = fmtDate(date);
+    return eventos
+      .filter(ev => ev.data === ds)
+      .sort((a, b) => String(a.horario || '99').localeCompare(String(b.horario || '99')));
+  }), [weekDates, eventos]);
 
   // ── Operações otimistas (atualiza state local, sync no background) ──
 
@@ -308,7 +333,7 @@ export default function ProcessosTarefas({ area }) {
     <div>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: C.text }}>Tarefas - {getAreaNome(area)}</h3>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: C.text }}>{titulo || `Tarefas - ${getAreaNome(area)}`}</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button onClick={() => setWeekStart(addDays(weekStart, -7))} style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 18, color: C.t2, lineHeight: 1 }}>{'\u2039'}</button>
           <button onClick={() => setWeekStart(getMonday(new Date()))} style={{ background: C.primaryBg, border: `1px solid ${C.primary}40`, borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: C.primary }}>Hoje</button>
@@ -324,10 +349,11 @@ export default function ProcessosTarefas({ area }) {
           const isToday = dateStr === todayStr;
           const kpis = dayKpis[gi];
           const tasks = dayTarefas[gi];
+          const evs = dayEventos[gi];
           const totalK = kpis.length, filledK = kpis.filter(k => k.filled).length;
 
           // Em mobile, esconde dias sem nada pra reduzir scroll
-          if (isMobile && totalK === 0 && tasks.length === 0 && !isToday) return null;
+          if (isMobile && totalK === 0 && tasks.length === 0 && evs.length === 0 && !isToday) return null;
 
           return (
             <div key={gi} style={{ background: C.card, border: `2px solid ${isToday ? C.primary : C.border}`, borderRadius: 12, minHeight: isMobile ? 0 : 200, display: 'flex', flexDirection: 'column' }}>
@@ -341,6 +367,30 @@ export default function ProcessosTarefas({ area }) {
               </div>
 
               <div style={{ padding: 6, flex: 1, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, overflow: 'auto' }}>
+                {/* Eventos externos (ex.: visitas pastorais agendadas) */}
+                {evs.map(ev => {
+                  const cor = ev.cor || C.purple;
+                  return (
+                    <div
+                      key={ev.id}
+                      onClick={() => onEventoClick && onEventoClick(ev)}
+                      style={{ padding: '5px 7px', borderRadius: 6, cursor: onEventoClick ? 'pointer' : 'default', background: cor + '14', border: `1px solid ${cor}40`, borderLeft: `3px solid ${cor}` }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontWeight: 600, color: C.text, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {ev.horario ? `${String(ev.horario).slice(0, 5)} · ` : ''}{ev.titulo}
+                        </span>
+                        {ev.statusLabel && (
+                          <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 8, color: cor, background: cor + '20', whiteSpace: 'nowrap' }}>
+                            {ev.statusLabel}
+                          </span>
+                        )}
+                      </div>
+                      {ev.subtitulo && <div style={{ fontSize: 10, color: C.t2, marginTop: 1 }}>{ev.subtitulo}</div>}
+                    </div>
+                  );
+                })}
+
                 {/* KPIs */}
                 {kpis.map((k, ki) => {
                   const isFilling = fillTarget?.indicadorId === k.indicadorId && fillTarget?.date === k.date;
