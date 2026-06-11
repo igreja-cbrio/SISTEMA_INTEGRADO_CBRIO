@@ -280,6 +280,11 @@ export const grupos = {
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
+  // Flag global de temporada de inscrições (app lê pra liberar auto-inscrição)
+  temporadaInscricoes: {
+    get: () => get('/grupos/temporada-inscricoes'),
+    set: (data) => put('/grupos/temporada-inscricoes', data),
+  },
   bairros: (params) => get('/grupos/bairros/list' + (params ? '?' + new URLSearchParams(params) : '')),
   // Busca / pedidos de inscrição
   buscar: (params) => get('/grupos/buscar' + (params ? '?' + new URLSearchParams(params) : '')),
