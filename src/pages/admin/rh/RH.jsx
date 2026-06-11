@@ -111,7 +111,8 @@ const SUGESTAO_CARGO_OVERRIDES = [
   [/coordenador.*cuidados/, 'lider-ministerial'],
   [/coordenador.*(grupos|cba)/, 'lider-ministerial'],
   [/supervisor.*jornada/, 'supervisor-jornada'],
-  [/(coordenador|lider|assistente).*(cbkids|kids)/, 'coordenador-kids'],
+  [/assistente.*(cbkids|kids)/, 'assistente-kids'],
+  [/(coordenador|lider).*(cbkids|kids)/, 'coordenador-kids'],
   [/coordenador.*ami/, 'coordenador-ami'],
   [/coordenador.*bridge/, 'coordenador-bridge'],
   [/(coordenador|lider).*online/, 'coordenador-online'],
@@ -248,7 +249,10 @@ function AcessosTab({ onDetail }) {
                 </td>
                 <td style={styles.td}>
                   {i.situacao === 'sem_acesso'
-                    ? <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>Sem acesso</span>
+                    ? <div>
+                        <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>Sem acesso</span>
+                        {i.motivo && <div className="text-[11px] text-muted-foreground mt-0.5">{i.motivo}</div>}
+                      </div>
                     : <span className="text-sm">{i.cargo_perm_nome || '—'}</span>}
                 </td>
                 <td style={styles.td}>
