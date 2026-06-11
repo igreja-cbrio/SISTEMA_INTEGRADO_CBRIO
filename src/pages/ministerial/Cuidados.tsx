@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ClipboardCheck, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
+import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ClipboardCheck, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
@@ -92,57 +92,109 @@ function CpfMembroLookup({ value, onChange, onMembro }: { value: string; onChang
   );
 }
 
-function AcompanhamentoModal({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ nome: '', cpf: '', telefone: '', motivo: '', observacoes: '' });
+function emptyAcompForm() {
+  return {
+    nome: '', cpf: '', telefone: '', tipo: 'aconselhamento', motivo: '', observacoes: '',
+    agendar: false, agendamento_data: '', agendamento_hora: '', agendamento_responsavel_id: '',
+  };
+}
+
+// Atendimento pastoral (aconselhamento ou capelania) · pode agendar a sessão,
+// que aparece no calendário de "Visitas agendadas". Recebe pelo app, WhatsApp
+// ou input manual do pastor. allTags não se aplica aqui (triagem é dos convertidos).
+function AcompanhamentoModal({ open, onClose, onSaved, atendentes, initial }: {
+  open: boolean; onClose: () => void; onSaved: () => void; atendentes: any[]; initial?: any | null;
+}) {
+  const editing = !!initial?.id;
+  const [form, setForm] = useState(emptyAcompForm());
   const [membro, setMembro] = useState<any>(null);
   const [saving, setSaving] = useState(false);
 
-  // Snapshot do form ao abrir (não há effect que popule o form aqui, então o
-  // estado no momento da abertura é a baseline) · membro (lookup) fica fora.
-  const snapRef = useRef<string>(JSON.stringify(form));
+  const snapRef = useRef<string>(JSON.stringify(emptyAcompForm()));
   useEffect(() => {
-    if (open) snapRef.current = JSON.stringify(form);
+    if (!open) return;
+    const next = initial ? {
+      nome: initial.nome || '',
+      cpf: initial.cpf || '',
+      telefone: initial.telefone || '',
+      tipo: initial.tipo || 'aconselhamento',
+      motivo: initial.motivo || '',
+      observacoes: initial.observacoes || '',
+      agendar: !!initial.agendamento_data,
+      agendamento_data: initial.agendamento_data || '',
+      agendamento_hora: initial.agendamento_hora ? String(initial.agendamento_hora).slice(0, 5) : '',
+      agendamento_responsavel_id: initial.agendamento_responsavel_id || '',
+    } : emptyAcompForm();
+    setForm(next);
+    setMembro(null);
+    snapRef.current = JSON.stringify(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, initial]);
+
   const temAlteracoes = JSON.stringify(form) !== snapRef.current;
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
+  const respForaDaLista = !!form.agendamento_responsavel_id && !atendentes.some((u: any) => u.id === form.agendamento_responsavel_id);
+
   async function save() {
     if (!form.nome) return toast.error('Nome obrigatório');
+    if (form.agendar && !form.agendamento_data) return toast.error('Escolha a data da sessão');
     setSaving(true);
     try {
-      let payload: any = { ...form };
-      if (!membro && form.cpf.replace(/\D/g, '').length === 11) {
-        // criar membro novo
-        const novo = await cuidadosApi.criarMembro({ nome: form.nome, telefone: form.telefone });
-        payload.membro_id = novo.id;
-      } else if (membro) {
-        payload.membro_id = membro.id;
-        payload.nome = membro.nome;
+      const u = atendentes.find((x: any) => x.id === form.agendamento_responsavel_id);
+      const payload: any = {
+        telefone: form.telefone, tipo: form.tipo, motivo: form.motivo, observacoes: form.observacoes,
+        agendamento_data: form.agendar ? form.agendamento_data : null,
+        agendamento_hora: form.agendar ? (form.agendamento_hora || null) : null,
+        agendamento_responsavel_id: form.agendar ? (form.agendamento_responsavel_id || null) : null,
+        agendamento_responsavel_nome: form.agendar
+          ? (u?.name || (form.agendamento_responsavel_id === initial?.agendamento_responsavel_id ? initial?.agendamento_responsavel_nome : null) || null)
+          : null,
+      };
+      if (editing) {
+        await cuidadosApi.acompanhamentos.update(initial.id, payload);
+        toast.success('Atendimento atualizado');
+      } else {
+        payload.nome = form.nome;
+        if (form.cpf) payload.cpf = form.cpf;
+        if (!membro && form.cpf.replace(/\D/g, '').length === 11) {
+          const novo = await cuidadosApi.criarMembro({ nome: form.nome, telefone: form.telefone });
+          payload.membro_id = novo.id;
+        } else if (membro) {
+          payload.membro_id = membro.id; payload.nome = membro.nome;
+        }
+        await cuidadosApi.acompanhamentos.create(payload);
+        toast.success('Atendimento registrado');
       }
-      await cuidadosApi.acompanhamentos.create(payload);
-      toast.success('Acompanhamento registrado');
       onSaved();
       onClose();
-      setForm({ nome: '', cpf: '', telefone: '', motivo: '', observacoes: '' });
-      setMembro(null);
     } catch (e: any) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Novo Acompanhamento</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div><Label>Nome *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
-          <div><Label>CPF</Label><CpfMembroLookup value={form.cpf} onChange={v => setForm({ ...form, cpf: v })} onMembro={setMembro} /></div>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>{editing ? 'Editar atendimento' : 'Novo atendimento pastoral'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+          <div>
+            <Label>Tipo</Label>
+            <div className="flex gap-2 mt-1">
+              <Button type="button" size="sm" variant={form.tipo === 'aconselhamento' ? 'default' : 'outline'} onClick={() => setForm({ ...form, tipo: 'aconselhamento' })}>Aconselhamento</Button>
+              <Button type="button" size="sm" variant={form.tipo === 'capelania' ? 'default' : 'outline'} onClick={() => setForm({ ...form, tipo: 'capelania' })}>Capelania</Button>
+            </div>
+          </div>
+          <div><Label>Nome *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} disabled={editing} /></div>
+          {!editing && (
+            <div><Label>CPF</Label><CpfMembroLookup value={form.cpf} onChange={v => setForm({ ...form, cpf: v })} onMembro={setMembro} /></div>
+          )}
           <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
           <div>
             <Label>Motivo</Label>
-            <Select value={form.motivo} onValueChange={v => setForm({ ...form, motivo: v })}>
+            <Select value={form.motivo || '__none'} onValueChange={v => setForm({ ...form, motivo: v === '__none' ? '' : v })}>
               <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="__none">Sem motivo</SelectItem>
                 <SelectItem value="luto">Luto</SelectItem>
                 <SelectItem value="casal">Casal</SelectItem>
                 <SelectItem value="espiritual">Espiritual</SelectItem>
@@ -152,11 +204,37 @@ function AcompanhamentoModal({ open, onClose, onSaved }: { open: boolean; onClos
               </SelectContent>
             </Select>
           </div>
+          <div className="rounded-md border border-border p-2.5" style={{ background: 'var(--cbrio-input-bg)' }}>
+            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input type="checkbox" checked={form.agendar} onChange={e => setForm({ ...form, agendar: e.target.checked })} />
+              <CalendarPlus className="h-3.5 w-3.5 text-primary" />Agendar sessão
+              <span className="text-xs text-muted-foreground font-normal">· entra nas Visitas agendadas</span>
+            </label>
+            {form.agendar && (
+              <div className="space-y-2 mt-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Data *</Label><Input type="date" value={form.agendamento_data} onChange={e => setForm({ ...form, agendamento_data: e.target.value })} /></div>
+                  <div><Label>Hora</Label><Input type="time" value={form.agendamento_hora} onChange={e => setForm({ ...form, agendamento_hora: e.target.value })} /></div>
+                </div>
+                <div>
+                  <Label>Quem vai atender</Label>
+                  <Select value={form.agendamento_responsavel_id || '__none'} onValueChange={v => setForm({ ...form, agendamento_responsavel_id: v === '__none' ? '' : v })}>
+                    <SelectTrigger><SelectValue placeholder="Selecione o líder" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">A definir</SelectItem>
+                      {respForaDaLista && <SelectItem value={form.agendamento_responsavel_id}>{initial?.agendamento_responsavel_nome || 'Responsável atual'}</SelectItem>}
+                      {atendentes.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </div>
           <div><Label>Observações</Label><Input value={form.observacoes} onChange={e => setForm({ ...form, observacoes: e.target.value })} /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Registrar'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -873,16 +951,9 @@ export default function Cuidados() {
   const [pedidosApp, setPedidosApp] = useState<any[]>([]);
   const [jornada, setJornada] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
-  const [agregado, setAgregado] = useState<any[]>([]);
-  const [agMes, setAgMes] = useState(new Date().toISOString().slice(0, 7));
-  const [agArea, setAgArea] = useState('igreja');
-  const [agAcons, setAgAcons] = useState('');
-  const [agCapel, setAgCapel] = useState('');
-  const [agDevoc, setAgDevoc] = useState('');
-  const [agJorn, setAgJorn] = useState('');
-  const [agConvAtend, setAgConvAtend] = useState('');
 
   const [modalAcomp, setModalAcomp] = useState(false);
+  const [editAcomp, setEditAcomp] = useState<any | null>(null);
   const [modalJornada, setModalJornada] = useState(false);
   const [modalConvert, setModalConvert] = useState(false);
   const [editConvert, setEditConvert] = useState<any | null>(null);
@@ -901,20 +972,13 @@ export default function Cuidados() {
   const [search, setSearch] = useState('');
 
   async function loadAll() {
-    const [a, pa, j, c, ag] = await Promise.all([
+    const [a, pa, j, c] = await Promise.all([
       cuidadosApi.acompanhamentos.list().catch(() => []),
       cuidadosApi.pedidosApp.list().catch(() => []),
       cuidadosApi.jornada180.list().catch(() => []),
       cuidadosApi.convertidos.list().catch(() => []),
-      cuidadosApi.agregado.list(agMes).catch(() => []),
     ]);
-    setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c); setAgregado(ag);
-    const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
-    setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
-    setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
-    setAgDevoc(findT('devocional') ? String(findT('devocional').quantidade) : '');
-    setAgJorn(findT('jornada180_inscricoes') ? String(findT('jornada180_inscricoes').quantidade) : '');
-    setAgConvAtend(findT('novos_convertidos_atend') ? String(findT('novos_convertidos_atend').quantidade) : '');
+    setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c);
     // Sinaliza o calendário de visitas + recarrega as pendências
     setVisitasVersion(v => v + 1);
     cuidadosApi.convertidos.visitasPendentes().then(setVisitasPendentes).catch(() => {});
@@ -940,19 +1004,32 @@ export default function Cuidados() {
       .then(setDashSeries).catch(() => setDashSeries(null)).finally(() => setDashLoading(false));
   }, [dashDias, visitasVersion]);
 
-  // Visitas agendadas da semana · alimenta o calendário da aba "Visitas agendadas"
+  // Visitas agendadas da semana · une os encontros de convertido + as sessões de
+  // aconselhamento/capelania agendadas no mesmo calendário.
   const fetchVisitasSemana = useCallback(async (di: string, df: string) => {
-    const rows = await cuidadosApi.convertidos.list({ encontro_from: di, encontro_to: df });
-    return (rows || []).map((c: any) => ({
-      id: c.id,
-      data: c.data_encontro,
-      horario: c.encontro_hora,
+    const [convs, acomps] = await Promise.all([
+      cuidadosApi.convertidos.list({ encontro_from: di, encontro_to: df }).catch(() => []),
+      cuidadosApi.acompanhamentos.list({ agendamento_from: di, agendamento_to: df }).catch(() => []),
+    ]);
+    const evConv = (convs || []).map((c: any) => ({
+      id: c.id, tipoEvento: 'convertido',
+      data: c.data_encontro, horario: c.encontro_hora,
       titulo: c.nome,
       subtitulo: c.encontro_responsavel_nome || 'Atendente a definir',
       cor: ENCONTRO_STATUS[c.encontro_status]?.color || C.info,
       statusLabel: ENCONTRO_STATUS[c.encontro_status]?.label || c.encontro_status,
       raw: c,
     }));
+    const evAcomp = (acomps || []).map((a: any) => ({
+      id: a.id, tipoEvento: 'acompanhamento',
+      data: a.agendamento_data, horario: a.agendamento_hora,
+      titulo: a.nome,
+      subtitulo: a.agendamento_responsavel_nome || (a.tipo === 'capelania' ? 'Capelania' : 'Aconselhamento'),
+      cor: C.purple,
+      statusLabel: a.tipo === 'capelania' ? 'Capelania' : 'Aconselhamento',
+      raw: a,
+    }));
+    return [...evConv, ...evAcomp];
   }, []);
 
   // Checkbox "Atendido" otimista: responde na hora · rollback + toast se falhar.
@@ -1000,27 +1077,6 @@ export default function Cuidados() {
     [convertidos]
   );
 
-  // Recarregar agregado quando mudar mês
-  useEffect(() => {
-    cuidadosApi.agregado.list(agMes).then((ag: any) => {
-      setAgregado(ag);
-      const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
-      setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
-      setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
-      setAgDevoc(findT('devocional') ? String(findT('devocional').quantidade) : '');
-      setAgJorn(findT('jornada180_inscricoes') ? String(findT('jornada180_inscricoes').quantidade) : '');
-      setAgConvAtend(findT('novos_convertidos_atend') ? String(findT('novos_convertidos_atend').quantidade) : '');
-    }).catch(() => {});
-  }, [agMes]);
-
-  async function salvarAgregado(tipo: string, q: string) {
-    try {
-      await cuidadosApi.agregado.upsert({ mes: agMes, tipo, quantidade: Number(q) || 0, area: agArea });
-      toast.success('Salvo');
-      loadAll();
-    } catch (e: any) { toast.error(e.message); }
-  }
-
   const acompFiltrados = useMemo(() => {
     if (!search) return acomp;
     return acomp.filter(a => (a.nome || '').toLowerCase().includes(search.toLowerCase()));
@@ -1041,12 +1097,10 @@ export default function Cuidados() {
       <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-          <TabsTrigger value="acomp">Acompanhamentos</TabsTrigger>
-          <TabsTrigger value="oracao">Oração</TabsTrigger>
+          <TabsTrigger value="acomp">Aconselhamento</TabsTrigger>
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Convertidos</TabsTrigger>
           <TabsTrigger value="primeiros-passos">Primeiros passos</TabsTrigger>
-          <TabsTrigger value="agregado">Mensal / Agregado</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="visitas">Visitas agendadas</TabsTrigger>
         </TabsList>
@@ -1205,38 +1259,44 @@ export default function Cuidados() {
             </div>
           </div>
 
-          {podeEditarCuidados && (
-            <div className="pt-1">
-              <WhatsappAutoConfig api={cuidadosApi.whatsappAuto} />
-            </div>
-          )}
-
           <div className="flex items-center justify-between gap-3">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="Buscar nome..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
             </div>
             {podeEditarCuidados && (
-              <Button onClick={() => setModalAcomp(true)}><Plus className="h-4 w-4 mr-2" />Novo</Button>
+              <Button onClick={() => { setEditAcomp(null); setModalAcomp(true); }}><Plus className="h-4 w-4 mr-2" />Novo atendimento</Button>
             )}
           </div>
           <div className="rounded-lg border border-border bg-card overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nome</TableHead><TableHead>Motivo</TableHead><TableHead>Início</TableHead><TableHead>Status</TableHead><TableHead></TableHead>
+                  <TableHead>Nome</TableHead><TableHead>Tipo</TableHead><TableHead>Motivo</TableHead><TableHead>Sessão agendada</TableHead><TableHead>Status</TableHead><TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {acompFiltrados.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Nenhum acompanhamento.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum atendimento.</TableCell></TableRow>
                 ) : acompFiltrados.map(a => (
                   <TableRow key={a.id}>
                     <TableCell className="font-medium">{a.nome}{a.membro_id && <Badge variant="secondary" className="ml-2 text-[10px]">membro</Badge>}</TableCell>
+                    <TableCell>
+                      <Badge style={{ background: (a.tipo === 'capelania' ? C.warn : C.info) + '20', color: a.tipo === 'capelania' ? C.warn : C.info, border: `1px solid ${(a.tipo === 'capelania' ? C.warn : C.info)}40` }}>
+                        {a.tipo === 'capelania' ? 'Capelania' : 'Aconselhamento'}
+                      </Badge>
+                    </TableCell>
                     <TableCell>{a.motivo || '—'}</TableCell>
-                    <TableCell>{a.data_inicio ? new Date(a.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {a.agendamento_data ? (
+                        <span className="text-primary flex items-center gap-1"><CalendarCheck className="h-3.5 w-3.5" />{new Date(a.agendamento_data + 'T12:00:00').toLocaleDateString('pt-BR')}{a.agendamento_hora ? ' · ' + String(a.agendamento_hora).slice(0, 5) : ''}</span>
+                      ) : <span className="text-xs text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell><Badge variant={a.status === 'ativo' ? 'default' : 'secondary'}>{a.status}</Badge></TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right whitespace-nowrap">
+                      {podeEditarCuidados && (
+                        <Button variant="ghost" size="sm" onClick={() => { setEditAcomp(a); setModalAcomp(true); }}>Editar</Button>
+                      )}
                       {podeEditarCuidados && a.status === 'ativo' && (
                         <Button variant="ghost" size="sm" onClick={async () => { await cuidadosApi.acompanhamentos.update(a.id, { status: 'concluido', data_encerramento: new Date().toISOString().slice(0, 10) }); loadAll(); }}>Concluir</Button>
                       )}
@@ -1249,11 +1309,17 @@ export default function Cuidados() {
               </TableBody>
             </Table>
           </div>
-        </TabsContent>
 
-        {/* Oração */}
-        <TabsContent value="oracao" className="space-y-4">
-          <OracaoPanel canWrite={podeEditarCuidados} />
+          {/* Técnico · oração (insights por IA) + configuração de WhatsApp · recolhido embaixo */}
+          <details className="rounded-lg border border-border bg-card">
+            <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />Oração (insights) e configuração de WhatsApp
+            </summary>
+            <div className="p-4 pt-0 space-y-4">
+              <OracaoPanel canWrite={podeEditarCuidados} />
+              {podeEditarCuidados && <WhatsappAutoConfig api={cuidadosApi.whatsappAuto} />}
+            </div>
+          </details>
         </TabsContent>
 
         {/* Jornada 180 */}
@@ -1444,59 +1510,6 @@ export default function Cuidados() {
           <JornadaConvertidos />
         </TabsContent>
 
-        {/* Agregado · totais mensais por tipo */}
-        <TabsContent value="agregado" className="space-y-4">
-          <p className="text-sm text-muted-foreground">Registre os totais mensais por tipo. Alimentam direto os KPIs (Aconselhamento, Capelania, Devocional, Jornada 180 e Convertidos atendidos).</p>
-          <div className="flex items-center gap-3 flex-wrap">
-            <Label>Mês:</Label>
-            <Input type="month" value={agMes} onChange={e => setAgMes(e.target.value)} className="w-44" />
-            <Label>Área:</Label>
-            <Select value={agArea} onValueChange={setAgArea}>
-              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="igreja">Igreja (geral)</SelectItem>
-                <SelectItem value="kids">Kids</SelectItem>
-                <SelectItem value="ami">AMI</SelectItem>
-                <SelectItem value="bridge">Bridge</SelectItem>
-                <SelectItem value="sede">Sede</SelectItem>
-                <SelectItem value="online">Online</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-info" /><h3 className="font-semibold">Aconselhamentos</h3></div>
-              <Input type="number" min={0} value={agAcons} onChange={e => setAgAcons(e.target.value)} placeholder="Quantidade" />
-              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('aconselhamento', agAcons)}>Salvar</Button>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2"><HandHelping className="h-4 w-4 text-warning" /><h3 className="font-semibold">Capelania</h3></div>
-              <Input type="number" min={0} value={agCapel} onChange={e => setAgCapel(e.target.value)} placeholder="Quantidade" />
-              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('capelania', agCapel)}>Salvar</Button>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2"><BookOpen className="h-4 w-4" style={{ color: '#8b5cf6' }} /><h3 className="font-semibold">Devocional</h3></div>
-              <Input type="number" min={0} value={agDevoc} onChange={e => setAgDevoc(e.target.value)} placeholder="Pessoas fazendo devocional" />
-              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('devocional', agDevoc)}>Salvar</Button>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2"><Users className="h-4 w-4" style={{ color: '#ef476f' }} /><h3 className="font-semibold">Jornada 180 · Inscrições</h3></div>
-              <Input type="number" min={0} value={agJorn} onChange={e => setAgJorn(e.target.value)} placeholder="Inscritos no semestre" />
-              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('jornada180_inscricoes', agJorn)}>Salvar</Button>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2"><UserCheck className="h-4 w-4 text-primary" /><h3 className="font-semibold">Convertidos atendidos</h3></div>
-              <Input type="number" min={0} value={agConvAtend} onChange={e => setAgConvAtend(e.target.value)} placeholder="Atendidos na semana da conversão" />
-              <Button size="sm" disabled={!podeEditarCuidados} onClick={() => salvarAgregado('novos_convertidos_atend', agConvAtend)}>Salvar</Button>
-            </div>
-          </div>
-          {agregado.length > 0 && (
-            <div className="text-xs text-muted-foreground">
-              Última atualização: {new Date(agregado[0].updated_at || agregado[0].created_at).toLocaleString('pt-BR')}
-            </div>
-          )}
-        </TabsContent>
-
         <TabsContent value="devocional" className="space-y-4">
           <DevocionalAdmin />
         </TabsContent>
@@ -1507,7 +1520,10 @@ export default function Cuidados() {
             area="Cuidados"
             titulo="Visitas agendadas - Cuidados"
             fetchEventos={fetchVisitasSemana}
-            onEventoClick={(ev: any) => setDetailConvert(ev.raw)}
+            onEventoClick={(ev: any) => {
+              if (ev.tipoEvento === 'acompanhamento') { setEditAcomp(ev.raw); setModalAcomp(true); }
+              else setDetailConvert(ev.raw);
+            }}
             eventosKey={visitasVersion}
           />
           <VisitasPendentesSection
@@ -1519,7 +1535,13 @@ export default function Cuidados() {
         </TabsContent>
       </Tabs>
 
-      <AcompanhamentoModal open={modalAcomp} onClose={() => setModalAcomp(false)} onSaved={loadAll} />
+      <AcompanhamentoModal
+        open={modalAcomp}
+        onClose={() => { setModalAcomp(false); setEditAcomp(null); }}
+        onSaved={loadAll}
+        atendentes={atendentes}
+        initial={editAcomp}
+      />
       <JornadaModal open={modalJornada} onClose={() => setModalJornada(false)} onSaved={loadAll} />
       <ConvertidoModal
         open={modalConvert}

@@ -208,11 +208,11 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     };
 
     // ── Processos pastorais (capelania entra de verdade na Fase 2) ──
-    const acomp = await fetchAll('cui_acompanhamentos', 'id, created_at', (q) => q.is('deleted_at', null).gte('created_at', inicio));
+    const acomp = await fetchAll('cui_acompanhamentos', 'id, created_at, tipo', (q) => q.is('deleted_at', null).gte('created_at', inicio));
     const jorn = await fetchAll('cui_jornada180', 'id, data_encontro', (q) => q.is('deleted_at', null).gte('data_encontro', inicio));
     const procMap = new Map();
     const bumpProc = (b, key) => { if (!b) return; const o = procMap.get(b) || { capelania: 0, acompanhamento: 0, jornada180: 0 }; o[key]++; procMap.set(b, o); };
-    for (const a of acomp) bumpProc(dashBucket(a.created_at, granTrend), 'acompanhamento');
+    for (const a of acomp) bumpProc(dashBucket(a.created_at, granTrend), a.tipo === 'capelania' ? 'capelania' : 'acompanhamento');
     for (const j of jorn) bumpProc(dashBucket(j.data_encontro, granTrend), 'jornada180');
     const processos = dashBucketsIntervalo(inicio, granTrend).map(b => ({
       periodo: b, ...(procMap.get(b) || { capelania: 0, acompanhamento: 0, jornada180: 0 }),
@@ -244,16 +244,24 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
 // ─────────────────────────────────────────────────────────────
 router.get('/acompanhamentos', async (req, res) => {
   try {
-    const { status, search, responsavel } = req.query;
+    const { status, search, responsavel, agendamento_from, agendamento_to } = req.query;
     let q = supabase
       .from('cui_acompanhamentos')
       .select('*')
       .is('deleted_at', null)
-      .order('created_at', { ascending: false })
       .limit(500);
     if (status) q = q.eq('status', status);
     if (responsavel) q = q.eq('responsavel_id', responsavel);
     if (search) q = q.ilike('nome', `%${search}%`);
+    // Janela de SESSÃO agendada (calendário de Visitas agendadas) · filtra por agendamento_data
+    if (agendamento_from || agendamento_to) {
+      q = q.not('agendamento_data', 'is', null);
+      if (agendamento_from) q = q.gte('agendamento_data', agendamento_from);
+      if (agendamento_to) q = q.lte('agendamento_data', agendamento_to);
+      q = q.order('agendamento_data', { ascending: true });
+    } else {
+      q = q.order('created_at', { ascending: false });
+    }
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
@@ -265,6 +273,7 @@ router.get('/acompanhamentos', async (req, res) => {
 router.post('/acompanhamentos', async (req, res) => {
   try {
     const body = { ...req.body, created_by: req.user.userId };
+    if (!['aconselhamento', 'capelania'].includes(body.tipo)) body.tipo = 'aconselhamento';
     if (body.cpf) {
       const membro = await findMembroByCpf(body.cpf);
       if (membro) body.membro_id = membro.id;
@@ -286,6 +295,21 @@ router.post('/acompanhamentos', async (req, res) => {
       severidade: 'info',
       chaveDedup: `cui_novo_${data.id}`,
     }).catch(() => {});
+
+    // Sessão agendada → avisa quem vai atender (aparece no calendário de Visitas agendadas)
+    if (data.agendamento_data && data.agendamento_responsavel_id) {
+      const quando = `${new Date(data.agendamento_data + 'T12:00:00').toLocaleDateString('pt-BR')}${data.agendamento_hora ? ' ' + String(data.agendamento_hora).slice(0, 5) : ''}`;
+      notificar({
+        modulo: 'cuidados',
+        tipo: 'aconselhamento_agendado',
+        titulo: `Sessão de ${data.tipo} — ${data.nome}`,
+        mensagem: `Você tem uma sessão com ${data.nome} em ${quando}.`,
+        link: '/ministerial/cuidados?tab=visitas',
+        severidade: 'info',
+        chaveDedup: `cui_acomp_ag_${data.id}_${data.agendamento_data}`,
+        targetIds: [data.agendamento_responsavel_id],
+      }).catch(() => {});
+    }
 
     enqueueSync('acompanhamento', data.id, 'upsert').catch(() => {});
 
