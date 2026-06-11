@@ -847,6 +847,7 @@ export const patrimonio = {
 
 export const rh = {
   dashboard: () => get('/rh/dashboard'),
+  acessos: () => get('/rh/acessos'),
   organograma: {
     ia: (instrucao) => post('/rh/organograma/ia', { instrucao }),
     aplicar: (mudancas) => post('/rh/organograma/ia/aplicar', { mudancas }),
