@@ -326,6 +326,9 @@ export const whatsapp = {
   // Config institucional + toggle IA
   getConfig: () => get('/whatsapp/config'),
   saveConfig: (data) => put('/whatsapp/config', data),
+  // Broadcast pra equipe (aviso pontual · {nome} = primeiro nome)
+  broadcastDestinatarios: () => get('/whatsapp/broadcast/destinatarios'),
+  broadcastEnviar: (mensagem) => post('/whatsapp/broadcast', { mensagem }),
 };
 
 export const strategic = {
