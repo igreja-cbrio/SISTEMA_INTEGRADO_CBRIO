@@ -439,6 +439,7 @@ export default function RH() {
       
       <FuncionarioDetailPanel
         open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)}
+        funcs={funcs}
         onEdit={(f) => { setModalDetail(null); setModalFunc(f); }}
         onDelete={abrirDesligamento}
         onReativar={reativarFuncionario}
@@ -449,6 +450,10 @@ export default function RH() {
           showSuccess('Colaborador atualizado!');
           const refreshed = await rh.funcionarios.get(modalDetail.id);
           setModalDetail(refreshed);
+          loadFuncs(); loadDash();
+        }}
+        onChanged={async () => {
+          try { const r = await rh.funcionarios.get(modalDetail.id); setModalDetail(r); } catch { /* noop */ }
           loadFuncs(); loadDash();
         }}
         onPhotoUpdated={(novoUrl) => {
@@ -2423,7 +2428,119 @@ function NotasColaborador({ funcId, initialValue }) {
 const NIVEL_LABELS = { 1: 'Sem acesso', 2: 'Pessoal', 3: 'Área', 4: 'Setor', 5: 'Admin' };
 const NIVEL_COLORS = { 1: C.red, 2: C.amber, 3: C.blue, 4: C.green, 5: '#8b5cf6' };
 
-function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onPhotoUpdated }) {
+// Descendentes (quem reporta, direta ou indiretamente, a `id`)
+function descendentesDe(id, funcs) {
+  const out = new Set();
+  let fronteira = funcs.filter(f => f.gestor_id === id).map(f => f.id);
+  let guard = 0;
+  while (fronteira.length && guard < 5000) {
+    const proximos = [];
+    for (const fid of fronteira) {
+      if (out.has(fid)) continue;
+      out.add(fid);
+      for (const f of funcs) if (f.gestor_id === fid) proximos.push(f.id);
+    }
+    fronteira = proximos;
+    guard += 1;
+  }
+  return out;
+}
+// Ancestrais (cadeia de gestores acima de `id`)
+function ancestraisDe(id, funcs) {
+  const out = new Set();
+  const byId = new Map(funcs.map(f => [f.id, f]));
+  let cur = byId.get(id)?.gestor_id || null;
+  let guard = 0;
+  while (cur && !out.has(cur) && guard < 5000) { out.add(cur); cur = byId.get(cur)?.gestor_id || null; guard += 1; }
+  return out;
+}
+
+// Seção Hierarquia no detalhe do colaborador: edita o gestor direto e os
+// subordinados (quem reporta a ele). Bloqueia ciclos filtrando as opções.
+function HierarquiaSection({ data, funcs = [], onChanged }) {
+  const [saving, setSaving] = useState(false);
+  const [addSel, setAddSel] = useState('');
+  const ativos = funcs.filter(f => f.status === 'ativo');
+  const gestor = data.gestor_id ? funcs.find(f => f.id === data.gestor_id) : null;
+  const subordinados = ativos.filter(f => f.gestor_id === data.id).sort((a, b) => a.nome.localeCompare(b.nome));
+  const desc = descendentesDe(data.id, funcs);
+  const anc = ancestraisDe(data.id, funcs);
+  const opcoesGestor = ativos.filter(f => f.id !== data.id && !desc.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
+  const opcoesAdd = ativos.filter(f => f.id !== data.id && f.gestor_id !== data.id && !anc.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
+
+  async function aplicar(fn, msg) {
+    setSaving(true);
+    try { await fn(); sonnerToast.success(msg); await onChanged?.(); }
+    catch (e) { sonnerToast.error(e.message || 'Erro ao salvar'); }
+    finally { setSaving(false); }
+  }
+  const mudarGestor = (novoId) => aplicar(() => rh.funcionarios.setGestor(data.id, novoId || null), novoId ? 'Gestor direto atualizado' : 'Gestor removido');
+  const addSubordinado = (id) => { if (id) aplicar(() => rh.funcionarios.setGestor(id, data.id), 'Subordinado adicionado').then(() => setAddSel('')); };
+  const removerSubordinado = (id) => aplicar(() => rh.funcionarios.setGestor(id, null), 'Removido dos subordinados');
+
+  const Avatarzinho = ({ f, size = 28 }) => (
+    f.foto_url
+      ? <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+      : <div style={{ width: size, height: size, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.42, fontWeight: 700, flexShrink: 0 }}>{(f.nome || '?')[0].toUpperCase()}</div>
+  );
+
+  return (
+    <div style={{ marginBottom: 20, background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <Network className="h-4 w-4 text-primary" />
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Hierarquia</span>
+        {saving && <span style={{ fontSize: 11, color: C.text3 }}>salvando...</span>}
+      </div>
+
+      {/* Gestor direto */}
+      <div style={{ marginBottom: 16 }}>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Gestor direto (a quem reporta)</label>
+        <ShadSelect value={data.gestor_id || '__none__'} onValueChange={v => mudarGestor(v === '__none__' ? null : v)} disabled={saving}>
+          <SelectTrigger className="w-full"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">— Sem gestor (topo)</SelectItem>
+            {opcoesGestor.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}{f.cargo ? ` · ${f.cargo}` : ''}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+        {gestor && <div style={{ fontSize: 11, color: C.text3, marginTop: 4 }}>Atual: {gestor.nome}</div>}
+      </div>
+
+      {/* Subordinados */}
+      <div>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Subordinados diretos ({subordinados.length})</label>
+        {subordinados.length === 0 && <div style={{ fontSize: 13, color: C.text3, marginBottom: 8 }}>Ninguém reporta a este colaborador ainda.</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {subordinados.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px' }}>
+              <Avatarzinho f={s} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nome}</div>
+                <div style={{ fontSize: 11, color: C.text2 }}>{s.cargo || '—'}</div>
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Remover dos subordinados" disabled={saving} onClick={() => removerSubordinado(s.id)}>
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <ShadSelect value={addSel} onValueChange={(v) => addSubordinado(v)} disabled={saving}>
+          <SelectTrigger className="w-full"><SelectValue placeholder="+ Adicionar subordinado..." /></SelectTrigger>
+          <SelectContent>
+            {opcoesAdd.length === 0 && <div style={{ padding: '8px 12px', fontSize: 12, color: C.text3 }}>Ninguém disponível</div>}
+            {opcoesAdd.map(f => (
+              <SelectItem key={f.id} value={f.id}>
+                {f.nome}{f.cargo ? ` · ${f.cargo}` : ''}{f.gestor_id ? ' (tem gestor)' : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </ShadSelect>
+        <div style={{ fontSize: 11, color: C.text3, marginTop: 4 }}>Adicionar move a pessoa pra reportar a {data.nome?.split(' ')[0] || 'este colaborador'} (troca o gestor anterior, se houver).</div>
+      </div>
+    </div>
+  );
+}
+
+function FuncionarioDetailPanel({ open, data, onClose, funcs = [], onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
@@ -2676,6 +2793,9 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onReati
           <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_COLORS} /></div></div>
         </div>
       )}
+
+      {/* Hierarquia · gestor direto + subordinados */}
+      <HierarquiaSection data={data} funcs={funcs} onChanged={onChanged} />
 
       {/* Anotações editáveis */}
       <NotasColaborador funcId={data.id} initialValue={data.observacoes || ''} />

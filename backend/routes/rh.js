@@ -309,6 +309,42 @@ router.post('/funcionarios/:id/reativar', async (req, res) => {
   }
 });
 
+// PUT /api/rh/funcionarios/:id/gestor — define APENAS o gestor direto, com
+// validação de ciclo. Endpoint dedicado porque o PUT genérico não trata
+// gestor_id (e um update parcial nele zeraria outros campos).
+router.put('/funcionarios/:id/gestor', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const gestorId = req.body?.gestor_id || null;
+    if (gestorId && gestorId === id) {
+      return res.status(400).json({ error: 'Um colaborador não pode ser gestor de si mesmo.' });
+    }
+    // Carrega todos (access-filtered) pra validar existência e ciclo
+    let q = supabase.from('rh_funcionarios').select('id, gestor_id');
+    q = applyAccessFilter(q, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: todos, error: qErr } = await q;
+    if (qErr) return res.status(400).json({ error: qErr.message });
+    const ids = new Set((todos || []).map(f => f.id));
+    if (!ids.has(id)) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+    if (gestorId && !ids.has(gestorId)) return res.status(400).json({ error: 'Gestor inválido.' });
+
+    const mapa = new Map((todos || []).map(f => [f.id, f.gestor_id || null]));
+    mapa.set(id, gestorId);
+    if (temCiclo(mapa)) {
+      return res.status(400).json({ error: 'Essa mudança criaria um ciclo na hierarquia.' });
+    }
+
+    const { error } = await supabase.from('rh_funcionarios')
+      .update({ gestor_id: gestorId, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true, gestor_id: gestorId });
+  } catch (e) {
+    console.error('[RH] definir gestor:', e.message);
+    res.status(500).json({ error: 'Erro ao definir gestor.' });
+  }
+});
+
 // ── ORGANOGRAMA · assistente de IA ─────────────────────────
 // Detecta ciclo: aplicando o mapa de gestores, ninguém pode ser ancestral de
 // si mesmo. Retorna true se houver ciclo a partir de algum nó.
