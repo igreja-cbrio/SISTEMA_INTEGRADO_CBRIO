@@ -152,7 +152,7 @@ async function gerarNotificacoesRH() {
     .from('rh_funcionarios')
     .select('id, nome, data_admissao, tipo_contrato')
     .eq('status', 'ativo')
-    .eq('tipo_contrato', 'clt');
+    .ilike('tipo_contrato', 'clt');  // case-insensitive · os dados estão em 'CLT' (uppercase)
 
   for (const func of funcionarios || []) {
     const admissao = new Date(func.data_admissao + 'T12:00:00');
@@ -170,6 +170,27 @@ async function gerarNotificacoesRH() {
         severidade: 'aviso',
         chaveDedup: `exp_vencendo_${func.id}`,
       });
+    }
+  }
+
+  // 7. Reconcilia status de afastamento: quem estava em férias/licença e o período
+  // já acabou volta para 'ativo'. Só RETORNA (a ida pra férias/licença é setada na
+  // aprovação) e NUNCA toca 'inativo' (desligados). Corrige o status que ficava preso.
+  const { data: emAfastamento } = await supabase
+    .from('rh_funcionarios')
+    .select('id')
+    .in('status', ['ferias', 'licenca']);
+  if (emAfastamento && emAfastamento.length) {
+    const { data: ativasHoje } = await supabase
+      .from('rh_ferias_licencas')
+      .select('funcionario_id')
+      .eq('status', 'aprovado')
+      .lte('data_inicio', today)
+      .gte('data_fim', today);
+    const comPeriodoAtivo = new Set((ativasHoje || []).map(f => f.funcionario_id));
+    const voltaram = emAfastamento.filter(f => !comPeriodoAtivo.has(f.id)).map(f => f.id);
+    if (voltaram.length) {
+      await supabase.from('rh_funcionarios').update({ status: 'ativo' }).in('id', voltaram);
     }
   }
 
