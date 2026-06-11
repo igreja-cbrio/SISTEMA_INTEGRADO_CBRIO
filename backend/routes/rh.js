@@ -136,6 +136,14 @@ router.get('/acessos', async (req, res) => {
       // "Acesso negado". (Não uso usuarios.ativo aqui: o acesso é decidido por
       // cargo+matriz+áreas, não por essa flag — usá-la geraria falso alarme.)
       const semAcesso = !u || !u.cargo_id || /negad/i.test(cargo?.nome || '');
+      // Motivo do "sem acesso" — deixa claro o que falta pra liberar (na maioria
+      // dos casos operacionais o bloqueio é não ter e-mail/conta, não o cargo).
+      let motivo = null;
+      if (semAcesso) {
+        if (!f.email) motivo = 'Sem e-mail cadastrado';
+        else if (/negad/i.test(cargo?.nome || '')) motivo = 'Cargo "Acesso negado"';
+        else motivo = 'Sem cargo de acesso';
+      }
       return {
         id: f.id, nome: f.nome, email: f.email || null,
         cargo_rh: f.cargo || null, area_rh: f.area || null,
@@ -144,6 +152,7 @@ router.get('/acessos', async (req, res) => {
         cargo_perm_slug: cargo?.slug ?? null,
         cargo_perm_nome: cargo ? (cargo.nome_completo || cargo.nome) : null,
         situacao: semAcesso ? 'sem_acesso' : 'com_acesso',
+        motivo,
       };
     });
 
