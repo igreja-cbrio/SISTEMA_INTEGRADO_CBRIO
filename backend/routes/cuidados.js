@@ -585,6 +585,233 @@ router.delete('/jornada180/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Jornada 180 · TURMAS (estrutura própria de Cuidados · dado sensível)
+// Espelha grupos (turma → líder → participantes → encontros → presenças),
+// mas vive em Cuidados (RLS scoped 'cuidados') e fica FORA dos KPIs de grupos.
+// ─────────────────────────────────────────────────────────────
+const J180_AREAS = ['ami', 'sede', 'online'];
+
+// Soft-delete via UPDATE (service_role) · a tabela fica fora da whitelist app_soft_delete
+async function j180SoftDelete(table, id, res) {
+  const { error } = await supabase.from(table).update({ deleted_at: new Date().toISOString() }).eq('id', id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+}
+
+// GET /j180/turmas?area=&incluir_inativas= — turmas + contagem de participantes ativos
+router.get('/j180/turmas', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { area, incluir_inativas } = req.query;
+    let q = supabase.from('cui_j180_turmas').select('*').is('deleted_at', null).order('nome');
+    if (area && J180_AREAS.includes(area)) q = q.eq('area', area);
+    if (incluir_inativas !== 'true') q = q.eq('ativo', true);
+    const { data: turmas, error } = await q;
+    if (error) throw error;
+    const ids = (turmas || []).map(t => t.id);
+    const countByTurma = new Map();
+    if (ids.length) {
+      const { data: membros } = await supabase
+        .from('cui_j180_turma_membros').select('turma_id').in('turma_id', ids).is('saiu_em', null);
+      (membros || []).forEach(m => countByTurma.set(m.turma_id, (countByTurma.get(m.turma_id) || 0) + 1));
+    }
+    res.json((turmas || []).map(t => ({ ...t, participantes_count: countByTurma.get(t.id) || 0 })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /j180/turmas/:id — detalhe (turma + participantes ativos + encontros recentes)
+router.get('/j180/turmas/:id', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { data: turma, error } = await supabase.from('cui_j180_turmas').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
+    const [{ data: membros }, { data: encontros }] = await Promise.all([
+      supabase.from('cui_j180_turma_membros').select('*').eq('turma_id', turma.id).is('saiu_em', null).order('nome'),
+      supabase.from('cui_j180_encontros').select('*').eq('turma_id', turma.id).is('deleted_at', null).order('data', { ascending: false }).limit(20),
+    ]);
+    res.json({ ...turma, membros: membros || [], encontros: encontros || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /j180/turmas — cria turma
+router.post('/j180/turmas', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const area = J180_AREAS.includes(b.area) ? b.area : 'sede';
+    const { data, error } = await supabase.from('cui_j180_turmas').insert({
+      nome: b.nome, area, lider_id: b.lider_id || null, lider_nome: b.lider_nome || null,
+      temporada: b.temporada || null, dia_semana: b.dia_semana ?? null, horario: b.horario || null,
+      descricao: b.descricao || null, ativo: b.ativo !== false,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /j180/turmas/:id
+router.patch('/j180/turmas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = { ...req.body };
+    if (b.area && !J180_AREAS.includes(b.area)) delete b.area;
+    delete b.id; delete b.created_at; delete b.deleted_at;
+    const { data, error } = await supabase.from('cui_j180_turmas').update(b).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /j180/turmas/:id — soft-delete
+router.delete('/j180/turmas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  await j180SoftDelete('cui_j180_turmas', req.params.id, res);
+});
+
+// POST /j180/turmas/:id/membros — adiciona participante (resolve membro por CPF se vier)
+router.post('/j180/turmas/:id/membros', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+    let membro_id = b.membro_id || null;
+    if (!membro_id && b.cpf) {
+      const m = await findMembroByCpf(b.cpf);
+      if (m) membro_id = m.id;
+    }
+    const { data, error } = await supabase.from('cui_j180_turma_membros').insert({
+      turma_id: req.params.id, membro_id, nome: b.nome, telefone: b.telefone || null,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /j180/membros/:id — ex.: marcar saída (saiu_em)
+router.patch('/j180/membros/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = { ...req.body }; delete b.id; delete b.turma_id; delete b.created_at;
+    const { data, error } = await supabase.from('cui_j180_turma_membros').update(b).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /j180/membros/:id — remove do roster (linha de vínculo)
+router.delete('/j180/membros/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('cui_j180_turma_membros').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /j180/turmas/:id/encontros — encontros + ids dos presentes
+router.get('/j180/turmas/:id/encontros', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { data: encontros, error } = await supabase
+      .from('cui_j180_encontros').select('*').eq('turma_id', req.params.id).is('deleted_at', null)
+      .order('data', { ascending: false }).limit(50);
+    if (error) throw error;
+    const ids = (encontros || []).map(e => e.id);
+    const presPorEncontro = new Map();
+    if (ids.length) {
+      const { data: pres } = await supabase
+        .from('cui_j180_encontro_presencas').select('encontro_id, turma_membro_id, presente').in('encontro_id', ids);
+      (pres || []).forEach(p => {
+        const arr = presPorEncontro.get(p.encontro_id) || [];
+        if (p.presente) arr.push(p.turma_membro_id);
+        presPorEncontro.set(p.encontro_id, arr);
+      });
+    }
+    res.json((encontros || []).map(e => ({ ...e, presentes: presPorEncontro.get(e.id) || [] })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /j180/turmas/:id/encontros — registra encontro + presenças
+// body: { data, tema?, observacoes?, presentes: [turma_membro_id] }
+router.post('/j180/turmas/:id/encontros', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const uid = req.user.userId || req.user.id;
+    const { data: enc, error: e1 } = await supabase.from('cui_j180_encontros').insert({
+      turma_id: req.params.id, data: b.data || new Date().toISOString().slice(0, 10),
+      tema: b.tema || null, observacoes: b.observacoes || null, registrado_por: uid,
+    }).select().single();
+    if (e1) throw e1;
+    const presentes = Array.isArray(b.presentes) ? b.presentes : [];
+    if (presentes.length) {
+      const rows = presentes.map(tmid => ({ encontro_id: enc.id, turma_membro_id: tmid, presente: true }));
+      const { error: e2 } = await supabase.from('cui_j180_encontro_presencas').insert(rows);
+      if (e2) throw e2;
+    }
+    res.status(201).json({ ...enc, presentes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /j180/encontros/:id — soft-delete
+router.delete('/j180/encontros/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  await j180SoftDelete('cui_j180_encontros', req.params.id, res);
+});
+
+// GET /j180/relatorio — métricas das turmas (nº turmas/participantes/líderes/frequência por área)
+router.get('/j180/relatorio', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { data: turmas } = await supabase.from('cui_j180_turmas').select('id, area, lider_nome').is('deleted_at', null).eq('ativo', true);
+    const turmaIds = (turmas || []).map(t => t.id);
+    const lideres = new Set((turmas || []).map(t => String(t.lider_nome || '').trim().toLowerCase()).filter(Boolean));
+    const porArea = {};
+    (turmas || []).forEach(t => { porArea[t.area] = (porArea[t.area] || 0) + 1; });
+
+    let participantes = 0, totalPresencas = 0, totalEncontros = 0;
+    const d180 = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+    if (turmaIds.length) {
+      const { count: pc } = await supabase.from('cui_j180_turma_membros')
+        .select('id', { count: 'exact', head: true }).in('turma_id', turmaIds).is('saiu_em', null);
+      participantes = pc || 0;
+
+      const { data: encs } = await supabase.from('cui_j180_encontros')
+        .select('id').in('turma_id', turmaIds).is('deleted_at', null).gte('data', d180);
+      const encIds = (encs || []).map(e => e.id);
+      totalEncontros = encIds.length;
+      for (let i = 0; i < encIds.length; i += 100) {
+        const lote = encIds.slice(i, i + 100);
+        const { count } = await supabase.from('cui_j180_encontro_presencas')
+          .select('id', { count: 'exact', head: true }).in('encontro_id', lote).eq('presente', true);
+        totalPresencas += count || 0;
+      }
+    }
+    res.json({
+      total_turmas: (turmas || []).length,
+      total_lideres: lideres.size,
+      total_participantes: participantes,
+      por_area: porArea,
+      frequencia: {
+        total_encontros: totalEncontros,
+        total_presencas: totalPresencas,
+        media_por_encontro: totalEncontros ? Math.round((totalPresencas / totalEncontros) * 10) / 10 : 0,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // Convertidos
 // ─────────────────────────────────────────────────────────────
 // Tags fixas de triagem pastoral · alimenta o multiselect no front

@@ -7,6 +7,7 @@ import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
 import OracaoPanel from '../../components/OracaoPanel';
+import CuidadosJ180 from '../../components/CuidadosJ180';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -234,65 +235,6 @@ function AcompanhamentoModal({ open, onClose, onSaved, atendentes, initial }: {
         <DialogFooter>
           <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Registrar'}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function JornadaModal({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ nome: '', cpf: '', etapa: 1, data_encontro: new Date().toISOString().slice(0, 10), presente: true, observacoes: '' });
-  const [membro, setMembro] = useState<any>(null);
-  const [saving, setSaving] = useState(false);
-
-  // Snapshot do form ao abrir (sem effect de população aqui) · membro fora.
-  const snapRef = useRef<string>(JSON.stringify(form));
-  useEffect(() => {
-    if (open) snapRef.current = JSON.stringify(form);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-  const temAlteracoes = JSON.stringify(form) !== snapRef.current;
-  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
-
-  async function save() {
-    if (!form.nome) return toast.error('Nome obrigatório');
-    setSaving(true);
-    try {
-      const payload: any = { ...form, etapa: Number(form.etapa) };
-      if (membro) { payload.membro_id = membro.id; payload.nome = membro.nome; }
-      await cuidadosApi.jornada180.create(payload);
-      toast.success('Encontro registrado');
-      onSaved();
-      onClose();
-      setForm({ nome: '', cpf: '', etapa: 1, data_encontro: new Date().toISOString().slice(0, 10), presente: true, observacoes: '' });
-      setMembro(null);
-    } catch (e: any) { toast.error(e.message); }
-    finally { setSaving(false); }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Registrar Encontro Jornada 180</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div><Label>Nome *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
-          <div><Label>CPF</Label><CpfMembroLookup value={form.cpf} onChange={v => setForm({ ...form, cpf: v })} onMembro={setMembro} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Etapa (1-6)</Label>
-              <Input type="number" min={1} max={6} value={form.etapa} onChange={e => setForm({ ...form, etapa: Number(e.target.value) })} />
-            </div>
-            <div><Label>Data</Label><Input type="date" value={form.data_encontro} onChange={e => setForm({ ...form, data_encontro: e.target.value })} /></div>
-          </div>
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="presente" checked={form.presente} onChange={e => setForm({ ...form, presente: e.target.checked })} />
-            <Label htmlFor="presente">Presente</Label>
-          </div>
-          <div><Label>Observações</Label><Input value={form.observacoes} onChange={e => setForm({ ...form, observacoes: e.target.value })} /></div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -970,13 +912,11 @@ export default function Cuidados() {
 
   const [acomp, setAcomp] = useState<any[]>([]);
   const [pedidosApp, setPedidosApp] = useState<any[]>([]);
-  const [jornada, setJornada] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
   const [jornadaData, setJornadaData] = useState<any>(null); // /jornada-convertidos · status contato/batismo/Next por pessoa
 
   const [modalAcomp, setModalAcomp] = useState(false);
   const [editAcomp, setEditAcomp] = useState<any | null>(null);
-  const [modalJornada, setModalJornada] = useState(false);
   const [modalConvert, setModalConvert] = useState(false);
   const [editConvert, setEditConvert] = useState<any | null>(null);
   const [detailConvert, setDetailConvert] = useState<any | null>(null);
@@ -994,14 +934,13 @@ export default function Cuidados() {
   const [search, setSearch] = useState('');
 
   async function loadAll() {
-    const [a, pa, j, c, jd] = await Promise.all([
+    const [a, pa, c, jd] = await Promise.all([
       cuidadosApi.acompanhamentos.list().catch(() => []),
       cuidadosApi.pedidosApp.list().catch(() => []),
-      cuidadosApi.jornada180.list().catch(() => []),
       cuidadosApi.convertidos.list().catch(() => []),
       cuidadosApi.jornadaConvertidos().catch(() => null),
     ]);
-    setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c); setJornadaData(jd);
+    setAcomp(a); setPedidosApp(pa); setConvertidos(c); setJornadaData(jd);
     // Sinaliza o calendário de visitas + recarrega as pendências
     setVisitasVersion(v => v + 1);
     cuidadosApi.convertidos.visitasPendentes().then(setVisitasPendentes).catch(() => {});
@@ -1370,38 +1309,7 @@ export default function Cuidados() {
             <p className="text-xs text-muted-foreground mb-3">Pessoas que o cuidado pastoral encaminhou pra Jornada 180. Faça o primeiro contato e registre a devolutiva.</p>
             <EncaminhamentosInbox destino="jornada180" canWrite={podeEditarCuidados} />
           </div>
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-sm text-muted-foreground">Encontros registrados</h3>
-            {podeEditarCuidados && (
-              <Button onClick={() => setModalJornada(true)}><Plus className="h-4 w-4 mr-2" />Registrar encontro</Button>
-            )}
-          </div>
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome</TableHead><TableHead>Etapa</TableHead><TableHead>Data</TableHead><TableHead>Presente</TableHead><TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {jornada.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">Nenhum encontro registrado.</TableCell></TableRow>
-                ) : jornada.map(j => (
-                  <TableRow key={j.id}>
-                    <TableCell className="font-medium">{j.nome}</TableCell>
-                    <TableCell><Badge variant="outline">Etapa {j.etapa}</Badge></TableCell>
-                    <TableCell>{new Date(j.data_encontro + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
-                    <TableCell>{j.presente ? '✓' : '✗'}</TableCell>
-                    <TableCell className="text-right">
-                      {podeEditarCuidados && (
-                        <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.jornada180.remove(j.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <CuidadosJ180 canWrite={podeEditarCuidados} />
         </TabsContent>
 
         {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}
@@ -1626,7 +1534,6 @@ export default function Cuidados() {
         atendentes={atendentes}
         initial={editAcomp}
       />
-      <JornadaModal open={modalJornada} onClose={() => setModalJornada(false)} onSaved={loadAll} />
       <ConvertidoModal
         open={modalConvert}
         onClose={() => { setModalConvert(false); setEditConvert(null); }}

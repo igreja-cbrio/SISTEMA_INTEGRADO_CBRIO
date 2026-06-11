@@ -1966,6 +1966,27 @@ export const cuidados = {
     create: (data) => post('/cuidados/jornada180', data),
     remove: (id) => del(`/cuidados/jornada180/${id}`),
   },
+  // Turmas da Jornada 180 · estrutura própria de Cuidados (líder/participantes/encontros)
+  j180: {
+    turmas: {
+      list: (params) => get('/cuidados/j180/turmas' + (params ? '?' + new URLSearchParams(params) : '')),
+      get: (id) => get(`/cuidados/j180/turmas/${id}`),
+      create: (data) => post('/cuidados/j180/turmas', data),
+      update: (id, data) => patch(`/cuidados/j180/turmas/${id}`, data),
+      remove: (id) => del(`/cuidados/j180/turmas/${id}`),
+    },
+    membros: {
+      add: (turmaId, data) => post(`/cuidados/j180/turmas/${turmaId}/membros`, data),
+      update: (id, data) => patch(`/cuidados/j180/membros/${id}`, data),
+      remove: (id) => del(`/cuidados/j180/membros/${id}`),
+    },
+    encontros: {
+      list: (turmaId) => get(`/cuidados/j180/turmas/${turmaId}/encontros`),
+      registrar: (turmaId, data) => post(`/cuidados/j180/turmas/${turmaId}/encontros`, data),
+      remove: (id) => del(`/cuidados/j180/encontros/${id}`),
+    },
+    relatorio: () => get('/cuidados/j180/relatorio'),
+  },
   convertidos: {
     list: (params) => get('/cuidados/convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/cuidados/convertidos', data),
