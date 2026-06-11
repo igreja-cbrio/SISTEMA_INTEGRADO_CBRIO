@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi } from '../../api';
+import { cuidados as cuidadosApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
@@ -18,10 +18,32 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Heart, BookOpen, HandHelping, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ClipboardCheck, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
+
+// Filtro de período do dashboard (bate com DASH_DIAS_VALIDOS no backend)
+const DASH_PERIODOS = [
+  { dias: 30, label: '30 dias' },
+  { dias: 60, label: '60 dias' },
+  { dias: 90, label: '90 dias' },
+  { dias: 180, label: '180 dias' },
+  { dias: 365, label: '1 ano' },
+  { dias: 1825, label: '5 anos' },
+];
+const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+// Rótulo do eixo X conforme a granularidade vinda do backend (dia/semana = DD/MM · mes = mmm/AA)
+function fmtPeriodo(v: string, gran: string) {
+  if (!v) return '';
+  if (gran === 'mes') {
+    const [y, m] = v.split('-');
+    return `${MESES_PT[Number(m) - 1] || m}/${String(y).slice(2)}`;
+  }
+  const [, m, d] = v.split('-');
+  return `${d}/${m}`;
+}
 
 // Pedidos de Cuidados vindos do app
 const PEDIDO_META: Record<string, { label: string; color: string }> = {
@@ -843,9 +865,9 @@ export default function Cuidados() {
     if (v === 'dashboard') sp.delete('tab'); else sp.set('tab', v);
     setSearchParams(sp, { replace: true });
   }
-  const [dash, setDash] = useState<any>(null);
-  const [devMetrics, setDevMetrics] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [dashSeries, setDashSeries] = useState<any>(null);
+  const [dashDias, setDashDias] = useState(90);
+  const [dashLoading, setDashLoading] = useState(true);
 
   const [acomp, setAcomp] = useState<any[]>([]);
   const [pedidosApp, setPedidosApp] = useState<any[]>([]);
@@ -879,25 +901,20 @@ export default function Cuidados() {
   const [search, setSearch] = useState('');
 
   async function loadAll() {
-    setLoading(true);
-    try {
-      const [d, a, pa, j, c, ag, dm] = await Promise.all([
-        cuidadosApi.dashboard().catch(() => null),
-        cuidadosApi.acompanhamentos.list().catch(() => []),
-        cuidadosApi.pedidosApp.list().catch(() => []),
-        cuidadosApi.jornada180.list().catch(() => []),
-        cuidadosApi.convertidos.list().catch(() => []),
-        cuidadosApi.agregado.list(agMes).catch(() => []),
-        devPlanosApi.metricasCuidados().catch(() => null),
-      ]);
-      setDash(d); setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c); setAgregado(ag); setDevMetrics(dm);
-      const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
-      setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
-      setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
-      setAgDevoc(findT('devocional') ? String(findT('devocional').quantidade) : '');
-      setAgJorn(findT('jornada180_inscricoes') ? String(findT('jornada180_inscricoes').quantidade) : '');
-      setAgConvAtend(findT('novos_convertidos_atend') ? String(findT('novos_convertidos_atend').quantidade) : '');
-    } finally { setLoading(false); }
+    const [a, pa, j, c, ag] = await Promise.all([
+      cuidadosApi.acompanhamentos.list().catch(() => []),
+      cuidadosApi.pedidosApp.list().catch(() => []),
+      cuidadosApi.jornada180.list().catch(() => []),
+      cuidadosApi.convertidos.list().catch(() => []),
+      cuidadosApi.agregado.list(agMes).catch(() => []),
+    ]);
+    setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c); setAgregado(ag);
+    const findT = (t: string) => (ag || []).find((r: any) => r.tipo === t);
+    setAgAcons(findT('aconselhamento') ? String(findT('aconselhamento').quantidade) : '');
+    setAgCapel(findT('capelania') ? String(findT('capelania').quantidade) : '');
+    setAgDevoc(findT('devocional') ? String(findT('devocional').quantidade) : '');
+    setAgJorn(findT('jornada180_inscricoes') ? String(findT('jornada180_inscricoes').quantidade) : '');
+    setAgConvAtend(findT('novos_convertidos_atend') ? String(findT('novos_convertidos_atend').quantidade) : '');
     // Sinaliza o calendário de visitas + recarrega as pendências
     setVisitasVersion(v => v + 1);
     cuidadosApi.convertidos.visitasPendentes().then(setVisitasPendentes).catch(() => {});
@@ -915,6 +932,13 @@ export default function Cuidados() {
   useEffect(() => {
     cuidadosApi.convertidos.atendentes().then(setAtendentes).catch(() => {});
   }, []);
+
+  // Séries do dashboard novo · recarrega ao trocar o período ou quando os dados mudam
+  useEffect(() => {
+    setDashLoading(true);
+    cuidadosApi.dashboardSeries({ dias: dashDias })
+      .then(setDashSeries).catch(() => setDashSeries(null)).finally(() => setDashLoading(false));
+  }, [dashDias, visitasVersion]);
 
   // Visitas agendadas da semana · alimenta o calendário da aba "Visitas agendadas"
   const fetchVisitasSemana = useCallback(async (di: string, df: string) => {
@@ -1007,10 +1031,6 @@ export default function Cuidados() {
     [pedidosApp]
   );
 
-  const a = dash?.atual || {};
-  const ant = dash?.anterior || {};
-  const delta = (cur: number, prev: number) => prev > 0 ? `${Math.round(((cur - prev) / prev) * 100)}%` : '—';
-
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -1032,61 +1052,86 @@ export default function Cuidados() {
         </TabsList>
 
         {/* Dashboard */}
-        <TabsContent value="dashboard" className="space-y-4">
-          {loading ? (
+        <TabsContent value="dashboard" className="space-y-5">
+          {/* Filtro de período */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-muted-foreground">Período:</span>
+            {DASH_PERIODOS.map(p => (
+              <Button key={p.dias} size="sm" variant={dashDias === p.dias ? 'default' : 'outline'} onClick={() => setDashDias(p.dias)}>
+                {p.label}
+              </Button>
+            ))}
+          </div>
+
+          {dashLoading ? (
             <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          ) : !dashSeries ? (
+            <p className="text-sm text-muted-foreground text-center py-12">Não foi possível carregar os indicadores.</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatisticsCard title="Pessoas Acompanhadas" value={a.pessoas_acompanhadas ?? 0} icon={Heart} iconColor={C.primary} />
-                <StatisticsCard title="Aconselhamentos" value={a.aconselhamentos ?? 0} icon={BookOpen} iconColor={C.info}
-                  subtitle={`Mês anterior: ${ant.aconselhamentos ?? 0} (${delta(a.aconselhamentos, ant.aconselhamentos)})`} />
-                <StatisticsCard title="Capelania" value={a.capelania ?? 0} icon={HandHelping} iconColor={C.warn}
-                  subtitle={`Mês anterior: ${ant.capelania ?? 0} (${delta(a.capelania, ant.capelania)})`} />
-                <StatisticsCard title="Encontros Jornada 180" value={a.jornada180_encontros ?? 0} icon={Users} iconColor={C.purple}
-                  subtitle={`Mês anterior: ${ant.jornada180_encontros ?? 0}`} />
-              </div>
-              <div className="grid grid-cols-2 lg:grid-cols-2 gap-4">
-                <StatisticsCard title="Convertidos Atendidos Pós-Culto" value={a.convertidos_atendidos ?? 0} icon={UserCheck} iconColor={C.primary}
-                  subtitle={`Mês anterior: ${ant.convertidos_atendidos ?? 0}`} />
-                <StatisticsCard title="Convertidos Cadastrados" value={a.convertidos_cadastrados ?? 0} icon={CheckCircle2} iconColor={C.info}
-                  subtitle={`Mês anterior: ${ant.convertidos_cadastrados ?? 0}`} />
+              {/* 5 cards de cobertura dos convertidos */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                <StatisticsCard title="Convertidos presencial" value={dashSeries.cards.conv_presencial_total} icon={UserCheck} iconColor={C.primary} />
+                <StatisticsCard title="Com dados · presencial" value={dashSeries.cards.conv_presencial_com_dados} icon={Phone} iconColor={C.info} subtitle="dá pra contatar" />
+                <StatisticsCard title="Convertidos online" value={dashSeries.cards.conv_online_total} icon={Users} iconColor={C.purple} />
+                <StatisticsCard title="Com dados · online" value={dashSeries.cards.conv_online_com_dados} icon={Phone} iconColor={C.pink} subtitle="dá pra contatar" />
+                <StatisticsCard title="% com dados" value={`${dashSeries.cards.pct_com_dados}%`} icon={CheckCircle2} iconColor={C.warn} subtitle="do total de convertidos" />
               </div>
 
-              {/* Métricas do Devocional */}
-              <div className="pt-2">
-                <div className="flex items-center gap-2 mb-3">
-                  <BookOpen className="h-4 w-4 text-primary" />
-                  <h3 className="font-semibold text-sm">Devocional</h3>
-                </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <StatisticsCard
-                    title="Check-ins hoje"
-                    value={devMetrics?.checkins_hoje ?? 0}
-                    icon={CalendarCheck}
-                    iconColor={C.primary}
-                    subtitle={`${devMetrics?.adesao_hoje_pct ?? 0}% dos membros logados`}
-                  />
-                  <StatisticsCard
-                    title="Check-ins (7 dias)"
-                    value={devMetrics?.checkins_7d ?? 0}
-                    icon={BookOpen}
-                    iconColor={C.info}
-                  />
-                  <StatisticsCard
-                    title="Membros engajados (30d)"
-                    value={devMetrics?.membros_engajados_30d ?? 0}
-                    icon={Users}
-                    iconColor={C.purple}
-                    subtitle={`${devMetrics?.membros_logados ?? 0} membros logaram no app`}
-                  />
-                  <StatisticsCard
-                    title="Planos ativos"
-                    value={devMetrics?.planos_ativos ?? 0}
-                    icon={Sparkles}
-                    iconColor={C.warn}
-                  />
-                </div>
+              {/* Gráfico 1 · funil do cuidado (a ponte pros outros valores) */}
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="font-semibold text-sm mb-1">Convertidos → 1º contato → engajados em +1 valor</h3>
+                <p className="text-xs text-muted-foreground mb-3">
+                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor (grupo, voluntário, Jornada 180).
+                </p>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={dashSeries.funil} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" />
+                    <XAxis dataKey="periodo" tickFormatter={(v) => fmtPeriodo(v, dashSeries.gran_trend)} fontSize={11} />
+                    <YAxis allowDecimals={false} fontSize={11} />
+                    <Tooltip labelFormatter={(v) => fmtPeriodo(v as string, dashSeries.gran_trend)} />
+                    <Legend />
+                    <Line type="monotone" dataKey="convertidos" name="Convertidos" stroke={C.primary} strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="contato" name="1º contato" stroke={C.info} strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="engajados" name="Engajados +1 valor" stroke={C.purple} strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Gráfico 2 · processos pastorais */}
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="font-semibold text-sm mb-1">Processos internos · capelania · acompanhamento · Jornada 180</h3>
+                <p className="text-xs text-muted-foreground mb-3">Volume de atendimentos pastorais ao longo do tempo.</p>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={dashSeries.processos} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" />
+                    <XAxis dataKey="periodo" tickFormatter={(v) => fmtPeriodo(v, dashSeries.gran_trend)} fontSize={11} />
+                    <YAxis allowDecimals={false} fontSize={11} />
+                    <Tooltip labelFormatter={(v) => fmtPeriodo(v as string, dashSeries.gran_trend)} />
+                    <Legend />
+                    <Line type="monotone" dataKey="acompanhamento" name="Acompanhamento" stroke={C.info} strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="jornada180" name="Jornada 180" stroke={C.pink} strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="capelania" name="Capelania" stroke={C.warn} strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+                <p className="text-[11px] text-muted-foreground mt-2">A linha de capelania passa a contar quando os atendimentos forem registrados por tipo (em breve).</p>
+              </div>
+
+              {/* Gráfico 3 · leitura de devocional */}
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="font-semibold text-sm mb-1">
+                  Devocional · leitores {dashSeries.gran_devoc === 'dia' ? 'por dia' : dashSeries.gran_devoc === 'semana' ? 'por semana' : 'por mês'}
+                </h3>
+                <p className="text-xs text-muted-foreground mb-3">Quantas pessoas leram o devocional no período.</p>
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={dashSeries.devocional} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" />
+                    <XAxis dataKey="periodo" tickFormatter={(v) => fmtPeriodo(v, dashSeries.gran_devoc)} fontSize={11} />
+                    <YAxis allowDecimals={false} fontSize={11} />
+                    <Tooltip labelFormatter={(v) => fmtPeriodo(v as string, dashSeries.gran_devoc)} />
+                    <Bar dataKey="leitores" name="Leitores" fill={C.primary} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </>
           )}

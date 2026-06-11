@@ -88,6 +88,158 @@ router.get('/dashboard', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/cuidados/dashboard-series?dias=30|60|90|180|365|1825
+// Séries do dashboard novo (tudo dado real · sem entrada manual):
+//   · funil      → convertidos → 1º contato → engajados em +1 valor
+//   · cards      → cobertura presencial/online × com-dados
+//   · processos  → capelania (entra de verdade na Fase 2) × acompanhamento × Jornada 180
+//   · devocional → leitores distintos por dia/semana/mês
+// ─────────────────────────────────────────────────────────────
+const DASH_DIAS_VALIDOS = [30, 60, 90, 180, 365, 1825];
+
+function dashInicioJanela(dias) {
+  return new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+}
+// Bucket de uma data (YYYY-MM-DD) na granularidade: dia | semana (segunda) | mes
+function dashBucket(dataIso, gran) {
+  if (!dataIso) return null;
+  const s = String(dataIso).slice(0, 10);
+  if (gran === 'mes') return s.slice(0, 7);
+  if (gran === 'semana') {
+    const dt = new Date(s + 'T12:00:00');
+    const dow = (dt.getDay() + 6) % 7; // 0 = segunda
+    dt.setDate(dt.getDate() - dow);
+    return dt.toISOString().slice(0, 10);
+  }
+  return s;
+}
+// Todos os buckets de [inicio, hoje] · preenche períodos vazios pra o gráfico ter eixo contínuo
+function dashBucketsIntervalo(inicioIso, gran) {
+  const out = [];
+  const hoje = new Date();
+  let cur = new Date(inicioIso + 'T12:00:00');
+  if (gran === 'mes') cur = new Date(cur.getFullYear(), cur.getMonth(), 1, 12);
+  else if (gran === 'semana') { const dow = (cur.getDay() + 6) % 7; cur.setDate(cur.getDate() - dow); }
+  let guard = 0;
+  while (cur <= hoje && guard++ < 6000) {
+    out.push(dashBucket(cur.toISOString().slice(0, 10), gran));
+    if (gran === 'mes') cur.setMonth(cur.getMonth() + 1);
+    else if (gran === 'semana') cur.setDate(cur.getDate() + 7);
+    else cur.setDate(cur.getDate() + 1);
+  }
+  return [...new Set(out)];
+}
+
+router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    let dias = parseInt(req.query.dias, 10);
+    if (!DASH_DIAS_VALIDOS.includes(dias)) dias = 90;
+    const inicio = dashInicioJanela(dias);
+    const granTrend = dias <= 90 ? 'semana' : 'mes';
+    const granDevoc = dias <= 90 ? 'dia' : (dias <= 730 ? 'semana' : 'mes');
+
+    // Paginação genérica (PostgREST capa em 1000 linhas server-side)
+    const fetchAll = async (table, columns, applyFilter) => {
+      const out = []; let from = 0; const page = 1000;
+      while (true) {
+        let q = supabase.from(table).select(columns).range(from, from + page - 1);
+        if (applyFilter) q = applyFilter(q);
+        const { data, error } = await q;
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return out;
+    };
+
+    // ── Convertidos na janela (bucket pela data do culto) ──
+    const convertidos = await fetchAll(
+      'cui_convertidos',
+      'id, data_culto, primeiro_contato_em, area, telefone',
+      (q) => q.is('deleted_at', null).gte('data_culto', inicio),
+    );
+
+    // engajados = convertido com >=1 encaminhamento status='engajou' (consulta em lotes de 100)
+    const engajadosSet = new Set();
+    const convIds = convertidos.map(c => c.id);
+    for (let i = 0; i < convIds.length; i += 100) {
+      const lote = convIds.slice(i, i + 100);
+      const { data: encs, error: eEnc } = await supabase
+        .from('jornada_encaminhamentos')
+        .select('convertido_id')
+        .eq('status', 'engajou')
+        .in('convertido_id', lote)
+        .is('deleted_at', null);
+      if (eEnc) throw eEnc;
+      (encs || []).forEach(e => engajadosSet.add(e.convertido_id));
+    }
+
+    // Funil por bucket (mesmo bucket = mesma coorte de conversão)
+    const funilMap = new Map();
+    for (const c of convertidos) {
+      const b = dashBucket(c.data_culto, granTrend);
+      if (!b) continue;
+      const o = funilMap.get(b) || { convertidos: 0, contato: 0, engajados: 0 };
+      o.convertidos++;
+      if (c.primeiro_contato_em) o.contato++;
+      if (engajadosSet.has(c.id)) o.engajados++;
+      funilMap.set(b, o);
+    }
+    const funil = dashBucketsIntervalo(inicio, granTrend).map(b => ({
+      periodo: b, ...(funilMap.get(b) || { convertidos: 0, contato: 0, engajados: 0 }),
+    }));
+
+    // Cards de cobertura (toda a janela) · "com dados" = telefone preenchido (dá pra contatar)
+    const ehOnline = (a) => String(a || '').toLowerCase() === 'online';
+    const temDados = (c) => String(c.telefone || '').replace(/\D/g, '').length >= 8;
+    let cp = 0, cpd = 0, co = 0, cod = 0;
+    for (const c of convertidos) {
+      if (ehOnline(c.area)) { co++; if (temDados(c)) cod++; }
+      else { cp++; if (temDados(c)) cpd++; }
+    }
+    const totalConv = convertidos.length;
+    const cards = {
+      conv_presencial_total: cp,
+      conv_presencial_com_dados: cpd,
+      conv_online_total: co,
+      conv_online_com_dados: cod,
+      pct_com_dados: totalConv ? Math.round(((cpd + cod) / totalConv) * 100) : 0,
+    };
+
+    // ── Processos pastorais (capelania entra de verdade na Fase 2) ──
+    const acomp = await fetchAll('cui_acompanhamentos', 'id, created_at', (q) => q.is('deleted_at', null).gte('created_at', inicio));
+    const jorn = await fetchAll('cui_jornada180', 'id, data_encontro', (q) => q.is('deleted_at', null).gte('data_encontro', inicio));
+    const procMap = new Map();
+    const bumpProc = (b, key) => { if (!b) return; const o = procMap.get(b) || { capelania: 0, acompanhamento: 0, jornada180: 0 }; o[key]++; procMap.set(b, o); };
+    for (const a of acomp) bumpProc(dashBucket(a.created_at, granTrend), 'acompanhamento');
+    for (const j of jorn) bumpProc(dashBucket(j.data_encontro, granTrend), 'jornada180');
+    const processos = dashBucketsIntervalo(inicio, granTrend).map(b => ({
+      periodo: b, ...(procMap.get(b) || { capelania: 0, acompanhamento: 0, jornada180: 0 }),
+    }));
+
+    // ── Devocional · leitores distintos por bucket ──
+    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => q.gte('data_devocional', inicio));
+    const devMap = new Map();
+    for (const d of devoc) {
+      const b = dashBucket(d.data_devocional, granDevoc);
+      if (!b) continue;
+      const set = devMap.get(b) || new Set();
+      set.add(d.membro_id);
+      devMap.set(b, set);
+    }
+    const devocional = dashBucketsIntervalo(inicio, granDevoc).map(b => ({
+      periodo: b, leitores: devMap.get(b) ? devMap.get(b).size : 0,
+    }));
+
+    res.json({ dias, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, processos, devocional });
+  } catch (e) {
+    console.error('[CUIDADOS] dashboard-series:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // Acompanhamentos
 // ─────────────────────────────────────────────────────────────
 router.get('/acompanhamentos', async (req, res) => {

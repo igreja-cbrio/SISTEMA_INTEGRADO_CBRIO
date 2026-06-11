@@ -1928,6 +1928,7 @@ export const kpis = {
 
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
+  dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
   jornadaConvertidos: (params) => get('/cuidados/jornada-convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
   acompanhamentos: {
     list: (params) => get('/cuidados/acompanhamentos' + (params ? '?' + new URLSearchParams(params) : '')),
