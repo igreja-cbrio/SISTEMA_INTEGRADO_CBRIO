@@ -173,7 +173,8 @@ router.post('/funcionarios', async (req, res) => {
     const podeRemun = ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
     const insertPayload = {
       nome, cpf: cpf || null, email: email || null, telefone: telefone || null,
-      cargo, area: area || null, tipo_contrato: tipo_contrato || 'clt',
+      cargo, area: area || null,
+      tipo_contrato: String(tipo_contrato || 'CLT').toUpperCase(),  // CHECK exige CLT/PJ/PJ+/PREBENDA (uppercase)
       data_admissao,
       salario: podeRemun ? (salario || null) : null,
       remuneracao_bruta: podeRemun ? (remuneracao_bruta || null) : null,
@@ -217,19 +218,41 @@ function podeEditarRemuneracao(req) {
 }
 const CAMPOS_RH_SENSIVEIS = ['salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'data_demissao'];
 
+// Tipos das colunas editaveis · coercao segura no UPDATE. O front manda ''
+// (string vazia) num campo nao preenchido; sem converter pra null o Postgres
+// recusa o cast pra numeric/date — era o que estourava ("invalid input syntax
+// for type numeric: \"\"") ao inativar/editar quem nao tem salario lancado.
+const RH_FIELD_TYPES = {
+  nome: 'text', cpf: 'text', email: 'text', telefone: 'text', cargo: 'text',
+  area: 'text', tipo_contrato: 'upper', observacoes: 'text', status: 'text',
+  salario: 'num', remuneracao_bruta: 'num',
+  data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date',
+  grau_id: 'uuid',
+};
+function coerceRh(val, type) {
+  if (val === undefined) return undefined;       // nao veio no body → nao mexe na coluna
+  if (val === '' || val === null) return null;   // vazio → null
+  if (type === 'num') { const n = Number(val); return Number.isFinite(n) ? n : null; }
+  if (type === 'upper') return String(val).toUpperCase();  // tipo_contrato · CHECK exige CLT/PJ/PJ+/PREBENDA
+  return val;                                     // text/date/uuid passam direto
+}
+
 // PUT /api/rh/funcionarios/:id
 router.put('/funcionarios/:id', async (req, res) => {
   try {
-    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, salario, remuneracao_bruta, grau_id, data_enquadramento, status, observacoes } = req.body;
-    const updatePayload = {
-      nome, cpf, email, telefone, cargo, area, tipo_contrato,
-      data_admissao, data_demissao: data_demissao || null,
-      salario, status, observacoes,
-      updated_at: new Date().toISOString(),
-    };
-    if (remuneracao_bruta !== undefined) updatePayload.remuneracao_bruta = remuneracao_bruta;
-    if (grau_id !== undefined) updatePayload.grau_id = grau_id || null;
-    if (data_enquadramento !== undefined) updatePayload.data_enquadramento = data_enquadramento || null;
+    const b = req.body || {};
+    // Update PARCIAL e seguro: monta o payload so com os campos presentes no
+    // body e coage '' → null. (1) corrige o erro ao inativar/editar quem nao tem
+    // salario/data e (2) impede que um update parcial (ex.: autosave de
+    // anotacoes) zere campos que nao foram enviados.
+    const updatePayload = { updated_at: new Date().toISOString() };
+    for (const [k, type] of Object.entries(RH_FIELD_TYPES)) {
+      if (!(k in b)) continue;
+      const v = coerceRh(b[k], type);
+      // nome e data_admissao sao NOT NULL · nunca apaga por engano
+      if ((k === 'nome' || k === 'data_admissao') && (v === null || v === '')) continue;
+      updatePayload[k] = v;
+    }
     // Bloqueia edicao de remuneracao/status por quem nao tem nivel suficiente.
     if (!podeEditarRemuneracao(req)) {
       for (const f of CAMPOS_RH_SENSIVEIS) delete updatePayload[f];
