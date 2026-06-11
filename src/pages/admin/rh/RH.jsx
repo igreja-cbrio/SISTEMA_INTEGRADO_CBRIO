@@ -361,7 +361,11 @@ const TABS = [
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function RH() {
-  const { isDiretor } = useAuth();
+  const { isAdmin, getAccessLevel } = useAuth();
+  // Quem vê remuneração (salário/benefícios/Folha/PCS/CPF) na tela · MESMA regra do
+  // backend (podeEditarRemuneracao): admin/diretor ou RH nível ≥4. Padrão conservador,
+  // ajustável quando a política de confidencialidade for definida com o RH.
+  const podeRemun = isAdmin || getAccessLevel(['rh']) >= 4;
   const [tab, setTab] = useState('dashboard');
   const [dash, setDash] = useState(null);
   const [funcs, setFuncs] = useState([]);
@@ -558,7 +562,7 @@ export default function RH() {
       <Tabs value={tab} onValueChange={setTab}>
         <ScrollArea className="w-full">
           <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none">
-            {TABS.map((t) => {
+            {TABS.filter(t => podeRemun || !['folha', 'pcs'].includes(t.key)).map((t) => {
               const Icon = t.icon;
               return (
                 <TabsTrigger
@@ -587,7 +591,7 @@ export default function RH() {
             showToast={showToast}
           />
         </TabsContent>
-        <TabsContent value="pcs"><TabPCS /></TabsContent>
+        <TabsContent value="pcs">{podeRemun && <TabPCS />}</TabsContent>
         <TabsContent value="admissao">
           <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-muted-foreground">
             <strong className="text-foreground">Admissão</strong> é o processo de contratação por etapas (rascunho → formulário pro contratado preencher → contrato → assinatura → concluído). Para apenas adicionar alguém que já está na equipe, use o botão <strong className="text-foreground">"Adicionar colaborador"</strong> no topo.
@@ -596,7 +600,7 @@ export default function RH() {
         </TabsContent>
         <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); }} /></TabsContent>
         <TabsContent value="acessos"><AcessosTab onDetail={openDetail} /></TabsContent>
-        <TabsContent value="folha"><TabFolha /></TabsContent>
+        <TabsContent value="folha">{podeRemun && <TabFolha />}</TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
         <TabsContent value="treinamentos">
           <TreinamentosTab treinos={treinos} funcs={funcs}
@@ -616,12 +620,12 @@ export default function RH() {
       </Tabs>
 
       {/* Modais */}
-      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} />
+      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} podeRemun={podeRemun} />
       <TreinamentoFormModal open={!!modalTreino} data={modalTreino} onClose={() => setModalTreino(null)} onSave={saveTreinamento} />
       
       <FuncionarioDetailPanel
         open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)}
-        funcs={funcs}
+        funcs={funcs} podeRemun={podeRemun}
         onEdit={(f) => { setModalDetail(null); setModalFunc(f); }}
         onDelete={abrirDesligamento}
         onReativar={reativarFuncionario}
@@ -2085,7 +2089,7 @@ function OrgChartTab({ funcs, onDetail, onChanged }) {
 // MODAIS
 // ═══════════════════════════════════════════════════════════
 
-function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], setores = [], areas = [] }) {
+function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], setores = [], areas = [], podeRemun = true }) {
   const [f, setF] = useState({});
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -2129,7 +2133,7 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </>}>
       <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
       <div style={styles.formRow}>
-        <Input label="CPF" value={f.cpf || ''} onChange={e => upd('cpf', e.target.value)} />
+        {podeRemun && <Input label="CPF" value={f.cpf || ''} onChange={e => upd('cpf', e.target.value)} />}
         <Input label="Email" type="email" value={f.email || ''} onChange={e => upd('email', e.target.value)} />
       </div>
       <div style={styles.formRow}>
@@ -2158,7 +2162,7 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </div>
       <div style={styles.formRow}>
         <Input label="Data Admissão *" type="date" value={f.data_admissao || ''} onChange={e => upd('data_admissao', e.target.value)} />
-        <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
+        {podeRemun && <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />}
       </div>
       {/* O gestor direto é definido na seção "Hierarquia" da ficha (editor canônico,
           com trava de ciclo) — não aqui, pra não ter dois editores divergentes. */}
@@ -2720,7 +2724,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
   );
 }
 
-function FuncionarioDetailPanel({ open, data, onClose, funcs = [], onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
+function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
@@ -2931,7 +2935,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], onEdit, onDel
             { key: 'cpf', label: 'CPF' },
             { key: 'data_admissao', label: 'Admissão', type: 'date' },
             { key: 'salario', label: 'Salário (R$)', type: 'number' },
-          ].map(f => (
+          ].filter(f => podeRemun || !['cpf', 'salario'].includes(f.key)).map(f => (
             <div key={f.key} style={f.full ? { gridColumn: '1 / -1' } : undefined}>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{f.label}</label>
               <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type={f.type || 'text'} value={editForm[f.key] || ''} onChange={e => setEditForm(p => ({ ...p, [f.key]: e.target.value }))} />
@@ -2964,12 +2968,12 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], onEdit, onDel
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Cargo:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{data.cargo}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Área:</span><div style={{ fontSize: 14 }}>{data.area || '—'}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>CPF:</span><div style={{ fontSize: 14 }}>{data.cpf || '—'}</div></div>
+          <div><span style={{ fontSize: 11, color: C.text2 }}>CPF:</span><div style={{ fontSize: 14 }}>{podeRemun ? (data.cpf || '—') : '•••'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Email:</span><div style={{ fontSize: 14 }}>{data.email || '—'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Telefone:</span><div style={{ fontSize: 14 }}>{data.telefone || '—'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Contrato:</span><div style={{ fontSize: 14 }}>{TIPO_CONTRATO[data.tipo_contrato]}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Admissão:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_admissao)}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Salário:</span><div style={{ fontSize: 14 }}>{fmtMoney(data.salario)}</div></div>
+          <div><span style={{ fontSize: 11, color: C.text2 }}>Salário:</span><div style={{ fontSize: 14 }}>{podeRemun ? fmtMoney(data.salario) : '•••'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_COLORS} /></div></div>
         </div>
       )}
@@ -2980,10 +2984,10 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], onEdit, onDel
       {/* Anotações editáveis */}
       <NotasColaborador funcId={data.id} initialValue={data.observacoes || ''} />
 
-      {/* Benefícios e Remuneração */}
-      <BeneficiosSection data={data} onSave={async (updated) => {
+      {/* Benefícios e Remuneração · só pra quem pode ver remuneração */}
+      {podeRemun && <BeneficiosSection data={data} onSave={async (updated) => {
         try { await rh.funcionarios.update(data.id, updated); onClose(); } catch (e) { console.error(e); }
-      }} />
+      }} />}
 
       {/* Documentos com upload */}
       <DocumentosSection data={data} onNewDoc={onNewDoc} onDeleteDoc={onDeleteDoc} onRefresh={() => onClose()} />
