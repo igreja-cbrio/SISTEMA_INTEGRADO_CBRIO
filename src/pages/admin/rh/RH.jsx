@@ -2160,10 +2160,8 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
         <Input label="Data Admissão *" type="date" value={f.data_admissao || ''} onChange={e => upd('data_admissao', e.target.value)} />
         <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
       </div>
-      <FormSelect label="Gestor Direto" value={f.gestor_id || ''} onChange={e => upd('gestor_id', e.target.value || null)} placeholder="Nenhum (nível máximo)">
-        <SelectItem value="__none__">Nenhum (nível máximo)</SelectItem>
-        {funcionarios.filter(fn => fn.id !== f.id && fn.status === 'ativo').map(fn => <SelectItem key={fn.id} value={fn.id}>{fn.nome} — {fn.cargo}</SelectItem>)}
-      </FormSelect>
+      {/* O gestor direto é definido na seção "Hierarquia" da ficha (editor canônico,
+          com trava de ciclo) — não aqui, pra não ter dois editores divergentes. */}
       {f.id && (
         <div style={styles.formRow}>
           <FormSelect label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>

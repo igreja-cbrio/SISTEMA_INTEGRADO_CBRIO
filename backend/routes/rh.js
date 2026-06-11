@@ -234,7 +234,7 @@ router.get('/funcionarios/:id', async (req, res) => {
 // POST /api/rh/funcionarios
 router.post('/funcionarios', async (req, res) => {
   try {
-    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, remuneracao_bruta, grau_id, data_enquadramento, observacoes } = req.body;
+    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, remuneracao_bruta, grau_id, data_enquadramento, observacoes, setor_id, foto_url } = req.body;
     if (!nome || !cargo || !data_admissao) {
       return res.status(400).json({ error: 'Nome, cargo e data de admissão são obrigatórios' });
     }
@@ -245,6 +245,8 @@ router.post('/funcionarios', async (req, res) => {
       nome, cpf: cpf || null, email: email || null, telefone: telefone || null,
       cargo, area: area || null,
       tipo_contrato: String(tipo_contrato || 'CLT').toUpperCase(),  // CHECK exige CLT/PJ/PJ+/PREBENDA (uppercase)
+      setor_id: setor_id ? parseInt(setor_id, 10) : null,
+      foto_url: foto_url || null,
       data_admissao,
       salario: podeRemun ? (salario || null) : null,
       remuneracao_bruta: podeRemun ? (remuneracao_bruta || null) : null,
@@ -286,7 +288,15 @@ router.post('/funcionarios', async (req, res) => {
 function podeEditarRemuneracao(req) {
   return ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
 }
-const CAMPOS_RH_SENSIVEIS = ['salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'data_demissao'];
+const CAMPOS_RH_SENSIVEIS = [
+  'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'data_demissao',
+  // benefícios/descontos/totais/provisões também são remuneração → só nível alto edita
+  'complemento_salario', 'alimentacao', 'transporte', 'saude', 'seguro_vida', 'educacao',
+  'saldo_livre', 'plano_saude', 'gratificacao', 'adicional_nivel', 'participacao_comite', 'veiculo',
+  'adicional_pastores', 'adicional_lideranca', 'adicional_pulpito',
+  'fgts', 'ir', 'inss', 'remuneracao_liquida', 'custo_total_mensal',
+  'bonus_anual_50', 'bonus_anual_integral', 'ferias_integral',
+];
 
 // Tipos das colunas editaveis · coercao segura no UPDATE. O front manda ''
 // (string vazia) num campo nao preenchido; sem converter pra null o Postgres
@@ -294,8 +304,19 @@ const CAMPOS_RH_SENSIVEIS = ['salario', 'remuneracao_bruta', 'grau_id', 'data_en
 // for type numeric: \"\"") ao inativar/editar quem nao tem salario lancado.
 const RH_FIELD_TYPES = {
   nome: 'text', cpf: 'text', email: 'text', telefone: 'text', cargo: 'text',
-  area: 'text', tipo_contrato: 'upper', observacoes: 'text', status: 'text',
+  area: 'text', tipo_contrato: 'upper', observacoes: 'text', status: 'text', foto_url: 'text',
+  setor_id: 'int',
   salario: 'num', remuneracao_bruta: 'num',
+  // Benefícios / descontos / totais / provisões — editados na seção Benefícios da
+  // ficha. Antes NÃO entravam no payload (eram descartados silenciosamente) → a
+  // Folha ficava sem dado. Agora persistem (e são sensíveis · ver CAMPOS_RH_SENSIVEIS).
+  complemento_salario: 'num', alimentacao: 'num', transporte: 'num', saude: 'num',
+  seguro_vida: 'num', educacao: 'num', saldo_livre: 'num', plano_saude: 'num',
+  gratificacao: 'num', adicional_nivel: 'num', participacao_comite: 'num', veiculo: 'num',
+  adicional_pastores: 'num', adicional_lideranca: 'num', adicional_pulpito: 'num',
+  fgts: 'num', ir: 'num', inss: 'num',
+  remuneracao_liquida: 'num', custo_total_mensal: 'num',
+  bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
   data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date',
   grau_id: 'uuid',
 };
@@ -303,6 +324,7 @@ function coerceRh(val, type) {
   if (val === undefined) return undefined;       // nao veio no body → nao mexe na coluna
   if (val === '' || val === null) return null;   // vazio → null
   if (type === 'num') { const n = Number(val); return Number.isFinite(n) ? n : null; }
+  if (type === 'int') { const n = parseInt(val, 10); return Number.isFinite(n) ? n : null; }
   if (type === 'upper') return String(val).toUpperCase();  // tipo_contrato · CHECK exige CLT/PJ/PJ+/PREBENDA
   return val;                                     // text/date/uuid passam direto
 }
