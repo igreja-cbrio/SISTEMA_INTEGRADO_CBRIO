@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw } from 'lucide-react';
+import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatisticsCard } from '../../../components/ui/statistics-card';
@@ -45,6 +46,41 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
         <div className="flex gap-2.5 justify-center">
           <Button variant="ghost" onClick={onCancel}>Cancelar</Button>
           <Button variant="destructive" onClick={onConfirm}>Confirmar</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Diálogo de desligamento (data real + motivo) ────────────
+// Não apaga o colaborador · marca como inativo preservando o histórico.
+function DesligarModal({ func, onClose, onConfirm }) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const [data, setData] = useState(hoje);
+  const [motivo, setMotivo] = useState('');
+  useEffect(() => { if (func) { setData(hoje); setMotivo(''); } }, [func]);
+  if (!func) return null;
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-popover rounded-2xl p-6 w-full max-w-[420px] shadow-2xl" style={{ animation: 'cbrio-modal-center-in 0.2s ease-out' }}>
+        <div className="flex items-center gap-3 mb-1">
+          <div className="h-10 w-10 rounded-full bg-amber-500/15 text-amber-600 flex items-center justify-center"><UserMinus className="h-5 w-5" /></div>
+          <div className="text-[15px] font-semibold text-foreground">Desligar colaborador</div>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          {func.nome ? <strong className="text-foreground">{func.nome}</strong> : 'O colaborador'} fica como <strong>inativo</strong> — o registro e o histórico <strong>não são apagados</strong> e dá pra reativar depois.
+        </p>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Data do desligamento</label>
+        <input type="date" value={data} onChange={e => setData(e.target.value)} max={hoje}
+          className="mt-1 mb-3 flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Motivo (opcional)</label>
+        <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} placeholder="Ex.: pedido de demissão, fim de contrato…"
+          className="mt-1 mb-4 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none" />
+        <div className="flex gap-2.5 justify-end">
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button variant="destructive" disabled={!data} onClick={() => onConfirm({ data_demissao: data, motivo: motivo.trim() || null })}>
+            <UserMinus className="h-4 w-4 mr-1.5" />Desligar
+          </Button>
         </div>
       </div>
     </div>
@@ -165,6 +201,7 @@ export default function RH() {
   const [modalFerias, setModalFerias] = useState(null);
   const [modalDetail, setModalDetail] = useState(null);
   const [modalDoc, setModalDoc] = useState(null);
+  const [desligarFunc, setDesligarFunc] = useState(null); // colaborador sendo desligado
 
   // Toast & confirmação
   const [toast, setToast] = useState(null); // { message, type }
@@ -209,19 +246,58 @@ export default function RH() {
   useEffect(() => { loadFuncs(); }, [filtroStatus, filtroArea, busca]);
 
   // ── Handlers ──
+  // Campos restaurados num "Desfazer" de edição
+  const CAMPOS_RESTAURAVEIS = ['nome', 'cpf', 'email', 'telefone', 'cargo', 'area', 'tipo_contrato', 'data_admissao', 'data_demissao', 'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'gestor_id', 'observacoes'];
+
   async function saveFuncionario(data) {
+    const anterior = data.id ? funcs.find(x => x.id === data.id) : null;
     try {
       if (data.id) await rh.funcionarios.update(data.id, data);
       else await rh.funcionarios.create(data);
       setModalFunc(null);
       loadFuncs(); loadDash();
-      showSuccess(data.id ? 'Colaborador atualizado!' : 'Colaborador criado!');
+      if (data.id && anterior) {
+        // Snapshot pré-edição pra permitir desfazer (toast com ação)
+        const restaura = {};
+        for (const k of CAMPOS_RESTAURAVEIS) if (k in anterior) restaura[k] = anterior[k] ?? null;
+        sonnerToast.success('Colaborador atualizado', {
+          description: 'Mexeu em algo sem querer?',
+          duration: 10000,
+          action: {
+            label: 'Desfazer',
+            onClick: async () => {
+              try {
+                await rh.funcionarios.update(data.id, restaura);
+                loadFuncs(); loadDash();
+                sonnerToast.success('Alteração desfeita');
+              } catch (e) { sonnerToast.error(e.message || 'Erro ao desfazer'); }
+            },
+          },
+        });
+      } else {
+        showSuccess('Colaborador criado!');
+      }
     } catch (e) { showToast(e.message); }
   }
 
-  function deleteFuncionario(id) {
-    askConfirm('Remover este colaborador?', async () => {
-      try { await rh.funcionarios.remove(id); loadFuncs(); loadDash(); setModalDetail(null); showSuccess('Colaborador removido'); }
+  // Abre o diálogo de desligamento (data real + motivo) · NÃO apaga o registro
+  function abrirDesligamento(id) {
+    setDesligarFunc(funcs.find(x => x.id === id) || { id });
+  }
+
+  async function confirmarDesligamento({ data_demissao, motivo }) {
+    if (!desligarFunc) return;
+    try {
+      await rh.funcionarios.desligar(desligarFunc.id, { data_demissao, motivo });
+      setDesligarFunc(null); setModalDetail(null);
+      loadFuncs(); loadDash();
+      showSuccess('Colaborador desligado · histórico preservado');
+    } catch (e) { showToast(e.message); }
+  }
+
+  function reativarFuncionario(id) {
+    askConfirm('Reativar este colaborador (voltar para ativo)?', async () => {
+      try { await rh.funcionarios.reativar(id); loadFuncs(); loadDash(); setModalDetail(null); showSuccess('Colaborador reativado'); }
       catch (e) { showToast(e.message); }
     });
   }
@@ -288,9 +364,10 @@ export default function RH() {
             <p className="text-xs text-muted-foreground" style={{ marginTop: 2 }}>Colaboradores · Treinamentos · Férias</p>
           </div>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => setModalFunc({})}>
+        <Button size="sm" className="gap-2" onClick={() => setModalFunc({})}
+          title="Cadastro manual direto: você digita os dados e a pessoa entra na base na hora. Para o processo completo de contratação (formulário + contrato + assinatura), use a aba Admissão.">
           <UserPlus className="w-4 h-4" />
-          Novo Colaborador
+          Adicionar colaborador
         </Button>
       </div>
 
@@ -325,12 +402,17 @@ export default function RH() {
             funcs={funcs} loading={loading} busca={busca} setBusca={setBusca}
             filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
             filtroArea={filtroArea} setFiltroArea={setFiltroArea}
-            onNew={() => setModalFunc({})} onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={deleteFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
+            onNew={() => setModalFunc({})} onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
             showToast={showToast}
           />
         </TabsContent>
         <TabsContent value="pcs"><TabPCS /></TabsContent>
-        <TabsContent value="admissao"><TabAdmissao /></TabsContent>
+        <TabsContent value="admissao">
+          <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-muted-foreground">
+            <strong className="text-foreground">Admissão</strong> é o processo de contratação por etapas (rascunho → formulário pro contratado preencher → contrato → assinatura → concluído). Para apenas adicionar alguém que já está na equipe, use o botão <strong className="text-foreground">"Adicionar colaborador"</strong> no topo.
+          </div>
+          <TabAdmissao />
+        </TabsContent>
         <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} /></TabsContent>
         <TabsContent value="folha"><TabFolha /></TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
@@ -358,7 +440,8 @@ export default function RH() {
       <FuncionarioDetailPanel
         open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)}
         onEdit={(f) => { setModalDetail(null); setModalFunc(f); }}
-        onDelete={deleteFuncionario}
+        onDelete={abrirDesligamento}
+        onReativar={reativarFuncionario}
         onNewDoc={(funcId) => setModalDoc({ funcionario_id: funcId })}
         onDeleteDoc={deleteDocumento}
         onSaveInline={async (updated) => {
@@ -374,6 +457,8 @@ export default function RH() {
         }}
       />
       <DocumentoFormModal open={!!modalDoc} data={modalDoc} onClose={() => setModalDoc(null)} onSave={saveDocumento} />
+
+      <DesligarModal func={desligarFunc} onClose={() => setDesligarFunc(null)} onConfirm={confirmarDesligamento} />
 
       {/* Toast & Confirm */}
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
@@ -598,7 +683,7 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onNew, onDetail, onDelete, onImport, showToast }) {
+function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onNew, onDetail, onDelete, onReativar, onImport, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
@@ -724,11 +809,22 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{f.area || '—'}</span></td>
                   <td style={styles.td}><span className="text-sm">{TIPO_CONTRATO[f.tipo_contrato] || f.tipo_contrato}</span></td>
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{fmtDate(f.data_admissao)}</span></td>
-                  <td style={styles.td}><Badge status={f.status} map={STATUS_COLORS} /></td>
                   <td style={styles.td}>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={e => { e.stopPropagation(); onDelete(f.id); }}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <Badge status={f.status} map={STATUS_COLORS} />
+                    {f.status === 'inativo' && f.data_demissao && (
+                      <div className="text-[11px] text-muted-foreground mt-1">desde {fmtDate(f.data_demissao)}</div>
+                    )}
+                  </td>
+                  <td style={styles.td}>
+                    {f.status === 'inativo' ? (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" title="Reativar colaborador" onClick={e => { e.stopPropagation(); onReativar(f.id); }}>
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-600" title="Desligar colaborador" onClick={e => { e.stopPropagation(); onDelete(f.id); }}>
+                        <UserMinus className="h-4 w-4" />
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1348,6 +1444,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
 function OrgChartTab({ funcs, onDetail }) {
   const ativos = funcs.filter(f => f.status === 'ativo');
   const containerRef = useRef(null);
+  const contentRef = useRef(null);
   const [zoom, setZoom] = useState(0.85);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
@@ -1551,10 +1648,33 @@ function OrgChartTab({ funcs, onDetail }) {
   const roots = getChildren(null);
   const comGestor = ativos.filter(f => f.gestor_id).length;
 
+  // Centraliza o conteúdo na área visível (o organograma nasce alinhado à
+  // esquerda e ficava fora da vista, obrigando a arrastar pra encontrá-lo).
+  // transform-origin é 'top center', então o centro do elemento é invariante ao
+  // zoom · basta alinhar o centro do conteúdo ao centro do container.
+  const centralizar = useCallback(() => {
+    const c = containerRef.current;
+    const el = contentRef.current;
+    if (!c || !el) return;
+    setPan({ x: (c.clientWidth - el.offsetWidth) / 2, y: 0 });
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => centralizar(), 60);
+    return () => clearTimeout(t);
+    // recentraliza quando muda o nº de raízes ou os filtros
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roots.length, filterArea, searchTerm]);
+
   return (
     <>
       {/* Toolbar */}
       <div className="flex flex-col gap-3 mb-4">
+        {ativos.length > 0 && comGestor === 0 && (
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-muted-foreground">
+            Ainda não há hierarquia: defina o <strong className="text-foreground">"Gestor Direto"</strong> de cada colaborador (no detalhe ou no formulário de edição) para o organograma montar a árvore. Por enquanto todos aparecem no topo.
+          </div>
+        )}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="text-sm text-muted-foreground">
             {ativos.length} colaboradores · {comGestor} com gestor definido
@@ -1627,7 +1747,7 @@ function OrgChartTab({ funcs, onDetail }) {
               position: 'relative',
             }}
           >
-            <div style={{
+            <div ref={contentRef} style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: 'top center',
               display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -1651,7 +1771,7 @@ function OrgChartTab({ funcs, onDetail }) {
             >−</button>
             <div className="h-px bg-border mx-1" />
             <button
-              onClick={() => { setZoom(0.85); setPan({ x: 0, y: 0 }); }}
+              onClick={() => { setZoom(0.85); centralizar(); }}
               className="w-8 h-8 rounded-xl flex items-center justify-center text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >fit</button>
           </div>
@@ -2200,7 +2320,7 @@ function NotasColaborador({ funcId, initialValue }) {
 const NIVEL_LABELS = { 1: 'Sem acesso', 2: 'Pessoal', 3: 'Área', 4: 'Setor', 5: 'Admin' };
 const NIVEL_COLORS = { 1: C.red, 2: C.amber, 3: C.blue, 4: C.green, 5: '#8b5cf6' };
 
-function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDoc, onDeleteDoc, onSaveInline, onPhotoUpdated }) {
+function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
@@ -2607,7 +2727,11 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 16, borderTop: `1px solid ${C.border}`, marginTop: 16 }}>
-        <Button variant="destructive" size="sm" className="gap-1.5" onClick={() => onDelete(data.id)}><Trash2 className="h-3.5 w-3.5" />Remover Colaborador</Button>
+        {data.status === 'inativo' ? (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onReativar(data.id)}><RotateCcw className="h-3.5 w-3.5" />Reativar colaborador</Button>
+        ) : (
+          <Button variant="destructive" size="sm" className="gap-1.5" onClick={() => onDelete(data.id)}><UserMinus className="h-3.5 w-3.5" />Desligar colaborador</Button>
+        )}
       </div>
         </div>{/* end padding div */}
       </div>{/* end panel */}
