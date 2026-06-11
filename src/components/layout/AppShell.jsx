@@ -25,6 +25,8 @@ import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
 } from '../ui/dropdown-menu';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Button } from '../ui/button';
 import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 
@@ -236,6 +238,7 @@ export default function AppShell() {
   };
   const [notifs, setNotifs] = useState([]);
   const [notifsLoading, setNotifsLoading] = useState(false);
+  const [notifAberta, setNotifAberta] = useState(null); // pop-up com a mensagem completa
   const prevNotifCount = useRef(-1);
 
   useEffect(() => {
@@ -326,10 +329,16 @@ export default function AppShell() {
         setNotifCount(prev => Math.max(0, prev - 1));
       } catch { /* ignore */ }
     }
-    if (n.link) {
-      setNotifOpen(false);
-      navigate(n.link);
+    // Avisos (e notificações sem página de destino) abrem a MENSAGEM COMPLETA
+    // num pop-up — a prévia da lista corta em 2 linhas. As demais continuam
+    // navegando direto pro link (fluxos de aprovação etc).
+    const ehAviso = (n.tipo || '').startsWith('aviso') || n.modulo === 'sistema' || !n.link;
+    setNotifOpen(false);
+    if (ehAviso) {
+      setNotifAberta(n);
+      return;
     }
+    navigate(n.link);
   }
 
   async function handleLerTodas() {
@@ -507,6 +516,38 @@ export default function AppShell() {
       <PrimeiroAcessoSenhaModal />
       <PrimeiroAcessoFotoModal />
       <FotoLightboxGlobal />
+
+      {/* Pop-up de notificação · mensagem completa (avisos) */}
+      <Dialog open={!!notifAberta} onOpenChange={(v) => { if (!v) setNotifAberta(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                style={{
+                  color: MOD_COLORS[notifAberta?.modulo] || '#6b7280',
+                  background: `${MOD_COLORS[notifAberta?.modulo] || '#6b7280'}15`,
+                }}
+              >
+                {MOD_LABELS[notifAberta?.modulo] || notifAberta?.modulo || 'Aviso'}
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {notifAberta ? new Date(notifAberta.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+              </span>
+            </div>
+            <DialogTitle className="text-left leading-snug">{notifAberta?.titulo}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{notifAberta?.mensagem}</p>
+          <div className="flex gap-2 justify-end mt-2">
+            <Button variant="outline" onClick={() => setNotifAberta(null)}>Fechar</Button>
+            {notifAberta?.link && (
+              <Button onClick={() => { const l = notifAberta.link; setNotifAberta(null); navigate(l); }}>
+                Abrir página
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
