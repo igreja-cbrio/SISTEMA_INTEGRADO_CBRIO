@@ -842,6 +842,10 @@ export const patrimonio = {
 
 export const rh = {
   dashboard: () => get('/rh/dashboard'),
+  organograma: {
+    ia: (instrucao) => post('/rh/organograma/ia', { instrucao }),
+    aplicar: (mudancas) => post('/rh/organograma/ia/aplicar', { mudancas }),
+  },
   funcionarios: {
     list: (params) => get('/rh/funcionarios' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/rh/funcionarios/${id}`),

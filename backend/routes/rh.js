@@ -5,6 +5,7 @@ const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
+const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -305,6 +306,140 @@ router.post('/funcionarios/:id/reativar', async (req, res) => {
   } catch (e) {
     console.error('[RH] Reativar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao reativar funcionário' });
+  }
+});
+
+// ── ORGANOGRAMA · assistente de IA ─────────────────────────
+// Detecta ciclo: aplicando o mapa de gestores, ninguém pode ser ancestral de
+// si mesmo. Retorna true se houver ciclo a partir de algum nó.
+function temCiclo(mapaGestor) {
+  for (const inicio of mapaGestor.keys()) {
+    let atual = mapaGestor.get(inicio);
+    const visitados = new Set([inicio]);
+    let passos = 0;
+    while (atual && passos < 1000) {
+      if (visitados.has(atual)) return true;
+      visitados.add(atual);
+      atual = mapaGestor.get(atual) || null;
+      passos += 1;
+    }
+  }
+  return false;
+}
+
+async function carregarAtivosOrg(req) {
+  let q = supabase.from('rh_funcionarios')
+    .select('id, nome, cargo, area, gestor_id, status')
+    .eq('status', 'ativo')
+    .order('nome');
+  q = applyAccessFilter(q, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// POST /api/rh/organograma/ia — interpreta o pedido e PROPÕE mudanças (não aplica)
+router.post('/organograma/ia', async (req, res) => {
+  try {
+    const instrucao = (req.body?.instrucao || '').toString().trim();
+    if (!instrucao) return res.status(400).json({ error: 'Descreva o que deseja fazer.' });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: 'Assistente de IA indisponível (ANTHROPIC_API_KEY não configurada).' });
+    }
+
+    const ativos = await carregarAtivosOrg(req);
+    if (!ativos.length) return res.status(400).json({ error: 'Nenhum colaborador ativo para organizar.' });
+
+    // Index curto pro modelo (evita ecoar UUIDs)
+    const porIdx = ativos.map((f, i) => ({ ...f, idx: i }));
+    const idPorIdx = new Map(porIdx.map((f) => [f.idx, f.id]));
+    const idxPorId = new Map(porIdx.map((f) => [f.id, f.idx]));
+    const nomePorId = new Map(porIdx.map((f) => [f.id, f.nome]));
+    const paraModelo = porIdx.map((f) => ({
+      idx: f.idx, nome: f.nome, cargo: f.cargo, area: f.area,
+      gestorIdx: f.gestor_id != null && idxPorId.has(f.gestor_id) ? idxPorId.get(f.gestor_id) : null,
+    }));
+
+    let bruto;
+    try {
+      bruto = await organogramaIA(instrucao, paraModelo);
+    } catch (e) {
+      console.error('[RH] organograma IA:', e.message);
+      return res.status(502).json({ error: 'Não consegui interpretar o pedido. Tente reformular de forma mais direta.' });
+    }
+
+    const avisos = [];
+    const mudancas = [];
+    for (const m of (bruto?.mudancas || [])) {
+      const cIdx = Number(m.colaborador);
+      if (!idPorIdx.has(cIdx)) continue;
+      const colaboradorId = idPorIdx.get(cIdx);
+      let gestorId = null;
+      if (m.gestor !== null && m.gestor !== undefined) {
+        const gIdx = Number(m.gestor);
+        if (!idPorIdx.has(gIdx)) { avisos.push(`Gestor inválido para ${nomePorId.get(colaboradorId)}.`); continue; }
+        gestorId = idPorIdx.get(gIdx);
+      }
+      if (gestorId && gestorId === colaboradorId) { avisos.push(`${nomePorId.get(colaboradorId)} não pode ser gestor de si.`); continue; }
+      mudancas.push({
+        funcionario_id: colaboradorId,
+        funcionario_nome: nomePorId.get(colaboradorId),
+        gestor_id: gestorId,
+        gestor_nome: gestorId ? nomePorId.get(gestorId) : null,
+        motivo: (m.motivo || '').toString().slice(0, 200),
+      });
+    }
+
+    // Valida ciclo no conjunto final (mapa atual + mudanças propostas)
+    if (mudancas.length) {
+      const mapa = new Map(ativos.map((f) => [f.id, f.gestor_id || null]));
+      for (const c of mudancas) mapa.set(c.funcionario_id, c.gestor_id);
+      if (temCiclo(mapa)) {
+        return res.status(400).json({ error: 'Essa mudança criaria um ciclo na hierarquia (alguém acabaria reportando a si mesmo). Revise o pedido.' });
+      }
+    }
+
+    res.json({ mudancas, observacao: (bruto?.observacao || '').toString().slice(0, 400), avisos });
+  } catch (e) {
+    console.error('[RH] organograma IA:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar o assistente.' });
+  }
+});
+
+// POST /api/rh/organograma/ia/aplicar — aplica as mudanças confirmadas
+router.post('/organograma/ia/aplicar', async (req, res) => {
+  try {
+    const mudancas = Array.isArray(req.body?.mudancas) ? req.body.mudancas : [];
+    if (!mudancas.length) return res.status(400).json({ error: 'Nenhuma mudança para aplicar.' });
+
+    const ativos = await carregarAtivosOrg(req);
+    const idsValidos = new Set(ativos.map((f) => f.id));
+
+    // Revalida (ids existem, sem auto-gestor) e revalida ciclo
+    const mapa = new Map(ativos.map((f) => [f.id, f.gestor_id || null]));
+    const aplicar = [];
+    for (const c of mudancas) {
+      const fid = c.funcionario_id;
+      const gid = c.gestor_id ?? null;
+      if (!idsValidos.has(fid)) continue;
+      if (gid && !idsValidos.has(gid)) continue;
+      if (gid && gid === fid) continue;
+      mapa.set(fid, gid);
+      aplicar.push({ fid, gid });
+    }
+    if (!aplicar.length) return res.status(400).json({ error: 'Mudanças inválidas.' });
+    if (temCiclo(mapa)) return res.status(400).json({ error: 'As mudanças criariam um ciclo na hierarquia.' });
+
+    let ok = 0;
+    for (const { fid, gid } of aplicar) {
+      const { error } = await supabase.from('rh_funcionarios').update({ gestor_id: gid }).eq('id', fid);
+      if (error) { console.error('[RH] aplicar organograma:', error.message); continue; }
+      ok += 1;
+    }
+    res.json({ aplicadas: ok });
+  } catch (e) {
+    console.error('[RH] aplicar organograma IA:', e.message);
+    res.status(500).json({ error: 'Erro ao aplicar mudanças.' });
   }
 });
 
