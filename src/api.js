@@ -854,6 +854,7 @@ export const rh = {
     remove: (id) => del(`/rh/funcionarios/${id}`),
     desligar: (id, data) => post(`/rh/funcionarios/${id}/desligar`, data),
     reativar: (id) => post(`/rh/funcionarios/${id}/reativar`),
+    setGestor: (id, gestorId) => put(`/rh/funcionarios/${id}/gestor`, { gestor_id: gestorId || null }),
     uploadFoto: (id, file) => {
       const fd = new FormData();
       fd.append('foto', file);
