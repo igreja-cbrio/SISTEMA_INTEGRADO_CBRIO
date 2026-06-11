@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -99,6 +99,178 @@ const STATUS_COLORS = {
 // Só estes 4 — não oferecer minúsculas nem voluntario/estagiario (estouram o constraint).
 const OPCOES_CONTRATO = ['CLT', 'PJ', 'PJ+', 'PREBENDA'];
 
+// ── Sugestão de cargo de PERMISSÃO a partir do cargo (texto livre) do RH ──
+// O título do RH e o cargo de permissão são cadastros distintos. Isto só
+// SUGERE o cargo de permissão mais provável (overrides pros casos do CBRio +
+// sobreposição de palavras). Nunca aplica sozinho — é estimativa pra revisão.
+function _normCargo(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+const SUGESTAO_CARGO_OVERRIDES = [
+  [/coordenador.*integracao/, 'lider-ministerial'],
+  [/coordenador.*cuidados/, 'lider-ministerial'],
+  [/coordenador.*(grupos|cba)/, 'lider-ministerial'],
+  [/supervisor.*jornada/, 'supervisor-jornada'],
+  [/(coordenador|lider|assistente).*(cbkids|kids)/, 'coordenador-kids'],
+  [/coordenador.*ami/, 'coordenador-ami'],
+  [/coordenador.*bridge/, 'coordenador-bridge'],
+  [/(coordenador|lider).*online/, 'coordenador-online'],
+  [/coordenador.*adoracao/, 'coordenador-adoracao'],
+  [/coordenador.*producao/, 'coordenador-producao'],
+  [/assistente.*producao/, 'assistente-producao'],
+  [/(coordenador|lider).*marketing/, 'coordenador-marketing'],
+  [/(designer|social media|produtor|audiovisual|\bvideo)/, 'assistente-marketing'],
+  [/coordenador.*financeiro/, 'coordenador-financeiro'],
+  [/assistente.*(financeiro|administrativo)/, 'assistente-financeiro'],
+  [/(coordenador|diretor).*\brh\b/, 'diretor-rh'],
+  [/coordenador.*voluntariado/, 'coordenador-voluntarios'],
+  [/pastor.*senior/, 'pastor-senior'],
+  [/pastor.*(presidente|executivo)/, 'pastor-presidente'],
+  [/diretor.*criativo/, 'diretor-criativo'],
+  [/diretor.*ministerial/, 'diretor-ministerial'],
+  [/diretor.*(operacional|administrativo|gestao)/, 'diretor-administrativo'],
+  [/(auxiliar|assistente).*(infra|infraestrutura|operacoes)/, 'assistente-operacoes'],
+  [/(auxiliar|assistente).*(logistica|almoxarifado)/, 'assistente-logistica'],
+  [/(coordenador|lider|encarregado).*(operacoes|infra|infraestrutura|logistica)/, 'lider-operacoes'],
+  [/assistente.*\bti\b/, 'assistente-area'],
+  [/(assistente|auxiliar).*(ministerial|pastoral)/, 'assistente-ministerial'],
+];
+function sugerirCargoPermissao(cargoRh, cargos) {
+  const n = _normCargo(cargoRh);
+  if (!n || !cargos || !cargos.length) return null;
+  const bySlug = {};
+  cargos.forEach(c => { if (c.slug) bySlug[c.slug] = c; });
+  for (const [re, slug] of SUGESTAO_CARGO_OVERRIDES) {
+    if (re.test(n) && bySlug[slug]) return bySlug[slug];
+  }
+  // Fallback: maior sobreposição de palavras com o nome do cargo (só cargos com slug)
+  const tokens = new Set(n.split(/[^a-z0-9+]+/).filter(t => t.length > 2));
+  let best = null, bestScore = 0;
+  for (const c of cargos) {
+    if (!c.slug) continue; // ignora os 5 cargos legados (sem slug)
+    const cn = _normCargo(c.nome_completo || c.nome);
+    if (cn === n) return c;
+    let score = 0;
+    cn.split(/[^a-z0-9+]+/).filter(t => t.length > 2).forEach(t => { if (tokens.has(t)) score += 1; });
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return bestScore >= 1 ? best : null;
+}
+
+// ── TAB: ACESSOS · cargo RH × cargo de permissão (relatório read-only) ──
+function AcessosTab({ onDetail }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState('');
+  const [filtro, setFiltro] = useState('todos'); // todos | sem_acesso | divergente
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try { const d = await rh.acessos(); if (vivo) setData(d); }
+      catch (e) { if (vivo) setErro(e.message || 'Erro ao carregar'); }
+      finally { if (vivo) setLoading(false); }
+    })();
+    return () => { vivo = false; };
+  }, []);
+
+  if (loading) return <div className="py-12 text-center text-sm text-muted-foreground">Carregando acessos…</div>;
+  if (erro) return <div className="py-12 text-center text-sm text-destructive">{erro}</div>;
+  if (!data) return null;
+
+  const cargos = data.cargos || [];
+  const itens = (data.itens || []).map(i => {
+    const sug = sugerirCargoPermissao(i.cargo_rh, cargos);
+    const divergente = i.situacao === 'com_acesso' && sug && i.cargo_perm_id && sug.id !== i.cargo_perm_id;
+    return { ...i, sugestao: sug, divergente };
+  });
+  const nDiverg = itens.filter(i => i.divergente).length;
+  const filtrados = itens.filter(i =>
+    filtro === 'sem_acesso' ? i.situacao === 'sem_acesso'
+      : filtro === 'divergente' ? i.divergente
+        : true
+  );
+
+  const cards = [
+    { title: 'Colaboradores ativos', value: data.resumo.total, color: '#3b82f6', f: 'todos' },
+    { title: 'Com acesso ao sistema', value: data.resumo.com_acesso, color: '#10b981', f: 'todos' },
+    { title: 'Sem acesso', value: data.resumo.sem_acesso, color: '#ef4444', f: 'sem_acesso' },
+    { title: 'Cargo divergente da sugestão', value: nDiverg, color: '#f59e0b', f: 'divergente' },
+  ];
+
+  return (
+    <div className="space-y-5 pt-4 pb-8">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        {cards.map(c => (
+          <StatisticsCard key={c.title} title={c.title} value={c.value} icon={ShieldCheck} iconColor={c.color} onClick={() => setFiltro(c.f)} />
+        ))}
+      </div>
+
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        O <b>cargo do RH</b> (título de folha) e o <b>cargo de permissão</b> (que dá acesso ao sistema) são cadastros
+        separados, ligados pelo e-mail. A <b>sugestão</b> é uma estimativa pelo título do RH — revise antes de aplicar.
+        Clique em <b>Configurar acesso</b> pra ajustar na ficha do colaborador (lá dá pra aplicar a sugestão num clique).
+      </p>
+
+      <div className="flex gap-2 flex-wrap">
+        {[['todos', 'Todos'], ['sem_acesso', 'Sem acesso'], ['divergente', 'Divergentes']].map(([k, l]) => (
+          <button key={k} onClick={() => setFiltro(k)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${filtro === k ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-md" style={{ border: `1px solid var(--cbrio-border)` }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Colaborador</th>
+              <th style={styles.th}>Cargo (RH)</th>
+              <th style={styles.th}>Acesso (permissão)</th>
+              <th style={styles.th}>Sugestão pelo RH</th>
+              <th style={styles.th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtrados.length === 0 && (
+              <tr><td colSpan={5}><div className="py-8 text-center text-sm text-muted-foreground">Nenhum colaborador neste filtro</div></td></tr>
+            )}
+            {filtrados.map(i => (
+              <tr key={i.id} className="cbrio-row hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => onDetail(i.id)}>
+                <td style={styles.td}>
+                  <div className="font-medium text-sm">{i.nome}</div>
+                  {i.email && <div className="text-xs text-muted-foreground truncate max-w-[220px]">{i.email}</div>}
+                </td>
+                <td style={styles.td}>
+                  <span className="text-sm">{i.cargo_rh || '—'}</span>
+                  {i.area_rh && <div className="text-xs text-muted-foreground">{i.area_rh}</div>}
+                </td>
+                <td style={styles.td}>
+                  {i.situacao === 'sem_acesso'
+                    ? <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>Sem acesso</span>
+                    : <span className="text-sm">{i.cargo_perm_nome || '—'}</span>}
+                </td>
+                <td style={styles.td}>
+                  {i.sugestao
+                    ? <span className="text-sm" style={{ color: i.divergente ? '#b45309' : 'var(--cbrio-text)' }}>
+                      {i.sugestao.nome_completo || i.sugestao.nome}
+                      {i.divergente && <span className="text-[10px] ml-1 text-amber-600">≠ atual</span>}
+                    </span>
+                    : <span className="text-sm text-muted-foreground">—</span>}
+                </td>
+                <td style={styles.td}>
+                  <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); onDetail(i.id); }}>Configurar acesso</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Shared inline styles (kept for backward compat, gradually migrate to Tailwind) ──
 const styles = {
   table: { width: '100%', borderCollapse: 'collapse' },
@@ -173,6 +345,7 @@ const TABS = [
   { key: 'pcs', label: 'PCS', icon: Scale },
   { key: 'admissao', label: 'Admissão', icon: UserPlus },
   { key: 'organograma', label: 'Organograma', icon: Network },
+  { key: 'acessos', label: 'Acessos', icon: ShieldCheck },
   { key: 'folha', label: 'Folha', icon: Receipt },
   { key: 'avaliacoes', label: 'Avaliações', icon: Star },
   { key: 'treinamentos', label: 'Treinamentos', icon: Briefcase },
@@ -418,6 +591,7 @@ export default function RH() {
           <TabAdmissao />
         </TabsContent>
         <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); }} /></TabsContent>
+        <TabsContent value="acessos"><AcessosTab onDetail={openDetail} /></TabsContent>
         <TabsContent value="folha"><TabFolha /></TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
         <TabsContent value="treinamentos">
@@ -2866,6 +3040,25 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], onEdit, onDel
                   </button>
                 ))}
               </div>
+              {(() => {
+                const sug = sugerirCargoPermissao(data.cargo, estrutura.cargos || []);
+                if (!sug) return null;
+                const jaIgual = localCargo === sug.id;
+                return (
+                  <div style={{ marginTop: 8, fontSize: 11, color: C.text2 }}>
+                    Cargo no RH: <b style={{ color: C.text }}>{data.cargo || '—'}</b>{' · '}
+                    {jaIgual
+                      ? <span style={{ color: C.green }}>já corresponde a “{sug.nome_completo || sug.nome}”</span>
+                      : <>sugestão de cargo: <b style={{ color: C.text }}>{sug.nome_completo || sug.nome}</b>
+                          <button onClick={() => handleCargoChange(sug.id)} disabled={saving}
+                            style={{ marginLeft: 6, padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: `1px solid ${C.primary}`, background: 'transparent', color: C.primary, cursor: 'pointer' }}>
+                            Aplicar sugestão
+                          </button>
+                          <span style={{ marginLeft: 6, color: C.text3 }}>(depois clique em “Salvar Permissões”)</span>
+                        </>}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Áreas vinculadas */}

@@ -101,6 +101,67 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
+// ── ACESSOS · cargo RH × cargo de permissão ────────────────
+// Relatório read-only: cruza rh_funcionarios (ativos) com o cadastro de
+// permissões (`usuarios` por e-mail → `cargos`) pra mostrar quem está SEM
+// acesso ao sistema e o cargo de permissão de cada um. A sugestão de cargo
+// (heurística pelo título do RH) é calculada no front · aqui só devolvemos o
+// dado cru + o catálogo de cargos.
+router.get('/acessos', async (req, res) => {
+  try {
+    let fq = supabase
+      .from('rh_funcionarios')
+      .select('id, nome, email, cargo, area, status')
+      .eq('status', 'ativo')
+      .is('deleted_at', null)
+      .order('nome');
+    fq = applyAccessFilter(fq, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: funcs, error } = await fq;
+    if (error) return res.status(400).json({ error: error.message });
+
+    const [{ data: usuarios }, { data: cargos }] = await Promise.all([
+      supabase.from('usuarios').select('id, email, cargo_id, ativo'),
+      supabase.from('cargos').select('id, slug, nome, nome_completo, nivel_padrao_leitura, ativo').order('id'),
+    ]);
+
+    const cargoById = {};
+    (cargos || []).forEach(c => { cargoById[c.id] = c; });
+    const usuarioByEmail = {};
+    (usuarios || []).forEach(u => { if (u.email) usuarioByEmail[u.email.toLowerCase()] = u; });
+
+    const itens = (funcs || []).map(f => {
+      const u = f.email ? usuarioByEmail[f.email.toLowerCase()] : null;
+      const cargo = u?.cargo_id ? cargoById[u.cargo_id] : null;
+      // "Sem acesso" = sem usuário no sistema granular, sem cargo, ou cargo
+      // "Acesso negado". (Não uso usuarios.ativo aqui: o acesso é decidido por
+      // cargo+matriz+áreas, não por essa flag — usá-la geraria falso alarme.)
+      const semAcesso = !u || !u.cargo_id || /negad/i.test(cargo?.nome || '');
+      return {
+        id: f.id, nome: f.nome, email: f.email || null,
+        cargo_rh: f.cargo || null, area_rh: f.area || null,
+        tem_usuario: !!u,
+        cargo_perm_id: cargo?.id ?? null,
+        cargo_perm_slug: cargo?.slug ?? null,
+        cargo_perm_nome: cargo ? (cargo.nome_completo || cargo.nome) : null,
+        situacao: semAcesso ? 'sem_acesso' : 'com_acesso',
+      };
+    });
+
+    res.json({
+      resumo: {
+        total: itens.length,
+        com_acesso: itens.filter(i => i.situacao === 'com_acesso').length,
+        sem_acesso: itens.filter(i => i.situacao === 'sem_acesso').length,
+      },
+      itens,
+      cargos: cargos || [],
+    });
+  } catch (e) {
+    console.error('[RH] Acessos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar relatório de acessos' });
+  }
+});
+
 // ── FUNCIONÁRIOS ───────────────────────────────────────────
 // GET /api/rh/funcionarios
 router.get('/funcionarios', async (req, res) => {
