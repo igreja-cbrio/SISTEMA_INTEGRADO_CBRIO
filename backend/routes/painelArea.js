@@ -363,6 +363,199 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
 });
 
 // ============================================================================
+// GET /:area/series · tendências históricas por valor da Jornada (área-scoped)
+// ============================================================================
+// Espelho do carrossel de valores do /painel, filtrado pela área:
+//   - Seguir: frequência média por culto + decisões (cultos da área)
+//   - Demais valores: tipos de dados_brutos da área, mapeados pelo
+//     formula_config dos KPIs (mesma lógica do GET principal)
+// Tudo num payload só (volume por área é pequeno) · trocar de slide/dado no
+// front é instantâneo, só o período refaz a chamada.
+//
+// Query: meses=3|6|12|24|60 (default 12)
+// ============================================================================
+
+const VALOR_LABELS = {
+  seguir: 'Seguir a Jesus',
+  conectar: 'Conectar com Pessoas',
+  investir: 'Investir Tempo com Deus',
+  servir: 'Servir em Comunidade',
+  generosidade: 'Viver Generosamente',
+};
+const VALOR_CORES = {
+  seguir: '#8B5CF6',
+  conectar: '#3B82F6',
+  investir: '#F59E0B',
+  servir: '#10B981',
+  generosidade: '#EC4899',
+};
+const ORDEM_VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
+
+function mesesDoRange(inicio, fim) {
+  const out = [];
+  let [y, m] = inicio.slice(0, 7).split('-').map(Number);
+  const [yf, mf] = fim.slice(0, 7).split('-').map(Number);
+  while (y < yf || (y === yf && m <= mf)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
+router.get('/:area/series', authorizeModule('painel-area', 1), async (req, res) => {
+  try {
+    const area = String(req.params.area).toLowerCase();
+    if (!AREAS_VALIDAS.includes(area)) {
+      return res.status(400).json({ error: 'Area invalida', validas: AREAS_VALIDAS });
+    }
+    const mesesPermitidos = [3, 6, 12, 24, 60];
+    const meses = mesesPermitidos.includes(parseInt(req.query.meses, 10))
+      ? parseInt(req.query.meses, 10) : 12;
+    const hoje = new Date();
+    const fim = hoje.toISOString().slice(0, 10);
+    const ini = new Date(hoje); ini.setMonth(ini.getMonth() - (meses - 1)); ini.setDate(1);
+    const inicio = ini.toISOString().slice(0, 10);
+    const mesesRange = mesesDoRange(inicio, fim);
+
+    const porValor = {}; // valor → [{ id, label, unidade, agregacao, serie }]
+    const pushDado = (valor, dado) => {
+      if (!porValor[valor]) porValor[valor] = [];
+      porValor[valor].push(dado);
+    };
+
+    // ── 1. Seguir · cultos da área ──────────────────────────────────────────
+    if (area !== 'cba') {
+      const { data: cultosRaw } = await supabase
+        .from('vw_culto_stats')
+        .select('id, data, nome, service_type_name, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, decisoes_kids, online_pico')
+        .gte('data', inicio)
+        .lte('data', fim);
+      const cultosArea = filtrarCultosPorArea(cultosRaw || [], area);
+
+      const freqDe = (c) => area === 'kids' ? (Number(c.presencial_kids) || 0)
+        : area === 'online' ? (Number(c.online_pico) || 0)
+        : (Number(c.presencial_adulto) || 0);
+      const decDe = (c) => area === 'kids' ? (Number(c.decisoes_kids) || 0)
+        : area === 'online' ? (Number(c.decisoes_online) || 0)
+        : (Number(c.decisoes_presenciais) || 0) + (Number(c.decisoes_online) || 0);
+
+      const porMes = new Map();
+      for (const c of cultosArea) {
+        const mes = String(c.data).slice(0, 7);
+        if (!porMes.has(mes)) porMes.set(mes, { cultos: 0, freq: 0, dec: 0 });
+        const m = porMes.get(mes);
+        m.cultos += 1; m.freq += freqDe(c); m.dec += decDe(c);
+      }
+      if (cultosArea.length > 0) {
+        // Frequência = MÉDIA por culto (robusta a mês com nº de cultos variável)
+        // · mês sem culto fica null (não zera o gráfico)
+        pushDado('seguir', {
+          id: 'frequencia',
+          label: area === 'online' ? 'Pico médio por culto' : 'Frequência média por culto',
+          unidade: 'pessoas',
+          agregacao: 'media',
+          serie: mesesRange.map(mes => {
+            const m = porMes.get(mes);
+            return { periodo: mes, valor: m && m.cultos > 0 ? Math.round(m.freq / m.cultos) : null };
+          }),
+        });
+        pushDado('seguir', {
+          id: 'decisoes',
+          label: 'Decisões',
+          unidade: 'pessoas',
+          agregacao: 'soma',
+          serie: mesesRange.map(mes => ({ periodo: mes, valor: porMes.get(mes)?.dec ?? 0 })),
+        });
+      }
+    }
+
+    // ── 2. Demais valores · dados_brutos da área mapeados pelos KPIs ────────
+    const { data: kpisRaw } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('valores, formula_config')
+      .eq('ativo', true)
+      .ilike('area', area);
+    const valoresPorTipo = new Map();
+    for (const k of kpisRaw || []) {
+      const fc = k.formula_config || {};
+      const candidatos = [fc.dado_tipo, fc.numerador, fc.denominador].filter(Boolean);
+      const tiposK = [];
+      for (const c of candidatos) {
+        if (Array.isArray(c)) tiposK.push(...c);
+        else tiposK.push(c);
+      }
+      const vals = Array.isArray(k.valores) ? k.valores : [];
+      for (const t of tiposK) {
+        if (!t) continue;
+        if (!valoresPorTipo.has(t)) valoresPorTipo.set(t, new Set());
+        vals.forEach(v => valoresPorTipo.get(t).add(v));
+      }
+    }
+    const tiposIds = Array.from(valoresPorTipo.keys());
+    if (tiposIds.length > 0) {
+      const [{ data: catalogo }, { data: registros }] = await Promise.all([
+        supabase.from('tipos_dado_bruto')
+          .select('id, nome, unidade, agregacao, ordem')
+          .in('id', tiposIds),
+        supabase.from('dados_brutos')
+          .select('tipo_id, data, valor')
+          .eq('area', area)
+          .in('tipo_id', tiposIds)
+          .gte('data', inicio)
+          .lte('data', fim),
+      ]);
+      const regsPorTipo = new Map();
+      for (const r of registros || []) {
+        if (!regsPorTipo.has(r.tipo_id)) regsPorTipo.set(r.tipo_id, []);
+        regsPorTipo.get(r.tipo_id).push(r);
+      }
+      const catalogoOrdenado = (catalogo || []).sort((a, b) => (a.ordem ?? 999) - (b.ordem ?? 999));
+      for (const t of catalogoOrdenado) {
+        const regs = regsPorTipo.get(t.id) || [];
+        if (regs.length === 0) continue; // tipo sem registro não vira gráfico vazio
+        const ehMedia = String(t.agregacao || '').toLowerCase().startsWith('med');
+        const porMes = new Map();
+        for (const r of regs) {
+          const mes = String(r.data).slice(0, 7);
+          if (!porMes.has(mes)) porMes.set(mes, { soma: 0, n: 0 });
+          const m = porMes.get(mes);
+          m.soma += Number(r.valor) || 0; m.n += 1;
+        }
+        const serie = mesesRange.map(mes => {
+          const m = porMes.get(mes);
+          if (!m) return { periodo: mes, valor: ehMedia ? null : 0 };
+          return { periodo: mes, valor: ehMedia ? Math.round((m.soma / m.n) * 100) / 100 : m.soma };
+        });
+        const dado = { id: t.id, label: t.nome, unidade: t.unidade, agregacao: ehMedia ? 'media' : 'soma', serie };
+        const valsDoTipo = Array.from(valoresPorTipo.get(t.id) || []);
+        for (const v of valsDoTipo) {
+          if (!ORDEM_VALORES.includes(v)) continue;
+          pushDado(v, dado);
+        }
+      }
+    }
+
+    res.json({
+      area,
+      inicio,
+      fim,
+      meses,
+      valores: ORDEM_VALORES
+        .filter(v => (porValor[v] || []).length > 0)
+        .map(v => ({
+          key: v,
+          label: VALOR_LABELS[v],
+          cor: VALOR_CORES[v],
+          dados: porValor[v],
+        })),
+    });
+  } catch (e) {
+    console.error('painel-area/series:', e.message);
+    res.status(500).json({ error: 'Erro ao montar séries da área' });
+  }
+});
+
+// ============================================================================
 // POST /:area/nps · registra NPS mensal da área (coord da área · nível >= 3)
 // ============================================================================
 // Os 5 KPIs CULTO-NPS-* (kids/ami/bridge/online/sede) já apontam pra

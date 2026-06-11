@@ -23,10 +23,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { ArrowLeft, ChevronRight, Plus, TrendingUp, TrendingDown, Minus, Users, Sparkles, CalendarDays, Trophy } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Plus, TrendingUp, TrendingDown, Minus, Users, Sparkles, CalendarDays, Trophy, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis,
+  ResponsiveContainer, ComposedChart, LineChart, Bar, Line, XAxis, YAxis,
   Tooltip as RTooltip, CartesianGrid, Legend,
 } from 'recharts';
 import JornadaConvertidos from '../../components/JornadaConvertidos';
@@ -324,12 +324,13 @@ export default function PainelArea({ area }) {
 
       {/* ─────────────────────── TABS PRINCIPAIS ─────────────────────── */}
       <Tabs defaultValue={temCultos ? 'cultos' : 'indicadores'}>
-        <TabsList className={`grid w-full max-w-3xl ${temCultos ? 'grid-cols-5' : 'grid-cols-4'}`}>
+        <TabsList className={`grid w-full max-w-4xl ${temCultos ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5'}`}>
           {temCultos && (
             <TabsTrigger value="cultos">
               Cultos <span className="ml-1 opacity-60">({cultos.length})</span>
             </TabsTrigger>
           )}
+          <TabsTrigger value="tendencias">Tendências</TabsTrigger>
           <TabsTrigger value="indicadores">
             Indicadores {kpisRegulares.length > 0 && <span className="ml-1 opacity-60">({kpisRegulares.length})</span>}
           </TabsTrigger>
@@ -358,6 +359,11 @@ export default function PainelArea({ area }) {
             <CultosTabela cultos={cultos} area={area} accent={meta.accent} />
           </TabsContent>
         )}
+
+        {/* ──────── ABA TENDÊNCIAS · carrossel por valor da Jornada ──────── */}
+        <TabsContent value="tendencias" className="mt-6">
+          <TendenciasValores area={area} accent={meta.accent} />
+        </TabsContent>
 
         {/* ──────── ABA INDICADORES ──────── */}
         <TabsContent value="indicadores" className="mt-6">
@@ -473,6 +479,248 @@ function Tendencia({ atual, anterior, sufixo = 'vs mês anterior' }) {
       <Icon className="h-3 w-3" />
       {pct >= 0 ? '+' : ''}{Math.round(pct)}% {sufixo}
     </span>
+  );
+}
+
+// ─────────── TENDÊNCIAS · carrossel por valor da Jornada (estilo /painel) ───────────
+// Um slide por valor com dados disponíveis na área · seletor de dado +
+// período · gráfico de linha com histórico. Tudo vem num payload só
+// (GET /:area/series) · trocar slide/dado é instantâneo, período refaz a chamada.
+
+const PERIODOS_SERIE = [
+  { v: 3,  l: '3 meses' },
+  { v: 6,  l: '6 meses' },
+  { v: 12, l: '12 meses' },
+  { v: 24, l: '2 anos' },
+  { v: 60, l: '5 anos' },
+];
+
+function TendenciasValores({ area, accent }) {
+  const [meses, setMeses] = useState(12);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
+  const [indice, setIndice] = useState(0);
+  const [dadoSel, setDadoSel] = useState({}); // valor.key → id do dado escolhido
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setErro(null);
+    api.series(area, meses)
+      .then(d => {
+        if (cancelled) return;
+        setData(d);
+        setIndice(i => Math.min(i, Math.max(0, (d.valores || []).length - 1)));
+      })
+      .catch(e => { if (!cancelled) setErro(e.message || 'Erro ao carregar tendências'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [area, meses]);
+
+  const valores = data?.valores || [];
+  const slide = valores[indice] || null;
+  const dadoAtivo = slide
+    ? (slide.dados.find(d => d.id === dadoSel[slide.key]) || slide.dados[0])
+    : null;
+
+  if (loading && !data) {
+    return (
+      <Card className="p-12 flex items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
+      </Card>
+    );
+  }
+
+  if (erro && !data) {
+    return <Card className="p-8 text-center text-sm text-red-600 dark:text-red-400">{erro}</Card>;
+  }
+
+  if (valores.length === 0) {
+    return (
+      <Card className="p-8 text-center text-sm text-muted-foreground">
+        Ainda não há dados históricos pra montar as tendências desta área.
+        Quando os cultos e os dados brutos forem preenchidos, os gráficos aparecem aqui.
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-5">
+      {/* Header do slide */}
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+          <BarChart3 className="h-4 w-4" style={{ color: slide?.cor || accent }} />
+          {slide?.label}
+          <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: slide?.cor || accent }} />
+        </h2>
+        <span className="text-[11px] text-muted-foreground">
+          use as setas pra alternar entre os valores da Jornada
+        </span>
+      </div>
+
+      <div className="relative">
+        {/* Seta esquerda */}
+        <button
+          onClick={() => setIndice(i => Math.max(0, i - 1))}
+          disabled={indice === 0}
+          aria-label="Valor anterior"
+          className="absolute -left-2 top-1/2 -translate-y-1/2 z-10 h-8 w-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center disabled:opacity-30 hover:bg-accent/50 transition-colors"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+
+        <div className="px-8">
+          {/* Filtros: dado + período */}
+          <div className="flex items-center gap-2 flex-wrap mb-4">
+            <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5 flex-wrap">
+              {(slide?.dados || []).map(d => {
+                const ativo = dadoAtivo?.id === d.id;
+                return (
+                  <button
+                    key={d.id}
+                    onClick={() => setDadoSel(s => ({ ...s, [slide.key]: d.id }))}
+                    className="px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors"
+                    style={ativo ? { background: slide.cor, color: '#fff' } : { color: 'inherit' }}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5 ml-auto">
+              {PERIODOS_SERIE.map(p => {
+                const ativo = meses === p.v;
+                return (
+                  <button
+                    key={p.v}
+                    onClick={() => setMeses(p.v)}
+                    disabled={loading}
+                    className="px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors disabled:opacity-50"
+                    style={ativo ? { background: accent, color: '#fff' } : { color: 'inherit' }}
+                  >
+                    {p.l}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {dadoAtivo && <SerieValor dado={dadoAtivo} cor={slide.cor} loading={loading} />}
+        </div>
+
+        {/* Seta direita */}
+        <button
+          onClick={() => setIndice(i => Math.min(valores.length - 1, i + 1))}
+          disabled={indice >= valores.length - 1}
+          aria-label="Próximo valor"
+          className="absolute -right-2 top-1/2 -translate-y-1/2 z-10 h-8 w-8 rounded-full bg-card border border-border shadow-sm flex items-center justify-center disabled:opacity-30 hover:bg-accent/50 transition-colors"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Dots */}
+      <div className="flex justify-center items-center gap-1.5 mt-4">
+        {valores.map((v, i) => (
+          <button
+            key={v.key}
+            onClick={() => setIndice(i)}
+            aria-label={`Ir para ${v.label}`}
+            className="rounded-full border-0 cursor-pointer transition-all"
+            style={{
+              width: i === indice ? 22 : 8,
+              height: 8,
+              background: i === indice ? v.cor : 'var(--cbrio-border, #e2e8f0)',
+            }}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+// Um gráfico de linha + estatísticas pra um dado de um valor
+function SerieValor({ dado, cor, loading }) {
+  const pontos = (dado.serie || []).map(p => ({
+    label: formatMes(p.periodo),
+    valor: p.valor,
+  }));
+  const naoNulos = pontos.filter(p => p.valor != null);
+  const ehMedia = dado.agregacao === 'media';
+  const total = naoNulos.reduce((a, p) => a + p.valor, 0);
+  const mediaPeriodo = naoNulos.length > 0 ? total / naoNulos.length : 0;
+  const ultimo = naoNulos[naoNulos.length - 1]?.valor ?? null;
+  const anterior = naoNulos[naoNulos.length - 2]?.valor ?? null;
+  const delta = (ultimo != null && anterior != null && anterior !== 0)
+    ? Math.round(((ultimo - anterior) / anterior) * 100)
+    : null;
+
+  return (
+    <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
+      {/* Estatísticas do período */}
+      <div className="flex gap-6 flex-wrap mb-3">
+        {!ehMedia && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total no período</p>
+            <p className="text-xl font-bold" style={{ color: cor }}>{formatNum(total)}</p>
+          </div>
+        )}
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            {ehMedia ? 'Média no período' : 'Média por mês'}
+          </p>
+          <p className="text-xl font-bold text-foreground">
+            {formatNum(Math.round(mediaPeriodo * 100) / 100)}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Último mês</p>
+          <p className="text-xl font-bold text-foreground">
+            {ultimo == null ? '—' : formatNum(ultimo)}
+            {delta != null && (
+              <span
+                className="text-[11px] font-semibold ml-1.5"
+                style={{ color: delta > 0 ? '#10b981' : delta < 0 ? '#ef4444' : undefined }}
+              >
+                {delta > 0 ? '+' : ''}{delta}%
+              </span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Gráfico de linha */}
+      <div className="w-full h-[260px]">
+        {naoNulos.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+            Sem dados no período.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={pontos} margin={{ top: 6, right: 16, left: -8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.25} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+              <RTooltip
+                cursor={{ stroke: cor, strokeOpacity: 0.2 }}
+                contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                formatter={(v) => [formatNum(v), dado.label]}
+              />
+              <Line
+                type="monotone"
+                dataKey="valor"
+                stroke={cor}
+                strokeWidth={2.5}
+                dot={{ r: 3, fill: cor }}
+                activeDot={{ r: 5 }}
+                connectNulls
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
   );
 }
 
