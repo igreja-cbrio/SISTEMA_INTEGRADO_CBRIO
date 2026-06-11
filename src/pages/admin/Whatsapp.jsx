@@ -60,10 +60,12 @@ export default function Whatsapp() {
         <TabsList>
           <TabsTrigger value="coletas">Coletas</TabsTrigger>
           <TabsTrigger value="lideres">Líderes vinculados</TabsTrigger>
+          <TabsTrigger value="avisos">Avisos</TabsTrigger>
           <TabsTrigger value="config">Configuração</TabsTrigger>
         </TabsList>
         <TabsContent value="coletas"><AbaColetas /></TabsContent>
         <TabsContent value="lideres"><AbaLideres /></TabsContent>
+        <TabsContent value="avisos"><AbaAvisos /></TabsContent>
         <TabsContent value="config"><AbaConfig /></TabsContent>
       </Tabs>
     </div>
@@ -429,6 +431,133 @@ function DialogVincular({ onClose, onSaved }) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Aba Avisos · broadcast pontual pra equipe ───────────────────────
+// Envia texto livre pra quem JÁ LOGOU no sistema e tem celular no perfil
+// (dedup por número). {nome} vira o primeiro nome. Fora da janela de 24h da
+// Meta o envio pode falhar — o relatório por pessoa aparece após o envio.
+const MENSAGEM_PADRAO_AVISO = `Oi, {nome}! 👋
+
+Aqui é o sistema CBRio. Estamos na fase inicial de implantação e o seu uso diário faz toda a diferença: é usando que a gente encontra os bugs, corrige rápido e prioriza as melhorias a partir da experiência de cada um.
+
+💬 Achou um erro ou tem uma sugestão? No canto inferior esquerdo do sistema tem o botão "Reportar" — é rapidinho e ajuda demais.
+
+Acesse: cbrio.org
+Conta com a gente — e a gente conta com você! 🙏`;
+
+function AbaAvisos() {
+  const [mensagem, setMensagem] = useState(MENSAGEM_PADRAO_AVISO);
+  const [destinatarios, setDestinatarios] = useState(null); // null = não carregado
+  const [loadingDest, setLoadingDest] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  async function carregarDestinatarios() {
+    setLoadingDest(true);
+    setResultado(null);
+    try {
+      const d = await api.broadcastDestinatarios();
+      setDestinatarios(d?.destinatarios || []);
+    } catch (e) {
+      toast.error(e.message || 'Erro ao montar a lista');
+    } finally { setLoadingDest(false); }
+  }
+
+  async function enviar() {
+    setEnviando(true);
+    setConfirmando(false);
+    try {
+      const r = await api.broadcastEnviar(mensagem);
+      setResultado(r);
+      toast.success(`Enviado para ${r.enviados} de ${r.total}`);
+    } catch (e) {
+      toast.error(e.message || 'Erro ao enviar');
+    } finally { setEnviando(false); }
+  }
+
+  const fmtTel = (t) => (t || '').replace(/^55(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3');
+
+  return (
+    <div className="space-y-4 mt-4">
+      <Card className="p-4 space-y-3">
+        <div>
+          <p className="font-medium text-foreground">Aviso pra equipe (WhatsApp)</p>
+          <p className="text-xs text-muted-foreground">
+            Vai pra quem <strong>já logou no sistema</strong> e tem <strong>celular cadastrado</strong> no perfil (contas duplicadas contam 1x).
+            Use <code className="px-1 rounded bg-muted">{'{nome}'}</code> pro primeiro nome. Fora da janela de 24h da Meta, alguns envios podem falhar — o relatório mostra quem recebeu.
+          </p>
+        </div>
+        <Textarea value={mensagem} onChange={e => setMensagem(e.target.value)} rows={9} />
+        <div className="flex flex-wrap gap-2 justify-end">
+          <Button variant="outline" onClick={carregarDestinatarios} disabled={loadingDest || enviando} className="gap-1.5">
+            <RefreshCw className={`h-3.5 w-3.5 ${loadingDest ? 'animate-spin' : ''}`} />
+            {destinatarios ? 'Recarregar destinatários' : 'Ver destinatários'}
+          </Button>
+          <Button
+            onClick={() => setConfirmando(true)}
+            disabled={enviando || !destinatarios?.length || mensagem.trim().length < 20}
+            className="gap-1.5"
+          >
+            <MessageCircle className="h-3.5 w-3.5" />
+            {enviando ? 'Enviando...' : `Enviar${destinatarios?.length ? ` para ${destinatarios.length}` : ''}`}
+          </Button>
+        </div>
+      </Card>
+
+      {destinatarios && (
+        <Card className="p-4">
+          <p className="text-sm font-medium text-foreground mb-2">Destinatários ({destinatarios.length})</p>
+          {destinatarios.length === 0 && <p className="text-xs text-muted-foreground">Ninguém com celular cadastrado ainda.</p>}
+          <div className="space-y-1">
+            {destinatarios.map((d, i) => (
+              <div key={i} className="flex items-center justify-between text-sm border-b border-border/50 last:border-0 py-1.5">
+                <span className="text-foreground">{d.nome}</span>
+                <span className="text-xs text-muted-foreground">{fmtTel(d.telefone)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {resultado && (
+        <Card className="p-4">
+          <p className="text-sm font-medium text-foreground mb-2">
+            Relatório · {resultado.enviados}/{resultado.total} enviados
+          </p>
+          <div className="space-y-1">
+            {(resultado.resultados || []).map((r, i) => (
+              <div key={i} className="flex items-center justify-between text-sm border-b border-border/50 last:border-0 py-1.5">
+                <span className="text-foreground">{r.nome}</span>
+                {r.ok
+                  ? <Badge className="bg-emerald-100 text-emerald-700">✓ enviado</Badge>
+                  : <Badge className="bg-rose-100 text-rose-700" title={r.erro || ''}>falhou</Badge>}
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            Falhas geralmente são a janela de 24h da Meta (a pessoa nunca falou com o bot). Nesse caso, peça pra pessoa mandar um "oi" pro número do bot e reenvie, ou usamos um template aprovado.
+          </p>
+        </Card>
+      )}
+
+      <Dialog open={confirmando} onOpenChange={setConfirmando}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmar envio</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Enviar a mensagem pra <strong className="text-foreground">{destinatarios?.length || 0} pessoa(s)</strong> no WhatsApp? Essa ação não pode ser desfeita.
+          </p>
+          <div className="flex gap-2 justify-end mt-2">
+            <Button variant="outline" onClick={() => setConfirmando(false)}>Cancelar</Button>
+            <Button onClick={enviar} className="gap-1.5"><MessageCircle className="h-3.5 w-3.5" />Enviar agora</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 

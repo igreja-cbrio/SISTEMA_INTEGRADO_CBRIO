@@ -293,6 +293,86 @@ router.post('/coletas/:id/rejeitar', podeGerir, async (req, res) => {
 // CONFIG · conteudo institucional + toggle da IA (linha unica id=1)
 // ═══════════════════════════════════════════════════════════════════
 
+// ── Broadcast pra equipe (aviso pontual) ────────────────────────────
+// Destinatários = profiles ativos que JÁ LOGARAM no sistema e têm celular
+// cadastrado (Meu Perfil), deduplicados por número (contas duplicadas da
+// mesma pessoa contam 1x). Texto livre via Cloud API: fora da janela de 24h
+// da Meta o envio pode falhar — o resultado por pessoa volta no relatório.
+async function resolverDestinatariosBroadcast() {
+  // last_sign_in_at vive em auth.users · via admin API (service role)
+  const logados = new Set();
+  let page = 1;
+  for (;;) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error(error.message);
+    for (const u of data?.users || []) {
+      if (u.last_sign_in_at) logados.add(u.id);
+    }
+    if (!data?.users?.length || data.users.length < 200) break;
+    page += 1;
+  }
+
+  const { data: profs, error: pErr } = await supabase
+    .from('profiles')
+    .select('id, name, email, telefone')
+    .eq('active', true)
+    .not('telefone', 'is', null);
+  if (pErr) throw new Error(pErr.message);
+
+  const porTelefone = new Map();
+  for (const p of profs || []) {
+    if (!logados.has(p.id)) continue;
+    const email = (p.email || '').toLowerCase();
+    if (email.startsWith('agente.') || email.startsWith('qa.')) continue;
+    const tel = normalizarTelefone(p.telefone);
+    if (!tel || tel.length < 12) continue; // 55 + DDD + número
+    if (!porTelefone.has(tel)) porTelefone.set(tel, { nome: p.name, email: p.email, telefone: tel });
+  }
+  return [...porTelefone.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+}
+
+// GET /api/whatsapp/broadcast/destinatarios — prévia da lista
+router.get('/broadcast/destinatarios', podeGerir, async (req, res) => {
+  try {
+    const destinatarios = await resolverDestinatariosBroadcast();
+    res.json({ total: destinatarios.length, destinatarios });
+  } catch (e) {
+    console.error('[whatsapp] broadcast destinatarios', e.message);
+    res.status(500).json({ error: 'Erro ao montar a lista de destinatários' });
+  }
+});
+
+// POST /api/whatsapp/broadcast · { mensagem } — usa {nome} como placeholder
+router.post('/broadcast', podeGerir, async (req, res) => {
+  try {
+    const mensagem = (req.body?.mensagem || '').toString().trim();
+    if (mensagem.length < 20) {
+      return res.status(400).json({ error: 'Escreva a mensagem (mínimo 20 caracteres).' });
+    }
+    const { enviarTexto, isConfigured } = require('../services/whatsappSend');
+    if (!isConfigured()) {
+      return res.status(503).json({ error: 'WhatsApp não configurado (credenciais ausentes).' });
+    }
+    const destinatarios = await resolverDestinatariosBroadcast();
+    if (!destinatarios.length) return res.status(400).json({ error: 'Nenhum destinatário com celular cadastrado.' });
+
+    const resultados = [];
+    for (const d of destinatarios) {
+      const primeiroNome = (d.nome || '').trim().split(/\s+/)[0] || 'você';
+      const texto = mensagem.replaceAll('{nome}', primeiroNome);
+      const r = await enviarTexto(d.telefone, texto);
+      resultados.push({ nome: d.nome, telefone: d.telefone, ok: !!r?.ok, erro: r?.ok ? null : (r?.error || 'falha') });
+      await new Promise(rr => setTimeout(rr, 300)); // throttle leve
+    }
+    const enviados = resultados.filter(r => r.ok).length;
+    console.log('[whatsapp] broadcast por %s: %d/%d enviados', req.user?.email, enviados, resultados.length);
+    res.json({ total: resultados.length, enviados, resultados });
+  } catch (e) {
+    console.error('[whatsapp] broadcast', e.message);
+    res.status(500).json({ error: 'Erro ao enviar o broadcast' });
+  }
+});
+
 // GET /api/whatsapp/config
 router.get('/config', podeGerir, async (req, res) => {
   try {
