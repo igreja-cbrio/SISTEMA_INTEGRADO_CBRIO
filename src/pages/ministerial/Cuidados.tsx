@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi, users as usersApi } from '../../api';
+import { cuidados as cuidadosApi, devocionalPlanos as devPlanosApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
@@ -529,10 +529,12 @@ function ConvertidoDetailDialog({
   );
 }
 
-// Agendar encontro pastoral · data + hora + quem vai atender (cria nada de tarefa;
-// notifica o pastor). É o "primeiro contato", o diferencial pedido pelo Marcos.
-function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }: {
-  open: boolean; convertido: any | null; usersList: any[]; onClose: () => void; onSaved: () => void;
+// Agendar visita pastoral · data + hora + quem vai atender (notifica o líder).
+// É o "primeiro contato", o diferencial pedido pelo Marcos. A visita aparece
+// no calendário da aba "Visitas agendadas". Só líderes de culto e de
+// ministérios podem atender (lista vem filtrada por cargo do backend).
+function AgendarEncontroModal({ open, convertido, atendentes, onClose, onSaved }: {
+  open: boolean; convertido: any | null; atendentes: any[]; onClose: () => void; onSaved: () => void;
 }) {
   const [form, setForm] = useState({ data_encontro: '', encontro_hora: '', responsavel_id: '' });
   const [saving, setSaving] = useState(false);
@@ -556,18 +558,25 @@ function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }:
   const temAlteracoes = JSON.stringify(form) !== snapRef.current;
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
+  // Visita antiga pode ter responsável fora da lista atual de atendentes ·
+  // mantém a opção visível pra não perder o vínculo ao reagendar.
+  const responsavelForaDaLista =
+    !!form.responsavel_id && !atendentes.some((u: any) => u.id === form.responsavel_id);
+
   async function save() {
-    if (!form.data_encontro) return toast.error('Escolha a data do encontro');
+    if (!form.data_encontro) return toast.error('Escolha a data da visita');
     setSaving(true);
     try {
-      const u = usersList.find((x: any) => x.id === form.responsavel_id);
+      const u = atendentes.find((x: any) => x.id === form.responsavel_id);
+      const nomeAtual = form.responsavel_id === convertido.encontro_responsavel_id
+        ? convertido.encontro_responsavel_nome : null;
       await cuidadosApi.convertidos.agendarEncontro(convertido.id, {
         data_encontro: form.data_encontro,
         encontro_hora: form.encontro_hora || null,
         encontro_responsavel_id: form.responsavel_id || null,
-        encontro_responsavel_nome: u?.name || null,
+        encontro_responsavel_nome: u?.name || nomeAtual || null,
       });
-      toast.success('Encontro agendado');
+      toast.success('Visita agendada');
       onSaved(); onClose();
     } catch (e: any) { toast.error(e.message); }
     finally { setSaving(false); }
@@ -577,7 +586,7 @@ function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }:
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Agendar encontro — {convertido.nome}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Agendar visita — {convertido.nome}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div><Label>Data *</Label><Input type="date" value={form.data_encontro} onChange={e => setForm({ ...form, data_encontro: e.target.value })} /></div>
@@ -586,12 +595,16 @@ function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }:
           <div>
             <Label>Quem vai atender</Label>
             <Select value={form.responsavel_id || '__none'} onValueChange={(v) => setForm({ ...form, responsavel_id: v === '__none' ? '' : v })}>
-              <SelectTrigger><SelectValue placeholder="Selecione o pastor/líder" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Selecione o líder" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none">A definir</SelectItem>
-                {usersList.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                {responsavelForaDaLista && (
+                  <SelectItem value={form.responsavel_id}>{convertido.encontro_responsavel_nome || 'Responsável atual'}</SelectItem>
+                )}
+                {atendentes.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground mt-1">Só líderes de culto e de ministérios podem atender convertidos.</p>
           </div>
         </div>
         <DialogFooter>
@@ -603,42 +616,57 @@ function AgendarEncontroModal({ open, convertido, usersList, onClose, onSaved }:
   );
 }
 
-// Desfecho do encontro · compareceu? + pra onde a pessoa segue (encaminhamento).
+// Desfecho da visita · compareceu? + tags pastorais + encaminhamento + observações,
+// tudo num modal só (decisão do Marcos 2026-06-10: o líder preenche tudo ali).
 // Sem "não converteu": ninguém é interrompido · toda pessoa sai com uma indicação.
-function DesfechoModal({ open, convertido, onClose, onSaved }: {
-  open: boolean; convertido: any | null; onClose: () => void; onSaved: () => void;
+function DesfechoModal({ open, convertido, allTags, onClose, onSaved }: {
+  open: boolean; convertido: any | null; allTags: string[]; onClose: () => void; onSaved: () => void;
 }) {
   const [compareceu, setCompareceu] = useState(true);
   const [destinos, setDestinos] = useState<Record<string, boolean>>({});
   const [notas, setNotas] = useState<Record<string, string>>({});
+  const [tags, setTags] = useState<string[]>([]);
   const [obs, setObs] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Snapshot = exatamente os valores do reset feito ao abrir (effect abaixo).
   const snapRef = useRef<string>(
-    JSON.stringify({ compareceu: true, destinos: {}, notas: {}, obs: '' })
+    JSON.stringify({ compareceu: true, destinos: {}, notas: {}, tags: [], obs: '' })
   );
 
   useEffect(() => {
     if (open) {
-      setCompareceu(true); setDestinos({}); setNotas({}); setObs('');
-      snapRef.current = JSON.stringify({ compareceu: true, destinos: {}, notas: {}, obs: '' });
+      // Tags já marcadas na ficha + encaminhamentos já feitos entram pré-preenchidos
+      // (reabrir pra completar pendência não some com o que já existe).
+      const tagsIniciais: string[] = Array.isArray(convertido?.tags) ? convertido.tags : [];
+      const destinosIniciais: Record<string, boolean> = {};
+      (Array.isArray(convertido?.destinos_existentes) ? convertido.destinos_existentes : [])
+        .forEach((d: string) => { destinosIniciais[d] = true; });
+      setCompareceu(true); setDestinos(destinosIniciais); setNotas({}); setTags(tagsIniciais); setObs('');
+      snapRef.current = JSON.stringify({ compareceu: true, destinos: destinosIniciais, notas: {}, tags: tagsIniciais, obs: '' });
     }
-  }, [open]);
+  }, [open, convertido]);
 
-  const temAlteracoes = JSON.stringify({ compareceu, destinos, notas, obs }) !== snapRef.current;
+  const temAlteracoes = JSON.stringify({ compareceu, destinos, notas, tags, obs }) !== snapRef.current;
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
+  function toggleTag(t: string) {
+    setTags(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+  }
 
   async function save() {
     if (compareceu && !DESTINOS_ENC.some(d => destinos[d.v])) {
       return toast.error('Toda pessoa sai com uma indicação · escolha ao menos um próximo passo');
+    }
+    if (compareceu && tags.length === 0) {
+      return toast.error('Marque ao menos uma tag pastoral · ela orienta a triagem do cuidado');
     }
     setSaving(true);
     try {
       const encaminhamentos = compareceu
         ? DESTINOS_ENC.filter(d => destinos[d.v]).map(d => ({ destino: d.v, observacao: notas[d.v]?.trim() || null }))
         : [];
-      await cuidadosApi.convertidos.desfecho(convertido.id, { compareceu, encaminhamentos, observacoes: obs.trim() || null });
+      await cuidadosApi.convertidos.desfecho(convertido.id, { compareceu, encaminhamentos, observacoes: obs.trim() || null, tags });
       toast.success('Desfecho registrado');
       onSaved(); onClose();
     } catch (e: any) { toast.error(e.message); }
@@ -649,7 +677,7 @@ function DesfechoModal({ open, convertido, onClose, onSaved }: {
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>Desfecho do encontro — {convertido.nome}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Desfecho da visita — {convertido.nome}</DialogTitle></DialogHeader>
         <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
           <div>
             <Label>A pessoa compareceu?</Label>
@@ -659,6 +687,33 @@ function DesfechoModal({ open, convertido, onClose, onSaved }: {
             </div>
             {!compareceu && <p className="text-xs text-muted-foreground mt-1">Faltou · você pode reagendar depois pela ficha.</p>}
           </div>
+
+          {compareceu && (
+            <div>
+              <Label>Tags pastorais <span className="text-muted-foreground font-normal">(o que apareceu na conversa · mínimo 1)</span></Label>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {allTags.map(t => {
+                  const active = tags.includes(t);
+                  const color = TAG_COLORS[t] || '#94a3b8';
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => toggleTag(t)}
+                      className="text-xs px-2.5 py-1 rounded-full border transition-colors"
+                      style={{
+                        borderColor: color,
+                        background: active ? color : 'transparent',
+                        color: active ? '#fff' : color,
+                      }}
+                    >
+                      {TAG_LABELS[t] || t}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {compareceu && (
             <div className="space-y-2">
@@ -679,9 +734,9 @@ function DesfechoModal({ open, convertido, onClose, onSaved }: {
           )}
 
           <div>
-            <Label>Observação geral <span className="text-muted-foreground font-normal">(fica na ficha · opcional)</span></Label>
+            <Label>Observações <span className="text-muted-foreground font-normal">(ficam na ficha · opcional)</span></Label>
             <textarea className="w-full min-h-[64px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
-              value={obs} onChange={e => setObs(e.target.value)} placeholder="Resumo do encontro, contexto..." />
+              value={obs} onChange={e => setObs(e.target.value)} placeholder="Resumo da visita, contexto, próximos passos..." />
           </div>
         </div>
         <DialogFooter>
@@ -693,6 +748,83 @@ function DesfechoModal({ open, convertido, onClose, onSaved }: {
   );
 }
 
+// Visitas passadas com pendência: toda pessoa visitada precisa sair com
+// desfecho + ≥1 tag pastoral + ≥1 encaminhamento. Aparece abaixo do calendário
+// da aba "Visitas agendadas".
+const PENDENCIA_LABELS: Record<string, string> = {
+  desfecho: 'Sem desfecho',
+  tag: 'Sem tag pastoral',
+  encaminhamento: 'Sem encaminhamento',
+};
+
+function VisitasPendentesSection({ itens, canEdit, onResolver, onFicha }: {
+  itens: any[]; canEdit: boolean; onResolver: (c: any) => void; onFicha: (c: any) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-center gap-2 mb-1">
+        <AlertTriangle className="h-4 w-4 text-warning" />
+        <h3 className="font-semibold text-sm">Visitas passadas sem encaminhamento</h3>
+        {itens.length > 0 && (
+          <Badge variant="destructive" className="ml-1">{itens.length}</Badge>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        Toda pessoa visitada precisa sair com desfecho registrado, ao menos uma tag pastoral e um encaminhamento. Estas visitas já aconteceram e ainda têm pendência.
+      </p>
+      {itens.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nenhuma pendência · todas as visitas passadas foram encaminhadas.</p>
+      ) : (
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Pessoa</TableHead>
+                <TableHead>Visita</TableHead>
+                <TableHead>Quem atendeu</TableHead>
+                <TableHead>Pendências</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {itens.map((c: any) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">
+                    <button type="button" onClick={() => onFicha(c)} className="text-left hover:text-primary transition-colors">
+                      <div className="underline-offset-2 hover:underline">{c.nome}</div>
+                      {c.telefone && <div className="text-xs text-muted-foreground">{c.telefone}</div>}
+                    </button>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {c.data_encontro ? new Date(c.data_encontro + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
+                    {c.encontro_hora ? ' · ' + String(c.encontro_hora).slice(0, 5) : ''}
+                  </TableCell>
+                  <TableCell className="text-sm">{c.encontro_responsavel_nome || '—'}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(c.pendencias || []).map((p: string) => (
+                        <Badge key={p} className="bg-warning/15 text-warning border-warning/30">{PENDENCIA_LABELS[p] || p}</Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    {canEdit && (
+                      <Button size="sm" variant="outline" onClick={() => onResolver(c)}>
+                        <ClipboardCheck className="h-3.5 w-3.5 mr-1" />
+                        {c.encontro_status === 'agendado' ? 'Registrar desfecho' : 'Completar'}
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Página principal
 // ──────────────────────────────────────────────────────────────────
@@ -700,7 +832,10 @@ export default function Cuidados() {
   const { isAdmin, getAccessLevel } = useAuth();
   const podeEditarCuidados = isAdmin || (getAccessLevel?.(['cuidados']) ?? 0) >= 3;
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState(() => searchParams.get('tab') || 'dashboard');
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get('tab') || 'dashboard';
+    return t === 'tarefas' ? 'visitas' : t; // legado · aba renomeada pra "Visitas agendadas"
+  });
 
   function handleTabChange(v: string) {
     setTab(v);
@@ -732,7 +867,9 @@ export default function Cuidados() {
   const [detailConvert, setDetailConvert] = useState<any | null>(null);
   const [agendarConv, setAgendarConv] = useState<any | null>(null);
   const [desfechoConv, setDesfechoConv] = useState<any | null>(null);
-  const [usersList, setUsersList] = useState<any[]>([]);
+  const [atendentes, setAtendentes] = useState<any[]>([]);
+  const [visitasPendentes, setVisitasPendentes] = useState<any[]>([]);
+  const [visitasVersion, setVisitasVersion] = useState(0);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
   const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'atendidos' | 'encontro_marcado' | 'sem_encontro' | 'aguardando_desfecho'>('todos');
@@ -761,6 +898,9 @@ export default function Cuidados() {
       setAgJorn(findT('jornada180_inscricoes') ? String(findT('jornada180_inscricoes').quantidade) : '');
       setAgConvAtend(findT('novos_convertidos_atend') ? String(findT('novos_convertidos_atend').quantidade) : '');
     } finally { setLoading(false); }
+    // Sinaliza o calendário de visitas + recarrega as pendências
+    setVisitasVersion(v => v + 1);
+    cuidadosApi.convertidos.visitasPendentes().then(setVisitasPendentes).catch(() => {});
   }
 
   useEffect(() => { loadAll(); }, []);
@@ -770,10 +910,38 @@ export default function Cuidados() {
     cuidadosApi.convertidos.tags().then(setConvertTags).catch(() => {});
   }, []);
 
-  // Usuarios · select de "quem vai atender" no agendamento do encontro
+  // Atendentes elegíveis (líderes de culto e de ministérios · filtrado por
+  // cargo no backend) · select de "quem vai atender" no agendamento da visita
   useEffect(() => {
-    usersApi.list().then(setUsersList).catch(() => {});
+    cuidadosApi.convertidos.atendentes().then(setAtendentes).catch(() => {});
   }, []);
+
+  // Visitas agendadas da semana · alimenta o calendário da aba "Visitas agendadas"
+  const fetchVisitasSemana = useCallback(async (di: string, df: string) => {
+    const rows = await cuidadosApi.convertidos.list({ encontro_from: di, encontro_to: df });
+    return (rows || []).map((c: any) => ({
+      id: c.id,
+      data: c.data_encontro,
+      horario: c.encontro_hora,
+      titulo: c.nome,
+      subtitulo: c.encontro_responsavel_nome || 'Atendente a definir',
+      cor: ENCONTRO_STATUS[c.encontro_status]?.color || C.info,
+      statusLabel: ENCONTRO_STATUS[c.encontro_status]?.label || c.encontro_status,
+      raw: c,
+    }));
+  }, []);
+
+  // Checkbox "Atendido" otimista: responde na hora · rollback + toast se falhar.
+  // (Antes esperava o PATCH + recarga completa da página sem feedback — parecia travado.)
+  async function marcarAtendido(id: string, checked: boolean) {
+    setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, atendido_apos_culto: checked } : x));
+    try {
+      await cuidadosApi.convertidos.update(id, { atendido_apos_culto: checked });
+    } catch (e: any) {
+      setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, atendido_apos_culto: !checked } : x));
+      toast.error(`Não foi possível atualizar o atendimento: ${e.message}`);
+    }
+  }
 
   const convertidosFiltrados = useMemo(() => {
     const q = convertSearch.trim().toLowerCase();
@@ -860,7 +1028,7 @@ export default function Cuidados() {
           <TabsTrigger value="primeiros-passos">Primeiros passos</TabsTrigger>
           <TabsTrigger value="agregado">Mensal / Agregado</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
-          <TabsTrigger value="tarefas">Tarefas</TabsTrigger>
+          <TabsTrigger value="visitas">Visitas agendadas</TabsTrigger>
         </TabsList>
 
         {/* Dashboard */}
@@ -1171,7 +1339,7 @@ export default function Cuidados() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
                       <TableCell>
-                        <input type="checkbox" checked={!!c.atendido_apos_culto} disabled={!podeEditarCuidados} onChange={async e => { await cuidadosApi.convertidos.update(c.id, { atendido_apos_culto: e.target.checked }); loadAll(); }} />
+                        <input type="checkbox" checked={!!c.atendido_apos_culto} disabled={!podeEditarCuidados} onChange={e => marcarAtendido(c.id, e.target.checked)} />
                       </TableCell>
                       <TableCell>
                         {c.encontro_marcado ? (
@@ -1288,8 +1456,21 @@ export default function Cuidados() {
           <DevocionalAdmin />
         </TabsContent>
 
-        <TabsContent value="tarefas" className="space-y-4">
-          <ProcessosTarefas area="Cuidados" />
+        {/* Visitas agendadas · calendário semanal + pendências de encaminhamento */}
+        <TabsContent value="visitas" className="space-y-4">
+          <ProcessosTarefas
+            area="Cuidados"
+            titulo="Visitas agendadas - Cuidados"
+            fetchEventos={fetchVisitasSemana}
+            onEventoClick={(ev: any) => setDetailConvert(ev.raw)}
+            eventosKey={visitasVersion}
+          />
+          <VisitasPendentesSection
+            itens={visitasPendentes}
+            canEdit={podeEditarCuidados}
+            onResolver={(c: any) => setDesfechoConv(c)}
+            onFicha={(c: any) => setDetailConvert(c)}
+          />
         </TabsContent>
       </Tabs>
 
@@ -1324,13 +1505,14 @@ export default function Cuidados() {
       <AgendarEncontroModal
         open={!!agendarConv}
         convertido={agendarConv}
-        usersList={usersList}
+        atendentes={atendentes}
         onClose={() => setAgendarConv(null)}
         onSaved={loadAll}
       />
       <DesfechoModal
         open={!!desfechoConv}
         convertido={desfechoConv}
+        allTags={convertTags}
         onClose={() => setDesfechoConv(null)}
         onSaved={loadAll}
       />

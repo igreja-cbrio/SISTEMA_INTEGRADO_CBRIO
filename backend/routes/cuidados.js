@@ -421,10 +421,49 @@ router.get('/convertidos/tags', (_req, res) => {
   res.json(CONVERTIDO_TAGS);
 });
 
+// Quem pode atender convertidos (decisão do Marcos · 2026-06-10): só líderes
+// de culto (coordenador kids/ami/bridge/online) e líderes de ministérios
+// (lider-ministerial + coordenador-voluntarios). Filtra por CARGO, não por
+// nome — trocar o titular do cargo atualiza a lista sozinho.
+const ATENDENTE_CARGO_SLUGS = [
+  'coordenador-kids', 'coordenador-ami', 'coordenador-bridge', 'coordenador-online',
+  'lider-ministerial', 'coordenador-voluntarios',
+];
+
+// GET /api/cuidados/convertidos/atendentes — profiles elegíveis pro select
+// "quem vai atender" do agendamento de visita.
+router.get('/convertidos/atendentes', async (_req, res) => {
+  try {
+    const { data: cargos, error: e1 } = await supabase
+      .from('cargos').select('id, slug').in('slug', ATENDENTE_CARGO_SLUGS);
+    if (e1) throw e1;
+    const cargoIds = (cargos || []).map(c => c.id);
+    if (!cargoIds.length) return res.json([]);
+
+    const { data: usuarios, error: e2 } = await supabase
+      .from('usuarios').select('email, cargo_id')
+      .in('cargo_id', cargoIds).is('deleted_at', null);
+    if (e2) throw e2;
+    const emails = new Set((usuarios || []).map(u => String(u.email || '').toLowerCase()).filter(Boolean));
+    if (!emails.size) return res.json([]);
+
+    const { data: profs, error: e3 } = await supabase
+      .from('profiles').select('id, name, email').eq('active', true).order('name');
+    if (e3) throw e3;
+    const itens = (profs || [])
+      .filter(p => emails.has(String(p.email || '').toLowerCase()))
+      .map(p => ({ id: p.id, name: p.name }));
+    res.json(itens);
+  } catch (e) {
+    console.error('[CUIDADOS] atendentes:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/convertidos', async (req, res) => {
   try {
-    const { from, to, tag, encontro_marcado, atendido } = req.query;
-    let q = supabase.from('cui_convertidos').select('*').is('deleted_at', null).order('data_culto', { ascending: false }).limit(2000);
+    const { from, to, tag, encontro_marcado, atendido, encontro_from, encontro_to } = req.query;
+    let q = supabase.from('cui_convertidos').select('*').is('deleted_at', null).limit(2000);
     if (from) q = q.gte('data_culto', from);
     if (to) q = q.lte('data_culto', to);
     if (tag) q = q.contains('tags', [tag]);
@@ -432,6 +471,15 @@ router.get('/convertidos', async (req, res) => {
     if (encontro_marcado === 'false') q = q.eq('encontro_marcado', false);
     if (atendido === 'true') q = q.eq('atendido_apos_culto', true);
     if (atendido === 'false') q = q.eq('atendido_apos_culto', false);
+    // Janela de VISITA agendada (calendário de visitas) · filtra por data_encontro
+    if (encontro_from || encontro_to) {
+      q = q.eq('encontro_marcado', true);
+      if (encontro_from) q = q.gte('data_encontro', encontro_from);
+      if (encontro_to) q = q.lte('data_encontro', encontro_to);
+      q = q.order('data_encontro', { ascending: true });
+    } else {
+      q = q.order('data_culto', { ascending: false });
+    }
     const { data, error } = await q;
     if (error) throw error;
     res.json(data || []);
@@ -571,32 +619,49 @@ router.post('/convertidos/:id/registrar-contato', async (req, res) => {
 });
 
 // POST /api/cuidados/convertidos/:id/desfecho
-// body: { compareceu, encaminhamentos: [{ destino, observacao? }], observacoes? }
+// body: { compareceu, encaminhamentos: [{ destino, observacao? }], observacoes?, tags? }
 // Registra o desfecho do encontro e encaminha a pessoa pros próximos valores.
+// tags = triagem pastoral preenchida no mesmo modal (decisão do Marcos 2026-06-10:
+// o líder sai do encontro com tags + encaminhamento + observações num lugar só).
 router.post('/convertidos/:id/desfecho', async (req, res) => {
   try {
-    const { compareceu, encaminhamentos = [], observacoes } = req.body;
+    const { compareceu, encaminhamentos = [], observacoes, tags } = req.body;
     const userId = req.user.userId || req.user.id;
 
     // 1) Desfecho no convertido
+    const patchDesfecho = {
+      encontro_compareceu: !!compareceu,
+      encontro_status: compareceu ? 'realizado' : 'faltou',
+      desfecho_em: new Date().toISOString(),
+      desfecho_por: userId,
+      desfecho_observacoes: observacoes ?? null,
+    };
+    if (Array.isArray(tags)) {
+      patchDesfecho.tags = tags.filter(t => CONVERTIDO_TAGS.includes(t));
+    }
     const { data: conv, error: e1 } = await supabase
       .from('cui_convertidos')
-      .update({
-        encontro_compareceu: !!compareceu,
-        encontro_status: compareceu ? 'realizado' : 'faltou',
-        desfecho_em: new Date().toISOString(),
-        desfecho_por: userId,
-        desfecho_observacoes: observacoes ?? null,
-      })
+      .update(patchDesfecho)
       .eq('id', req.params.id).select().single();
     if (e1) throw e1;
 
     // 2) Encaminhamentos (só se a pessoa compareceu)
+    // Dedup por (convertido, destino): reabrir o desfecho pra completar uma
+    // pendência (ex.: tag) não pode duplicar um encaminhamento já feito.
     const criados = [];
     if (compareceu && Array.isArray(encaminhamentos)) {
       for (const enc of encaminhamentos) {
         const meta = DESTINO_META[enc?.destino];
         if (!meta) continue;
+        const { data: jaExiste } = await supabase
+          .from('jornada_encaminhamentos')
+          .select('id')
+          .eq('convertido_id', conv.id)
+          .eq('destino', enc.destino)
+          .is('deleted_at', null)
+          .limit(1)
+          .maybeSingle();
+        if (jaExiste) continue;
         const { data: row, error: e2 } = await supabase
           .from('jornada_encaminhamentos')
           .insert({
@@ -626,6 +691,59 @@ router.post('/convertidos/:id/desfecho', async (req, res) => {
     }
     res.json({ convertido: conv, encaminhamentos: criados });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/cuidados/visitas-pendentes
+// Visitas passadas (data_encontro < hoje) cuja pessoa ainda não saiu "completa":
+// toda pessoa visitada precisa ter desfecho registrado, ≥1 tag pastoral e
+// ≥1 encaminhamento (regra do Marcos · 2026-06-10). Faltou/cancelado ficam fora
+// (o caminho deles é reagendar pela ficha).
+router.get('/visitas-pendentes', async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: rows, error } = await supabase
+      .from('cui_convertidos')
+      .select('id, nome, telefone, cpf, membro_id, data_culto, data_encontro, encontro_hora, encontro_status, encontro_responsavel_id, encontro_responsavel_nome, encontro_compareceu, encontro_marcado, atendido_apos_culto, cadastrado, tags, observacoes, area, created_at')
+      .is('deleted_at', null)
+      .eq('encontro_marcado', true)
+      .lt('data_encontro', hoje)
+      .in('encontro_status', ['agendado', 'realizado'])
+      .order('data_encontro', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+
+    // Encaminhamentos existentes por convertido (consulta em lotes · evita URL gigante)
+    const ids = (rows || []).map(r => r.id);
+    const destinosPorConvertido = new Map();
+    for (let i = 0; i < ids.length; i += 100) {
+      const lote = ids.slice(i, i + 100);
+      const { data: encs, error: e2 } = await supabase
+        .from('jornada_encaminhamentos')
+        .select('convertido_id, destino')
+        .in('convertido_id', lote)
+        .is('deleted_at', null);
+      if (e2) throw e2;
+      (encs || []).forEach(en => {
+        const lista = destinosPorConvertido.get(en.convertido_id) || [];
+        if (!lista.includes(en.destino)) lista.push(en.destino);
+        destinosPorConvertido.set(en.convertido_id, lista);
+      });
+    }
+
+    const itens = (rows || []).map(c => {
+      const destinosExistentes = destinosPorConvertido.get(c.id) || [];
+      const pendencias = [];
+      if (c.encontro_status === 'agendado') pendencias.push('desfecho');
+      if (!Array.isArray(c.tags) || c.tags.length === 0) pendencias.push('tag');
+      if (destinosExistentes.length === 0) pendencias.push('encaminhamento');
+      return { ...c, pendencias, destinos_existentes: destinosExistentes };
+    }).filter(c => c.pendencias.length > 0);
+
+    res.json(itens);
+  } catch (e) {
+    console.error('[CUIDADOS] visitas-pendentes:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
