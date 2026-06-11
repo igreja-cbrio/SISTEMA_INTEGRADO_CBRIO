@@ -7,7 +7,6 @@ import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
 import OracaoPanel from '../../components/OracaoPanel';
-import JornadaConvertidos from '../../components/JornadaConvertidos';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -332,6 +331,26 @@ const ENCONTRO_STATUS: Record<string, { label: string; color: string }> = {
   faltou:    { label: 'Faltou',    color: '#ef4444' },
   cancelado: { label: 'Cancelado', color: '#6b7280' },
 };
+
+// Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
+const JORNADA_ST: Record<string, { label: string; color: string }> = {
+  feito:          { label: 'Feito',        color: '#10b981' },
+  feito_no_prazo: { label: 'No prazo',     color: '#10b981' },
+  feito_atrasado: { label: 'Feito (fora)', color: '#0ea5e9' },
+  inscrito:       { label: 'Inscrito',     color: '#3b82f6' },
+  no_prazo:       { label: 'No prazo',     color: '#94a3b8' },
+  vencendo:       { label: 'Vencendo',     color: '#f59e0b' },
+  atrasado:       { label: 'Atrasado',     color: '#ef4444' },
+};
+function JornadaPill({ label, m }: { label: string; m: any }) {
+  const st = JORNADA_ST[m?.status] || JORNADA_ST.no_prazo;
+  return (
+    <span title={`${label}: ${st.label}`} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
+      style={{ background: st.color + '20', color: st.color, border: `1px solid ${st.color}40` }}>
+      {label}{m?.feito ? ' ✓' : ''}
+    </span>
+  );
+}
 
 // destinos do encaminhamento da jornada · mapeiam pros próximos valores
 const DESTINOS_ENC = [
@@ -934,7 +953,9 @@ export default function Cuidados() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
     const t = searchParams.get('tab') || 'dashboard';
-    return t === 'tarefas' ? 'visitas' : t; // legado · aba renomeada pra "Visitas agendadas"
+    if (t === 'tarefas') return 'visitas'; // legado · aba renomeada pra "Visitas agendadas"
+    if (t === 'primeiros-passos') return 'convertidos'; // legado · fundida em "Próximos passos"
+    return t;
   });
 
   function handleTabChange(v: string) {
@@ -951,6 +972,7 @@ export default function Cuidados() {
   const [pedidosApp, setPedidosApp] = useState<any[]>([]);
   const [jornada, setJornada] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
+  const [jornadaData, setJornadaData] = useState<any>(null); // /jornada-convertidos · status contato/batismo/Next por pessoa
 
   const [modalAcomp, setModalAcomp] = useState(false);
   const [editAcomp, setEditAcomp] = useState<any | null>(null);
@@ -965,20 +987,21 @@ export default function Cuidados() {
   const [visitasVersion, setVisitasVersion] = useState(0);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
-  const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'atendidos' | 'encontro_marcado' | 'sem_encontro' | 'aguardando_desfecho'>('todos');
+  const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'atendidos' | 'encontro_marcado' | 'sem_encontro' | 'aguardando_desfecho' | 'atrasados'>('todos');
   const [convertFilterTag, setConvertFilterTag] = useState<string>('');
   const [convertFilterFrom, setConvertFilterFrom] = useState<string>('');
   const [convertFilterTo, setConvertFilterTo] = useState<string>('');
   const [search, setSearch] = useState('');
 
   async function loadAll() {
-    const [a, pa, j, c] = await Promise.all([
+    const [a, pa, j, c, jd] = await Promise.all([
       cuidadosApi.acompanhamentos.list().catch(() => []),
       cuidadosApi.pedidosApp.list().catch(() => []),
       cuidadosApi.jornada180.list().catch(() => []),
       cuidadosApi.convertidos.list().catch(() => []),
+      cuidadosApi.jornadaConvertidos().catch(() => null),
     ]);
-    setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c);
+    setAcomp(a); setPedidosApp(pa); setJornada(j); setConvertidos(c); setJornadaData(jd);
     // Sinaliza o calendário de visitas + recarrega as pendências
     setVisitasVersion(v => v + 1);
     cuidadosApi.convertidos.visitasPendentes().then(setVisitasPendentes).catch(() => {});
@@ -1044,6 +1067,21 @@ export default function Cuidados() {
     }
   }
 
+  // Jornada por pessoa (contato/batismo/Next) indexada por id do convertido
+  const jMap = useMemo(() => {
+    const m = new Map<string, any>();
+    (jornadaData?.itens || []).forEach((i: any) => m.set(i.id, i));
+    return m;
+  }, [jornadaData]);
+
+  async function marcarContato(id: string) {
+    try {
+      await cuidadosApi.convertidos.registrarContato(id);
+      toast.success('Contato registrado');
+      loadAll();
+    } catch (e: any) { toast.error(e.message); }
+  }
+
   const convertidosFiltrados = useMemo(() => {
     const q = convertSearch.trim().toLowerCase();
     return convertidos.filter((c: any) => {
@@ -1052,6 +1090,10 @@ export default function Cuidados() {
       if (convertFilter === 'encontro_marcado' && !c.encontro_marcado) return false;
       if (convertFilter === 'sem_encontro' && c.encontro_marcado) return false;
       if (convertFilter === 'aguardando_desfecho' && c.encontro_status !== 'agendado') return false;
+      if (convertFilter === 'atrasados') {
+        const j = jMap.get(c.id);
+        if (!(j && [j.contato, j.batismo, j.next].some((m: any) => m?.status === 'atrasado'))) return false;
+      }
       if (convertFilterTag && !(Array.isArray(c.tags) && c.tags.includes(convertFilterTag))) return false;
       if (convertFilterFrom && c.data_culto < convertFilterFrom) return false;
       if (convertFilterTo && c.data_culto > convertFilterTo) return false;
@@ -1061,7 +1103,7 @@ export default function Cuidados() {
       }
       return true;
     });
-  }, [convertidos, convertSearch, convertFilter, convertFilterTag, convertFilterFrom, convertFilterTo]);
+  }, [convertidos, convertSearch, convertFilter, convertFilterTag, convertFilterFrom, convertFilterTo, jMap]);
 
   const filtersActive = convertSearch || convertFilter !== 'todos' || convertFilterTag || convertFilterFrom || convertFilterTo;
   function limparFiltrosConvertidos() {
@@ -1099,8 +1141,7 @@ export default function Cuidados() {
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="acomp">Aconselhamento</TabsTrigger>
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
-          <TabsTrigger value="convertidos">Convertidos</TabsTrigger>
-          <TabsTrigger value="primeiros-passos">Primeiros passos</TabsTrigger>
+          <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="visitas">Visitas agendadas</TabsTrigger>
         </TabsList>
@@ -1363,8 +1404,40 @@ export default function Cuidados() {
           </div>
         </TabsContent>
 
-        {/* Convertidos */}
+        {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}
         <TabsContent value="convertidos" className="space-y-4">
+          <div>
+            <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Acompanhamento dos novos convertidos</h3>
+            <p className="text-xs text-muted-foreground">Quem a Integração registrou neste período inicial · marque o atendimento, agende a visita e acompanhe a jornada (contato em 3d · batismo e Next em 90d · atrasados em vermelho).</p>
+          </div>
+          {jornadaData?.resumo && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
+                <div className="rounded-lg p-2 shrink-0" style={{ background: C.primary + '18' }}><Phone className="h-5 w-5" style={{ color: C.primary }} /></div>
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Contato ≤ 3 dias</p>
+                  <span className="text-2xl font-bold text-foreground">{jornadaData.resumo.contato_pct}%</span>
+                  <p className="text-[11px] text-muted-foreground">{jornadaData.resumo.contato_no_prazo}/{jornadaData.resumo.total} no prazo · {jornadaData.resumo.contato_atrasados} atrasados</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
+                <div className="rounded-lg p-2 shrink-0" style={{ background: '#0ea5e918' }}><CheckCircle2 className="h-5 w-5" style={{ color: '#0ea5e9' }} /></div>
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Batismo ≤ 90 dias</p>
+                  <span className="text-2xl font-bold text-foreground">{jornadaData.resumo.batismo_pct}%</span>
+                  <p className="text-[11px] text-muted-foreground">{jornadaData.resumo.batismo_feitos}/{jornadaData.resumo.total} batizados</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
+                <div className="rounded-lg p-2 shrink-0" style={{ background: C.purple + '18' }}><Sparkles className="h-5 w-5" style={{ color: C.purple }} /></div>
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Next ≤ 90 dias</p>
+                  <span className="text-2xl font-bold text-foreground">{jornadaData.resumo.next_pct}%</span>
+                  <p className="text-[11px] text-muted-foreground">{jornadaData.resumo.next_feitos}/{jornadaData.resumo.total} fizeram o Next</p>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted-foreground">
               <strong className="text-foreground">{convertidos.length}</strong> convertidos · {convertPendentes > 0 ? <span className="text-warning">{convertPendentes} ainda nao atendidos</span> : <span className="text-primary">todos atendidos</span>}
@@ -1394,6 +1467,7 @@ export default function Cuidados() {
                 <SelectItem value="encontro_marcado">Com encontro marcado</SelectItem>
                 <SelectItem value="sem_encontro">Sem encontro marcado</SelectItem>
                 <SelectItem value="aguardando_desfecho">Aguardando desfecho</SelectItem>
+                <SelectItem value="atrasados">Atrasados na jornada</SelectItem>
               </SelectContent>
             </Select>
             <Select value={convertFilterTag || '__all'} onValueChange={(v: any) => setConvertFilterTag(v === '__all' ? '' : v)}>
@@ -1425,13 +1499,14 @@ export default function Cuidados() {
                   <TableHead>Data culto</TableHead>
                   <TableHead>Atendido</TableHead>
                   <TableHead>Encontro</TableHead>
+                  <TableHead>Jornada</TableHead>
                   <TableHead>Tags</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {convertidosFiltrados.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
                   </TableCell></TableRow>
                 ) : convertidosFiltrados.map(c => {
@@ -1463,6 +1538,24 @@ export default function Cuidados() {
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          const j = jMap.get(c.id);
+                          if (!j) return <span className="text-xs text-muted-foreground">—</span>;
+                          return (
+                            <div className="flex flex-col gap-1 items-start">
+                              <div className="flex gap-1">
+                                <JornadaPill label="Contato" m={j.contato} />
+                                <JornadaPill label="Batismo" m={j.batismo} />
+                                <JornadaPill label="Next" m={j.next} />
+                              </div>
+                              {podeEditarCuidados && !j.contato?.feito && (
+                                <button onClick={() => marcarContato(c.id)} className="text-[10px] text-primary hover:underline">marcar contato</button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>
                         {tags.length === 0 ? <span className="text-xs text-muted-foreground">—</span> : (
@@ -1499,15 +1592,6 @@ export default function Cuidados() {
               </TableBody>
             </Table>
           </div>
-        </TabsContent>
-
-        {/* Primeiros passos · jornada dos primeiros 90 dias do novo convertido */}
-        <TabsContent value="primeiros-passos" className="space-y-4">
-          <div>
-            <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Primeiros 90 dias do novo convertido</h3>
-            <p className="text-xs text-muted-foreground">Contato pastoral em 3 dias · batismo e Next em 90 dias. Cada líder de área acompanha a sua gente; aqui você (Marcelo/Cuidados) vê todas e cobra os atrasados (em vermelho).</p>
-          </div>
-          <JornadaConvertidos />
         </TabsContent>
 
         <TabsContent value="devocional" className="space-y-4">
