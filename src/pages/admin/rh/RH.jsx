@@ -95,6 +95,10 @@ const STATUS_COLORS = {
   licenca: { c: C.amber, bg: C.amberBg, label: 'Licença' },
 };
 
+// Tipos de contrato aceitos pelo banco (CHECK rh_funcionarios_tipo_contrato_check).
+// Só estes 4 — não oferecer minúsculas nem voluntario/estagiario (estouram o constraint).
+const OPCOES_CONTRATO = ['CLT', 'PJ', 'PJ+', 'PREBENDA'];
+
 // ── Shared inline styles (kept for backward compat, gradually migrate to Tailwind) ──
 const styles = {
   table: { width: '100%', borderCollapse: 'collapse' },
@@ -1970,8 +1974,8 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </div>
       <div style={styles.formRow}>
         <Input label="Cargo *" value={f.cargo || ''} onChange={e => upd('cargo', e.target.value)} />
-        <FormSelect label="Tipo de Contrato" value={f.tipo_contrato || 'clt'} onChange={e => upd('tipo_contrato', e.target.value)}>
-          {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+        <FormSelect label="Tipo de Contrato" value={f.tipo_contrato || 'CLT'} onChange={e => upd('tipo_contrato', e.target.value)}>
+          {OPCOES_CONTRATO.map(k => <SelectItem key={k} value={k}>{TIPO_CONTRATO[k] || k}</SelectItem>)}
         </FormSelect>
       </div>
       <div style={styles.formRow}>
@@ -2759,12 +2763,12 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], onEdit, onDel
           ))}
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Contrato</label>
-            <ShadSelect value={editForm.tipo_contrato || 'clt'} onValueChange={v => setEditForm(p => ({ ...p, tipo_contrato: v }))}>
+            <ShadSelect value={editForm.tipo_contrato || 'CLT'} onValueChange={v => setEditForm(p => ({ ...p, tipo_contrato: v }))}>
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                {OPCOES_CONTRATO.map(k => <SelectItem key={k} value={k}>{TIPO_CONTRATO[k] || k}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
           </div>
