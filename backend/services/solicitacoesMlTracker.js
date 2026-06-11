@@ -268,6 +268,22 @@ async function notificarSolicitante({ solicitacao, status, descricao, isFirstLin
       link,
     });
   }
+
+  // 3. Quando a encomenda é ENTREGUE, avisa também a EQUIPE de logística
+  //    (destinatários vêm das regras do módulo 'logistica' em /admin/notificacao-regras;
+  //    sem regra, cai no fallback admin/diretor). Sem targetIds de propósito.
+  if (status === 'delivered') {
+    const rastreio = solicitacao.ml_tracking_number ? ` (rastreio ${solicitacao.ml_tracking_number})` : '';
+    await notificar({
+      modulo: 'logistica',
+      tipo: 'encomenda_entregue',
+      titulo: `📦 Encomenda entregue · ${solicitacao.titulo}`,
+      mensagem: `Foi marcada como ENTREGUE no rastreamento do Mercado Livre${rastreio}. Confira o recebimento.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `sol_ml_entregue_equipe_${solicitacao.id}`,
+    }).catch(e => console.error('[ML-TRACK] notify equipe entrega:', e.message));
+  }
 }
 
 module.exports = {
