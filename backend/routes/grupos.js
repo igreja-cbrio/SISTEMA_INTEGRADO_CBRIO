@@ -25,6 +25,45 @@ const sanitizePath = (s) => (s || '').replace(/[^a-zA-Z0-9\-_ ]/g, '').trim();
 
 router.use(authenticate);
 
+// ── Temporada de inscrições · flag GLOBAL (linha única em app_grupos_temporada) ──
+// O app de membros lê esta flag pra liberar a auto-inscrição em grupos. Leitura
+// liberada a qualquer autenticado; escrita só admin/diretor ou líder de grupos
+// (authorizeModule('grupos', 3) · Nélio/Natasha entram via boost de área).
+router.get('/temporada-inscricoes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('app_grupos_temporada')
+      .select('aberta, titulo, atualizado_em')
+      .eq('id', true)
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || { aberta: false, titulo: null, atualizado_em: null });
+  } catch (e) {
+    console.error('[grupos] temporada-inscricoes get:', e.message);
+    res.status(500).json({ error: 'Erro ao ler a temporada de inscrições' });
+  }
+});
+
+router.put('/temporada-inscricoes', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const payload = { id: true, atualizado_em: new Date().toISOString() };
+    if (typeof req.body?.aberta === 'boolean') payload.aberta = req.body.aberta;
+    if (req.body?.titulo !== undefined) {
+      payload.titulo = (req.body.titulo || '').toString().trim().slice(0, 120) || null;
+    }
+    const { data, error } = await supabase
+      .from('app_grupos_temporada')
+      .upsert(payload, { onConflict: 'id' })
+      .select('aberta, titulo, atualizado_em')
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[grupos] temporada-inscricoes put:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a temporada de inscrições' });
+  }
+});
+
 // GET /api/grupos — lista todos com contagem de membros e líder
 router.get('/', async (req, res) => {
   try {

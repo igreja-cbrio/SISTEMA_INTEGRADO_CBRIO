@@ -14,6 +14,7 @@ import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
+import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
@@ -1082,6 +1083,7 @@ export default function Grupos() {
       {/* ═══ TAB CONFIGURAÇÕES · Temporadas + Endereços (só quem edita) ═══ */}
       {tabAtiva === 'config' && (
         <div>
+          <TemporadaInscricoesCard podeEditar={podeEditarGrupos} />
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {[
               { key: 'temporadas', label: 'Temporadas', Icon: Calendar },
