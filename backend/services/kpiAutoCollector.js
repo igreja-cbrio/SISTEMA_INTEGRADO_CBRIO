@@ -309,13 +309,19 @@ const COLLECTORS = {
   },
 
   'cuidados.atendimentos_pastorais': async ({ inicio }) => {
-    // cui_atendimentos_agregado eh agregado mensal (campo 'mês' = primeiro dia do mês)
-    const mes = inicio.slice(0, 7) + '-01';
-    const tipos = ['capelania', 'aconselhamento', 'staff'];
+    // Conta os atendimentos pastorais REAIS do mês (cui_acompanhamentos por tipo),
+    // não mais a entrada manual mensal de cui_atendimentos_agregado (aposentada na Fase 2).
+    const mesIni = inicio.slice(0, 7) + '-01';
+    const dt = new Date(mesIni + 'T12:00:00'); dt.setMonth(dt.getMonth() + 1);
+    const mesFim = dt.toISOString().slice(0, 10);
+    const tipos = ['capelania', 'aconselhamento'];
     let total = 0;
     const partes = [];
     for (const tipo of tipos) {
-      const { count } = await supabase.from('cui_atendimentos_agregado').select('id', { count: 'exact', head: true }).eq('mes', mes).eq('tipo', tipo);
+      const { count } = await supabase.from('cui_acompanhamentos')
+        .select('id', { count: 'exact', head: true })
+        .is('deleted_at', null).eq('tipo', tipo)
+        .gte('created_at', mesIni).lt('created_at', mesFim);
       total += count || 0;
       if (count) partes.push(`${tipo}: ${count}`);
     }
