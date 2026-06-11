@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -413,7 +413,7 @@ export default function RH() {
           </div>
           <TabAdmissao />
         </TabsContent>
-        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} /></TabsContent>
+        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); }} /></TabsContent>
         <TabsContent value="folha"><TabFolha /></TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
         <TabsContent value="treinamentos">
@@ -1441,7 +1441,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
   );
 }
 
-function OrgChartTab({ funcs, onDetail }) {
+function OrgChartTab({ funcs, onDetail, onChanged }) {
   const ativos = funcs.filter(f => f.status === 'ativo');
   const containerRef = useRef(null);
   const contentRef = useRef(null);
@@ -1454,6 +1454,46 @@ function OrgChartTab({ funcs, onDetail }) {
   const [previewFunc, setPreviewFunc] = useState(null);
   const [expandAll, setExpandAll] = useState(true);
   const [collapsed, setCollapsed] = useState({});
+  // Assistente de IA
+  const [iaTexto, setIaTexto] = useState('');
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaAplicando, setIaAplicando] = useState(false);
+  const [iaProposta, setIaProposta] = useState(null); // { mudancas, observacao, avisos }
+
+  async function pedirIA() {
+    const instrucao = iaTexto.trim();
+    if (!instrucao || iaLoading) return;
+    setIaLoading(true);
+    try {
+      const r = await rh.organograma.ia(instrucao);
+      if (!r.mudancas?.length) {
+        sonnerToast.message('Nada para mudar', { description: r.observacao || 'Não identifiquei uma mudança clara. Tente ser mais direto (ex.: "Marcelo reporta à Lorena").' });
+        setIaProposta(null);
+      } else {
+        setIaProposta(r);
+      }
+    } catch (e) {
+      sonnerToast.error(e.message || 'Erro ao consultar a IA');
+    } finally {
+      setIaLoading(false);
+    }
+  }
+
+  async function aplicarIA() {
+    if (!iaProposta?.mudancas?.length || iaAplicando) return;
+    setIaAplicando(true);
+    try {
+      const r = await rh.organograma.aplicar(iaProposta.mudancas);
+      sonnerToast.success(`Organograma atualizado · ${r.aplicadas} mudança(s) aplicada(s)`);
+      setIaProposta(null);
+      setIaTexto('');
+      onChanged?.();
+    } catch (e) {
+      sonnerToast.error(e.message || 'Erro ao aplicar');
+    } finally {
+      setIaAplicando(false);
+    }
+  }
 
   // Unique áreas
   const areas = [...new Set(ativos.map(f => f.area).filter(Boolean))].sort();
@@ -1668,6 +1708,69 @@ function OrgChartTab({ funcs, onDetail }) {
 
   return (
     <>
+      {/* Assistente de IA · organize por descrição */}
+      <div className="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
+        <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-foreground">
+          <Sparkles className="h-4 w-4 text-primary" />
+          Organizar com IA
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Descreva a mudança em português e a IA ajusta a hierarquia — você confirma antes de aplicar.
+          Ex.: <em>"Marcelo reporta à Lorena"</em> · <em>"tira o gestor do Pedro"</em> · <em>"coloca o time de mídia sob o Pedro Paiva"</em>.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={iaTexto}
+            onChange={e => setIaTexto(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') pedirIA(); }}
+            placeholder="Descreva o que quer mudar no organograma..."
+            disabled={iaLoading}
+            className="flex-1 h-9 px-3 rounded-md border border-input bg-background text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Button size="sm" onClick={pedirIA} disabled={iaLoading || !iaTexto.trim()} className="gap-1.5 shrink-0">
+            {iaLoading ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" /> : <Sparkles className="h-3.5 w-3.5" />}
+            {iaLoading ? 'Pensando...' : 'Sugerir'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Prévia das mudanças sugeridas pela IA (confirmar antes de aplicar) */}
+      {iaProposta && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4" onClick={() => !iaAplicando && setIaProposta(null)}>
+          <div className="bg-popover rounded-2xl p-6 w-full max-w-[480px] shadow-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()} style={{ animation: 'cbrio-modal-center-in 0.2s ease-out' }}>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center"><Sparkles className="h-5 w-5" /></div>
+              <div className="text-[15px] font-semibold text-foreground">Confirmar mudanças</div>
+            </div>
+            {iaProposta.observacao && <p className="text-xs text-muted-foreground mb-3">{iaProposta.observacao}</p>}
+            <div className="space-y-2 mb-3">
+              {iaProposta.mudancas.map((m, i) => (
+                <div key={i} className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
+                  <div className="font-medium text-foreground">{m.funcionario_nome}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    ↳ {m.gestor_nome ? <>passa a reportar a <strong className="text-foreground">{m.gestor_nome}</strong></> : <>fica <strong className="text-foreground">sem gestor</strong> (vai para o topo)</>}
+                  </div>
+                  {m.motivo && <div className="text-[11px] text-muted-foreground mt-1 italic">{m.motivo}</div>}
+                </div>
+              ))}
+            </div>
+            {iaProposta.avisos?.length > 0 && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 mb-3">
+                {iaProposta.avisos.map((a, i) => <div key={i}>⚠️ {a}</div>)}
+              </div>
+            )}
+            <div className="flex gap-2.5 justify-end">
+              <Button variant="ghost" onClick={() => setIaProposta(null)} disabled={iaAplicando}>Cancelar</Button>
+              <Button onClick={aplicarIA} disabled={iaAplicando} className="gap-1.5">
+                {iaAplicando ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" /> : <Save className="h-3.5 w-3.5" />}
+                Aplicar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-col gap-3 mb-4">
         {ativos.length > 0 && comGestor === 0 && (
