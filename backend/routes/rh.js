@@ -249,7 +249,9 @@ router.put('/funcionarios/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/rh/funcionarios/:id (desativação lógica)
+// DELETE /api/rh/funcionarios/:id (desligamento lógico · NÃO apaga o registro)
+// Mantido por retrocompatibilidade · usa a data de hoje. Pra informar a data
+// real do desligamento + motivo, use POST /funcionarios/:id/desligar.
 router.delete('/funcionarios/:id', async (req, res) => {
   try {
     const { error } = await supabase
@@ -262,6 +264,47 @@ router.delete('/funcionarios/:id', async (req, res) => {
   } catch (e) {
     console.error('[RH] Desativar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao desativar funcionário' });
+  }
+});
+
+// POST /api/rh/funcionarios/:id/desligar — marca como inativo preservando o
+// histórico, com a data real de desligamento + motivo opcional.
+router.post('/funcionarios/:id/desligar', async (req, res) => {
+  try {
+    const { data_demissao, motivo } = req.body || {};
+    const payload = {
+      status: 'inativo',
+      data_demissao: data_demissao || new Date().toISOString().split('T')[0],
+      motivo_desligamento: motivo || null,
+    };
+    const { data, error } = await supabase
+      .from('rh_funcionarios')
+      .update(payload)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[RH] Desligar funcionário:', e.message);
+    res.status(500).json({ error: 'Erro ao desligar funcionário' });
+  }
+});
+
+// POST /api/rh/funcionarios/:id/reativar — volta um ex-colaborador pra ativo.
+router.post('/funcionarios/:id/reativar', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('rh_funcionarios')
+      .update({ status: 'ativo', data_demissao: null, motivo_desligamento: null })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[RH] Reativar funcionário:', e.message);
+    res.status(500).json({ error: 'Erro ao reativar funcionário' });
   }
 });
 

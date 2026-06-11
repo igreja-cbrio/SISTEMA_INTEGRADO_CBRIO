@@ -848,6 +848,8 @@ export const rh = {
     create: (data) => post('/rh/funcionarios', data),
     update: (id, data) => put(`/rh/funcionarios/${id}`, data),
     remove: (id) => del(`/rh/funcionarios/${id}`),
+    desligar: (id, data) => post(`/rh/funcionarios/${id}/desligar`, data),
+    reativar: (id) => post(`/rh/funcionarios/${id}/reativar`),
     uploadFoto: (id, file) => {
       const fd = new FormData();
       fd.append('foto', file);
