@@ -977,6 +977,10 @@ export const painelArea = {
     ).toString();
     return get(`/painel-area/${encodeURIComponent(area)}${qs ? `?${qs}` : ''}`);
   },
+  // Tendências históricas por valor da Jornada · meses: 3|6|12|24|60
+  series: (area, meses = 12) => {
+    return get(`/painel-area/${encodeURIComponent(area)}/series?meses=${meses}`);
+  },
   // Registra NPS mensal · body: { nota: 0-10, mês?: 'YYYY-MM', qtd_respostas?, observação? }
   // Requer nível >= 3 no módulo da área (coord da área)
   registrarNps: (area, body) => post(`/painel-area/${encodeURIComponent(area)}/nps`, body),
