@@ -938,6 +938,148 @@ router.delete('/ferias/:id', async (req, res) => {
   }
 });
 
+// ── ESCALAS EXTRAS ─────────────────────────────────────────────
+// Escalas pontuais (plantões/coberturas) pagas à parte · rh_escalas_extras.
+// GET /api/rh/extras?status=
+router.get('/extras', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let query = supabase
+      .from('rh_escalas_extras')
+      .select('*, funcionario:rh_funcionarios(nome, cargo, foto_url)')
+      .order('data', { ascending: false });
+    if (status) query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[RH] Listar extras:', e.message);
+    res.status(500).json({ error: 'Erro ao listar escalas de extra' });
+  }
+});
+
+// POST /api/rh/extras
+router.post('/extras', async (req, res) => {
+  try {
+    const { funcionario_id, titulo, descricao, data, horario_inicio, horario_fim, valor, observacoes, status } = req.body || {};
+    if (!funcionario_id || !titulo || !data) {
+      return res.status(400).json({ error: 'Colaborador, título e data são obrigatórios' });
+    }
+    const valorNum = valor === '' || valor == null ? null : Number(valor);
+    if (valorNum != null && Number.isNaN(valorNum)) {
+      return res.status(400).json({ error: 'Valor inválido' });
+    }
+    const { data: row, error } = await supabase
+      .from('rh_escalas_extras')
+      .insert({
+        funcionario_id,
+        titulo,
+        descricao: descricao || null,
+        data,
+        horario_inicio: horario_inicio || null,
+        horario_fim: horario_fim || null,
+        valor: valorNum,
+        observacoes: observacoes || null,
+        status: status || 'agendado',
+      })
+      .select('*, funcionario:rh_funcionarios(nome, cargo, foto_url)')
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    notificar({
+      modulo: 'rh',
+      tipo: 'escala_extra',
+      titulo: `Escala de extra: ${row.funcionario?.nome || 'colaborador'}`,
+      mensagem: `${row.titulo} em ${row.data}${valorNum != null ? ` · R$ ${valorNum.toFixed(2)}` : ''}.`,
+      link: '/admin/rh',
+      severidade: 'info',
+      chaveDedup: `escala_extra_${row.id}`,
+    }).catch(() => {});
+
+    res.json(row);
+  } catch (e) {
+    console.error('[RH] Criar extra:', e.message);
+    res.status(500).json({ error: 'Erro ao criar escala de extra' });
+  }
+});
+
+// PATCH /api/rh/extras/:id
+router.patch('/extras/:id', async (req, res) => {
+  try {
+    const campos = ['funcionario_id', 'titulo', 'descricao', 'data', 'horario_inicio', 'horario_fim', 'valor', 'observacoes', 'status'];
+    const patch = {};
+    for (const c of campos) {
+      if (req.body && c in req.body) patch[c] = req.body[c];
+    }
+    if (patch.valor === '') patch.valor = null;
+    if (patch.valor != null && Number.isNaN(Number(patch.valor))) {
+      return res.status(400).json({ error: 'Valor inválido' });
+    }
+    if (patch.valor != null) patch.valor = Number(patch.valor);
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    patch.updated_at = new Date().toISOString();
+
+    const { data: row, error } = await supabase
+      .from('rh_escalas_extras')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select('*, funcionario:rh_funcionarios(nome, cargo, foto_url)')
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(row);
+  } catch (e) {
+    console.error('[RH] Atualizar extra:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar escala de extra' });
+  }
+});
+
+// DELETE /api/rh/extras/:id
+router.delete('/extras/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('rh_escalas_extras').delete().eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[RH] Remover extra:', e.message);
+    res.status(500).json({ error: 'Erro ao remover escala de extra' });
+  }
+});
+
+// ── CONFIG (chave/valor do módulo RH) ──────────────────────────
+// GET /api/rh/config → objeto { chave: valor }
+router.get('/config', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('rh_config').select('chave, valor');
+    if (error) return res.status(400).json({ error: error.message });
+    const cfg = {};
+    (data || []).forEach((r) => { cfg[r.chave] = r.valor; });
+    res.json(cfg);
+  } catch (e) {
+    console.error('[RH] Ler config:', e.message);
+    res.status(500).json({ error: 'Erro ao ler configuração' });
+  }
+});
+
+// PUT /api/rh/config/:chave  body { valor }
+router.put('/config/:chave', async (req, res) => {
+  try {
+    const { valor } = req.body || {};
+    const { data, error } = await supabase
+      .from('rh_config')
+      .upsert(
+        { chave: req.params.chave, valor: valor == null ? null : String(valor), updated_at: new Date().toISOString(), updated_by: req.user?.userId || null },
+        { onConflict: 'chave' }
+      )
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[RH] Salvar config:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar configuração' });
+  }
+});
+
 // ── KPIs ──────────────────────────────────────────────────────
 // GET /api/rh/kpis
 router.get('/kpis', async (req, res) => {
