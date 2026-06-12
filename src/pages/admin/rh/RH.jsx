@@ -549,11 +549,6 @@ export default function RH() {
             <p className="text-xs text-muted-foreground" style={{ marginTop: 2 }}>Colaboradores · Treinamentos · Férias</p>
           </div>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => setModalFunc({})}
-          title="Cadastro manual direto: você digita os dados e a pessoa entra na base na hora. Para o processo completo de contratação (formulário + contrato + assinatura), use a aba Admissão.">
-          <UserPlus className="w-4 h-4" />
-          Adicionar colaborador
-        </Button>
       </div>
 
       {error && <div className="text-destructive text-sm mb-3 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">{error}</div>}
@@ -587,14 +582,14 @@ export default function RH() {
             funcs={funcs} loading={loading} busca={busca} setBusca={setBusca}
             filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
             filtroArea={filtroArea} setFiltroArea={setFiltroArea}
-            onNew={() => setModalFunc({})} onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
+            onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
             showToast={showToast}
           />
         </TabsContent>
         <TabsContent value="pcs">{podeRemun && <TabPCS />}</TabsContent>
         <TabsContent value="admissao">
           <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-muted-foreground">
-            <strong className="text-foreground">Admissão</strong> é o processo de contratação por etapas (rascunho → formulário pro contratado preencher → contrato → assinatura → concluído). Para apenas adicionar alguém que já está na equipe, use o botão <strong className="text-foreground">"Adicionar colaborador"</strong> no topo.
+            <strong className="text-foreground">Admissão</strong> é o processo de contratação por etapas (rascunho → formulário pro contratado preencher → contrato → assinatura → concluído). Todo novo colaborador entra na base por aqui; para desligar alguém, use o botão de desligamento na aba <strong className="text-foreground">Colaboradores</strong>.
           </div>
           <TabAdmissao />
         </TabsContent>
@@ -874,7 +869,7 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onNew, onDetail, onDelete, onReativar, onImport, showToast }) {
+function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
