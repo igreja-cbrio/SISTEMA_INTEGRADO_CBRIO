@@ -588,9 +588,6 @@ export default function RH() {
         </TabsContent>
         <TabsContent value="pcs">{podeRemun && <TabPCS />}</TabsContent>
         <TabsContent value="admissao">
-          <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-muted-foreground">
-            <strong className="text-foreground">Admissão</strong> é o processo de contratação por etapas (rascunho → formulário pro contratado preencher → contrato → assinatura → concluído). Todo novo colaborador entra na base por aqui; para desligar alguém, use o botão de desligamento na aba <strong className="text-foreground">Colaboradores</strong>.
-          </div>
           <TabAdmissao />
         </TabsContent>
         <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); }} /></TabsContent>

@@ -958,45 +958,47 @@ router.get('/extras', async (req, res) => {
   }
 });
 
-// POST /api/rh/extras
+// POST /api/rh/extras · aceita funcionario_id (1) OU funcionario_ids[] (escala
+// vários colaboradores de uma vez, com os mesmos título/data/horário/valor)
 router.post('/extras', async (req, res) => {
   try {
-    const { funcionario_id, titulo, descricao, data, horario_inicio, horario_fim, valor, observacoes, status } = req.body || {};
-    if (!funcionario_id || !titulo || !data) {
-      return res.status(400).json({ error: 'Colaborador, título e data são obrigatórios' });
+    const { funcionario_id, funcionario_ids, titulo, descricao, data, horario_inicio, horario_fim, valor, observacoes, status } = req.body || {};
+    const ids = [...new Set((Array.isArray(funcionario_ids) && funcionario_ids.length ? funcionario_ids : [funcionario_id]).filter(Boolean))];
+    if (!ids.length || !titulo || !data) {
+      return res.status(400).json({ error: 'Colaborador(es), título e data são obrigatórios' });
     }
     const valorNum = valor === '' || valor == null ? null : Number(valor);
     if (valorNum != null && Number.isNaN(valorNum)) {
       return res.status(400).json({ error: 'Valor inválido' });
     }
-    const { data: row, error } = await supabase
+    const base = {
+      titulo,
+      descricao: descricao || null,
+      data,
+      horario_inicio: horario_inicio || null,
+      horario_fim: horario_fim || null,
+      valor: valorNum,
+      observacoes: observacoes || null,
+      status: status || 'agendado',
+    };
+    const { data: rows, error } = await supabase
       .from('rh_escalas_extras')
-      .insert({
-        funcionario_id,
-        titulo,
-        descricao: descricao || null,
-        data,
-        horario_inicio: horario_inicio || null,
-        horario_fim: horario_fim || null,
-        valor: valorNum,
-        observacoes: observacoes || null,
-        status: status || 'agendado',
-      })
-      .select('*, funcionario:rh_funcionarios(nome, cargo, foto_url)')
-      .single();
+      .insert(ids.map((fid) => ({ ...base, funcionario_id: fid })))
+      .select('*, funcionario:rh_funcionarios(nome, cargo, foto_url)');
     if (error) return res.status(400).json({ error: error.message });
 
+    const nomes = (rows || []).map((r) => r.funcionario?.nome).filter(Boolean);
     notificar({
       modulo: 'rh',
       tipo: 'escala_extra',
-      titulo: `Escala de extra: ${row.funcionario?.nome || 'colaborador'}`,
-      mensagem: `${row.titulo} em ${row.data}${valorNum != null ? ` · R$ ${valorNum.toFixed(2)}` : ''}.`,
+      titulo: rows.length > 1 ? `${rows.length} escalas de extra criadas` : `Escala de extra: ${nomes[0] || 'colaborador'}`,
+      mensagem: `${titulo} em ${data}${valorNum != null ? ` · R$ ${valorNum.toFixed(2)}` : ''}${rows.length > 1 ? ` · ${nomes.join(', ')}` : ''}.`,
       link: '/admin/rh',
       severidade: 'info',
-      chaveDedup: `escala_extra_${row.id}`,
+      chaveDedup: `escala_extra_${(rows[0] && rows[0].id) || data}`,
     }).catch(() => {});
 
-    res.json(row);
+    res.json(rows.length === 1 ? rows[0] : rows);
   } catch (e) {
     console.error('[RH] Criar extra:', e.message);
     res.status(500).json({ error: 'Erro ao criar escala de extra' });

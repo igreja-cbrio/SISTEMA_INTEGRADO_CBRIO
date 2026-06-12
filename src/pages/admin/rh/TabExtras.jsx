@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { rh } from '../../../api';
 import { Button } from '../../../components/ui/button';
-import { Plus, X, Clock, Settings, Trash2, CalendarDays } from 'lucide-react';
+import { Plus, X, Clock, Settings, Trash2, CalendarDays, Pencil } from 'lucide-react';
 
 const C = {
   primary: '#00B39D', primaryBg: '#00B39D18',
@@ -26,10 +26,12 @@ export default function TabExtras({ funcionarios, onRefresh }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [editId, setEditId] = useState(null);
   const [valorPadrao, setValorPadrao] = useState('150.00');
   const [showConfig, setShowConfig] = useState(false);
+  const [pessoaBusca, setPessoaBusca] = useState('');
   const [form, setForm] = useState({
-    funcionario_id: '', titulo: '', descricao: '', data: '',
+    funcionario_ids: [], titulo: '', descricao: '', data: '',
     horario_inicio: '08:00', horario_fim: '17:00', valor: '', observacoes: '',
   });
 
@@ -52,16 +54,57 @@ export default function TabExtras({ funcionarios, onRefresh }) {
     } catch { }
   }
 
+  const ativos = (funcionarios || []).filter(f => f.status === 'ativo');
+  const ativosFiltrados = ativos.filter(f => (f.nome || '').toLowerCase().includes(pessoaBusca.trim().toLowerCase()));
+
+  function openCreate() {
+    setEditId(null);
+    setForm({ funcionario_ids: [], titulo: '', descricao: '', data: '', horario_inicio: '08:00', horario_fim: '17:00', valor: valorPadrao, observacoes: '' });
+    setPessoaBusca(''); setError(''); setShowModal(true);
+  }
+
+  function openEdit(ex) {
+    setEditId(ex.id);
+    setForm({
+      funcionario_ids: ex.funcionario_id ? [ex.funcionario_id] : [],
+      titulo: ex.titulo || '', descricao: ex.descricao || '', data: ex.data || '',
+      horario_inicio: (ex.horario_inicio || '08:00').slice(0, 5),
+      horario_fim: (ex.horario_fim || '17:00').slice(0, 5),
+      valor: ex.valor != null ? String(ex.valor) : '', observacoes: ex.observacoes || '',
+    });
+    setPessoaBusca(''); setError(''); setShowModal(true);
+  }
+
+  function closeModal() { setShowModal(false); setEditId(null); }
+
+  function togglePessoa(id) {
+    setForm(f => ({
+      ...f,
+      funcionario_ids: f.funcionario_ids.includes(id)
+        ? f.funcionario_ids.filter(x => x !== id)
+        : [...f.funcionario_ids, id],
+    }));
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!form.funcionario_ids.length) { setError('Selecione ao menos um colaborador.'); return; }
     if (form.horario_fim && form.horario_inicio && form.horario_fim <= form.horario_inicio) {
       setError('O horário de fim deve ser posterior ao horário de início.');
       return;
     }
+    const payload = {
+      titulo: form.titulo, descricao: form.descricao, data: form.data,
+      horario_inicio: form.horario_inicio, horario_fim: form.horario_fim,
+      valor: form.valor || valorPadrao, observacoes: form.observacoes,
+    };
     try {
-      await rh.extras.create({ ...form, valor: form.valor || valorPadrao });
-      setShowModal(false);
-      setForm({ funcionario_id: '', titulo: '', descricao: '', data: '', horario_inicio: '08:00', horario_fim: '17:00', valor: '', observacoes: '' });
+      if (editId) {
+        await rh.extras.update(editId, { ...payload, funcionario_id: form.funcionario_ids[0] });
+      } else {
+        await rh.extras.create({ ...payload, funcionario_ids: form.funcionario_ids });
+      }
+      closeModal();
       load();
       onRefresh?.();
     } catch (err) { setError(err.message); }
@@ -79,6 +122,8 @@ export default function TabExtras({ funcionarios, onRefresh }) {
     try { await rh.config.set('valor_extra_padrao', valorPadrao); setShowConfig(false); } catch { }
   }
 
+  const nSel = form.funcionario_ids.length;
+
   return (
     <div style={{ minHeight: 200 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
@@ -86,7 +131,7 @@ export default function TabExtras({ funcionarios, onRefresh }) {
           <span style={{ fontSize: 13, color: C.text2 }}>Valor padrão: <strong style={{ color: C.primary }}>R$ {Number(valorPadrao).toFixed(2)}</strong></span>
           <Button variant="ghost" size="icon-xs" onClick={() => setShowConfig(!showConfig)}><Settings className="h-3.5 w-3.5" /></Button>
         </div>
-        <Button className="gap-1.5" onClick={() => { setForm(f => ({ ...f, valor: valorPadrao })); setShowModal(true); }}>
+        <Button className="gap-1.5" onClick={openCreate}>
           <Plus className="h-4 w-4" /> Nova Escala
         </Button>
       </div>
@@ -156,7 +201,10 @@ export default function TabExtras({ funcionarios, onRefresh }) {
                     </select>
                   </td>
                   <td style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}` }}>
-                    <Button variant="ghost" size="icon-xs" onClick={() => remove(ex.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      <Button variant="ghost" size="icon-xs" onClick={() => openEdit(ex)} title="Editar escala"><Pencil className="h-3.5 w-3.5" /></Button>
+                      <Button variant="ghost" size="icon-xs" onClick={() => remove(ex.id)} title="Excluir escala"><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -167,20 +215,47 @@ export default function TabExtras({ funcionarios, onRefresh }) {
 
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={() => setShowModal(false)} />
+          <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={closeModal} />
           <div style={{ width: '45%', minWidth: 400, maxWidth: 520, background: 'var(--cbrio-modal-bg)', overflowY: 'auto', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out' }}>
             <div style={{ padding: '20px 24px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>Nova Escala de Extra</h3>
-              <Button variant="ghost" size="icon-xs" onClick={() => setShowModal(false)}><X className="h-4 w-4" /></Button>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>{editId ? 'Editar Escala de Extra' : 'Nova Escala de Extra'}</h3>
+              <Button variant="ghost" size="icon-xs" onClick={closeModal}><X className="h-4 w-4" /></Button>
             </div>
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '16px 24px 24px' }}>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Colaborador *</label>
-                <select required value={form.funcionario_id} onChange={e => setForm(f => ({ ...f, funcionario_id: e.target.value }))} style={inputStyle}>
-                  <option value="">Selecione...</option>
-                  {funcionarios.filter(f => f.status === 'ativo').map(f => <option key={f.id} value={f.id}>{f.nome} — {f.cargo}</option>)}
-                </select>
-              </div>
+              {editId ? (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Colaborador *</label>
+                  <select required value={form.funcionario_ids[0] || ''} onChange={e => setForm(f => ({ ...f, funcionario_ids: e.target.value ? [e.target.value] : [] }))} style={inputStyle}>
+                    <option value="">Selecione...</option>
+                    {ativos.map(f => <option key={f.id} value={f.id}>{f.nome} — {f.cargo}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>
+                    Colaboradores * <span style={{ color: C.text3, fontWeight: 500 }}>({nSel} selecionado{nSel === 1 ? '' : 's'})</span>
+                  </label>
+                  <input value={pessoaBusca} onChange={e => setPessoaBusca(e.target.value)} placeholder="Buscar colaborador..." style={{ ...inputStyle, marginBottom: 6 }} />
+                  <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, maxHeight: 200, overflowY: 'auto', background: 'var(--cbrio-input-bg)' }}>
+                    {ativosFiltrados.length === 0 ? (
+                      <div style={{ padding: 12, fontSize: 13, color: C.text3, textAlign: 'center' }}>Nenhum colaborador.</div>
+                    ) : ativosFiltrados.map(f => {
+                      const checked = form.funcionario_ids.includes(f.id);
+                      return (
+                        <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}`, background: checked ? C.primaryBg : 'transparent' }}>
+                          <input type="checkbox" checked={checked} onChange={() => togglePessoa(f.id)} />
+                          <span style={{ fontSize: 13, color: C.text }}>{f.nome}</span>
+                          <span style={{ fontSize: 11, color: C.text3 }}>— {f.cargo}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
+                    <button type="button" onClick={() => setForm(f => ({ ...f, funcionario_ids: [...new Set([...f.funcionario_ids, ...ativosFiltrados.map(x => x.id)])] }))} style={{ background: 'none', border: 'none', color: C.primary, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}>Selecionar todos</button>
+                    <button type="button" onClick={() => setForm(f => ({ ...f, funcionario_ids: [] }))} style={{ background: 'none', border: 'none', color: C.text3, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}>Limpar</button>
+                  </div>
+                </div>
+              )}
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Título do serviço *</label>
                 <input required value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Plantão Domingo Páscoa" style={inputStyle} />
@@ -207,8 +282,12 @@ export default function TabExtras({ funcionarios, onRefresh }) {
                 <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Valor R$ *</label>
                 <input required type="number" step="0.01" value={form.valor} onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} placeholder={valorPadrao} style={inputStyle} />
               </div>
-              <Button type="submit" className="w-full mt-1">Escalar Colaborador</Button>
-              <p style={{ fontSize: 11, color: C.text3, textAlign: 'center', margin: 0 }}>O colaborador receberá uma notificação com os detalhes.</p>
+              <Button type="submit" className="w-full mt-1">
+                {editId ? 'Salvar alterações' : nSel > 1 ? `Escalar ${nSel} colaboradores` : 'Escalar colaborador'}
+              </Button>
+              {!editId && (
+                <p style={{ fontSize: 11, color: C.text3, textAlign: 'center', margin: 0 }}>Cada colaborador selecionado recebe uma escala com estes dados.</p>
+              )}
             </form>
           </div>
         </div>
