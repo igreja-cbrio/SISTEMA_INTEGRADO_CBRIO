@@ -30,6 +30,107 @@ async function cronEnviarDiario(req, res) {
 router.get('/cron/enviar-diario', cronEnviarDiario);
 router.post('/cron/enviar-diario', cronEnviarDiario);
 
+// ─────────────────────────────────────────────────────────────
+// GET|POST /api/devocional-planos/cron/lancar-semanal
+//   Cron Vercel · segunda-feira 05:00 BRT (08:00 UTC)
+//   Lançamento SEMANAL dos devocionais (seg→sex):
+//   1. desativa planos expirados (data_fim < hoje) — housekeeping
+//   2. se já existe plano ATIVO cobrindo hoje → lançamento manual
+//      aconteceu, não faz nada
+//   3. senão → cria o plano da semana (seg–sex) e gera os 5 itens
+//      via IA, já ativo (lançamento automático), e avisa os
+//      responsáveis de Cuidados pra revisarem o conteúdo
+// ─────────────────────────────────────────────────────────────
+function hojeBRT() {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  return p; // YYYY-MM-DD
+}
+
+async function cronLancarSemanal(req, res) {
+  if (!isAuthorizedCron(req)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const hoje = hojeBRT();
+    const d = new Date(hoje + 'T12:00:00Z');
+    const dow = d.getUTCDay();
+    const seg = new Date(d); seg.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
+    const sex = new Date(seg); sex.setUTCDate(seg.getUTCDate() + 4);
+    const segIso = seg.toISOString().slice(0, 10);
+    const sexIso = sex.toISOString().slice(0, 10);
+
+    // 1) desativa expirados
+    const { data: expirados } = await supabase
+      .from('devocional_planos')
+      .update({ ativo: false })
+      .eq('ativo', true)
+      .lt('data_fim', hoje)
+      .select('id');
+
+    // 2) já tem plano ativo cobrindo hoje? (lançamento manual)
+    const { data: vigentes } = await supabase
+      .from('devocional_planos')
+      .select('id, titulo')
+      .eq('ativo', true)
+      .lte('data_inicio', hoje)
+      .gte('data_fim', hoje)
+      .limit(1);
+    if (vigentes && vigentes.length > 0) {
+      return res.json({
+        ok: true, modo: 'manual', plano: vigentes[0].titulo,
+        expirados: expirados?.length || 0,
+      });
+    }
+
+    // 3) lançamento automático: cria plano da semana + 5 itens por IA
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY não configurada' });
+    }
+    const [, mm, dd] = segIso.split('-');
+    const { data: plano, error: e1 } = await supabase
+      .from('devocional_planos')
+      .insert({
+        titulo: `Devocional da semana ${dd}/${mm}`,
+        descricao: 'Lançamento automático semanal (gerado por IA — revise os itens)',
+        data_inicio: segIso,
+        data_fim: sexIso,
+        ativo: true,
+      })
+      .select()
+      .single();
+    if (e1) throw e1;
+
+    const dias = eachDay(segIso, sexIso);
+    const rows = await gerarItensViaIA(plano, dias, '', 'pastoral, edificante, com aplicação pratica');
+    const { error: e2 } = await supabase.from('devocional_itens').insert(rows);
+    if (e2) throw e2;
+
+    try {
+      const { notificar } = require('../services/notificar');
+      await notificar({
+        modulo: 'cuidados',
+        tipo: 'devocional_auto',
+        titulo: 'Devocional da semana lançado automaticamente',
+        mensagem: `Ninguém lançou o devocional desta semana até segunda 05:00 — o sistema criou "${plano.titulo}" com ${rows.length} itens por IA. Revise o conteúdo em Cuidados → Devocionais.`,
+        link: '/ministerial/cuidados',
+        chaveDedup: `devocional_auto_${segIso}`,
+      });
+    } catch (nErr) {
+      console.error('[devocional-cron-semanal] notificar:', nErr.message);
+    }
+
+    console.log(`[devocional-cron-semanal] plano ${plano.id} criado com ${rows.length} itens`);
+    res.json({ ok: true, modo: 'automatico', plano_id: plano.id, itens: rows.length, expirados: expirados?.length || 0 });
+  } catch (e) {
+    console.error('[devocional-cron-semanal]:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+}
+router.get('/cron/lancar-semanal', cronLancarSemanal);
+router.post('/cron/lancar-semanal', cronLancarSemanal);
+
 // Tudo abaixo requer autenticação normal
 router.use(authenticate);
 
@@ -151,6 +252,76 @@ router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
   }
 });
 
+// Gera itens devocionais via Haiku pra um conjunto de datas. Retorna as
+// rows prontas pro insert em devocional_itens (NÃO insere). Usada pela
+// rota gerar-ia (admin) e pelo cron de lançamento semanal.
+async function gerarItensViaIA(plano, diasAlvo, tema, tom) {
+  const client = new Anthropic();
+  const systemPrompt = `Você e um pastor protestante brasileiro escrevendo devocionais diarios para a Igreja CBRio. Estilo: ${tom}.
+
+Cada devocional deve ter:
+- **passagem**: referência bíblica curta (1-3 versiculos) · formato "Livro Cap:Vers"
+- **passagem_texto**: o TEXTO COMPLETO da passagem em portugues, traducao NAA ou ARA. NUNCA omita · a pessoa que le o devocional deve poder ler o texto bíblico ali mesmo, sem precisar abrir a Bíblia.
+- **reflexao**: 4-6 paragrafos curtos
+- **aplicação**: 1 paragrafo de aplicação pratica
+- **oração**: oração curta encerrando
+
+Use linguagem acessivel e contemporanea. NUNCA cite mais de uma passagem central por devocional.`;
+
+  const userPrompt = `Gere ${diasAlvo.length} devocionais diarios para o plano "${plano.titulo}".
+${tema ? `Tema/serie: ${tema}\n` : ''}${plano.descricao ? `Contexto: ${plano.descricao}\n` : ''}
+Datas (uma por devocional, na ordem):
+${diasAlvo.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+
+Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAlvo.length} objetos no formato:
+[
+  {
+    "data": "yyyy-mm-dd",
+    "titulo": "...",
+    "passagem": "Livro Cap:Vers",
+    "passagem_texto": "Texto biblico completo aqui, em portugues",
+    "reflexao": "...",
+    "aplicacao": "...",
+    "oracao": "..."
+  }
+]`;
+
+  const resp = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 8000,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+
+  const text = resp.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
+  const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+  let arr;
+  try { arr = JSON.parse(cleaned); }
+  catch (err) {
+    console.error('IA JSON parse error:', err.message, 'raw:', text.slice(0, 500));
+    const e = new Error('IA retornou JSON invalido');
+    e.preview = text.slice(0, 300);
+    throw e;
+  }
+  if (!Array.isArray(arr)) throw new Error('IA não retornou array');
+
+  const rows = arr
+    .filter(o => o && o.data && o.titulo && o.reflexao)
+    .map(o => ({
+      plano_id: plano.id,
+      data: o.data,
+      titulo: String(o.titulo).slice(0, 200),
+      passagem: o.passagem ? String(o.passagem).slice(0, 100) : null,
+      passagem_texto: o.passagem_texto ? String(o.passagem_texto) : null,
+      reflexao: String(o.reflexao),
+      aplicacao: o.aplicacao ? String(o.aplicacao) : null,
+      oracao: o.oracao ? String(o.oracao) : null,
+      gerado_por_ia: true,
+    }));
+  if (rows.length === 0) throw new Error('IA não retornou itens validos');
+  return rows;
+}
+
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-planos/:id/gerar-ia
 // body: { tema?, tom?, sobrescrever?, apenas_datas?: string[] }
@@ -205,77 +376,20 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
       });
     }
 
-    const client = new Anthropic();
-    const systemPrompt = `Você e um pastor protestante brasileiro escrevendo devocionais diarios para a Igreja CBRio. Estilo: ${tom}.
-
-Cada devocional deve ter:
-- **passagem**: referência bíblica curta (1-3 versiculos) · formato "Livro Cap:Vers"
-- **passagem_texto**: o TEXTO COMPLETO da passagem em portugues, traducao NAA ou ARA. NUNCA omita · a pessoa que le o devocional deve poder ler o texto bíblico ali mesmo, sem precisar abrir a Bíblia.
-- **reflexao**: 4-6 paragrafos curtos
-- **aplicação**: 1 paragrafo de aplicação pratica
-- **oração**: oração curta encerrando
-
-Use linguagem acessivel e contemporanea. NUNCA cite mais de uma passagem central por devocional.`;
-
-    const userPrompt = `Gere ${diasAlvo.length} devocionais diarios para o plano "${plano.titulo}".
-${tema ? `Tema/serie: ${tema}\n` : ''}${plano.descricao ? `Contexto: ${plano.descricao}\n` : ''}
-Datas (uma por devocional, na ordem):
-${diasAlvo.map((d, i) => `${i + 1}. ${d}`).join('\n')}
-
-Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAlvo.length} objetos no formato:
-[
-  {
-    "data": "yyyy-mm-dd",
-    "titulo": "...",
-    "passagem": "Livro Cap:Vers",
-    "passagem_texto": "Texto biblico completo aqui, em portugues",
-    "reflexao": "...",
-    "aplicacao": "...",
-    "oracao": "..."
-  }
-]`;
-
-    const resp = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 8000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
-
-    const text = resp.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
-    const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-    let arr;
-    try { arr = JSON.parse(cleaned); }
-    catch (err) {
-      console.error('IA JSON parse error:', err.message, 'raw:', text.slice(0, 500));
-      return res.status(500).json({ error: 'IA retornou JSON invalido', preview: text.slice(0, 300) });
+    let rows;
+    try {
+      rows = await gerarItensViaIA(plano, diasAlvo, tema, tom);
+    } catch (iaErr) {
+      return res.status(500).json({ error: iaErr.message, preview: iaErr.preview });
     }
-    if (!Array.isArray(arr)) return res.status(500).json({ error: 'IA não retornou array' });
 
     if (sobrescrever) {
-      const datasSobrescrever = diasAlvo;
       await supabase
         .from('devocional_itens')
         .delete()
         .eq('plano_id', plano.id)
-        .in('data', datasSobrescrever);
+        .in('data', diasAlvo);
     }
-
-    const rows = arr
-      .filter(o => o && o.data && o.titulo && o.reflexao)
-      .map(o => ({
-        plano_id: plano.id,
-        data: o.data,
-        titulo: String(o.titulo).slice(0, 200),
-        passagem: o.passagem ? String(o.passagem).slice(0, 100) : null,
-        passagem_texto: o.passagem_texto ? String(o.passagem_texto) : null,
-        reflexao: String(o.reflexao),
-        aplicacao: o.aplicacao ? String(o.aplicacao) : null,
-        oracao: o.oracao ? String(o.oracao) : null,
-        gerado_por_ia: true,
-      }));
-
-    if (rows.length === 0) return res.status(500).json({ error: 'IA não retornou itens validos' });
 
     const { error: e2 } = await supabase.from('devocional_itens').insert(rows);
     if (e2) throw e2;
