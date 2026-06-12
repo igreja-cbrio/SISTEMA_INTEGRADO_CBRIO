@@ -985,3 +985,11 @@ export const cuidados = {
   buscarMembro: (cpf) => get(`/cuidados/buscar-membro?cpf=${encodeURIComponent(cpf)}`),
   criarMembro: (data) => post('/cuidados/criar-membro', data),
 };
+
+export const destaques = {
+  list: () => get('/destaques'),
+  create: (formData) => requestFile('/destaques', formData),
+  update: (id, data) => put(`/destaques/${id}`, data),
+  trocarImagem: (id, formData) => requestFile(`/destaques/${id}/imagem`, formData),
+  remove: (id) => del(`/destaques/${id}`),
+};

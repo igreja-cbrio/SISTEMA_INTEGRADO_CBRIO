@@ -10,7 +10,7 @@ import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen,
-  Megaphone, BrainCircuit, ShoppingCart,
+  Megaphone, BrainCircuit, ShoppingCart, Images,
   Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Sparkles,
 } from 'lucide-react';
 import {
@@ -99,6 +99,7 @@ const NAV_ITEMS = [
         title: 'Áreas',
         items: [
           { label: 'Marketing', description: 'Projetos e solicitações', icon: Megaphone, path: '/criativo/marketing' },
+          { label: 'Destaques do App', description: 'Carrossel de fotos da Home do app de membros', icon: Images, path: '/admin/destaques', perm: 'isAdmin' },
         ],
       },
     ],
@@ -107,7 +108,7 @@ const NAV_ITEMS = [
 
 export default function AppShell() {
   const { profile, role, signOut, isAdmin, isVoluntario, isColaborador, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados } = useAuth();
-  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, isColaborador };
+  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, isColaborador, isAdmin };
 
   // If permissions haven't loaded yet (modulePerms is null), show all items
   const permsLoaded = modulePerms !== null || isAdmin;
