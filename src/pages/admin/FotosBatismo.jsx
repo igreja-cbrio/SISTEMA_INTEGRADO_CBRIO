@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { batismoFotos as api } from '../../api';
 import { Button } from '../../components/ui/button';
 import { comprimirImagem } from '../../lib/comprimirImagem';
+import { OverlayEnvio } from './Destaques';
 
 const C = {
   text: 'var(--cbrio-text)', text2: 'var(--cbrio-text2)', text3: 'var(--cbrio-text3)',
@@ -22,6 +23,7 @@ export default function FotosBatismo() {
   const [fotos, setFotos] = useState([]);
   const [fotosLoading, setFotosLoading] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  const [progresso, setProgresso] = useState(null);
   const fileRef = useRef(null);
 
   async function load() {
@@ -56,10 +58,14 @@ export default function FotosBatismo() {
       // Comprime no navegador (o Vercel rejeita corpo > 4,5 MB — foto de
       // câmera estoura) e envia em lotes pequenos pra caber no limite.
       const comprimidos = [];
-      for (const f of arquivos) comprimidos.push(await comprimirImagem(f, { maxLado: 2048 }));
+      for (let i = 0; i < arquivos.length; i++) {
+        setProgresso(`Preparando ${i + 1} de ${arquivos.length}…`);
+        comprimidos.push(await comprimirImagem(arquivos[i], { maxLado: 2048 }));
+      }
       let enviadas = 0;
       const LOTE = 4;
       for (let i = 0; i < comprimidos.length; i += LOTE) {
+        setProgresso(`Enviando ${Math.min(i + LOTE, comprimidos.length)} de ${comprimidos.length}…`);
         const fd = new FormData();
         comprimidos.slice(i, i + LOTE).forEach((f) => fd.append('fotos', f));
         const parcial = await api.upload(selecionada.data, fd);
@@ -73,6 +79,7 @@ export default function FotosBatismo() {
       toast.error(err.message);
     }
     setEnviando(false);
+    setProgresso(null);
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -128,7 +135,8 @@ export default function FotosBatismo() {
           </div>
         )
       ) : (
-        <div>
+        <div style={{ position: 'relative' }}>
+          {enviando && progresso && <OverlayEnvio texto={progresso} />}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
             <Button variant="outline" size="sm" onClick={() => { setSelecionada(null); setFotos([]); }}>← Voltar</Button>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text, textTransform: 'capitalize' }}>{fmtData(selecionada.data)}</div>
