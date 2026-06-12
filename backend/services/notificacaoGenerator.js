@@ -338,6 +338,33 @@ async function gerarNotificacoesFinanceiro() {
     }
   }
 
+  // Notas fiscais de compras aguardando lançamento há 3+ dias
+  try {
+    const limite = new Date(Date.now() - 3 * 86400000).toISOString();
+    const { data: notasParadas } = await supabase
+      .from('log_notas_fiscais')
+      .select('id', { count: 'exact' })
+      .eq('status', 'enviada_financeiro')
+      .lt('enviada_financeiro_em', limite);
+
+    if (notasParadas?.length) {
+      const n = notasParadas.length;
+      count += await notificar({
+        modulo: 'financeiro',
+        tipo: 'nf_compra_parada',
+        titulo: 'Notas fiscais de compras aguardando lançamento',
+        mensagem: `${n} nota${n > 1 ? 's' : ''} fiscal${n > 1 ? 'is' : ''} de compras aguarda${n > 1 ? 'm' : ''} lançamento há mais de 3 dias.`,
+        link: '/admin/financeiro',
+        severidade: 'aviso',
+        chaveDedup: `nf_paradas_${today}`,
+      });
+    }
+  } catch (e) {
+    if (!String(e.message || '').includes('does not exist')) {
+      console.warn('[NOTIF-FIN] Erro nas notas de compras:', e.message);
+    }
+  }
+
   return count;
 }
 

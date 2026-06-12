@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import { useAuth } from '../../contexts/AuthContext';
-import { membresia, voluntariado } from '../../api';
+import { membresia, voluntariado, devocionais } from '../../api';
 import { supabase } from '../../supabaseClient';
 import {
   Users, Search, Plus, ChevronRight, X,
@@ -13,7 +13,7 @@ import {
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
-  TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2,
+  TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2, BookOpen, Flame,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -650,6 +650,20 @@ export default function Membresia() {
   const [volStatus, setVolStatus] = useState(null);
   const [loadingVolStatus, setLoadingVolStatus] = useState(false);
   const [indicandoServir, setIndicandoServir] = useState(false);
+  const [devocionalHist, setDevocionalHist] = useState(null); // { data: [], resumo: {} }
+  const [loadingDevocional, setLoadingDevocional] = useState(false);
+
+  // Histórico de devocionais (check-ins do app) · carrega ao abrir a aba
+  useEffect(() => {
+    if (!selectedMembro?.id || activeTab !== 'devocional') return;
+    let cancelado = false;
+    setLoadingDevocional(true);
+    devocionais.byMembro(selectedMembro.id)
+      .then(r => { if (!cancelado) setDevocionalHist(r); })
+      .catch(() => { if (!cancelado) setDevocionalHist({ data: [], resumo: null }); })
+      .finally(() => { if (!cancelado) setLoadingDevocional(false); });
+    return () => { cancelado = true; };
+  }, [selectedMembro?.id, activeTab]);
 
   // Só a lista de membros depende da busca/filtros · roda 1 request por busca
   // (não recarrega KPIs/famílias/grupos/ministérios a cada tecla)
@@ -790,6 +804,7 @@ export default function Membresia() {
     setShowCheckinForm(false);
     setShowContribForm(false);
     setVolStatus(null);
+    setDevocionalHist(null);
 
     if (typeof mOrId === 'object' && mOrId) {
       setSelectedMembro({ ...mOrId, _optimistic: true });
@@ -1299,7 +1314,8 @@ export default function Membresia() {
 
             <div style={{ padding: '20px 32px 28px' }}>
               <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-4">
+                {/* flex-wrap: todas as categorias visíveis (sem arrastar pro lado) */}
+                <TabsList className="flex h-auto w-full flex-wrap justify-start bg-transparent p-0 gap-1 border-b border-border rounded-none mb-4">
                   {[
                     { key: 'info', label: 'Informações', icon: Users },
                     { key: 'familia', label: 'Família', icon: Home },
@@ -1307,6 +1323,7 @@ export default function Membresia() {
                     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
                     { key: 'servico', label: 'Serviço', icon: Sparkles },
                     { key: 'next', label: 'NEXT', icon: ArrowRightLeft },
+                    { key: 'devocional', label: 'Devocional', icon: BookOpen },
                     { key: 'trilha', label: 'Trilha', icon: Star },
                     { key: 'historico', label: 'Histórico', icon: Calendar },
                   ].map(t => {
@@ -1315,7 +1332,7 @@ export default function Membresia() {
                       <TabsTrigger
                         key={t.key}
                         value={t.key}
-                        className="relative rounded-none border-b-2 border-transparent px-4 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-b-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none bg-transparent"
+                        className="relative grow-0 rounded-none border-b-2 border-transparent px-3 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-b-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none bg-transparent"
                       >
                         <Icon className="size-3.5 mr-1.5 hidden sm:inline-block" />
                         {t.label}
@@ -2131,6 +2148,67 @@ export default function Membresia() {
                         );
                       })}
                     </div>
+                  )}
+                </TabsContent>
+
+                {/* Aba: Devocional · check-ins do app */}
+                <TabsContent value="devocional" className="mt-4">
+                  {loadingDevocional ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text3, fontSize: 13, padding: '24px 0', justifyContent: 'center' }}>
+                      <Loader2 style={{ width: 16, height: 16 }} className="animate-spin" /> Carregando check-ins…
+                    </div>
+                  ) : !devocionalHist || devocionalHist.data?.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '32px 0', color: C.text3 }}>
+                      <BookOpen style={{ width: 32, height: 32, margin: '0 auto 8px', opacity: 0.4 }} />
+                      <div style={{ fontSize: 14, color: C.text2 }}>Nenhum check-in de devocional ainda</div>
+                      <div style={{ fontSize: 12, marginTop: 4 }}>Os check-ins feitos pelo app do membro aparecem aqui.</div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Resumo */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+                        <div style={{ padding: 14, borderRadius: 12, background: '#f59e0b18', border: '1px solid #f59e0b30', textAlign: 'center' }}>
+                          <Flame style={{ width: 18, height: 18, color: '#f59e0b', margin: '0 auto 4px' }} />
+                          <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{devocionalHist.resumo?.streak ?? 0}</div>
+                          <div style={{ fontSize: 11, color: C.text3 }}>dias seguidos</div>
+                        </div>
+                        <div style={{ padding: 14, borderRadius: 12, background: C.primaryBg, border: `1px solid ${C.primary}30`, textAlign: 'center' }}>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{devocionalHist.resumo?.no_mes ?? 0}</div>
+                          <div style={{ fontSize: 11, color: C.text3 }}>neste mês</div>
+                        </div>
+                        <div style={{ padding: 14, borderRadius: 12, background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}`, textAlign: 'center' }}>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{devocionalHist.resumo?.total ?? devocionalHist.data.length}</div>
+                          <div style={{ fontSize: 11, color: C.text3 }}>no total</div>
+                        </div>
+                      </div>
+
+                      {/* Histórico */}
+                      <div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                        Últimos check-ins
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
+                        {devocionalHist.data.map(d => (
+                          <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: 'var(--cbrio-input-bg)' }}>
+                            <CheckCircle2 style={{ width: 16, height: 16, color: C.primary, flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>
+                                {new Date(d.data_devocional + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+                              </div>
+                              {(d.devocional_itens?.titulo || d.observacoes) && (
+                                <div style={{ fontSize: 12, color: C.text3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {d.devocional_itens?.titulo}
+                                  {d.devocional_itens?.passagem ? ` · ${d.devocional_itens.passagem}` : ''}
+                                  {!d.devocional_itens?.titulo && d.observacoes ? d.observacoes : ''}
+                                </div>
+                              )}
+                            </div>
+                            {d.tipo && d.tipo !== 'pessoal' && (
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, background: C.primaryBg, color: C.primary, fontWeight: 700, textTransform: 'uppercase' }}>{d.tipo}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </TabsContent>
 

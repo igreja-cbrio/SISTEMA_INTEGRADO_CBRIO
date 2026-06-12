@@ -975,6 +975,88 @@ visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
   Cards de resumo da aba Visitas viraram BOTÕES-FILTRO (clique em "Sem
   visita há 2+ meses" filtra a lista · Marcos não tinha achado as pills).
 
+## Devocionais · KPIs/OKR do app + histórico na Membresia (2026-06-12)
+
+O devocional está NO AR via app (check-in grava `mem_devocionais` · 1 linha
+por membro/dia). Esta leva liga a medição e dá visibilidade por pessoa:
+
+- **KPIs DEV-01/02/03** (migration `20260612150000`): check-ins/mês, pessoas
+  fazendo devocional/mês, famílias com devocional familiar/mês. Área `sede`
+  (= igreja toda · devocional NÃO tem dimensão de área de culto — KRs filhos
+  por área seguem sem fonte), `valores=['investir']`, objetivo `576c04ec`
+  ("Aumentar Pessoas fazendo Devocionais"), `tipo_calculo='manual'` +
+  coletores JS `devocionais.checkins`/`devocionais.pessoas` (novos ·
+  `devocionais.familias` já existia — KID-04 segue dormente/inativo). Cron
+  diário `0 7` já coleta (fonte_auto setado · sem mudança no vercel.json).
+  **meta_valor=NULL** nos volumes (app novo, sem baseline 2025 · view trata
+  como `sem_meta`, sem vermelho falso) — Marcos define meta no /gestao.
+- **OKR ligado (padrão B1)**: KR geral "Crescimento >=50% no nº de
+  devocionais/mes" ganhou `fonte_kpi_id='DEV-01'` → /gestao mostra realizado.
+  KR de famílias (">=25% das famílias do CBKids") segue SEM fonte: o check-in
+  do app é `tipo='pessoal'` (sem captura de devocional familiar ainda).
+- **Aba "KPIs e OKR" no DevocionalAdmin** (dentro de Cuidados → Devocionais):
+  `GET /devocionais/kpis` (paginado p/ cap 1000) → cards do mês em tempo
+  real, série diária 30d, evolução mensal 6m, KPIs DEV-* com status da
+  `vw_kpi_trajetoria_atual` e KRs do objetivo com realizado.
+- **Membresia · aba "Devocional" no detalhe do membro**: histórico de
+  check-ins do app por pessoa (sequência de dias, nº no mês, total, lista com
+  título/passagem do plano). `GET /devocionais/membro/:id` ganhou join de
+  `devocional_itens` + `resumo {total, streak, no_mes}`.
+- **UX do detalhe do membro**: as abas de categoria não rolam mais na
+  horizontal — `TabsList` virou `flex flex-wrap` (todas visíveis, quebram em
+  2 linhas no mobile). Reclamação do Marcos: "arrastar pro lado é muito ruim".
+- ⚠️ Pós-migration: rodar `POST /api/kpis/v2/coletar` body
+  `{"fontes":["devocionais."]}` (ou esperar o cron diário) pra popular os
+  primeiros registros.
+
+## Compras · escanear nota fiscal → financeiro lançar (2026-06-12)
+
+Pedido do Marcos (via gestão): Amaury/Pery escaneiam a nota fiscal da compra
+(foto ou PDF) na aba **Notas Fiscais** do `/admin/logistica`, o sistema extrai
+os dados + sugere a categoria contábil, e a nota vai pra fila do financeiro
+lançar — rastreabilidade de cada compra ponta a ponta.
+
+- **Fluxo**: scan (`POST /logistica/notas/escanear` · multer 15MB jpg/png/webp/pdf)
+  → arquivo no bucket `log-arquivos/notas-fiscais/` → **Haiku com visão**
+  (`services/nfScanner.js` · `extrairNotaFiscal`) extrai emitente/CNPJ/número/
+  chave/data/valor/itens/resumo → `sugerirCategoria` reusa o
+  `financeiroClassificador.classificarLancamento` (memória do fornecedor +
+  regras por CNPJ) com **fallback Haiku** escolhendo no plano de contas de
+  despesa → nota nasce `status='registrada'` já preenchida → compras revisa no
+  modal (categoria sugerida editável · `GET /logistica/notas/aux/categorias`) →
+  **"Enviar pro financeiro"** (`status='enviada_financeiro'` + `notificar()`
+  módulo financeiro) → Yago vê em **Operacional → Notas de compras**
+  (`NotasCompras.jsx` · `GET /financeiro-v2/notas-compras`) → **Lançar**
+  (`POST /notas-compras/:id/lancar`) cria `fin_transacoes` (despesa) e
+  **concilia com o extrato**: se existe exatamente 1 débito OFX não
+  classificado com o mesmo valor em [emissão, emissão+15d], a transação nasce
+  `conciliado` linkada ao bruto (e o item da fila de classificação vira
+  `ignorado`); senão nasce `pendente` (exige escolher a conta bancária).
+  **Devolver** (`/rejeitar`) → `status='rejeitada'` + notifica logística;
+  compras corrige e reenvia. Lançar também chama `aprenderClassificacao` com o
+  CNPJ do fornecedor → o próximo débito dele já vem sugerido na fila OFX.
+- **Tudo em `log_notas_fiscais`** (sem tabela nova) · migration
+  `20260612120000_nf_scan_compras.sql`: colunas de fluxo (status/descricao/
+  itens/extracao_raw/sugestao_*/enviada_*/lancada_*/transacao_id/
+  rejeitada_motivo) + **catch-up de drift git↔prod** (a tabela viva já tinha
+  storage_path/origem/ml_order_id/xml_content/emitente_* fora do git, e NÃO
+  tinha tipo/observacoes/created_by da migration original — o POST /notas
+  manual estava quebrado em prod por inserir `tipo`; consertado junto).
+- **Decisões**: review-before-apply nas 2 pontas (compras revisa a extração ·
+  financeiro confirma a categoria antes de virar transação — nada entra
+  direto); a sugestão de categoria fica em colunas `sugestao_*` (a transação
+  guarda o final · `classificacao_origem` mapeia memoria/regra/ia/manual);
+  notificações: envio→financeiro, lançada/devolvida→logistica, cron 3+ dias
+  parada→financeiro (`notificacaoGenerator`).
+- ⚠️ **Limitação conhecida (follow-up)**: NF lançada como `pendente` (sem
+  débito no extrato ainda) NÃO é conciliada automaticamente quando o OFX
+  chegar depois — o débito aparece na fila de classificação normal e, se
+  aprovado lá, duplica a despesa. Hábito: ao reconhecer o débito de uma NF já
+  lançada, **ignorar** o item da fila. Conciliação retroativa automática fica
+  pra uma próxima leva.
+- Sem env nova (`ANTHROPIC_API_KEY` já existe). Modelo: Haiku 4.5 (regra da
+  casa pra classificação).
+
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 
 Sintoma recorrente: **"Erro ao atualizar/excluir evento"** mas a mudança

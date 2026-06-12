@@ -732,6 +732,37 @@ const COLLECTORS = {
     return { valor: familias.size, observacao: `${familias.size} famílias com devocionais no período` };
   },
 
+  // ── Devocionais do app (2026-06-12) · DEV-01/DEV-02 ──
+  // Check-ins do webapp gravam mem_devocionais (1 linha por membro/dia).
+  // DEV-01: total de check-ins no período (igreja toda).
+  'devocionais.checkins': async ({ inicio, fim }) => {
+    const { count } = await supabase.from('mem_devocionais')
+      .select('id', { count: 'exact', head: true })
+      .gte('data_devocional', inicio)
+      .lt('data_devocional', fim);
+    return { valor: count || 0, observacao: `${count || 0} check-ins de devocional no período` };
+  },
+
+  // DEV-02: pessoas distintas com check-in no período (paginado · cap 1000)
+  'devocionais.pessoas': async ({ inicio, fim }) => {
+    const pessoas = new Set();
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data } = await supabase.from('mem_devocionais')
+        .select('membro_id')
+        .gte('data_devocional', inicio)
+        .lt('data_devocional', fim)
+        .order('id', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (!data || data.length === 0) break;
+      data.forEach(d => { if (d.membro_id) pessoas.add(d.membro_id); });
+      if (data.length < pageSize) break;
+      offset += pageSize;
+    }
+    return { valor: pessoas.size, observacao: `${pessoas.size} pessoas com devocional no período` };
+  },
+
   // ── CBA — fluxo batismo ──
   // CBA-01: % batismos realizados / decisões no período
   'cba.batismos_conversoes': async ({ inicio, fim }) => {

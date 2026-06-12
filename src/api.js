@@ -642,6 +642,11 @@ export const financeiroV2 = {
     aprovar: (filaId, data) => post(`/financeiro-v2/classificar/${filaId}/aprovar`, data),
     ignorar: (filaId) => post(`/financeiro-v2/classificar/${filaId}/ignorar`, {}),
   },
+  notasCompras: {
+    list: (params) => get('/financeiro-v2/notas-compras' + (params ? '?' + new URLSearchParams(params) : '')),
+    lancar: (id, data) => post(`/financeiro-v2/notas-compras/${id}/lancar`, data),
+    rejeitar: (id, motivo) => post(`/financeiro-v2/notas-compras/${id}/rejeitar`, { motivo }),
+  },
   transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   arrecadacoes: (params) => get('/financeiro-v2/arrecadacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   despesasDetalhe: (params) => get('/financeiro-v2/despesas/detalhe' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -809,9 +814,17 @@ export const logistica = {
     removeItem: (id) => del(`/logistica/itens/${id}`),
   },
   notas: {
-    list: () => get('/logistica/notas'),
+    list: (params) => get('/logistica/notas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/logistica/notas', data),
+    update: (id, data) => put(`/logistica/notas/${id}`, data),
     remove: (id) => del(`/logistica/notas/${id}`),
+    escanear: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/logistica/notas/escanear', fd, { timeoutMs: 120_000 });
+    },
+    enviarFinanceiro: (id) => post(`/logistica/notas/${id}/enviar-financeiro`, {}),
+    categorias: () => get('/logistica/notas/aux/categorias'),
   },
   movimentacoes: {
     list: (params) => get('/logistica/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2070,6 +2083,7 @@ export const jornada = {
 export const devocionais = {
   list: (p) => get('/devocionais' + (p ? '?' + new URLSearchParams(p) : '')),
   byMembro: (id) => get(`/devocionais/membro/${id}`),
+  kpis: () => get('/devocionais/kpis'),
   stats: (p) => get('/devocionais/stats' + (p ? '?' + new URLSearchParams(p) : '')),
   create: (body) => post('/devocionais', body),
   update: (id, body) => put(`/devocionais/${id}`, body),

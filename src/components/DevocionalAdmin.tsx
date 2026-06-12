@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { devocionalPlanos as planosApi } from '../api';
+import { devocionalPlanos as planosApi, devocionais as devocionaisApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -50,14 +50,26 @@ export default function DevocionalAdmin() {
   const { isAdmin } = useAuth();
   const [view, setView] = useState<'lista' | 'detalhe'>('lista');
   const [planoId, setPlanoId] = useState<string | null>(null);
+  const [topTab, setTopTab] = useState('planos');
 
   return (
     <div className="space-y-4">
       {view === 'lista' && (
-        <PlanosLista
-          onAbrir={(id) => { setPlanoId(id); setView('detalhe'); }}
-          podeEditar={isAdmin}
-        />
+        <Tabs value={topTab} onValueChange={setTopTab}>
+          <TabsList>
+            <TabsTrigger value="planos">Planos</TabsTrigger>
+            <TabsTrigger value="kpis">KPIs e OKR</TabsTrigger>
+          </TabsList>
+          <TabsContent value="planos" className="space-y-4 mt-4">
+            <PlanosLista
+              onAbrir={(id) => { setPlanoId(id); setView('detalhe'); }}
+              podeEditar={isAdmin}
+            />
+          </TabsContent>
+          <TabsContent value="kpis" className="mt-4">
+            <DevocionalKpis />
+          </TabsContent>
+        </Tabs>
       )}
       {view === 'detalhe' && planoId && (
         <PlanoDetalhe
@@ -66,6 +78,154 @@ export default function DevocionalAdmin() {
           podeEditar={isAdmin}
         />
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// KPIs e OKR · arquitetura de medição do devocional
+// (check-ins do app → mem_devocionais → KPIs DEV-* na matriz
+//  Investir → KR do objetivo "Aumentar Pessoas fazendo Devocionais")
+// ─────────────────────────────────────────────────────────────
+const KR_STATUS_CORES: Record<string, string> = {
+  verde: 'text-emerald-500', amarelo: 'text-amber-500', vermelho: 'text-red-500',
+  sem_meta: 'text-muted-foreground', sem_dado: 'text-muted-foreground',
+};
+
+function DevocionalKpis() {
+  const [dados, setDados] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    devocionaisApi.kpis()
+      .then(setDados)
+      .catch((e: any) => toast.error(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+  if (!dados) return <Card className="p-8 text-center text-sm text-muted-foreground">Sem dados de KPI ainda.</Card>;
+
+  const m = dados.mes_atual || {};
+  const serie: { data: string; checkins: number }[] = dados.serie_diaria || [];
+  const maxDia = Math.max(1, ...serie.map(s => s.checkins));
+  const mesLabel = (iso: string) => {
+    const [y, mo] = iso.split('-');
+    return `${['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(mo) - 1]}/${y.slice(2)}`;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Cards do mês corrente (tempo real · direto do mem_devocionais) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Check-ins no mês', valor: m.checkins ?? 0 },
+          { label: 'Pessoas fazendo devocional', valor: m.pessoas ?? 0 },
+          { label: 'Média de check-ins/dia', valor: m.media_dia ?? 0 },
+          { label: 'Famílias (devocional familiar)', valor: m.familias ?? 0 },
+        ].map(c => (
+          <Card key={c.label} className="p-4">
+            <div className="text-2xl font-bold">{c.valor}</div>
+            <div className="text-xs text-muted-foreground mt-1">{c.label}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Série diária · últimos 30 dias */}
+      <Card className="p-4">
+        <h4 className="text-sm font-semibold mb-3">Check-ins por dia · últimos 30 dias</h4>
+        <div className="flex items-end gap-[2px] h-24">
+          {serie.map(s => (
+            <div key={s.data} className="flex-1 flex flex-col justify-end group relative" title={`${fmt(s.data)} · ${s.checkins} check-in${s.checkins === 1 ? '' : 's'}`}>
+              <div
+                className="w-full rounded-t bg-primary/70 group-hover:bg-primary transition-colors"
+                style={{ height: `${Math.max(s.checkins > 0 ? 8 : 2, (s.checkins / maxDia) * 100)}%` }}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+          <span>{fmt(serie[0]?.data)}</span>
+          <span>{fmt(serie[serie.length - 1]?.data)}</span>
+        </div>
+      </Card>
+
+      {/* Evolução mensal */}
+      {(dados.serie_mensal || []).length > 1 && (
+        <Card className="p-4">
+          <h4 className="text-sm font-semibold mb-3">Evolução mensal</h4>
+          <div className="grid grid-cols-3 text-xs font-semibold text-muted-foreground border-b pb-1 mb-1">
+            <span>Mês</span><span className="text-right">Check-ins</span><span className="text-right">Pessoas</span>
+          </div>
+          {dados.serie_mensal.map((sm: any) => (
+            <div key={sm.mes} className="grid grid-cols-3 text-sm py-1 border-b border-border/40 last:border-0">
+              <span>{mesLabel(sm.mes)}</span>
+              <span className="text-right font-medium">{sm.checkins}</span>
+              <span className="text-right font-medium">{sm.pessoas}</span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {/* KPIs da matriz (valor Investir) */}
+      <Card className="p-4">
+        <h4 className="text-sm font-semibold">KPIs na matriz · valor Investir</h4>
+        <p className="text-xs text-muted-foreground mb-3">
+          Medidos automaticamente dos check-ins do app (coletor diário). Igreja toda — devocional não tem dimensão de área de culto.
+        </p>
+        {(dados.kpis || []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">KPIs DEV-* ainda não cadastrados (aguardando migration).</p>
+        ) : (
+          <div className="space-y-2">
+            {dados.kpis.map((k: any) => (
+              <div key={k.id} className="flex items-center justify-between gap-3 border border-border/60 rounded-lg p-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">{k.indicador} <span className="text-xs text-muted-foreground">· {k.id}</span></div>
+                  <div className="text-xs text-muted-foreground truncate">{k.descricao}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-lg font-bold">{k.trajetoria?.ultimo_valor ?? '—'}</div>
+                  <div className={`text-[11px] ${KR_STATUS_CORES[k.trajetoria?.status] || 'text-muted-foreground'}`}>
+                    {k.meta_valor != null ? `meta ${k.meta_valor}` : 'sem meta definida'}
+                    {k.trajetoria?.ultimo_periodo ? ` · ${k.trajetoria.ultimo_periodo}` : ''}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* OKR */}
+      <Card className="p-4">
+        <h4 className="text-sm font-semibold">OKR · {dados.okr?.objetivo?.nome || 'Objetivo de devocionais'}</h4>
+        {dados.okr?.objetivo?.meta_descricao && (
+          <p className="text-xs text-muted-foreground mb-3">{dados.okr.objetivo.meta_descricao}</p>
+        )}
+        <div className="space-y-2 mt-2">
+          {(dados.okr?.krs || []).map((kr: any) => (
+            <div key={kr.id} className="flex items-center justify-between gap-3 border border-border/60 rounded-lg p-3">
+              <div className="min-w-0">
+                <div className="text-sm">{kr.titulo}</div>
+                {!kr.fonte_kpi_id && (
+                  <div className="text-[11px] text-muted-foreground">Sem medição automática ainda</div>
+                )}
+              </div>
+              <div className="text-right shrink-0">
+                <div className={`text-lg font-bold ${KR_STATUS_CORES[kr.kr_status] || ''}`}>{kr.realizado ?? '—'}</div>
+                {kr.realizado_periodo && <div className="text-[11px] text-muted-foreground">{kr.realizado_periodo}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
