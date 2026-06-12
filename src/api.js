@@ -2008,6 +2008,13 @@ export const cuidados = {
   criarMembro: (data) => post('/cuidados/criar-membro', data),
 };
 
+export const batismoFotos = {
+  datas: () => get('/batismo-fotos'),
+  fotos: (data) => get(`/batismo-fotos/${data}/fotos`),
+  upload: (data, formData) => requestFile(`/batismo-fotos/${data}/fotos`, formData),
+  remove: (data, nome) => del(`/batismo-fotos/${data}/fotos/${encodeURIComponent(nome)}`),
+};
+
 export const destaques = {
   list: () => get('/destaques'),
   create: (formData) => requestFile('/destaques', formData),

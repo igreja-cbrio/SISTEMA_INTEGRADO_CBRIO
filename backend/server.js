@@ -98,6 +98,7 @@ app.use('/api/notificacoes', require('./routes/notificacoes'));
 app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
 app.use('/api/destaques', require('./routes/destaques'));
+app.use('/api/batismo-fotos', require('./routes/batismoFotos'));
 // Rate limit dedicado pros forms públicos (anti-spam · sem auth)
 // Mais restritivo que o limiter global · 30 req/15min por IP em prod
 const publicLimiter = rateLimit({
