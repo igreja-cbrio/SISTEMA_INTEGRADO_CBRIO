@@ -43,6 +43,20 @@ function CampoData({ label, value, onChange }) {
   );
 }
 
+// Overlay de progresso por cima do formulário durante compressão/upload.
+export function OverlayEnvio({ texto }) {
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 5, borderRadius: 12,
+      background: 'var(--cbrio-overlay)', backdropFilter: 'blur(2px)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+    }}>
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30" style={{ borderTopColor: C.primary }} />
+      <div style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{texto}</div>
+    </div>
+  );
+}
+
 function FormDestaque({ inicial, onSalvar, onCancelar, salvando, exigirImagem }) {
   const [titulo, setTitulo] = useState(inicial?.titulo || '');
   const [subtitulo, setSubtitulo] = useState(inicial?.subtitulo || '');
@@ -133,6 +147,7 @@ export default function Destaques() {
   const [criando, setCriando] = useState(false);
   const [editando, setEditando] = useState(null);
   const [salvando, setSalvando] = useState(false);
+  const [progresso, setProgresso] = useState(null); // texto do overlay durante envio
 
   async function load() {
     setLoading(true);
@@ -161,7 +176,9 @@ export default function Destaques() {
     setSalvando(true);
     try {
       let criados = 0;
+      const total = dados.arquivos.length;
       for (const original of dados.arquivos) {
+        setProgresso(total > 1 ? `Publicando ${criados + 1} de ${total}…` : 'Publicando…');
         const arquivo = await comprimirImagem(original);
         await api.create(montarForm(dados, arquivo));
         criados += 1;
@@ -177,10 +194,12 @@ export default function Destaques() {
       toast.error(e.message);
     }
     setSalvando(false);
+    setProgresso(null);
   }
 
   async function editar(dados) {
     setSalvando(true);
+    setProgresso('Salvando…');
     try {
       await api.update(editando.id, {
         titulo: dados.titulo,
@@ -201,6 +220,7 @@ export default function Destaques() {
       toast.error(e.message);
     }
     setSalvando(false);
+    setProgresso(null);
   }
 
   async function alternarAtivo(d) {
@@ -253,9 +273,10 @@ export default function Destaques() {
       </div>
 
       {criando && (
-        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, padding: 20, marginBottom: 24, maxWidth: 560 }}>
+        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, padding: 20, marginBottom: 24, maxWidth: 560, position: 'relative' }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Novo destaque</div>
           <FormDestaque exigirImagem onSalvar={criar} onCancelar={() => setCriando(false)} salvando={salvando} />
+          {salvando && progresso && <OverlayEnvio texto={progresso} />}
         </div>
       )}
 
@@ -312,9 +333,10 @@ export default function Destaques() {
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
           }}
         >
-          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 14, border: `1px solid ${C.border}`, padding: 20, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}>
+          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 14, border: `1px solid ${C.border}`, padding: 20, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Editar destaque</div>
             <FormDestaque inicial={editando} onSalvar={editar} onCancelar={() => setEditando(null)} salvando={salvando} />
+            {salvando && progresso && <OverlayEnvio texto={progresso} />}
           </div>
         </div>
       )}
