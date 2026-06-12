@@ -94,6 +94,47 @@ const PERM_TO_MODULO = {
   'Marketing': 'marketing',
 };
 
+// ── Resolução de SETOR (Gestão/Criativo/Ministerial) para o roteamento ao
+// diretor de origem. A cascata RICA roda aqui (req.user já carrega área/
+// kpi_areas/cargo) e vira uma "dica" passada para fn_solicitacoes_rotear_origem
+// — assim resolvemos o setor pelo cadastro OU pelo cargo antes de cair na
+// triagem. Espelha fn_normalizar_setor (migration 20260612120000).
+function _setorPorArea(raw) {
+  const v = String(raw || '').normalize('NFD')
+    .split('').filter(c => { const x = c.charCodeAt(0); return x < 0x0300 || x > 0x036f; }).join('')
+    .toLowerCase().trim();
+  if (!v) return null;
+  if (['gestao', 'administrativo', 'adm', 'financeiro', 'rh', 'recursos humanos', 'logistica', 'logistica_compras', 'logistica_estoque', 'compras', 'manutencao', 'patrimonio', 'ti', 'tecnologia', 'operacoes', 'operacional', 'estrategia', 'governanca', 'juridico', 'secretaria', 'reserva_espaco'].includes(v)) return 'Gestao';
+  if (['criativo', 'criativa', 'marketing', 'producao', 'comunicacao', 'design', 'audiovisual', 'midia', 'adoracao', 'louvor'].includes(v)) return 'Criativo';
+  if (['ministerial', 'ministerio', 'pastoral', 'voluntariado', 'voluntariada', 'cuidados', 'grupos', 'integracao', 'next', 'membresia', 'discipulado', 'kids', 'ami', 'bridge', 'online', 'sede', 'cba', 'geracional', 'jornada'].includes(v)) return 'Ministerial';
+  return null;
+}
+// Cargo → setor (rede de resgate quando o cadastro de área falha). Cargos
+// genéricos/sem setor claro caem fora → resolve pela área ou vai pra triagem.
+const CARGO_SETOR = {
+  'diretor-criativo': 'Criativo', 'coordenador-marketing': 'Criativo', 'assistente-marketing': 'Criativo',
+  'lider-producao': 'Criativo', 'assistente-producao': 'Criativo',
+  'diretor-administrativo': 'Gestao', 'coordenador-estrategia': 'Gestao', 'coordenador-financeiro': 'Gestao',
+  'assistente-financeiro': 'Gestao', 'lider-operacoes': 'Gestao', 'lider-logistica': 'Gestao',
+  'assistente-logistica': 'Gestao', 'assistente-operacoes': 'Gestao', 'diretor-rh': 'Gestao',
+  'diretor-ministerial': 'Ministerial', 'lider-ministerial': 'Ministerial', 'assistente-ministerial': 'Ministerial',
+  'coordenador-kids': 'Ministerial', 'assistente-kids': 'Ministerial', 'coordenador-ami': 'Ministerial',
+  'coordenador-bridge': 'Ministerial', 'coordenador-online': 'Ministerial', 'supervisor-jornada': 'Ministerial',
+  'coordenador-voluntarios': 'Ministerial',
+};
+// Cascata: kpi_areas → usuario_areas (granular.areas) → profile.area → cargo
+function resolverSetorHint(user) {
+  const cands = [
+    ...(Array.isArray(user.kpi_areas) ? user.kpi_areas : []),
+    ...(Array.isArray(user.granular?.areas) ? user.granular.areas : []),
+    user.area,
+  ];
+  for (const c of cands) { const s = _setorPorArea(c); if (s) return s; }
+  const cs = user.granular?.cargoSlug;
+  if (cs && CARGO_SETOR[cs]) return CARGO_SETOR[cs];
+  return null;
+}
+
 // ── LIST (filtered by role) ─────────────────────────────────
 router.get('/', async (req, res) => {
   try {
@@ -112,9 +153,16 @@ router.get('/', async (req, res) => {
 
     if (aba === 'aprovar') {
       // Aba do diretor de origem · so o que o user precisa aprovar.
-      q = q.eq('aprovacao_origem_diretor_id', userId)
-           .eq('aprovacao_origem_status', 'pendente')
-           .is('deleted_at', null);
+      // Super-admins tambem veem a fila de TRIAGEM (sem setor resolvido · Fase 0).
+      const isSuper = await isAdminFallback(req);
+      if (isSuper) {
+        q = q.or(`and(aprovacao_origem_diretor_id.eq.${userId},aprovacao_origem_status.eq.pendente),aprovacao_origem_status.eq.triagem`)
+             .is('deleted_at', null);
+      } else {
+        q = q.eq('aprovacao_origem_diretor_id', userId)
+             .eq('aprovacao_origem_status', 'pendente')
+             .is('deleted_at', null);
+      }
     } else if (mine === 'true') {
       q = q.eq('solicitante_id', userId);
     } else if (['admin', 'diretor'].includes(role)) {
@@ -258,6 +306,18 @@ router.get('/meu-papel', async (req, res) => {
       pendentesOrigem = count || 0;
     }
 
+    // Triagem · super-admins veem solicitacoes sem setor resolvido (Fase 0)
+    const isSuper = await isAdminFallback(req);
+    let pendentesTriagem = 0;
+    if (isSuper) {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('aprovacao_origem_status', 'triagem')
+        .is('deleted_at', null);
+      pendentesTriagem = count || 0;
+    }
+
     if (['admin', 'diretor'].includes(role)) {
       return res.json({
         atende: true,
@@ -266,6 +326,8 @@ router.get('/meu-papel', async (req, res) => {
         eh_diretor_origem: !!setorRow,
         setor_origem: setorRow?.setor || null,
         pendentes_origem: pendentesOrigem,
+        eh_triagem_admin: isSuper,
+        pendentes_triagem: pendentesTriagem,
       });
     }
     const { data, error } = await supabase
@@ -281,6 +343,8 @@ router.get('/meu-papel', async (req, res) => {
       eh_diretor_origem: !!setorRow,
       setor_origem: setorRow?.setor || null,
       pendentes_origem: pendentesOrigem,
+      eh_triagem_admin: isSuper,
+      pendentes_triagem: pendentesTriagem,
     });
   } catch (e) {
     console.error('[SOLICITACOES] meu-papel error:', e.message);
@@ -336,8 +400,9 @@ router.post('/', async (req, res) => {
     // de segurança (so age quando ninguém setou aprovacao_origem_status).
     let rota = null;
     try {
+      const setorHint = resolverSetorHint(req.user);
       const { data: r, error: rErr } = await supabase
-        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId });
+        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
       if (rErr) throw rErr;
       rota = r;
     } catch (rerr) {
@@ -355,6 +420,7 @@ router.post('/', async (req, res) => {
         valor_estimado,
         solicitante_id: userId,
         area_solicitante,
+        cargo_solicitante: req.user.granular?.cargoNome || null,
         // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira.
         // area_cliente vem da ÁREA do solicitante (KPIs), não mais de seletor.
         area_cliente: areaClienteResolvida,
@@ -482,6 +548,20 @@ router.post('/', async (req, res) => {
       }).catch(err => console.error('[SOLICITACOES] notify diretor:', err.message));
     }
 
+    // Triagem · setor nao resolvido · alerta de governanca pros super-admins/diretoria.
+    // O foco do alerta e' o CADASTRO sem area (corrigir o usuario), nao o pedido.
+    if (data.status === 'aguardando_aprovacao_origem' && data.aprovacao_origem_status === 'triagem') {
+      notificar({
+        modulo: 'administrativo',
+        tipo: 'solicitacao_triagem',
+        titulo: 'Triagem · usuário sem área no sistema',
+        mensagem: `A solicitação "${titulo}" caiu na triagem porque ${userName || 'o solicitante'} está no sistema sem área/setor definido. Defina a área no cadastro (Permissões › Usuários) e aprove/encaminhe.`,
+        link: '/solicitacoes?aba=aprovar',
+        severidade: 'alta',
+        chaveDedup: `solicitacao_triagem_${data.id}`,
+      }).catch(err => console.error('[SOLICITACOES] notify triagem:', err.message));
+    }
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[SOLICITACOES] create error:', e.message);
@@ -526,7 +606,7 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
     if (getErr) throw getErr;
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
 
-    if (atual.aprovacao_origem_status !== 'pendente') {
+    if (!['pendente', 'triagem'].includes(atual.aprovacao_origem_status)) {
       return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
     }
 
@@ -619,7 +699,7 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
       .is('deleted_at', null)
       .maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
-    if (atual.aprovacao_origem_status !== 'pendente') {
+    if (!['pendente', 'triagem'].includes(atual.aprovacao_origem_status)) {
       return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
     }
     const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
