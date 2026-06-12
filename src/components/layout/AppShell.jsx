@@ -17,7 +17,7 @@ import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
-  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal,
+  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
   Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass,
 } from 'lucide-react';
@@ -153,6 +153,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
           { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
+          { label: 'Destaques do App', description: 'Carrossel de fotos da Home do app de membros', icon: Images, path: '/admin/destaques', perm: 'isAdmin' },
         ],
       },
     ],

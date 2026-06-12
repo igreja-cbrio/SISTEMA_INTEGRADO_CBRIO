@@ -163,6 +163,7 @@ const Perfil = lazyWithRetry(() => import('./pages/Perfil'));
 const NotFound = lazyWithRetry(() => import('./pages/NotFound'));
 const Solicitacoes = lazyWithRetry(() => import('./pages/Solicitacoes'));
 const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoRegras'));
+const Destaques = lazyWithRetry(() => import('./pages/admin/Destaques'));
 const CruzamentosPessoas = lazyWithRetry(() => import('./pages/admin/CruzamentosPessoas'));
 const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/SolicitacoesResponsaveis'));
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
@@ -519,6 +520,7 @@ function AppRoutes() {
         <Route path="/painel/kpi/:id" element={<Navigate to="/painel" replace />} />
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
+        <Route path="/admin/destaques" element={<ModuleGuard permKey="isAdmin"><Suspense fallback={<Loading />}><Destaques /></Suspense></ModuleGuard>} />
         <Route path="/admin/cruzamentos" element={<Suspense fallback={<Loading />}><CruzamentosPessoas /></Suspense>} />
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />

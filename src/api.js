@@ -2008,6 +2008,15 @@ export const cuidados = {
   criarMembro: (data) => post('/cuidados/criar-membro', data),
 };
 
+export const destaques = {
+  list: () => get('/destaques'),
+  create: (formData) => requestFile('/destaques', formData),
+  update: (id, data) => put(`/destaques/${id}`, data),
+  trocarImagem: (id, formData) => requestFile(`/destaques/${id}/imagem`, formData),
+  remove: (id) => del(`/destaques/${id}`),
+};
+
+
 // Encaminhamentos da jornada · caixa de entrada das áreas receptoras
 // (Grupos / Voluntários / Jornada 180). Origem = desfecho do encontro em Cuidados.
 export const encaminhamentos = {
