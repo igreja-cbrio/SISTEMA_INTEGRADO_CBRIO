@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { batismoFotos as api } from '../../api';
 import { Button } from '../../components/ui/button';
+import { comprimirImagem } from '../../lib/comprimirImagem';
 
 const C = {
   text: 'var(--cbrio-text)', text2: 'var(--cbrio-text2)', text3: 'var(--cbrio-text3)',
@@ -52,9 +53,19 @@ export default function FotosBatismo() {
     if (!arquivos.length) return;
     setEnviando(true);
     try {
-      const fd = new FormData();
-      arquivos.forEach((f) => fd.append('fotos', f));
-      const r = await api.upload(selecionada.data, fd);
+      // Comprime no navegador (o Vercel rejeita corpo > 4,5 MB — foto de
+      // câmera estoura) e envia em lotes pequenos pra caber no limite.
+      const comprimidos = [];
+      for (const f of arquivos) comprimidos.push(await comprimirImagem(f, { maxLado: 2048 }));
+      let enviadas = 0;
+      const LOTE = 4;
+      for (let i = 0; i < comprimidos.length; i += LOTE) {
+        const fd = new FormData();
+        comprimidos.slice(i, i + LOTE).forEach((f) => fd.append('fotos', f));
+        const parcial = await api.upload(selecionada.data, fd);
+        enviadas += parcial.enviadas;
+      }
+      const r = { enviadas };
       toast.success(`${r.enviadas} foto${r.enviadas > 1 ? 's' : ''} no álbum — os batizados desse dia já veem no app`);
       setFotos(await api.fotos(selecionada.data));
       setDatas((arr) => arr.map((d) => (d.data === selecionada.data ? { ...d, fotos: d.fotos + r.enviadas } : d)));

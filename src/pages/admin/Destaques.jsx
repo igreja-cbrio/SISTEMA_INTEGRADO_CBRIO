@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { destaques as api } from '../../api';
 import { Button } from '../../components/ui/button';
+import { comprimirImagem } from '../../lib/comprimirImagem';
 
 const C = {
   text: 'var(--cbrio-text)', text2: 'var(--cbrio-text2)', text3: 'var(--cbrio-text3)',
@@ -48,24 +49,24 @@ function FormDestaque({ inicial, onSalvar, onCancelar, salvando, exigirImagem })
   const [link, setLink] = useState(inicial?.link || '');
   const [publicaEm, setPublicaEm] = useState(toLocalInput(inicial?.publica_em));
   const [expiraEm, setExpiraEm] = useState(toLocalInput(inicial?.expira_em));
-  const [arquivo, setArquivo] = useState(null);
+  const [arquivos, setArquivos] = useState([]);
   const [preview, setPreview] = useState(null);
   const fileRef = useRef(null);
 
   function escolherArquivo(e) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setArquivo(f);
-    setPreview(URL.createObjectURL(f));
+    const fs = Array.from(e.target.files || []);
+    if (!fs.length) return;
+    setArquivos(fs);
+    setPreview(URL.createObjectURL(fs[0]));
   }
 
   function salvar() {
-    if (exigirImagem && !arquivo) { toast.error('Escolha a imagem do destaque'); return; }
+    if (exigirImagem && arquivos.length === 0) { toast.error('Escolha pelo menos uma imagem'); return; }
     onSalvar({
       titulo, subtitulo, link,
       publica_em: fromLocalInput(publicaEm),
       expira_em: fromLocalInput(expiraEm),
-      arquivo,
+      arquivos,
     });
   }
 
@@ -76,21 +77,40 @@ function FormDestaque({ inicial, onSalvar, onCancelar, salvando, exigirImagem })
         style={{
           aspectRatio: '16 / 9', borderRadius: 10, overflow: 'hidden', cursor: 'pointer',
           border: `1px dashed ${C.border}`, background: C.inputBg,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
         }}
       >
         {preview || inicial?.imagem_url ? (
-          <img src={preview || inicial.imagem_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <>
+            <img src={preview || inicial.imagem_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            {arquivos.length > 1 && (
+              <span style={{
+                position: 'absolute', bottom: 8, right: 8, background: 'rgba(0,0,0,0.65)',
+                color: '#fff', fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99,
+              }}>+{arquivos.length - 1} foto{arquivos.length > 2 ? 's' : ''}</span>
+            )}
+          </>
         ) : (
           <div style={{ textAlign: 'center', color: C.text3, fontSize: 13, padding: 16 }}>
-            Clique para escolher a imagem
-            <div style={{ fontSize: 11, marginTop: 4 }}>Horizontal 16:9 (ex.: 1600×900) — JPG, PNG ou WebP até 8 MB</div>
+            {exigirImagem ? 'Clique para escolher uma ou mais imagens' : 'Clique para escolher a imagem'}
+            <div style={{ fontSize: 11, marginTop: 4 }}>
+              Horizontal 16:9 fica melhor no carrossel — pode mandar foto de câmera, a gente comprime aqui mesmo
+            </div>
           </div>
         )}
       </div>
-      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={escolherArquivo} style={{ display: 'none' }} />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple={!!exigirImagem}
+        onChange={escolherArquivo}
+        style={{ display: 'none' }}
+      />
       {(preview || inicial?.imagem_url) && (
-        <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>Trocar imagem</Button>
+        <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+          {exigirImagem ? 'Trocar imagens' : 'Trocar imagem'}
+        </Button>
       )}
       <input placeholder="Título (opcional)" value={titulo} onChange={(e) => setTitulo(e.target.value)} style={inputStyle} maxLength={80} />
       <input placeholder="Subtítulo (opcional)" value={subtitulo} onChange={(e) => setSubtitulo(e.target.value)} style={inputStyle} maxLength={120} />
@@ -126,9 +146,9 @@ export default function Destaques() {
 
   useEffect(() => { load(); }, []);
 
-  function montarForm(dados) {
+  function montarForm(dados, arquivo) {
     const fd = new FormData();
-    if (dados.arquivo) fd.append('imagem', dados.arquivo);
+    if (arquivo) fd.append('imagem', arquivo);
     fd.append('titulo', dados.titulo || '');
     fd.append('subtitulo', dados.subtitulo || '');
     fd.append('link', dados.link || '');
@@ -140,8 +160,17 @@ export default function Destaques() {
   async function criar(dados) {
     setSalvando(true);
     try {
-      await api.create(montarForm(dados));
-      toast.success('Destaque publicado — aparece no app em até 10 minutos');
+      let criados = 0;
+      for (const original of dados.arquivos) {
+        const arquivo = await comprimirImagem(original);
+        await api.create(montarForm(dados, arquivo));
+        criados += 1;
+      }
+      toast.success(
+        criados > 1
+          ? `${criados} destaques publicados — aparecem no app em até 10 minutos`
+          : 'Destaque publicado — aparece no app em até 10 minutos'
+      );
       setCriando(false);
       load();
     } catch (e) {
@@ -160,9 +189,9 @@ export default function Destaques() {
         publica_em: dados.publica_em,
         expira_em: dados.expira_em,
       });
-      if (dados.arquivo) {
+      if (dados.arquivos?.[0]) {
         const fd = new FormData();
-        fd.append('imagem', dados.arquivo);
+        fd.append('imagem', await comprimirImagem(dados.arquivos[0]));
         await api.trocarImagem(editando.id, fd);
       }
       toast.success('Destaque atualizado');
