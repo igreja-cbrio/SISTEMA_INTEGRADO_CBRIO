@@ -2083,6 +2083,7 @@ export const jornada = {
 export const devocionais = {
   list: (p) => get('/devocionais' + (p ? '?' + new URLSearchParams(p) : '')),
   byMembro: (id) => get(`/devocionais/membro/${id}`),
+  kpis: () => get('/devocionais/kpis'),
   stats: (p) => get('/devocionais/stats' + (p ? '?' + new URLSearchParams(p) : '')),
   create: (body) => post('/devocionais', body),
   update: (id, body) => put(`/devocionais/${id}`, body),

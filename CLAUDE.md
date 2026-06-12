@@ -975,6 +975,40 @@ visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
   Cards de resumo da aba Visitas viraram BOTÕES-FILTRO (clique em "Sem
   visita há 2+ meses" filtra a lista · Marcos não tinha achado as pills).
 
+## Devocionais · KPIs/OKR do app + histórico na Membresia (2026-06-12)
+
+O devocional está NO AR via app (check-in grava `mem_devocionais` · 1 linha
+por membro/dia). Esta leva liga a medição e dá visibilidade por pessoa:
+
+- **KPIs DEV-01/02/03** (migration `20260612150000`): check-ins/mês, pessoas
+  fazendo devocional/mês, famílias com devocional familiar/mês. Área `sede`
+  (= igreja toda · devocional NÃO tem dimensão de área de culto — KRs filhos
+  por área seguem sem fonte), `valores=['investir']`, objetivo `576c04ec`
+  ("Aumentar Pessoas fazendo Devocionais"), `tipo_calculo='manual'` +
+  coletores JS `devocionais.checkins`/`devocionais.pessoas` (novos ·
+  `devocionais.familias` já existia — KID-04 segue dormente/inativo). Cron
+  diário `0 7` já coleta (fonte_auto setado · sem mudança no vercel.json).
+  **meta_valor=NULL** nos volumes (app novo, sem baseline 2025 · view trata
+  como `sem_meta`, sem vermelho falso) — Marcos define meta no /gestao.
+- **OKR ligado (padrão B1)**: KR geral "Crescimento >=50% no nº de
+  devocionais/mes" ganhou `fonte_kpi_id='DEV-01'` → /gestao mostra realizado.
+  KR de famílias (">=25% das famílias do CBKids") segue SEM fonte: o check-in
+  do app é `tipo='pessoal'` (sem captura de devocional familiar ainda).
+- **Aba "KPIs e OKR" no DevocionalAdmin** (dentro de Cuidados → Devocionais):
+  `GET /devocionais/kpis` (paginado p/ cap 1000) → cards do mês em tempo
+  real, série diária 30d, evolução mensal 6m, KPIs DEV-* com status da
+  `vw_kpi_trajetoria_atual` e KRs do objetivo com realizado.
+- **Membresia · aba "Devocional" no detalhe do membro**: histórico de
+  check-ins do app por pessoa (sequência de dias, nº no mês, total, lista com
+  título/passagem do plano). `GET /devocionais/membro/:id` ganhou join de
+  `devocional_itens` + `resumo {total, streak, no_mes}`.
+- **UX do detalhe do membro**: as abas de categoria não rolam mais na
+  horizontal — `TabsList` virou `flex flex-wrap` (todas visíveis, quebram em
+  2 linhas no mobile). Reclamação do Marcos: "arrastar pro lado é muito ruim".
+- ⚠️ Pós-migration: rodar `POST /api/kpis/v2/coletar` body
+  `{"fontes":["devocionais."]}` (ou esperar o cron diário) pra popular os
+  primeiros registros.
+
 ## Compras · escanear nota fiscal → financeiro lançar (2026-06-12)
 
 Pedido do Marcos (via gestão): Amaury/Pery escaneiam a nota fiscal da compra
