@@ -82,6 +82,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/devocional-planos/cron/lancar-semanal",
+      "schedule": "0 8 * * 1"
+    },
+    {
       "path": "/api/financeiro/alertas/cron-gerar",
       "schedule": "0 8 * * *"
     },
