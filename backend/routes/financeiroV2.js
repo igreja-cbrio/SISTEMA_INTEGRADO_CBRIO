@@ -25,6 +25,7 @@ const { parsePixExtrato } = require('../services/pixExtratoParser');
 const {
   matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento,
 } = require('../services/financeiroClassificador');
+const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('financeiro'));
 
@@ -678,6 +679,187 @@ router.post('/classificar/:filaId/ignorar', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao ignorar' }); }
+});
+
+// ====================================================================
+// NOTAS DE COMPRAS · notas fiscais escaneadas pela logística
+// (fluxo: compras escaneia/revisa → enviada_financeiro → aqui o
+//  financeiro confere a categorização e lança como fin_transacoes)
+// ====================================================================
+router.get('/notas-compras', async (req, res) => {
+  try {
+    const { status = 'enviada_financeiro', limit = 100 } = req.query;
+    let query = supabase.from('log_notas_fiscais')
+      .select('*, log_fornecedores(razao_social, nome_fantasia)')
+      .order('enviada_financeiro_em', { ascending: false, nullsFirst: false })
+      .limit(Number(limit));
+    if (status !== 'todas') query = query.eq('status', status);
+    else query = query.neq('status', 'registrada');
+    const { data: notas, error } = await query;
+    if (error) return res.status(400).json({ error: error.message });
+    if (!notas?.length) return res.json([]);
+
+    // Resolve nomes das sugestões em batch (mesmo padrão da fila de classificação)
+    const planoIds = [...new Set(notas.map(n => n.sugestao_plano_contas_id).filter(Boolean))];
+    const centroIds = [...new Set(notas.map(n => n.sugestao_centro_custo_id).filter(Boolean))];
+    const [planos, centros] = await Promise.all([
+      planoIds.length ? supabase.from('fin_plano_contas').select('id, codigo, nome').in('id', planoIds) : { data: [] },
+      centroIds.length ? supabase.from('fin_centros_custo').select('id, codigo, nome').in('id', centroIds) : { data: [] },
+    ]);
+    const pMap = new Map((planos.data || []).map(p => [p.id, p]));
+    const cMap = new Map((centros.data || []).map(c => [c.id, c]));
+
+    res.json(notas.map(n => ({
+      ...n,
+      sugestao_plano: pMap.get(n.sugestao_plano_contas_id) || null,
+      sugestao_centro: cMap.get(n.sugestao_centro_custo_id) || null,
+    })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar notas de compras: ' + e.message }); }
+});
+
+// Lançar a nota: cria fin_transacoes (despesa) e tenta conciliar com o extrato.
+// Se existir exatamente 1 débito OFX não classificado com o mesmo valor na
+// janela da emissão, a transação nasce conciliada e o item sai da fila.
+router.post('/notas-compras/:id/lancar', async (req, res) => {
+  try {
+    const { plano_contas_id, centro_custo_id, conta_id, data_pagamento, observacoes } = req.body;
+
+    const { data: nota, error: errNota } = await supabase.from('log_notas_fiscais')
+      .select('*').eq('id', req.params.id).single();
+    if (errNota || !nota) return res.status(404).json({ error: 'Nota não encontrada' });
+    if (nota.status !== 'enviada_financeiro') {
+      return res.status(400).json({ error: `Nota com status "${nota.status}" não está na fila de lançamento` });
+    }
+
+    const finalPlano = plano_contas_id || nota.sugestao_plano_contas_id;
+    const finalCentro = centro_custo_id !== undefined ? (centro_custo_id || null) : nota.sugestao_centro_custo_id;
+    if (!finalPlano) return res.status(400).json({ error: 'plano_contas_id obrigatório' });
+    const valor = Math.abs(Number(nota.valor) || 0);
+    if (!valor) return res.status(400).json({ error: 'Nota sem valor' });
+
+    // Conciliação com o extrato: débito não classificado, mesmo valor,
+    // data entre a emissão e emissão+15d
+    let bruto = null;
+    try {
+      const emissao = nota.data_emissao;
+      const fimJanela = new Date(new Date(`${emissao}T12:00:00`).getTime() + 15 * 86400000).toISOString().slice(0, 10);
+      const { data: candidatos } = await supabase.from('fin_lancamentos_brutos')
+        .select('id, conta_id, valor, tipo_trn, data_lancamento, memo')
+        .eq('ja_classificado', false)
+        .in('valor', [-valor, valor])
+        .gte('data_lancamento', emissao)
+        .lte('data_lancamento', fimJanela);
+      const debitos = (candidatos || []).filter(c => c.tipo_trn === 'DEBIT' || Number(c.valor) < 0);
+      if (debitos.length === 1) bruto = debitos[0];
+    } catch (e) { console.error('[FIN-V2] match NF×extrato:', e.message); }
+
+    const finalConta = bruto?.conta_id || conta_id;
+    if (!finalConta) return res.status(400).json({ error: 'Sem débito correspondente no extrato — informe a conta bancária (conta_id)' });
+
+    const origemMap = { memoria: 'memoria', regra: 'regra', ia: 'ia' };
+    const usouSugestao = !plano_contas_id || plano_contas_id === nota.sugestao_plano_contas_id;
+    const classificacaoOrigem = usouSugestao ? (origemMap[nota.sugestao_origem] || 'manual') : 'manual';
+
+    const { data: transacao, error: errTrans } = await supabase.from('fin_transacoes')
+      .insert({
+        conta_id: finalConta,
+        tipo: 'despesa',
+        descricao: nota.descricao || `NF ${nota.numero}${nota.emitente_nome ? ` · ${nota.emitente_nome}` : ''}`,
+        valor,
+        data_competencia: nota.data_emissao,
+        data_pagamento: bruto?.data_lancamento || data_pagamento || nota.data_emissao,
+        status: bruto ? 'conciliado' : 'pendente',
+        referencia: nota.chave_acesso || `NF ${nota.numero}`,
+        observacoes: observacoes || null,
+        plano_contas_id: finalPlano,
+        centro_custo_id: finalCentro,
+        lancamento_bruto_id: bruto?.id || null,
+        classificacao_origem: classificacaoOrigem,
+        classificacao_confianca: classificacaoOrigem === 'manual' ? 1.0 : (nota.sugestao_confianca || null),
+        created_by: req.user.userId,
+      })
+      .select().single();
+    if (errTrans) return res.status(400).json({ error: errTrans.message });
+
+    // Secundárias best-effort · o write primário (transação) já decidiu o sucesso
+    if (bruto) {
+      try {
+        await supabase.from('fin_lancamentos_brutos').update({ ja_classificado: true }).eq('id', bruto.id);
+        await supabase.from('fin_fila_classificacao')
+          .update({ status: 'ignorado', decidido_em: new Date().toISOString(), decidido_por: req.user.userId })
+          .eq('lancamento_bruto_id', bruto.id).eq('status', 'pendente');
+      } catch (e) { console.error('[FIN-V2] marcar bruto da NF:', e.message); }
+    }
+    try {
+      await supabase.from('log_notas_fiscais')
+        .update({
+          status: 'lancada',
+          transacao_id: transacao.id,
+          lancada_em: new Date().toISOString(),
+          lancada_por: req.user.userId,
+          sugestao_plano_contas_id: finalPlano,
+          sugestao_centro_custo_id: finalCentro,
+        })
+        .eq('id', nota.id);
+    } catch (e) { console.error('[FIN-V2] atualizar nota lançada:', e.message); }
+    try {
+      // Memória do classificador: próximo débito desse fornecedor já vem sugerido
+      await aprenderClassificacao({
+        documento: nota.emitente_cnpj,
+        nome: nota.emitente_nome,
+        plano_contas_id: finalPlano,
+        centro_custo_id: finalCentro,
+      });
+    } catch (e) { console.error('[FIN-V2] aprender NF:', e.message); }
+    try {
+      await notificar({
+        modulo: 'logistica',
+        tipo: 'nf_compra_lancada',
+        titulo: 'Nota fiscal lançada pelo financeiro',
+        mensagem: `${nota.emitente_nome || `NF ${nota.numero}`} · ${valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} · ${bruto ? 'conciliada com o extrato' : 'lançada como pendente'}.`,
+        link: '/admin/logistica',
+        severidade: 'info',
+        chaveDedup: `nf_lancada_${nota.id}`,
+      });
+    } catch (e) { console.error('[FIN-V2] notificar NF lançada:', e.message); }
+
+    res.json({ transacao, conciliada: !!bruto });
+  } catch (e) {
+    console.error('[FIN-V2] lançar NF:', e);
+    res.status(500).json({ error: e.message || 'Erro ao lançar nota' });
+  }
+});
+
+// Devolver pra equipe de compras (dados incompletos, duplicada etc.)
+router.post('/notas-compras/:id/rejeitar', async (req, res) => {
+  try {
+    const { motivo } = req.body;
+    const { data: nota, error: errNota } = await supabase.from('log_notas_fiscais')
+      .select('id, status, numero, emitente_nome').eq('id', req.params.id).single();
+    if (errNota || !nota) return res.status(404).json({ error: 'Nota não encontrada' });
+    if (nota.status !== 'enviada_financeiro') {
+      return res.status(400).json({ error: `Nota com status "${nota.status}" não está na fila de lançamento` });
+    }
+
+    const { data, error } = await supabase.from('log_notas_fiscais')
+      .update({ status: 'rejeitada', rejeitada_motivo: motivo || null })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    try {
+      await notificar({
+        modulo: 'logistica',
+        tipo: 'nf_compra_rejeitada',
+        titulo: 'Nota fiscal devolvida pelo financeiro',
+        mensagem: `${nota.emitente_nome || `NF ${nota.numero}`} foi devolvida${motivo ? `: ${motivo.slice(0, 120)}` : ''}.`,
+        link: '/admin/logistica',
+        severidade: 'aviso',
+        chaveDedup: `nf_rejeitada_${nota.id}`,
+      });
+    } catch (e) { console.error('[FIN-V2] notificar NF rejeitada:', e.message); }
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao rejeitar nota' }); }
 });
 
 // ====================================================================

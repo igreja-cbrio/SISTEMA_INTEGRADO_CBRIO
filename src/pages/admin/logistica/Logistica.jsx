@@ -141,6 +141,8 @@ export default function Logistica() {
   const [modalNota, setModalNota] = useState(null);
   const [modalItens, setModalItens] = useState(null); // pedido_id
   const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [categorias, setCategorias] = useState({ planos: [], centros: [] });
 
   // ── Fetch ──────────────────────────────────────────────
   const fetchDash = useCallback(async (refresh = false) => {
@@ -175,12 +177,16 @@ export default function Logistica() {
     setLoading(false);
   }, []);
 
+  const fetchCategorias = useCallback(async () => {
+    try { setCategorias(await logistica.notas.categorias()); } catch (e) { console.error(e); }
+  }, []);
+
   useEffect(() => {
     if (tab === 0) fetchDash();
     if (tab === 1) fetchFornecedores();
     if (tab === 2) { fetchPedidos(); fetchFornecedores(); }
-    if (tab === 3) { fetchNotas(); fetchFornecedores(); fetchPedidos(); }
-  }, [tab, fetchDash, fetchFornecedores, fetchPedidos, fetchNotas]);
+    if (tab === 3) { fetchNotas(); fetchFornecedores(); fetchPedidos(); fetchCategorias(); }
+  }, [tab, fetchDash, fetchFornecedores, fetchPedidos, fetchNotas, fetchCategorias]);
 
   // ── Fornecedor CRUD ────────────────────────────────────
   const saveFornecedor = async () => {
@@ -235,16 +241,45 @@ export default function Logistica() {
   };
 
   // ── Nota Fiscal ────────────────────────────────────────
-  const saveNota = async () => {
+  const notaPayload = (n) => ({
+    numero: n.numero, serie: n.serie, fornecedor_id: n.fornecedor_id || null,
+    pedido_id: n.pedido_id || null, valor: n.valor, data_emissao: n.data_emissao,
+    chave_acesso: n.chave_acesso, emitente_nome: n.emitente_nome, emitente_cnpj: n.emitente_cnpj,
+    descricao: n.descricao, observacoes: n.observacoes, storage_path: n.storage_path,
+    sugestao_plano_contas_id: n.sugestao_plano_contas_id || null,
+    sugestao_centro_custo_id: n.sugestao_centro_custo_id || null,
+  });
+
+  const saveNota = async (enviarDepois = false) => {
     if (!modalNota?.numero?.trim()) { setError('Número da nota é obrigatório'); return; }
     if (!modalNota?.valor || Number(modalNota.valor) <= 0) { setError('Valor é obrigatório e deve ser positivo'); return; }
     if (!modalNota?.data_emissao) { setError('Data de emissão é obrigatória'); return; }
     setSaving(true);
     try {
-      await logistica.notas.create(modalNota);
+      let salva;
+      if (modalNota.id) salva = await logistica.notas.update(modalNota.id, notaPayload(modalNota));
+      else salva = await logistica.notas.create(notaPayload(modalNota));
+      if (enviarDepois && salva?.id) await logistica.notas.enviarFinanceiro(salva.id);
       setModalNota(null); fetchNotas();
     } catch (e) { setError(e.message); }
     setSaving(false);
+  };
+
+  const escanearNota = async (file) => {
+    if (!file) return;
+    setScanning(true); setError('');
+    try {
+      const { nota, extracao_ok } = await logistica.notas.escanear(file);
+      fetchNotas();
+      setModalNota({ ...nota });
+      if (!extracao_ok) setError('Não consegui ler os dados da nota — confira a imagem e preencha manualmente.');
+    } catch (e) { setError(e.message); }
+    setScanning(false);
+  };
+
+  const enviarNotaFinanceiro = async (id) => {
+    if (!confirm('Enviar esta nota pro financeiro lançar?')) return;
+    try { await logistica.notas.enviarFinanceiro(id); fetchNotas(); } catch (e) { setError(e.message); }
   };
 
   const deleteNota = async (id) => {
@@ -300,9 +335,12 @@ export default function Logistica() {
       )}
       {tab === 3 && (
         <NotasFiscaisTab data={notas} loading={loading}
-          onNew={() => setModalNota({ pedido_id: '', fornecedor_id: '', numero: '', serie: '', chave_acesso: '', valor: '', data_emissao: '', storage_path: '' })}
+          onNew={() => setModalNota({ pedido_id: '', fornecedor_id: '', numero: '', serie: '', chave_acesso: '', valor: '', data_emissao: '', storage_path: '', emitente_nome: '', emitente_cnpj: '', descricao: '', observacoes: '' })}
           onDelete={deleteNota} fornecedores={fornecedores} pedidos={pedidos}
           onReload={fetchNotas}
+          onScan={escanearNota} scanning={scanning}
+          onEdit={(n) => setModalNota({ ...n })}
+          onEnviar={enviarNotaFinanceiro}
         />
       )}
 
@@ -371,7 +409,8 @@ export default function Logistica() {
 
       {/* Nota Fiscal */}
       <NotaFiscalModal open={modalNota !== null} data={modalNota} onClose={() => setModalNota(null)}
-        onSave={saveNota} saving={saving} fornecedores={fornecedores} pedidos={pedidos} upNota={upNota} />
+        onSave={saveNota} saving={saving} fornecedores={fornecedores} pedidos={pedidos} upNota={upNota}
+        categorias={categorias} />
 
       {/* Itens do Pedido */}
       <ItensPedidoModal open={modalItens !== null} pedidoId={modalItens} onClose={() => setModalItens(null)} />
@@ -563,9 +602,18 @@ const NF_ORIGEM = {
   manual: { c: C.text3, bg: '#73737318', label: 'Manual' },
   mercadolivre: { c: '#FFE600', bg: '#FFE60020', label: 'Mercado Livre' },
   arquivei: { c: C.blue, bg: C.blueBg, label: 'Arquivei' },
+  scan: { c: C.primary, bg: `${C.primary}18`, label: 'Escaneada' },
 };
 
-function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload }) {
+const NF_STATUS = {
+  registrada: { c: '#f59e0b', bg: '#f59e0b18', label: 'A revisar' },
+  enviada_financeiro: { c: C.blue, bg: C.blueBg, label: 'No financeiro' },
+  lancada: { c: C.green, bg: C.greenBg, label: 'Lançada' },
+  rejeitada: { c: C.red, bg: C.redBg, label: 'Devolvida' },
+};
+
+function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, scanning, onEdit, onEnviar }) {
+  const scanRef = useRef(null);
   const [syncing, setSyncing] = useState(false);
   const [arquiveiStatus, setArquiveiStatus] = useState(null);
   const [arquiveiForm, setArquiveiForm] = useState({ api_id: '', api_key: '', cnpj: '07023068000135' });
@@ -624,7 +672,13 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload }) {
     )}
     {/* Barra de ações */}
     <div style={styles.filterRow}>
-      <Button onClick={onNew}>+ Nova Nota Fiscal</Button>
+      <input ref={scanRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf"
+        style={{ display: 'none' }}
+        onChange={e => { onScan(e.target.files?.[0]); e.target.value = ''; }} />
+      <Button onClick={() => scanRef.current?.click()} disabled={scanning}>
+        {scanning ? '⏳ Lendo a nota...' : '📷 Escanear nota fiscal'}
+      </Button>
+      <Button variant="outline" onClick={onNew}>+ Nova Nota Fiscal</Button>
       <Button variant="outline" onClick={syncML} disabled={syncing}>
         {syncing ? '⏳ Sincronizando...' : '🛒 Importar do Mercado Livre'}
       </Button>
@@ -669,16 +723,17 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload }) {
 
     {/* Tabela */}
     <div style={styles.card}><table style={styles.table}><thead><tr>
-      <th style={styles.th}>Número</th><th style={styles.th}>Emitente</th><th style={styles.th}>Valor</th><th style={styles.th}>Emissão</th><th style={styles.th}>Origem</th><th style={styles.th}>PDF</th><th style={styles.th}>Ações</th>
+      <th style={styles.th}>Número</th><th style={styles.th}>Emitente</th><th style={styles.th}>Valor</th><th style={styles.th}>Emissão</th><th style={styles.th}>Status</th><th style={styles.th}>Origem</th><th style={styles.th}>PDF</th><th style={styles.th}>Ações</th>
     </tr></thead><tbody>
-      {loading ? <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
-      : data.length === 0 ? <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhuma nota fiscal</span><span className="text-xs text-muted-foreground">Importe do ML ou Arquivei</span></div></td></tr>
+      {loading ? <tr><td colSpan={8}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
+      : data.length === 0 ? <tr><td colSpan={8}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhuma nota fiscal</span><span className="text-xs text-muted-foreground">Escaneie uma nota ou importe do ML/Arquivei</span></div></td></tr>
       : data.map(n => (
         <tr key={n.id}>
           <td style={{ ...styles.td, fontWeight: 600 }}>
             {n.numero}
             {n.serie && n.origem !== 'mercadolivre' ? `/${n.serie}` : ''}
             {n.origem === 'mercadolivre' && n.serie && <div style={{ fontSize: 11, color: C.text3, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.serie}</div>}
+            {n.descricao && <div style={{ fontSize: 11, color: C.text3, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.descricao}</div>}
           </td>
           <td style={styles.td}>
             {n.emitente_nome || n.log_fornecedores?.nome_fantasia || n.log_fornecedores?.razao_social || '—'}
@@ -686,13 +741,25 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload }) {
           </td>
           <td style={{ ...styles.td, fontWeight: 600 }}>{fmtMoney(n.valor)}</td>
           <td style={styles.td}>{fmtDate(n.data_emissao)}</td>
+          <td style={styles.td}>
+            <Badge status={n.status || 'registrada'} map={NF_STATUS} />
+            {n.status === 'rejeitada' && n.rejeitada_motivo && <div style={{ fontSize: 11, color: C.red, maxWidth: 180 }}>{n.rejeitada_motivo}</div>}
+          </td>
           <td style={styles.td}><Badge status={n.origem || 'manual'} map={NF_ORIGEM} /></td>
           <td style={styles.td}>
             {n.storage_path ? <a href={n.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary }}>📄 Ver</a>
             : n.origem === 'mercadolivre' && n.ml_order_id ? <a href={`https://www.mercadolivre.com.br/purchases/${n.ml_order_id}`} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 12 }}>🛒 Ver no ML</a>
             : '—'}
           </td>
-          <td style={styles.td}><Button variant="ghost" size="sm" onClick={() => onDelete(n.id)}>🗑</Button></td>
+          <td style={styles.td}>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              {['registrada', 'rejeitada'].includes(n.status) && (
+                <Button variant="outline" size="sm" onClick={() => onEnviar(n.id)}>Enviar pro financeiro</Button>
+              )}
+              {n.status !== 'lancada' && <Button variant="ghost" size="sm" onClick={() => onEdit(n)}>✏️</Button>}
+              {n.status !== 'lancada' && <Button variant="ghost" size="sm" onClick={() => onDelete(n.id)}>🗑</Button>}
+            </div>
+          </td>
         </tr>
       ))}
     </tbody></table></div>
@@ -702,7 +769,7 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload }) {
 // ═══════════════════════════════════════════════════════════
 // MODAL: Nota Fiscal (com upload PDF)
 // ═══════════════════════════════════════════════════════════
-function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pedidos, upNota }) {
+function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pedidos, upNota, categorias }) {
   const [uploading, setUploading] = useState(false);
   const [localError, setLocalError] = useState('');
   const fileRef = useRef(null);
@@ -720,14 +787,29 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
     finally { setUploading(false); }
   }
 
+  const podeEnviar = data?.id && ['registrada', 'rejeitada'].includes(data.status);
+
   return (
-    <Modal open={open} onClose={onClose} title="Nova Nota Fiscal"
-      footer={<><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={onSave} disabled={saving || uploading}>{saving ? 'Salvando...' : 'Salvar'}</Button></>}>
+    <Modal open={open} onClose={onClose} title={data?.id ? 'Revisar Nota Fiscal' : 'Nova Nota Fiscal'} wide
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Cancelar</Button>
+        <Button onClick={() => onSave(false)} disabled={saving || uploading}>{saving ? 'Salvando...' : 'Salvar'}</Button>
+        {podeEnviar && (
+          <Button className="bg-emerald-500 hover:bg-emerald-600 text-white" onClick={() => onSave(true)} disabled={saving || uploading}>
+            {saving ? 'Enviando...' : 'Salvar e enviar pro financeiro'}
+          </Button>
+        )}
+      </>}>
       {data && (<>
         {localError && (
           <div style={{ background: C.redBg, color: C.red, padding: '10px 16px', borderRadius: 8, marginBottom: 12, fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             {localError}
             <Button variant="ghost" onClick={() => setLocalError('')}>&#x2715;</Button>
+          </div>
+        )}
+        {data.status === 'rejeitada' && data.rejeitada_motivo && (
+          <div style={{ background: C.redBg, color: C.red, padding: '10px 16px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+            Devolvida pelo financeiro: {data.rejeitada_motivo}
           </div>
         )}
         <div style={styles.formRow}>
@@ -739,6 +821,11 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
           <Input label="Data Emissão *" type="date" value={data.data_emissao || ''} onChange={e => upNota('data_emissao', e.target.value)} />
         </div>
         <div style={styles.formRow}>
+          <Input label="Emitente (quem vendeu)" value={data.emitente_nome || ''} onChange={e => upNota('emitente_nome', e.target.value)} />
+          <Input label="CNPJ do emitente" value={data.emitente_cnpj || ''} onChange={e => upNota('emitente_cnpj', e.target.value)} />
+        </div>
+        <Input label="O que foi comprado" value={data.descricao || ''} onChange={e => upNota('descricao', e.target.value)} />
+        <div style={styles.formRow}>
           <Select label="Fornecedor" value={data.fornecedor_id || ''} onChange={e => upNota('fornecedor_id', e.target.value)}>
             <option value="">Selecione...</option>
             {fornecedores.filter(f => f.ativo).map(f => <option key={f.id} value={f.id}>{f.nome_fantasia || f.razao_social}</option>)}
@@ -749,26 +836,58 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
           </Select>
         </div>
         <Input label="Chave de Acesso" value={data.chave_acesso || ''} onChange={e => upNota('chave_acesso', e.target.value)} />
+        {/* Categoria contábil sugerida (o financeiro confirma no lançamento) */}
+        {categorias?.planos?.length > 0 && (
+          <div style={{ background: `${C.primary}0d`, border: `1px solid ${C.primary}33`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.primary, marginBottom: 8 }}>Categoria sugerida pro financeiro</div>
+            {data.sugestao_explicacao && (
+              <div style={{ fontSize: 12, color: C.text2, marginBottom: 8 }}>{data.sugestao_explicacao}</div>
+            )}
+            <div style={styles.formRow}>
+              <Select label="Conta de despesa" value={data.sugestao_plano_contas_id || ''} onChange={e => upNota('sugestao_plano_contas_id', e.target.value)}>
+                <option value="">Sem sugestão (financeiro decide)</option>
+                {categorias.planos.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
+              </Select>
+              <Select label="Centro de custo" value={data.sugestao_centro_custo_id || ''} onChange={e => upNota('sugestao_centro_custo_id', e.target.value)}>
+                <option value="">Sem centro de custo</option>
+                {categorias.centros.map(c => <option key={c.id} value={c.id}>{c.codigo} · {c.nome}</option>)}
+              </Select>
+            </div>
+          </div>
+        )}
+        {/* Itens extraídos da nota */}
+        {Array.isArray(data.itens) && data.itens.length > 0 && (
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 12, maxHeight: 160, overflowY: 'auto' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, marginBottom: 6 }}>Itens lidos da nota ({data.itens.length})</div>
+            {data.itens.map((it, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.text2, padding: '2px 0' }}>
+                <span>{it.quantidade ? `${it.quantidade}× ` : ''}{it.descricao}</span>
+                <span>{fmtMoney(it.valor_total ?? it.valor_unitario)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <Textarea label="Observações" value={data.observacoes || ''} onChange={e => upNota('observacoes', e.target.value)} />
         {/* Upload PDF */}
         <div style={styles.formGroup}>
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">PDF da Nota Fiscal</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Arquivo da Nota Fiscal (foto ou PDF)</label>
           <div
             onDragOver={e => e.preventDefault()}
             onDrop={e => { e.preventDefault(); handleUploadNF(e.dataTransfer.files?.[0]); }}
             onClick={() => fileRef.current?.click()}
             style={{ border: `2px dashed ${C.border}`, borderRadius: 10, padding: 16, textAlign: 'center', cursor: 'pointer' }}
           >
-            <input ref={fileRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => handleUploadNF(e.target.files?.[0])} />
+            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,.pdf" style={{ display: 'none' }} onChange={e => handleUploadNF(e.target.files?.[0])} />
             {data.storage_path ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }}>
                 <span style={{ fontSize: 20 }}>📄</span>
-                <a href={data.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 13 }}>PDF enviado ↗</a>
+                <a href={data.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 13 }}>Arquivo enviado ↗</a>
                 <Button type="button" variant="ghost" className="text-red-500 text-xs" onClick={e => { e.stopPropagation(); upNota('storage_path', ''); }}>Remover</Button>
               </div>
             ) : uploading ? (
               <div style={{ color: C.primary, fontSize: 13 }}>Enviando...</div>
             ) : (
-              <><div style={{ fontSize: 20 }}>📄</div><div style={{ fontSize: 13, color: C.text2 }}>Arraste o PDF aqui ou clique para selecionar</div></>
+              <><div style={{ fontSize: 20 }}>📄</div><div style={{ fontSize: 13, color: C.text2 }}>Arraste a foto/PDF aqui ou clique para selecionar</div></>
             )}
           </div>
         </div>
