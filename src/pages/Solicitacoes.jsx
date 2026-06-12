@@ -167,10 +167,16 @@ export default function Solicitacoes() {
   // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
   // via /meu-papel · colaborador comum so ve "Minhas Solicitações".
   // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
-  const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0 });
+  const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0, eh_triagem_admin: false, pendentes_triagem: 0 });
   const atendeAreas = papel.atende;
   const ehDiretorOrigem = papel.eh_diretor_origem;
   const pendentesOrigem = papel.pendentes_origem || 0;
+  // Triagem · super-admins veem solicitações sem setor resolvido (Fase 0).
+  const ehTriagemAdmin = papel.eh_triagem_admin;
+  const pendentesTriagem = papel.pendentes_triagem || 0;
+  // A aba "Aprovar" agrega a fila do diretor de origem + a triagem dos super-admins.
+  const ehAprovador = ehDiretorOrigem || ehTriagemAdmin;
+  const pendentesAprovar = pendentesOrigem + pendentesTriagem;
   const isResponsavel = isAdmin || atendeAreas;
 
   // View atual · 'minhas' (lista das próprias) | 'atender' (kanban da equipe) | 'aprovar' (diretor de origem).
@@ -199,12 +205,12 @@ export default function Solicitacoes() {
   // Se for diretor de origem com fila pendente, comeca em 'aprovar'.
   useEffect(() => {
     if (viewTouched) return;
-    if (ehDiretorOrigem && pendentesOrigem > 0) {
+    if (ehAprovador && pendentesAprovar > 0) {
       setView('aprovar');
     } else if (isAdmin || atendeAreas) {
       setView('atender');
     }
-  }, [isAdmin, atendeAreas, ehDiretorOrigem, pendentesOrigem, viewTouched]);
+  }, [isAdmin, atendeAreas, ehAprovador, pendentesAprovar, viewTouched]);
 
   // Form state
   const FORM_INITIAL = {
@@ -810,10 +816,10 @@ export default function Solicitacoes() {
         </div>
       </div>
 
-      {/* Tabs · Aprovar (diretor de origem) · Para Atender (responsável) · Minhas (todos). */}
-      {(isResponsavel || ehDiretorOrigem) && (
+      {/* Tabs · Aprovar (diretor de origem + triagem super-admin) · Para Atender · Minhas. */}
+      {(isResponsavel || ehAprovador) && (
         <div className="flex items-center gap-1 border-b border-border">
-          {ehDiretorOrigem && (
+          {ehAprovador && (
             <button
               type="button"
               onClick={() => { setViewTouched(true); setView('aprovar'); }}
@@ -824,9 +830,9 @@ export default function Solicitacoes() {
               }`}
             >
               Aprovar
-              {pendentesOrigem > 0 && (
+              {pendentesAprovar > 0 && (
                 <Badge className="text-[10px] bg-violet-500/15 text-violet-700 dark:text-violet-400 px-1.5">
-                  {pendentesOrigem}
+                  {pendentesAprovar}
                 </Badge>
               )}
             </button>
@@ -945,7 +951,8 @@ export default function Solicitacoes() {
                 && item.solicitante_id === profile?.id
                 && item.nps_nota == null;
               const aguardandoOrigem = item.status === 'aguardando_aprovacao_origem'
-                && item.aprovacao_origem_status === 'pendente';
+                && ['pendente', 'triagem'].includes(item.aprovacao_origem_status);
+              const emTriagem = item.aprovacao_origem_status === 'triagem';
               const diretorNome = item.aprovacao_origem_diretor?.name;
               const foiRejeitada = item.status === 'rejeitado' && item.aprovacao_origem_status === 'rejeitada';
               return (
@@ -980,7 +987,9 @@ export default function Solicitacoes() {
                   </div>
                   {aguardandoOrigem && (
                     <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
-                      ⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}
+                      {emTriagem
+                        ? <>⏳ Em triagem · definindo o aprovador{item.eh_urgente ? ' · urgente' : ''}</>
+                        : <>⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}</>}
                     </p>
                   )}
                   {foiRejeitada && item.aprovacao_origem_motivo && (
@@ -1072,6 +1081,9 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
           <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
           {item.eh_urgente && (
             <Badge className="text-xs bg-red-500/15 text-red-700 dark:text-red-400">Urgente</Badge>
+          )}
+          {item.aprovacao_origem_status === 'triagem' && (
+            <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400">⚠ Triagem · sem setor</Badge>
           )}
           <span className="text-xs text-muted-foreground">aguardando {aguardandoHa}</span>
         </div>
