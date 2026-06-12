@@ -13,7 +13,7 @@ router.get('/diagnostico', async (req, res) => {
     const hoje = new Date().toISOString().split('T')[0];
 
     const [projRes, marcosRes, depsRes] = await Promise.all([
-      supabase.from('projects').select('id, name, status, date_start, date_end, responsible, budget_planned, budget_spent, priority, area, description, year, notes').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
+      supabase.from('projects').select('id, name, status, date_start, date_end, responsible, responsible_id, leader, leader_id, budget_planned, budget_spent, priority, area, description, year, notes').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
       supabase.from('expansion_milestones').select('id, name, status, date_start, date_end, budget_planned, budget_spent, responsible, sort_order, year, area, description, phase').order('sort_order'),
       supabase.from('expansion_milestone_dependencies').select('milestone_id, depends_on_id'),
     ]);
@@ -145,7 +145,7 @@ router.get('/simular/:tipo/:id', async (req, res) => {
 router.put('/projeto/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { motivo, ...campos } = req.body;
-    const allowed = ['name', 'year', 'description', 'status', 'responsible', 'area', 'date_start', 'date_end', 'budget_planned', 'budget_spent', 'priority', 'notes'];
+    const allowed = ['name', 'year', 'description', 'status', 'responsible', 'responsible_id', 'leader', 'leader_id', 'area', 'date_start', 'date_end', 'budget_planned', 'budget_spent', 'priority', 'notes'];
     const update = {};
     for (const k of allowed) { if (campos[k] !== undefined) update[k] = campos[k]; }
     if (Object.keys(update).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
@@ -233,23 +233,17 @@ router.get('/historico', async (req, res) => {
 router.delete('/projeto/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data: item } = await supabase.from('projects').select('id, name').eq('id', req.params.id).single();
-    if (!item) return res.status(404).json({ error: 'Projeto nao encontrado' });
+    if (!item) return res.status(404).json({ error: 'Projeto não encontrado' });
 
-    // Cascade: tarefas, fases, milestones, riscos, kpis, budget, retrospectiva
-    const { data: tasks } = await supabase.from('project_tasks').select('id').eq('project_id', req.params.id);
-    const taskIds = (tasks || []).map(t => t.id);
-    if (taskIds.length > 0) {
-      await supabase.from('project_task_subtasks').delete().in('task_id', taskIds).catch(() => {});
-      await supabase.from('project_task_comments').delete().in('task_id', taskIds).catch(() => {});
-      await supabase.from('project_tasks').delete().eq('project_id', req.params.id);
-    }
-    await supabase.from('project_phases').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_milestones').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_risks').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_kpis').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_budget_items').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('project_retrospectives').delete().eq('project_id', req.params.id).catch(() => {});
-    await supabase.from('projects').delete().eq('id', req.params.id);
+    // Soft-delete reversível do projeto (consistente com routes/projects.js, que
+    // já usa app_soft_delete + filtra deleted_at nas leituras). Não destrói mais as
+    // tabelas-filhas: o projeto soft-deletado some das listas e leva os filhos junto
+    // (e volta inteiro se restaurado). Antes era hard-delete em cascata (auditoria 2026-06-08).
+    await supabase.rpc('app_soft_delete', {
+      p_table_name: 'projects',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.userId ?? null,
+    });
 
     // Log
     await supabase.from('revision_log').insert({
@@ -266,7 +260,7 @@ router.delete('/projeto/:id', authorize('admin', 'diretor'), async (req, res) =>
 router.delete('/expansao/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data: item } = await supabase.from('expansion_milestones').select('id, name').eq('id', req.params.id).single();
-    if (!item) return res.status(404).json({ error: 'Marco nao encontrado' });
+    if (!item) return res.status(404).json({ error: 'Marco não encontrado' });
 
     // Cascade: tarefas, subtarefas, dependencias
     const { data: tasks } = await supabase.from('expansion_tasks').select('id').eq('milestone_id', req.params.id);

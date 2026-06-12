@@ -3,30 +3,43 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { notificacoes as notifApi } from '../../api';
+import { supabase } from '../../supabaseClient';
+import ChatIAFloating from './ChatIAFloating';
+import FeedbackButton from '../FeedbackButton';
+import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
+import PrimeiroAcessoFotoModal from '../auth/PrimeiroAcessoFotoModal';
+import FotoLightboxGlobal from '../FotoLightboxGlobal';
 import { playNotificationSound } from '../../lib/sounds';
+import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import {
   Users, DollarSign, Truck, Tag,
-  CalendarDays, FolderKanban, Map,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen,
-  Megaphone, BrainCircuit, ShoppingCart, Images,
-  Sun, Moon, Bell, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Sparkles,
+  CalendarDays, FolderKanban, Map, ListChecks,
+  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
+  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
+  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass,
 } from 'lucide-react';
+import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
 } from '../ui/dropdown-menu';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Button } from '../ui/button';
 import { ScrollArea } from '../ui/scroll-area';
-import { Avatar, AvatarFallback } from '../ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
-const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', sistema: '#6b7280' };
-const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', sistema: 'Sistema' };
+const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
+const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos', nps: 'NPS', sistema: 'Sistema' };
 
+// 6 módulos macro · alinhados com o roadmap apresentado ao gestor
+// (Administração · Inteligência · Planejamento · Ministerial · Cultos · Criativo)
 const NAV_ITEMS = [
   {
     id: 1,
-    label: 'Administrativo',
+    label: 'Administração',
     subMenus: [
       {
         title: 'Gestão',
@@ -44,61 +57,102 @@ const NAV_ITEMS = [
         ],
       },
       {
-        title: 'Inteligência',
+        title: 'Configurações',
         items: [
-          { label: 'KPIs e Indicadores', description: 'Frequência, batismos e métricas 2026', icon: BarChart2, path: '/kpis', perm: 'canKPIs' },
-          { label: 'Cultura CBRio', description: 'Mandala dos 5 valores: PENSE e generosidade', icon: Sparkles, path: '/admin/cultura' },
-          { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
+          { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
+          { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao', moduleMin: 3 },
+          { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
         ],
       },
     ],
   },
   {
     id: 2,
-    label: 'Projetos e Eventos',
-    path: '/planejamento',
+    label: 'Inteligência',
     subMenus: [
       {
-        title: 'Módulos',
+        title: 'Visão macro',
         items: [
-          { label: 'Eventos', description: 'Gestão de eventos da igreja', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
-          { label: 'Projetos', description: 'Acompanhamento de projetos', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
-          { label: 'Expansão', description: 'Metas de expansão', icon: Map, path: '/expansao', perm: 'canExpansao' },
-          { label: 'Revisão', description: 'Revisão estratégica com líderes', icon: ClipboardCheck, path: '/revisao' },
+          { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
+          { label: 'Monitoramento OKR', description: 'Planejamento estratégico 2026 · NSM, 9 OKRs e indicadores táticos', icon: Compass, path: '/monitoramento-okr' },
+          { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
+          { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
+        ],
+      },
+      {
+        title: 'Análise',
+        items: [
+          { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
+          { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
+          { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
+          { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
+          { label: 'Apresentações', description: 'Gera slides HTML premium via Claude Opus · upload opcional', icon: Sparkles, path: '/admin/apresentacoes', module: 'apresentacoes' },
         ],
       },
     ],
   },
   {
     id: 3,
-    label: 'Ministerial',
+    label: 'Planejamento',
     subMenus: [
       {
-        title: 'Áreas',
+        title: 'Execução',
         items: [
-          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao' },
-          { label: 'Grupos', description: 'Grupos de conexao da igreja', icon: UsersRound, path: '/grupos' },
-          { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', perm: 'canCuidados' },
-          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
-          { label: 'Membresia', description: 'Cadastro e trilha dos valores', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
-        ],
-      },
-      {
-        title: 'Ferramentas',
-        items: [
-          { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', perm: 'canMembresia' },
+          { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
+          { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
+          { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
         ],
       },
     ],
   },
   {
     id: 4,
+    label: 'Ministerial',
+    subMenus: [
+      {
+        title: 'Áreas ministeriais',
+        items: [
+          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
+          { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
+          { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
+          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos' },
+          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
+          { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
+        ],
+      },
+      {
+        title: 'Ferramentas',
+        items: [
+          { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', perm: 'isAdmin' },
+          { label: 'Totem Kids', description: 'Check-in das crianças · sessões, salas, configuração tudo aqui', icon: Baby, path: '/ministerial/totem-kids', module: 'kids' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 5,
+    label: 'Cultos',
+    subMenus: [
+      {
+        title: 'Visualização por culto',
+        items: [
+          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/online', perm: 'canMembresia' },
+          { label: 'Kids', description: 'Indicadores do ministério infantil', icon: Baby, path: '/kids', module: 'kids' },
+          { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ami', module: 'ami' },
+          { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/bridge', module: 'bridge' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 6,
     label: 'Criativo',
     subMenus: [
       {
-        title: 'Áreas',
+        title: 'Demandas criativas',
         items: [
-          { label: 'Marketing', description: 'Projetos e solicitações', icon: Megaphone, path: '/criativo/marketing' },
+          { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
+          { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
           { label: 'Destaques do App', description: 'Carrossel de fotos da Home do app de membros', icon: Images, path: '/admin/destaques', perm: 'isAdmin' },
         ],
       },
@@ -107,19 +161,43 @@ const NAV_ITEMS = [
 ];
 
 export default function AppShell() {
-  const { profile, role, signOut, isAdmin, isVoluntario, isColaborador, modulePerms, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados } = useAuth();
-  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, isColaborador, isAdmin };
+  const { profile, role, signOut, isAdmin, isVoluntario, isColaborador, modulePerms, modulosBloqueados, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, canProcessos } = useAuth();
+  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, canProcessos, isColaborador, isAdmin };
 
   // If permissions haven't loaded yet (modulePerms is null), show all items
   const permsLoaded = modulePerms !== null || isAdmin;
 
-  const filteredNavItems = NAV_ITEMS.map(section => ({
-    ...section,
-    subMenus: section.subMenus.map(sub => ({
-      ...sub,
-      items: sub.items.filter(item => !item.perm || !permsLoaded || permMap[item.perm] !== false),
-    })).filter(sub => sub.items.length > 0),
-  })).filter(section => section.subMenus.length > 0);
+  // Item passa se: sem perm + sem module · OU perm explicita true · OU
+  // module com nível leitura >= moduleMin (default 1 · admin sempre passa)
+  function itemAllowed(item) {
+    if (!permsLoaded) return true;
+    // Deny explícito de módulo (override nível 0) vence até o bypass de admin
+    if (item.perm && permMap[item.perm] === false) return false;
+    if (item.module && (modulosBloqueados || []).includes(item.module)) return false;
+    if (isAdmin) return true;
+    if (item.module && modulePerms) {
+      const m = modulePerms[item.module];
+      const leitura = m?.leitura ?? 0;
+      if (leitura < (item.moduleMin ?? 1)) return false;
+    }
+    return true;
+  }
+
+  function sectionAllowed(section) {
+    if (!section.roles) return true;
+    if (isAdmin) return true;
+    return section.roles.includes(role);
+  }
+
+  const filteredNavItems = NAV_ITEMS
+    .filter(sectionAllowed)
+    .map(section => ({
+      ...section,
+      subMenus: section.subMenus.map(sub => ({
+        ...sub,
+        items: sub.items.filter(itemAllowed),
+      })).filter(sub => sub.items.length > 0),
+    })).filter(section => section.subMenus.length > 0);
 
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
@@ -133,15 +211,96 @@ export default function AppShell() {
 
   const [notifCount, setNotifCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const pushSupported = typeof window !== 'undefined' && isPushSupported();
+
+  useEffect(() => {
+    if (!pushSupported) return;
+    getCurrentSubscription().then(s => setPushSubscribed(!!s)).catch(() => {});
+  }, [pushSupported]);
+
+  const togglePush = async () => {
+    if (pushBusy) return;
+    setPushBusy(true);
+    try {
+      if (pushSubscribed) {
+        await unsubscribePush();
+        setPushSubscribed(false);
+      } else {
+        const r = await subscribePush();
+        if (r === 'ok') setPushSubscribed(true);
+        else if (r === 'denied') alert('Você bloqueou notificações neste navegador. Habilite nas configurações do site.');
+        else if (r === 'no_vapid') alert('Push ainda não foi configurado pelo administrador.');
+        else if (r === 'unsupported') alert('Este navegador não suporta notificações push.');
+        else alert('Não foi possível ativar notificações.');
+      }
+    } finally { setPushBusy(false); }
+  };
   const [notifs, setNotifs] = useState([]);
   const [notifsLoading, setNotifsLoading] = useState(false);
+  const [notifAberta, setNotifAberta] = useState(null); // pop-up com a mensagem completa
   const prevNotifCount = useRef(-1);
 
   useEffect(() => {
     loadNotifCount();
-    const interval = setInterval(loadNotifCount, 10000);
-    return () => clearInterval(interval);
+    // Polling como safety net (caso o WebSocket caia ou o navegador hiberne a aba).
+    // O canal Realtime abaixo entrega INSERTs em < 1s · o polling so existe pra
+    // ressincronizar se algum evento for perdido.
+    const interval = setInterval(loadNotifCount, 30000);
+    // Ao voltar pra aba (que estava em segundo plano · WebSocket pode ter
+    // hibernado e perdido eventos), ressincroniza na hora — sem esperar o poll.
+    const onVisible = () => { if (document.visibilityState === 'visible') loadNotifCount(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
   }, []);
+
+  // Realtime · escuta INSERTs em `notificações` filtrado pelo usuário logado.
+  // Quando uma nova chega, toca o som, incrementa o badge e (se o dropdown
+  // já estiver aberto) prepend na lista sem precisar refazer fetch.
+  useEffect(() => {
+    if (!supabase || !profile?.id) return;
+    const channel = supabase
+      .channel(`notif:${profile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notificacoes',
+          filter: `usuario_id=eq.${profile.id}`,
+        },
+        (payload) => {
+          const nova = payload?.new;
+          if (!nova) return;
+          playNotificationSound();
+          setNotifCount(c => {
+            const next = c + 1;
+            // Mantem o ref sincronizado pro polling subsequente não tocar som de novo
+            // pelo mesmo evento (a comparacao em loadNotifCount usa prevNotifCount).
+            prevNotifCount.current = next;
+            return next;
+          });
+          setNotifs(prev => {
+            if (prev.some(x => x.id === nova.id)) return prev;
+            return [nova, ...prev];
+          });
+        }
+      )
+      .subscribe((status) => {
+        // A cada (re)conexão do canal, ressincroniza o contador pra recuperar
+        // eventos que tenham chegado enquanto o socket estava fora do ar.
+        if (status === 'SUBSCRIBED') loadNotifCount();
+      });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.id]);
 
   async function loadNotifCount() {
     try {
@@ -171,10 +330,16 @@ export default function AppShell() {
         setNotifCount(prev => Math.max(0, prev - 1));
       } catch { /* ignore */ }
     }
-    if (n.link) {
-      setNotifOpen(false);
-      navigate(n.link);
+    // Avisos (e notificações sem página de destino) abrem a MENSAGEM COMPLETA
+    // num pop-up — a prévia da lista corta em 2 linhas. As demais continuam
+    // navegando direto pro link (fluxos de aprovação etc).
+    const ehAviso = (n.tipo || '').startsWith('aviso') || n.modulo === 'sistema' || !n.link;
+    setNotifOpen(false);
+    if (ehAviso) {
+      setNotifAberta(n);
+      return;
     }
+    navigate(n.link);
   }
 
   async function handleLerTodas() {
@@ -196,18 +361,21 @@ export default function AppShell() {
 
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
-        <div className="flex items-center justify-between h-14 px-6 max-w-[1800px] mx-auto">
-          {/* Left: Logo + Nav */}
-          {/* Left: Logo */}
-          <div className="flex items-center gap-2 min-w-[140px]">
-            <button onClick={() => navigate('/')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+        <div className="flex items-center justify-between h-14 px-4 md:px-6 max-w-[1800px] mx-auto gap-2">
+          {/* Left: Menu mobile + Logo */}
+          <div className="flex items-center gap-2">
+            {/* Hamburger · so mobile (desktop usa MegaMenu) */}
+            {!isVoluntario && (
+              <MobileNavSheet items={filteredNavItems} />
+            )}
+            <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
               <img src="/logo-cbrio-text.png" alt="CBRio" className="h-8 object-contain" />
             </button>
           </div>
 
-          {/* Center: Navigation (hidden for volunteers) */}
+          {/* Center: Navigation desktop · escondido no mobile (vai pro Sheet) */}
           {!isVoluntario && (
-            <div className="flex-1 flex justify-center">
+            <div className="flex-1 flex justify-center" data-tour="megamenu">
               <MegaMenu items={filteredNavItems} role={role} />
             </div>
           )}
@@ -219,16 +387,18 @@ export default function AppShell() {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
-            {/* Search trigger */}
+            {/* Search trigger · mobile so icon, desktop com texto + ⌘K */}
             <button
+              data-tour="search"
               onClick={() => {
                 window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
               }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-muted-foreground text-xs hover:bg-accent transition-colors"
+              className="flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-lg border border-border text-muted-foreground text-xs hover:bg-accent transition-colors"
+              title="Buscar (⌘K)"
             >
               <Search className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Buscar</span>
-              <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted">⌘K</kbd>
+              <span className="hidden md:inline">Buscar</span>
+              <kbd className="hidden md:inline text-[10px] px-1 py-0.5 rounded bg-muted">⌘K</kbd>
             </button>
 
             {/* Theme toggle */}
@@ -239,7 +409,7 @@ export default function AppShell() {
             {/* Notifications */}
             <DropdownMenu open={notifOpen} onOpenChange={(v) => { setNotifOpen(v); if (v) loadNotifs(); }}>
               <DropdownMenuTrigger asChild>
-                <button className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
+                <button data-tour="notifications" className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
                   <Bell className="h-4 w-4" />
                   {notifCount > 0 && (
                     <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-primary text-[9px] font-bold text-primary-foreground flex items-center justify-center cbrio-badge-pulse px-1">
@@ -250,11 +420,22 @@ export default function AppShell() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-[380px] p-0" sideOffset={8}>
                 <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                  <span className="text-sm font-bold text-foreground">Notificacoes</span>
+                  <span className="text-sm font-bold text-foreground">Notificações</span>
                   <div className="flex items-center gap-2">
                     {notifCount > 0 && (
                       <button onClick={handleLerTodas} className="flex items-center gap-1 text-[11px] text-primary hover:underline">
                         <CheckCheck className="h-3 w-3" /> Marcar todas como lidas
+                      </button>
+                    )}
+                    {pushSupported && (
+                      <button
+                        onClick={togglePush}
+                        disabled={pushBusy}
+                        className="p-1 rounded hover:bg-accent transition-colors"
+                        style={{ color: pushSubscribed ? '#00B39D' : 'var(--cbrio-text3)' }}
+                        title={pushSubscribed ? 'Desativar notificações no celular/desktop' : 'Ativar notificações no celular/desktop'}
+                      >
+                        {pushSubscribed ? <BellRing className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
                       </button>
                     )}
                     <button onClick={() => { setNotifOpen(false); navigate('/admin/notificacao-regras'); }} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Configurar regras">
@@ -270,7 +451,7 @@ export default function AppShell() {
                   ) : notifs.length === 0 ? (
                     <div className="flex flex-col items-center py-10 gap-2 text-muted-foreground">
                       <Bell className="h-8 w-8 opacity-30" />
-                      <span className="text-xs">Nenhuma notificacao</span>
+                      <span className="text-xs">Nenhuma notificação</span>
                     </div>
                   ) : (
                     <div className="py-1">
@@ -308,8 +489,9 @@ export default function AppShell() {
             </DropdownMenu>
 
             {/* User menu */}
-            <button onClick={() => navigate('/perfil')} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-accent transition-colors">
+            <button data-tour="user-menu" onClick={() => navigate('/perfil')} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-accent transition-colors">
               <Avatar className="h-7 w-7">
+                {profile?.avatar_url ? <AvatarImage src={profile.avatar_url} alt={profile.name || ''} /> : null}
                 <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
                   {initials}
                 </AvatarFallback>
@@ -329,6 +511,112 @@ export default function AppShell() {
       <main className="max-w-[1800px] mx-auto">
         <Outlet />
       </main>
+
+      <ChatIAFloating />
+      <FeedbackButton />
+      <PrimeiroAcessoSenhaModal />
+      <PrimeiroAcessoFotoModal />
+      <FotoLightboxGlobal />
+
+      {/* Pop-up de notificação · mensagem completa (avisos) */}
+      <Dialog open={!!notifAberta} onOpenChange={(v) => { if (!v) setNotifAberta(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                style={{
+                  color: MOD_COLORS[notifAberta?.modulo] || '#6b7280',
+                  background: `${MOD_COLORS[notifAberta?.modulo] || '#6b7280'}15`,
+                }}
+              >
+                {MOD_LABELS[notifAberta?.modulo] || notifAberta?.modulo || 'Aviso'}
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {notifAberta ? new Date(notifAberta.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+              </span>
+            </div>
+            <DialogTitle className="text-left leading-snug">{notifAberta?.titulo}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{notifAberta?.mensagem}</p>
+          <div className="flex gap-2 justify-end mt-2">
+            <Button variant="outline" onClick={() => setNotifAberta(null)}>Fechar</Button>
+            {notifAberta?.link && (
+              <Button onClick={() => { const l = notifAberta.link; setNotifAberta(null); navigate(l); }}>
+                Abrir página
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// MobileNavSheet · drawer lateral pra navegar em telas pequenas
+// Visível so < md (768px) · desktop usa MegaMenu no centro do header.
+// ─────────────────────────────────────────────────────────────────────────
+function MobileNavSheet({ items }) {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  function go(path) {
+    setOpen(false);
+    navigate(path);
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <button
+          data-tour="megamenu"
+          className="md:hidden p-2 rounded-lg hover:bg-accent transition-colors text-foreground"
+          aria-label="Abrir menu"
+        >
+          <MenuIcon className="h-5 w-5" />
+        </button>
+      </SheetTrigger>
+      <SheetContent side="left" className="w-80 max-w-[85vw] overflow-y-auto p-0">
+        <div className="px-4 py-4 border-b border-border">
+          <img src="/logo-cbrio-text.png" alt="CBRio" className="h-7 object-contain" />
+        </div>
+        <nav className="p-2 space-y-4">
+          {items.map(section => (
+            <div key={section.id}>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold px-3 mb-1.5">
+                {section.label}
+              </p>
+              {section.subMenus.map(sub => (
+                <div key={sub.title} className="mb-2">
+                  {sub.title && section.subMenus.length > 1 && (
+                    <p className="text-[10px] text-muted-foreground/70 px-3 mt-2 mb-1">{sub.title}</p>
+                  )}
+                  {sub.items.map(item => {
+                    const Icon = item.icon;
+                    const ativo = location.pathname === item.path;
+                    return (
+                      <button
+                        key={item.path}
+                        onClick={() => go(item.path)}
+                        className={`w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors ${
+                          ativo
+                            ? 'bg-primary/15 text-primary'
+                            : 'hover:bg-accent text-foreground'
+                        }`}
+                      >
+                        {Icon && <Icon className="h-4 w-4 shrink-0" />}
+                        <span className="text-sm font-medium">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          ))}
+        </nav>
+      </SheetContent>
+    </Sheet>
   );
 }

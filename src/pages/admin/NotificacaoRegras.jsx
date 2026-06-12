@@ -8,6 +8,7 @@ const C = {
 };
 
 const MODULOS = [
+  { id: 'piloto', label: 'Piloto (testes)', desc: 'Relatório diário do agente · feedback dos testadores + erros capturados', color: '#00B39D' },
   { id: 'rh', label: 'Recursos Humanos', desc: 'Férias, documentos, experiência CLT, admissões', color: '#8b5cf6' },
   { id: 'financeiro', label: 'Financeiro', desc: 'Contas a pagar, reembolsos, vencimentos', color: '#10b981' },
   { id: 'logistica', label: 'Logística', desc: 'Pedidos atrasados, solicitações pendentes', color: '#3b82f6' },
@@ -17,6 +18,17 @@ const MODULOS = [
   { id: 'projetos', label: 'Projetos', desc: 'Marcos atrasados, tarefas pendentes', color: '#ec4899' },
   { id: 'kpis', label: 'KPIs e Indicadores', desc: 'Metas atingidas, registros de culto e batismo', color: '#f97316' },
   { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },
+  { id: 'next', label: 'NEXT', desc: 'Novas inscrições, indicações de batismo/servir/grupo/dízimo', color: '#06b6d4' },
+  { id: 'voluntariado', label: 'Voluntariado', desc: 'Novos voluntários, indicações para servir', color: '#14b8a6' },
+  { id: 'grupos', label: 'Grupos', desc: 'Novos membros, grupos sem encontro recente, membros sem grupo, indicações via NEXT', color: '#a855f7' },
+  { id: 'generosidade', label: 'Generosidade', desc: 'Indicações de dízimo/oferta via NEXT', color: '#eab308' },
+  { id: 'integracao', label: 'Integração', desc: 'Dados de culto aguardando aprovação, visitantes novos, indicações de batismo via NEXT', color: '#0ea5e9' },
+  { id: 'batismos', label: 'Batismos', desc: 'Novas inscrições para batismo via formulário público', color: '#06b6d4' },
+  { id: 'processos', label: 'Processos', desc: 'Novos processos, OKRs e acompanhamento de indicadores', color: '#00B39D' },
+  { id: 'nps', label: 'NPS', desc: 'Novas pesquisas de satisfação, lembretes e análises', color: '#06b6d4' },
+  { id: 'marketing', label: 'Marketing', desc: 'Cards atribuídos, prazo confirmado, preview pronto, entrega aprovada, revisão sugerida, gargalo de aprovação', color: '#ec4899' },
+  { id: 'producao', label: 'Produção de Culto', desc: 'Ocorrências críticas (falha técnica / estrutura) e novas solicitações da Produção', color: '#6366f1' },
+  { id: 'wifi', label: 'WiFi', desc: 'Novos visitantes recorrentes identificados pelo portal WiFi (2+ cultos)', color: '#00B39D' },
 ];
 
 export default function NotificacaoRegras() {

@@ -31,8 +31,14 @@ class AgentService {
     this.stepCount = 0;
   }
 
-  /** Cria um run no banco e retorna a instância */
+  /** Cria um run no banco e retorna a instância (ou reusa se config._existingRunId) */
   static async createRun(agentType, triggeredBy, config = {}) {
+    // Permite reusar uma run já criada pelo endpoint /run (evita duplicação).
+    if (config._existingRunId) {
+      const cleanConfig = { ...config };
+      delete cleanConfig._existingRunId;
+      return new AgentService(config._existingRunId, agentType, cleanConfig);
+    }
     const { data, error } = await supabase.from('agent_runs').insert({
       agent_type: agentType,
       status: 'running',
@@ -52,23 +58,44 @@ class AgentService {
     return this.tokenBudget - total;
   }
 
-  /** Chamada principal ao Claude API */
-  async call({ model = 'claude-haiku-4-5-20251001', system, messages, tools, role = 'step', maxTokens = 2048 }) {
+  /** Chamada principal ao Claude API
+   *
+   * `system` aceita 3 formas:
+   *  - string: append no GUARDRAILS, vira system simples
+   *  - array de TextBlocks Anthropic ({type:'text', text, cache_control?}): usado tal qual,
+   *    com GUARDRAILS injetado no primeiro bloco (preservando o cache_control que estiver lá)
+   *  - undefined: só os GUARDRAILS
+   *
+   * `tools` + `toolChoice` ativam structured output. O resultado vai em toolCalls[0].input.
+   */
+  async call({ model = 'claude-haiku-4-5-20251001', system, messages, tools, toolChoice, role = 'step', maxTokens = 2048 }) {
     this.checkBudget();
     this.stepCount++;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY não configurada');
 
-    const systemWithGuardrails = `${GUARDRAILS}\n\n${system || ''}`;
+    // Build system field: aceita string ou array de blocks
+    let systemField;
+    if (Array.isArray(system)) {
+      // Injeta GUARDRAILS no primeiro bloco preservando seu cache_control
+      const first = system[0] || { type: 'text', text: '' };
+      systemField = [
+        { ...first, text: `${GUARDRAILS}\n\n${first.text || ''}` },
+        ...system.slice(1),
+      ];
+    } else {
+      systemField = `${GUARDRAILS}\n\n${system || ''}`;
+    }
 
     const body = {
       model,
       max_tokens: maxTokens,
-      system: systemWithGuardrails,
+      system: systemField,
       messages,
     };
     if (tools?.length) body.tools = tools;
+    if (toolChoice) body.tool_choice = toolChoice;
 
     const start = Date.now();
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -166,6 +193,50 @@ class AgentService {
       cost_usd: this.totalCost,
       completed_at: new Date().toISOString(),
     }).eq('id', this.runId);
+
+    // Dispara notificações in-app se houver findings críticos. Não bloqueia.
+    this._notificarSeNecessario(findings, summary).catch(e =>
+      console.warn('[AgentService] notificacao falhou:', e.message)
+    );
+  }
+
+  /** Cria notificação in-app para findings críticos. Silencioso em erro. */
+  async _notificarSeNecessario(findings, summary) {
+    if (process.env.AI_DISABLE_NOTIFICATIONS === '1') return;
+    if (!Array.isArray(findings) || !findings.length) return;
+
+    const criticos = findings.filter(f => f.severity === 'critico');
+    const avisos = findings.filter(f => f.severity === 'aviso');
+    if (!criticos.length && avisos.length < 3) return;
+
+    let notificar;
+    try { notificar = require('./notificar').notificar; }
+    catch { return; }
+
+    const score = this.config?.score;
+    const nomeAgente = this.agentType
+      .replace('module_', '')
+      .replace('_', ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+
+    const severidade = criticos.length ? 'critico' : 'aviso';
+    const titulo = criticos.length
+      ? `${nomeAgente}: ${criticos.length} problema(s) crítico(s)`
+      : `${nomeAgente}: ${avisos.length} avisos detectados`;
+    const primeiraEvidencia = (criticos[0] || avisos[0])?.title || 'Veja o detalhe da auditoria.';
+    const mensagem = score != null
+      ? `Score ${score}/10 — ${primeiraEvidencia}`
+      : primeiraEvidencia;
+
+    await notificar({
+      modulo: 'assistenteIA',
+      tipo: 'auditoria_critica',
+      titulo,
+      mensagem,
+      link: `/assistente-ia?run=${this.runId}`,
+      severidade,
+      chaveDedup: `auditoria_${this.agentType}_${new Date().toISOString().slice(0, 10)}`,
+    });
   }
 
   /** Finaliza run com erro */

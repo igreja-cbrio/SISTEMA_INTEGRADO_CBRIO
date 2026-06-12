@@ -98,7 +98,7 @@ async function listHubDrives() {
 async function getDriveIdByName(libraryName) {
   if (driveCache[libraryName] && Date.now() < driveCacheExpiry) return driveCache[libraryName];
   await listHubDrives();
-  if (!driveCache[libraryName]) throw new Error(`Biblioteca "${libraryName}" nao encontrada no CBRio Hub`);
+  if (!driveCache[libraryName]) throw new Error(`Biblioteca "${libraryName}" não encontrada no CBRio Hub`);
   return driveCache[libraryName];
 }
 
@@ -134,9 +134,9 @@ async function uploadToDrive(driveId, folderPath, fileName, fileBuffer) {
  * @returns {Promise<{url, itemId, path, driveId, provider}>}
  */
 async function uploadModuleFile(module, subFolder, fileName, fileBuffer) {
-  if (!SHAREPOINT_CONFIGURED) throw new Error('SharePoint nao configurado');
+  if (!SHAREPOINT_CONFIGURED) throw new Error('SharePoint não configurado');
   const libraryName = MODULE_LIBRARY_MAP[module];
-  if (!libraryName) throw new Error(`Modulo "${module}" nao tem biblioteca SharePoint mapeada`);
+  if (!libraryName) throw new Error(`Módulo "${module}" não tem biblioteca SharePoint mapeada`);
 
   // Planejamento já tem drive ID fixo
   const driveId = libraryName === 'Planejamento' ? PLANEJAMENTO_DRIVE_ID : await getDriveIdByName(libraryName);

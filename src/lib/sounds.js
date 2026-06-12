@@ -1,4 +1,4 @@
-// Notification & success sounds using Web Audio API (no external files needed)
+// Notification & success sounds using Web Áudio API (no external files needed)
 let audioCtx = null;
 
 function getCtx() {
@@ -36,15 +36,15 @@ export function playNotificationSound() {
     g2.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
     osc2.start(t + 0.18);
     osc2.stop(t + 0.5);
-  } catch { /* audio not available */ }
+  } catch { /* áudio not available */ }
 }
 
-/** Single "PLIM" — breve sino de confirmacao de check-in */
+/** Single "PLIM" — breve sino de confirmação de check-in */
 export function playCheckinSound() {
   try {
     const ctx = getCtx();
     // Alguns navegadores iniciam o AudioContext em estado "suspended";
-    // resume() precisa ser chamado apos gesto do usuario (o proprio clique
+    // resume() precisa ser chamado após gesto do usuário (o próprio clique
     // que dispara o check-in vale como gesto)
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     const t = ctx.currentTime;
@@ -63,7 +63,7 @@ export function playCheckinSound() {
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
     osc.start(t);
     osc.stop(t + 0.5);
-  } catch { /* audio not available */ }
+  } catch { /* áudio not available */ }
 }
 
 /** Ascending chime for task/solicitation completion */
@@ -86,5 +86,5 @@ export function playSuccessSound() {
       osc.start(ctx.currentTime + i * 0.12);
       osc.stop(ctx.currentTime + i * 0.12 + 0.35);
     });
-  } catch { /* audio not available */ }
+  } catch { /* áudio not available */ }
 }

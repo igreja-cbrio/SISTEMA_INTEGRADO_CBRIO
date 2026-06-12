@@ -137,7 +137,7 @@ Responda em JSON:
     if (score !== null) {
       const { supabase } = require('../utils/supabase');
       await supabase.from('agent_runs').update({
-        config: { ...config, score, module: 'design', topReferences, quickWins }
+        config: { ...agent.config, score, module: 'design', topReferences, quickWins }
       }).eq('id', agent.runId);
     }
 

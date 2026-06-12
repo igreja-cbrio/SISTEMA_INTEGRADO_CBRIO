@@ -1,0 +1,49 @@
+name: Santander · Saldo (a cada 30min)
+
+# Atualiza snapshot do saldo Santander automaticamente.
+# Trigger no Supabase propaga pra fin_contas → dashboard reflete sem
+# usuario precisar sincronizar manual.
+#
+# Janela: 06h-23h BRT (09h-02h UTC). Fora desse horario nao faz sentido
+# porque a igreja nao opera de madrugada.
+#
+# Secrets:
+#   CRON_SECRET   · mesmo valor da env CRON_SECRET no Vercel
+#   APP_BASE_URL  · ex.: https://cbrio.org
+
+on:
+  schedule:
+    - cron: '*/30 9-23 * * *'  # de 30 em 30 min entre 06h e 20h BRT (09h-23h UTC)
+    - cron: '*/30 0-2 * * *'   # de 30 em 30 min entre 21h e 23h BRT (00h-02h UTC)
+  workflow_dispatch:
+
+concurrency:
+  group: santander-saldo-monitor
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Trigger saldo endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_BASE_URL" ]; then
+            echo "::warning::CRON_SECRET ou APP_BASE_URL nao configurados"
+            exit 0
+          fi
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            "$APP_BASE_URL/api/santander/cron/saldo")
+          body=$(echo "$response" | head -n -1)
+          status=$(echo "$response" | tail -n 1)
+          echo "HTTP $status"
+          echo "$body" | head -c 500
+          if [ "$status" -ge 400 ]; then
+            echo "::error::Saldo refresh falhou com HTTP $status"
+            exit 1
+          fi

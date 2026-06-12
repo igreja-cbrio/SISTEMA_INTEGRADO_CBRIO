@@ -1,0 +1,711 @@
+// ============================================================================
+// Produção de Culto — aba da área de Produção
+// ============================================================================
+// Espelha a Integração: semana de cultos + preenchimento por culto.
+// Sub-abas:
+//   - Preenchimento (semana · calendário + modal com 4 grupos de métrica)
+//   - Acumulado (totais do período)
+//   - Detalhado (por tipo de culto)
+//   - Checklists (template editável · admin nível 3)
+//   - Solicitações (fila da Produção · andamento direto)
+//   - Desempenho (KPIs próprios + SLA + NPS vs outras áreas criativas)
+// ============================================================================
+
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+  Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save,
+  Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2, TrendingUp,
+  Inbox, Gauge, Activity,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { producao as prodApi, solicitacoes as solicApi } from '../../api';
+import { formatErro } from '../../lib/formatErro';
+import useConfirmarSaida from '../../hooks/useConfirmarSaida';
+
+const C = {
+  bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
+  t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)', border: 'var(--cbrio-border)',
+  inputBg: 'var(--cbrio-input-bg)', modalBg: 'var(--cbrio-modal-bg)', overlay: 'var(--cbrio-overlay)',
+  primary: '#6366F1', primaryBg: '#6366F118', // indigo · cor da área Produção (voluntariado seed)
+};
+const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const MESES_CURTO = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function inicioSemana(d) {
+  const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = c.getDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  c.setDate(c.getDate() + diff);
+  return c;
+}
+function getISOWeek(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  const firstDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3);
+  return 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 864e5));
+}
+function rangeSemana(segunda) {
+  const fim = new Date(segunda); fim.setDate(fim.getDate() + 6);
+  return { inicio: toISO(segunda), fim: toISO(fim) };
+}
+function diasDaSemana(segunda) {
+  return Array.from({ length: 7 }, (_, i) => { const d = new Date(segunda); d.setDate(d.getDate() + i); return d; });
+}
+function mesmoDia(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+function formataDataCurta(dataStr) {
+  const [y, m, d] = dataStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return { dia: dt.getDate(), diaSemana: DIAS[dt.getDay()] };
+}
+
+const ABAS = [
+  { key: 'semana',       label: 'Preenchimento', icon: Calendar },
+  { key: 'acumulado',    label: 'Acumulado',     icon: TrendingUp },
+  { key: 'detalhado',    label: 'Detalhado',     icon: Activity },
+  { key: 'checklists',   label: 'Checklists',    icon: ListChecks },
+  { key: 'solicitacoes', label: 'Solicitações',  icon: Inbox },
+  { key: 'desempenho',   label: 'Desempenho',    icon: Gauge },
+];
+
+export default function Producao() {
+  const [aba, setAba] = useState('semana');
+  return (
+    <div style={{ padding: 20, maxWidth: 1100, margin: '0 auto' }}>
+      <header style={{ marginBottom: 16, borderLeft: `4px solid ${C.primary}`, paddingLeft: 12 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0, color: C.text }}>Produção de Culto</h1>
+        <p style={{ fontSize: 13, color: C.t3, margin: '4px 0 0' }}>
+          Indicadores técnicos por culto · solicitações da Produção · desempenho da área
+        </p>
+      </header>
+
+      <nav style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 18, flexWrap: 'wrap' }}>
+        {ABAS.map(t => {
+          const sel = aba === t.key; const Icon = t.icon;
+          return (
+            <button key={t.key} onClick={() => setAba(t.key)} style={{
+              padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              background: 'none', border: 'none', borderBottom: `2px solid ${sel ? C.primary : 'transparent'}`,
+              color: sel ? C.primary : C.t2, display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+              <Icon size={14} /> {t.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {aba === 'semana'       && <AbaSemana />}
+      {aba === 'acumulado'    && <AbaAcumulado modo="acumulado" />}
+      {aba === 'detalhado'    && <AbaAcumulado modo="detalhado" />}
+      {aba === 'checklists'   && <AbaChecklists />}
+      {aba === 'solicitacoes' && <AbaSolicitacoes />}
+      {aba === 'desempenho'   && <AbaDesempenho />}
+    </div>
+  );
+}
+
+// ── Aba Preenchimento (semana) ───────────────────────────────────────────────
+function AbaSemana() {
+  const hoje = new Date();
+  const [semanaInicio, setSemanaInicio] = useState(() => {
+    const ini = inicioSemana(hoje); ini.setDate(ini.getDate() - 7); return ini;
+  });
+  const [cultos, setCultos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editando, setEditando] = useState(null);
+
+  const dias = useMemo(() => diasDaSemana(semanaInicio), [semanaInicio]);
+  const ehSemanaAtual = mesmoDia(semanaInicio, inicioSemana(hoje));
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { inicio, fim } = rangeSemana(semanaInicio);
+      const data = await prodApi.semana(inicio, fim);
+      setCultos(Array.isArray(data) ? data : []);
+    } catch (e) { toast.error(formatErro(e, 'produção')); setCultos([]); }
+    finally { setLoading(false); }
+  }, [semanaInicio]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const irSemana = (delta) => { const n = new Date(semanaInicio); n.setDate(n.getDate() + delta * 7); setSemanaInicio(n); };
+  const voltarHoje = () => setSemanaInicio(inicioSemana(new Date()));
+
+  const ultimoDia = dias[6];
+  const labelDatas = semanaInicio.getMonth() === ultimoDia.getMonth()
+    ? `${semanaInicio.getDate()} – ${ultimoDia.getDate()} ${MESES[semanaInicio.getMonth()]} ${semanaInicio.getFullYear()}`
+    : `${semanaInicio.getDate()} ${MESES_CURTO[semanaInicio.getMonth()]} – ${ultimoDia.getDate()} ${MESES_CURTO[ultimoDia.getMonth()]} ${ultimoDia.getFullYear()}`;
+
+  const porDia = useMemo(() => {
+    const map = new Map();
+    dias.forEach(d => map.set(toISO(d), []));
+    cultos.forEach(c => { if (map.has(c.data)) map.get(c.data).push(c); });
+    for (const arr of map.values()) arr.sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+    return map;
+  }, [dias, cultos]);
+
+  const { preenchidos, pendentes } = useMemo(() => {
+    let p = 0, n = 0; cultos.forEach(c => c.producao_preenchido ? p++ : n++); return { preenchidos: p, pendentes: n };
+  }, [cultos]);
+
+  return (
+    <section>
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+          <Calendar size={11} style={{ color: C.primary }} /> Cultos da semana
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={() => irSemana(-1)} style={btnNav}><ChevronLeft size={14} /></button>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, minWidth: 200, textAlign: 'center' }}>
+            Semana {getISOWeek(semanaInicio)} · {labelDatas}
+          </div>
+          <button onClick={() => irSemana(1)} style={btnNav}><ChevronRight size={14} /></button>
+          {!ehSemanaAtual && <button onClick={voltarHoje} style={{ ...btnNav, padding: '6px 12px', fontSize: 11, fontWeight: 600, color: C.primary, borderColor: C.primary }}>Hoje</button>}
+        </div>
+      </header>
+
+      {!loading && cultos.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, color: C.t3 }}>
+          <span><strong style={{ color: '#10B981' }}>{preenchidos}</strong> preenchidos</span>
+          <span><strong style={{ color: '#F59E0B' }}>{pendentes}</strong> pendentes</span>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={loadingBox}>Carregando cultos da semana…</div>
+      ) : (
+        <div style={{ overflowX: 'auto', marginLeft: -4, marginRight: -4, paddingLeft: 4, paddingRight: 4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(100px, 1fr))', gap: 6 }}>
+            {dias.map(d => {
+              const iso = toISO(d); const arr = porDia.get(iso) || [];
+              const ehHoje = mesmoDia(d, hoje); const ehFds = d.getDay() === 0 || d.getDay() === 6;
+              return (
+                <div key={iso} style={{ background: ehHoje ? C.primaryBg : C.card, border: `1px solid ${ehHoje ? C.primary : C.border}`, borderRadius: 8, padding: 8, minHeight: 140, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ textAlign: 'center', borderBottom: `1px dashed ${C.border}`, paddingBottom: 6 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: ehHoje ? C.primary : C.t3, textTransform: 'uppercase' }}>{DIAS[d.getDay()]}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: ehHoje ? C.primary : C.text, lineHeight: 1 }}>{d.getDate()}</div>
+                  </div>
+                  {arr.length === 0 ? (
+                    <div style={{ fontSize: 10, color: C.t3, textAlign: 'center', padding: 14, fontStyle: 'italic' }}>{ehFds || d.getDay() === 3 ? '—' : 'sem culto'}</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {arr.map(c => <MiniCard key={c.id} culto={c} onClick={() => setEditando(c)} />)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {editando && <ModalProducao culto={editando} onClose={() => setEditando(null)} onSaved={() => { setEditando(null); carregar(); }} />}
+    </section>
+  );
+}
+
+function MiniCard({ culto, onClick }) {
+  const ok = culto.producao_preenchido;
+  const cor = culto.service_type_color || C.primary;
+  const dur = culto.producao?.duracao_minutos;
+  const meta = culto.producao?.meta_duracao_min ?? 60;
+  const atrasou = dur != null && dur > meta;
+  const ocorr = (culto.ocorrencias?.tecnica || 0) + (culto.ocorrencias?.estrutura || 0);
+  return (
+    <button onClick={onClick} style={{
+      textAlign: 'left', padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+      background: ok ? `${cor}10` : C.inputBg, border: `1px solid ${ok ? cor : C.border}`, borderLeft: `3px solid ${cor}`,
+      display: 'flex', flexDirection: 'column', gap: 2,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: cor }}>{culto.hora?.slice(0, 5) || '--:--'}</span>
+        {ok ? <CheckCircle2 size={11} style={{ color: '#10B981' }} /> : <AlertCircle size={11} style={{ color: '#F59E0B' }} />}
+      </div>
+      <span style={{ fontSize: 10, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>{culto.service_type_name || culto.nome}</span>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 1 }}>
+        {dur != null && <span style={{ fontSize: 9, color: atrasou ? '#EF4444' : C.t3 }}>{dur}min</span>}
+        {(culto.checklist?.total || 0) > 0 && <span style={{ fontSize: 9, color: C.t3 }}>· {culto.checklist.feitos}/{culto.checklist.total} ✓</span>}
+        {ocorr > 0 && <span style={{ fontSize: 9, color: '#EF4444' }}>· {ocorr} ⚠</span>}
+      </div>
+    </button>
+  );
+}
+
+// ── Modal de preenchimento da Produção ───────────────────────────────────────
+function ModalProducao({ culto, onClose, onSaved }) {
+  const [det, setDet] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ duracao_minutos: '', pontualidade_obs: '', observacoes: '' });
+  const [marks, setMarks] = useState({}); // item_id -> {feito, observação}
+  const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
+  const inicialRef = useRef(null); // snapshot do estado carregado · detecta alterações não salvas
+
+  const meta = det?.culto?.meta_duracao_min ?? culto.producao?.meta_duracao_min ?? 60;
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await prodApi.culto(culto.id);
+      setDet(d);
+      const formInicial = {
+        duracao_minutos: d.producao?.duracao_minutos ?? '',
+        pontualidade_obs: d.producao?.pontualidade_obs ?? '',
+        observacoes: d.producao?.observacoes ?? '',
+      };
+      setForm(formInicial);
+      const m = {};
+      (d.checklist || []).forEach(it => { m[it.item_id] = { feito: it.feito, observacao: it.observacao || '' }; });
+      setMarks(m);
+      inicialRef.current = JSON.stringify({ form: formInicial, marks: m });
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setLoading(false); }
+  }, [culto.id]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const temAlteracoes =
+    (inicialRef.current !== null && JSON.stringify({ form, marks }) !== inicialRef.current) ||
+    novaOcorr.descricao.trim() !== '' || novaOcorr.momento.trim() !== '';
+  const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
+
+  const dur = Number(form.duracao_minutos);
+  const atrasou = form.duracao_minutos !== '' && !Number.isNaN(dur) && dur > meta;
+
+  const addOcorrencia = async () => {
+    if (!novaOcorr.descricao.trim() || novaOcorr.descricao.trim().length < 3) {
+      toast.error('Descreva a ocorrência (o rastro do erro)'); return;
+    }
+    try {
+      await prodApi.addOcorrencia(culto.id, novaOcorr);
+      setNovaOcorr({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
+      const d = await prodApi.culto(culto.id); setDet(d);
+      toast.success('Ocorrência registrada');
+    } catch (e) { toast.error(formatErro(e)); }
+  };
+  const removerOcorrencia = async (id) => {
+    if (!window.confirm('Remover esta ocorrência?')) return;
+    try { await prodApi.removerOcorrencia(id); const d = await prodApi.culto(culto.id); setDet(d); }
+    catch (e) { toast.error(formatErro(e)); }
+  };
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await prodApi.salvarCulto(culto.id, {
+        duracao_minutos: form.duracao_minutos === '' ? null : Number(form.duracao_minutos),
+        pontualidade_obs: form.pontualidade_obs?.trim() || null,
+        observacoes: form.observacoes?.trim() || null,
+      });
+      const marksArr = Object.entries(marks).map(([item_id, v]) => ({ item_id, feito: v.feito, observacao: v.observacao }));
+      if (marksArr.length) await prodApi.salvarChecklist(culto.id, marksArr);
+      toast.success('Produção do culto salva');
+      onSaved?.();
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setSaving(false); }
+  };
+
+  const { dia, diaSemana } = formataDataCurta(culto.data);
+  const checklistFeitos = Object.values(marks).filter(m => m.feito).length;
+  const checklistTotal = det?.checklist?.length || 0;
+
+  return (
+    <div
+      {...backdropProps}
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div onClick={e => e.stopPropagation()} style={{ background: C.modalBg, borderRadius: 12, maxWidth: 620, width: '100%', maxHeight: '92vh', overflow: 'auto' }}>
+        <header style={{ padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>{culto.nome || culto.service_type_name}</h2>
+            <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0', textTransform: 'capitalize' }}>
+              {diaSemana} · {dia} {MESES[Number(culto.data.split('-')[1]) - 1]} {culto.data.split('-')[0]}
+              {culto.hora && <> · {culto.hora.slice(0, 5)}</>}
+            </p>
+          </div>
+          <button onClick={tentarFechar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}><X size={18} /></button>
+        </header>
+
+        {loading ? <div style={{ ...loadingBox, margin: 16 }}>Carregando…</div> : (
+        <div style={{ padding: 16 }}>
+          {/* Pontualidade */}
+          <SecaoTitulo icone={Clock} cor="#0EA5E9" titulo="Pontualidade · duração do culto" />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 6 }}>
+            <Field label={`Duração (min) · alvo ${meta}`}>
+              <input type="number" min="0" value={form.duracao_minutos} onChange={e => setForm(f => ({ ...f, duracao_minutos: e.target.value }))} style={inp} autoFocus />
+            </Field>
+            <Field label="Observação (opcional, mesmo passando do tempo)">
+              <input type="text" value={form.pontualidade_obs} onChange={e => setForm(f => ({ ...f, pontualidade_obs: e.target.value }))} style={inp} placeholder="Ex: ministração estendida, batismos…" />
+            </Field>
+          </div>
+          {atrasou && (
+            <div style={{ fontSize: 11, color: '#B45309', background: '#F59E0B18', borderRadius: 6, padding: '6px 10px', marginBottom: 16 }}>
+              Passou do alvo de {meta} min ({dur} min). A observação é opcional — registre o motivo se quiser deixar rastro.
+            </div>
+          )}
+
+          {/* Ocorrências */}
+          <SecaoTitulo icone={ShieldAlert} cor="#EF4444" titulo="Ocorrências · falhas técnicas e estabilidade" />
+          <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {(det?.ocorrencias || []).length === 0 && <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic' }}>Nenhuma ocorrência registrada neste culto.</div>}
+            {(det?.ocorrencias || []).map(o => (
+              <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${o.tipo === 'tecnica' ? '#EF4444' : '#F59E0B'}`, borderRadius: 4, fontSize: 11 }}>
+                <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.inputBg, color: C.t2, fontWeight: 700 }}>{o.tipo === 'tecnica' ? 'TÉCNICA' : 'ESTRUTURA'}</span>
+                <span style={{ fontSize: 9, color: sevCor(o.severidade), fontWeight: 700 }}>{o.severidade}</span>
+                <span style={{ flex: 1, color: C.text }}>{o.descricao}{o.momento ? ` · ${o.momento}` : ''}</span>
+                <button onClick={() => removerOcorrencia(o.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2 }}><Trash2 size={12} /></button>
+              </div>
+            ))}
+          </div>
+          <div style={{ background: C.inputBg, borderRadius: 8, padding: 10, marginBottom: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <select value={novaOcorr.tipo} onChange={e => setNovaOcorr(o => ({ ...o, tipo: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
+                <option value="tecnica">Falha técnica</option>
+                <option value="estrutura">Estabilidade estrutura</option>
+              </select>
+              <select value={novaOcorr.severidade} onChange={e => setNovaOcorr(o => ({ ...o, severidade: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
+                <option value="baixa">Baixa</option><option value="media">Média</option>
+                <option value="alta">Alta</option><option value="critica">Crítica</option>
+              </select>
+              <input type="text" value={novaOcorr.momento} onChange={e => setNovaOcorr(o => ({ ...o, momento: e.target.value }))} style={{ ...inp, padding: '6px 8px' }} placeholder="Momento (louvor…)" />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="text" value={novaOcorr.descricao} onChange={e => setNovaOcorr(o => ({ ...o, descricao: e.target.value }))} style={{ ...inp, flex: 1 }} placeholder="Descreva o erro (o rastro) *" onKeyDown={e => { if (e.key === 'Enter') addOcorrencia(); }} />
+              <button onClick={addOcorrencia} style={{ ...btnPrimary, background: '#EF4444' }}><Plus size={13} /> Adicionar</button>
+            </div>
+          </div>
+
+          {/* Checklist */}
+          <SecaoTitulo icone={ListChecks} cor="#10B981" titulo={`Checklist técnico · ${checklistFeitos}/${checklistTotal} executados`} />
+          {checklistTotal === 0 ? (
+            <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', marginBottom: 16 }}>
+              Nenhum item de checklist cadastrado. Cadastre na aba “Checklists”.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
+              {(det?.checklist || []).map(it => {
+                const m = marks[it.item_id] || { feito: false, observacao: '' };
+                return (
+                  <label key={it.item_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: m.feito ? '#10B98110' : C.card, border: `1px solid ${m.feito ? '#10B981' : C.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
+                    <input type="checkbox" checked={m.feito} onChange={e => setMarks(s => ({ ...s, [it.item_id]: { ...m, feito: e.target.checked } }))} />
+                    <span style={{ flex: 1, color: C.text, fontWeight: 600 }}>{it.titulo}{it.descricao && <span style={{ fontWeight: 400, color: C.t3 }}> · {it.descricao}</span>}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Observações */}
+          <SecaoTitulo icone={FileText} cor="#64748B" titulo="Observações gerais" />
+          <textarea value={form.observacoes} onChange={e => setForm(f => ({ ...f, observacoes: e.target.value }))} rows={3} style={{ ...inp, width: '100%', minHeight: 64, resize: 'vertical' }} placeholder="Notas livres sobre a produção deste culto." />
+        </div>
+        )}
+
+        <footer style={{ padding: 14, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={tentarFechar} disabled={saving} style={btnGhost}>Cancelar</button>
+          <button onClick={submit} disabled={saving || loading} style={{ ...btnPrimary, opacity: (saving || loading) ? 0.5 : 1 }}>
+            <Save size={13} /> {saving ? 'Salvando…' : 'Salvar'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// ── Aba Acumulado / Detalhado ─────────────────────────────────────────────────
+function AbaAcumulado({ modo }) {
+  const [periodo, setPeriodo] = useState('90');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const hoje = new Date(); const ate = toISO(hoje);
+        const d = new Date(hoje); d.setDate(d.getDate() - Number(periodo));
+        const res = await prodApi.acumulado({ inicio: toISO(d), fim: ate });
+        if (alive) setData(res);
+      } catch (e) { toast.error(formatErro(e)); }
+      finally { if (alive) setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [periodo]);
+
+  return (
+    <section>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        {['30', '90', '180', '365'].map(p => (
+          <button key={p} onClick={() => setPeriodo(p)} style={{ ...chip, ...(periodo === p ? chipSel : {}) }}>{p}d</button>
+        ))}
+      </div>
+      {loading ? <div style={loadingBox}>Carregando…</div> : !data ? null : modo === 'acumulado' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+          <Kpi titulo="Cultos preenchidos" valor={`${data.totais.cultos_preenchidos}/${data.totais.cultos_no_periodo}`} />
+          <Kpi titulo="Pontualidade" valor={data.totais.pontualidade_pct == null ? '—' : `${data.totais.pontualidade_pct}%`} cor="#0EA5E9" />
+          <Kpi titulo="Duração média" valor={data.totais.duracao_media_min == null ? '—' : `${data.totais.duracao_media_min} min`} />
+          <Kpi titulo="Checklist executado" valor={data.totais.checklist_pct == null ? '—' : `${data.totais.checklist_pct}%`} cor="#10B981" />
+          <Kpi titulo="Falhas técnicas" valor={data.totais.falhas_tecnicas} cor="#EF4444" />
+          <Kpi titulo="Ocorr. estrutura" valor={data.totais.ocorrencias_estrutura} cor="#F59E0B" />
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
+                {['Tipo de culto', 'Cultos', 'Preench.', 'Pontual.', 'Dur. média', 'Checklist', 'Falhas', 'Estrutura'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {data.detalhado.map(t => (
+                <tr key={t.tipo} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>{t.tipo}</td>
+                  <td style={td}>{t.cultos}</td>
+                  <td style={td}>{t.preenchidos}</td>
+                  <td style={td}>{t.pontualidade_pct == null ? '—' : `${t.pontualidade_pct}%`}</td>
+                  <td style={td}>{t.duracao_media_min == null ? '—' : `${t.duracao_media_min}min`}</td>
+                  <td style={td}>{t.checklist_pct == null ? '—' : `${t.checklist_pct}%`}</td>
+                  <td style={{ ...td, color: t.falhas_tecnicas > 0 ? '#EF4444' : C.t3 }}>{t.falhas_tecnicas}</td>
+                  <td style={{ ...td, color: t.ocorrencias_estrutura > 0 ? '#F59E0B' : C.t3 }}>{t.ocorrencias_estrutura}</td>
+                </tr>
+              ))}
+              {data.detalhado.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem dados no período.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── Aba Checklists (template · admin) ─────────────────────────────────────────
+function AbaChecklists() {
+  const [itens, setItens] = useState([]);
+  const [tipos, setTipos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [novo, setNovo] = useState({ titulo: '', descricao: '', service_type_id: '' });
+  const [metas, setMetas] = useState({}); // service_type_id -> valor em edição
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [its, sts] = await Promise.all([prodApi.checklistItens.list(), prodApi.serviceTypes()]);
+      setItens(its); setTipos(sts);
+      const m = {}; (sts || []).forEach(s => { m[s.id] = s.meta_duracao_min ?? 60; });
+      setMetas(m);
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const tipoNome = (id) => tipos.find(t => t.id === id)?.name || 'tipo';
+
+  const criar = async () => {
+    if (!novo.titulo.trim()) { toast.error('Título obrigatório'); return; }
+    try {
+      const ordem = (itens.reduce((a, i) => Math.max(a, i.ordem || 0), 0)) + 1;
+      await prodApi.checklistItens.create({
+        titulo: novo.titulo, descricao: novo.descricao,
+        service_type_id: novo.service_type_id || null, ordem,
+      });
+      setNovo({ titulo: '', descricao: '', service_type_id: '' }); carregar(); toast.success('Item criado');
+    } catch (e) { toast.error(formatErro(e)); }
+  };
+  const toggle = async (it) => { try { await prodApi.checklistItens.update(it.id, { ativo: !it.ativo }); carregar(); } catch (e) { toast.error(formatErro(e)); } };
+  const remover = async (id) => { if (!window.confirm('Remover item do checklist?')) return; try { await prodApi.checklistItens.remove(id); carregar(); } catch (e) { toast.error(formatErro(e)); } };
+  const salvarMeta = async (id) => {
+    try { await prodApi.salvarMetaTipo(id, Number(metas[id])); toast.success('Duração-alvo salva'); }
+    catch (e) { toast.error(formatErro(e)); }
+  };
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Duração-alvo por tipo de culto (pontualidade) */}
+      <div>
+        <h3 style={subTit}>Duração-alvo por tipo de culto (pontualidade)</h3>
+        <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
+          Acima desse tempo o culto conta como “fora do horário”. Padrão 60 min.
+        </p>
+        {loading ? <div style={loadingBox}>Carregando…</div> : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+            {tipos.map(t => (
+              <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                <span style={{ flex: 1, fontWeight: 600, color: C.text, fontSize: 13 }}>{t.name}</span>
+                <input type="number" min="1" max="600" value={metas[t.id] ?? ''} onChange={e => setMetas(m => ({ ...m, [t.id]: e.target.value }))} style={{ ...inp, width: 70, padding: '6px 8px' }} />
+                <span style={{ fontSize: 11, color: C.t3 }}>min</span>
+                <button onClick={() => salvarMeta(t.id)} style={{ ...chip, ...chipSel }}>Salvar</button>
+              </div>
+            ))}
+            {tipos.length === 0 && <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic' }}>Nenhum tipo de culto ativo.</div>}
+          </div>
+        )}
+      </div>
+
+      {/* Itens do checklist técnico */}
+      <div>
+        <h3 style={subTit}>Itens do checklist técnico</h3>
+        <p style={{ fontSize: 12, color: C.t3, margin: '0 0 12px' }}>
+          A equipe marca estes itens em cada culto. O “% executado” é derivado deles.
+          Itens “gerais” valem para todos os cultos; itens por tipo só aparecem no culto daquele tipo.
+        </p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <input type="text" value={novo.titulo} onChange={e => setNovo(n => ({ ...n, titulo: e.target.value }))} style={{ ...inp, flex: 2, minWidth: 160 }} placeholder="Novo item (ex: Áudio testado)" />
+          <input type="text" value={novo.descricao} onChange={e => setNovo(n => ({ ...n, descricao: e.target.value }))} style={{ ...inp, flex: 2, minWidth: 140 }} placeholder="Descrição (opcional)" />
+          <select value={novo.service_type_id} onChange={e => setNovo(n => ({ ...n, service_type_id: e.target.value }))} style={{ ...inp, flex: 1, minWidth: 130 }}>
+            <option value="">Geral (todos)</option>
+            {tipos.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <button onClick={criar} style={btnPrimary}><Plus size={13} /> Adicionar</button>
+        </div>
+        {loading ? <div style={loadingBox}>Carregando…</div> : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {itens.map(it => (
+              <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, opacity: it.ativo ? 1 : 0.5 }}>
+                <span style={{ flex: 1, fontWeight: 600, color: C.text, fontSize: 13 }}>{it.titulo}{it.descricao && <span style={{ fontWeight: 400, color: C.t3, fontSize: 11 }}> · {it.descricao}</span>}</span>
+                <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.inputBg, color: it.service_type_id ? C.primary : C.t3, fontWeight: 700 }}>
+                  {it.service_type_id ? tipoNome(it.service_type_id) : 'Geral'}
+                </span>
+                <button onClick={() => toggle(it)} style={{ ...chip, ...(it.ativo ? chipSel : {}) }}>{it.ativo ? 'Ativo' : 'Inativo'}</button>
+                <button onClick={() => remover(it.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4 }}><Trash2 size={14} /></button>
+              </div>
+            ))}
+            {itens.length === 0 && <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic' }}>Nenhum item cadastrado ainda.</div>}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── Aba Solicitações (fila da Produção · andamento) ───────────────────────────
+const STATUS_PROD = ['pendente', 'em_analise', 'em_atendimento', 'aguardando_entrega', 'concluido', 'rejeitado'];
+const STATUS_LABEL = {
+  pendente: 'Pendente', em_analise: 'Em análise', em_atendimento: 'Em atendimento',
+  aguardando_entrega: 'Aguardando entrega', concluido: 'Concluído', rejeitado: 'Rejeitado',
+  aguardando_aprovacao_financeira: 'Aprov. financeira', aguardando_aprovacao_origem: 'Aprov. diretor', avaliado: 'Avaliado',
+};
+function AbaSolicitacoes() {
+  const [itens, setItens] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await solicApi.list({ aba: 'atender' });
+      const arr = (Array.isArray(data) ? data : (data?.items || []))
+        .filter(s => s.area_responsavel === 'producao');
+      setItens(arr);
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const mudarStatus = async (id, status) => {
+    try { await solicApi.update(id, { status }); toast.success('Status atualizado'); carregar(); }
+    catch (e) { toast.error(formatErro(e)); }
+  };
+
+  return (
+    <section>
+      <p style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
+        Solicitações direcionadas à Produção. Dê andamento mudando o status. Para o fluxo completo, use o módulo Solicitações.
+      </p>
+      {loading ? <div style={loadingBox}>Carregando…</div> : itens.length === 0 ? (
+        <div style={{ ...loadingBox, color: C.t3 }}>Nenhuma solicitação para a Produção no momento.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {itens.map(s => (
+            <div key={s.id} style={{ padding: 12, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 700, color: C.text, fontSize: 13 }}>{s.titulo}</div>
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                  {s.categoria}{s.eh_urgente ? ' · 🚩 urgente' : ''}{s.data_necessaria ? ` · até ${s.data_necessaria}` : ''}
+                </div>
+              </div>
+              <select value={STATUS_PROD.includes(s.status) ? s.status : ''} onChange={e => mudarStatus(s.id, e.target.value)} style={{ ...inp, width: 'auto', padding: '6px 10px' }}>
+                {!STATUS_PROD.includes(s.status) && <option value="">{STATUS_LABEL[s.status] || s.status}</option>}
+                {STATUS_PROD.map(st => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── Aba Desempenho (KPIs próprios + SLA + NPS comparativo) ────────────────────
+function AbaDesempenho() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    (async () => { try { setData(await prodApi.desempenho()); } catch (e) { toast.error(formatErro(e)); } finally { setLoading(false); } })();
+  }, []);
+
+  if (loading) return <div style={loadingBox}>Carregando…</div>;
+  if (!data) return null;
+  const fmt = (k) => k?.valor == null ? '—' : `${k.valor}${k.unidade === '%' ? '%' : k.unidade === 'nota' ? '/10' : ''}`;
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <div>
+        <h3 style={subTit}>Indicadores técnicos por culto (específicos · não cascateiam)</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+          {data.especificos.map(k => (
+            <Kpi key={k.id} titulo={k.indicador} valor={fmt(k)} sub={`meta ${k.meta_descricao || '—'} · ${k.periodo || 'sem período'}`} cor={statusCor(k.status)} />
+          ))}
+        </div>
+      </div>
+      <div>
+        <h3 style={subTit}>SLA das solicitações da Produção</h3>
+        <Kpi titulo={data.sla?.indicador || '% atendidas no SLA'} valor={fmt(data.sla)} sub={`meta ${data.sla?.meta_descricao || '≥85%'}`} cor={statusCor(data.sla?.status)} />
+      </div>
+      <div>
+        <h3 style={subTit}>NPS interno · Produção vs outras áreas criativas</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+          {data.nps_comparativo.map(n => (
+            <div key={n.area} style={{ padding: 14, borderRadius: 10, background: n.destaque ? C.primaryBg : C.card, border: `1px solid ${n.destaque ? C.primary : C.border}` }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: n.destaque ? C.primary : C.t2 }}>{n.area}{n.destaque ? ' (você)' : ''}</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>{n.valor == null ? '—' : `${n.valor}`}<span style={{ fontSize: 13, color: C.t3 }}>/10</span></div>
+              <div style={{ fontSize: 10, color: C.t3 }}>{n.periodo || 'sem período'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── Bits compartilhados ───────────────────────────────────────────────────────
+function SecaoTitulo({ icone: Icone, cor, titulo }) {
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: cor, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}><Icone size={11} /> {titulo}</div>;
+}
+function Field({ label, children }) {
+  return <div><label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: C.t3, marginBottom: 4 }}>{label}</label>{children}</div>;
+}
+function Kpi({ titulo, valor, sub, cor }) {
+  return (
+    <div style={{ padding: 14, borderRadius: 10, background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${cor || C.primary}` }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: C.t3 }}>{titulo}</div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginTop: 2 }}>{valor}</div>
+      {sub && <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+function sevCor(s) { return { baixa: '#10B981', media: '#F59E0B', alta: '#EF4444', critica: '#B91C1C' }[s] || C.t3; }
+function statusCor(s) { return { no_alvo: '#10B981', atrasado: '#F59E0B', critico: '#EF4444' }[s] || C.primary; }
+
+const inp = { width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text, fontSize: 12, boxSizing: 'border-box', fontFamily: 'inherit' };
+const btnNav = { padding: 6, borderRadius: 6, background: C.card, color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
+const btnPrimary = { padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, background: C.primary, color: '#fff', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' };
+const btnGhost = { padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer' };
+const chip = { padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.t2 };
+const chipSel = { border: `1px solid ${C.primary}`, background: C.primaryBg, color: C.primary };
+const td = { padding: '8px 10px', color: C.t2 };
+const subTit = { fontSize: 12, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' };
+const loadingBox = { padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}` };

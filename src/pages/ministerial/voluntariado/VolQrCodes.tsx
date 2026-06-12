@@ -54,7 +54,7 @@ export default function VolQrCodes() {
           <h1 className="text-xl md:text-2xl font-bold text-foreground flex items-center gap-2">
             <QrCode className="h-5 w-5 md:h-6 md:w-6" /> Gestao de QR Codes
           </h1>
-          <p className="text-sm text-muted-foreground">Voluntarios ativos nos ultimos 3 meses</p>
+          <p className="text-sm text-muted-foreground">Voluntários ativos nos últimos 3 meses</p>
         </div>
         <Button variant="outline" className="gap-2 w-full sm:w-auto" onClick={() => document.getElementById('pc-search-section')?.scrollIntoView({ behavior: 'smooth' })}>
           <Search className="h-4 w-4" /> Buscar no Planning Center
@@ -119,7 +119,7 @@ export default function VolQrCodes() {
           {pcSearch.data?.people?.map((person: any) => (
             <div key={person.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
               <div className="flex items-center gap-3">
-                {person.avatar_url && <img src={person.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />}
+                {person.avatar_url && <img data-foto-avatar="" src={person.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />}
                 <div>
                   <span className="font-medium">{person.full_name}</span>
                   <p className="text-xs text-muted-foreground">PC ID: {person.id}</p>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi, governanca as govApi } from '../../api';
-// govApi usado apenas para aba Governança (relatórios)
+import ReactMarkdown from 'react-markdown';
+import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi } from '../../api';
 import { supabase } from '../../supabaseClient';
 import { resolveApiBaseUrl } from '../../lib/api-base';
 import CycleView from './components/CycleView';
@@ -306,12 +306,15 @@ function EvStatCard({ label, value, bg, svg }) {
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Eventos() {
-  const { profile, user, getAccessLevel, userAreas } = useAuth();
+  const { profile, user, getAccessLevel, userAreas, modulePerms } = useAuth();
   const userRole = profile?.role || '';
   const userArea = profile?.area || '';
   const userId = user?.id || '';
-  const accessLevel = getAccessLevel(['Agenda']);
+  const accessLevel = getAccessLevel(['eventos', 'Agenda']);
   const isPMO = accessLevel >= 4;
+  // Cargos com escopo_proprio em eventos (ex: coord-marketing, lider-producao)
+  // são tratados como "líder" pra filtrar kanban pela área deles.
+  const eventosEscopoProprio = !!modulePerms?.eventos?.escopo_proprio;
 
   // URL params para drill-down (ex: /eventos?status=atrasado&id=xxx)
   const urlParams = new URLSearchParams(window.location.search);
@@ -333,9 +336,6 @@ export default function Eventos() {
   const [newSubName, setNewSubName] = useState('');
   const [expandedTpl, setExpandedTpl] = useState(null);
   const [templateSubTab, setTemplateSubTab] = useState('ciclo');
-  const [simpleKanban, setSimpleKanban] = useState({ events: [], tasks: [] });
-  const [simpleKanbanEvent, setSimpleKanbanEvent] = useState('all');
-  const [simpleNewTask, setSimpleNewTask] = useState('');
   const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -347,6 +347,8 @@ export default function Eventos() {
   // Filtros
   const [filtroStatus, setFiltroStatus] = useState(urlStatus);
   const [filtroCategoria, setFiltroCategoria] = useState('');
+  // Filtro de ano (PR-C). Default: ano atual. Filtra events.date no range YYYY-01-01 a YYYY-12-31 via backend.
+  const [filtroAno, setFiltroAno] = useState(new Date().getFullYear());
 
   // PMO KPIs + workload
   const [pmoKpis, setPmoKpis] = useState(null);
@@ -386,11 +388,6 @@ export default function Eventos() {
   const [detailTab, setDetailTab] = useState('info');
 
   // Governança (aba de relatórios)
-  const [govTab, setGovTab] = useState(null);
-  const [govRelatorio, setGovRelatorio] = useState(null);
-  const [govLoading, setGovLoading] = useState(false);
-  const [govObs, setGovObs] = useState('');
-  const [govSaving, setGovSaving] = useState(false);
 
   // Modais
   const [modalEvent, setModalEvent] = useState(null);
@@ -418,10 +415,11 @@ export default function Eventos() {
       const params = {};
       if (filtroStatus) params.status = filtroStatus;
       if (filtroCategoria) params.category_id = filtroCategoria;
+      if (filtroAno) params.year = filtroAno;
       setEventList(await events.list(params));
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [filtroStatus, filtroCategoria]);
+  }, [filtroStatus, filtroCategoria, filtroAno]);
 
   const loadDetail = useCallback(async (id) => {
     try {
@@ -464,21 +462,27 @@ export default function Eventos() {
     usersApi.list().then(d => setUsersList(Array.isArray(d) ? d : [])).catch(() => setUsersList([]));
     if (urlEventId) loadDetail(urlEventId);
   }, []);
-  useEffect(() => { loadEvents(); }, [filtroStatus, filtroCategoria]);
+  useEffect(() => { loadEvents(); }, [filtroStatus, filtroCategoria, filtroAno]);
 
   // ── Event CRUD ──
   async function saveEvent(data) {
-    try {
-      const ativarCiclo = data.ativar_ciclo === 'true';
-      delete data.ativar_ciclo;
+    const ativarCiclo = data.ativar_ciclo === 'true';
+    delete data.ativar_ciclo;
+    const editing = !!data.id;
 
-      if (data.id) {
-        // Se a data mudou, confirmar com o usuário (recalcula ciclo inteiro)
-        if (selectedEvent?.date && data.date && selectedEvent.date !== data.date) {
-          if (!window.confirm('Ao alterar a data do evento, todas as datas das fases e tarefas do ciclo criativo serão recalculadas automaticamente. Deseja continuar?')) return;
-        }
+    // Se a data mudou, confirmar com o usuário (recalcula ciclo inteiro)
+    if (editing && selectedEvent?.date && data.date && selectedEvent.date !== data.date) {
+      if (!window.confirm('Ao alterar a data do evento, todas as datas das fases e tarefas do ciclo criativo serão recalculadas automaticamente. Deseja continuar?')) return;
+    }
+
+    // Captura o erro mas não desiste: uma falha lateral pós-commit no backend
+    // (recálculo de ciclo, audit, trigger) pode retornar 500 mesmo com o evento
+    // já gravado. Mesmo padrão do toggle de status — refetch confirma se o banco
+    // realmente mudou antes de mostrar erro ("atualiza ao recarregar a página").
+    let apiError = null;
+    try {
+      if (editing) {
         await events.update(data.id, data);
-        // Ativar ciclo no editar se marcado e evento ainda não tem
         if (ativarCiclo && !hasCycle) {
           try { await cyclesApi.activate(data.id); setHasCycle(true); } catch(e) { console.error('Erro ao ativar ciclo:', e.message); }
         }
@@ -488,22 +492,54 @@ export default function Eventos() {
           try { await cyclesApi.activate(created.id); } catch(e) { console.error('Erro ao ativar ciclo:', e.message); }
         }
       }
-      setModalEvent(null);
-      loadEvents();
-      loadDash();
-      if (data.id && selectedEvent?.id === data.id) refreshDetail();
-    } catch (e) { setError(e.message); }
+    } catch (e) { apiError = e; }
+
+    // Edição que falhou com erro de servidor: confere se gravou assim mesmo.
+    if (apiError && editing && (apiError.status === undefined || apiError.status >= 500)) {
+      try {
+        const fresh = await events.get(data.id);
+        if (fresh && (data.name == null || fresh.name === data.name)) apiError = null;
+      } catch { /* refetch falhou → mantém o erro */ }
+    }
+
+    if (apiError) { setError(apiError.message); return; }
+
+    setModalEvent(null);
+    loadEvents();
+    loadDash();
+    if (data.id && selectedEvent?.id === data.id) refreshDetail();
   }
 
   async function toggleEventStatus(id, currentStatus) {
     const newStatus = currentStatus === 'concluido' ? 'reabrir' : 'concluido';
     const label = newStatus === 'concluido' ? 'finalizar' : 'reabrir';
     if (!window.confirm(`Deseja ${label} este evento?`)) return;
+
+    // Captura erro mas não desiste — refetch checa se o banco realmente
+    // mudou. Erro lateral (audit_log, trigger derivado) é suprimido se
+    // o status alvo bate com o que o usuário pediu. Bug real continua
+    // aparecendo porque o refetch detecta status inalterado.
+    let apiError = null;
     try {
       await events.updateStatus(id, newStatus);
-      loadEvents();
-      if (selectedEvent?.id === id) refreshDetail();
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      apiError = e;
+    }
+
+    loadEvents();
+    if (selectedEvent?.id === id) refreshDetail();
+
+    if (apiError) {
+      try {
+        const fresh = await events.get(id);
+        const finalizou = fresh?.status === 'concluido';
+        const reabriu = fresh?.status !== 'concluido';
+        const sucessoReal = newStatus === 'reabrir' ? reabriu : finalizou;
+        if (!sucessoReal) setError(apiError.message);
+      } catch {
+        setError(apiError.message);
+      }
+    }
   }
 
   async function deleteEvent(id) {
@@ -671,8 +707,10 @@ export default function Eventos() {
   const [reportModal, setReportModal] = useState(null); // null | { step: 'event' | 'scope' | 'phase' | 'generating' | 'done', eventId, eventName, type, phaseName, result, error }
 
   // ── Kanban (dois níveis)
-  const isLider = !isPMO && accessLevel >= 3;
-  // Líderes: visão PMO filtrada pela area deles. PMO: visão completa.
+  // isLider · qualquer pessoa com escopo próprio (coord-marketing, lider-producao,
+  // lider-ministerial) ou com nível >= 3. Esses tem o kanban filtrado pela área.
+  const isLider = !isPMO && (accessLevel >= 3 || eventosEscopoProprio);
+  // Líderes: visão PMO filtrada pela área deles. PMO: visão completa.
   const [kanbanViewMode, setKanbanViewMode] = useState('pmo');
   const defaultArea = isLider && userAreas.length > 0 ? userAreas[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') : 'all';
   const [kanbanArea, setKanbanArea] = useState(defaultArea);
@@ -723,7 +761,7 @@ export default function Eventos() {
     const d = kpiData;
     const CAT_COLORS = { marketing: '#00B39D', producao: '#6366f1', compras: '#3b82f6', financeiro: '#10b981', manutencao: '#f59e0b', limpeza: '#8b5cf6', cozinha: '#ec4899', adm: '#0ea5e9' };
     const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
-    // scoreColor movido para nivel do componente
+    // scoreColor movido para nível do componente
 
     const ScoreLegend = () => (
       <div style={{ display: 'flex', gap: 12, padding: '10px 16px', background: C.bg, borderRadius: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center', border: `1px solid ${C.border}` }}>
@@ -773,8 +811,8 @@ export default function Eventos() {
 
           <ScoreLegend />
 
-          {/* KPI por area com breakdown */}
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Performance por Area</div>
+          {/* KPI por área com breakdown */}
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Performance por Área</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 20 }}>
             {(ev.kpi_areas || []).map(a => {
               const b = a.breakdown || {};
@@ -806,13 +844,13 @@ export default function Eventos() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr style={{ background: 'var(--cbrio-table-header)' }}>
                   <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Documento</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Area</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Área</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Prazo</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Qualidade</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Aprovado</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Arquivo</th>
                   <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Score</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Acoes</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Ações</th>
                 </tr></thead>
                 <tbody>
                   {(ev.documentos || []).map(doc => {
@@ -909,7 +947,7 @@ export default function Eventos() {
                 <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>{d.eventos?.length || 0} eventos com ciclo criativo</div>
               </div>
 
-              {/* Top 3 areas */}
+              {/* Top 3 áreas */}
               {(d.ranking_areas || []).slice(0, 3).map((a, i) => (
                 <div key={a.area} style={{ background: C.card, borderRadius: 14, padding: 16, border: `1px solid ${C.border}`, flex: '1 1 150px' }}>
                   <div style={{ fontSize: 10, color: C.t3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 4 }}>{i === 0 ? 'Melhor area' : `#${i + 1}`}</div>
@@ -920,8 +958,8 @@ export default function Eventos() {
               ))}
             </div>
 
-            {/* Ranking de areas */}
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Ranking de Areas</div>
+            {/* Ranking de áreas */}
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>Ranking de Áreas</div>
             <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, marginBottom: 24, overflow: 'hidden' }}>
               {(d.ranking_areas || []).map((a, i) => (
                 <div key={a.area} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -973,7 +1011,7 @@ export default function Eventos() {
       <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
         <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 24, maxWidth: 500, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Pesos de Area por Categoria</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Pesos de Área por Categoria</span>
             <button onClick={() => setKpiConfigOpen(false)} style={{ background: 'none', border: 'none', fontSize: 18, color: C.t3, cursor: 'pointer' }}>{'\u2715'}</button>
           </div>
           <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
@@ -997,442 +1035,6 @@ export default function Eventos() {
     );
   }
 
-
-  // ══════════════════════════════════════════════
-  // GOVERNANCA — Relatórios automáticos
-  // ══════════════════════════════════════════════
-
-  const GOV_TIPOS = [
-    { sigla: 'OKR', nome: 'OKR', cor: '#3b82f6', desc: 'Objectives & Key Results', recorrencia: 'Mensal — 1a quarta' },
-    { sigla: 'DRE', nome: 'DRE', cor: '#10b981', desc: 'Demonstrativo de Resultado', recorrencia: 'Mensal — 2a quarta' },
-    { sigla: 'KPI', nome: 'KPI', cor: '#f59e0b', desc: 'Indicadores de Performance', recorrencia: 'Mensal — 3a quarta' },
-    { sigla: 'CC',  nome: 'Conselho Consultivo', cor: '#8b5cf6', desc: 'Conselho Consultivo', recorrencia: 'Mensal — 4a quarta' },
-    { sigla: 'DE',  nome: 'Diretoria Estatutaria', cor: '#ef4444', desc: 'Diretoria Estatutaria', recorrencia: 'Quadrimestral' },
-    { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', desc: 'Assembleia com a Igreja', recorrencia: 'Semestral' },
-  ];
-
-  async function loadGovRelatorio(sigla) {
-    setGovLoading(true);
-    try {
-      const r = await govApi.relatorio(sigla);
-      setGovRelatorio(r);
-      setGovObs(r.observacoes || '');
-    } catch { setGovRelatorio(null); }
-    finally { setGovLoading(false); }
-  }
-
-  const GovKpiCard = ({ label, value, color, sub }) => (
-    <div style={{ ...styles.card, padding: 14, textAlign: 'center' }}>
-      <div style={{ fontSize: 24, fontWeight: 800, color }}>{value}</div>
-      <div style={{ fontSize: 11, color: C.text3 }}>{label}</div>
-      {sub && <div style={{ fontSize: 10, color: C.text2, marginTop: 2 }}>{sub}</div>}
-    </div>
-  );
-
-  const GovProgressBar = ({ pct, color }) => (
-    <div style={{ height: 6, borderRadius: 3, background: C.border, flex: 1 }}>
-      <div style={{ height: '100%', borderRadius: 3, background: color || C.primary, width: `${Math.min(100, pct)}%`, transition: 'width 0.3s' }} />
-    </div>
-  );
-
-  function renderGovOKR(r) {
-    const { resumo: s, dados: d, ourico: o } = r;
-    const areas = Object.entries(d.projetos_por_area || {});
-    const KR_COLOR = { on_track: C.green, at_risk: C.amber, off_track: C.red, sem_meta: C.text3 };
-    const KR_LABEL = { on_track: 'No alvo', at_risk: 'Em risco', off_track: 'Critico', sem_meta: 'Sem meta' };
-    return (<div>
-      {/* KPI bar — objetivos + key results */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
-        <GovKpiCard label="Objetivos" value={s.total_objetivos} color={C.blue} />
-        <GovKpiCard label="No prazo" value={s.no_prazo} color={C.green} />
-        <GovKpiCard label="Atrasados" value={s.atrasados} color={s.atrasados > 0 ? C.red : C.green} />
-        <GovKpiCard label="Key Results" value={s.total_krs} color={C.primary} sub={s.total_krs > 0 ? `${s.krs_on_track} ok | ${s.krs_at_risk} risco | ${s.krs_off_track} critico` : 'Nenhum cadastrado'} />
-        <GovKpiCard label="Conclusao media" value={`${s.pct_conclusao_media}%`} color={C.primary} />
-      </div>
-
-      {/* Tripé do Ouriço */}
-      {o && (
-        <div style={{ ...styles.card, padding: 14, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Ourico:</span>
-          {[
-            { label: 'Passam no Ourico', val: o.passam, color: '#8b5cf6' },
-            { label: 'Geram Unidade', val: o.geram_unidade, color: C.blue },
-            { label: 'Colaboram Expansao', val: o.colaboram_expansao, color: C.green },
-          ].map(item => (
-            <span key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 16, fontWeight: 800, color: item.color }}>{item.val}</span>
-              <span style={{ fontSize: 11, color: C.text3 }}>/{o.total} {item.label}</span>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Projetos por area com KRs expandidos */}
-      {areas.map(([area, projs]) => (
-        <div key={area} style={{ ...styles.card, marginBottom: 12 }}>
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{area} ({projs.length})</span>
-          </div>
-          {projs.map(p => (
-            <div key={p.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-              {/* Linha do projeto/objetivo */}
-              <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{p.name}</div>
-                  <div style={{ fontSize: 11, color: C.text3, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span>{p.responsible || 'Sem resp.'}</span>
-                    {p.publico_alvo && <span>| Publico: {p.publico_alvo}</span>}
-                    <span>| {fmtDate(p.date_end)}</span>
-                    {p.ourico_passa && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600 }}>Ourico</span>}
-                    {p.gera_unidade && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.blueBg, color: C.blue, fontWeight: 600 }}>Unidade</span>}
-                    {p.colabora_expansao && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.greenBg, color: C.green, fontWeight: 600 }}>Expansao</span>}
-                  </div>
-                </div>
-                {/* Prazo automático */}
-                <div style={{ width: 80, display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <GovProgressBar pct={p.pct_completion} color={p.at_risk ? C.red : C.green} />
-                  <span style={{ fontSize: 10, fontWeight: 700, color: p.at_risk ? C.red : C.text3 }}>{p.pct_completion}%</span>
-                </div>
-                {/* Orçamento automático */}
-                {p.budget_planned > 0 && (
-                  <div style={{ width: 70, display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <GovProgressBar pct={p.budget_pct} color={p.budget_pct > 90 ? C.red : p.budget_pct > 70 ? C.amber : C.green} />
-                    <span style={{ fontSize: 9, fontWeight: 600, color: p.budget_pct > 90 ? C.red : C.text3 }}>{p.budget_pct}%$</span>
-                  </div>
-                )}
-                {p.krs_total > 0 && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: p.krs_at_risk > 0 ? C.amberBg : C.greenBg, color: p.krs_at_risk > 0 ? C.amber : C.green, fontWeight: 700 }}>{p.krs_on_track}/{p.krs_total} KRs</span>}
-                {p.atrasado && <span style={{ fontSize: 9, padding: '2px 8px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Atrasado</span>}
-              </div>
-              {/* Key Results do projeto */}
-              {(p.key_results || []).length > 0 && (
-                <div style={{ padding: '0 16px 10px 32px' }}>
-                  {p.key_results.map(kr => (
-                    <div key={kr.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-                      <span style={{ fontSize: 10, width: 8, height: 8, borderRadius: '50%', background: KR_COLOR[kr.status], flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{kr.name}</span>
-                      <div style={{ width: 60, display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <GovProgressBar pct={kr.pct} color={KR_COLOR[kr.status]} />
-                      </div>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: KR_COLOR[kr.status], minWidth: 70, textAlign: 'right' }}>
-                        {kr.current_value ?? 0}/{kr.target_value} {kr.unit || ''}
-                      </span>
-                      <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: KR_COLOR[kr.status] + '20', color: KR_COLOR[kr.status], fontWeight: 600 }}>{KR_LABEL[kr.status]}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      ))}
-      {(d.alertas || []).length > 0 && (
-        <div style={{ ...styles.card, marginTop: 4 }}>
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.amberBg }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>Alertas ({d.alertas.length})</span>
-          </div>
-          {d.alertas.slice(0, 10).map((a, i) => (
-            <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.text2 }}>
-              <strong style={{ color: a.tipo === 'risco_alto' ? C.red : C.amber }}>{a.tipo.replace(/_/g, ' ')}</strong>: {a.item} {a.responsavel ? `(${a.responsavel})` : ''}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>);
-  }
-
-  function renderGovDRE(r) {
-    const { resumo: s, dados: d } = r;
-    const varArrow = (pct) => pct == null ? '' : pct > 0 ? `+${pct}%` : `${pct}%`;
-    return (<div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-        <GovKpiCard label="Receitas" value={fmtMoney(s.receitas)} color={C.green} sub={varArrow(s.variacao_receita_pct)} />
-        <GovKpiCard label="Despesas" value={fmtMoney(s.despesas)} color={C.red} sub={varArrow(s.variacao_despesa_pct)} />
-        <GovKpiCard label="Resultado" value={fmtMoney(s.resultado)} color={s.resultado >= 0 ? C.green : C.red} sub={`Anterior: ${fmtMoney(s.resultado_anterior)}`} />
-        <GovKpiCard label="Saldo Total" value={fmtMoney(s.saldo_total)} color={C.blue} />
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-        {[{ title: 'Receitas por categoria', data: d.receitas_por_categoria, color: C.green },
-          { title: 'Despesas por categoria', data: d.despesas_por_categoria, color: C.red }].map(col => (
-          <div key={col.title} style={styles.card}>
-            <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{col.title}</span>
-            </div>
-            {(col.data || []).map((c, i) => (
-              <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{c.categoria}</span>
-                <GovProgressBar pct={c.pct} color={col.color} />
-                <span style={{ fontSize: 11, fontWeight: 600, color: C.text, minWidth: 60, textAlign: 'right' }}>{fmtMoney(c.valor)}</span>
-                <span style={{ fontSize: 10, color: C.text3, minWidth: 30 }}>{c.pct}%</span>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-      {(d.contas_pagar || []).length > 0 && (
-        <div style={{ ...styles.card, marginBottom: 12 }}>
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Contas a pagar ({d.contas_pagar.length}) — Total: {fmtMoney(d.total_pagar)}</span>
-          </div>
-          {d.contas_pagar.map((p, i) => (
-            <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, display: 'flex', justifyContent: 'space-between', color: p.vencida ? C.red : C.text }}>
-              <span>{p.descricao} {p.fornecedor ? `(${p.fornecedor})` : ''}</span>
-              <span style={{ fontWeight: 600 }}>{fmtMoney(Number(p.valor))} | {fmtDate(p.data_vencimento)} {p.vencida ? '(VENCIDA)' : ''}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>);
-  }
-
-  function renderGovKPI(r) {
-    const { resumo: s, dados: d } = r;
-    const trendIcon = d.culto_trend?.trend === 'up' ? '\u2197' : d.culto_trend?.trend === 'down' ? '\u2198' : '\u2192';
-    const trendColor = d.culto_trend?.trend === 'up' ? C.green : d.culto_trend?.trend === 'down' ? C.red : C.text3;
-    return (<div>
-      {/* Mandala — 5 pilares */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14, marginBottom: 20 }}>
-        {Object.values(d.mandala || {}).map(p => (
-          <div key={p.label} style={{ ...styles.card, padding: 16, borderLeft: `4px solid ${p.cor}` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: p.cor, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{p.label}</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: C.text }}>{p.valor}</div>
-            <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{p.detalhe}</div>
-          </div>
-        ))}
-      </div>
-      {/* Cultos + tendência */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
-        <GovKpiCard label="Cultos no mes" value={s.cultos_no_mes} color={C.primary} />
-        <GovKpiCard label="Presenca media" value={s.presenca_media} color={C.blue} sub={`${trendIcon} ${d.culto_trend?.trendPct > 0 ? '+' : ''}${d.culto_trend?.trendPct || 0}% vs mes anterior`} />
-        <GovKpiCard label="Decisoes" value={s.decisoes} color={C.green} />
-        <GovKpiCard label="Membros ativos" value={s.membros_ativos} color={C.primary} />
-      </div>
-      {/* Metas */}
-      {(d.metas || []).length > 0 && (
-        <div style={styles.card}>
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Metas estrategicas ({d.metas.length})</span>
-          </div>
-          {d.metas.map((m, i) => (
-            <div key={i} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{m.area}</span>
-              <span style={{ fontSize: 12, color: C.text, flex: 1 }}>{m.indicador}</span>
-              <span style={{ fontSize: 11, color: C.text3 }}>Meta 6m: {m.meta_6m} | 12m: {m.meta_12m}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>);
-  }
-
-  function renderGovCC(r) {
-    const { resumo: s, dados: d } = r;
-    return (<div>
-      {/* Dashboard executivo — 3 resumos lado a lado */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 20 }}>
-        <div style={{ ...styles.card, padding: 16, borderTop: `3px solid #3b82f6` }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', marginBottom: 6 }}>OKR</div>
-          <div style={{ fontSize: 13, color: C.text }}><strong>{s.okr?.total_objetivos}</strong> objetivos | <strong style={{ color: s.okr?.atrasados > 0 ? C.red : C.green }}>{s.okr?.atrasados}</strong> atrasados</div>
-          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Conclusao media: {s.okr?.pct_conclusao_media}%</div>
-        </div>
-        <div style={{ ...styles.card, padding: 16, borderTop: `3px solid #10b981` }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#10b981', marginBottom: 6 }}>DRE</div>
-          <div style={{ fontSize: 13, color: s.dre?.resultado >= 0 ? C.green : C.red, fontWeight: 700 }}>{fmtMoney(s.dre?.resultado)}</div>
-          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Rec: {fmtMoney(s.dre?.receitas)} | Desp: {fmtMoney(s.dre?.despesas)}</div>
-        </div>
-        <div style={{ ...styles.card, padding: 16, borderTop: `3px solid #f59e0b` }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', marginBottom: 6 }}>KPI</div>
-          <div style={{ fontSize: 13, color: C.text }}>Presenca: <strong>{s.kpi?.presenca_media}</strong> | Decisoes: <strong>{s.kpi?.decisoes}</strong></div>
-          <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{s.kpi?.membros_ativos} membros | {s.kpi?.voluntarios_ativos} voluntarios</div>
-        </div>
-      </div>
-      {/* Top riscos */}
-      {(d.top_riscos || []).length > 0 && (
-        <div style={{ ...styles.card, marginBottom: 16 }}>
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.redBg }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>Top riscos ({d.top_riscos.length})</span>
-          </div>
-          {d.top_riscos.map((r, i) => (
-            <div key={i} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 600, color: C.text }}>{r.title}</span>
-                <span style={{ fontWeight: 700, color: r.score >= 12 ? C.red : C.amber }}>Score: {r.score}</span>
-              </div>
-              <div style={{ fontSize: 11, color: C.text3 }}>Projeto: {r.projeto_nome} | Dono: {r.owner_name || '-'}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* Alertas OKR */}
-      {(d.okr_alertas || []).length > 0 && (
-        <div style={{ ...styles.card, marginBottom: 16 }}>
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.amberBg }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>Pontos de atencao</span>
-          </div>
-          {d.okr_alertas.map((a, i) => (
-            <div key={i} style={{ padding: '6px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.text2 }}>
-              <strong>{a.tipo.replace(/_/g, ' ')}</strong>: {a.item}
-            </div>
-          ))}
-        </div>
-      )}
-      {/* Regra de ouro */}
-      <div style={{ ...styles.card, padding: 16, borderLeft: `4px solid ${C.primary}`, background: C.primaryBg }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>Regra de ouro</div>
-        <div style={{ fontSize: 12, color: C.text, marginTop: 4 }}>Todo desvio deve gerar: <strong>causa</strong>, <strong>decisao</strong>, <strong>responsavel</strong> e <strong>proximo passo</strong>.</div>
-      </div>
-    </div>);
-  }
-
-  function renderGovernanca() {
-    if (!govTab) {
-      return (
-        <div>
-          <p style={{ fontSize: 13, color: C.text2, marginBottom: 16 }}>Reunioes de gestao estrategica. Selecione para ver relatorio com dados ao vivo.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
-            {GOV_TIPOS.map(t => (
-              <div key={t.sigla} onClick={() => { setGovTab(t.sigla); loadGovRelatorio(t.sigla); }} style={{ ...styles.card, padding: 20, cursor: 'pointer', borderLeft: `4px solid ${t.cor}`, transition: 'transform 0.1s' }}
-                onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
-                <div style={{ fontSize: 18, fontWeight: 800, color: t.cor, marginBottom: 4 }}>{t.sigla}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>{t.nome}</div>
-                <div style={{ fontSize: 11, color: C.text3, marginBottom: 4 }}>{t.recorrencia}</div>
-                <div style={{ fontSize: 10, color: C.text2 }}>{t.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    const tipo = GOV_TIPOS.find(t => t.sigla === govTab);
-    if (govLoading) return <div style={{ padding: 40, textAlign: 'center', color: C.text3 }}>Carregando {govTab}...</div>;
-    const r = govRelatorio;
-    if (!r) return <div style={{ padding: 40, textAlign: 'center', color: C.text3 }}>Erro ao carregar relatorio.</div>;
-
-    return (
-      <div>
-        <button onClick={() => { setGovTab(null); setGovRelatorio(null); }} style={styles.backBtn}>{'\u2190'} Voltar</button>
-
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 10, background: tipo.cor, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16, fontWeight: 800 }}>{tipo.sigla}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{tipo.nome}</div>
-            <div style={{ fontSize: 12, color: C.text3 }}>{tipo.recorrencia} | {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: r.checklist.every(c => c.ok) ? C.greenBg : C.amberBg, padding: '6px 14px', borderRadius: 99 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: r.checklist.every(c => c.ok) ? C.green : C.amber }}>{r.checklist.filter(c => c.ok).length}/{r.checklist.length} checklist</span>
-          </div>
-        </div>
-
-        {/* Checklist colapsado */}
-        <div style={{ ...styles.card, marginBottom: 16 }}>
-          <div style={{ padding: '10px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {r.checklist.map((c, i) => (
-              <span key={i} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 99, background: c.ok ? C.greenBg : C.amberBg, color: c.ok ? C.green : C.amber, fontWeight: 600 }}>
-                {c.ok ? '\u2713' : '!'} {c.item}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* Conteudo especifico por tipo */}
-        {govTab === 'OKR' && renderGovOKR(r)}
-        {govTab === 'DRE' && renderGovDRE(r)}
-        {govTab === 'KPI' && renderGovKPI(r)}
-        {govTab === 'CC' && renderGovCC(r)}
-        {(govTab === 'DE' || govTab === 'AG') && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
-            {Object.entries(r.resumo || {}).map(([k, v]) => (
-              <GovKpiCard key={k} label={k.replace(/_/g, ' ')} value={typeof v === 'number' && (k.includes('receita') || k.includes('despesa') || k.includes('resultado')) ? fmtMoney(v) : v} color={C.primary} />
-            ))}
-          </div>
-        )}
-
-        {/* Observacoes da reuniao */}
-        <div style={{ ...styles.card, marginTop: 20, padding: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Observacoes da reuniao</div>
-          <textarea value={govObs} onChange={e => setGovObs(e.target.value)} rows={4} placeholder="Registre aqui decisoes, pendencias e proximos passos..." style={{ width: '100%', padding: 10, borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13, resize: 'vertical' }} />
-          <button onClick={async () => { setGovSaving(true); try { await govApi.salvarObservacoes(govTab, govObs); toast.success('Observacoes salvas'); } catch { toast.error('Erro'); } finally { setGovSaving(false); } }} disabled={govSaving} style={{ marginTop: 8, padding: '8px 24px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: govSaving ? 0.6 : 1 }}>{govSaving ? 'Salvando...' : 'Salvar observacoes'}</button>
-        </div>
-      </div>
-    );
-  }
-
-  async function loadSimpleKanban() {
-    try {
-      const data = await cyclesApi.kanbanAll();
-      const simpleEvs = (data.events || []).filter(e => e._simple);
-      const simpleTks = (data.tasks || []).filter(t => t._source === 'simple');
-      setSimpleKanban({ events: simpleEvs, tasks: simpleTks });
-    } catch {}
-  }
-
-  function renderSimpleKanban() {
-    const { events: evs, tasks: tks } = simpleKanban;
-    const STATUS_COLS = [
-      { key: 'pendente', mapped: ['pendente', 'a_fazer'], label: 'A fazer', color: '#9ca3af' },
-      { key: 'em-andamento', mapped: ['em-andamento', 'em_andamento'], label: 'Em andamento', color: '#3b82f6' },
-      { key: 'concluida', mapped: ['concluida', 'concluido'], label: 'Concluida', color: '#10b981' },
-    ];
-    const filtered = simpleKanbanEvent === 'all' ? tks : tks.filter(t => t.event_id === simpleKanbanEvent);
-
-    return (
-      <div>
-        {/* Event filter + Add task */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div>
-            <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Evento</div>
-            <select value={simpleKanbanEvent} onChange={e => setSimpleKanbanEvent(e.target.value)} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 200 }}>
-              <option value="all">Todos os eventos ({evs.length})</option>
-              {evs.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
-            </select>
-          </div>
-          {simpleKanbanEvent !== 'all' && (
-            <div style={{ display: 'flex', gap: 6, flex: 1, minWidth: 200 }}>
-              <input placeholder="Nova tarefa..." value={simpleNewTask} onChange={e => setSimpleNewTask(e.target.value)} style={{ flex: 1, padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} onKeyDown={async e => {
-                if (e.key === 'Enter' && simpleNewTask.trim()) {
-                  try { await events.createTask(simpleKanbanEvent, { name: simpleNewTask.trim() }); setSimpleNewTask(''); await loadSimpleKanban(); } catch {}
-                }
-              }} />
-              <button onClick={async () => { if (simpleNewTask.trim()) { try { await events.createTask(simpleKanbanEvent, { name: simpleNewTask.trim() }); setSimpleNewTask(''); await loadSimpleKanban(); } catch {} } }} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: C.primary, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Tarefa</button>
-            </div>
-          )}
-          <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>{filtered.length} tarefas | {evs.length} eventos sem ciclo</span>
-        </div>
-
-        {/* Kanban 3 columns */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-          {STATUS_COLS.map(col => {
-            const colTasks = filtered.filter(t => col.mapped.includes(t.status));
-            return (
-              <div key={col.key} style={{ background: C.bg, borderRadius: 12, padding: 10, minHeight: 200 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${col.color}` }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: col.color, textTransform: 'uppercase' }}>{col.label}</span>
-                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: C.card, border: `1px solid ${C.border}`, color: C.t3 }}>{colTasks.length}</span>
-                </div>
-                {colTasks.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: 10, color: C.t3, border: '1.5px dashed var(--cbrio-border)', borderRadius: 8 }}>{'\u2014'}</div>}
-                {colTasks.map(t => {
-                  const evName = evs.find(e => e.id === t.event_id)?.name || '';
-                  return (
-                    <div key={t.id} style={{ background: C.card, borderRadius: 8, padding: 10, marginBottom: 6, border: `1px solid ${C.border}` }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 4 }}>{t.titulo || t.name}</div>
-                      {evName && <div style={{ fontSize: 10, color: C.t3, marginBottom: 4 }}>{evName}</div>}
-                      {t.responsible || t.responsavel_nome ? <div style={{ fontSize: 10, color: C.t2 }}>{t.responsible || t.responsavel_nome}</div> : null}
-                      <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
-                        {col.key !== 'pendente' && <button onClick={async () => { try { await events.updateTaskStatus(t.id, 'pendente'); await loadSimpleKanban(); } catch {} }} style={{ padding: '2px 6px', fontSize: 9, borderRadius: 4, border: `1px solid ${C.border}`, background: 'transparent', color: C.t3, cursor: 'pointer' }}>A fazer</button>}
-                        {col.key !== 'em-andamento' && <button onClick={async () => { try { await events.updateTaskStatus(t.id, 'em-andamento'); await loadSimpleKanban(); } catch {} }} style={{ padding: '2px 6px', fontSize: 9, borderRadius: 4, border: 'none', background: '#3b82f620', color: '#3b82f6', cursor: 'pointer' }}>Andamento</button>}
-                        {col.key !== 'concluida' && <button onClick={async () => { try { await events.updateTaskStatus(t.id, 'concluida'); await loadSimpleKanban(); } catch {} }} style={{ padding: '2px 6px', fontSize: 9, borderRadius: 4, border: 'none', background: '#10b98120', color: '#10b981', cursor: 'pointer' }}>Concluir</button>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
 
   function renderTemplates() {
     const AREAS = ['marketing', 'producao', 'compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha', 'adm'];
@@ -1492,7 +1094,7 @@ export default function Eventos() {
 
         {/* Novo template */}
         <div style={{ background: C.card, borderRadius: 10, padding: 14, marginBottom: 24, border: `1px solid ${C.border}` }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>Adicionar tarefa padrao</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>Adicionar tarefa padrão</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <div>
               <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Fase</div>
@@ -1502,14 +1104,14 @@ export default function Eventos() {
               </select>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Area</div>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Área</div>
               <select value={newTplForm.area} onChange={e => setNewTplForm(f => ({ ...f, area: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 130 }}>
                 <option value="">Selecione</option>
                 {AREAS.map(a => <option key={a} value={a}>{CAT_LABELS[a]}</option>)}
               </select>
             </div>
             <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Titulo da tarefa</div>
+              <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Título da tarefa</div>
               <input value={newTplForm.titulo} onChange={e => setNewTplForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Criar briefing visual do evento" style={{ width: '100%', padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12 }} onKeyDown={async e => {
                 if (e.key === 'Enter' && newTplForm.area && newTplForm.etapa && newTplForm.titulo) { await cyclesApi.createAdmTemplate(newTplForm); await reloadTemplates(); setNewTplForm(f => ({ ...f, titulo: '' })); }
               }} />
@@ -1575,7 +1177,7 @@ export default function Eventos() {
               <span><strong>{tpls.length}</strong> tarefas padrao</span>
               <span><strong>{tpls.filter(t => t.ativo).length}</strong> ativas</span>
               <span><strong>{tpls.reduce((a, t) => a + (t.adm_task_template_subtasks?.length || 0), 0)}</strong> subtarefas</span>
-              <span style={{ color: C.t3, fontSize: 11 }}>Ao adicionar/excluir, as alteracoes sao aplicadas em todos os eventos ativos</span>
+              <span style={{ color: C.t3, fontSize: 11 }}>Ao adicionar/excluir, as alteracoes são aplicadas em todos os eventos ativos</span>
             </div>
           </div>
         )}
@@ -1673,7 +1275,7 @@ export default function Eventos() {
           <button onClick={async () => { if (newName.trim()) { await events.createSimpleTemplate({ titulo: newName.trim() }); setNewName(''); await reload(); } }} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: C.primary, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>+</button>
         </div>
         {stpls.length === 0 ? (
-          <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>Nenhuma tarefa padrao. Adicione acima.</div>
+          <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>Nenhuma tarefa padrão. Adicione acima.</div>
         ) : stpls.map(t => (
           <div key={t.id} style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8, opacity: t.ativo ? 1 : 0.4 }}>
             <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{t.titulo}</span>
@@ -1726,7 +1328,7 @@ export default function Eventos() {
       }
       // Filtrar por evento
       if (kanbanEvent !== 'all' && t.event_id !== kanbanEvent) return false;
-      // Líderes: filtrar pela area automaticamente (sem opcao de mudar)
+      // Líderes: filtrar pela área automaticamente (sem opção de mudar)
       if (isLider && lowerUserAreas.length > 0) {
         const cat = getCat(t);
         if (!lowerUserAreas.includes(cat)) return false;
@@ -1737,7 +1339,7 @@ export default function Eventos() {
       }
       return true;
     });
-    // Filtro de area manual (so PMO usa)
+    // Filtro de área manual (so PMO usa)
     if (kanbanArea !== 'all') phaseTasks = phaseTasks.filter(t => getCat(t) === kanbanArea);
     phaseTasks = filterByHorizon(phaseTasks, kanbanHorizon, 'prazo');
 
@@ -1993,8 +1595,8 @@ export default function Eventos() {
                   </div>
                   <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--cbrio-text2)' }}>
                     {evName && <div><span style={{ fontWeight: 600 }}>Evento:</span> {evName}</div>}
-                    <div><span style={{ fontWeight: 600 }}>Responsavel:</span> {task.responsavel_nome || '—'}</div>
-                    {phase?.data_inicio_prevista && <div><span style={{ fontWeight: 600 }}>Inicio:</span> {fmtDate(phase.data_inicio_prevista)}</div>}
+                    <div><span style={{ fontWeight: 600 }}>Responsável:</span> {task.responsavel_nome || '—'}</div>
+                    {phase?.data_inicio_prevista && <div><span style={{ fontWeight: 600 }}>Início:</span> {fmtDate(phase.data_inicio_prevista)}</div>}
                     {p && <div><span style={{ fontWeight: 600 }}>Entrega:</span> {fmtDate(p)} {daysColor && <span style={{ color: daysColor, fontWeight: 700 }}> ({diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`})</span>}</div>}
                   </div>
                 </div>
@@ -2225,27 +1827,130 @@ export default function Eventos() {
 
           const closeModal = () => setReportModal(null);
 
-          const selectEvent = (ev) => setReportModal({ ...rm, step: 'scope', eventId: ev.id, eventName: ev.name });
+          // Ao escolher o evento, já busca relatórios existentes em paralelo
+          // pra mostrar opção de reaproveitar e evitar custo de regenerar.
+          const selectEvent = async (ev) => {
+            const base = { ...rm, step: 'scope', eventId: ev.id, eventName: ev.name, sinceDays: null, existingReports: [] };
+            setReportModal(base);
+            try {
+              const list = await reportsApi.list(ev.id);
+              setReportModal(prev => prev && prev.eventId === ev.id ? { ...prev, existingReports: Array.isArray(list) ? list : [] } : prev);
+            } catch { /* silencia: histórico é apenas conveniência */ }
+          };
 
-          const selectScope = async (type) => {
-            if (type === 'full') {
-              setReportModal({ ...rm, step: 'generating', type: 'full' });
+          // Reusa um relatório já gerado em vez de pagar Sonnet de novo
+          const reuseReport = (report) => {
+            setReportModal({
+              ...rm,
+              step: 'done',
+              type: report.report_type,
+              phaseName: report.phase_name || undefined,
+              result: report,
+            });
+          };
+
+          // Geração progressiva: start → loop section → finalize. Cada chamada
+          // < 60s (contorna Vercel Hobby). Frontend orquestra, mostra progresso
+          // por seção, permite retry granular.
+          const runProgressive = async (type, phaseName) => {
+            const body = { type };
+            if (phaseName) body.phase_name = phaseName;
+            if (rm.sinceDays) body.since_days = rm.sinceDays;
+
+            // Etapa 1: start (cria registro + snapshot)
+            let started;
+            try {
+              started = await reportsApi.start(rm.eventId, body);
+            } catch (e) {
+              setReportModal(prev => prev ? { ...prev, step: 'done', type, phaseName, error: e.message } : prev);
+              return;
+            }
+
+            const initialSections = started.sections_plan.map(p => ({
+              name: p.name, title: p.title, status: 'pending', content: '', error: null,
+            }));
+
+            setReportModal(prev => prev ? {
+              ...prev, step: 'progressive', type, phaseName,
+              reportId: started.id, sectionsState: initialSections,
+              progressError: null,
+            } : prev);
+
+            // Etapa 2: gera cada seção em série. Continua mesmo se uma falhar
+            // (acumula erros, permite finalize parcial).
+            const sectionsState = [...initialSections];
+            for (let i = 0; i < sectionsState.length; i++) {
+              sectionsState[i] = { ...sectionsState[i], status: 'generating' };
+              const snap = [...sectionsState];
+              setReportModal(prev => prev?.reportId === started.id ? { ...prev, sectionsState: snap } : prev);
+
               try {
-                const result = await reportsApi.generate(rm.eventId, { type: 'full' });
-                setReportModal({ ...rm, step: 'done', type: 'full', result });
-              } catch (e) { setReportModal({ ...rm, step: 'done', type: 'full', error: e.message }); }
-            } else {
-              setReportModal({ ...rm, step: 'phase', type: 'phase' });
+                const result = await reportsApi.generateSection(rm.eventId, started.id, sectionsState[i].name);
+                sectionsState[i] = { ...sectionsState[i], status: 'done', content: result.content, error: null };
+              } catch (e) {
+                sectionsState[i] = { ...sectionsState[i], status: 'error', error: e.message };
+              }
+              const after = [...sectionsState];
+              setReportModal(prev => prev?.reportId === started.id ? { ...prev, sectionsState: after } : prev);
+            }
+
+            // Etapa 3: finalize (assembla markdown e marca status). Se faltou
+            // seção, backend retorna missing_sections — mostra na UI.
+            try {
+              const final = await reportsApi.finalize(rm.eventId, started.id);
+              const hasMissing = (final.missing_sections || []).length > 0;
+              setReportModal(prev => prev?.reportId === started.id ? {
+                ...prev,
+                step: hasMissing ? 'progressive' : 'done',
+                result: final,
+                progressError: hasMissing ? `Finalizado com ${final.missing_sections.length} seção(ões) faltando.` : null,
+              } : prev);
+            } catch (e) {
+              setReportModal(prev => prev?.reportId === started.id ? { ...prev, progressError: 'Erro ao finalizar: ' + e.message } : prev);
             }
           };
 
-          const selectPhase = async (phaseName) => {
-            setReportModal({ ...rm, step: 'generating', type: 'phase', phaseName });
+          // Retry de uma seção que falhou (força regen mesmo se já existe)
+          const retrySection = async (idx) => {
+            const current = reportModal;
+            if (!current?.reportId) return;
+            const sectionName = current.sectionsState[idx].name;
+            const sectionsState = [...current.sectionsState];
+            sectionsState[idx] = { ...sectionsState[idx], status: 'generating', error: null };
+            setReportModal(prev => prev?.reportId === current.reportId ? { ...prev, sectionsState } : prev);
+
             try {
-              const result = await reportsApi.generate(rm.eventId, { type: 'phase', phase_name: phaseName });
-              setReportModal({ ...rm, step: 'done', type: 'phase', phaseName, result });
-            } catch (e) { setReportModal({ ...rm, step: 'done', type: 'phase', phaseName, error: e.message }); }
+              const result = await reportsApi.generateSection(current.eventId, current.reportId, sectionName, true);
+              sectionsState[idx] = { ...sectionsState[idx], status: 'done', content: result.content, error: null };
+            } catch (e) {
+              sectionsState[idx] = { ...sectionsState[idx], status: 'error', error: e.message };
+            }
+            const after = [...sectionsState];
+            setReportModal(prev => prev?.reportId === current.reportId ? { ...prev, sectionsState: after } : prev);
           };
+
+          // Tenta finalizar (útil se o usuário aceitar relatório com lacunas)
+          const finalizeNow = async () => {
+            const current = reportModal;
+            if (!current?.reportId) return;
+            try {
+              const final = await reportsApi.finalize(current.eventId, current.reportId);
+              const hasMissing = (final.missing_sections || []).length > 0;
+              setReportModal(prev => prev?.reportId === current.reportId ? {
+                ...prev, step: hasMissing ? 'progressive' : 'done', result: final,
+                progressError: hasMissing ? `Finalizado com ${final.missing_sections.length} seção(ões) faltando.` : null,
+              } : prev);
+            } catch (e) {
+              setReportModal(prev => prev?.reportId === current.reportId ? { ...prev, progressError: 'Erro ao finalizar: ' + e.message } : prev);
+            }
+          };
+
+          const selectScope = (type) => {
+            if (type === 'full') runProgressive('full', null);
+            else setReportModal({ ...rm, step: 'phase', type: 'phase' });
+          };
+
+          const selectPhase = (phaseName) => runProgressive('phase', phaseName);
 
           const eventPhases = allPh.filter(p => p.event_id === rm.eventId);
 
@@ -2285,11 +1990,56 @@ export default function Eventos() {
                     </div>
                   )}
 
-                  {/* Step 2: Escopo */}
+                  {/* Step 2: Escopo + histórico + filtro de data */}
                   {rm.step === 'scope' && (
                     <div>
                       <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 4 }}>{rm.eventName}</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 12 }}>Qual tipo de relatório?</div>
+
+                      {/* Histórico (offer-existing) — só aparece se já houver relatórios */}
+                      {Array.isArray(rm.existingReports) && rm.existingReports.length > 0 && (
+                        <div style={{ marginBottom: 14, padding: 10, borderRadius: 8, background: 'var(--cbrio-bg)', border: '1px dashed var(--cbrio-border)' }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--cbrio-text2)', marginBottom: 6 }}>Relatórios anteriores · clique pra abrir sem gastar IA</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {rm.existingReports.slice(0, 3).map(r => (
+                              <button key={r.id} onClick={() => reuseReport(r)} style={{
+                                padding: '6px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)',
+                                background: 'transparent', cursor: 'pointer', textAlign: 'left',
+                                fontSize: 12, color: 'var(--cbrio-text)',
+                              }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-card)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                <span style={{ fontWeight: 600 }}>
+                                  {r.report_type === 'full' ? 'Evento Completo' : `Fase: ${r.phase_name}`}
+                                </span>
+                                <span style={{ color: 'var(--cbrio-text3)', marginLeft: 6, fontSize: 10 }}>
+                                  · {new Date(r.created_at).toLocaleDateString('pt-BR')} · {r.attachments_count || 0} anexo(s)
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Filtro de data — útil pra séries longas */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                        <span style={{ fontSize: 11, color: 'var(--cbrio-text3)' }}>Período:</span>
+                        {[
+                          { v: null, l: 'Tudo' },
+                          { v: 30, l: '30d' },
+                          { v: 60, l: '60d' },
+                          { v: 90, l: '90d' },
+                        ].map(opt => (
+                          <button key={String(opt.v)} onClick={() => setReportModal({ ...rm, sinceDays: opt.v })} style={{
+                            padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600,
+                            cursor: 'pointer',
+                            border: rm.sinceDays === opt.v ? '1px solid var(--cbrio-primary, #00B39D)' : '1px solid var(--cbrio-border)',
+                            background: rm.sinceDays === opt.v ? 'var(--cbrio-primary, #00B39D)' : 'transparent',
+                            color: rm.sinceDays === opt.v ? '#fff' : 'var(--cbrio-text2)',
+                          }}>{opt.l}</button>
+                        ))}
+                      </div>
+
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 12 }}>Gerar novo relatório:</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         <button onClick={() => selectScope('full')} style={{
                           padding: '14px 16px', borderRadius: 10, border: '1px solid var(--cbrio-border)',
@@ -2298,7 +2048,7 @@ export default function Eventos() {
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-bg)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)' }}>Acumulado completo</div>
-                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Tudo que foi entregue no evento/série até hoje</div>
+                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Tudo que foi entregue no evento/série{rm.sinceDays ? ` nos últimos ${rm.sinceDays} dias` : ' até hoje'}</div>
                         </button>
                         <button onClick={() => selectScope('phase')} style={{
                           padding: '14px 16px', borderRadius: 10, border: '1px solid var(--cbrio-border)',
@@ -2307,7 +2057,7 @@ export default function Eventos() {
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-bg)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)' }}>Fase específica</div>
-                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Relatório de uma fase do ciclo criativo</div>
+                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 2 }}>Relatório de uma fase do ciclo criativo{rm.sinceDays ? ` · últimos ${rm.sinceDays} dias` : ''}</div>
                         </button>
                       </div>
                     </div>
@@ -2335,27 +2085,136 @@ export default function Eventos() {
                   )}
 
                   {/* Step 4: Gerando */}
-                  {rm.step === 'generating' && (
-                    <div style={{ textAlign: 'center', padding: 30 }}>
-                      <div style={{ width: 28, height: 28, border: '3px solid var(--cbrio-border)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
+                  {/* Step 4: Geração progressiva — lista de seções com status individual */}
+                  {rm.step === 'progressive' && (
+                    <div>
                       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-                      <div style={{ fontSize: 13, color: 'var(--cbrio-text2)' }}>Gerando relatório de {rm.eventName}...</div>
-                      <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 4 }}>Analisando entregáveis e conclusões</div>
+                      <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 4 }}>{rm.eventName}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: 4 }}>
+                        Gerando relatório por seção
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 14 }}>
+                        Cada seção é uma chamada curta · você pode fechar e voltar depois
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {(rm.sectionsState || []).map((s, i) => {
+                          const isDone = s.status === 'done';
+                          const isGen = s.status === 'generating';
+                          const isErr = s.status === 'error';
+                          const icon = isDone ? '✓' : isErr ? '!' : isGen ? '' : '○';
+                          const iconColor = isDone ? 'var(--cbrio-green, #10b981)' : isErr ? '#ef4444' : isGen ? '#7c3aed' : 'var(--cbrio-text3)';
+                          return (
+                            <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: isErr ? '#fee2e2' : 'var(--cbrio-bg)', border: '1px solid var(--cbrio-border)' }}>
+                              <div style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {isGen ? (
+                                  <div style={{ width: 14, height: 14, border: '2px solid var(--cbrio-border)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                                ) : (
+                                  <span style={{ color: iconColor, fontWeight: 700, fontSize: 13 }}>{icon}</span>
+                                )}
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--cbrio-text)' }}>{s.title}</div>
+                                {isErr && (
+                                  <div style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>{s.error}</div>
+                                )}
+                              </div>
+                              {isErr && (
+                                <button onClick={() => retrySection(i)} style={{
+                                  padding: '4px 10px', borderRadius: 6, border: '1px solid #ef4444',
+                                  background: 'transparent', color: '#ef4444', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                                }}>Tentar de novo</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {rm.progressError && (
+                        <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef3c7', color: '#92400e', borderRadius: 8, fontSize: 12 }}>
+                          {rm.progressError}
+                        </div>
+                      )}
+
+                      {/* Botão de finalize manual se há seções pendentes/erro mas o usuário quer prosseguir */}
+                      {(rm.sectionsState || []).some(s => s.status === 'error' || s.status === 'pending') && (
+                        <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                          <button onClick={finalizeNow} style={{
+                            padding: '8px 18px', borderRadius: 8, border: '1px solid var(--cbrio-border)',
+                            background: 'transparent', color: 'var(--cbrio-text2)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          }}>Finalizar com o que tem</button>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {/* Step 5: Resultado — botões de download */}
+                  {/* Step 5: Resultado — preview + downloads ou erro com retry */}
                   {rm.step === 'done' && (
                     <div>
                       {rm.error ? (
-                        <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#ef4444', borderRadius: 8, fontSize: 13 }}>{rm.error}</div>
+                        <div>
+                          <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#ef4444', borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{rm.error}</div>
+                          <button onClick={() => {
+                            // Retry: re-dispara baseado no estado atual (full ou phase)
+                            if (rm.type === 'phase') selectPhase(rm.phaseName);
+                            else selectScope('full');
+                          }} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                            Tentar novamente
+                          </button>
+                        </div>
                       ) : (
-                        <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                        <div>
                           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
                             {rm.type === 'full' ? 'Relatório Completo' : `Fase: ${rm.phaseName}`}
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 20 }}>
+                          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 14 }}>
                             {rm.eventName} · {rm.result?.attachments_count || 0} arquivo(s) analisado(s)
+                          </div>
+
+                          {/* Preview do markdown gerado */}
+                          {rm.result?.content && (
+                            <div style={{ maxHeight: 360, overflowY: 'auto', padding: '12px 16px', border: '1px solid var(--cbrio-border)', borderRadius: 10, background: 'var(--cbrio-bg)', marginBottom: 16, fontSize: 13, lineHeight: 1.55, color: 'var(--cbrio-text)' }}>
+                              <ReactMarkdown>{rm.result.content}</ReactMarkdown>
+                            </div>
+                          )}
+
+                          {/* Corpo de e-mail pra copiar */}
+                          {rm.result?.email_summary ? (
+                            <div style={{ marginBottom: 16, padding: 14, borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--cbrio-text)' }}>Corpo do e-mail (cole pra enviar)</div>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  <button onClick={async () => {
+                                    try { await navigator.clipboard.writeText(rm.result.email_summary); }
+                                    catch { /* navegador sem permissão de clipboard */ }
+                                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                                    Copiar
+                                  </button>
+                                  <button onClick={async () => {
+                                    try {
+                                      const fresh = await reportsApi.emailSummary(rm.eventId, rm.result.id, true);
+                                      setReportModal(prev => prev ? { ...prev, result: { ...prev.result, email_summary: fresh.email_summary } } : prev);
+                                    } catch { /* silencia, usuário pode tentar de novo */ }
+                                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text3)', fontSize: 11, cursor: 'pointer' }} title="Gerar outra versão">
+                                    ↻
+                                  </button>
+                                </div>
+                              </div>
+                              <pre style={{ margin: 0, padding: '10px 12px', borderRadius: 8, background: 'var(--cbrio-bg)', fontSize: 12, lineHeight: 1.5, color: 'var(--cbrio-text)', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{rm.result.email_summary}</pre>
+                            </div>
+                          ) : rm.result?.content ? (
+                            <button onClick={async () => {
+                              try {
+                                const fresh = await reportsApi.emailSummary(rm.eventId, rm.result.id, false);
+                                setReportModal(prev => prev ? { ...prev, result: { ...prev.result, email_summary: fresh.email_summary } } : prev);
+                              } catch { /* silencia */ }
+                            }} style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, border: '1px dashed var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text2)', fontSize: 12, cursor: 'pointer', width: '100%' }}>
+                              Gerar resumo de e-mail pra copiar
+                            </button>
+                          ) : null}
+
+                          <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 10, textAlign: 'center' }}>
+                            Os downloads são HTML formatado. Abra no navegador, depois "Imprimir → Salvar como PDF" pra compartilhar.
                           </div>
                           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
                             <button onClick={async () => {
@@ -2366,7 +2225,8 @@ export default function Eventos() {
                                 });
                                 const blob = await res.blob();
                                 const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a'); a.href = url; a.download = `Apresentacao_${rm.eventName}.pptx`; a.click();
+                                const a = document.createElement('a'); a.href = url; a.download = `Apresentacao_${rm.eventName}.html`; a.click();
+                                setTimeout(() => URL.revokeObjectURL(url), 1000);
                               } catch (e) { console.error(e); }
                             }} style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                               Baixar Apresentação
@@ -2379,7 +2239,8 @@ export default function Eventos() {
                                 });
                                 const blob = await res.blob();
                                 const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a'); a.href = url; a.download = `Documento_${rm.eventName}.docx`; a.click();
+                                const a = document.createElement('a'); a.href = url; a.download = `Documento_${rm.eventName}.html`; a.click();
+                                setTimeout(() => URL.revokeObjectURL(url), 1000);
                               } catch (e) { console.error(e); }
                             }} style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                               Baixar Documento
@@ -2745,6 +2606,9 @@ export default function Eventos() {
 
         {/* Filtros */}
         <div style={styles.filterRow}>
+          <span title="Eventos de outros anos: módulo Gestão Anual" style={{ display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 12px', borderRadius: 8, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)', color: 'var(--cbrio-text2)', fontSize: 13, fontWeight: 600 }}>
+            {new Date().getFullYear()} {'·'} ano corrente
+          </span>
           <ShadSelect value={filtroStatus || '__all__'} onValueChange={v => setFiltroStatus(v === '__all__' ? '' : v)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Todos os status" />
@@ -2944,8 +2808,16 @@ export default function Eventos() {
             <Button variant={expandedOcc.status === 'concluido' ? 'outline' : 'default'} size="sm"
               onClick={async () => {
                 const ns = expandedOcc.status === 'concluido' ? 'pendente' : 'concluido';
-                try { await events.updateOccurrence(ev.id, expandedOcc.id, { status: ns }); refreshDetail(); loadOccurrence(expandedOcc.id); dashApi.pmo().then(setPmoKpis).catch(() => {}); }
-                catch (err) { setError(err.message); }
+                try {
+                  await events.updateOccurrence(ev.id, expandedOcc.id, { status: ns });
+                  // Refresh detalhe, ocorrência atual E a lista (próxima
+                  // data do evento na grid). Sem loadEvents() a data antiga
+                  // ficava em vermelho até F5.
+                  refreshDetail();
+                  loadOccurrence(expandedOcc.id);
+                  loadEvents();
+                  dashApi.pmo().then(setPmoKpis).catch(() => {});
+                } catch (err) { setError(err.message); }
               }}>
               {expandedOcc.status === 'concluido' ? 'Reabrir' : 'Finalizar'}
             </Button>
@@ -2967,11 +2839,9 @@ export default function Eventos() {
           </div>
         )}
 
-        {/* Eventos simples: so card info, tarefas ficam na aba Tarefas */}
         {!hasCycle && (
           <div style={{ background: C.bg, borderRadius: 10, padding: 16, border: `1px solid ${C.border}`, textAlign: 'center' }}>
-            <div style={{ fontSize: 13, color: C.t3, marginBottom: 4 }}>Este evento nao tem ciclo criativo.</div>
-            <div style={{ fontSize: 12, color: C.t3 }}>Gerencie as tarefas na aba <strong style={{ color: C.primary }}>Tarefas</strong> do menu principal.</div>
+            <div style={{ fontSize: 13, color: C.t3 }}>Este evento não tem ciclo criativo.</div>
           </div>
         )}
 
@@ -3600,7 +3470,7 @@ export default function Eventos() {
           <div style={styles.subtitle}>Gestão de eventos da igreja</div>
         </div>
         {(tab <= 3) && (
-          <Button onClick={() => setModalEvent({})}>+ Novo Evento</Button>
+          <Button data-tour="eventos-novo" onClick={() => setModalEvent({})}>+ Novo Evento</Button>
         )}
       </div>
 
@@ -3618,8 +3488,6 @@ export default function Eventos() {
         <button style={styles.tab(tab === 1)} onClick={() => setTab(1)}>Lista</button>
         <button style={styles.tab(tab === 2)} onClick={() => { setTab(2); if (!kanbanCycleData) loadKanban(); }}>Kanban</button>
         <button style={styles.tab(tab === 3)} onClick={() => { setTab(3); if (!kanbanCycleData) loadKanban(); }}>Gantt</button>
-        <button style={styles.tab(tab === 7)} onClick={() => { setTab(7); loadSimpleKanban(); }}>Tarefas</button>
-        <button style={styles.tab(tab === 8)} onClick={() => setTab(8)}>Governanca</button>
         <button style={styles.tab(tab === 5)} onClick={() => { setTab(5); if (!kpiData) loadKpis(kpiTipo); }}>KPIs</button>
         {accessLevel >= 5 && <button style={styles.tab(tab === 6)} onClick={async () => { setTab(6); try { const d = await cyclesApi.admTemplates(); setAdmTemplates(Array.isArray(d) ? d : []); } catch (e) { console.error('Templates load error:', e); } }}>Templates</button>}
         {selectedEvent && <button style={styles.tab(tab === 4)} onClick={() => setTab(4)}>Detalhes</button>}
@@ -3632,8 +3500,6 @@ export default function Eventos() {
       {tab === 3 && renderGantt()}
       {tab === 4 && renderDetail()}
       {tab === 5 && renderKPIs()}
-      {tab === 7 && renderSimpleKanban()}
-      {tab === 8 && renderGovernanca()}
       {tab === 6 && renderTemplates()}
 
       {/* KPI Doc Resumo Modal */}
@@ -3686,7 +3552,7 @@ export default function Eventos() {
               </div>
             ) : (
               <div style={{ padding: 16, textAlign: 'center', color: C.t3, fontSize: 12, background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
-                {kpiDocModal.file_name ? 'Documento ainda nao processado pelo Cerebro. O resumo aparece apos o proximo ciclo do agente.' : 'Nenhum arquivo anexado a este card.'}
+                {kpiDocModal.file_name ? 'Documento ainda não processado pelo Cerebro. O resumo aparece após o próximo ciclo do agente.' : 'Nenhum arquivo anexado a este card.'}
               </div>
             )}
 
@@ -3717,6 +3583,12 @@ function ReportTab({ eventId, isPMO }) {
   const [error, setError] = useState('');
   const [viewReport, setViewReport] = useState(null);
   const [reportType, setReportType] = useState('full');
+  // null = sem filtro de data (todo o histórico). 30/60/90 limita o escopo
+  // do que o IA processa — útil pra séries longas, reduz custo e foca em ação.
+  const [sinceDays, setSinceDays] = useState(null);
+  // Estado da geração progressiva (null quando ocioso).
+  // { reportId, sectionsState: [{ name, title, status, content, error }] }
+  const [progState, setProgState] = useState(null);
 
   useEffect(() => {
     reportsApi.list(eventId).then(setReportsList).catch(() => {});
@@ -3724,34 +3596,102 @@ function ReportTab({ eventId, isPMO }) {
 
   const [exporting, setExporting] = useState('');
 
+  // Geração progressiva: start → loop section → finalize. Cada chamada < 60s.
   const generate = async () => {
     setGenerating(true);
     setError('');
+
+    const body = { type: reportType };
+    if (sinceDays) body.since_days = sinceDays;
+
+    let started;
     try {
-      const report = await reportsApi.generate(eventId, { type: reportType });
-      setReportsList(prev => [report, ...prev]);
-      setViewReport(report);
+      started = await reportsApi.start(eventId, body);
     } catch (err) {
       setError(err.message);
-    } finally {
       setGenerating(false);
+      return;
     }
+
+    const initial = started.sections_plan.map(p => ({
+      name: p.name, title: p.title, status: 'pending', content: '', error: null,
+    }));
+    setProgState({ reportId: started.id, sectionsState: initial });
+
+    const ss = [...initial];
+    for (let i = 0; i < ss.length; i++) {
+      ss[i] = { ...ss[i], status: 'generating' };
+      const snap = [...ss];
+      setProgState(prev => prev?.reportId === started.id ? { ...prev, sectionsState: snap } : prev);
+      try {
+        const result = await reportsApi.generateSection(eventId, started.id, ss[i].name);
+        ss[i] = { ...ss[i], status: 'done', content: result.content, error: null };
+      } catch (err) {
+        ss[i] = { ...ss[i], status: 'error', error: err.message };
+      }
+      const after = [...ss];
+      setProgState(prev => prev?.reportId === started.id ? { ...prev, sectionsState: after } : prev);
+    }
+
+    try {
+      const final = await reportsApi.finalize(eventId, started.id);
+      setReportsList(prev => [final, ...prev.filter(r => r.id !== final.id)]);
+      setViewReport(final);
+      if (final.missing_sections && final.missing_sections.length > 0) {
+        setError(`Relatório finalizado com ${final.missing_sections.length} seção(ões) faltando. Clique em uma seção em vermelho pra retentar.`);
+      }
+    } catch (err) {
+      setError('Falha ao finalizar: ' + err.message);
+    }
+
+    setGenerating(false);
+    // Mantém progState visível pra usuário ver o resultado das seções.
+    // Será limpo no próximo generate ou ao trocar de evento.
   };
 
-  const downloadExport = async (reportId, format) => {
-    setExporting(format);
+  // Retry de uma seção específica que falhou
+  const retrySection = async (idx) => {
+    if (!progState) return;
+    const reportId = progState.reportId;
+    const ss = [...progState.sectionsState];
+    const sectionName = ss[idx].name;
+    ss[idx] = { ...ss[idx], status: 'generating', error: null };
+    setProgState(prev => prev?.reportId === reportId ? { ...prev, sectionsState: [...ss] } : prev);
+    try {
+      const result = await reportsApi.generateSection(eventId, reportId, sectionName, true);
+      ss[idx] = { ...ss[idx], status: 'done', content: result.content, error: null };
+    } catch (err) {
+      ss[idx] = { ...ss[idx], status: 'error', error: err.message };
+    }
+    const after = [...ss];
+    setProgState(prev => prev?.reportId === reportId ? { ...prev, sectionsState: after } : prev);
+    // Re-finalize pra atualizar content
+    try {
+      const final = await reportsApi.finalize(eventId, reportId);
+      setReportsList(prev => [final, ...prev.filter(r => r.id !== final.id)]);
+      if (viewReport?.id === reportId) setViewReport(final);
+      if (!final.missing_sections || final.missing_sections.length === 0) setError('');
+    } catch { /* silencia: finalize parcial é OK */ }
+  };
+
+  // kind: 'slide' | 'document' (alinhado com o backend; antes mandava 'pptx'/'docx',
+  // que o backend não reconhecia e gerava sempre documento pros dois botões).
+  const downloadExport = async (reportId, kind) => {
+    setExporting(kind);
     try {
       const res = await fetch(`${API}/events/${eventId}/report/export`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
-        body: JSON.stringify({ reportId, format }),
+        body: JSON.stringify({ reportId, format: kind }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = format === 'pptx' ? `Apresentacao_CBRio.pptx` : `Documento_CBRio.docx`;
+      a.download = kind === 'slide' ? `Apresentacao_CBRio.html` : `Documento_CBRio.html`;
       a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) { setError('Erro ao exportar: ' + e.message); }
     finally { setExporting(''); }
   };
@@ -3761,7 +3701,7 @@ function ReportTab({ eventId, isPMO }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--cbrio-text)' }}>Relatórios do Evento</div>
         {isPMO && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <ShadSelect value={reportType} onValueChange={v => setReportType(v)}>
               <SelectTrigger className="w-[180px] h-8 text-xs">
                 <SelectValue />
@@ -3769,6 +3709,17 @@ function ReportTab({ eventId, isPMO }) {
               <SelectContent>
                 <SelectItem value="full">Evento Completo</SelectItem>
                 <SelectItem value="phase">Por Fase</SelectItem>
+              </SelectContent>
+            </ShadSelect>
+            <ShadSelect value={String(sinceDays || 'all')} onValueChange={v => setSinceDays(v === 'all' ? null : parseInt(v, 10))}>
+              <SelectTrigger className="w-[120px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tudo</SelectItem>
+                <SelectItem value="30">Últimos 30d</SelectItem>
+                <SelectItem value="60">Últimos 60d</SelectItem>
+                <SelectItem value="90">Últimos 90d</SelectItem>
               </SelectContent>
             </ShadSelect>
             <button onClick={generate} disabled={generating}
@@ -3784,28 +3735,130 @@ function ReportTab({ eventId, isPMO }) {
       </div>
 
       {error && (
-        <div style={{ padding: '10px 16px', borderRadius: 8, background: '#fee2e2', color: '#ef4444', fontSize: 13, marginBottom: 16 }}>
-          {error}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ padding: '10px 16px', borderRadius: 8, background: '#fee2e2', color: '#ef4444', fontSize: 13, marginBottom: 8 }}>
+            {error}
+          </div>
+          <button onClick={() => { setError(''); generate(); }}
+            style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            Tentar novamente
+          </button>
         </div>
       )}
 
-      {/* Relatório gerado — botões de download */}
+      {/* Progresso da geração progressiva — uma seção por linha */}
+      {progState && progState.sectionsState && progState.sectionsState.length > 0 && (
+        <div style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, padding: '18px 20px' }}>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
+            {generating ? 'Gerando relatório por seção...' : 'Resultado das seções'}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 12 }}>
+            Cada seção é uma chamada curta · você pode fechar e voltar depois sem perder progresso
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {progState.sectionsState.map((s, i) => {
+              const isDone = s.status === 'done';
+              const isGen = s.status === 'generating';
+              const isErr = s.status === 'error';
+              const icon = isDone ? '✓' : isErr ? '!' : '○';
+              const iconColor = isDone ? '#10b981' : isErr ? '#ef4444' : 'var(--cbrio-text3)';
+              return (
+                <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: isErr ? '#fee2e2' : 'var(--cbrio-bg)', border: '1px solid var(--cbrio-border)' }}>
+                  <div style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {isGen ? (
+                      <div style={{ width: 14, height: 14, border: '2px solid var(--cbrio-border)', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    ) : (
+                      <span style={{ color: iconColor, fontWeight: 700, fontSize: 13 }}>{icon}</span>
+                    )}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--cbrio-text)' }}>{s.title}</div>
+                    {isErr && (
+                      <div style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>{s.error}</div>
+                    )}
+                  </div>
+                  {isErr && !generating && (
+                    <button onClick={() => retrySection(i)} style={{
+                      padding: '4px 10px', borderRadius: 6, border: '1px solid #ef4444',
+                      background: 'transparent', color: '#ef4444', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                    }}>Tentar de novo</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Relatório gerado — preview + downloads */}
       {viewReport && (
         <div style={{ background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', marginBottom: 16, padding: '24px 20px' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--cbrio-text)', marginBottom: 4 }}>
             {viewReport.report_type === 'full' ? 'Relatório Completo' : `Relatório: ${viewReport.phase_name}`}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 16 }}>
             {viewReport.attachments_count} arquivo(s) analisado(s) · Gerado em {new Date(viewReport.created_at).toLocaleString('pt-BR')}
           </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button onClick={() => downloadExport(viewReport.id, 'pptx')} disabled={!!exporting}
-              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'docx' ? 0.5 : 1 }}>
-              {exporting === 'pptx' ? 'Gerando...' : 'Baixar Apresentação'}
+
+          {/* Preview do conteúdo gerado */}
+          {viewReport.content && (
+            <div style={{ maxHeight: 420, overflowY: 'auto', padding: '14px 18px', border: '1px solid var(--cbrio-border)', borderRadius: 10, background: 'var(--cbrio-bg)', marginBottom: 16, fontSize: 13, lineHeight: 1.55, color: 'var(--cbrio-text)' }}>
+              <ReactMarkdown>{viewReport.content}</ReactMarkdown>
+            </div>
+          )}
+
+          {/* Corpo de e-mail pra copiar */}
+          {viewReport.email_summary ? (
+            <div style={{ marginBottom: 16, padding: 14, borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--cbrio-text)' }}>Corpo do e-mail (cole pra enviar)</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={async () => {
+                    try { await navigator.clipboard.writeText(viewReport.email_summary); }
+                    catch { /* navegador sem permissão de clipboard */ }
+                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-primary, #00B39D)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    Copiar
+                  </button>
+                  <button onClick={async () => {
+                    try {
+                      const fresh = await reportsApi.emailSummary(eventId, viewReport.id, true);
+                      const updated = { ...viewReport, email_summary: fresh.email_summary };
+                      setViewReport(updated);
+                      setReportsList(prev => prev.map(r => r.id === updated.id ? updated : r));
+                    } catch { /* silencia */ }
+                  }} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text3)', fontSize: 11, cursor: 'pointer' }} title="Gerar outra versão">
+                    ↻
+                  </button>
+                </div>
+              </div>
+              <pre style={{ margin: 0, padding: '10px 12px', borderRadius: 8, background: 'var(--cbrio-bg)', fontSize: 12, lineHeight: 1.5, color: 'var(--cbrio-text)', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{viewReport.email_summary}</pre>
+            </div>
+          ) : viewReport.content ? (
+            <button onClick={async () => {
+              try {
+                const fresh = await reportsApi.emailSummary(eventId, viewReport.id, false);
+                const updated = { ...viewReport, email_summary: fresh.email_summary };
+                setViewReport(updated);
+                setReportsList(prev => prev.map(r => r.id === updated.id ? updated : r));
+              } catch { /* silencia */ }
+            }} style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, border: '1px dashed var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text2)', fontSize: 12, cursor: 'pointer', width: '100%' }}>
+              Gerar resumo de e-mail pra copiar
             </button>
-            <button onClick={() => downloadExport(viewReport.id, 'docx')} disabled={!!exporting}
-              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'pptx' ? 0.5 : 1 }}>
-              {exporting === 'docx' ? 'Gerando...' : 'Baixar Documento'}
+          ) : null}
+
+          <div style={{ fontSize: 10, color: 'var(--cbrio-text3)', marginBottom: 10 }}>
+            Os downloads são HTML formatado. Abra no navegador, depois "Imprimir → Salvar como PDF" pra compartilhar.
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <button onClick={() => downloadExport(viewReport.id, 'slide')} disabled={!!exporting}
+              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#00839D', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'document' ? 0.5 : 1 }}>
+              {exporting === 'slide' ? 'Gerando...' : 'Baixar Apresentação'}
+            </button>
+            <button onClick={() => downloadExport(viewReport.id, 'document')} disabled={!!exporting}
+              style={{ padding: '14px 28px', borderRadius: 10, border: 'none', background: '#242223', color: '#fff', fontSize: 14, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: exporting === 'slide' ? 0.5 : 1 }}>
+              {exporting === 'document' ? 'Gerando...' : 'Baixar Documento'}
             </button>
             <button onClick={() => setViewReport(null)}
               style={{ padding: '14px 20px', borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'transparent', fontSize: 13, cursor: 'pointer', color: 'var(--cbrio-text3)' }}>

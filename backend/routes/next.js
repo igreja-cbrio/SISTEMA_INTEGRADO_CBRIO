@@ -1,0 +1,392 @@
+// ============================================================================
+// Módulo NEXT - rotas autenticadas
+//
+// Eventos:
+//   GET    /eventos                       - lista eventos (com contagem)
+//   POST   /eventos                       - criar evento
+//   PUT    /eventos/:id                   - atualizar
+//   POST   /eventos/auto-create-mes       - cria 3 eventos do mês (1o-3o domingo)
+//
+// Inscrições:
+//   GET    /inscricoes                    - lista (filtros: evento_id, search, status)
+//   GET    /inscricoes/:id                - detalhe
+//   POST   /inscricoes                    - inscrever manualmente
+//   PUT    /inscricoes/:id                - atualizar
+//   POST   /inscricoes/:id/checkin        - marcar check-in
+//   DELETE /inscricoes/:id/checkin        - desfazer check-in
+//   POST   /inscricoes/:id/indicacoes     - { tipos: ['batismo', 'servir'...] }
+//   GET    /indicacoes                    - lista de indicacoes pendentes
+//   PUT    /indicacoes/:id                - atualizar status
+//
+// Dashboard:
+//   GET    /dashboard                     - resumo do mês corrente
+// ============================================================================
+
+const express = require('express');
+const router = express.Router();
+const { authenticate } = require('../middleware/auth');
+const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
+const { coletarTodos } = require('../services/kpiAutoCollector');
+const { escapePostgrestValue } = require('../utils/sanitize');
+
+// Re-calcula KPIs do NEXT em background (não bloqueia a resposta).
+// Chamado após qualquer mudança em inscrições ou indicacoes.
+function recalcularKpisNext() {
+  setImmediate(async () => {
+    try {
+      await coletarTodos({ fontes: ['next.'] });
+    } catch (e) {
+      console.error('[next] erro ao recalcular KPIs:', e.message);
+    }
+  });
+}
+
+router.use(authenticate);
+
+// ----------------------------------------------------------------------------
+// Eventos
+// ----------------------------------------------------------------------------
+router.get('/eventos', async (req, res) => {
+  const { ano, mes, status } = req.query;
+  let q = supabase.from('next_eventos').select('*').order('data', { ascending: false });
+  if (status) q = q.eq('status', status);
+  if (ano) {
+    const start = `${ano}-01-01`;
+    const end = `${Number(ano) + 1}-01-01`;
+    q = q.gte('data', start).lt('data', end);
+  }
+  if (mes && ano) {
+    const m = String(mes).padStart(2, '0');
+    const start = `${ano}-${m}-01`;
+    const next = new Date(Date.UTC(Number(ano), Number(mes), 1)).toISOString().slice(0, 10);
+    q = q.gte('data', start).lt('data', next);
+  }
+  const { data, error } = await q.limit(500);
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Contagem agregada via view (1 row por evento) — evita o limite default
+  // de 1000 rows do supabase ao agregar em memória com 2.4k+ inscrições.
+  const ids = (data || []).map(e => e.id);
+  let counts = {};
+  if (ids.length) {
+    const { data: rows } = await supabase
+      .from('vw_next_eventos_counts')
+      .select('evento_id, inscritos, checkins')
+      .in('evento_id', ids);
+    for (const row of (rows || [])) {
+      counts[row.evento_id] = { inscritos: Number(row.inscritos) || 0, checkins: Number(row.checkins) || 0 };
+    }
+  }
+  res.json((data || []).map(e => ({
+    ...e,
+    inscritos: counts[e.id]?.inscritos || 0,
+    checkins: counts[e.id]?.checkins || 0,
+  })));
+});
+
+router.post('/eventos', async (req, res) => {
+  const { data, titulo, observacoes, total_lista, presentes_impressa, presentes_manuscritos, arquivo_origem } = req.body || {};
+  if (!data) return res.status(400).json({ error: 'data obrigatoria' });
+  const { data: row, error } = await supabase
+    .from('next_eventos')
+    .insert({
+      data, titulo: titulo || null, observacoes: observacoes || null,
+      total_lista: total_lista ?? null,
+      presentes_impressa: presentes_impressa ?? null,
+      presentes_manuscritos: presentes_manuscritos ?? null,
+      arquivo_origem: arquivo_origem || null,
+    })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(row);
+});
+
+router.put('/eventos/:id', async (req, res) => {
+  const allowed = [
+    'data', 'titulo', 'observacoes', 'status',
+    'total_lista', 'presentes_impressa', 'presentes_manuscritos', 'arquivo_origem',
+  ];
+  const update = { updated_at: new Date().toISOString() };
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (allowed.includes(k)) update[k] = v;
+  }
+  const { data, error } = await supabase
+    .from('next_eventos').update(update).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Cria os 3 primeiros domingos do mês informado (idempotente)
+router.post('/eventos/auto-create-mes', async (req, res) => {
+  const ano = Number(req.body?.ano) || new Date().getFullYear();
+  const mes = Number(req.body?.mes) || (new Date().getMonth() + 1);
+
+  const datas = [];
+  let cursor = new Date(Date.UTC(ano, mes - 1, 1));
+  // primeiro domingo
+  while (cursor.getUTCDay() !== 0) cursor.setUTCDate(cursor.getUTCDate() + 1);
+  for (let i = 0; i < 3; i++) {
+    datas.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 7);
+  }
+
+  const created = [];
+  for (const d of datas) {
+    const { data: row, error } = await supabase
+      .from('next_eventos')
+      .upsert({ data: d, titulo: `NEXT ${d}` }, { onConflict: 'data', ignoreDuplicates: true })
+      .select();
+    if (!error && row && row[0]) created.push(row[0]);
+  }
+  res.json({ ano, mes, datas, created: created.length });
+});
+
+// ----------------------------------------------------------------------------
+// Inscrições
+// ----------------------------------------------------------------------------
+router.get('/inscricoes', async (req, res) => {
+  const { evento_id, search, com_checkin, com_indicacao, origem_lista, limit } = req.query;
+  const maxLimit = Math.min(Number(limit) || 500, 5000);
+  let q = supabase.from('next_inscricoes').select('*, evento:next_eventos(id, data, titulo)')
+    .order('created_at', { ascending: false }).limit(maxLimit);
+  if (evento_id) q = q.eq('evento_id', evento_id);
+  if (com_checkin === 'true') q = q.not('check_in_at', 'is', null);
+  if (com_checkin === 'false') q = q.is('check_in_at', null);
+  if (origem_lista && ['impressa', 'manuscrito'].includes(origem_lista)) q = q.eq('origem_lista', origem_lista);
+  if (com_indicacao === 'true') {
+    q = q.or('indicou_batismo.eq.true,indicou_servir.eq.true,indicou_grupo.eq.true,indicou_dizimo.eq.true');
+  }
+  if (search) {
+    const s = `%${escapePostgrestValue(search)}%`;
+    q = q.or(`nome.ilike.${s},sobrenome.ilike.${s},email.ilike.${s},cpf.ilike.${s}`);
+  }
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+router.get('/inscricoes/:id', async (req, res) => {
+  const { data, error } = await supabase
+    .from('next_inscricoes')
+    .select('*, evento:next_eventos(*), indicacoes:next_indicacoes(*)')
+    .eq('id', req.params.id)
+    .maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Inscrição não encontrada' });
+  res.json(data);
+});
+
+const { findOrCreateMembro } = require('./pessoas');
+
+router.post('/inscricoes', async (req, res) => {
+  const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
+  if (!nome || !evento_id) return res.status(400).json({ error: 'nome e evento_id obrigatórios' });
+  const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
+  const validOrigemLista = ['impressa', 'manuscrito'].includes(origem_lista) ? origem_lista : null;
+
+  // ANTES de criar a inscrição: garantir que existe mem_membros (cria se necessário).
+  // Membresia e fonte única — toda pessoa que se inscreve no NEXT vira membro
+  // (status='visitante' no mínimo) e fica acessivel em /ministerial/membresia.
+  let membro_id = null;
+  try {
+    const r = await findOrCreateMembro({
+      cpf: cleanCpf, email, telefone,
+      nome: [nome, sobrenome].filter(Boolean).join(' '),
+      status: 'visitante',
+    });
+    membro_id = r.membro_id;
+  } catch (e) {
+    console.error('next/inscricoes findOrCreateMembro failed:', e.message);
+    // segue sem membro_id - inscrição ainda e criada pra não perder dado
+  }
+
+  const { data, error } = await supabase
+    .from('next_inscricoes')
+    .insert({
+      evento_id, nome, sobrenome: sobrenome || null, cpf: cleanCpf,
+      telefone: telefone || null, email: email ? String(email).toLowerCase() : null,
+      data_nascimento: data_nascimento || null, observacoes: observacoes || null,
+      origem: 'manual', origem_lista: validOrigemLista,
+      registered_by: req.user?.id || null,
+      membro_id,
+    })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.put('/inscricoes/:id', async (req, res) => {
+  const allowed = [
+    'nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento',
+    'observacoes', 'evento_id', 'ja_batizado', 'ja_voluntario', 'ja_doador',
+    'origem_lista',
+  ];
+  const update = { updated_at: new Date().toISOString() };
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (allowed.includes(k)) update[k] = v;
+  }
+  const { data, error } = await supabase
+    .from('next_inscricoes').update(update).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ----------------------------------------------------------------------------
+// Check-in
+// ----------------------------------------------------------------------------
+router.post('/inscricoes/:id/checkin', async (req, res) => {
+  const { data, error } = await supabase
+    .from('next_inscricoes')
+    .update({
+      check_in_at: new Date().toISOString(),
+      check_in_by: req.user?.id || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.delete('/inscricoes/:id/checkin', async (req, res) => {
+  const { error } = await supabase
+    .from('next_inscricoes')
+    .update({ check_in_at: null, check_in_by: null, updated_at: new Date().toISOString() })
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ----------------------------------------------------------------------------
+// Indicacoes (batismo, servir, grupo, dizimo)
+// ----------------------------------------------------------------------------
+const TIPOS_AREA = {
+  batismo: { area: 'integracao', flag: 'indicou_batismo', titulo: 'Nova indicacao de batismo no NEXT' },
+  servir: { area: 'voluntariado', flag: 'indicou_servir', titulo: 'Nova indicacao para servir no NEXT' },
+  grupo: { area: 'grupos', flag: 'indicou_grupo', titulo: 'Nova indicacao de grupo no NEXT' },
+  dizimo: { area: 'generosidade', flag: 'indicou_dizimo', titulo: 'Nova indicacao de dizimo no NEXT' },
+};
+
+router.post('/inscricoes/:id/indicacoes', async (req, res) => {
+  try {
+    const { tipos = [], observacoes } = req.body || {};
+    if (!Array.isArray(tipos) || tipos.length === 0) {
+      return res.status(400).json({ error: 'Informe ao menos um tipo' });
+    }
+    const validos = tipos.filter(t => TIPOS_AREA[t]);
+    if (validos.length === 0) return res.status(400).json({ error: 'Nenhum tipo valido' });
+
+    // Atualiza flags na inscrição
+    const update = {
+      indicacao_observacoes: observacoes || null,
+      indicacao_marcada_em: new Date().toISOString(),
+      indicacao_marcada_por: req.user?.id || null,
+      updated_at: new Date().toISOString(),
+    };
+    for (const t of validos) update[TIPOS_AREA[t].flag] = true;
+
+    const { data: insc, error: e1 } = await supabase
+      .from('next_inscricoes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (e1) return res.status(500).json({ error: e1.message });
+
+    // Cria/atualiza indicacoes (1 por tipo)
+    const linhas = validos.map(t => ({
+      inscricao_id: req.params.id,
+      tipo: t,
+      area_destino: TIPOS_AREA[t].area,
+      observacoes: observacoes || null,
+      status: 'pendente',
+    }));
+
+    for (const linha of linhas) {
+      await supabase
+        .from('next_indicacoes')
+        .upsert(linha, { onConflict: 'inscricao_id,tipo' });
+    }
+
+    // Notificar áreas
+    for (const t of validos) {
+      try {
+        await notificar({
+          modulo: TIPOS_AREA[t].area,
+          titulo: TIPOS_AREA[t].titulo,
+          mensagem: `${insc.nome} ${insc.sobrenome || ''} indicou ${t} no NEXT.`,
+          link: '/ministerial/next?tab=indicacoes',
+        });
+      } catch (e) { console.error('[next] notificar:', e.message); }
+    }
+
+    // Recalcula KPIs do NEXT em background (não bloqueia)
+    recalcularKpisNext();
+
+    res.json({ ok: true, indicacoes: linhas.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/indicacoes', async (req, res) => {
+  const { tipo, status, area } = req.query;
+  let q = supabase
+    .from('next_indicacoes')
+    .select('*, inscricao:next_inscricoes(id, nome, sobrenome, email, telefone, evento_id, evento:next_eventos(data))')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (tipo) q = q.eq('tipo', tipo);
+  if (status) q = q.eq('status', status);
+  if (area) q = q.eq('area_destino', area);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+router.put('/indicacoes/:id', async (req, res) => {
+  const allowed = ['status', 'observacoes', 'atendido_por', 'atendido_em'];
+  const update = { updated_at: new Date().toISOString() };
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (allowed.includes(k)) update[k] = v;
+  }
+  if (req.body?.status === 'concluido' && !update.atendido_em) {
+    update.atendido_em = new Date().toISOString();
+    update.atendido_por = req.user?.id || null;
+  }
+  const { data, error } = await supabase
+    .from('next_indicacoes').update(update).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ----------------------------------------------------------------------------
+// Dashboard
+// ----------------------------------------------------------------------------
+router.get('/dashboard', async (_req, res) => {
+  const hoje = new Date();
+  const inicioMes = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), 1)).toISOString().slice(0, 10);
+  const inicioProxMes = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth() + 1, 1)).toISOString().slice(0, 10);
+
+  const [eventos, inscricoesMes, checkinsMes, indicPendentes] = await Promise.all([
+    supabase.from('next_eventos').select('id, data, status').gte('data', inicioMes).lt('data', inicioProxMes),
+    supabase.from('next_inscricoes').select('id', { count: 'exact', head: true })
+      .gte('created_at', inicioMes).lt('created_at', inicioProxMes),
+    supabase.from('next_inscricoes').select('id', { count: 'exact', head: true })
+      .not('check_in_at', 'is', null)
+      .gte('check_in_at', inicioMes).lt('check_in_at', inicioProxMes),
+    supabase.from('next_indicacoes').select('id', { count: 'exact', head: true }).eq('status', 'pendente'),
+  ]);
+
+  res.json({
+    eventos_mes: eventos.data || [],
+    inscricoes_mes: inscricoesMes.count || 0,
+    checkins_mes: checkinsMes.count || 0,
+    indicacoes_pendentes: indicPendentes.count || 0,
+  });
+});
+
+module.exports = router;

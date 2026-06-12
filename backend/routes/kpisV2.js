@@ -1,13 +1,13 @@
 // ============================================================================
-// KPIs V2 - Hierarquia estrategica (NSM -> Direcionadores -> KPIs -> Taticos)
+// KPIs V2 - Hierarquia estratégica (NSM -> Direcionadores -> KPIs -> Taticos)
 //
 // Endpoints:
 //   GET  /api/kpis/v2/nsm                   - NSM do ano corrente
 //   GET  /api/kpis/v2/direcionadores        - 5 direcionadores + KPIs
 //   GET  /api/kpis/v2/estrategicos          - 17 KPIs com rollup dos taticos
 //   GET  /api/kpis/v2/taticos               - 55 indicadores + status atual
-//   GET  /api/kpis/v2/taticos/:id           - detalhe de um tatico + historico
-//   GET  /api/kpis/v2/areas                 - lista de areas com contagens
+//   GET  /api/kpis/v2/taticos/:id           - detalhe de um tatico + histórico
+//   GET  /api/kpis/v2/areas                 - lista de áreas com contagens
 //   POST /api/kpis/v2/registros             - lancar valor
 //   PUT  /api/kpis/v2/registros/:id         - editar lancamento
 //   GET  /api/kpis/v2/registros             - lista filtravel
@@ -16,30 +16,44 @@
 
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize, authorizeKpiArea } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const painelCache = require('../services/painelCache');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
 // ----------------------------------------------------------------------------
-// Cron / coletor automatico (publico com auth de cron)
-// Definido ANTES do router.use(authenticate) para nao exigir login.
+// Cron / coletor automático (público com auth de cron)
+// Definido ANTES do router.use(authenticate) para não exigir login.
 // ----------------------------------------------------------------------------
+const { isAuthorizedCron } = require('../utils/cronAuth');
 async function autorizaCron(req, res, next) {
-  const auth = req.headers['x-cron-secret'] || req.headers['authorization'];
-  const isVercelCron = req.headers['user-agent']?.includes('vercel-cron');
-  if (!isVercelCron && auth !== CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   next();
 }
 
+// Após coletar (fonte_auto · kpi_registros), recalcula TODOS os KPIs
+// calculados (dado_tipo · kpi_valores_calculados) — rede de segurança pros
+// gatilhos por tabela (cobre cascatas em trigger depth>1 e fontes sem gatilho).
+async function coletarERecalcular() {
+  const resultados = await coletarTodos();
+  const ok = resultados.filter(r => r.status === 'ok').length;
+  let recalculo = null;
+  try {
+    const { data, error } = await supabase.rpc('kpi_recalcular_todos');
+    recalculo = error ? { error: error.message } : data;
+  } catch (e) {
+    recalculo = { error: e.message };
+  }
+  return { ok, total: resultados.length, recalculo, resultados };
+}
+
 router.get('/cron/coletar', autorizaCron, async (_req, res) => {
   try {
-    const resultados = await coletarTodos();
-    const ok = resultados.filter(r => r.status === 'ok').length;
-    res.json({ ok, total: resultados.length, resultados });
+    res.json(await coletarERecalcular());
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -47,9 +61,7 @@ router.get('/cron/coletar', autorizaCron, async (_req, res) => {
 
 router.post('/cron/coletar', autorizaCron, async (_req, res) => {
   try {
-    const resultados = await coletarTodos();
-    const ok = resultados.filter(r => r.status === 'ok').length;
-    res.json({ ok, total: resultados.length, resultados });
+    res.json(await coletarERecalcular());
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -57,21 +69,33 @@ router.post('/cron/coletar', autorizaCron, async (_req, res) => {
 
 router.use(authenticate);
 
+// Bust automático do painel após mutacoes (edição de KPI, lancamento de registro)
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) painelCache.bust('');
+    });
+  }
+  next();
+});
+
 // ----------------------------------------------------------------------------
 // Trigger manual (admin) - dry-run ou execucao
 // ----------------------------------------------------------------------------
 router.post('/coletar', async (req, res) => {
   try {
     const dryRun = req.query.dry_run === 'true' || req.body?.dry_run === true;
-    const resultados = await coletarTodos({ dryRun });
-    res.json({ dryRun, total: resultados.length, resultados });
+    const fontes = req.query.fontes ? String(req.query.fontes).split(',').filter(Boolean) : null;
+    const areas = req.query.areas ? String(req.query.areas).split(',').filter(Boolean) : null;
+    const resultados = await coletarTodos({ dryRun, fontes, areas });
+    res.json({ dryRun, fontes, areas, total: resultados.length, resultados });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 // ----------------------------------------------------------------------------
-// Helpers de periodo
+// Helpers de período
 // ----------------------------------------------------------------------------
 function periodoAtual(periodicidade, date = new Date()) {
   const y = date.getUTCFullYear();
@@ -195,11 +219,51 @@ router.get('/taticos', async (req, res) => {
   if (periodicidade) query = query.eq('periodicidade', periodicidade);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  // Enriquece com formula_config + entrada_manual do tipo dado_tipo
+  // (a view não tem essas colunas · precisamos pra UI saber quem e auto/manual)
+  const ids = (data || []).map(d => d.id);
+  let fcByKpi = {};
+  if (ids.length) {
+    const { data: configs } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, formula_config, tipo_calculo')
+      .in('id', ids);
+    fcByKpi = Object.fromEntries((configs || []).map(c => [c.id, c]));
+  }
+
+  const tipoIds = [...new Set(
+    Object.values(fcByKpi)
+      .map(c => c?.formula_config?.dado_tipo)
+      .filter(Boolean)
+  )];
+  let tiposManuais = {};
+  if (tipoIds.length) {
+    const { data: tipos } = await supabase
+      .from('tipos_dado_bruto')
+      .select('id, entrada_manual')
+      .in('id', tipoIds);
+    tiposManuais = Object.fromEntries((tipos || []).map(t => [t.id, t.entrada_manual]));
+  }
+
+  const enriched = (data || []).map(d => {
+    const cfg = fcByKpi[d.id] || {};
+    const dadoTipo = cfg.formula_config?.dado_tipo || null;
+    // dado_tipo_manual = true se o KPI tem dado_tipo E o tipo permite entrada manual
+    const dadoTipoManual = !!dadoTipo && tiposManuais[dadoTipo] === true;
+    return {
+      ...d,
+      formula_config: cfg.formula_config || null,
+      tipo_calculo: cfg.tipo_calculo || null,
+      dado_tipo_manual: dadoTipoManual,
+    };
+  });
+
+  res.json(enriched);
 });
 
 // ----------------------------------------------------------------------------
-// GET /taticos/:id - detalhe + historico de registros
+// GET /taticos/:id - detalhe + histórico de registros
 // ----------------------------------------------------------------------------
 router.get('/taticos/:id', async (req, res) => {
   const { id } = req.params;
@@ -211,7 +275,7 @@ router.get('/taticos/:id', async (req, res) => {
     .eq('id', id)
     .maybeSingle();
   if (e1) return res.status(500).json({ error: e1.message });
-  if (!tatico) return res.status(404).json({ error: 'Indicador nao encontrado' });
+  if (!tatico) return res.status(404).json({ error: 'Indicador não encontrado' });
 
   const { data: registros, error: e2 } = await supabase
     .from('kpi_registros')
@@ -232,7 +296,159 @@ router.get('/taticos/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /areas - lista de areas com contagens (saude da area)
+// PUT /taticos/:id - editar indicador (apenas admin/diretor)
+// Campos editaveis: indicador, descrição, área, periodicidade, periodo_offset_meses,
+//                   meta_descricao, meta_valor, unidade, responsavel_area,
+//                   apuracao, sort_order, ativo, kpi_estrategico_id, fonte_auto,
+//                   valores, pilar
+// ----------------------------------------------------------------------------
+// Helper: extrai área de um indicador tatico pelo seu id
+async function fetchIndicadorArea(indicadorId) {
+  if (!indicadorId) return null;
+  const { data } = await supabase.from('kpi_indicadores_taticos')
+    .select('area').eq('id', indicadorId).maybeSingle();
+  return data?.area || null;
+}
+
+router.put('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params.id)), async (req, res) => {
+  const { id } = req.params;
+  const allowed = [
+    'indicador', 'descricao', 'area', 'periodicidade', 'periodo_offset_meses',
+    'meta_descricao', 'meta_valor', 'unidade', 'responsavel_area', 'apuracao',
+    'sort_order', 'ativo', 'kpi_estrategico_id', 'fonte_auto', 'valores', 'pilar',
+    'is_okr', 'lider_funcionario_id',
+    'objetivo_geral_id', 'memoria_calculo', 'observacoes',
+    'tipo_calculo', 'formula_config',
+  ];
+  const update = { updated_at: new Date().toISOString() };
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (!allowed.includes(k)) continue;
+    if (k === 'meta_valor') {
+      update[k] = (v === '' || v == null) ? null : Number(v);
+    } else if (k === 'sort_order' || k === 'periodo_offset_meses') {
+      update[k] = (v === '' || v == null) ? 0 : Number(v);
+    } else if (k === 'ativo' || k === 'is_okr') {
+      update[k] = !!v;
+    } else if (k === 'valores') {
+      update[k] = Array.isArray(v) ? v.filter(Boolean) : [];
+    } else if (k === 'area' && typeof v === 'string') {
+      update[k] = v.toLowerCase(); // normaliza pra lowercase no DB
+    } else {
+      update[k] = v === '' ? null : v;
+    }
+  }
+  // Se vai marcar OKR, exige valores nao-vazio (no payload OU já existente)
+  if (update.is_okr === true) {
+    let valores = update.valores;
+    if (!Array.isArray(valores)) {
+      const { data: cur } = await supabase
+        .from('kpi_indicadores_taticos').select('valores').eq('id', id).maybeSingle();
+      valores = cur?.valores || [];
+    }
+    if (!valores || valores.length === 0) {
+      return res.status(400).json({ error: 'KPI marcado como OKR precisa ter pelo menos 1 valor da jornada vinculado' });
+    }
+  }
+  const { data, error } = await supabase
+    .from('kpi_indicadores_taticos')
+    .update(update)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ----------------------------------------------------------------------------
+// POST /taticos - criar novo indicador (apenas admin/diretor)
+// Body: { id, indicador, área, periodicidade, ... }
+// id deve ser único (ex: 'GRUP-06') e respeita PK existente.
+// ----------------------------------------------------------------------------
+router.post('/taticos', authorizeKpiArea(req => req.body?.area), async (req, res) => {
+  const b = req.body || {};
+  if (!b.id || !b.indicador || !b.area || !b.periodicidade) {
+    return res.status(400).json({ error: 'id, indicador, área e periodicidade são obrigatórios' });
+  }
+  const VALID = ['semanal','mensal','trimestral','semestral','anual'];
+  if (!VALID.includes(b.periodicidade)) {
+    return res.status(400).json({ error: `periodicidade deve ser: ${VALID.join('|')}` });
+  }
+  const valores = Array.isArray(b.valores) ? b.valores.filter(Boolean) : [];
+  const isOkr = !!b.is_okr;
+  if (isOkr && valores.length === 0) {
+    return res.status(400).json({ error: 'KPI marcado como OKR precisa ter pelo menos 1 valor da jornada vinculado' });
+  }
+  const payload = {
+    id: b.id,
+    indicador: b.indicador,
+    descricao: b.descricao ?? null,
+    area: String(b.area).toLowerCase(),  // DB sempre em lowercase
+    periodicidade: b.periodicidade,
+    periodo_offset_meses: Number.isFinite(Number(b.periodo_offset_meses)) ? Number(b.periodo_offset_meses) : 0,
+    meta_descricao: b.meta_descricao ?? null,
+    meta_valor: (b.meta_valor === '' || b.meta_valor == null) ? null : Number(b.meta_valor),
+    unidade: b.unidade ?? null,
+    responsavel_area: b.responsavel_area ?? null,
+    apuracao: b.apuracao ?? null,
+    sort_order: Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 0,
+    ativo: b.ativo === false ? false : true,
+    kpi_estrategico_id: b.kpi_estrategico_id ?? null,
+    fonte_auto: b.fonte_auto ?? null,
+    valores,
+    pilar: b.pilar ?? null,
+    is_okr: isOkr,
+    lider_funcionario_id: b.lider_funcionario_id ?? null,
+    objetivo_geral_id: b.objetivo_geral_id ?? null,
+    memoria_calculo: b.memoria_calculo ?? null,
+    observacoes: b.observacoes ?? null,
+    tipo_calculo: b.tipo_calculo || 'manual',
+    formula_config: b.formula_config ?? null,
+  };
+  const { data, error } = await supabase
+    .from('kpi_indicadores_taticos')
+    .insert(payload)
+    .select()
+    .single();
+  if (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'id já existe' });
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json(data);
+});
+
+// ----------------------------------------------------------------------------
+// DELETE /taticos/:id - soft delete (ativo=false). Preserva histórico.
+// Use ?hard=true para remover de fato (requer admin e nenhum registro vinculado).
+// ----------------------------------------------------------------------------
+router.delete('/taticos/:id', authorizeKpiArea(req => fetchIndicadorArea(req.params.id)), async (req, res) => {
+  const { id } = req.params;
+  const hard = req.query.hard === 'true';
+  if (hard) {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'hard delete requer admin' });
+    }
+    const { count } = await supabase
+      .from('kpi_registros').select('id', { count: 'exact', head: true })
+      .eq('indicador_id', id);
+    if ((count || 0) > 0) {
+      return res.status(409).json({ error: `KPI tem ${count} registros. Use soft delete (sem ?hard=true).` });
+    }
+    const { error } = await supabase.from('kpi_indicadores_taticos').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(204).end();
+  }
+  const { data, error } = await supabase
+    .from('kpi_indicadores_taticos')
+    .update({ ativo: false, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ----------------------------------------------------------------------------
+// GET /areas - lista de áreas com contagens (saúde da área)
 // ----------------------------------------------------------------------------
 router.get('/areas', async (req, res) => {
   const { data, error } = await supabase
@@ -277,12 +493,12 @@ router.get('/registros', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// POST /registros - lancar valor (upsert por indicador+periodo)
+// POST /registros - lancar valor (upsert por indicador+período)
 // ----------------------------------------------------------------------------
 router.post('/registros', async (req, res) => {
   const { indicador_id, periodo_referencia, valor_realizado, valor_texto, observacoes, responsavel } = req.body;
   if (!indicador_id || !periodo_referencia) {
-    return res.status(400).json({ error: 'indicador_id e periodo_referencia sao obrigatorios' });
+    return res.status(400).json({ error: 'indicador_id e periodo_referencia são obrigatórios' });
   }
 
   // Verifica que o indicador existe
@@ -292,7 +508,15 @@ router.post('/registros', async (req, res) => {
     .eq('id', indicador_id)
     .maybeSingle();
   if (eTat) return res.status(500).json({ error: eTat.message });
-  if (!tatico) return res.status(404).json({ error: 'Indicador nao encontrado' });
+  if (!tatico) return res.status(404).json({ error: 'Indicador não encontrado' });
+
+  // Autoriza por área: admin/diretor passa direto; líder so da sua kpi_area
+  if (!['admin', 'diretor'].includes(req.user?.role)) {
+    const myAreas = (req.user?.kpi_areas || []).map(a => String(a).toLowerCase());
+    if (!myAreas.includes(String(tatico.area || '').toLowerCase())) {
+      return res.status(403).json({ error: `Sem permissão para registrar KPIs da área "${tatico.area}"` });
+    }
+  }
 
   const payload = {
     indicador_id,
@@ -306,7 +530,7 @@ router.post('/registros', async (req, res) => {
     updated_at: new Date().toISOString(),
   };
 
-  // Upsert (atualiza se ja existe registro do mesmo indicador+periodo)
+  // Upsert (atualiza se já existe registro do mesmo indicador+período)
   const { data, error } = await supabase
     .from('kpi_registros')
     .upsert(payload, { onConflict: 'indicador_id,periodo_referencia' })
@@ -349,7 +573,7 @@ router.delete('/registros/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /periodo-atual?periodicidade=semanal - util pro frontend saber o periodo
+// GET /periodo-atual?periodicidade=semanal - útil pro frontend saber o período
 // ----------------------------------------------------------------------------
 router.get('/periodo-atual', (req, res) => {
   const { periodicidade = 'mensal' } = req.query;

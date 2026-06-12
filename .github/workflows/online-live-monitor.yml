@@ -1,0 +1,61 @@
+name: Online · Live Monitor (5min)
+
+# Vercel Hobby nao permite cron sub-diario. Live monitor roda aqui no GitHub
+# Actions a cada 5 minutos · so age (server-side) se ha culto na janela.
+#
+# Janelas de execucao (UTC · BRT = UTC-3):
+#
+#   Cultos fixos com has_online=true (BRT) → janela [-30min, +4h]:
+#     Dom 08:30 / 10:00 / 11:30 / 19:00 · Qua 20:00 · Sab 20:00 (AMI)
+#
+#   Cron 1 · Dom UTC 11-15 (BRT 08-12:55):
+#     cobre cultos manha de domingo (08:30, 10:00, 11:30) + buffer inicial.
+#   Cron 2 · diario UTC 16-23 (BRT 13-20:55):
+#     cobre janela tardia dos cultos de manha do domingo (ate 18:30 UTC),
+#     inicio dos cultos de noite (Dom 19h, Qua 20h, Sab 20h) e qualquer
+#     evento atipico em horario plausivel (vigilia/conferencia/etc).
+#   Cron 3 · diario UTC 00-04 (BRT 21-01:55):
+#     cobre o termino dos cultos de noite (+4h buffer apos 22h-23h UTC) e
+#     vigilias/eventos atipicos que vao ate a madrugada inicial.
+#
+#   Pula UTC 05-10 (BRT 02-07h) · sem culto cadastrado nesse horario.
+#   Pra evento atipico em madrugada profunda, usar botao "Coletar pico
+#   agora" da UI em /ministerial/online.
+#
+# Custo estimado: ~10s por run × ~165 runs/dia × 30 dias = ~825min/mes.
+# Reducao de ~43% vs. */5 24h/dia. Cabe folgado no free tier de 2000min/mes.
+#
+# Secrets necessarios no repo (Settings > Secrets > Actions):
+#   CRON_SECRET    · mesmo valor da env CRON_SECRET no Vercel
+#   APP_BASE_URL   · ex.: https://cbrio.org
+
+on:
+  schedule:
+    - cron: '*/5 11-15 * * 0'  # Dom 08:00-12:55 BRT · cultos manha
+    - cron: '*/5 16-23 * * *'  # Diario 13:00-20:55 BRT
+    - cron: '*/5 0-4 * * *'    # Diario 21:00-01:55 BRT
+  workflow_dispatch: # permite run manual via UI
+
+concurrency:
+  group: online-live-monitor
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call live-monitor endpoint
+        run: |
+          set -euo pipefail
+          # -L segue redirect (ex.: 308 apex<->www ou URL nao-canonica em
+          # APP_BASE_URL) · sem isso o curl parava no "Redirecting..." e o
+          # monitor nunca rodava (pico nao era capturado). Loga o HTTP status
+          # e o corpo pra diagnostico.
+          out=$(curl -sS -L --max-time 60 -w "\n[http_code=%{http_code} url=%{url_effective}]" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "user-agent: github-actions-cron" \
+            "${{ secrets.APP_BASE_URL }}/api/online/cron/live-monitor") || true
+          echo "$out"
+          echo "$out" | grep -q '"ok"\|"skipped"' \
+            || echo "::warning::live-monitor nao retornou JSON esperado · verifique o secret APP_BASE_URL (deve ser o dominio canonico, ex. https://cbrio.org) e CRON_SECRET"

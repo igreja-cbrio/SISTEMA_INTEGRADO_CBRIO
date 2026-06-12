@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays } from 'lucide-react';
+import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck } from 'lucide-react';
+import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatisticsCard } from '../../../components/ui/statistics-card';
@@ -16,6 +17,7 @@ import TabFolha from './TabFolha';
 import TabAvaliacoes from './TabAvaliacoes';
 import TabExtras from './TabExtras';
 import TabFeriasCalendar from './TabFeriasCalendar';
+import TabPCS from './TabPCS';
 
 // ── Toast de feedback ───────────────────────────────────────
 function Toast({ message, type = 'error', onClose }) {
@@ -50,6 +52,41 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
   );
 }
 
+// ── Diálogo de desligamento (data real + motivo) ────────────
+// Não apaga o colaborador · marca como inativo preservando o histórico.
+function DesligarModal({ func, onClose, onConfirm }) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const [data, setData] = useState(hoje);
+  const [motivo, setMotivo] = useState('');
+  useEffect(() => { if (func) { setData(hoje); setMotivo(''); } }, [func]);
+  if (!func) return null;
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-popover rounded-2xl p-6 w-full max-w-[420px] shadow-2xl" style={{ animation: 'cbrio-modal-center-in 0.2s ease-out' }}>
+        <div className="flex items-center gap-3 mb-1">
+          <div className="h-10 w-10 rounded-full bg-amber-500/15 text-amber-600 flex items-center justify-center"><UserMinus className="h-5 w-5" /></div>
+          <div className="text-[15px] font-semibold text-foreground">Desligar colaborador</div>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          {func.nome ? <strong className="text-foreground">{func.nome}</strong> : 'O colaborador'} fica como <strong>inativo</strong> — o registro e o histórico <strong>não são apagados</strong> e dá pra reativar depois.
+        </p>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Data do desligamento</label>
+        <input type="date" value={data} onChange={e => setData(e.target.value)} max={hoje}
+          className="mt-1 mb-3 flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Motivo (opcional)</label>
+        <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} placeholder="Ex.: pedido de demissão, fim de contrato…"
+          className="mt-1 mb-4 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none" />
+        <div className="flex gap-2.5 justify-end">
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button variant="destructive" disabled={!data} onClick={() => onConfirm({ data_demissao: data, motivo: motivo.trim() || null })}>
+            <UserMinus className="h-4 w-4 mr-1.5" />Desligar
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Legacy compat maps (local uses { c, bg, label } shape)
 const STATUS_COLORS = {
   ativo: { c: C.green, bg: C.greenBg, label: 'Ativo' },
@@ -57,6 +94,186 @@ const STATUS_COLORS = {
   ferias: { c: C.blue, bg: C.blueBg, label: 'Férias' },
   licenca: { c: C.amber, bg: C.amberBg, label: 'Licença' },
 };
+
+// Tipos de contrato aceitos pelo banco (CHECK rh_funcionarios_tipo_contrato_check).
+// Só estes 4 — não oferecer minúsculas nem voluntario/estagiario (estouram o constraint).
+const OPCOES_CONTRATO = ['CLT', 'PJ', 'PJ+', 'PREBENDA'];
+
+// ── Sugestão de cargo de PERMISSÃO a partir do cargo (texto livre) do RH ──
+// O título do RH e o cargo de permissão são cadastros distintos. Isto só
+// SUGERE o cargo de permissão mais provável (overrides pros casos do CBRio +
+// sobreposição de palavras). Nunca aplica sozinho — é estimativa pra revisão.
+function _normCargo(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+const SUGESTAO_CARGO_OVERRIDES = [
+  [/coordenador.*integracao/, 'lider-ministerial'],
+  [/coordenador.*cuidados/, 'lider-ministerial'],
+  [/coordenador.*(grupos|cba)/, 'lider-ministerial'],
+  [/supervisor.*jornada/, 'supervisor-jornada'],
+  [/assistente.*(cbkids|kids)/, 'assistente-kids'],
+  [/(coordenador|lider).*(cbkids|kids)/, 'coordenador-kids'],
+  [/coordenador.*ami/, 'coordenador-ami'],
+  [/coordenador.*bridge/, 'coordenador-bridge'],
+  [/(coordenador|lider).*online/, 'coordenador-online'],
+  [/coordenador.*adoracao/, 'coordenador-adoracao'],
+  [/coordenador.*producao/, 'coordenador-producao'],
+  [/assistente.*producao/, 'assistente-producao'],
+  [/(coordenador|lider).*marketing/, 'coordenador-marketing'],
+  [/(designer|social media|produtor|audiovisual|\bvideo)/, 'assistente-marketing'],
+  [/coordenador.*financeiro/, 'coordenador-financeiro'],
+  [/assistente.*(financeiro|administrativo)/, 'assistente-financeiro'],
+  [/(coordenador|diretor).*\brh\b/, 'diretor-rh'],
+  [/coordenador.*voluntariado/, 'coordenador-voluntarios'],
+  [/pastor.*senior/, 'pastor-senior'],
+  [/pastor.*(presidente|executivo)/, 'pastor-presidente'],
+  [/diretor.*criativo/, 'diretor-criativo'],
+  [/diretor.*ministerial/, 'diretor-ministerial'],
+  [/diretor.*(operacional|administrativo|gestao)/, 'diretor-administrativo'],
+  [/(auxiliar|assistente).*(infra|infraestrutura|operacoes)/, 'assistente-operacoes'],
+  [/(auxiliar|assistente).*(logistica|almoxarifado)/, 'assistente-logistica'],
+  [/(coordenador|lider|encarregado).*(operacoes|infra|infraestrutura|logistica)/, 'lider-operacoes'],
+  [/assistente.*\bti\b/, 'assistente-area'],
+  [/(assistente|auxiliar).*(ministerial|pastoral)/, 'assistente-ministerial'],
+];
+function sugerirCargoPermissao(cargoRh, cargos) {
+  const n = _normCargo(cargoRh);
+  if (!n || !cargos || !cargos.length) return null;
+  const bySlug = {};
+  cargos.forEach(c => { if (c.slug) bySlug[c.slug] = c; });
+  for (const [re, slug] of SUGESTAO_CARGO_OVERRIDES) {
+    if (re.test(n) && bySlug[slug]) return bySlug[slug];
+  }
+  // Fallback: maior sobreposição de palavras com o nome do cargo (só cargos com slug)
+  const tokens = new Set(n.split(/[^a-z0-9+]+/).filter(t => t.length > 2));
+  let best = null, bestScore = 0;
+  for (const c of cargos) {
+    if (!c.slug) continue; // ignora os 5 cargos legados (sem slug)
+    const cn = _normCargo(c.nome_completo || c.nome);
+    if (cn === n) return c;
+    let score = 0;
+    cn.split(/[^a-z0-9+]+/).filter(t => t.length > 2).forEach(t => { if (tokens.has(t)) score += 1; });
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return bestScore >= 1 ? best : null;
+}
+
+// ── TAB: ACESSOS · cargo RH × cargo de permissão (relatório read-only) ──
+function AcessosTab({ onDetail }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState('');
+  const [filtro, setFiltro] = useState('todos'); // todos | sem_acesso | divergente
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try { const d = await rh.acessos(); if (vivo) setData(d); }
+      catch (e) { if (vivo) setErro(e.message || 'Erro ao carregar'); }
+      finally { if (vivo) setLoading(false); }
+    })();
+    return () => { vivo = false; };
+  }, []);
+
+  if (loading) return <div className="py-12 text-center text-sm text-muted-foreground">Carregando acessos…</div>;
+  if (erro) return <div className="py-12 text-center text-sm text-destructive">{erro}</div>;
+  if (!data) return null;
+
+  const cargos = data.cargos || [];
+  const itens = (data.itens || []).map(i => {
+    const sug = sugerirCargoPermissao(i.cargo_rh, cargos);
+    const divergente = i.situacao === 'com_acesso' && sug && i.cargo_perm_id && sug.id !== i.cargo_perm_id;
+    return { ...i, sugestao: sug, divergente };
+  });
+  const nDiverg = itens.filter(i => i.divergente).length;
+  const filtrados = itens.filter(i =>
+    filtro === 'sem_acesso' ? i.situacao === 'sem_acesso'
+      : filtro === 'divergente' ? i.divergente
+        : true
+  );
+
+  const cards = [
+    { title: 'Colaboradores ativos', value: data.resumo.total, color: '#3b82f6', f: 'todos' },
+    { title: 'Com acesso ao sistema', value: data.resumo.com_acesso, color: '#10b981', f: 'todos' },
+    { title: 'Sem acesso', value: data.resumo.sem_acesso, color: '#ef4444', f: 'sem_acesso' },
+    { title: 'Cargo divergente da sugestão', value: nDiverg, color: '#f59e0b', f: 'divergente' },
+  ];
+
+  return (
+    <div className="space-y-5 pt-4 pb-8">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        {cards.map(c => (
+          <StatisticsCard key={c.title} title={c.title} value={c.value} icon={ShieldCheck} iconColor={c.color} onClick={() => setFiltro(c.f)} />
+        ))}
+      </div>
+
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        O <b>cargo do RH</b> (título de folha) e o <b>cargo de permissão</b> (que dá acesso ao sistema) são cadastros
+        separados, ligados pelo e-mail. A <b>sugestão</b> é uma estimativa pelo título do RH — revise antes de aplicar.
+        Clique em <b>Configurar acesso</b> pra ajustar na ficha do colaborador (lá dá pra aplicar a sugestão num clique).
+      </p>
+
+      <div className="flex gap-2 flex-wrap">
+        {[['todos', 'Todos'], ['sem_acesso', 'Sem acesso'], ['divergente', 'Divergentes']].map(([k, l]) => (
+          <button key={k} onClick={() => setFiltro(k)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${filtro === k ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-md" style={{ border: `1px solid var(--cbrio-border)` }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Colaborador</th>
+              <th style={styles.th}>Cargo (RH)</th>
+              <th style={styles.th}>Acesso (permissão)</th>
+              <th style={styles.th}>Sugestão pelo RH</th>
+              <th style={styles.th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtrados.length === 0 && (
+              <tr><td colSpan={5}><div className="py-8 text-center text-sm text-muted-foreground">Nenhum colaborador neste filtro</div></td></tr>
+            )}
+            {filtrados.map(i => (
+              <tr key={i.id} className="cbrio-row hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => onDetail(i.id)}>
+                <td style={styles.td}>
+                  <div className="font-medium text-sm">{i.nome}</div>
+                  {i.email && <div className="text-xs text-muted-foreground truncate max-w-[220px]">{i.email}</div>}
+                </td>
+                <td style={styles.td}>
+                  <span className="text-sm">{i.cargo_rh || '—'}</span>
+                  {i.area_rh && <div className="text-xs text-muted-foreground">{i.area_rh}</div>}
+                </td>
+                <td style={styles.td}>
+                  {i.situacao === 'sem_acesso'
+                    ? <div>
+                        <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>Sem acesso</span>
+                        {i.motivo && <div className="text-[11px] text-muted-foreground mt-0.5">{i.motivo}</div>}
+                      </div>
+                    : <span className="text-sm">{i.cargo_perm_nome || '—'}</span>}
+                </td>
+                <td style={styles.td}>
+                  {i.sugestao
+                    ? <span className="text-sm" style={{ color: i.divergente ? '#b45309' : 'var(--cbrio-text)' }}>
+                      {i.sugestao.nome_completo || i.sugestao.nome}
+                      {i.divergente && <span className="text-[10px] ml-1 text-amber-600">≠ atual</span>}
+                    </span>
+                    : <span className="text-sm text-muted-foreground">—</span>}
+                </td>
+                <td style={styles.td}>
+                  <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); onDetail(i.id); }}>Configurar acesso</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 // ── Shared inline styles (kept for backward compat, gradually migrate to Tailwind) ──
 const styles = {
@@ -129,8 +346,10 @@ function Badge({ status, map }) {
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'colaboradores', label: 'Colaboradores', icon: Users },
+  { key: 'pcs', label: 'PCS', icon: Scale },
   { key: 'admissao', label: 'Admissão', icon: UserPlus },
   { key: 'organograma', label: 'Organograma', icon: Network },
+  { key: 'acessos', label: 'Acessos', icon: ShieldCheck },
   { key: 'folha', label: 'Folha', icon: Receipt },
   { key: 'avaliacoes', label: 'Avaliações', icon: Star },
   { key: 'treinamentos', label: 'Treinamentos', icon: Briefcase },
@@ -142,7 +361,11 @@ const TABS = [
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function RH() {
-  const { isDiretor } = useAuth();
+  const { isAdmin, getAccessLevel } = useAuth();
+  // Quem vê remuneração (salário/benefícios/Folha/PCS/CPF) na tela · MESMA regra do
+  // backend (podeEditarRemuneracao): admin/diretor ou RH nível ≥4. Padrão conservador,
+  // ajustável quando a política de confidencialidade for definida com o RH.
+  const podeRemun = isAdmin || getAccessLevel(['rh']) >= 4;
   const [tab, setTab] = useState('dashboard');
   const [dash, setDash] = useState(null);
   const [funcs, setFuncs] = useState([]);
@@ -163,6 +386,7 @@ export default function RH() {
   const [modalFerias, setModalFerias] = useState(null);
   const [modalDetail, setModalDetail] = useState(null);
   const [modalDoc, setModalDoc] = useState(null);
+  const [desligarFunc, setDesligarFunc] = useState(null); // colaborador sendo desligado
 
   // Toast & confirmação
   const [toast, setToast] = useState(null); // { message, type }
@@ -207,19 +431,58 @@ export default function RH() {
   useEffect(() => { loadFuncs(); }, [filtroStatus, filtroArea, busca]);
 
   // ── Handlers ──
+  // Campos restaurados num "Desfazer" de edição
+  const CAMPOS_RESTAURAVEIS = ['nome', 'cpf', 'email', 'telefone', 'cargo', 'area', 'tipo_contrato', 'data_admissao', 'data_demissao', 'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'gestor_id', 'observacoes'];
+
   async function saveFuncionario(data) {
+    const anterior = data.id ? funcs.find(x => x.id === data.id) : null;
     try {
       if (data.id) await rh.funcionarios.update(data.id, data);
       else await rh.funcionarios.create(data);
       setModalFunc(null);
       loadFuncs(); loadDash();
-      showSuccess(data.id ? 'Colaborador atualizado!' : 'Colaborador criado!');
+      if (data.id && anterior) {
+        // Snapshot pré-edição pra permitir desfazer (toast com ação)
+        const restaura = {};
+        for (const k of CAMPOS_RESTAURAVEIS) if (k in anterior) restaura[k] = anterior[k] ?? null;
+        sonnerToast.success('Colaborador atualizado', {
+          description: 'Mexeu em algo sem querer?',
+          duration: 10000,
+          action: {
+            label: 'Desfazer',
+            onClick: async () => {
+              try {
+                await rh.funcionarios.update(data.id, restaura);
+                loadFuncs(); loadDash();
+                sonnerToast.success('Alteração desfeita');
+              } catch (e) { sonnerToast.error(e.message || 'Erro ao desfazer'); }
+            },
+          },
+        });
+      } else {
+        showSuccess('Colaborador criado!');
+      }
     } catch (e) { showToast(e.message); }
   }
 
-  function deleteFuncionario(id) {
-    askConfirm('Remover este colaborador?', async () => {
-      try { await rh.funcionarios.remove(id); loadFuncs(); loadDash(); setModalDetail(null); showSuccess('Colaborador removido'); }
+  // Abre o diálogo de desligamento (data real + motivo) · NÃO apaga o registro
+  function abrirDesligamento(id) {
+    setDesligarFunc(funcs.find(x => x.id === id) || { id });
+  }
+
+  async function confirmarDesligamento({ data_demissao, motivo }) {
+    if (!desligarFunc) return;
+    try {
+      await rh.funcionarios.desligar(desligarFunc.id, { data_demissao, motivo });
+      setDesligarFunc(null); setModalDetail(null);
+      loadFuncs(); loadDash();
+      showSuccess('Colaborador desligado · histórico preservado');
+    } catch (e) { showToast(e.message); }
+  }
+
+  function reativarFuncionario(id) {
+    askConfirm('Reativar este colaborador (voltar para ativo)?', async () => {
+      try { await rh.funcionarios.reativar(id); loadFuncs(); loadDash(); setModalDetail(null); showSuccess('Colaborador reativado'); }
       catch (e) { showToast(e.message); }
     });
   }
@@ -286,9 +549,10 @@ export default function RH() {
             <p className="text-xs text-muted-foreground" style={{ marginTop: 2 }}>Colaboradores · Treinamentos · Férias</p>
           </div>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => setModalFunc({})}>
+        <Button size="sm" className="gap-2" onClick={() => setModalFunc({})}
+          title="Cadastro manual direto: você digita os dados e a pessoa entra na base na hora. Para o processo completo de contratação (formulário + contrato + assinatura), use a aba Admissão.">
           <UserPlus className="w-4 h-4" />
-          Novo Colaborador
+          Adicionar colaborador
         </Button>
       </div>
 
@@ -298,7 +562,7 @@ export default function RH() {
       <Tabs value={tab} onValueChange={setTab}>
         <ScrollArea className="w-full">
           <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none">
-            {TABS.map((t) => {
+            {TABS.filter(t => podeRemun || !['folha', 'pcs'].includes(t.key)).map((t) => {
               const Icon = t.icon;
               return (
                 <TabsTrigger
@@ -323,13 +587,20 @@ export default function RH() {
             funcs={funcs} loading={loading} busca={busca} setBusca={setBusca}
             filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
             filtroArea={filtroArea} setFiltroArea={setFiltroArea}
-            onNew={() => setModalFunc({})} onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={deleteFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
+            onNew={() => setModalFunc({})} onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
             showToast={showToast}
           />
         </TabsContent>
-        <TabsContent value="admissao"><TabAdmissao /></TabsContent>
-        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} /></TabsContent>
-        <TabsContent value="folha"><TabFolha /></TabsContent>
+        <TabsContent value="pcs">{podeRemun && <TabPCS />}</TabsContent>
+        <TabsContent value="admissao">
+          <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-muted-foreground">
+            <strong className="text-foreground">Admissão</strong> é o processo de contratação por etapas (rascunho → formulário pro contratado preencher → contrato → assinatura → concluído). Para apenas adicionar alguém que já está na equipe, use o botão <strong className="text-foreground">"Adicionar colaborador"</strong> no topo.
+          </div>
+          <TabAdmissao />
+        </TabsContent>
+        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); }} /></TabsContent>
+        <TabsContent value="acessos"><AcessosTab onDetail={openDetail} /></TabsContent>
+        <TabsContent value="folha">{podeRemun && <TabFolha />}</TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
         <TabsContent value="treinamentos">
           <TreinamentosTab treinos={treinos} funcs={funcs}
@@ -349,13 +620,15 @@ export default function RH() {
       </Tabs>
 
       {/* Modais */}
-      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} />
+      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} podeRemun={podeRemun} />
       <TreinamentoFormModal open={!!modalTreino} data={modalTreino} onClose={() => setModalTreino(null)} onSave={saveTreinamento} />
       
       <FuncionarioDetailPanel
         open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)}
+        funcs={funcs} podeRemun={podeRemun}
         onEdit={(f) => { setModalDetail(null); setModalFunc(f); }}
-        onDelete={deleteFuncionario}
+        onDelete={abrirDesligamento}
+        onReativar={reativarFuncionario}
         onNewDoc={(funcId) => setModalDoc({ funcionario_id: funcId })}
         onDeleteDoc={deleteDocumento}
         onSaveInline={async (updated) => {
@@ -365,8 +638,18 @@ export default function RH() {
           setModalDetail(refreshed);
           loadFuncs(); loadDash();
         }}
+        onChanged={async () => {
+          try { const r = await rh.funcionarios.get(modalDetail.id); setModalDetail(r); } catch { /* noop */ }
+          loadFuncs(); loadDash();
+        }}
+        onPhotoUpdated={(novoUrl) => {
+          setModalDetail((prev) => prev ? { ...prev, foto_url: novoUrl } : prev);
+          loadFuncs();
+        }}
       />
       <DocumentoFormModal open={!!modalDoc} data={modalDoc} onClose={() => setModalDoc(null)} onSave={saveDocumento} />
+
+      <DesligarModal func={desligarFunc} onClose={() => setDesligarFunc(null)} onConfirm={confirmarDesligamento} />
 
       {/* Toast & Confirm */}
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
@@ -591,7 +874,7 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onNew, onDetail, onDelete, onImport, showToast }) {
+function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onNew, onDetail, onDelete, onReativar, onImport, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
@@ -701,7 +984,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                   <td style={{ ...styles.td, fontWeight: 600 }}>
                     <div className="flex items-center gap-3">
                       {f.foto_url ? (
-                        <img src={f.foto_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                        <img data-foto-avatar="" src={f.foto_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold shrink-0">
                           {(f.nome || '?')[0].toUpperCase()}
@@ -717,11 +1000,22 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{f.area || '—'}</span></td>
                   <td style={styles.td}><span className="text-sm">{TIPO_CONTRATO[f.tipo_contrato] || f.tipo_contrato}</span></td>
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{fmtDate(f.data_admissao)}</span></td>
-                  <td style={styles.td}><Badge status={f.status} map={STATUS_COLORS} /></td>
                   <td style={styles.td}>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={e => { e.stopPropagation(); onDelete(f.id); }}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <Badge status={f.status} map={STATUS_COLORS} />
+                    {f.status === 'inativo' && f.data_demissao && (
+                      <div className="text-[11px] text-muted-foreground mt-1">desde {fmtDate(f.data_demissao)}</div>
+                    )}
+                  </td>
+                  <td style={styles.td}>
+                    {f.status === 'inativo' ? (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" title="Reativar colaborador" onClick={e => { e.stopPropagation(); onReativar(f.id); }}>
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-600" title="Desligar colaborador" onClick={e => { e.stopPropagation(); onDelete(f.id); }}>
+                        <UserMinus className="h-4 w-4" />
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -937,7 +1231,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                   <div key={tf.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: `1px solid ${C.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {tf.rh_funcionarios?.foto_url ? (
-                        <img src={tf.rh_funcionarios.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+                        <img data-foto-avatar="" src={tf.rh_funcionarios.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
                       ) : (
                         <div style={{ width: 24, height: 24, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
                           {(tf.rh_funcionarios?.nome || '?')[0].toUpperCase()}
@@ -1045,7 +1339,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                                 <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                     {d.funcionario?.foto_url ? (
-                                      <img src={d.funcionario.foto_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
+                                      <img data-foto-avatar="" src={d.funcionario.foto_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
                                     ) : (
                                       <div style={{ width: 28, height: 28, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>
                                         {(d.funcionario?.nome || '?')[0].toUpperCase()}
@@ -1083,7 +1377,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                                     <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: jaEnviado ? 'default' : 'pointer', opacity: jaEnviado ? 0.5 : 1 }}>
                                       <input type="checkbox" disabled={jaEnviado} checked={jaEnviado || enviarSel.includes(f.id)} onChange={() => toggleFuncSel(f.id)} />
                                       {f.foto_url ? (
-                                        <img src={f.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+                                        <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
                                       ) : (
                                         <div style={{ width: 24, height: 24, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
                                           {(f.nome || '?')[0].toUpperCase()}
@@ -1231,7 +1525,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
         <div className="px-6 pt-6 pb-4 border-b border-border flex items-start justify-between">
           <div className="flex items-center gap-4">
             {func.foto_url ? (
-              <img src={func.foto_url} alt="" className="w-16 h-16 rounded-full object-cover border-[3px] border-primary" />
+              <img data-foto-avatar="" src={func.foto_url} alt="" className="w-16 h-16 rounded-full object-cover border-[3px] border-primary" />
             ) : (
               <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center text-2xl font-bold border-[3px] border-primary">
                 {func.nome[0]?.toUpperCase()}
@@ -1282,7 +1576,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
                 onClick={() => onDetail(gestor.id)}
               >
                 {gestor.foto_url ? (
-                  <img src={gestor.foto_url} alt="" className="w-8 h-8 rounded-full object-cover border border-primary/40" />
+                  <img data-foto-avatar="" src={gestor.foto_url} alt="" className="w-8 h-8 rounded-full object-cover border border-primary/40" />
                 ) : (
                   <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
                     {gestor.nome[0]?.toUpperCase()}
@@ -1310,7 +1604,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
                     onClick={() => onDetail(s.id)}
                   >
                     {s.foto_url ? (
-                      <img src={s.foto_url} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
+                      <img data-foto-avatar="" src={s.foto_url} alt="" className="w-7 h-7 rounded-full object-cover border border-border" />
                     ) : (
                       <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">
                         {s.nome[0]?.toUpperCase()}
@@ -1338,9 +1632,10 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
   );
 }
 
-function OrgChartTab({ funcs, onDetail }) {
+function OrgChartTab({ funcs, onDetail, onChanged }) {
   const ativos = funcs.filter(f => f.status === 'ativo');
   const containerRef = useRef(null);
+  const contentRef = useRef(null);
   const [zoom, setZoom] = useState(0.85);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
@@ -1350,8 +1645,48 @@ function OrgChartTab({ funcs, onDetail }) {
   const [previewFunc, setPreviewFunc] = useState(null);
   const [expandAll, setExpandAll] = useState(true);
   const [collapsed, setCollapsed] = useState({});
+  // Assistente de IA
+  const [iaTexto, setIaTexto] = useState('');
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaAplicando, setIaAplicando] = useState(false);
+  const [iaProposta, setIaProposta] = useState(null); // { mudancas, observacao, avisos }
 
-  // Unique areas
+  async function pedirIA() {
+    const instrucao = iaTexto.trim();
+    if (!instrucao || iaLoading) return;
+    setIaLoading(true);
+    try {
+      const r = await rh.organograma.ia(instrucao);
+      if (!r.mudancas?.length) {
+        sonnerToast.message('Nada para mudar', { description: r.observacao || 'Não identifiquei uma mudança clara. Tente ser mais direto (ex.: "Marcelo reporta à Lorena").' });
+        setIaProposta(null);
+      } else {
+        setIaProposta(r);
+      }
+    } catch (e) {
+      sonnerToast.error(e.message || 'Erro ao consultar a IA');
+    } finally {
+      setIaLoading(false);
+    }
+  }
+
+  async function aplicarIA() {
+    if (!iaProposta?.mudancas?.length || iaAplicando) return;
+    setIaAplicando(true);
+    try {
+      const r = await rh.organograma.aplicar(iaProposta.mudancas);
+      sonnerToast.success(`Organograma atualizado · ${r.aplicadas} mudança(s) aplicada(s)`);
+      setIaProposta(null);
+      setIaTexto('');
+      onChanged?.();
+    } catch (e) {
+      sonnerToast.error(e.message || 'Erro ao aplicar');
+    } finally {
+      setIaAplicando(false);
+    }
+  }
+
+  // Unique áreas
   const areas = [...new Set(ativos.map(f => f.area).filter(Boolean))].sort();
 
   function handleWheel(e) {
@@ -1430,7 +1765,7 @@ function OrgChartTab({ funcs, onDetail }) {
           style={{ minWidth: 240, maxWidth: 280 }}
         >
           {func.foto_url ? (
-            <img src={func.foto_url} alt="" className="w-20 h-20 rounded-full object-cover mx-auto mb-3 border-[3px] border-primary shadow-md group-hover:scale-105 transition-transform" />
+            <img data-foto-avatar="" src={func.foto_url} alt="" className="w-20 h-20 rounded-full object-cover mx-auto mb-3 border-[3px] border-primary shadow-md group-hover:scale-105 transition-transform" />
           ) : (
             <div className="w-20 h-20 rounded-full bg-primary/10 text-primary flex items-center justify-center text-3xl font-bold mx-auto mb-3 border-[3px] border-primary">
               {func.nome[0]?.toUpperCase()}
@@ -1459,7 +1794,7 @@ function OrgChartTab({ funcs, onDetail }) {
           style={{ minWidth: 220, maxWidth: 260 }}
         >
           {func.foto_url ? (
-            <img src={func.foto_url} alt="" className="w-12 h-12 rounded-full object-cover border-2 border-primary/60 shrink-0 group-hover:scale-105 transition-transform" />
+            <img data-foto-avatar="" src={func.foto_url} alt="" className="w-12 h-12 rounded-full object-cover border-2 border-primary/60 shrink-0 group-hover:scale-105 transition-transform" />
           ) : (
             <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center text-lg font-bold shrink-0 border-2 border-primary/60">
               {func.nome[0]?.toUpperCase()}
@@ -1486,7 +1821,7 @@ function OrgChartTab({ funcs, onDetail }) {
         style={{ minWidth: 160, maxWidth: 180 }}
       >
         {func.foto_url ? (
-          <img src={func.foto_url} alt="" className="w-10 h-10 rounded-full object-cover mx-auto mb-2 border-2 border-border group-hover:border-primary/40 transition-colors" />
+          <img data-foto-avatar="" src={func.foto_url} alt="" className="w-10 h-10 rounded-full object-cover mx-auto mb-2 border-2 border-border group-hover:border-primary/40 transition-colors" />
         ) : (
           <div className="w-10 h-10 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-bold mx-auto mb-2 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
             {func.nome[0]?.toUpperCase()}
@@ -1544,10 +1879,96 @@ function OrgChartTab({ funcs, onDetail }) {
   const roots = getChildren(null);
   const comGestor = ativos.filter(f => f.gestor_id).length;
 
+  // Centraliza o conteúdo na área visível (o organograma nasce alinhado à
+  // esquerda e ficava fora da vista, obrigando a arrastar pra encontrá-lo).
+  // transform-origin é 'top center', então o centro do elemento é invariante ao
+  // zoom · basta alinhar o centro do conteúdo ao centro do container.
+  const centralizar = useCallback(() => {
+    const c = containerRef.current;
+    const el = contentRef.current;
+    if (!c || !el) return;
+    setPan({ x: (c.clientWidth - el.offsetWidth) / 2, y: 0 });
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => centralizar(), 60);
+    return () => clearTimeout(t);
+    // recentraliza quando muda o nº de raízes ou os filtros
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roots.length, filterArea, searchTerm]);
+
   return (
     <>
+      {/* Assistente de IA · organize por descrição */}
+      <div className="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
+        <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-foreground">
+          <Sparkles className="h-4 w-4 text-primary" />
+          Organizar com IA
+        </div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Descreva a mudança em português e a IA ajusta a hierarquia — você confirma antes de aplicar.
+          Ex.: <em>"Marcelo reporta à Lorena"</em> · <em>"tira o gestor do Pedro"</em> · <em>"coloca o time de mídia sob o Pedro Paiva"</em>.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={iaTexto}
+            onChange={e => setIaTexto(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') pedirIA(); }}
+            placeholder="Descreva o que quer mudar no organograma..."
+            disabled={iaLoading}
+            className="flex-1 h-9 px-3 rounded-md border border-input bg-background text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Button size="sm" onClick={pedirIA} disabled={iaLoading || !iaTexto.trim()} className="gap-1.5 shrink-0">
+            {iaLoading ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" /> : <Sparkles className="h-3.5 w-3.5" />}
+            {iaLoading ? 'Pensando...' : 'Sugerir'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Prévia das mudanças sugeridas pela IA (confirmar antes de aplicar) */}
+      {iaProposta && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4" onClick={() => !iaAplicando && setIaProposta(null)}>
+          <div className="bg-popover rounded-2xl p-6 w-full max-w-[480px] shadow-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()} style={{ animation: 'cbrio-modal-center-in 0.2s ease-out' }}>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center"><Sparkles className="h-5 w-5" /></div>
+              <div className="text-[15px] font-semibold text-foreground">Confirmar mudanças</div>
+            </div>
+            {iaProposta.observacao && <p className="text-xs text-muted-foreground mb-3">{iaProposta.observacao}</p>}
+            <div className="space-y-2 mb-3">
+              {iaProposta.mudancas.map((m, i) => (
+                <div key={i} className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
+                  <div className="font-medium text-foreground">{m.funcionario_nome}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    ↳ {m.gestor_nome ? <>passa a reportar a <strong className="text-foreground">{m.gestor_nome}</strong></> : <>fica <strong className="text-foreground">sem gestor</strong> (vai para o topo)</>}
+                  </div>
+                  {m.motivo && <div className="text-[11px] text-muted-foreground mt-1 italic">{m.motivo}</div>}
+                </div>
+              ))}
+            </div>
+            {iaProposta.avisos?.length > 0 && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 mb-3">
+                {iaProposta.avisos.map((a, i) => <div key={i}>⚠️ {a}</div>)}
+              </div>
+            )}
+            <div className="flex gap-2.5 justify-end">
+              <Button variant="ghost" onClick={() => setIaProposta(null)} disabled={iaAplicando}>Cancelar</Button>
+              <Button onClick={aplicarIA} disabled={iaAplicando} className="gap-1.5">
+                {iaAplicando ? <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" /> : <Save className="h-3.5 w-3.5" />}
+                Aplicar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-col gap-3 mb-4">
+        {ativos.length > 0 && comGestor === 0 && (
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs text-muted-foreground">
+            Ainda não há hierarquia: defina o <strong className="text-foreground">"Gestor Direto"</strong> de cada colaborador (no detalhe ou no formulário de edição) para o organograma montar a árvore. Por enquanto todos aparecem no topo.
+          </div>
+        )}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="text-sm text-muted-foreground">
             {ativos.length} colaboradores · {comGestor} com gestor definido
@@ -1620,7 +2041,7 @@ function OrgChartTab({ funcs, onDetail }) {
               position: 'relative',
             }}
           >
-            <div style={{
+            <div ref={contentRef} style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: 'top center',
               display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -1644,7 +2065,7 @@ function OrgChartTab({ funcs, onDetail }) {
             >−</button>
             <div className="h-px bg-border mx-1" />
             <button
-              onClick={() => { setZoom(0.85); setPan({ x: 0, y: 0 }); }}
+              onClick={() => { setZoom(0.85); centralizar(); }}
               className="w-8 h-8 rounded-xl flex items-center justify-center text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >fit</button>
           </div>
@@ -1668,7 +2089,7 @@ function OrgChartTab({ funcs, onDetail }) {
 // MODAIS
 // ═══════════════════════════════════════════════════════════
 
-function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], setores = [], areas = [] }) {
+function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], setores = [], areas = [], podeRemun = true }) {
   const [f, setF] = useState({});
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -1712,7 +2133,7 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </>}>
       <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
       <div style={styles.formRow}>
-        <Input label="CPF" value={f.cpf || ''} onChange={e => upd('cpf', e.target.value)} />
+        {podeRemun && <Input label="CPF" value={f.cpf || ''} onChange={e => upd('cpf', e.target.value)} />}
         <Input label="Email" type="email" value={f.email || ''} onChange={e => upd('email', e.target.value)} />
       </div>
       <div style={styles.formRow}>
@@ -1735,18 +2156,16 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
       </div>
       <div style={styles.formRow}>
         <Input label="Cargo *" value={f.cargo || ''} onChange={e => upd('cargo', e.target.value)} />
-        <FormSelect label="Tipo de Contrato" value={f.tipo_contrato || 'clt'} onChange={e => upd('tipo_contrato', e.target.value)}>
-          {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+        <FormSelect label="Tipo de Contrato" value={f.tipo_contrato || 'CLT'} onChange={e => upd('tipo_contrato', e.target.value)}>
+          {OPCOES_CONTRATO.map(k => <SelectItem key={k} value={k}>{TIPO_CONTRATO[k] || k}</SelectItem>)}
         </FormSelect>
       </div>
       <div style={styles.formRow}>
         <Input label="Data Admissão *" type="date" value={f.data_admissao || ''} onChange={e => upd('data_admissao', e.target.value)} />
-        <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
+        {podeRemun && <Input label="Salário (R$)" type="number" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />}
       </div>
-      <FormSelect label="Gestor Direto" value={f.gestor_id || ''} onChange={e => upd('gestor_id', e.target.value || null)} placeholder="Nenhum (nível máximo)">
-        <SelectItem value="__none__">Nenhum (nível máximo)</SelectItem>
-        {funcionarios.filter(fn => fn.id !== f.id && fn.status === 'ativo').map(fn => <SelectItem key={fn.id} value={fn.id}>{fn.nome} — {fn.cargo}</SelectItem>)}
-      </FormSelect>
+      {/* O gestor direto é definido na seção "Hierarquia" da ficha (editor canônico,
+          com trava de ciclo) — não aqui, pra não ter dois editores divergentes. */}
       {f.id && (
         <div style={styles.formRow}>
           <FormSelect label="Status" value={f.status || 'ativo'} onChange={e => upd('status', e.target.value)}>
@@ -2193,7 +2612,119 @@ function NotasColaborador({ funcId, initialValue }) {
 const NIVEL_LABELS = { 1: 'Sem acesso', 2: 'Pessoal', 3: 'Área', 4: 'Setor', 5: 'Admin' };
 const NIVEL_COLORS = { 1: C.red, 2: C.amber, 3: C.blue, 4: C.green, 5: '#8b5cf6' };
 
-function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDoc, onDeleteDoc, onSaveInline }) {
+// Descendentes (quem reporta, direta ou indiretamente, a `id`)
+function descendentesDe(id, funcs) {
+  const out = new Set();
+  let fronteira = funcs.filter(f => f.gestor_id === id).map(f => f.id);
+  let guard = 0;
+  while (fronteira.length && guard < 5000) {
+    const proximos = [];
+    for (const fid of fronteira) {
+      if (out.has(fid)) continue;
+      out.add(fid);
+      for (const f of funcs) if (f.gestor_id === fid) proximos.push(f.id);
+    }
+    fronteira = proximos;
+    guard += 1;
+  }
+  return out;
+}
+// Ancestrais (cadeia de gestores acima de `id`)
+function ancestraisDe(id, funcs) {
+  const out = new Set();
+  const byId = new Map(funcs.map(f => [f.id, f]));
+  let cur = byId.get(id)?.gestor_id || null;
+  let guard = 0;
+  while (cur && !out.has(cur) && guard < 5000) { out.add(cur); cur = byId.get(cur)?.gestor_id || null; guard += 1; }
+  return out;
+}
+
+// Seção Hierarquia no detalhe do colaborador: edita o gestor direto e os
+// subordinados (quem reporta a ele). Bloqueia ciclos filtrando as opções.
+function HierarquiaSection({ data, funcs = [], onChanged }) {
+  const [saving, setSaving] = useState(false);
+  const [addSel, setAddSel] = useState('');
+  const ativos = funcs.filter(f => f.status === 'ativo');
+  const gestor = data.gestor_id ? funcs.find(f => f.id === data.gestor_id) : null;
+  const subordinados = ativos.filter(f => f.gestor_id === data.id).sort((a, b) => a.nome.localeCompare(b.nome));
+  const desc = descendentesDe(data.id, funcs);
+  const anc = ancestraisDe(data.id, funcs);
+  const opcoesGestor = ativos.filter(f => f.id !== data.id && !desc.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
+  const opcoesAdd = ativos.filter(f => f.id !== data.id && f.gestor_id !== data.id && !anc.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
+
+  async function aplicar(fn, msg) {
+    setSaving(true);
+    try { await fn(); sonnerToast.success(msg); await onChanged?.(); }
+    catch (e) { sonnerToast.error(e.message || 'Erro ao salvar'); }
+    finally { setSaving(false); }
+  }
+  const mudarGestor = (novoId) => aplicar(() => rh.funcionarios.setGestor(data.id, novoId || null), novoId ? 'Gestor direto atualizado' : 'Gestor removido');
+  const addSubordinado = (id) => { if (id) aplicar(() => rh.funcionarios.setGestor(id, data.id), 'Subordinado adicionado').then(() => setAddSel('')); };
+  const removerSubordinado = (id) => aplicar(() => rh.funcionarios.setGestor(id, null), 'Removido dos subordinados');
+
+  const Avatarzinho = ({ f, size = 28 }) => (
+    f.foto_url
+      ? <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+      : <div style={{ width: size, height: size, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.42, fontWeight: 700, flexShrink: 0 }}>{(f.nome || '?')[0].toUpperCase()}</div>
+  );
+
+  return (
+    <div style={{ marginBottom: 20, background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <Network className="h-4 w-4 text-primary" />
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Hierarquia</span>
+        {saving && <span style={{ fontSize: 11, color: C.text3 }}>salvando...</span>}
+      </div>
+
+      {/* Gestor direto */}
+      <div style={{ marginBottom: 16 }}>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Gestor direto (a quem reporta)</label>
+        <ShadSelect value={data.gestor_id || '__none__'} onValueChange={v => mudarGestor(v === '__none__' ? null : v)} disabled={saving}>
+          <SelectTrigger className="w-full"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">— Sem gestor (topo)</SelectItem>
+            {opcoesGestor.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}{f.cargo ? ` · ${f.cargo}` : ''}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+        {gestor && <div style={{ fontSize: 11, color: C.text3, marginTop: 4 }}>Atual: {gestor.nome}</div>}
+      </div>
+
+      {/* Subordinados */}
+      <div>
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Subordinados diretos ({subordinados.length})</label>
+        {subordinados.length === 0 && <div style={{ fontSize: 13, color: C.text3, marginBottom: 8 }}>Ninguém reporta a este colaborador ainda.</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {subordinados.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px' }}>
+              <Avatarzinho f={s} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nome}</div>
+                <div style={{ fontSize: 11, color: C.text2 }}>{s.cargo || '—'}</div>
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Remover dos subordinados" disabled={saving} onClick={() => removerSubordinado(s.id)}>
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <ShadSelect value={addSel} onValueChange={(v) => addSubordinado(v)} disabled={saving}>
+          <SelectTrigger className="w-full"><SelectValue placeholder="+ Adicionar subordinado..." /></SelectTrigger>
+          <SelectContent>
+            {opcoesAdd.length === 0 && <div style={{ padding: '8px 12px', fontSize: 12, color: C.text3 }}>Ninguém disponível</div>}
+            {opcoesAdd.map(f => (
+              <SelectItem key={f.id} value={f.id}>
+                {f.nome}{f.cargo ? ` · ${f.cargo}` : ''}{f.gestor_id ? ' (tem gestor)' : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </ShadSelect>
+        <div style={{ fontSize: 11, color: C.text3, marginTop: 4 }}>Adicionar move a pessoa pra reportar a {data.nome?.split(' ')[0] || 'este colaborador'} (troca o gestor anterior, se houver).</div>
+      </div>
+    </div>
+  );
+}
+
+function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
@@ -2203,6 +2734,25 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [savingInline, setSavingInline] = useState(false);
+  const [uploadingFoto, setUploadingFoto] = useState(false);
+  const fotoInputRef = useRef(null);
+
+  async function handleFotoChange(e) {
+    const file = e.target.files?.[0];
+    if (!file || !data?.id) return;
+    if (!file.type.startsWith('image/')) { alert('Selecione uma imagem'); return; }
+    if (file.size > 10 * 1024 * 1024) { alert('Imagem precisa ter no máximo 10 MB'); return; }
+    setUploadingFoto(true);
+    try {
+      const result = await rh.funcionarios.uploadFoto(data.id, file);
+      onPhotoUpdated?.(result.foto_url);
+    } catch (err) {
+      alert(err.message || 'Erro ao enviar foto');
+    } finally {
+      setUploadingFoto(false);
+      if (fotoInputRef.current) fotoInputRef.current.value = '';
+    }
+  }
 
   // Estado local das permissões (editável, salva só no botão)
   const [localCargo, setLocalCargo] = useState(null);
@@ -2342,17 +2892,36 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
         <div style={{ padding: '24px 28px' }}>
       {/* Avatar + Info principal */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-        {data.foto_url ? (
-          <img src={data.foto_url} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}`, flexShrink: 0 }} />
-        ) : (
-          <div style={{ width: 72, height: 72, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700, flexShrink: 0 }}>
-            {(data.nome || '?')[0].toUpperCase()}
-          </div>
-        )}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          {data.foto_url ? (
+            <img data-foto-avatar="" src={data.foto_url} alt="" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${C.primary}` }} />
+          ) : (
+            <div style={{ width: 72, height: 72, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>
+              {(data.nome || '?')[0].toUpperCase()}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => fotoInputRef.current?.click()}
+            disabled={uploadingFoto}
+            title="Trocar foto"
+            style={{ position: 'absolute', bottom: -2, right: -2, width: 28, height: 28, borderRadius: '50%', background: C.primary, color: '#fff', border: '2px solid var(--cbrio-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingFoto ? 'wait' : 'pointer', opacity: uploadingFoto ? 0.6 : 1 }}
+          >
+            <Camera className="h-3.5 w-3.5" />
+          </button>
+          <input
+            ref={fotoInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFotoChange}
+            style={{ display: 'none' }}
+          />
+        </div>
         <div>
           <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{data.nome}</div>
           <div style={{ fontSize: 14, color: C.text2 }}>{data.cargo}{data.area ? ` · ${data.area}` : ''}</div>
           <Badge status={data.status} map={STATUS_COLORS} />
+          {uploadingFoto ? <div style={{ fontSize: 11, color: C.text2, marginTop: 4 }}>Enviando foto...</div> : null}
         </div>
       </div>
       {editMode ? (
@@ -2366,7 +2935,7 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
             { key: 'cpf', label: 'CPF' },
             { key: 'data_admissao', label: 'Admissão', type: 'date' },
             { key: 'salario', label: 'Salário (R$)', type: 'number' },
-          ].map(f => (
+          ].filter(f => podeRemun || !['cpf', 'salario'].includes(f.key)).map(f => (
             <div key={f.key} style={f.full ? { gridColumn: '1 / -1' } : undefined}>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{f.label}</label>
               <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type={f.type || 'text'} value={editForm[f.key] || ''} onChange={e => setEditForm(p => ({ ...p, [f.key]: e.target.value }))} />
@@ -2374,12 +2943,12 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
           ))}
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Contrato</label>
-            <ShadSelect value={editForm.tipo_contrato || 'clt'} onValueChange={v => setEditForm(p => ({ ...p, tipo_contrato: v }))}>
+            <ShadSelect value={editForm.tipo_contrato || 'CLT'} onValueChange={v => setEditForm(p => ({ ...p, tipo_contrato: v }))}>
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(TIPO_CONTRATO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                {OPCOES_CONTRATO.map(k => <SelectItem key={k} value={k}>{TIPO_CONTRATO[k] || k}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
           </div>
@@ -2399,23 +2968,26 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Cargo:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{data.cargo}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Área:</span><div style={{ fontSize: 14 }}>{data.area || '—'}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>CPF:</span><div style={{ fontSize: 14 }}>{data.cpf || '—'}</div></div>
+          <div><span style={{ fontSize: 11, color: C.text2 }}>CPF:</span><div style={{ fontSize: 14 }}>{podeRemun ? (data.cpf || '—') : '•••'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Email:</span><div style={{ fontSize: 14 }}>{data.email || '—'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Telefone:</span><div style={{ fontSize: 14 }}>{data.telefone || '—'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Contrato:</span><div style={{ fontSize: 14 }}>{TIPO_CONTRATO[data.tipo_contrato]}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Admissão:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_admissao)}</div></div>
-          <div><span style={{ fontSize: 11, color: C.text2 }}>Salário:</span><div style={{ fontSize: 14 }}>{fmtMoney(data.salario)}</div></div>
+          <div><span style={{ fontSize: 11, color: C.text2 }}>Salário:</span><div style={{ fontSize: 14 }}>{podeRemun ? fmtMoney(data.salario) : '•••'}</div></div>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_COLORS} /></div></div>
         </div>
       )}
 
+      {/* Hierarquia · gestor direto + subordinados */}
+      <HierarquiaSection data={data} funcs={funcs} onChanged={onChanged} />
+
       {/* Anotações editáveis */}
       <NotasColaborador funcId={data.id} initialValue={data.observacoes || ''} />
 
-      {/* Benefícios e Remuneração */}
-      <BeneficiosSection data={data} onSave={async (updated) => {
+      {/* Benefícios e Remuneração · só pra quem pode ver remuneração */}
+      {podeRemun && <BeneficiosSection data={data} onSave={async (updated) => {
         try { await rh.funcionarios.update(data.id, updated); onClose(); } catch (e) { console.error(e); }
-      }} />
+      }} />}
 
       {/* Documentos com upload */}
       <DocumentosSection data={data} onNewDoc={onNewDoc} onDeleteDoc={onDeleteDoc} onRefresh={() => onClose()} />
@@ -2474,6 +3046,25 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
                   </button>
                 ))}
               </div>
+              {(() => {
+                const sug = sugerirCargoPermissao(data.cargo, estrutura.cargos || []);
+                if (!sug) return null;
+                const jaIgual = localCargo === sug.id;
+                return (
+                  <div style={{ marginTop: 8, fontSize: 11, color: C.text2 }}>
+                    Cargo no RH: <b style={{ color: C.text }}>{data.cargo || '—'}</b>{' · '}
+                    {jaIgual
+                      ? <span style={{ color: C.green }}>já corresponde a “{sug.nome_completo || sug.nome}”</span>
+                      : <>sugestão de cargo: <b style={{ color: C.text }}>{sug.nome_completo || sug.nome}</b>
+                          <button onClick={() => handleCargoChange(sug.id)} disabled={saving}
+                            style={{ marginLeft: 6, padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: `1px solid ${C.primary}`, background: 'transparent', color: C.primary, cursor: 'pointer' }}>
+                            Aplicar sugestão
+                          </button>
+                          <span style={{ marginLeft: 6, color: C.text3 }}>(depois clique em “Salvar Permissões”)</span>
+                        </>}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Áreas vinculadas */}
@@ -2562,7 +3153,11 @@ function FuncionarioDetailPanel({ open, data, onClose, onEdit, onDelete, onNewDo
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 16, borderTop: `1px solid ${C.border}`, marginTop: 16 }}>
-        <Button variant="destructive" size="sm" className="gap-1.5" onClick={() => onDelete(data.id)}><Trash2 className="h-3.5 w-3.5" />Remover Colaborador</Button>
+        {data.status === 'inativo' ? (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onReativar(data.id)}><RotateCcw className="h-3.5 w-3.5" />Reativar colaborador</Button>
+        ) : (
+          <Button variant="destructive" size="sm" className="gap-1.5" onClick={() => onDelete(data.id)}><UserMinus className="h-3.5 w-3.5" />Desligar colaborador</Button>
+        )}
       </div>
         </div>{/* end padding div */}
       </div>{/* end panel */}

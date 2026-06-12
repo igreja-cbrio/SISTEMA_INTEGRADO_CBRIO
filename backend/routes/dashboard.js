@@ -22,7 +22,7 @@ router.get('/workload', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Erro ao buscar carga' }); }
 });
 
-// POST /api/dashboard/sync-areas — sincronizar area dos profiles com RH
+// POST /api/dashboard/sync-areas — sincronizar área dos profiles com RH
 router.post('/sync-areas', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { data: profiles } = await supabase.from('profiles').select('id, email, area');

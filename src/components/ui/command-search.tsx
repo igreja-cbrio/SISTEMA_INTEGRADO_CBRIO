@@ -27,8 +27,8 @@ const PAGES: SearchItem[] = [
   { label: 'Assistente IA', description: 'Agentes de auditoria e análise', path: '/assistente-ia', icon: Bot, category: 'Administrativo' },
   { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos' },
   { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos' },
-  { label: 'Planejamento', description: 'Visão consolidada PMO', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
-  { label: 'Expansão', description: 'Metas de expansão', path: '/expansao', icon: Map, category: 'Projetos e Eventos' },
+  { label: 'Gestão Anual', description: 'Próximo ano e resultados · eventos e projetos', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
+  { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos' },
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial' },
   { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial' },
 ]
@@ -119,10 +119,11 @@ export function CommandSearch() {
 
   return (
     <div className="fixed inset-0 z-[999]" onClick={handleClose}>
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="flex items-start justify-center pt-[20vh]">
+      <div className="absolute inset-0 bg-black/70" />
+      <div className="relative flex items-start justify-center pt-[20vh]">
         <div
-          className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
+          className="w-full max-w-lg rounded-2xl border border-border shadow-2xl overflow-hidden"
+          style={{ background: 'var(--cbrio-card)' }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border">

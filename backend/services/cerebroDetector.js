@@ -59,7 +59,7 @@ async function detectarArquivosNovos() {
       if (data['@odata.nextLink']) {
         deltaUrl = data['@odata.nextLink'];
       } else {
-        // Salvar delta link pra proxima execucao
+        // Salvar delta link pra próxima execucao
         if (data['@odata.deltaLink']) {
           await supabase.from('cerebro_config').upsert({
             chave: deltaKey,
@@ -85,7 +85,7 @@ async function filtrarEEnfileirar(item, drive) {
   if (tam < TAM_MINIMO) return 'ignorado';
   if (nome.startsWith('~') || nome.startsWith('.')) return 'ignorado';
 
-  // Verificar se ja foi processado com mesma versao
+  // Verificar se já foi processado com mesma versão
   const lastMod = item.lastModifiedDateTime || '';
   const { data: existente } = await supabase.from('cerebro_fila')
     .select('id, last_modified, status')

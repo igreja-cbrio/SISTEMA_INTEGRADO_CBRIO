@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 230" aria-hidden="true">
+<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+<path d="M-20,40 C120,4 220,76 360,40 C500,4 560,60 620,40"/>
+<path d="M-20,90 C120,54 220,126 360,90 C500,54 560,110 620,90"/>
+<path d="M-20,140 C120,104 220,176 360,140 C500,104 560,160 620,140"/>
+<path d="M-20,190 C120,154 220,226 360,190 C500,154 560,210 620,190"/>
+</g>
+</svg>

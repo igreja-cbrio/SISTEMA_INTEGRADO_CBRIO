@@ -49,7 +49,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
         setMemberId(r.memberId || '');
       } catch (err: any) {
         if (!alive) return;
-        setError(err.message || 'Nao foi possivel gerar o QR');
+        setError(err.message || 'Não foi possível gerar o QR');
       } finally {
         if (alive) setLoading(false);
       }
@@ -121,7 +121,7 @@ export default function MemberWalletPass({ cpf, dataNascimento, inline = false, 
     return (
       <div className="flex flex-col items-center gap-2 py-6 text-center">
         <AlertCircle className="h-6 w-6 text-red-400" />
-        <p className="text-sm text-red-300">{error || 'Nao foi possivel gerar o QR'}</p>
+        <p className="text-sm text-red-300">{error || 'Não foi possível gerar o QR'}</p>
       </div>
     );
   }

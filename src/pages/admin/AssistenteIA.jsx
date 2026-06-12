@@ -4,6 +4,8 @@ import { Button } from '../../components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import ReactMarkdown from 'react-markdown';
+import FilaAprovacao from './FilaAprovacao';
+import AgentRunDetailDialog from '../../components/AgentRunDetailDialog';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -27,15 +29,34 @@ const SEV_MAP = {
 };
 
 const AGENT_TYPES = [
-  { value: 'system_auditor', label: '🔍 Auditor Geral', desc: 'Analisa dados reais de todos os módulos e identifica problemas, inconsistências e oportunidades de melhoria.', icon: '🔍' },
-  { value: 'module_rh', label: '👥 Agente RH', desc: 'Audita colaboradores, admissões, férias, treinamentos. Verifica campos faltantes e inconsistências.', icon: '👥' },
-  { value: 'module_financeiro', label: '💰 Agente Financeiro', desc: 'Audita contas, transações, contas a pagar e reembolsos. Detecta vencimentos e anomalias.', icon: '💰' },
-  { value: 'module_eventos', label: '📅 Agente Eventos', desc: 'Audita eventos, tarefas, orçamentos e reuniões. Identifica atrasos e eventos sem responsável.', icon: '📅' },
-  { value: 'module_projetos', label: '📊 Agente Projetos', desc: 'Audita projetos, fases, tarefas e riscos. Detecta progresso estagnado e marcos vencidos.', icon: '📊' },
-  { value: 'module_logistica', label: '🚚 Agente Logística', desc: 'Audita fornecedores, pedidos, solicitações e notas fiscais. Verifica atrasos e pendências.', icon: '🚚' },
-  { value: 'module_patrimonio', label: '🏢 Agente Patrimônio', desc: 'Audita bens, inventários e movimentações. Detecta bens extraviados e sem catalogação.', icon: '🏢' },
-  { value: 'module_membresia', label: '⛪ Agente Membresia', desc: 'Audita membros, integração e engajamento. Identifica dados incompletos e inativos.', icon: '⛪' },
-  { value: 'design_auditor', label: '🎨 Agente Design', desc: 'Analisa layout e UI do sistema, traz referências modernas (Linear, Vercel, Notion) e sugere melhorias concretas com Tailwind.', icon: '🎨' },
+  // Auditoria cross-módulos
+  { value: 'system_auditor',     label: '🔍 Auditor Geral',       desc: 'Analisa dados reais de todos os módulos e identifica problemas, inconsistências e oportunidades.', icon: '🔍', group: 'cross' },
+  { value: 'design_auditor',     label: '🎨 Agente Design',       desc: 'Analisa layout e UI, traz referências modernas (Linear, Vercel, Notion) e sugere melhorias.', icon: '🎨', group: 'cross' },
+
+  // Administrativo
+  { value: 'module_rh',          label: '👥 Agente RH',           desc: 'Audita colaboradores, admissões, férias, treinamentos. Verifica campos faltantes.', icon: '👥', group: 'admin' },
+  { value: 'module_financeiro',  label: '💰 Agente Financeiro',   desc: 'Audita contas, transações, contas a pagar e reembolsos.', icon: '💰', group: 'admin' },
+  { value: 'module_logistica',   label: '🚚 Agente Logística',    desc: 'Audita fornecedores, pedidos, solicitações e notas fiscais.', icon: '🚚', group: 'admin' },
+  { value: 'module_patrimonio',  label: '🏢 Agente Patrimônio',   desc: 'Audita bens, inventários e movimentações.', icon: '🏢', group: 'admin' },
+
+  // Acompanhamento
+  { value: 'module_eventos',     label: '📅 Agente Eventos',      desc: 'Audita eventos, tarefas, orçamentos e reuniões.', icon: '📅', group: 'acomp' },
+  { value: 'module_projetos',    label: '📊 Agente Projetos',     desc: 'Audita projetos, fases, tarefas e riscos.', icon: '📊', group: 'acomp' },
+
+  // Ministerial
+  { value: 'module_membresia',   label: '⛪ Agente Membresia',     desc: 'Audita membros, integração e engajamento.', icon: '⛪', group: 'min' },
+  { value: 'module_integracao',  label: '🤲 Agente Integração',   desc: 'Audita visitantes, decisões e funil de acompanhamento.', icon: '🤲', group: 'min' },
+  { value: 'module_next',        label: '➡️ Agente NEXT',         desc: 'Audita inscrições do NEXT, check-ins e indicações pendentes.', icon: '➡️', group: 'min' },
+  { value: 'module_grupos',      label: '👥 Agente Grupos',       desc: 'Audita grupos de conexão, líderes e cobertura por bairro.', icon: '👥', group: 'min' },
+  { value: 'module_cuidados',    label: '💜 Agente Cuidados',     desc: 'Audita capelania, aconselhamento e Jornada 180.', icon: '💜', group: 'min' },
+  { value: 'module_voluntariado',label: '🤝 Agente Voluntariado', desc: 'Audita voluntários ativos, escalas e sincronização Planning Center.', icon: '🤝', group: 'min' },
+
+  // Inteligência / Governança
+  { value: 'module_nps',         label: '📢 Agente NPS',          desc: 'Audita pesquisas de satisfação, taxa de resposta e tendências de NPS.', icon: '📢', group: 'intel' },
+  { value: 'module_cerebro',     label: '🧠 Agente Cérebro',      desc: 'Audita fila do Cérebro CBRio, erros de processamento e custo de tokens.', icon: '🧠', group: 'intel' },
+  { value: 'module_kpis',        label: '📈 Agente KPIs/OKR',     desc: 'Audita indicadores táticos, trajetória das metas e cobertura por área.', icon: '📈', group: 'intel' },
+  { value: 'module_processos',   label: '⚙️ Agente Processos',    desc: 'Audita processos operacionais, OKRs e responsáveis.', icon: '⚙️', group: 'intel' },
+  { value: 'module_governanca',  label: '🏛️ Agente Governança',   desc: 'Audita ciclo mensal (OKR/DRE/KPI/Conselho), pautas e deliberações.', icon: '🏛️', group: 'intel' },
 ];
 
 const MODULE_OPTIONS = [
@@ -69,6 +90,25 @@ const s = {
 const fmtDate = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
 const fmtCost = (v) => `$${(Number(v) || 0).toFixed(4)}`;
 const fmtTokens = (v) => (v || 0).toLocaleString('pt-BR');
+
+const AGENT_BY_VALUE = AGENT_TYPES.reduce((acc, a) => { acc[a.value] = a; return acc; }, {});
+const labelOf = (agentType) => AGENT_BY_VALUE[agentType]?.label || agentType;
+
+const GROUP_LABELS = {
+  cross: 'Cross-módulos',
+  admin: 'Administrativo',
+  acomp: 'Acompanhamento',
+  min: 'Ministerial',
+  intel: 'Inteligência & Governança',
+};
+const GROUP_ORDER = ['cross', 'admin', 'acomp', 'min', 'intel'];
+
+function scoreColor(score) {
+  if (score == null) return C.text3;
+  if (score >= 8) return C.green;
+  if (score >= 5) return C.amber;
+  return C.red;
+}
 
 // ─── Typing Indicator ──────────────────────────────────────────────────
 
@@ -428,36 +468,92 @@ function ChatTab() {
   );
 }
 
+// ─── Stat Box ───────────────────────────────────────────────────────────
+
+function StatBox({ label, value, sub, color }) {
+  return (
+    <div style={{ ...s.card, padding: 14 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.8 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: color || C.text, marginTop: 4 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
 // ─── Score Chart ────────────────────────────────────────────────────────
 
 function ScoreChart({ scores = {} }) {
-  const moduleNames = { module_rh: 'RH', module_financeiro: 'Fin', module_eventos: 'Evt', module_projetos: 'Proj', module_logistica: 'Log', module_patrimonio: 'Pat', module_membresia: 'Mem', system_auditor: 'Geral' };
   const entries = Object.entries(scores).filter(([, v]) => v.length > 0);
   if (!entries.length) return null;
 
+  // Calcular extremos para o eixo temporal
+  const allDates = entries.flatMap(([, h]) => h.map(p => new Date(p.date).getTime()));
+  const minT = Math.min(...allDates);
+  const maxT = Math.max(...allDates);
+  const range = Math.max(maxT - minT, 86400000); // ao menos 1d
+
+  const W = 800;
+  const H = 180;
+  const padL = 32, padR = 12, padT = 12, padB = 24;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  // Paleta circular para os agentes
+  const palette = ['#00B39D', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#10b981', '#ec4899', '#06b6d4', '#84cc16'];
+
+  const xOf = (ts) => padL + ((ts - minT) / range) * innerW;
+  const yOf = (score) => padT + innerH - (score / 10) * innerH;
+
   return (
     <div style={{ ...s.card, padding: 20, marginBottom: 24 }}>
-      <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 16 }}>Evolução dos Scores</div>
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-        {entries.map(([type, history]) => {
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Evolução dos Scores</div>
+        <div style={{ fontSize: 11, color: C.text3 }}>{entries.length} agente(s) · {allDates.length} pontos</div>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', minWidth: 480, height: H, display: 'block' }}>
+          {/* gridlines de score (0, 5, 10) */}
+          {[0, 5, 10].map(score => (
+            <g key={score}>
+              <line x1={padL} y1={yOf(score)} x2={W - padR} y2={yOf(score)} stroke={C.border} strokeWidth={1} strokeDasharray={score === 5 ? '0' : '2,3'} />
+              <text x={padL - 6} y={yOf(score) + 3} fontSize="9" textAnchor="end" fill={C.text3}>{score}</text>
+            </g>
+          ))}
+          {/* linhas */}
+          {entries.map(([type, history], idx) => {
+            const color = palette[idx % palette.length];
+            const pts = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
+            const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xOf(new Date(p.date).getTime())} ${yOf(p.score)}`).join(' ');
+            return (
+              <g key={type}>
+                <path d={path} stroke={color} strokeWidth={2} fill="none" strokeLinejoin="round" strokeLinecap="round" />
+                {pts.map((p, i) => (
+                  <circle key={i} cx={xOf(new Date(p.date).getTime())} cy={yOf(p.score)} r={3} fill={color}>
+                    <title>{`${labelOf(type)} — ${new Date(p.date).toLocaleDateString('pt-BR')}: score ${p.score}, ${p.findingsCount} findings`}</title>
+                  </circle>
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      {/* Legenda */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+        {entries.map(([type, history], idx) => {
+          const color = palette[idx % palette.length];
           const last = history[history.length - 1];
           const prev = history.length > 1 ? history[history.length - 2] : null;
           const trend = prev ? last.score - prev.score : 0;
-          const scoreColor = last.score >= 8 ? C.green : last.score >= 5 ? C.amber : C.red;
           return (
-            <div key={type} style={{ textAlign: 'center', minWidth: 60 }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: scoreColor }}>{last.score}</div>
-              <div style={{ fontSize: 10, color: C.text3 }}>{moduleNames[type] || type}</div>
+            <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.text2 }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, display: 'inline-block' }} />
+              <span>{labelOf(type)}</span>
+              <strong style={{ color: scoreColor(last.score) }}>{last.score}</strong>
               {trend !== 0 && (
-                <div style={{ fontSize: 10, color: trend > 0 ? C.green : C.red, fontWeight: 600 }}>
+                <span style={{ color: trend > 0 ? C.green : C.red, fontWeight: 600 }}>
                   {trend > 0 ? `▲+${trend}` : `▼${trend}`}
-                </div>
+                </span>
               )}
-              <div style={{ display: 'flex', gap: 2, justifyContent: 'center', marginTop: 4 }}>
-                {history.slice(-8).map((h, i) => (
-                  <div key={i} style={{ width: 4, height: h.score * 3, background: h.score >= 8 ? C.green : h.score >= 5 ? C.amber : C.red, borderRadius: 2, opacity: 0.3 + (i / history.length) * 0.7 }} />
-                ))}
-              </div>
             </div>
           );
         })}
@@ -472,11 +568,11 @@ function AuditoriasTab() {
   const [runs, setRuns] = useState([]);
   const [stats, setStats] = useState(null);
   const [scores, setScores] = useState({});
-  const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [selectedRun, setSelectedRun] = useState(null);
   const [steps, setSteps] = useState([]);
   const [pollingId, setPollingId] = useState(null);
+  const [filterStatus, setFilterStatus] = useState('all'); // all, completed, running, failed
 
   const loadRuns = useCallback(async () => {
     try { setRuns(await agents.runs()); } catch (e) { console.error(e); }
@@ -490,7 +586,23 @@ function AuditoriasTab() {
     try { setStats(await agents.stats()); } catch (e) { console.error(e); }
   }, []);
 
+  const selectRun = useCallback(async (runId) => {
+    try {
+      const detail = await agents.runDetail(runId);
+      const stepsData = await agents.runSteps(runId);
+      setSelectedRun(detail);
+      setSteps(stepsData);
+    } catch (e) { console.error(e); }
+  }, []);
+
   useEffect(() => { loadRuns(); loadStats(); loadScores(); }, [loadRuns, loadStats, loadScores]);
+
+  // Deep-link ?run=<id> abre a run direto (vindo da notificação)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const runId = params.get('run');
+    if (runId) selectRun(runId);
+  }, [selectRun]);
 
   useEffect(() => {
     const hasRunning = runs.some(r => r.status === 'running');
@@ -514,92 +626,153 @@ function AuditoriasTab() {
     setLaunching(false);
   }
 
-  async function selectRun(runId) {
-    try {
-      const detail = await agents.runDetail(runId);
-      const stepsData = await agents.runSteps(runId);
-      setSelectedRun(detail);
-      setSteps(stepsData);
-    } catch (e) { console.error(e); }
-  }
+  // Resumo agregado de findings de runs completas
+  const findingsSummary = runs
+    .filter(r => r.status === 'completed' && Array.isArray(r.findings))
+    .reduce((acc, r) => {
+      r.findings.forEach(f => {
+        if (f.severity === 'critico') acc.criticos++;
+        else if (f.severity === 'aviso') acc.avisos++;
+        else acc.info++;
+      });
+      return acc;
+    }, { criticos: 0, avisos: 0, info: 0 });
+
+  const runsFiltered = filterStatus === 'all' ? runs : runs.filter(r => r.status === filterStatus);
+  const lastRunByAgent = runs.reduce((acc, r) => {
+    if (!acc[r.agent_type]) acc[r.agent_type] = r;
+    return acc;
+  }, {});
 
   return (
     <>
-      {stats && (
-        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: C.text2, marginBottom: 16 }}>
-          <span>Execuções: <strong style={{ color: C.text }}>{stats.totalRuns}</strong></span>
-          <span>Tokens: <strong style={{ color: C.text }}>{fmtTokens(stats.totalTokens)}</strong></span>
-          <span>Custo: <strong style={{ color: C.text }}>{fmtCost(stats.totalCost)}</strong></span>
-        </div>
-      )}
+      {/* Stats bar: agora com findings agregados */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <StatBox label="Execuções" value={stats?.totalRuns ?? '—'} sub={stats ? `${stats.completed} OK · ${stats.failed} falhas` : null} />
+        <StatBox label="Tokens" value={stats ? fmtTokens(stats.totalTokens) : '—'} />
+        <StatBox label="Custo" value={stats ? fmtCost(stats.totalCost) : '—'} sub={stats ? `últimos ${stats.sinceDays}d` : null} />
+        <StatBox label="Findings críticos" value={findingsSummary.criticos} color={findingsSummary.criticos > 0 ? C.red : C.text} sub={`${findingsSummary.avisos} avisos · ${findingsSummary.info} info`} />
+      </div>
 
       <ScoreChart scores={scores} />
 
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <Button onClick={async () => { for (const at of AGENT_TYPES) { await launchAgent(at.value); } }} disabled={launching}>
           {launching ? 'Iniciando...' : '🚀 Executar Todos os Agentes'}
         </Button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[
+            { v: 'all', label: 'Todas' },
+            { v: 'completed', label: 'Concluídas' },
+            { v: 'running', label: 'Em execução' },
+            { v: 'failed', label: 'Falhas' },
+          ].map(opt => (
+            <button key={opt.v} onClick={() => setFilterStatus(opt.v)} style={{
+              padding: '6px 12px', fontSize: 12, fontWeight: 600,
+              borderRadius: 6, cursor: 'pointer',
+              border: `1px solid ${filterStatus === opt.v ? C.primary : C.border}`,
+              background: filterStatus === opt.v ? C.primaryBg : 'transparent',
+              color: filterStatus === opt.v ? C.primary : C.text2,
+            }}>{opt.label}</button>
+          ))}
+        </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {AGENT_TYPES.map(at => {
-          const lastRun = runs.find(r => r.agent_type === at.value);
-          const lastStatus = lastRun ? STATUS_MAP[lastRun.status] : null;
-          const score = lastRun?.config?.score;
-          const findingsCount = lastRun?.findings?.length || 0;
-          const scoreColor = score >= 8 ? C.green : score >= 5 ? C.amber : score ? C.red : C.text3;
-          return (
-            <div key={at.value} style={{ ...s.card, padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{at.label}</div>
-                {score != null && (
-                  <div style={{ fontSize: 20, fontWeight: 800, color: scoreColor }}>{score}</div>
-                )}
+      {/* Cards agrupados por categoria */}
+      {GROUP_ORDER.map(groupKey => {
+        const agentsInGroup = AGENT_TYPES.filter(a => a.group === groupKey);
+        if (!agentsInGroup.length) return null;
+        return (
+          <div key={groupKey} style={{ marginBottom: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                {GROUP_LABELS[groupKey]}
               </div>
-              <div style={{ fontSize: 11, color: C.text3, lineHeight: 1.4 }}>{at.desc}</div>
-              {lastRun && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: C.text3 }}>
-                  <span style={s.badge(lastStatus?.c || C.text3, lastStatus?.bg || '#73737318')}>{lastStatus?.label || '—'}</span>
-                  <span>{findingsCount > 0 ? `${findingsCount} finding(s)` : 'Sem alertas'}</span>
-                </div>
-              )}
-              <Button size="sm" variant={lastRun ? 'outline' : 'default'} className="w-full" onClick={() => launchAgent(at.value)} disabled={launching}>
-                {launching ? '...' : lastRun ? 'Executar Novamente' : 'Executar'}
-              </Button>
+              <div style={{ flex: 1, height: 1, background: C.border }} />
             </div>
-          );
-        })}
-      </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+              {agentsInGroup.map(at => {
+                const lastRun = lastRunByAgent[at.value];
+                const lastStatus = lastRun ? STATUS_MAP[lastRun.status] : null;
+                const score = lastRun?.config?.score;
+                const findingsCount = lastRun?.findings?.length || 0;
+                const criticos = (lastRun?.findings || []).filter(f => f.severity === 'critico').length;
+                const sc = scoreColor(score);
+                const isHighlighted = selectedRun?.agent_type === at.value;
+                return (
+                  <div key={at.value}
+                    onClick={() => lastRun && selectRun(lastRun.id)}
+                    style={{
+                      ...s.card, padding: 16, display: 'flex', flexDirection: 'column', gap: 10,
+                      cursor: lastRun ? 'pointer' : 'default',
+                      borderColor: isHighlighted ? C.primary : (criticos > 0 ? C.red : C.border),
+                      borderWidth: isHighlighted || criticos > 0 ? 2 : 1,
+                    }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{at.label}</div>
+                      {score != null && (
+                        <div style={{ fontSize: 20, fontWeight: 800, color: sc }}>{score}</div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.text3, lineHeight: 1.4 }}>{at.desc}</div>
+                    {lastRun && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: C.text3 }}>
+                        <span style={s.badge(lastStatus?.c || C.text3, lastStatus?.bg || '#73737318')}>{lastStatus?.label || '—'}</span>
+                        {criticos > 0 ? (
+                          <span style={{ color: C.red, fontWeight: 700 }}>{criticos} crítico(s)</span>
+                        ) : (
+                          <span>{findingsCount > 0 ? `${findingsCount} finding(s)` : 'Sem alertas'}</span>
+                        )}
+                      </div>
+                    )}
+                    <Button size="sm" variant={lastRun ? 'outline' : 'default'} className="w-full"
+                      onClick={(e) => { e.stopPropagation(); launchAgent(at.value); }} disabled={launching}>
+                      {launching ? '...' : lastRun ? 'Executar Novamente' : 'Executar'}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
 
-      <div style={{ display: 'grid', gridTemplateColumns: selectedRun ? '1fr 2fr' : '1fr', gap: 16 }}>
+      <AgentRunDetailDialog
+        run={selectedRun}
+        open={!!selectedRun}
+        onClose={() => setSelectedRun(null)}
+      />
+
+      <div style={{ gap: 16 }}>
         <div style={s.card}>
           <div style={s.cardHeader}>
             <div style={s.cardTitle}>Execuções</div>
             <Button variant="ghost" onClick={loadRuns}>Atualizar</Button>
           </div>
-          {runs.length === 0 ? <div style={s.empty}>Nenhuma execução ainda</div> : (
+          {runsFiltered.length === 0 ? <div style={s.empty}>Nenhuma execução {filterStatus === 'all' ? '' : `(${filterStatus})`} encontrada</div> : (
             <div style={{ maxHeight: 500, overflowY: 'auto' }}>
-              {runs.map(r => {
+              {runsFiltered.map(r => {
                 const st = STATUS_MAP[r.status] || STATUS_MAP.running;
                 const isSelected = selectedRun?.id === r.id;
+                const criticos = (r.findings || []).filter(f => f.severity === 'critico').length;
                 return (
                   <div key={r.id} onClick={() => selectRun(r.id)} style={{
                     padding: '14px 20px', borderBottom: `1px solid ${C.border}`, cursor: 'pointer',
                     background: isSelected ? C.primaryBg : 'transparent',
+                    borderLeft: criticos > 0 ? `3px solid ${C.red}` : '3px solid transparent',
                     transition: 'background 0.15s',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{
-                        { system_auditor: '🔍 Auditor', design_auditor: '🎨 Design', module_rh: '👥 RH', module_financeiro: '💰 Financeiro', module_eventos: '📅 Eventos', module_projetos: '📊 Projetos', module_logistica: '🚚 Logística', module_patrimonio: '🏢 Patrimônio', module_membresia: '⛪ Membresia' }[r.agent_type] || r.agent_type
-                      }</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{labelOf(r.agent_type)}</span>
                       <span style={s.badge(st.c, st.bg)}>{st.label}</span>
                     </div>
                     <div style={{ fontSize: 11, color: C.text3 }}>
                       {fmtDate(r.created_at)} · {fmtTokens((r.tokens_input || 0) + (r.tokens_output || 0))} tokens · {fmtCost(r.cost_usd)}
                     </div>
                     {r.status === 'completed' && r.findings?.length > 0 && (
-                      <div style={{ fontSize: 11, color: C.amber, marginTop: 4 }}>
-                        {r.findings.length} finding(s)
+                      <div style={{ fontSize: 11, marginTop: 4, display: 'flex', gap: 8 }}>
+                        {criticos > 0 && <span style={{ color: C.red, fontWeight: 700 }}>{criticos} crítico</span>}
+                        <span style={{ color: C.amber }}>{r.findings.length} finding(s)</span>
                       </div>
                     )}
                   </div>
@@ -609,112 +782,6 @@ function AuditoriasTab() {
           )}
         </div>
 
-        {selectedRun && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {selectedRun.summary && (
-              <div style={{ ...s.card, padding: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Resumo Executivo</div>
-                <div style={{ fontSize: 14, color: C.text, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{selectedRun.summary}</div>
-              </div>
-            )}
-
-            {selectedRun.error && (
-              <div style={{ ...s.card, padding: 20, borderLeft: `4px solid ${C.red}` }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.red, marginBottom: 4 }}>Erro</div>
-                <div style={{ fontSize: 13, color: C.text }}>{selectedRun.error}</div>
-              </div>
-            )}
-
-            {selectedRun.findings?.length > 0 && (
-              <div style={s.card}>
-                <div style={s.cardHeader}>
-                  <div style={s.cardTitle}>Findings ({selectedRun.findings.length})</div>
-                </div>
-                <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-                  {selectedRun.findings.map((f, i) => {
-                    const sev = SEV_MAP[f.severity] || SEV_MAP.info;
-                    return (
-                      <div key={i} style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}` }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                          <span style={{ ...s.badge(sev.c, sev.bg), fontSize: 9 }}>{sev.label}</span>
-                          <span style={{ ...s.badge(C.primary, C.primaryBg), fontSize: 9 }}>{(f.module || '').toUpperCase()}</span>
-                          <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{f.title}</span>
-                        </div>
-                        <div style={{ fontSize: 13, color: C.text2, lineHeight: 1.5, marginBottom: 6 }}>{f.detail}</div>
-                        {f.suggestion && (
-                          <div style={{ fontSize: 12, color: C.green, fontStyle: 'italic' }}>Sugestão: {f.suggestion}</div>
-                        )}
-                        {f.reference && (
-                          <div style={{ fontSize: 11, color: C.blue, marginTop: 4 }}>Ref: {f.reference}</div>
-                        )}
-                        {f.category && (
-                          <span style={{ ...s.badge(C.text3, '#73737318'), fontSize: 9, marginTop: 4, display: 'inline-block' }}>{f.category}</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {selectedRun.config?.topReferences?.length > 0 && (
-              <div style={s.card}>
-                <div style={s.cardHeader}>
-                  <div style={s.cardTitle}>🎨 Referências de Design</div>
-                </div>
-                <div style={{ padding: 16 }}>
-                  {selectedRun.config.topReferences.map((ref, i) => (
-                    <div key={i} style={{ padding: '10px 0', borderBottom: i < selectedRun.config.topReferences.length - 1 ? `1px solid ${C.border}` : 'none' }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.primary }}>{ref.name}</div>
-                      {ref.url && <div style={{ fontSize: 11, color: C.blue }}>{ref.url}</div>}
-                      <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{ref.why}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {selectedRun.config?.quickWins?.length > 0 && (
-              <div style={{ ...s.card, borderLeft: `4px solid ${C.green}` }}>
-                <div style={s.cardHeader}>
-                  <div style={s.cardTitle}>⚡ Quick Wins</div>
-                </div>
-                <div style={{ padding: 16 }}>
-                  {selectedRun.config.quickWins.map((qw, i) => (
-                    <div key={i} style={{ padding: '6px 0', fontSize: 13, color: C.text, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                      <span style={{ color: C.green, fontWeight: 700 }}>→</span>
-                      <span>{qw}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {steps.length > 0 && (
-              <div style={s.card}>
-                <div style={s.cardHeader}>
-                  <div style={s.cardTitle}>Steps ({steps.length})</div>
-                </div>
-                {steps.map(step => (
-                  <div key={step.id} style={{ padding: '10px 20px', borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: C.text2 }}>
-                      <span>#{step.step_number} · <strong>{step.role}</strong> · {step.model?.split('-').slice(0, 2).join('-')}</span>
-                      <span>{fmtTokens(step.tokens_input + step.tokens_output)} tokens · {step.duration_ms}ms · {fmtCost(step.cost_usd)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {selectedRun.status === 'running' && (
-              <div style={{ ...s.card, padding: 20, textAlign: 'center' }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>🔄</div>
-                <div style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>Agente em execução...</div>
-                <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>A página atualiza automaticamente a cada 5 segundos.</div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </>
   );
@@ -733,11 +800,16 @@ export default function AssistenteIA() {
       <Tabs defaultValue="chat">
         <TabsList className="mb-4">
           <TabsTrigger value="chat">💬 Chat IA</TabsTrigger>
-          <TabsTrigger value="auditorias">🔍 Auditorias</TabsTrigger>
+          <TabsTrigger value="fila">🤖 Agentes de Auditoria</TabsTrigger>
+          <TabsTrigger value="auditorias">🔍 Legacy</TabsTrigger>
         </TabsList>
 
         <TabsContent value="chat">
           <ChatTab />
+        </TabsContent>
+
+        <TabsContent value="fila">
+          <FilaAprovacao />
         </TabsContent>
 
         <TabsContent value="auditorias">

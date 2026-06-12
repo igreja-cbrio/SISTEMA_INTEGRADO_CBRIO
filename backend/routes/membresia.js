@@ -1,10 +1,11 @@
 const router = require('express').Router();
 const multer = require('multer');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
+const { escapePostgrestValue } = require('../utils/sanitize');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -16,6 +17,18 @@ const uploadMw = multer({
 });
 
 router.use(authenticate);
+
+// Autoriza edicao de um membro especifico pelas rotas "totem":
+//   - staff de membresia (nivel >= 3) ou admin/diretor → qualquer membro
+//   - o proprio usuario logado → so o seu proprio cadastro (req.user.membro_id)
+// Antes, qualquer autenticado podia sobrescrever PII (email/telefone/endereco/
+// foto) de QUALQUER membro só pelo id (IDOR · LGPD).
+function podeEditarMembroTotem(req, membroId) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  if (getEffectiveLevel(req, 'membresia') >= 3) return true;
+  if (req.user.membro_id && String(req.user.membro_id) === String(membroId)) return true;
+  return false;
+}
 
 // ── Utils ──
 // Nível de generosidade baseado na data da última contribuição.
@@ -69,7 +82,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
       .maybeSingle();
 
     if (!mapping || !mapping.cpf) {
-      return res.status(404).json({ error: 'QR nao encontrado' });
+      return res.status(404).json({ error: 'QR não encontrado' });
     }
 
     // Marca uso (opcional, nao-critico)
@@ -101,6 +114,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
         supabase
           .from('mem_grupo_membros')
           .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
           .maybeSingle(),
@@ -180,19 +194,141 @@ router.get('/qr-lookup/:token', async (req, res) => {
       });
     }
 
-    return res.status(404).json({ error: 'Cadastro nao encontrado' });
+    return res.status(404).json({ error: 'Cadastro não encontrado' });
   } catch (e) {
     console.error('[MEMBRESIA] qr-lookup error:', e.message);
     res.status(500).json({ error: 'Erro ao consultar QR' });
   }
 });
 
+// ── CPF Lookup (identidade do membro por CPF) ──
+//
+// GET /api/membresia/cpf-lookup/:cpf
+// Mesma lógica do qr-lookup, mas resolve direto pelo CPF (sem token).
+// Usado no totem como alternativa pra quem não tem a carteirinha digital.
+// CPF e' normalizado pra so digitos antes do match.
+router.get('/cpf-lookup/:cpf', async (req, res) => {
+  try {
+    const cpf = String(req.params.cpf || '').replace(/\D/g, '');
+    if (!cpf || cpf.length !== 11) {
+      return res.status(400).json({ error: 'CPF invalido' });
+    }
+
+    // 1) Tenta membro ativo em mem_membros
+    const { data: membro } = await supabase
+      .from('mem_membros')
+      .select(`
+        id, nome, foto_url, status, email, telefone, data_nascimento, cpf,
+        endereco, bairro, cidade, estado_civil, cep, lat, lng,
+        familia:mem_familias(id, nome)
+      `)
+      .eq('cpf', cpf)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (membro) {
+      const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
+        supabase
+          .from('mem_grupo_membros')
+          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          .is('deleted_at', null)
+          .eq('membro_id', membro.id)
+          .is('saiu_em', null)
+          .maybeSingle(),
+        supabase
+          .from('mem_voluntarios')
+          .select('ministerio:mem_ministerios(id, nome, cor)')
+          .eq('membro_id', membro.id)
+          .is('ate', null),
+        supabase
+          .from('mem_contribuicoes')
+          .select('data')
+          .eq('membro_id', membro.id)
+          .order('data', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('mem_checkins')
+          .select('data')
+          .eq('membro_id', membro.id)
+          .order('data', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('mem_trilha_valores')
+          .select('etapa, data_conclusao, concluida')
+          .eq('membro_id', membro.id),
+      ]);
+
+      const ultimaContribuicao = ultContribRes?.data?.data || null;
+      const ultimoCheckin = ultCheckinRes?.data?.data || null;
+      const ministerios = (ministeriosRes?.data || [])
+        .map((v) => v.ministerio)
+        .filter(Boolean);
+      const trilha = trilhaRes?.data || [];
+
+      return res.json({
+        found: true,
+        pending: false,
+        membro: {
+          id: membro.id,
+          nome: membro.nome,
+          foto_url: membro.foto_url,
+          status: membro.status,
+          email: membro.email,
+          telefone: membro.telefone,
+          data_nascimento: membro.data_nascimento,
+          cpf: membro.cpf,
+          endereco: membro.endereco,
+          bairro: membro.bairro,
+          cidade: membro.cidade,
+          cep: membro.cep,
+          estado_civil: membro.estado_civil,
+          familia: membro.familia || null,
+          grupo_atual: grupoAtualRes?.data?.grupo || null,
+          ministerios,
+          trilha,
+          ultima_contribuicao: ultimaContribuicao,
+          nivel_generosidade: calcularNivelGenerosidade(ultimaContribuicao),
+          ultimo_checkin: ultimoCheckin,
+          nivel_servico: calcularNivelServico(ultimoCheckin),
+        },
+      });
+    }
+
+    // 2) Fallback: cadastro pendente
+    const { data: pendente } = await supabase
+      .from('mem_cadastros_pendentes')
+      .select('id, nome, foto_url, email, telefone, data_nascimento, cpf, endereco, bairro, cidade, estado_civil, status, created_at')
+      .eq('cpf', cpf)
+      .maybeSingle();
+
+    if (pendente) {
+      return res.json({
+        found: true,
+        pending: true,
+        cadastro: pendente,
+      });
+    }
+
+    return res.status(404).json({ error: 'Cadastro não encontrado' });
+  } catch (e) {
+    console.error('[MEMBRESIA] cpf-lookup error:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar CPF' });
+  }
+});
+
 // ── Membros ──
 
 // GET /api/membresia/membros
+// Query params:
+//   ?status=...        filtra por status (visitante|membro_ativo|...)
+//   ?busca=...         busca por nome
+//   ?papel=...         filtra por papel: voluntário|visitante|grupo_ativo|
+//                      contribuinte|inscrito_next|sem_papel
 router.get('/membros', async (req, res) => {
   try {
-    const { status, busca } = req.query;
+    const { status, busca, papel } = req.query;
     let query = supabase
       .from('mem_membros')
       .select('*, familia:mem_familias(id, nome)')
@@ -200,12 +336,56 @@ router.get('/membros', async (req, res) => {
       .order('nome');
 
     if (status) query = query.eq('status', status);
-    if (busca) query = query.ilike('nome', `%${busca}%`);
+    // Busca por tokens: "matheus toscano" casa "Matheus Ribeiro Toscano".
+    // Cada palavra vira um ILIKE (AND), case-insensitive, em qualquer ordem.
+    if (busca) {
+      const tokens = String(busca).trim().split(/\s+/).filter(Boolean).slice(0, 6);
+      for (const t of tokens) query = query.ilike('nome', `%${t}%`);
+    }
 
-    const { data, error } = await query;
+    const { data: membros, error } = await query;
     if (error) throw error;
-    res.json(data);
+    if (!membros || membros.length === 0) return res.json([]);
+
+    // Anotar papéis (vw_pessoas_papeis), batch — evita N+1.
+    // A view já faz JOIN com vol_profiles, int_visitantes, etc.
+    const ids = membros.map(m => m.id);
+    const { data: papeis } = await supabase
+      .from('vw_pessoas_papeis')
+      .select('membresia_id, is_voluntario, is_visitante, is_inscrito_next, in_grupo_ativo, is_contribuinte, total_inscricoes_next')
+      .in('membresia_id', ids);
+    const papeisMap = {};
+    (papeis || []).forEach(p => { papeisMap[p.membresia_id] = p; });
+
+    const enriched = membros.map(m => ({
+      ...m,
+      papeis: papeisMap[m.id] || {
+        is_voluntario: false, is_visitante: false, is_inscrito_next: false,
+        in_grupo_ativo: false, is_contribuinte: false, total_inscricoes_next: 0,
+      },
+    }));
+
+    // Filtro por papel (depois de enriched pra suportar 'sem_papel')
+    let filtered = enriched;
+    if (papel) {
+      filtered = enriched.filter(m => {
+        const p = m.papeis;
+        if (papel === 'voluntario') return p.is_voluntario;
+        if (papel === 'visitante') return p.is_visitante;
+        if (papel === 'grupo_ativo') return p.in_grupo_ativo;
+        if (papel === 'contribuinte') return p.is_contribuinte;
+        if (papel === 'inscrito_next') return p.is_inscrito_next;
+        if (papel === 'sem_papel') {
+          return !p.is_voluntario && !p.is_visitante && !p.is_inscrito_next
+            && !p.in_grupo_ativo && !p.is_contribuinte;
+        }
+        return true;
+      });
+    }
+
+    res.json(filtered);
   } catch (e) {
+    console.error('membresia/membros:', e.message);
     res.status(500).json({ error: 'Erro ao buscar membros' });
   }
 });
@@ -213,14 +393,62 @@ router.get('/membros', async (req, res) => {
 // GET /api/membresia/membros/:id (detalhe com trilha e histórico)
 router.get('/membros/:id', async (req, res) => {
   try {
-    const { data: membro, error } = await supabase
-      .from('mem_membros')
-      .select('*, familia:mem_familias(id, nome)')
-      .eq('id', req.params.id)
-      .single();
-    if (error) throw error;
+    const id = req.params.id;
+    const anoAtual = new Date().getFullYear();
 
-    // Familiares
+    // Round 1: tudo que so depende do id (em paralelo)
+    const [
+      membroRes,
+      trilhaRes,
+      historicoRes,
+      participacoesRes,
+      contribuicoesRes,
+      contribAnoRes,
+      volProfileRes,
+      inscricoesNextRes,
+      jornada180Res,
+      batismoRes,
+      decisoesCultoRes,
+    ] = await Promise.all([
+      supabase.from('mem_membros').select('*, familia:mem_familias(id, nome)').eq('id', id).single(),
+      supabase.from('mem_trilha_valores').select('*').eq('membro_id', id).order('created_at'),
+      supabase.from('mem_historico').select('*, registrado:profiles(name)').eq('membro_id', id).order('data', { ascending: false }).limit(20),
+      supabase.from('mem_grupo_membros')
+        .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
+        .eq('membro_id', id).order('entrou_em', { ascending: false }),
+      supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(30),
+      supabase.from('mem_contribuicoes').select('tipo, valor')
+        .eq('membro_id', id).is('deleted_at', null).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
+      supabase.from('vol_profiles')
+        .select('id, full_name, planning_center_id, allocation_status, profile_complete')
+        .eq('membresia_id', id).maybeSingle(),
+      supabase.from('next_inscricoes')
+        .select('id, evento_id, indicou_batismo, indicou_servir, indicou_grupo, indicou_dizimo, check_in_at, created_at, evento:next_eventos(id, data, titulo, status)')
+        .eq('membro_id', id).order('created_at', { ascending: false }).limit(20),
+      supabase.from('cui_jornada180')
+        .select('id, data_encontro, observacoes, pastor_lider_id, pastor_lider:profiles(name)')
+        .eq('membro_id', id).order('data_encontro', { ascending: false }).limit(20),
+      supabase.from('batismo_inscricoes')
+        .select('id, data_batismo, status, observacoes')
+        .eq('membro_id', id).order('data_batismo', { ascending: false }).limit(5),
+      supabase.from('cultos_decisoes_pessoas')
+        .select('id, culto_id, tipo_decisao, registrado_em, culto:cultos(id, data, service_type:vol_service_types(name))')
+        .eq('membro_id', id).order('registrado_em', { ascending: false }).limit(5),
+    ]);
+    if (membroRes.error) throw membroRes.error;
+    const membro = membroRes.data;
+    const trilha = trilhaRes.data || [];
+    const historico = historicoRes.data || [];
+    const participacoes = participacoesRes.data || [];
+    const contribuicoes = contribuicoesRes.data || [];
+    const contribAno = contribAnoRes.data || [];
+    const volProfile = volProfileRes.data || null;
+    const inscricoesNext = inscricoesNextRes.data || [];
+    const jornada180 = jornada180Res.data || [];
+    const batismos = batismoRes.data || [];
+    const decisoesCulto = decisoesCultoRes.data || [];
+
+    // Round 2: familiares depende de membro.familia_id
     let familiares = [];
     if (membro.familia_id) {
       const { data: fam } = await supabase
@@ -232,86 +460,102 @@ router.get('/membros/:id', async (req, res) => {
       familiares = fam || [];
     }
 
-    // Trilha dos valores
-    const { data: trilha } = await supabase
-      .from('mem_trilha_valores')
-      .select('*')
-      .eq('membro_id', membro.id)
-      .order('created_at');
+    const grupo_atual = participacoes.find(p => !p.saiu_em) || null;
+    const grupo_historico = participacoes.filter(p => p.saiu_em);
 
-    // Histórico
-    const { data: historico } = await supabase
-      .from('mem_historico')
-      .select('*, registrado:profiles(name)')
-      .eq('membro_id', membro.id)
-      .order('data', { ascending: false })
-      .limit(20);
-
-    // Grupo de Conexão — participação atual + histórico
-    const { data: participacoes } = await supabase
-      .from('mem_grupo_membros')
-      .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
-      .eq('membro_id', membro.id)
-      .order('entrou_em', { ascending: false });
-
-    const grupo_atual = (participacoes || []).find(p => !p.saiu_em) || null;
-    const grupo_historico = (participacoes || []).filter(p => p.saiu_em);
-
-    // Contribuições (últimas 30) + nível de generosidade + totais do ano corrente
-    const { data: contribuicoes } = await supabase
-      .from('mem_contribuicoes')
-      .select('*')
-      .eq('membro_id', membro.id)
-      .order('data', { ascending: false })
-      .limit(30);
-
-    const ultimaContribuicao = contribuicoes?.[0]?.data || null;
+    const ultimaContribuicao = contribuicoes[0]?.data || null;
     const nivelGenerosidade = calcularNivelGenerosidade(ultimaContribuicao);
 
-    const anoAtual = new Date().getFullYear();
-    const { data: contribAno } = await supabase
-      .from('mem_contribuicoes')
-      .select('tipo, valor')
-      .eq('membro_id', membro.id)
-      .gte('data', `${anoAtual}-01-01`)
-      .lte('data', `${anoAtual}-12-31`);
-
     const totaisAno = { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
-    (contribAno || []).forEach(c => {
+    contribAno.forEach(c => {
       const v = Number(c.valor) || 0;
       totaisAno[c.tipo] = (totaisAno[c.tipo] || 0) + v;
       totaisAno.total += v;
     });
 
-    // Voluntariado / Ministérios
-    const { data: voluntarios } = await supabase
-      .from('mem_voluntarios')
-      .select('*, ministerio:mem_ministerios(id, nome, cor, ativo)')
-      .eq('membro_id', membro.id)
-      .order('desde', { ascending: false });
+    let ministerios_ativos = [];
+    let ministerios_historico = [];
+    let checkins = [];
+    let ultimoCheckin = null;
+    let nivelServico = 'sem_servico';
+    let escalasFuturas = [];
+    let totalCheckins90d = 0;
+    const vol_profile_id = volProfile?.id || null;
+    const allocation_status = volProfile?.allocation_status || null;
 
-    const ministerios_ativos = (voluntarios || []).filter(v => !v.ate);
-    const ministerios_historico = (voluntarios || []).filter(v => v.ate);
+    if (volProfile) {
+      const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+      // 4 queries de voluntariado em paralelo
+      const [teamRes, ckRes, cnt90Res, schedRes] = await Promise.all([
+        supabase.from('vol_team_members')
+          .select('id, is_active, joined_at, team:vol_teams(id, name, color)')
+          .eq('volunteer_profile_id', volProfile.id),
+        supabase.from('vol_check_ins')
+          .select('id, checked_in_at, method, is_unscheduled, service:vol_services(id, name, scheduled_at)')
+          .eq('volunteer_id', volProfile.id)
+          .order('checked_in_at', { ascending: false })
+          .limit(20),
+        supabase.from('vol_check_ins')
+          .select('id', { count: 'exact', head: true })
+          .eq('volunteer_id', volProfile.id)
+          .gte('checked_in_at', d90),
+        supabase.from('vol_schedules')
+          .select('id, confirmation_status, team_name, position_name, service:vol_services!inner(id, name, scheduled_at)')
+          .eq('volunteer_id', volProfile.id)
+          .gte('service.scheduled_at', new Date().toISOString())
+          .order('service(scheduled_at)', { ascending: true })
+          .limit(10),
+      ]);
+      const teamData = teamRes.data || [];
+      const ckData = ckRes.data || [];
+      const cnt90 = cnt90Res.count || 0;
+      const schedData = schedRes.data || [];
 
-    // Check-ins recentes (últimos 20)
-    const { data: checkins } = await supabase
-      .from('mem_checkins')
-      .select('*, ministerio:mem_ministerios(id, nome, cor)')
-      .eq('membro_id', membro.id)
-      .order('data', { ascending: false })
-      .limit(20);
+      ministerios_ativos = teamData
+        .filter(t => t.is_active)
+        .map(t => ({
+          id: t.id, joined_at: t.joined_at,
+          ministerio: t.team ? { id: t.team.id, nome: t.team.name, cor: t.team.color, ativo: true } : null,
+          desde: t.joined_at,
+        }));
+      ministerios_historico = teamData
+        .filter(t => !t.is_active)
+        .map(t => ({
+          id: t.id, joined_at: t.joined_at,
+          ministerio: t.team ? { id: t.team.id, nome: t.team.name, cor: t.team.color, ativo: false } : null,
+          desde: t.joined_at,
+        }));
 
-    const ultimoCheckin = checkins?.[0]?.data || null;
-    const nivelServico = calcularNivelServico(ultimoCheckin);
+      checkins = ckData.map(c => ({
+        id: c.id,
+        data: c.checked_in_at?.slice(0, 10),
+        checked_in_at: c.checked_in_at,
+        method: c.method,
+        is_unscheduled: c.is_unscheduled,
+        ministerio: c.service ? { nome: c.service.name } : null,
+      }));
+      ultimoCheckin = checkins[0]?.checked_in_at || null;
+      totalCheckins90d = cnt90;
 
-    // Escalas futuras
-    const { data: escalasFuturas } = await supabase
-      .from('mem_escalas')
-      .select('*, ministerio:mem_ministerios(id, nome, cor)')
-      .eq('membro_id', membro.id)
-      .gte('data', new Date().toISOString().slice(0, 10))
-      .order('data')
-      .limit(10);
+      // Nível de serviço (Ativo <30d / Ausente 30-90 / Sumido >90)
+      if (ultimoCheckin) {
+        const dias = Math.floor((Date.now() - new Date(ultimoCheckin).getTime()) / 86400000);
+        if (dias <= 30) nivelServico = 'ativo';
+        else if (dias <= 90) nivelServico = 'ausente';
+        else nivelServico = 'sumido';
+      } else if (allocation_status === 'waiting_allocation') {
+        nivelServico = 'aguardando_alocacao';
+      }
+
+      escalasFuturas = schedData.map(s => ({
+        id: s.id,
+        data: s.service?.scheduled_at?.slice(0, 10),
+        scheduled_at: s.service?.scheduled_at,
+        confirmation_status: s.confirmation_status,
+        ministerio: { nome: s.team_name || (s.service?.name) },
+        position: s.position_name,
+      }));
+    }
 
     res.json({
       ...membro,
@@ -324,15 +568,90 @@ router.get('/membros/:id', async (req, res) => {
       nivel_generosidade: nivelGenerosidade,
       ultima_contribuicao: ultimaContribuicao,
       totais_ano: totaisAno,
+      // Voluntariado (lido de vol_profiles - fonte única)
+      vol_profile_id,
+      allocation_status,
       ministerios_ativos,
       ministerios_historico,
       checkins: checkins || [],
       ultimo_checkin: ultimoCheckin,
+      total_checkins_90d: totalCheckins90d,
       nivel_servico: nivelServico,
       escalas_futuras: escalasFuturas || [],
+      // NEXT
+      inscricoes_next: inscricoesNext || [],
+      // Discipulado / encontros pastorais
+      jornada180: jornada180 || [],
+      // Batismos · realizado conta como etapa 'seguir'
+      batismos: batismos || [],
+      // Decisões registradas em culto (data + tipo + culto)
+      decisoes_culto: decisoesCulto || [],
     });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar membro' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// GET /api/membresia/orfaos-stats · conta voluntários e batismos sem
+// link com mem_membros. Ideal = 0 após a migration 20260515500000.
+// ────────────────────────────────────────────────────────────────────────
+router.get('/orfaos-stats', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vw_membros_orfaos_stats')
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    res.json(data || { voluntarios_sem_membro: 0, batismos_sem_membro: 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/membresia/promover-orfaos · forca backfill manual (admin/diretor).
+// A migration já faz isso uma vez · este endpoint serve pra rodar de novo
+// caso registros antigos tenham caido pelas brechas (importacoes, etc).
+router.post('/promover-orfaos', authorize('admin', 'diretor'), async (_req, res) => {
+  try {
+    // Reusa a lógica da fn_link_or_create_membro via RPC.
+    // O trigger já age em INSERT/UPDATE · pra reprocessar antigos, basta
+    // touchear (UPDATE de nenhum campo não dispara · forco trigger via UPDATE updated_at).
+    const stats = { voluntarios: 0, batismos: 0, erros: [] };
+
+    const { data: volOrfaos } = await supabase
+      .from('vol_profiles')
+      .select('id')
+      .is('membresia_id', null)
+      .not('full_name', 'is', null);
+
+    for (const v of volOrfaos || []) {
+      // UPDATE no próprio updated_at pra disparar BEFORE UPDATE trigger
+      const { error } = await supabase
+        .from('vol_profiles')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', v.id);
+      if (error) stats.erros.push({ tabela: 'vol_profiles', id: v.id, msg: error.message });
+      else stats.voluntarios++;
+    }
+
+    const { data: batOrfaos } = await supabase
+      .from('batismo_inscricoes')
+      .select('id')
+      .is('membro_id', null);
+
+    for (const b of batOrfaos || []) {
+      const { error } = await supabase
+        .from('batismo_inscricoes')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', b.id);
+      if (error) stats.erros.push({ tabela: 'batismo_inscricoes', id: b.id, msg: error.message });
+      else stats.batismos++;
+    }
+
+    res.json({ ok: true, ...stats });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -400,7 +719,7 @@ router.post('/membros/:id/foto', authorize('admin', 'diretor'), uploadMw.single(
     const { error: dbErr } = await supabase.from('mem_membros').update({ foto_url }).eq('id', id);
     if (dbErr) throw dbErr;
 
-    // Copiar para SharePoint "CRM e Pessoas" em background (nao bloqueia resposta)
+    // Copiar para SharePoint "CRM e Pessoas" em background (não bloqueia resposta)
     if (SHAREPOINT_CONFIGURED) {
       (async () => {
         try {
@@ -695,7 +1014,7 @@ router.get('/geocode-cep', async (req, res) => {
     if (cep.length !== 8) return res.status(400).json({ error: 'CEP invalido' });
     const viaCepRes = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
     const viaCep = await viaCepRes.json();
-    if (viaCep.erro) return res.status(404).json({ error: 'CEP nao encontrado' });
+    if (viaCep.erro) return res.status(404).json({ error: 'CEP não encontrado' });
     const q = encodeURIComponent(`${viaCep.logradouro || ''} ${viaCep.localidade} ${viaCep.uf} Brasil`.trim());
     const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`, {
       headers: { 'User-Agent': 'CBRio-Sistema/1.0 (contato@cbrio.com.br)' },
@@ -732,6 +1051,9 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
 router.put('/totem/membros/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!podeEditarMembroTotem(req, id)) {
+      return res.status(403).json({ error: 'Sem permissão para editar este cadastro' });
+    }
     const allowed = ['email', 'telefone', 'data_nascimento', 'endereco', 'bairro', 'cidade', 'cep', 'estado_civil'];
     const updates = {};
     for (const f of allowed) {
@@ -747,11 +1069,310 @@ router.put('/totem/membros/:id', async (req, res) => {
   }
 });
 
+// ── Totem · NEXT (inscrição + status) ──
+//
+// Helper · acha o próximo evento NEXT agendado (data >= hoje).
+async function _proximoEventoNext() {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from('next_eventos')
+    .select('id, data, titulo')
+    .eq('status', 'agendado')
+    .gte('data', hoje)
+    .order('data')
+    .limit(1)
+    .maybeSingle();
+  return data || null;
+}
+
+// GET /api/membresia/totem/next/status?membro_id=X&email=Y&cpf=Z
+// Retorna { inscrito: bool, inscrição?, proximo_evento? }.
+// "inscrito = true" significa que o membro tem inscrição ativa pra um
+// evento futuro (status='agendado' do evento e check_in_at NULL).
+router.get('/totem/next/status', async (req, res) => {
+  try {
+    const { membro_id, email, cpf } = req.query;
+    const hoje = new Date().toISOString().slice(0, 10);
+    const proximo = await _proximoEventoNext();
+
+    // Procura inscrição mais recente do membro/email/cpf cujo evento e futuro
+    let q = supabase
+      .from('next_inscricoes')
+      .select('id, nome, sobrenome, email, cpf, check_in_at, evento:next_eventos(id, data, titulo, status)')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    const filtros = [];
+    if (membro_id) filtros.push(`membro_id.eq.${escapePostgrestValue(String(membro_id))}`);
+    if (email) filtros.push(`email.eq.${escapePostgrestValue(String(email).toLowerCase().trim())}`);
+    if (cpf) filtros.push(`cpf.eq.${String(cpf).replace(/\D/g, '')}`);
+    if (filtros.length === 0) {
+      return res.json({ inscrito: false, proximo_evento: proximo });
+    }
+    q = q.or(filtros.join(','));
+
+    const { data: inscricoes } = await q;
+    const insc = (inscricoes || [])[0] || null;
+
+    // Inscrito ativo · evento futuro agendado e ainda sem check-in
+    const ativo = insc && insc.evento && insc.evento.data >= hoje
+      && insc.evento.status === 'agendado'
+      && !insc.check_in_at;
+
+    return res.json({
+      inscrito: !!ativo,
+      inscricao: ativo ? insc : null,
+      ultima_inscricao: insc,
+      proximo_evento: proximo,
+    });
+  } catch (e) {
+    console.error('[TOTEM] next/status error:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar status do NEXT' });
+  }
+});
+
+// POST /api/membresia/totem/next/inscrever
+// Body: { membro_id?, nome, sobrenome?, cpf?, telefone, email, data_nascimento?, observações? }
+// Resolve evento automaticamente (próximo agendado). Idempotente por
+// CPF/email do evento (UNIQUE INDEX existente em next_inscricoes).
+router.post('/totem/next/inscrever', async (req, res) => {
+  try {
+    const {
+      membro_id, nome, sobrenome, cpf, telefone, email,
+      data_nascimento, observacoes,
+    } = req.body || {};
+
+    if (!nome || String(nome).trim().length < 2) {
+      return res.status(400).json({ error: 'Nome obrigatorio' });
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+      return res.status(400).json({ error: 'Email invalido' });
+    }
+    const cleanTel = String(telefone || '').replace(/\D/g, '');
+    if (!cleanTel || cleanTel.length < 10) {
+      return res.status(400).json({ error: 'Telefone invalido' });
+    }
+    const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    const proximo = await _proximoEventoNext();
+    if (!proximo) {
+      return res.status(400).json({ error: 'Nenhum evento NEXT agendado no momento' });
+    }
+
+    // Snapshot pre-NEXT
+    let jaBatizado = false, jaVoluntario = false;
+    if (membro_id) {
+      const { data: m } = await supabase
+        .from('mem_membros').select('batizado').eq('id', membro_id).maybeSingle();
+      jaBatizado = !!m?.batizado;
+    }
+    if (cleanCpf) {
+      const { count } = await supabase
+        .from('vol_profiles')
+        .select('id', { count: 'exact', head: true })
+        .eq('cpf', cleanCpf)
+        .eq('allocation_status', 'active');
+      if (count && count > 0) jaVoluntario = true;
+    }
+
+    const { data: insc, error: insErr } = await supabase
+      .from('next_inscricoes')
+      .insert({
+        evento_id: proximo.id,
+        nome: String(nome).trim(),
+        sobrenome: sobrenome ? String(sobrenome).trim() : null,
+        cpf: cleanCpf,
+        telefone: cleanTel,
+        email: cleanEmail,
+        data_nascimento: data_nascimento || null,
+        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
+        membro_id: membro_id || null,
+        ja_batizado: jaBatizado,
+        ja_voluntario: jaVoluntario,
+        origem: 'manual',
+        registered_by: req.user?.id || null,
+      })
+      .select('id, evento:next_eventos(id, data, titulo)')
+      .single();
+
+    if (insErr) {
+      if (insErr.code === '23505') {
+        // Já inscrito · retorna evento
+        return res.json({ ok: true, ja_inscrito: true, evento: proximo });
+      }
+      throw insErr;
+    }
+
+    try {
+      await notificar({
+        modulo: 'next',
+        titulo: 'Nova inscrição no NEXT (via totem)',
+        mensagem: `${nome} ${sobrenome || ''} (${cleanEmail}) se inscreveu pelo totem.`,
+        link: '/ministerial/next?tab=inscritos',
+      });
+    } catch (e) {
+      console.error('[TOTEM] next notificar error:', e.message);
+    }
+
+    res.status(201).json({ ok: true, inscricao: insc, evento: insc?.evento || proximo });
+  } catch (e) {
+    console.error('[TOTEM] next/inscrever error:', e.message);
+    res.status(500).json({ error: 'Erro ao inscrever no NEXT: ' + e.message });
+  }
+});
+
+// ── Totem · Apresentação de Bebes ──
+//
+// Sempre 2 domingo do mês. Helper calcula a próxima data e retorna
+// junto com o culto correspondente (se houver) e a apresentação
+// existente do membro pra essa data (pra UI mostrar "já inscrito").
+function _segundoDomingo(year, month0) {
+  const first = new Date(year, month0, 1);
+  const dow = first.getDay(); // 0=Dom
+  const firstSundayDay = dow === 0 ? 1 : 8 - dow;
+  return new Date(year, month0, firstSundayDay + 7);
+}
+function _proximoSegundoDomingo(refDate = new Date()) {
+  const y = refDate.getFullYear();
+  const m = refDate.getMonth();
+  const ref = new Date(y, m, refDate.getDate()); // strip time
+  const candidato = _segundoDomingo(y, m);
+  if (candidato >= ref) return candidato;
+  // Próximo mês
+  const ny = m === 11 ? y + 1 : y;
+  const nm = m === 11 ? 0 : m + 1;
+  return _segundoDomingo(ny, nm);
+}
+function _fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// GET /api/membresia/totem/apresentacao-bebe/status?membro_id=X
+// Retorna { proxima_data, culto?, apresentacao_existente? }
+router.get('/totem/apresentacao-bebe/status', async (req, res) => {
+  try {
+    const { membro_id } = req.query;
+    const proxima = _proximoSegundoDomingo();
+    const proximaStr = _fmtDate(proxima);
+
+    // Cultos do dia (domingo manha) · informativo
+    const { data: cultos } = await supabase
+      .from('cultos')
+      .select('id, data, service_type:vol_service_types(name, recurrence_time)')
+      .eq('data', proximaStr)
+      .limit(5);
+
+    let apresentacao_existente = null;
+    if (membro_id) {
+      const { data } = await supabase
+        .from('apresentacao_bebes')
+        .select('id, bebe_nome, data_apresentacao, status')
+        .eq('responsavel_membro_id', membro_id)
+        .eq('data_apresentacao', proximaStr)
+        .is('deleted_at', null)
+        .maybeSingle();
+      apresentacao_existente = data || null;
+    }
+
+    res.json({
+      proxima_data: proximaStr,
+      cultos: cultos || [],
+      apresentacao_existente,
+    });
+  } catch (e) {
+    console.error('[TOTEM] apresentacao-bebe/status error:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar apresentação de bebes' });
+  }
+});
+
+// POST /api/membresia/totem/apresentacao-bebe
+// Body: { responsavel_membro_id?, responsavel_nome, responsavel_telefone,
+//         responsavel_email?, bebe_nome, bebe_data_nascimento, bebe_sexo?,
+//         nome_pai?, nome_mae?, observações? }
+router.post('/totem/apresentacao-bebe', async (req, res) => {
+  try {
+    const {
+      responsavel_membro_id, responsavel_nome, responsavel_telefone, responsavel_email,
+      bebe_nome, bebe_data_nascimento, bebe_sexo, nome_pai, nome_mae, observacoes,
+    } = req.body || {};
+
+    if (!responsavel_nome || String(responsavel_nome).trim().length < 2) {
+      return res.status(400).json({ error: 'Nome do responsável obrigatório' });
+    }
+    const cleanTel = String(responsavel_telefone || '').replace(/\D/g, '');
+    if (cleanTel.length < 10) {
+      return res.status(400).json({ error: 'Telefone do responsável invalido' });
+    }
+    if (!bebe_nome || String(bebe_nome).trim().length < 1) {
+      return res.status(400).json({ error: 'Nome do bebe obrigatório' });
+    }
+    if (!bebe_data_nascimento) {
+      return res.status(400).json({ error: 'Data de nascimento do bebe obrigatória' });
+    }
+
+    const proxima = _proximoSegundoDomingo();
+    const proximaStr = _fmtDate(proxima);
+
+    // Tenta vincular ao culto de domingo de manha (primeiro do dia)
+    let culto_id = null;
+    const { data: cultos } = await supabase
+      .from('cultos')
+      .select('id')
+      .eq('data', proximaStr)
+      .order('id')
+      .limit(1);
+    if (cultos && cultos[0]) culto_id = cultos[0].id;
+
+    const { data, error } = await supabase
+      .from('apresentacao_bebes')
+      .insert({
+        responsavel_membro_id: responsavel_membro_id || null,
+        responsavel_nome: String(responsavel_nome).trim(),
+        responsavel_telefone: cleanTel,
+        responsavel_email: responsavel_email
+          ? String(responsavel_email).toLowerCase().trim() : null,
+        bebe_nome: String(bebe_nome).trim(),
+        bebe_data_nascimento,
+        bebe_sexo: bebe_sexo || null,
+        nome_pai: nome_pai ? String(nome_pai).trim() : null,
+        nome_mae: nome_mae ? String(nome_mae).trim() : null,
+        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
+        data_apresentacao: proximaStr,
+        culto_id,
+        registrado_por: req.user?.id || null,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    try {
+      await notificar({
+        modulo: 'integracao',
+        titulo: 'Apresentação de bebe agendada',
+        mensagem: `${responsavel_nome} agendou apresentação de ${bebe_nome} para ${proximaStr}.`,
+        link: '/integracao',
+      });
+    } catch (e) {
+      console.error('[TOTEM] apresentacao-bebe notificar error:', e.message);
+    }
+
+    res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr });
+  } catch (e) {
+    console.error('[TOTEM] apresentacao-bebe POST error:', e.message);
+    res.status(500).json({ error: 'Erro ao agendar apresentação: ' + e.message });
+  }
+});
+
 // POST /api/membresia/totem/membros/:id/foto — upload de foto via totem
 router.post('/totem/membros/:id/foto', uploadMw.single('foto'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Imagem não fornecida' });
     const { id } = req.params;
+    if (!podeEditarMembroTotem(req, id)) {
+      return res.status(403).json({ error: 'Sem permissão para editar este cadastro' });
+    }
     const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
     const path = `membros/${id}.${ext}`;
     const { error: upErr } = await supabase.storage
@@ -860,10 +1481,14 @@ router.put('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res)
   }
 });
 
-// DELETE /api/membresia/contribuicoes/:id
+// DELETE /api/membresia/contribuicoes/:id · soft-delete (preserva histórico financeiro)
 router.delete('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { error } = await supabase.from('mem_contribuicoes').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'mem_contribuicoes',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
@@ -1243,7 +1868,7 @@ router.post('/cadastros/:id/aprovar', authorize('admin', 'diretor'), async (req,
     // Família: prioriza a escolhida no modal, senão usa sugestão do formulário público
     const familia_id = reqFamiliaId || cad.familia_sugerida_id || null;
 
-    // Observação "Como conheceu" vai para observacoes (mem_membros não tem esse campo).
+    // Observação "Como conheceu" vai para observações (mem_membros não tem esse campo).
     const obsAuto = [
       cad.como_conheceu ? `Como conheceu: ${cad.como_conheceu}` : null,
       observacoes || cad.observacoes,
@@ -1500,6 +2125,115 @@ router.get('/kpis', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar KPIs' });
   }
+});
+
+// ============================================================================
+// Duplicados · detecção + merge
+//
+// Marcos: "ter uma aba de juntar esses cadastros futuramente · não impede
+//          cadastro, mas detecta e oferece merge".
+// ============================================================================
+
+router.get('/duplicados', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const { data, error } = await supabase
+      .from('vw_membros_duplicados')
+      .select('*')
+      .order('confianca', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+
+    const items = (data || []).map(d => ({
+      par_id: `${d.membro_a_id}_${d.membro_b_id}`,
+      membro_a_id: d.membro_a_id,
+      membro_b_id: d.membro_b_id,
+      motivos: d.motivos || [],
+      confianca: d.confianca,
+      membro_a: {
+        id: d.membro_a_id,
+        nome: d.a_nome,
+        email: d.a_email,
+        telefone: d.a_telefone,
+        cpf: d.a_cpf,
+        data_nascimento: d.a_nascimento,
+        status: d.a_status,
+        foto_url: d.a_foto_url,
+        criado_em: d.a_criado_em,
+      },
+      membro_b: {
+        id: d.membro_b_id,
+        nome: d.b_nome,
+        email: d.b_email,
+        telefone: d.b_telefone,
+        cpf: d.b_cpf,
+        data_nascimento: d.b_nascimento,
+        status: d.b_status,
+        foto_url: d.b_foto_url,
+        criado_em: d.b_criado_em,
+      },
+    }));
+    res.json({ total: items.length, items });
+  } catch (e) {
+    console.error('[membresia/duplicados]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao buscar duplicados' });
+  }
+});
+
+router.post('/duplicados/ignorar', authorize('admin', 'diretor'), async (req, res) => {
+  const { membro_a_id, membro_b_id, motivo } = req.body || {};
+  if (!membro_a_id || !membro_b_id) {
+    return res.status(400).json({ error: 'membro_a_id e membro_b_id obrigatórios' });
+  }
+  // Ordena pra bater com o CHECK da tabela (a < b)
+  const [a, b] = [membro_a_id, membro_b_id].sort();
+  const { data, error } = await supabase
+    .from('mem_duplicados_ignorados')
+    .upsert({
+      membro_a_id: a,
+      membro_b_id: b,
+      ignorado_por: req.user?.id || null,
+      motivo: motivo || null,
+    }, { onConflict: 'membro_a_id,membro_b_id' })
+    .select()
+    .single();
+  if (error) {
+    console.error('[membresia/duplicados/ignorar]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true, registro: data });
+});
+
+router.post('/membros/merge', authorize('admin', 'diretor'), async (req, res) => {
+  const { keep_id, merge_ids, observacao } = req.body || {};
+  if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatorio' });
+  if (!Array.isArray(merge_ids) || merge_ids.length === 0) {
+    return res.status(400).json({ error: 'merge_ids obrigatório (array de uuids)' });
+  }
+  try {
+    const { data, error } = await supabase.rpc('merge_membros', {
+      p_keep_id: keep_id,
+      p_merge_ids: merge_ids,
+      p_feito_por: req.user?.id || null,
+      p_observacao: observacao || null,
+    });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[membresia/membros/merge]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao fundir membros' });
+  }
+});
+
+router.get('/merge-log', authorize('admin', 'diretor'), async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const { data, error } = await supabase
+    .from('mem_merge_log')
+    .select('*')
+    .order('feito_em', { ascending: false })
+    .limit(limit);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
 });
 
 module.exports = router;

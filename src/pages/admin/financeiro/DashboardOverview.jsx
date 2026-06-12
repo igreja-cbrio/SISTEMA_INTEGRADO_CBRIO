@@ -1,0 +1,776 @@
+import { useEffect, useState, useMemo } from 'react';
+import { motion } from 'framer-motion';
+import {
+  ArrowUpRight, ArrowDownRight, Wallet, CreditCard, TrendingUp, TrendingDown,
+  Calendar, Upload, ClipboardList, Receipt, ArrowRight, ChevronRight, Banknote,
+} from 'lucide-react';
+import { financeiroV2 } from '../../../api';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Button } from '../../../components/ui/button';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '../../../components/ui/select';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '../../../components/ui/table';
+import { Badge } from '../../../components/ui/badge';
+
+const fmtMoney = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const MESES_LBL = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const monthLabel = (yyyymm) => {
+  if (!yyyymm) return '';
+  const [y, m] = yyyymm.split('-');
+  return `${MESES_LBL[parseInt(m, 10) - 1]}/${y.slice(2)}`;
+};
+
+const CATEGORY_COLORS = [
+  'bg-blue-500',
+  'bg-emerald-500',
+  'bg-amber-500',
+  'bg-violet-500',
+  'bg-rose-500',
+  'bg-cyan-500',
+  'bg-orange-500',
+];
+
+const PERIOD_LABEL = {
+  week: 'Esta Semana',
+  month: 'Este Mês',
+  quarter: 'Este Trimestre',
+  year: 'Este Ano',
+};
+
+const MES_NOMES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+export default function DashboardOverview({ onNavigate }) {
+  const hoje = new Date();
+  const [modo, setModo] = useState('preset'); // 'preset' | 'mês' | 'ano'
+  const [period, setPeriod] = useState('month');
+  const [ano, setAno] = useState(hoje.getFullYear());
+  const [mes, setMes] = useState(hoje.getMonth());
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
+  const [categoriaDetalhe, setCategoriaDetalhe] = useState(null);
+
+  const queryKey = modo === 'preset' ? `p:${period}` : modo === 'ano' ? `y:${ano}` : `ym:${ano}-${mes}`;
+
+  useEffect(() => {
+    setLoading(true);
+    setErro(null);
+    const opts = modo === 'preset' ? { period }
+      : modo === 'ano' ? { year: ano }
+      : { year: ano, month: mes };
+    financeiroV2.dashboard.overview(opts)
+      .then(setData)
+      .catch(e => { console.error('[dashboard] overview erro:', e); setErro(e?.message || 'Erro ao carregar dashboard'); })
+      .finally(() => setLoading(false));
+  }, [queryKey]); // eslint-disable-line
+
+  // Lista de anos · 2022 até ano corrente
+  const anosDisponiveis = useMemo(() => {
+    const arr = [];
+    for (let y = hoje.getFullYear(); y >= 2022; y--) arr.push(y);
+    return arr;
+  }, [hoje.getFullYear()]);
+
+  const labelPeriodo = modo === 'preset' ? PERIOD_LABEL[period]
+    : modo === 'ano' ? `Ano ${ano}`
+    : `${MES_NOMES[mes]} ${ano}`;
+
+  const cardVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: (i) => ({
+      opacity: 1, y: 0,
+      transition: { delay: i * 0.1, duration: 0.5, ease: 'easeOut' },
+    }),
+  };
+
+  // IMPORTANTE: hooks (useMemo) devem vir ANTES de qualquer early return
+  // pra não violar a regra dos hooks do React (erro #310)
+  const fluxoCaixa = useMemo(
+    () => normalizarSerieAnual(data?.serie_6_meses),
+    [data?.serie_6_meses]
+  );
+  const maxFluxo = useMemo(
+    () => Math.max(...fluxoCaixa.map(p => Math.max(p.receita, p.despesa)), 1),
+    [fluxoCaixa]
+  );
+
+  // Stale-while-revalidate · so bloqueia carregamento INICIAL.
+  // Trocas de período mantem dados anteriores + spinner sutil.
+  if (erro && !data) {
+    return (
+      <div className="border border-destructive/40 bg-destructive/5 rounded-lg p-6 text-sm">
+        <div className="font-semibold text-destructive mb-2">Erro ao carregar dashboard</div>
+        <div className="text-muted-foreground text-xs font-mono mb-3">{erro}</div>
+        <Button size="sm" variant="outline" onClick={() => { setErro(null); setLoading(true); window.location.reload(); }}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground text-sm">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
+        Carregando dashboard...
+      </div>
+    );
+  }
+
+  const { stats, pendencias, contas, top_despesas, transacoes_recentes, ultimo_upload } = data;
+
+  return (
+    <div className={`space-y-6 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}>
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+      >
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Visão geral · {labelPeriodo}</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Receitas, despesas e saldo do período selecionado
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 rounded bg-muted/40 p-0.5">
+            {[
+              { v: 'preset', label: 'Atual' },
+              { v: 'mes', label: 'Mês' },
+              { v: 'ano', label: 'Ano' },
+            ].map(m => (
+              <button
+                key={m.v}
+                onClick={() => setModo(m.v)}
+                className={`px-3 py-1 text-xs rounded transition ${
+                  modo === m.v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {modo === 'preset' && (
+            <Select value={period} onValueChange={setPeriod} disabled={loading}>
+              <SelectTrigger className="w-[170px]">
+                <Calendar className="w-4 h-4 mr-2" />
+                <SelectValue />
+                {loading && <div className="h-3 w-3 ml-1 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />}
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="week">Esta Semana</SelectItem>
+                <SelectItem value="month">Este Mês</SelectItem>
+                <SelectItem value="quarter">Este Trimestre</SelectItem>
+                <SelectItem value="year">Este Ano</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+
+          {modo === 'mes' && (
+            <>
+              <select value={mes} onChange={e => setMes(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded border bg-background">
+                {MES_NOMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
+              </select>
+              <select value={ano} onChange={e => setAno(Number(e.target.value))}
+                className="px-2 py-1.5 text-xs rounded border bg-background">
+                {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </>
+          )}
+
+          {modo === 'ano' && (
+            <select value={ano} onChange={e => setAno(Number(e.target.value))}
+              className="px-2 py-1.5 text-xs rounded border bg-background">
+              {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          )}
+
+          {loading && modo !== 'preset' && <div className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />}
+        </div>
+      </motion.div>
+
+      {/* Atalhos rapidos */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <ShortcutCard
+          icon={Upload}
+          color="text-primary"
+          bgColor="bg-primary/10"
+          title="Importar extratos"
+          subtitle={ultimo_upload ? `Último: ${daysAgo(ultimo_upload.created_at)}` : 'Nenhum upload ainda'}
+          onClick={() => onNavigate?.('importar')}
+        />
+        <ShortcutCard
+          icon={ClipboardList}
+          color="text-amber-600"
+          bgColor="bg-amber-500/10"
+          title="Fila de classificação"
+          subtitle={pendencias.fila_classificacao > 0
+            ? `${pendencias.fila_classificacao} aguardando revisão`
+            : 'Sem pendências ✓'}
+          badge={pendencias.fila_classificacao}
+          onClick={() => onNavigate?.('fila')}
+        />
+        <ShortcutCard
+          icon={CreditCard}
+          color={pendencias.contas_pagar_vencidas > 0 ? 'text-rose-600' : 'text-blue-600'}
+          bgColor={pendencias.contas_pagar_vencidas > 0 ? 'bg-rose-500/10' : 'bg-blue-500/10'}
+          title="Contas a pagar"
+          subtitle={pendencias.contas_pagar_vencidas > 0
+            ? `${pendencias.contas_pagar_vencidas} vencidas`
+            : pendencias.contas_pagar_vencendo_7d > 0
+              ? `${pendencias.contas_pagar_vencendo_7d} vencem em 7d`
+              : `${pendencias.contas_pagar} pendentes`}
+          badge={pendencias.contas_pagar_vencidas || null}
+          onClick={() => onNavigate?.('contas_pagar')}
+        />
+        <ShortcutCard
+          icon={Receipt}
+          color="text-violet-600"
+          bgColor="bg-violet-500/10"
+          title="Reembolsos"
+          subtitle={pendencias.reembolsos > 0
+            ? `${pendencias.reembolsos} pendentes`
+            : 'Sem pendências ✓'}
+          badge={pendencias.reembolsos}
+          onClick={() => onNavigate?.('reembolsos')}
+        />
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard
+          custom={0}
+          variants={cardVariants}
+          title="Saldo bancário"
+          icon={Wallet}
+          iconBg="bg-primary/10"
+          iconColor="text-primary"
+          gradient="from-emerald-500 to-emerald-400"
+          delay={0.5}
+          value={fmtMoney(stats.saldoTotal)}
+          variation={null}
+          subtitle={`${stats.contasAtivas} conta${stats.contasAtivas === 1 ? '' : 's'} ativa${stats.contasAtivas === 1 ? '' : 's'}`}
+        />
+        <StatCard
+          custom={1}
+          variants={cardVariants}
+          title="Receitas"
+          icon={TrendingUp}
+          iconBg="bg-emerald-500/10"
+          iconColor="text-emerald-600"
+          gradient="from-emerald-500 to-emerald-400"
+          delay={0.6}
+          value={fmtMoney(stats.receitaMes)}
+          variation={stats.receitaVariacao}
+        />
+        <StatCard
+          custom={2}
+          variants={cardVariants}
+          title="Despesas"
+          icon={TrendingDown}
+          iconBg="bg-rose-500/10"
+          iconColor="text-rose-600"
+          gradient="from-rose-500 to-rose-400"
+          delay={0.7}
+          value={fmtMoney(stats.despesaMes)}
+          variation={stats.despesaVariacao}
+          invertVariation
+        />
+        <StatCard
+          custom={3}
+          variants={cardVariants}
+          title="Resultado"
+          icon={Banknote}
+          iconBg={stats.resultadoMes >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}
+          iconColor={stats.resultadoMes >= 0 ? 'text-emerald-600' : 'text-rose-600'}
+          gradient={stats.resultadoMes >= 0 ? 'from-emerald-500 to-emerald-400' : 'from-rose-500 to-rose-400'}
+          delay={0.8}
+          value={fmtMoney(stats.resultadoMes)}
+          subtitle={stats.resultadoMes >= 0 ? 'Superávit' : 'Déficit'}
+        />
+      </div>
+
+      {/* Chart Section */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4, duration: 0.5 }}
+        className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+      >
+        <Card className="lg:col-span-2 border-border">
+          <CardHeader>
+            <CardTitle className="text-base">Fluxo de Caixa</CardTitle>
+            <p className="text-xs text-muted-foreground">Receitas vs Despesas · últimos 12 meses</p>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[260px] flex items-end justify-around gap-1.5 px-2">
+              {fluxoCaixa.map((p, i) => {
+                const hReceita = (p.receita / maxFluxo) * 100;
+                const hDespesa = (p.despesa / maxFluxo) * 100;
+                return (
+                  <div key={p.mes} className="flex-1 flex items-end justify-center gap-0.5 h-full">
+                    <motion.div
+                      className="flex-1 bg-gradient-to-t from-emerald-600 to-emerald-400 rounded-t-md relative group cursor-pointer max-w-[14px]"
+                      initial={{ height: 0 }}
+                      animate={{ height: `${hReceita}%` }}
+                      transition={{ delay: 0.6 + i * 0.04, duration: 0.5 }}
+                      whileHover={{ scale: 1.1 }}
+                    >
+                      <div className="absolute -top-9 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-popover border border-border rounded px-2 py-1 text-[10px] whitespace-nowrap shadow-md z-10">
+                        Receita: {fmtMoney(p.receita)}
+                      </div>
+                    </motion.div>
+                    <motion.div
+                      className="flex-1 bg-gradient-to-t from-rose-600 to-rose-400 rounded-t-md relative group cursor-pointer max-w-[14px]"
+                      initial={{ height: 0 }}
+                      animate={{ height: `${hDespesa}%` }}
+                      transition={{ delay: 0.65 + i * 0.04, duration: 0.5 }}
+                      whileHover={{ scale: 1.1 }}
+                    >
+                      <div className="absolute -top-9 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-popover border border-border rounded px-2 py-1 text-[10px] whitespace-nowrap shadow-md z-10">
+                        Despesa: {fmtMoney(p.despesa)}
+                      </div>
+                    </motion.div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-around mt-4 text-[11px] text-muted-foreground">
+              {fluxoCaixa.map(p => (<span key={p.mes}>{monthLabel(p.mes)}</span>))}
+            </div>
+            <div className="flex items-center justify-center gap-4 mt-4 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-2.5 rounded-sm bg-gradient-to-t from-emerald-600 to-emerald-400" />
+                Receita
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-2.5 rounded-sm bg-gradient-to-t from-rose-600 to-rose-400" />
+                Despesa
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border">
+          <CardHeader>
+            <CardTitle className="text-base">Distribuição de Despesas</CardTitle>
+            <p className="text-xs text-muted-foreground">{labelPeriodo}</p>
+          </CardHeader>
+          <CardContent>
+            {top_despesas.length === 0 ? (
+              <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                Sem despesas classificadas
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {top_despesas.map((item, i) => (
+                  <motion.button
+                    key={item.codigo}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.8 + i * 0.1 }}
+                    onClick={() => setCategoriaDetalhe(item)}
+                    className="w-full text-left space-y-2 p-2 -mx-2 rounded hover:bg-muted/40 transition-colors group cursor-pointer"
+                    title={`${item.codigo} · ${item.nome} · clique pra detalhar`}
+                  >
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-foreground truncate group-hover:text-primary transition-colors">
+                        {item.nome}
+                      </span>
+                      <span className="text-muted-foreground tabular-nums shrink-0 ml-2 flex items-center gap-1">
+                        {item.percentual.toFixed(0)}%
+                        <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <motion.div
+                        className={`h-full ${CATEGORY_COLORS[i % CATEGORY_COLORS.length]}`}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${item.percentual}%` }}
+                        transition={{ delay: 0.8 + i * 0.1, duration: 0.8 }}
+                      />
+                    </div>
+                    <div className="text-xs text-muted-foreground tabular-nums">
+                      {fmtMoney(item.total)}
+                    </div>
+                  </motion.button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Transactions Table */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.6, duration: 0.5 }}
+      >
+        <Card className="border-border">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Transações Recentes</CardTitle>
+              <Button variant="outline" size="sm" onClick={() => onNavigate?.('transacoes')}>
+                Ver Todas
+                <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {transacoes_recentes.length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground">
+                Nenhuma transação ainda · importe um extrato pra começar
+              </div>
+            ) : (
+              <div className="rounded-md border border-border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Descrição</TableHead>
+                      <TableHead>Categoria</TableHead>
+                      <TableHead>Data</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {transacoes_recentes.map((t, i) => (
+                      <motion.tr
+                        key={t.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.8 + i * 0.05 }}
+                        className="border-b border-border hover:bg-muted/50 transition-colors"
+                      >
+                        <TableCell className="font-medium max-w-[260px] truncate" title={t.descricao}>
+                          {t.descricao}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-xs">
+                          {t.plano_contas_nome || t.culto_nome || '—'}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {new Date(t.data_competencia).toLocaleDateString('pt-BR')}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={t.status === 'pago' || t.status === 'conciliado' ? 'default' : 'secondary'}>
+                            {labelStatus(t.status)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className={t.tipo === 'receita' ? 'text-emerald-600 font-semibold tabular-nums' : 'text-rose-600 font-semibold tabular-nums'}>
+                            {t.tipo === 'receita' ? '+' : '−'}
+                            {fmtMoney(Math.abs(t.valor))}
+                          </span>
+                        </TableCell>
+                      </motion.tr>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Contas bancarias · resumo */}
+      <Card className="border-border">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Contas bancárias</CardTitle>
+              <p className="text-xs text-muted-foreground">{contas.length} contas ativas</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const r = await (await import('../../../api')).financeiroV2.syncSaldoBancos();
+                    if (r?.ok) {
+                      window.location.reload();
+                    }
+                  } catch (e) {
+                    alert('Erro ao sincronizar: ' + e.message);
+                  }
+                }}
+              >
+                ↻ Sincronizar saldos
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => onNavigate?.('contas')}>
+                Ver todas <ChevronRight className="h-3 w-3 ml-1" />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {contas.map(c => (
+              <div key={c.id} className="border border-border rounded-lg p-3 bg-card/50">
+                <div className="text-xs text-muted-foreground mb-1">{c.banco || 'Conta'}</div>
+                <div className="text-sm font-semibold truncate">{c.nome}</div>
+                <div className={`text-lg font-bold mt-1 tabular-nums ${c.saldo >= 0 ? 'text-foreground' : 'text-destructive'}`}>
+                  {fmtMoney(c.saldo)}
+                </div>
+              </div>
+            ))}
+            {contas.length === 0 && (
+              <div className="col-span-full text-center py-6 text-sm text-muted-foreground">
+                Nenhuma conta ativa
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {categoriaDetalhe && (
+        <ModalDespesaDetalhe
+          categoria={categoriaDetalhe}
+          inicio={data.ranges.inicio}
+          fim={data.ranges.fim}
+          labelPeriodo={labelPeriodo}
+          onClose={() => setCategoriaDetalhe(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal · drilldown dos lancamentos de uma categoria
+function ModalDespesaDetalhe({ categoria, inicio, fim, labelPeriodo, onClose }) {
+  const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    financeiroV2.despesasDetalhe({ inicio, fim, prefixo: categoria.codigo })
+      .then(d => setItems(Array.isArray(d) ? d : []))
+      .catch(e => setErro(e?.message || 'Erro ao carregar detalhes'))
+      .finally(() => setLoading(false));
+  }, [categoria.codigo, inicio, fim]);
+
+  // Agrupa por subcategoria (nível 3 do plano)
+  const grupos = useMemo(() => {
+    if (!items) return [];
+    const map = new Map();
+    for (const t of items) {
+      const k = t.plano_codigo;
+      if (!map.has(k)) map.set(k, { codigo: k, nome: t.plano_nome, total: 0, items: [] });
+      const g = map.get(k);
+      g.total += Number(t.valor);
+      g.items.push(t);
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [items]);
+
+  const totalGeral = useMemo(() => (items || []).reduce((s, t) => s + Number(t.valor), 0), [items]);
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center p-4"
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="bg-background rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+      >
+        <header className="p-5 border-b border-border flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <span className="font-mono">{categoria.codigo}</span>
+              <span>· {labelPeriodo}</span>
+            </div>
+            <h2 className="text-xl font-bold">{categoria.nome}</h2>
+            <div className="text-sm text-muted-foreground mt-1">
+              {items?.length || 0} lançamento{items?.length === 1 ? '' : 's'}
+              {totalGeral > 0 && (
+                <> · Total: <span className="font-bold text-foreground tabular-nums">{fmtMoney(totalGeral)}</span></>
+              )}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">×</button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground text-sm">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
+              Carregando lançamentos...
+            </div>
+          ) : erro ? (
+            <div className="text-destructive text-sm">{erro}</div>
+          ) : grupos.length === 0 ? (
+            <div className="text-center py-12 text-sm text-muted-foreground">
+              Sem lançamentos nessa categoria no período
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {grupos.map(g => (
+                <details key={g.codigo} className="border border-border rounded-lg overflow-hidden" open={grupos.length <= 3}>
+                  <summary className="px-4 py-3 cursor-pointer hover:bg-muted/30 flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-muted-foreground">{g.codigo}</span>
+                      <span className="font-semibold">{g.nome}</span>
+                      <span className="text-xs text-muted-foreground">({g.items.length})</span>
+                    </div>
+                    <span className="font-bold tabular-nums">{fmtMoney(g.total)}</span>
+                  </summary>
+                  <div className="border-t border-border bg-muted/10">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground uppercase tracking-wider">
+                          <th className="text-left py-2 px-3 font-medium">Data</th>
+                          <th className="text-left py-2 px-3 font-medium">Descrição</th>
+                          <th className="text-left py-2 px-3 font-medium">Centro</th>
+                          <th className="text-left py-2 px-3 font-medium">Conta</th>
+                          <th className="text-right py-2 px-3 font-medium">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.items.slice(0, 100).map(t => (
+                          <tr key={t.id} className="border-b border-border/50 hover:bg-muted/30">
+                            <td className="py-2 px-3 tabular-nums">{new Date(t.data_competencia + 'T12:00').toLocaleDateString('pt-BR')}</td>
+                            <td className="py-2 px-3 max-w-[260px] truncate" title={t.descricao}>{t.descricao}</td>
+                            <td className="py-2 px-3 text-muted-foreground">{t.centro_nome || '—'}</td>
+                            <td className="py-2 px-3 text-muted-foreground">{t.conta_nome || '—'}</td>
+                            <td className="py-2 px-3 text-right font-semibold tabular-nums text-rose-600">
+                              −{fmtMoney(t.valor)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {g.items.length > 100 && (
+                      <div className="px-3 py-2 text-xs text-muted-foreground text-center italic">
+                        Mostrando 100 de {g.items.length}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Sub-componentes
+// ============================================================
+function StatCard({ custom, variants, title, icon: Icon, iconBg, iconColor, gradient, delay, value, variation, invertVariation, subtitle }) {
+  let varNode = null;
+  if (variation !== null && variation !== undefined && !Number.isNaN(variation)) {
+    const positive = invertVariation ? variation < 0 : variation > 0;
+    const VarIcon = variation > 0 ? ArrowUpRight : ArrowDownRight;
+    const corClass = positive ? 'text-emerald-600' : (Math.abs(variation) < 0.5 ? 'text-muted-foreground' : 'text-rose-600');
+    varNode = (
+      <div className={`flex items-center pt-1 text-xs ${corClass}`}>
+        <VarIcon className="mr-1 h-3 w-3" />
+        <span>{variation > 0 ? '+' : ''}{variation.toFixed(1)}% em relação ao período anterior</span>
+      </div>
+    );
+  }
+
+  return (
+    <motion.div custom={custom} initial="hidden" animate="visible" variants={variants}>
+      <Card className="relative overflow-hidden border-border hover:shadow-lg transition-shadow">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <div className={`p-2 rounded-lg ${iconBg}`}>
+            <Icon className={`h-4 w-4 ${iconColor}`} />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold tabular-nums">{value}</div>
+          {varNode || (subtitle && (
+            <div className="flex items-center pt-1 text-xs text-muted-foreground">
+              <span>{subtitle}</span>
+            </div>
+          ))}
+        </CardContent>
+        <motion.div
+          className={`absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r ${gradient}`}
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: 1 }}
+          transition={{ delay, duration: 0.8 }}
+          style={{ transformOrigin: 'left' }}
+        />
+      </Card>
+    </motion.div>
+  );
+}
+
+function ShortcutCard({ icon: Icon, color, bgColor, title, subtitle, badge, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-left w-full bg-card border border-border rounded-xl p-4 transition-all hover:border-primary/50 hover:shadow-md group"
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${bgColor}`}>
+          <Icon className={`h-5 w-5 ${color}`} />
+        </div>
+        {badge ? (
+          <Badge variant="secondary" className="font-bold">
+            {badge}
+          </Badge>
+        ) : null}
+      </div>
+      <div className="text-sm font-semibold mb-1">{title}</div>
+      <div className="text-xs text-muted-foreground flex items-center justify-between gap-2">
+        <span className="truncate">{subtitle}</span>
+        <ArrowRight className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+    </button>
+  );
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+function daysAgo(isoString) {
+  if (!isoString) return '';
+  const d = Math.floor((Date.now() - new Date(isoString).getTime()) / 86400000);
+  if (d === 0) return 'hoje';
+  if (d === 1) return 'ontem';
+  if (d < 7) return `há ${d} dias`;
+  if (d < 30) return `há ${Math.floor(d / 7)} semanas`;
+  return `há ${Math.floor(d / 30)} meses`;
+}
+
+function labelStatus(s) {
+  const m = {
+    pago: 'Pago',
+    conciliado: 'Conciliado',
+    pendente: 'Pendente',
+    cancelado: 'Cancelado',
+    bruto: 'A classificar',
+  };
+  return m[s] || s;
+}
+
+// Normaliza série pra 12 meses recentes (preenche meses sem dado com 0)
+function normalizarSerieAnual(serie) {
+  const hoje = new Date();
+  const meses = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  const map = new Map((serie || []).map(p => [p.mes, p]));
+  return meses.map(mes => ({
+    mes,
+    receita: map.get(mes)?.receita || 0,
+    despesa: map.get(mes)?.despesa || 0,
+  }));
+}

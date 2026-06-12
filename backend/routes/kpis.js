@@ -3,8 +3,32 @@ const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { coletarTodos } = require('../services/kpiAutoCollector');
+const painelCache = require('../services/painelCache');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 router.use(authenticate);
+
+// Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
+// quem tem 'integração' em kpi_areas (Lorena, líder de Integração).
+// Auditoria de pre-liberacao identificou que essas rotas estavam so com
+// authenticate · qualquer usuário logado escrevia. Agora restringido.
+function authorizeIntegracao(req, res, next) {
+  const u = req.user || {};
+  if (['admin', 'diretor'].includes(u.role)) return next();
+  const areas = (u.kpi_areas || []).map(a => String(a).toLowerCase());
+  if (areas.includes('integracao')) return next();
+  return res.status(403).json({
+    error: 'Sem permissão · necessário ser admin, diretor ou líder de Integração',
+  });
+}
+
+// Helper: valida número >= 0 (rejeita negativos antes do INSERT/UPDATE)
+function nonNeg(v, fallback = 0) {
+  const n = Number(v);
+  if (Number.isNaN(n) || n < 0) return fallback;
+  return n;
+}
 
 // ── Service Types (culto types) ───────────────────────────────────────────────
 router.get('/service-types', async (req, res) => {
@@ -35,12 +59,12 @@ router.get('/cultos', async (req, res) => {
   res.json(data);
 });
 
-router.post('/cultos', async (req, res) => {
+router.post('/cultos', authorizeIntegracao, async (req, res) => {
   const {
     service_type_id, nome, data, hora,
     presencial_adulto, presencial_kids,
-    decisoes_presenciais, decisoes_online,
-    youtube_video_id, online_pico,
+    decisoes_presenciais, decisoes_online, decisoes_kids,
+    youtube_video_id, online_pico, observacoes,
   } = req.body;
   if (!data || !hora || !nome) return res.status(400).json({ error: 'data, hora e nome são obrigatórios' });
 
@@ -48,12 +72,14 @@ router.post('/cultos', async (req, res) => {
     .from('cultos')
     .insert({
       service_type_id, nome, data, hora,
-      presencial_adulto: Number(presencial_adulto) || 0,
-      presencial_kids:   Number(presencial_kids)   || 0,
-      decisoes_presenciais: Number(decisoes_presenciais) || 0,
-      decisoes_online:      Number(decisoes_online)      || 0,
+      presencial_adulto:    nonNeg(presencial_adulto),
+      presencial_kids:      nonNeg(presencial_kids),
+      decisoes_presenciais: nonNeg(decisoes_presenciais),
+      decisoes_online:      nonNeg(decisoes_online),
+      decisoes_kids:        nonNeg(decisoes_kids),
       youtube_video_id: youtube_video_id || null,
-      online_pico: online_pico ? Number(online_pico) : null,
+      online_pico: online_pico ? nonNeg(online_pico, null) : null,
+      observacoes: observacoes ? String(observacoes).trim() : null,
       inserido_por: req.user.id,
     })
     .select()
@@ -62,25 +88,326 @@ router.post('/cultos', async (req, res) => {
   res.json(culto);
 });
 
-router.put('/cultos/:id', async (req, res) => {
+router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   const allowed = [
     'presencial_adulto', 'presencial_kids',
-    'decisoes_presenciais', 'decisoes_online',
+    'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
     'youtube_video_id', 'online_pico', 'nome',
     'online_ds', 'online_ddus',
+    'voluntarios_escalados', 'voluntarios_checkin',
+    'observacoes',
+  ];
+  const camposNumericos = [
+    'presencial_adulto', 'presencial_kids',
+    'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
+    'online_pico', 'online_ds', 'online_ddus',
+    'voluntarios_escalados', 'voluntarios_checkin',
   ];
   const update = { updated_at: new Date().toISOString() };
   for (const [k, v] of Object.entries(req.body)) {
-    if (allowed.includes(k)) update[k] = v === '' ? null : v;
+    if (!allowed.includes(k)) continue;
+    if (v === '' || v === null || v === undefined) { update[k] = null; continue; }
+    if (camposNumericos.includes(k)) {
+      const n = Number(v);
+      if (Number.isNaN(n) || n < 0) {
+        return res.status(400).json({ error: `Campo ${k} deve ser número >= 0 (recebido: ${v})` });
+      }
+      update[k] = n;
+    } else {
+      update[k] = v;
+    }
   }
   const { data, error } = await supabase
     .from('cultos').update(update).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // KPIs auto-cultos/batismos são recalculados via trigger SQL (migration
+  // 20260514210000_kpis_trigger_realtime.sql · trg_kpi_recalcular_culto).
+  // Aqui so limpa o cache do /painel pra forcar releitura do dado novo.
+  painelCache.bust('');
+
   res.json(data);
 });
 
 router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => {
   const { error } = await supabase.from('cultos').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Conta automática de voluntários escalados/checkin · usada no modal pra
+// mostrar valor sugerido. Quando user salva nas colunas manuais, sobrescreve.
+router.get('/cultos/:id/voluntarios', async (req, res) => {
+  const { data, error } = await supabase
+    .from('vw_culto_voluntarios')
+    .select('escalados_manual, checkin_manual, escalados_auto, checkin_auto, escalados, checkin')
+    .eq('culto_id', req.params.id)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || { escalados_auto: 0, checkin_auto: 0, escalados_manual: null, checkin_manual: null });
+});
+
+// ── Decisões com dados das pessoas (cultos_decisoes_pessoas) ──────────────────
+// 1 row por pessoa que decidiu no culto · vincula opcionalmente a mem_membros.
+
+router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .select('id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por, responsavel_nome, responsavel_telefone, responsavel_cpf')
+    .eq('culto_id', req.params.id)
+    .order('registrado_em', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// Decisões históricas que foram importadas (planilha, etc) e NÃO tem
+// culto vinculado. Vem de mem_trilha_valores etapa='conversao' filtrando
+// por observacoes/origem. Alimenta a aba Pessoas em /integracao/decisoes
+// pra incluir esse histórico junto com as decisões registradas em cultos.
+router.get('/decisoes-pessoas/historico-importado', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 500, 2000);
+    const desdeDias = Number(req.query.dias) || 365;
+    const desde = new Date();
+    desde.setDate(desde.getDate() - desdeDias);
+
+    // Trilha de conversao importada · join com mem_membros pra dados
+    const { data: trilhas, error } = await supabase
+      .from('mem_trilha_valores')
+      .select('membro_id, data_conclusao, observacoes, mem_membros(id, nome, telefone, cpf, data_nascimento, status, observacoes)')
+      .eq('etapa', 'conversao')
+      .eq('concluida', true)
+      .ilike('observacoes', '%importacao%')
+      .gte('data_conclusao', desde.toISOString().slice(0, 10))
+      .order('data_conclusao', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    const items = (trilhas || [])
+      .filter(t => t.mem_membros)
+      .map(t => ({
+        id: t.membro_id,
+        membro_id: t.membro_id,
+        nome: t.mem_membros.nome,
+        telefone: t.mem_membros.telefone,
+        cpf: t.mem_membros.cpf,
+        data_nascimento: t.mem_membros.data_nascimento,
+        data_conversao: t.data_conclusao,
+        status_membro: t.mem_membros.status,
+        origem: 'importacao_planilha',
+        observacoes_membro: t.mem_membros.observacoes,
+      }));
+
+    res.json({ total: items.length, items });
+  } catch (e) {
+    console.error('[kpis/decisoes-pessoas/historico-importado]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Decisões com cadastro incompleto (sem CPF ou sem data_nascimento)
+// Marcos: "futuramente quando tivermos esse convertido já alinhado na
+// jornada vamos conseguir buscar melhor esses dados em um censo posterior"
+router.get('/decisoes-pessoas/incompletos', async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .select(`
+      id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf,
+      tipo_decisao, status_followup, registrado_em,
+      culto:culto_id(id, data, service_type_id, service_type_name)
+    `)
+    .or('cpf.is.null,data_nascimento.is.null')
+    .order('registrado_em', { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error('[kpis/decisoes-pessoas/incompletos]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  const items = (data || []).map(p => ({
+    ...p,
+    falta_cpf:   !p.cpf,
+    falta_nasc:  !p.data_nascimento,
+  }));
+  res.json({
+    total: items.length,
+    items,
+  });
+});
+
+// Busca de membro/visitante por nome, CPF, email, telefone
+// Usada pelo autocomplete no modal antes de cadastrar manual
+router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+
+  const cpfLimpo = q.replace(/\D/g, '');
+  const isCpf = cpfLimpo.length >= 5 && /^\d+$/.test(cpfLimpo);
+  const escaped = q.replace(/[%_,()]/g, '\\$&');
+
+  // 1) Membros cadastrados
+  let memQuery = supabase
+    .from('mem_membros')
+    .select('id, nome, email, telefone, cpf, data_nascimento, status')
+    .is('deleted_at', null)
+    .limit(10);
+
+  // 2) Pessoas da lista do WiFi (portal · podem ainda não ser membros)
+  let wifiQuery = supabase
+    .from('wifi_visitantes')
+    .select('nome, email, telefone, cpf, cpf_norm, tel_norm, membro_id, data_acesso')
+    .is('deleted_at', null)
+    .order('data_acesso', { ascending: false, nullsFirst: false })
+    .limit(30);
+
+  if (isCpf) {
+    memQuery = memQuery.ilike('cpf', `${cpfLimpo}%`);
+    wifiQuery = wifiQuery.ilike('cpf_norm', `${cpfLimpo}%`);
+  } else {
+    memQuery = memQuery.or(`nome.ilike.%${escaped}%,email.ilike.%${escaped}%,telefone.ilike.%${escaped}%`);
+    wifiQuery = wifiQuery.or(`nome.ilike.%${escaped}%,email.ilike.%${escaped}%,telefone.ilike.%${escaped}%`);
+  }
+
+  const [memRes, wifiRes] = await Promise.all([memQuery, wifiQuery]);
+
+  if (memRes.error) {
+    console.error('[kpis/decisoes-pessoas buscar-membro]', memRes.error.message);
+    return res.status(500).json({ error: memRes.error.message });
+  }
+  if (wifiRes.error) {
+    // WiFi é complementar · não derruba a busca de membros
+    console.error('[kpis/decisoes-pessoas buscar-membro wifi]', wifiRes.error.message);
+  }
+
+  const out = (memRes.data || []).map(m => ({ ...m, membro_id: m.id, origem: 'membro' }));
+  const idsMembro = new Set(out.map(m => m.id));
+  const vistosWifi = new Set();
+
+  for (const w of (wifiRes.data || [])) {
+    // se já está vinculada a um membro que veio na busca de membros, evita duplicar
+    if (w.membro_id && idsMembro.has(w.membro_id)) continue;
+    const chave = w.cpf_norm || w.tel_norm || (w.nome || '').toLowerCase().trim();
+    if (!chave || vistosWifi.has(chave)) continue;
+    vistosWifi.add(chave);
+    out.push({
+      id: w.membro_id || `wifi:${chave}`,
+      membro_id: w.membro_id || null,
+      nome: w.nome,
+      email: w.email,
+      telefone: w.telefone,
+      cpf: w.cpf_norm || (w.cpf || '').replace(/\D/g, '') || null,
+      data_nascimento: null,
+      status: w.membro_id ? null : 'visitante',
+      origem: 'wifi',
+    });
+    if (out.length >= 25) break;
+  }
+
+  res.json(out);
+});
+
+router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
+  const {
+    nome, telefone, email, idade, data_nascimento, cpf,
+    tipo_decisao, observacoes, membro_id,
+    responsavel_nome, responsavel_telefone, responsavel_cpf,
+  } = req.body || {};
+
+  if (!nome || String(nome).trim().length < 2) {
+    return res.status(400).json({ error: 'Nome obrigatorio (min 2 chars)' });
+  }
+
+  const tipo = ['presencial', 'online', 'kids'].includes(tipo_decisao) ? tipo_decisao : 'presencial';
+
+  // Validacoes diferentes conforme tipo:
+  // - presencial/online: telefone da pessoa eh obrigatório (11 digitos)
+  // - kids: nome da criança + dados do responsável (telefone responsável
+  //   obrigatório · CPF responsável opcional)
+  let telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
+  let cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
+  let respTelLimpo = responsavel_telefone ? String(responsavel_telefone).replace(/\D/g, '') : '';
+  let respCpfLimpo = responsavel_cpf ? String(responsavel_cpf).replace(/\D/g, '') : null;
+
+  if (tipo === 'kids') {
+    if (!responsavel_nome || String(responsavel_nome).trim().length < 2) {
+      return res.status(400).json({ error: 'Nome do responsável obrigatório (min 2 chars) pra decisão Kids' });
+    }
+    if (respTelLimpo.length !== 11) {
+      return res.status(400).json({ error: 'Telefone do responsável deve ter 11 digitos pra decisão Kids' });
+    }
+    if (respCpfLimpo && respCpfLimpo.length !== 11) {
+      return res.status(400).json({ error: 'CPF do responsável deve ter 11 digitos (ou deixe vazio)' });
+    }
+    // Criança não precisa de telefone próprio
+    telLimpo = telLimpo || '';
+    if (telLimpo && telLimpo.length !== 11) {
+      return res.status(400).json({ error: 'Telefone da criança (se preenchido) deve ter 11 digitos' });
+    }
+  } else {
+    // presencial / online
+    if (telLimpo.length !== 11) {
+      return res.status(400).json({ error: 'Telefone deve ter 11 digitos (DDD + 9 + numero)' });
+    }
+    if (cpfLimpo && cpfLimpo.length !== 11) {
+      return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+    }
+  }
+
+  // Se não veio membro_id explicito, trigger BEFORE INSERT resolve/cria
+  // (trigger pula tipo='kids' · não cria mem_membros pra criança por LGPD)
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas')
+    .insert({
+      culto_id: req.params.id,
+      membro_id: tipo === 'kids' ? null : (membro_id || null),
+      nome: String(nome).trim(),
+      telefone: telLimpo || null,
+      email: email ? String(email).trim().toLowerCase() : null,
+      idade: idade ? Number(idade) : null,
+      data_nascimento: data_nascimento || null,
+      cpf: cpfLimpo,
+      tipo_decisao: tipo,
+      observacoes: observacoes || null,
+      responsavel_nome:     tipo === 'kids' ? String(responsavel_nome).trim() : null,
+      responsavel_telefone: tipo === 'kids' ? respTelLimpo : null,
+      responsavel_cpf:      tipo === 'kids' ? respCpfLimpo : null,
+      registrado_por: req.user?.id || null,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error('[kpis/decisoes-pessoas POST]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+  res.status(201).json(data);
+});
+
+router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
+  const allowed = [
+    'nome', 'telefone', 'email', 'idade', 'data_nascimento', 'cpf',
+    'tipo_decisao', 'observacoes', 'status_followup', 'observacoes_followup',
+    'responsavel_nome', 'responsavel_telefone', 'responsavel_cpf',
+  ];
+  const update = {};
+  for (const [k, v] of Object.entries(req.body || {})) {
+    if (!allowed.includes(k)) continue;
+    if ((k === 'cpf' || k === 'responsavel_cpf') && v) update[k] = String(v).replace(/\D/g, '');
+    else if ((k === 'telefone' || k === 'responsavel_telefone') && v) update[k] = String(v).replace(/\D/g, '');
+    else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
+    else if (k === 'idade') update[k] = v ? Number(v) : null;
+    else if (k === 'data_nascimento') update[k] = v || null;
+    else update[k] = v === '' ? null : v;
+  }
+  const { data, error } = await supabase
+    .from('cultos_decisoes_pessoas').update(update)
+    .eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+router.delete('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
+  const { error } = await supabase.from('cultos_decisoes_pessoas').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
@@ -91,11 +418,8 @@ router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => 
 // Idempotente: ON CONFLICT DO NOTHING via índice único (service_type_id, data, hora).
 // weeks=N: backfill das últimas N semanas (default 1 = só semana corrente).
 router.post('/cultos/auto-create', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = req.headers['x-vercel-cron'] === '1';
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+  if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
   }
 
@@ -179,12 +503,129 @@ router.get('/batismos', async (req, res) => {
   if (status) query = query.eq('status', status);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  const inscricoes = data || [];
+
+  // Enriquece com a data de conversão (etapa 'conversao' da jornada do membro,
+  // em mem_trilha_valores.data_conclusao — mesma fonte do "Seguir a Jesus") e o
+  // tempo em dias até o batismo. Busca em lote pelos membros vinculados.
+  const membroIds = [...new Set(inscricoes.map(b => b.membro_id).filter(Boolean))];
+  const conversaoPorMembro = {};
+  if (membroIds.length) {
+    const { data: trilhas } = await supabase
+      .from('mem_trilha_valores')
+      .select('membro_id, data_conclusao')
+      .eq('etapa', 'conversao')
+      .eq('concluida', true)
+      .in('membro_id', membroIds);
+    (trilhas || []).forEach(t => {
+      if (!t.data_conclusao) return;
+      // Conserva a conversão mais antiga por membro (defensivo contra duplicatas)
+      const atual = conversaoPorMembro[t.membro_id];
+      if (!atual || t.data_conclusao < atual) conversaoPorMembro[t.membro_id] = t.data_conclusao;
+    });
+  }
+
+  const DIA_MS = 86400000;
+  const enriched = inscricoes.map(b => {
+    const data_conversao = b.membro_id ? (conversaoPorMembro[b.membro_id] || null) : null;
+    let dias_conversao_batismo = null;
+    if (data_conversao && b.data_batismo) {
+      dias_conversao_batismo = Math.round(
+        (new Date(`${b.data_batismo}T12:00:00`).getTime()
+          - new Date(`${data_conversao}T12:00:00`).getTime()) / DIA_MS,
+      );
+    }
+    return { ...b, data_conversao, dias_conversao_batismo };
+  });
+
+  res.json(enriched);
 });
 
-router.post('/batismos', async (req, res) => {
-  const { cpf, nome, sobrenome, data_nascimento, telefone, email, origem = 'manual', observacoes } = req.body;
+// ── Cobertura de batismo dos convertidos ────────────────────────────────────
+// Trilho UNIVERSAL: todo convertido deve ser chamado pro batismo. A Integracao
+// acompanha aqui quem ja foi batizado, quem esta inscrito e quem ainda falta —
+// independente do acompanhamento pastoral (Cuidados). Cruza cui_convertidos com
+// batismo_inscricoes por membro_id, CPF ou nome. Paginado (cap de 1000 do PostgREST).
+router.get('/batismos/cobertura-convertidos', async (req, res) => {
+  try {
+    const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
+    const fetchAll = async (table, columns) => {
+      const out = []; let from = 0; const page = 1000;
+      while (true) {
+        const { data, error } = await supabase.from(table).select(columns)
+          .is('deleted_at', null).range(from, from + page - 1);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return out;
+    };
+
+    const [convertidos, inscricoes] = await Promise.all([
+      fetchAll('cui_convertidos', 'id, nome, telefone, cpf, membro_id, data_culto'),
+      fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome, data_batismo'),
+    ]);
+
+    // Indices de batismo · realizado tem prioridade sobre inscrito
+    const byMembro = new Map(), byCpf = new Map(), byNome = new Map();
+    const put = (map, key, realizado) => {
+      if (!key) return;
+      const cur = map.get(key);
+      const rank = realizado ? 2 : 1;
+      if (!cur || rank > cur.rank) map.set(key, { realizado });
+    };
+    for (const b of inscricoes) {
+      const realizado = b.status === 'realizado';
+      put(byMembro, b.membro_id, realizado);
+      put(byCpf, onlyDigits(b.cpf).length === 11 ? onlyDigits(b.cpf) : null, realizado);
+      put(byNome, String(b.nome || '').trim().toLowerCase() || null, realizado);
+    }
+    const matchOf = (c) => {
+      const cands = [
+        c.membro_id ? byMembro.get(c.membro_id) : null,
+        onlyDigits(c.cpf).length === 11 ? byCpf.get(onlyDigits(c.cpf)) : null,
+        byNome.get(String(c.nome || '').trim().toLowerCase()),
+      ].filter(Boolean);
+      if (!cands.length) return null;
+      return { realizado: cands.some(m => m.realizado) };
+    };
+
+    let batizados = 0, inscritos = 0, naoInscritos = 0;
+    const pendentes = [];
+    for (const c of convertidos) {
+      const m = matchOf(c);
+      if (m && m.realizado) { batizados++; continue; }
+      if (m) inscritos++; else naoInscritos++;
+      pendentes.push({
+        id: c.id, nome: c.nome, telefone: c.telefone, membro_id: c.membro_id,
+        data_culto: c.data_culto, status_batismo: m ? 'inscrito' : 'nao_inscrito',
+      });
+    }
+    pendentes.sort((a, b) => String(b.data_culto || '').localeCompare(String(a.data_culto || '')));
+
+    res.json({
+      total: convertidos.length,
+      batizados, inscritos, nao_inscritos: naoInscritos,
+      pct_batizados: convertidos.length ? Math.round((batizados / convertidos.length) * 100) : 0,
+      pendentes,
+    });
+  } catch (e) {
+    console.error('[kpis/batismos/cobertura-convertidos]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/batismos', authorizeIntegracao, async (req, res) => {
+  const {
+    cpf, nome, sobrenome, data_nascimento, telefone, email,
+    origem = 'manual', observacoes, area_kpi,
+    tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
+  } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
+  const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
+  const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
   let membro_id = null;
   const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
@@ -226,8 +667,15 @@ router.post('/batismos', async (req, res) => {
       telefone: telefone || null,
       email: email || null,
       origem,
+      area_kpi: areaKpiValida,
       observacoes: observacoes || null,
       inscrito_por: req.user?.id || null,
+      tamanho_camisa: tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null,
+      eh_crianca: !!eh_crianca,
+      possui_deficiencia: !!possui_deficiencia,
+      deficiencia_descricao: possui_deficiencia && deficiencia_descricao
+        ? String(deficiencia_descricao).trim() : null,
+      endereco: endereco ? String(endereco).trim() : null,
     })
     .select('*, membro:membro_id(id, nome, foto_url)')
     .single();
@@ -246,12 +694,27 @@ router.post('/batismos', async (req, res) => {
   res.json(inscricao);
 });
 
-router.put('/batismos/:id', async (req, res) => {
-  const { status, data_batismo, observacoes } = req.body;
+router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
+  const {
+    status, data_batismo, observacoes, area_kpi,
+    tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
+  } = req.body;
   const update = { updated_at: new Date().toISOString() };
   if (status)       update.status = status;
   if (data_batismo) update.data_batismo = data_batismo;
   if (observacoes !== undefined) update.observacoes = observacoes;
+  if (area_kpi && ['kids', 'sede', 'bridge', 'ami', 'online'].includes(area_kpi)) {
+    update.area_kpi = area_kpi;
+  }
+  if (tamanho_camisa !== undefined) {
+    update.tamanho_camisa = tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null;
+  }
+  if (eh_crianca !== undefined) update.eh_crianca = !!eh_crianca;
+  if (possui_deficiencia !== undefined) update.possui_deficiencia = !!possui_deficiencia;
+  if (deficiencia_descricao !== undefined) {
+    update.deficiencia_descricao = deficiencia_descricao ? String(deficiencia_descricao).trim() : null;
+  }
+  if (endereco !== undefined) update.endereco = endereco ? String(endereco).trim() : null;
 
   const { data, error } = await supabase
     .from('batismo_inscricoes')
@@ -279,9 +742,9 @@ router.get('/dashboard', async (req, res) => {
     { data: metas },
   ] = await Promise.all([
     supabase.from('vw_culto_stats').select('*').gte('data', dataInicioStr).order('data', { ascending: true }),
-    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).eq('status', 'pendente'),
-    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).eq('status', 'realizado'),
-    supabase.from('mem_grupos').select('*', { count: 'exact', head: true }).eq('ativo', true),
+    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'pendente'),
+    supabase.from('batismo_inscricoes').select('*', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'realizado'),
+    supabase.from('mem_grupos').select('*', { count: 'exact', head: true }).is('deleted_at', null).eq('ativo', true),
     supabase.from('mem_checkins').select('membro_id', { count: 'exact', head: true })
       .gte('data', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]),
     supabase.from('kpi_metas').select('*').eq('ativo', true).order('area'),
@@ -336,11 +799,8 @@ router.get('/youtube/status', async (req, res) => {
 
 // ── YouTube sync (chamado pelo cron Vercel) ───────────────────────────────────
 router.post('/youtube/sync', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = req.headers['x-vercel-cron'] === '1';
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+  if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
   }
 
@@ -363,9 +823,16 @@ router.post('/youtube/sync', async (req, res) => {
   const onlineTypeIds = new Set((onlineTypes || []).map(t => t.id));
   const isOnline = (c) => !c.service_type_id || onlineTypeIds.has(c.service_type_id);
 
+  // Backfill-friendly: pega TODOS os cultos com vídeo pendente até a data limite,
+  // não so a data exata. Se o cron falhou em algum dia, na próxima execucao ele
+  // ainda recupera o dado (best-effort com viewCount atual). O cron diario
+  // limita o backlog a poucos itens.
+  //
+  // D+1 (online_ds): cultos com data <= ontem, com vídeo, sem online_ds
+  // D+7 (online_ddus): cultos com data <= 7 dias atras, com vídeo, com online_ds, sem online_ddus
   const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
-    supabase.from('cultos').select('id, youtube_video_id, service_type_id').eq('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null),
-    supabase.from('cultos').select('id, youtube_video_id, online_ds, service_type_id').eq('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null),
+    supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').is('deleted_at', null).lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
+    supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').is('deleted_at', null).lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
   ]);
   const cultosDS = (cultosDSRaw || []).filter(isOnline);
   const cultosDDUS = (cultosDDUSRaw || []).filter(isOnline);
@@ -451,7 +918,19 @@ function parseMes(input) {
   const inicio = new Date(Date.UTC(y, m - 1, 1));
   const fimExclusivo = new Date(Date.UTC(y, m, 1));
   const diasNoMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const semanasNoMes = Math.max(1, Math.ceil(diasNoMes / 7));
+  // Semanas "completas" · domingo (D) E quarta (D+3) ambos dentro do mês.
+  // Regra do negócio: so contam semanas com ambos os dias de culto (dom+qua).
+  // Ex.: abr/26 → 4 semanas (dom 5/12/19/26 + qua 8/15/22/29 todos em abril)
+  //      jun/26 → 3 semanas (dom 28/jun + qua 1/jul cai fora)
+  let semanasNoMes = 0;
+  for (let d = 1; d <= diasNoMes; d++) {
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (date.getUTCDay() === 0) {
+      const qua = new Date(date.getTime() + 3 * 86400000);
+      if (qua.getUTCMonth() === m - 1) semanasNoMes++;
+    }
+  }
+  semanasNoMes = Math.max(1, semanasNoMes);
   const mesISO = `${y}-${String(m).padStart(2, '0')}`;
   const inicioStr = inicio.toISOString().split('T')[0];
   const fimExclusivoStr = fimExclusivo.toISOString().split('T')[0];
@@ -474,7 +953,7 @@ router.get('/cultura', async (req, res) => {
         .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
       // mem_grupo_membros (saiu_em IS NULL = ativo). Tabela pode não existir — tolerante.
-      supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('saiu_em', null),
+      supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).is('saiu_em', null),
       supabase.from('pense_videos')
         .select('views')
         .eq('ativo', true)
@@ -483,6 +962,8 @@ router.get('/cultura', async (req, res) => {
       // RPC: count(distinct volunteer_id) direto no banco — evita trafegar milhares de linhas
       supabase.rpc('kpi_servir_comunidade', { _since: noventaDiasStr }),
       supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
+      // Generosidade · fallback do fin_transacoes via RPC (escapa do cap de 1000 do PostgREST)
+      supabase.rpc('fin_generosidade_mes', { p_mes: inicioStr }),
     ]);
 
     const pick = (i) => (settled[i].status === 'fulfilled' ? settled[i].value : { data: null, error: settled[i].reason });
@@ -491,6 +972,7 @@ router.get('/cultura', async (req, res) => {
     const penseRes = pick(2);
     const servirRes = pick(3);
     const culturaMensalRes = pick(4);
+    const finGenRes = pick(5);
 
     const cultos = cultosRes.data || [];
     const presencialTotal = cultos.reduce((s, c) => s + (c.presencial_adulto || 0) + (c.presencial_kids || 0), 0);
@@ -506,27 +988,55 @@ router.get('/cultura', async (req, res) => {
     const servirComunidade = servirRes.error ? null : (typeof servirRes.data === 'number' ? servirRes.data : (servirRes.data ?? null));
 
     const cm = culturaMensalRes.data;
+
+    // Fallback de generosidade · RPC fin_generosidade_mes retorna agregado JSONB
+    // (escapa do cap de 1000 do PostgREST quando fin_transacoes > 1000 linhas no mês)
+    const finGen = finGenRes.error || !finGenRes.data ? null : finGenRes.data;
+    const finDizimistas = finGen ? Number(finGen.dizimistas || 0) : null;
+    const finOfertantes = finGen ? Number(finGen.ofertantes || 0) : null;
+    const finValorDizimo = finGen ? Number(finGen.valor_dizimo || 0) : 0;
+    const finValorOferta = finGen ? Number(finGen.valor_oferta || 0) : 0;
+    const finDoadoresUnicos = finGen ? Number(finGen.doadores_unicos || 0) : null;
+
     const generosidade = {
-      dizimistas: cm?.qtd_dizimistas ?? null,
-      ofertantes: cm?.qtd_ofertantes ?? null,
+      // Prioriza valor manual (cultura_mensal) · fallback pra fin_transacoes
+      dizimistas: cm?.qtd_dizimistas ?? finDizimistas ?? null,
+      ofertantes: cm?.qtd_ofertantes ?? finOfertantes ?? null,
+      doadores_unicos: finDoadoresUnicos,
+      valor_dizimo: finValorDizimo,
+      valor_oferta: finValorOferta,
+      valor_total: finValorDizimo + finValorOferta,
+      fonte: cm?.qtd_dizimistas != null || cm?.qtd_ofertantes != null ? 'manual' : 'fin_transacoes',
     };
+
+    // Valores manuais de cultura_mensal tem prioridade sobre o agregado de
+    // cultos · permite lancar mês consolidado sem cultos individuais.
+    const presencialSemanal = cm?.freq_presencial_semanal != null
+      ? cm.freq_presencial_semanal
+      : Math.round(presencialTotal / semanasNoMes);
+    const onlineSemanal = cm?.freq_online_semanal != null
+      ? cm.freq_online_semanal
+      : Math.round(onlineDsTotal / semanasNoMes);
+    const decisoesMes = cm?.decisoes_total != null ? cm.decisoes_total : decisoesTotal;
+    const conectarMes = cm?.freq_grupos_total != null ? cm.freq_grupos_total : conectarPessoas;
 
     res.json({
       mes: mesISO,
       semanas_no_mes: semanasNoMes,
       dias_no_mes: diasNoMes,
       seguir_jesus: {
-        presencial: Math.round(presencialTotal / semanasNoMes),
-        online: Math.round(onlineDsTotal / semanasNoMes),
+        presencial: presencialSemanal,
+        online: onlineSemanal,
         presencial_total: presencialTotal,
         online_total: onlineDsTotal,
+        fonte: cm?.freq_presencial_semanal != null ? 'manual' : 'auto',
       },
-      conectar_pessoas: conectarPessoas,
+      conectar_pessoas: conectarMes,
       investir_deus: investirDeus,
       investir_deus_total: penseTotalViews,
       servir_comunidade: servirComunidade,
       generosidade,
-      decisoes: decisoesTotal,
+      decisoes: decisoesMes,
     });
   } catch (e) {
     console.error('[kpis/cultura] erro:', e);
@@ -537,18 +1047,26 @@ router.get('/cultura', async (req, res) => {
   }
 });
 
-// POST /kpis/cultura/mensal — upsert (mes, qtd_dizimistas, qtd_ofertantes, observacoes)
+// POST /kpis/cultura/mensal — upsert (mês, qtd_dizimistas, qtd_ofertantes, observações)
 router.post('/cultura/mensal', authorize('admin', 'diretor'), async (req, res) => {
-  const { mes, qtd_dizimistas, qtd_ofertantes, observacoes } = req.body || {};
+  const {
+    mes, qtd_dizimistas, qtd_ofertantes, observacoes,
+    freq_presencial_semanal, freq_online_semanal, decisoes_total, freq_grupos_total,
+  } = req.body || {};
   if (!mes || !/^\d{4}-\d{2}/.test(mes)) {
-    return res.status(400).json({ error: 'Campo "mes" obrigatório no formato YYYY-MM' });
+    return res.status(400).json({ error: 'Campo "mês" obrigatório no formato YYYY-MM' });
   }
   // Sempre dia 01
   const mesDate = `${mes.slice(0, 7)}-01`;
+  const intOrNull = (v) => v == null || v === '' ? null : Number(v);
   const payload = {
     mes: mesDate,
     qtd_dizimistas: Number(qtd_dizimistas) || 0,
     qtd_ofertantes: Number(qtd_ofertantes) || 0,
+    freq_presencial_semanal: intOrNull(freq_presencial_semanal),
+    freq_online_semanal:     intOrNull(freq_online_semanal),
+    decisoes_total:          intOrNull(decisoes_total),
+    freq_grupos_total:       intOrNull(freq_grupos_total),
     observacoes: observacoes || null,
     updated_at: new Date().toISOString(),
     updated_by: req.user?.id || null,
@@ -606,11 +1124,8 @@ router.delete('/cultura/pense/:id', authorize('admin', 'diretor'), async (req, r
 
 // POST /kpis/cultura/pense/sync — atualiza views via YouTube API
 router.post('/cultura/pense/sync', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = req.headers['x-vercel-cron'] === '1';
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isVercelCron && authHeader !== cronSecret && authHeader !== `Bearer ${cronSecret}` && !isAdmin) {
+  if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
   }
 

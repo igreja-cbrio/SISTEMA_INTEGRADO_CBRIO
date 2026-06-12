@@ -1,0 +1,42 @@
+/**
+ * Constantes de áreas e categorias da igreja.
+ *
+ * NOTA HISTÓRICA: até 2026-04-30 este arquivo continha um array INDICADORES
+ * com 60 KPIs hardcoded. Foi removido — a fonte de verdade agora e o banco
+ * (kpi_indicadores_taticos) acessado via hook useKpis().
+ *
+ * O que ficou aqui são constantes que não mudam: as 11 áreas da igreja
+ * e as 5 categorias. Se um dia precisar editar áreas via UI, mudamos pra
+ * tabela também.
+ */
+
+export const CATEGORIAS = ['Ministerial', 'Geracional', 'Institucional', 'Criativo', 'Operacoes'];
+
+export const AREAS = [
+  { id: 'AMI', nome: 'AMI', categoria: 'Geracional' },
+  { id: 'CBA', nome: 'CBA', categoria: 'Ministerial' },
+  { id: 'CBKids', nome: 'CBKids', categoria: 'Geracional' },
+  { id: 'Cuidados', nome: 'Cuidados', categoria: 'Ministerial' },
+  { id: 'Grupos', nome: 'Grupos', categoria: 'Ministerial' },
+  { id: 'Integracao', nome: 'Integração', categoria: 'Ministerial' },
+  { id: 'Voluntariado', nome: 'Voluntariado', categoria: 'Ministerial' },
+  { id: 'NEXT', nome: 'NEXT', categoria: 'Ministerial' },
+  { id: 'Generosidade', nome: 'Generosidade', categoria: 'Ministerial' },
+  { id: 'Jornada', nome: 'Jornada (cross-cutting)', categoria: 'Institucional' },
+  { id: 'Igreja', nome: 'Igreja (institucional)', categoria: 'Institucional' },
+  // Operações — sustentam a NSM, não movem (PDF Planejamento Estratégico 2026)
+  { id: 'Financeiro',     nome: 'Financeiro',     categoria: 'Operacoes' },
+  { id: 'RH',             nome: 'RH',             categoria: 'Operacoes' },
+  { id: 'Infraestrutura', nome: 'Infraestrutura', categoria: 'Operacoes' },
+];
+
+export const CATEGORIA_AREAS = {
+  Ministerial: ['CBA', 'Cuidados', 'Grupos', 'Integracao', 'Voluntariado', 'NEXT', 'Generosidade'],
+  Geracional: ['AMI', 'CBKids'],
+  Institucional: ['Jornada', 'Igreja'],
+  Criativo: [],
+  Operacoes: ['Financeiro', 'RH', 'Infraestrutura'],
+};
+
+export const getAreasForCategoria = (cat) => CATEGORIA_AREAS[cat] || [];
+export const getAreaNome = (id) => AREAS.find(a => a.id === id)?.nome || id;

@@ -1,42 +1,17 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
-const db = require('../utils/db');
 const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
 const { ENVIRONMENT_ID, getAgentId, listModulesForUser, canUseAgent } = require('../config/managedAgents');
 const { buildContext, serializeContext } = require('../services/agentContext');
 
-// Helper: persist to DB with supabase fallback
+// Persistência via cliente supabase (REST · service_role). O pool pg direto não
+// conecta no serverless do Vercel, então toda a leitura/escrita aqui usa REST.
 async function dbInsert(table, data) {
-  try {
-    const cols = Object.keys(data);
-    const vals = Object.values(data);
-    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-    const result = await db.query(
-      `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
-      vals
-    );
-    return result.rows[0];
-  } catch (pgErr) {
-    console.warn(`[AGENTS] pg INSERT into ${table} failed:`, pgErr.message);
-    // Fallback to supabase client
-    if (supabase) {
-      const { data: row, error } = await supabase.from(table).insert(data).select().single();
-      if (error) throw new Error(`Supabase fallback failed: ${error.message}`);
-      return row;
-    }
-    throw pgErr;
-  }
-}
-
-async function dbQuery(text, params) {
-  try {
-    return await db.query(text, params);
-  } catch (pgErr) {
-    console.warn('[AGENTS] pg query failed:', pgErr.message);
-    throw pgErr;
-  }
+  const { data: row, error } = await supabase.from(table).insert(data).select().single();
+  if (error) throw new Error(`Insert em ${table} falhou: ${error.message}`);
+  return row;
 }
 
 // Autenticação é obrigatória em todas as rotas.
@@ -139,12 +114,16 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
       sendEvent('session', { sessionId: activeSessionId, dbSessionId, module: agentModule });
     } else {
-      // Update last_message_at
+      // Update last_message_at (preenche title só se ainda estiver vazio · COALESCE)
       try {
-        await dbQuery(
-          `UPDATE agent_sessions SET last_message_at = NOW(), title = COALESCE(title, $1) WHERE anthropic_session_id = $2`,
-          [message.slice(0, 80), activeSessionId]
-        );
+        const { data: sessRows } = await supabase
+          .from('agent_sessions')
+          .select('title')
+          .eq('anthropic_session_id', activeSessionId)
+          .limit(1);
+        const patch = { last_message_at: new Date().toISOString() };
+        if (sessRows?.[0] && !sessRows[0].title) patch.title = message.slice(0, 80);
+        await supabase.from('agent_sessions').update(patch).eq('anthropic_session_id', activeSessionId);
       } catch (e) { console.warn('[AGENTS] Failed to update session timestamp:', e.message); }
     }
 
@@ -341,11 +320,12 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
     // 6. Persist messages in DB
     try {
-      const sessRow = await dbQuery(
-        `SELECT id FROM agent_sessions WHERE anthropic_session_id = $1 LIMIT 1`,
-        [activeSessionId]
-      );
-      const dbSessId = sessRow.rows[0]?.id;
+      const { data: sessRows } = await supabase
+        .from('agent_sessions')
+        .select('id')
+        .eq('anthropic_session_id', activeSessionId)
+        .limit(1);
+      const dbSessId = sessRows?.[0]?.id;
       if (dbSessId) {
         await dbInsert('agent_messages', { session_id: dbSessId, role: 'user', content: message });
         if (fullText) {
@@ -359,10 +339,11 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
     // 7. Log usage
     try {
-      await db.query(
-        'INSERT INTO agent_log (agent, action, details) VALUES ($1,$2,$3)',
-        [agentModule, `Chat: ${message.slice(0, 80)}`, JSON.stringify({ session: activeSessionId, response_length: fullText.length })]
-      );
+      await supabase.from('agent_log').insert({
+        agent: agentModule,
+        action: `Chat: ${message.slice(0, 80)}`,
+        details: { session: activeSessionId, response_length: fullText.length },
+      });
     } catch (e) { /* ignore */ }
 
     sendEvent('done', { sessionId: activeSessionId });
@@ -380,12 +361,14 @@ router.post('/chat', chatLimiter, async (req, res) => {
 // GET /api/agents/sessions — lista sessões do usuário
 router.get('/sessions', async (req, res) => {
   try {
-    const r = await dbQuery(
-      `SELECT id, anthropic_session_id, agent_module, title, created_at, last_message_at
-       FROM agent_sessions WHERE user_id = $1 ORDER BY last_message_at DESC LIMIT 30`,
-      [req.user.userId]
-    );
-    res.json(r.rows);
+    const { data, error } = await supabase
+      .from('agent_sessions')
+      .select('id, anthropic_session_id, agent_module, title, created_at, last_message_at')
+      .eq('user_id', req.user.userId)
+      .order('last_message_at', { ascending: false })
+      .limit(30);
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     console.error('[AGENTS] Sessions list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar sessões' });
@@ -395,21 +378,24 @@ router.get('/sessions', async (req, res) => {
 // GET /api/agents/sessions/:id/messages — histórico de mensagens (com validação de ownership)
 router.get('/sessions/:id/messages', async (req, res) => {
   try {
-    // Validate session belongs to user
-    const sessCheck = await dbQuery(
-      `SELECT id FROM agent_sessions WHERE id = $1 AND user_id = $2 LIMIT 1`,
-      [req.params.id, req.user.userId]
-    );
-    if (!sessCheck.rows.length) {
+    // Valida que a sessão pertence ao usuário
+    const { data: sessRows } = await supabase
+      .from('agent_sessions')
+      .select('id')
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.userId)
+      .limit(1);
+    if (!sessRows || !sessRows.length) {
       return res.status(404).json({ error: 'Sessão não encontrada' });
     }
 
-    const r = await dbQuery(
-      `SELECT id, role, content, created_at FROM agent_messages
-       WHERE session_id = $1 ORDER BY created_at ASC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
+    const { data, error } = await supabase
+      .from('agent_messages')
+      .select('id, role, content, created_at')
+      .eq('session_id', req.params.id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     console.error('[AGENTS] Messages list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar mensagens' });
@@ -419,10 +405,12 @@ router.get('/sessions/:id/messages', async (req, res) => {
 // DELETE /api/agents/sessions/:id — remove sessão
 router.delete('/sessions/:id', async (req, res) => {
   try {
-    await db.query(
-      'DELETE FROM agent_sessions WHERE id = $1 AND user_id = $2',
-      [req.params.id, req.user.userId]
-    );
+    const { error } = await supabase
+      .from('agent_sessions')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.userId);
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao remover sessão' });
@@ -459,10 +447,11 @@ router.post('/generate', authorize('admin', 'diretor'), aiLimiter, async (req, r
     const text = data.content?.[0]?.text || 'Sem resposta';
 
     // Log da ação
-    await db.query(
-      'INSERT INTO agent_log (agent, action, details) VALUES ($1,$2,$3)',
-      [agent || 'general', `Gerou resposta: ${prompt.slice(0, 100)}`, JSON.stringify({ prompt_length: prompt.length })]
-    );
+    await supabase.from('agent_log').insert({
+      agent: agent || 'general',
+      action: `Gerou resposta: ${prompt.slice(0, 100)}`,
+      details: { prompt_length: prompt.length },
+    });
 
     res.json({ text, usage: data.usage });
   } catch (e) {
@@ -471,21 +460,34 @@ router.post('/generate', authorize('admin', 'diretor'), aiLimiter, async (req, r
   }
 });
 
-// GET /api/agents/queue
+// GET /api/agents/queue · lista propostas pra aprovar (default = pending)
 router.get('/queue', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM agent_queue WHERE status = $1 ORDER BY created_at DESC LIMIT 20', ['pending']);
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+    const status = req.query.status || 'pending';
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const { data, error } = await supabase
+      .from('agent_queue')
+      .select('id, run_id, agent_type, action_type, action_label, description, reasoning, payload, status, reviewed_by, reviewed_at, applied_at, apply_error, created_at')
+      .eq('status', status)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[AGENTS] /queue error:', e.message);
+    res.status(500).json({ error: 'Erro ao listar fila' });
+  }
 });
 
-// PATCH /api/agents/queue/:id/approve
+// PATCH /api/agents/queue/:id/approve · so marca aprovada (sem aplicar)
+// Mantido por backward-compat. Pra aplicar, use POST /queue/:id/apply.
 router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    await db.query(
-      'UPDATE agent_queue SET status=$1, reviewed_by=$2, reviewed_at=NOW() WHERE id=$3',
-      ['approved', req.user.userId, req.params.id]
-    );
+    const { error } = await supabase
+      .from('agent_queue')
+      .update({ status: 'approved', reviewed_by: req.user.userId, reviewed_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -493,20 +495,314 @@ router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, re
 // PATCH /api/agents/queue/:id/reject
 router.patch('/queue/:id/reject', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    await db.query(
-      'UPDATE agent_queue SET status=$1, reviewed_by=$2, reviewed_at=NOW() WHERE id=$3',
-      ['rejected', req.user.userId, req.params.id]
-    );
+    const motivo = (req.body || {}).motivo || null;
+    const patch = { status: 'rejected', reviewed_by: req.user.userId, reviewed_at: new Date().toISOString() };
+    if (motivo) patch.apply_error = motivo; // COALESCE: só sobrescreve se veio motivo
+    const { error } = await supabase.from('agent_queue').update(patch).eq('id', req.params.id);
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// POST /api/agents/queue/:id/apply · aprova E aplica em UMA chamada
+// Switch por action_type → handler em backend/agents/apply/*.
+const { applyQueueAction } = require('../agents/apply');
+
+router.post('/queue/:id/apply', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalido' });
+
+    // Carrega proposta
+    const { data: row, error: errRow } = await supabase
+      .from('agent_queue')
+      .select('id, action_type, payload, status, reviewed_by')
+      .eq('id', req.params.id)
+      .single();
+    if (errRow || !row) return res.status(404).json({ error: 'Proposta não encontrada' });
+    if (row.status !== 'pending') {
+      return res.status(400).json({
+        error: `Proposta já com status=${row.status} · não pode aplicar novamente`,
+      });
+    }
+
+    // Marca como aprovada antes de aplicar pra evitar race condition
+    await supabase
+      .from('agent_queue')
+      .update({
+        status: 'approved',
+        reviewed_by: req.user.userId,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', row.id);
+
+    // Aplica
+    const result = await applyQueueAction({
+      action_type: row.action_type,
+      payload: row.payload,
+      reviewedBy: req.user.userId,
+    });
+
+    if (!result.ok) {
+      await supabase
+        .from('agent_queue')
+        .update({ status: 'failed', apply_error: result.error || 'erro desconhecido' })
+        .eq('id', row.id);
+      return res.status(400).json({ ok: false, error: result.error });
+    }
+
+    await supabase
+      .from('agent_queue')
+      .update({
+        status: 'applied',
+        applied_at: new Date().toISOString(),
+        apply_error: null,
+      })
+      .eq('id', row.id);
+
+    res.json({ ok: true, info: result.info || null });
+  } catch (e) {
+    console.error('[AGENTS] /queue/:id/apply error:', e.message);
+    res.status(500).json({ error: 'Erro ao aplicar ação' });
+  }
+});
+
+// POST /api/agents/worker/trigger · pinga o Railway Worker pra rodar agente
+router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const workerUrl = process.env.AGENT_WORKER_URL;
+    const secret = process.env.AGENT_WORKER_HMAC_SECRET;
+    if (!workerUrl || !secret) {
+      return res.status(503).json({
+        error: 'Worker não configurado · setar AGENT_WORKER_URL e AGENT_WORKER_HMAC_SECRET no Vercel',
+      });
+    }
+    const agentType = (req.body || {}).agentType || 'financeiro_executor';
+    const body = JSON.stringify({
+      triggeredBy: req.user.userId,
+      config: { trigger: 'manual', triggered_by_email: req.user.email },
+    });
+    const { sign } = require('../utils/workerHmac');
+    const sig = sign(body);
+
+    const resp = await fetch(`${workerUrl.replace(/\/$/, '')}/run/${agentType}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Agent-Signature': sig,
+      },
+      body,
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      return res.status(502).json({ error: `Worker respondeu ${resp.status}: ${txt.slice(0, 200)}` });
+    }
+    const data = await resp.json().catch(() => ({}));
+    res.json({ accepted: true, worker: data });
+  } catch (e) {
+    console.error('[AGENTS] /worker/trigger error:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao chamar worker' });
+  }
 });
 
 // GET /api/agents/log
 router.get('/log', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const r = await db.query('SELECT * FROM agent_log ORDER BY created_at DESC LIMIT 50');
-    res.json(r.rows);
+    const { data, error } = await supabase
+      .from('agent_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// ─── AUDITORES (system, module_*, design) ───────────────────────────────
+// Os agentes rodam em background ("fire and forget"). O frontend faz polling
+// em /runs/:id para acompanhar progresso e ler os findings quando completar.
+
+const { runSystemAudit } = require('../agents/systemAuditor');
+const { runModuleAudit } = require('../agents/moduleAuditor');
+const { runDesignAudit } = require('../agents/designAuditor');
+const { AgentService } = require('../services/agentService');
+
+function executarAgente(agentType, triggeredBy, config) {
+  if (agentType === 'system_auditor') return runSystemAudit(triggeredBy, config);
+  if (agentType === 'design_auditor') return runDesignAudit(triggeredBy, config);
+  if (agentType.startsWith('module_')) return runModuleAudit(agentType, triggeredBy, config);
+  throw new Error(`Tipo de agente desconhecido: ${agentType}`);
+}
+
+// POST /api/agents/run — dispara auditoria em background, retorna runId
+router.post('/run', authorize('admin', 'diretor'), aiLimiter, async (req, res) => {
+  try {
+    const { agentType, config } = sanitizeObj(req.body || {});
+    if (!agentType) return res.status(400).json({ error: 'agentType obrigatório' });
+
+    const userConfig = config || {};
+
+    // Cria o run imediatamente para o frontend já ter um ID para polling.
+    // O config gravado no banco é só o que veio do usuário (sem flags internas).
+    const agent = await AgentService.createRun(agentType, req.user.userId, userConfig);
+
+    // Dispara a auditoria em background. Erros são capturados pelo próprio
+    // auditor (chamam agent.fail) — qualquer escape vira agent_runs.status='failed'.
+    const runtimeConfig = { ...userConfig, _existingRunId: agent.runId };
+    setImmediate(async () => {
+      try {
+        await executarAgente(agentType, req.user.userId, runtimeConfig);
+      } catch (err) {
+        console.error(`[AGENTS] run ${agent.runId} crashed:`, err.message);
+        try {
+          await supabase.from('agent_runs').update({
+            status: 'failed',
+            error: err.message,
+            completed_at: new Date().toISOString(),
+          }).eq('id', agent.runId);
+        } catch { /* ignore */ }
+      }
+    });
+
+    res.status(202).json({ runId: agent.runId, status: 'running' });
+  } catch (e) {
+    console.error('[AGENTS] /run error:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao iniciar agente' });
+  }
+});
+
+// GET /api/agents/runs — lista runs (filtros: agentType, status, limit)
+router.get('/runs', async (req, res) => {
+  try {
+    const { agentType, status, limit } = req.query;
+    let q = supabase
+      .from('agent_runs')
+      .select('id, agent_type, status, summary, findings, config, tokens_input, tokens_output, cost_usd, created_at, completed_at, error')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(parseInt(limit) || 30, 100));
+    if (agentType) q = q.eq('agent_type', agentType);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[AGENTS] /runs error:', e.message);
+    res.status(500).json({ error: 'Erro ao listar runs' });
+  }
+});
+
+// GET /api/agents/runs/:id — detalhe de uma run
+router.get('/runs/:id', async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { data, error } = await supabase
+      .from('agent_runs').select('*').eq('id', req.params.id).single();
+    if (error || !data) return res.status(404).json({ error: 'Run não encontrada' });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar run' });
+  }
+});
+
+// GET /api/agents/runs/:id/steps — passos de uma run
+router.get('/runs/:id/steps', async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { data, error } = await supabase
+      .from('agent_steps')
+      .select('id, step_number, model, role, tokens_input, tokens_output, cost_usd, response_text, duration_ms, created_at')
+      .eq('run_id', req.params.id)
+      .order('step_number', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao listar steps' });
+  }
+});
+
+// POST /api/agents/runs/:id/cancel — marca como cancelada
+router.post('/runs/:id/cancel', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    const { error } = await supabase
+      .from('agent_runs')
+      .update({ status: 'cancelled', completed_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('status', 'running');
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao cancelar' });
+  }
+});
+
+// GET /api/agents/stats — totais agregados (execuções, tokens, custo)
+router.get('/stats', async (req, res) => {
+  try {
+    const sinceDays = parseInt(req.query.days) || 30;
+    const since = new Date(Date.now() - sinceDays * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from('agent_runs')
+      .select('tokens_input, tokens_output, cost_usd, status')
+      .gte('created_at', since);
+    if (error) throw error;
+    const rows = data || [];
+    const totalRuns = rows.length;
+    const completed = rows.filter(r => r.status === 'completed').length;
+    const failed = rows.filter(r => r.status === 'failed').length;
+    const totalTokens = rows.reduce((s, r) => s + (r.tokens_input || 0) + (r.tokens_output || 0), 0);
+    const totalCost = rows.reduce((s, r) => s + Number(r.cost_usd || 0), 0);
+    res.json({ totalRuns, completed, failed, totalTokens, totalCost, sinceDays });
+  } catch (e) {
+    console.error('[AGENTS] /stats error:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular estatísticas' });
+  }
+});
+
+// GET /api/agents/scores — histórico de score por agent_type
+router.get('/scores', async (req, res) => {
+  try {
+    const sinceDays = parseInt(req.query.days) || 90;
+    const since = new Date(Date.now() - sinceDays * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from('agent_runs')
+      .select('agent_type, config, findings, created_at')
+      .eq('status', 'completed')
+      .gte('created_at', since)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+
+    const byType = {};
+    for (const r of data || []) {
+      const score = r.config?.score;
+      if (score == null) continue;
+      if (!byType[r.agent_type]) byType[r.agent_type] = [];
+      byType[r.agent_type].push({
+        date: r.created_at,
+        score: Number(score),
+        findingsCount: Array.isArray(r.findings) ? r.findings.length : 0,
+      });
+    }
+    res.json(byType);
+  } catch (e) {
+    console.error('[AGENTS] /scores error:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar scores' });
+  }
+});
+
+// GET /api/agents/memory/:module — memórias persistidas de um módulo
+router.get('/memory/:module', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('agent_memory')
+      .select('agent_type, module, key, value, updated_at')
+      .eq('module', req.params.module)
+      .order('updated_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar memória' });
+  }
 });
 
 module.exports = router;

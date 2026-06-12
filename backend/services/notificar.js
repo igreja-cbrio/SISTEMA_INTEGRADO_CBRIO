@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { enviarPushParaUsers } = require('./webpush');
 
 /**
  * Resolve quais usuários devem receber notificação de um módulo.
@@ -27,11 +28,21 @@ async function resolverDestinatarios(modulo) {
  * Cria notificação para múltiplos usuários, com deduplicação.
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
-async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds }) {
-  const destinatarios = targetIds || await resolverDestinatarios(modulo);
-  if (!destinatarios.length) return 0;
+async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds }) {
+  let destinatarios = targetIds || await resolverDestinatarios(modulo);
+  if (extraTargetIds?.length) {
+    destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
+  }
+  if (!destinatarios.length) {
+    console.warn(`[notificar] sem destinatarios · modulo=${modulo} · titulo="${titulo}"`);
+    return 0;
+  }
 
   let inserted = 0;
+  let skipped = 0;
+  let failed = 0;
+  const usersInseridos = [];
+  const erros = [];
   for (const userId of destinatarios) {
     // Dedup: não cria se já existe notificação não-lida com mesma chave
     if (chaveDedup) {
@@ -41,7 +52,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
         .eq('usuario_id', userId)
         .eq('chave_dedup', chaveDedup)
         .eq('lida', false);
-      if (count > 0) continue;
+      if (count > 0) { skipped++; continue; }
     }
 
     const { error } = await supabase.from('notificacoes').insert({
@@ -55,8 +66,27 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       chave_dedup: chaveDedup,
       lida: false,
     });
-    if (!error) inserted++;
+    if (!error) {
+      inserted++;
+      usersInseridos.push(userId);
+    } else {
+      failed++;
+      erros.push(`${userId.slice(0, 8)}: ${error.message}`);
+    }
   }
+
+  console.log(`[notificar] modulo=${modulo} alvos=${destinatarios.length} inseridos=${inserted} pulados=${skipped} falhas=${failed}${failed ? ' erros=' + erros.slice(0, 3).join('; ') : ''}`);
+
+  // Dispara push em background (no-op se VAPID não configurado)
+  if (usersInseridos.length) {
+    enviarPushParaUsers(usersInseridos, {
+      title: titulo,
+      body: mensagem,
+      url: link || '/',
+      tag: chaveDedup || `${modulo}-${Date.now()}`,
+    }).catch(e => console.warn('[notificar push]', e.message));
+  }
+
   return inserted;
 }
 

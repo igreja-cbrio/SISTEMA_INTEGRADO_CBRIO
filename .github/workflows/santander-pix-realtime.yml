@@ -1,0 +1,66 @@
+name: Santander · PIX Realtime (3min em cultos)
+
+# Cron 3min em janelas justas de culto pra alimentar a aba "Culto ao Vivo".
+# Janelas escolhidas pra caber no free tier GitHub Actions (~1030 min/mes
+# somado a ~825 min/mes do online-live-monitor = ~1855 min/mes < 2000 limite).
+#
+# Janelas (BRT · -3 do UTC):
+#   Dom 09:00-12:00 + 19:00-21:00 BRT  (cultos manha 08:30/10:00/11:30 + noite 19:00)
+#   Qua 19:30-21:30 BRT                 (Quarta com Deus 20:00)
+#   Sab 16:30-19:30 BRT + 20:00-22:00   (Bridge 17:00 + AMI 20:00)
+#
+# Total: ~12h/semana × 20 runs/hora × 1min = ~1030 min/mes.
+#
+# Secrets necessarios (Settings > Secrets > Actions):
+#   CRON_SECRET    · mesmo valor da env CRON_SECRET no Vercel
+#   APP_BASE_URL   · ex.: https://cbrio.org
+
+on:
+  schedule:
+    # Domingo manha · BRT 09:00-12:55 = UTC 12:00-15:55
+    - cron: '*/3 12-15 * * 0'
+    # Domingo noite · BRT 19:00-20:55 = UTC 22:00-23:55
+    - cron: '*/3 22-23 * * 0'
+    # Segunda madrugada (= domingo BRT 21:00) · UTC 00:00 da segunda
+    - cron: '*/3 0 * * 1'
+    # Quarta noite · BRT 19:30-21:30 = UTC 22:30-00:30 (cobre 22-23 + 0-1 da qui)
+    - cron: '*/3 22-23 * * 3'
+    - cron: '*/3 0 * * 4'
+    # Sabado tarde · BRT 16:30-19:30 = UTC 19:30-22:30 (cobre 19-22)
+    - cron: '*/3 19-22 * * 6'
+    # Sabado noite · BRT 20:00-22:00 = UTC 23:00-01:00 (cobre 23 + 0)
+    - cron: '*/3 23 * * 6'
+    - cron: '*/3 0 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: santander-pix-realtime
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Trigger pix-sync endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_BASE_URL" ]; then
+            echo "::warning::CRON_SECRET ou APP_BASE_URL nao configurados"
+            exit 0
+          fi
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"horas": 4}' \
+            "$APP_BASE_URL/api/santander/cron/pix-sync")
+          body=$(echo "$response" | head -n -1)
+          status=$(echo "$response" | tail -n 1)
+          echo "HTTP $status"
+          echo "$body" | head -c 1500
+          if [ "$status" -ge 400 ]; then
+            echo "::error::pix-sync falhou com HTTP $status"
+            exit 1
+          fi

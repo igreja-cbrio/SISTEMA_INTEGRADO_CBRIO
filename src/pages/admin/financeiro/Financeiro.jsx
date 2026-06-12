@@ -3,6 +3,27 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { financeiro } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import { exportPDF } from '../../../lib/export';
+import SantanderTab from './SantanderTab';
+import EstruturaFiscal from './EstruturaFiscal';
+import ImportarExtratos from './ImportarExtratos';
+import FilaClassificacao from './FilaClassificacao';
+import DashboardOverview from './DashboardOverview';
+import CultoAoVivo from './CultoAoVivo';
+import DreAuto from './DreAuto';
+import Analises from './Analises';
+import PixCobranca from './PixCobranca';
+import PagamentosContas from './PagamentosContas';
+import BoletosEmitidos from './BoletosEmitidos';
+import SolicitacoesFinanceiro from './SolicitacoesFinanceiro';
+import Recorrentes from './Recorrentes';
+import Generosidade from './Generosidade';
+import Alertas from './Alertas';
+import CalendarioFinanceiro from './CalendarioFinanceiro';
+import DreCentroCusto from './DreCentroCusto';
+import DreComparativo from './DreComparativo';
+import ClosingMensal from './ClosingMensal';
+import AuditLog from './AuditLog';
+import Arrecadacoes from './Arrecadacoes';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -136,7 +157,19 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-const TABS = ['Dashboard', 'Contas', 'Transacoes', 'Contas a Pagar', 'Reembolsos'];
+// 6 grupos top-level (em vez de 14 abas em sequencia)
+// Cada grupo composto tem sub-abas dentro
+// Reorganizacao 2026-05-22 · Marcos pediu clareza · destaque pras coisas
+// que ele mais usa (Transacoes, Arrecadacoes, Contas a Pagar).
+const TABS = [
+  'Dashboard', 'Transações', 'Arrecadações', 'Contas a Pagar',
+  'Análises', 'DRE', 'Generosidade', 'Banco',
+  'Operacional', 'Gestão', 'Configuração',
+];
+const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Calendário'];
+const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
+const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal', 'DRE (legacy)'];
+const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -148,6 +181,35 @@ const FIN_STAT_SVGS = [
   <svg key="f5" style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '67%', pointerEvents: 'none', zIndex: 0 }} viewBox="0 0 300 200" fill="none"><circle cx="200" cy="100" r="90" fill="#fff" fillOpacity="0.07" /><circle cx="260" cy="40" r="60" fill="#fff" fillOpacity="0.10" /></svg>,
   <svg key="f6" style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '67%', pointerEvents: 'none', zIndex: 0 }} viewBox="0 0 300 200" fill="none"><circle cx="220" cy="110" r="88" fill="#fff" fillOpacity="0.08" /><circle cx="275" cy="55" r="52" fill="#fff" fillOpacity="0.09" /></svg>,
 ];
+
+// SubTabBar · usado dentro dos grupos Movimentação, DRE, Banco
+function SubTabBar({ items, current, onSelect }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
+      {items.map((label, i) => {
+        const active = i === current;
+        return (
+          <button
+            key={label}
+            onClick={() => onSelect(i)}
+            style={{
+              padding: '8px 14px',
+              fontSize: 13,
+              fontWeight: 600,
+              borderRadius: 6,
+              cursor: 'pointer',
+              border: `1px solid ${active ? '#00B39D' : 'var(--cbrio-border)'}`,
+              background: active ? '#00B39D18' : 'transparent',
+              color: active ? '#00B39D' : 'var(--cbrio-text2)',
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function StatCard({ label, value, bg, svg }) {
   return (
@@ -170,6 +232,43 @@ function StatCard({ label, value, bg, svg }) {
 export default function Financeiro() {
   const { isDiretor } = useAuth();
   const [tab, setTab] = useState(0);
+  const [subOp, setSubOp] = useState(0);
+  const [subGestao, setSubGestao] = useState(0);
+  const [subDre, setSubDre] = useState(0);
+  const [subBanco, setSubBanco] = useState(0);
+
+  // Navegacao por string-id usada por DashboardOverview shortcuts
+  const goTo = (id) => {
+    switch (id) {
+      // Nova estrutura · 11 abas topo
+      case 'transacoes':       setTab(1); break;
+      case 'arrecadacoes':     setTab(2); break;
+      case 'contas_pagar':     setTab(3); break;
+      case 'analises':         setTab(4); break;
+      case 'dre_auto':         setTab(5); setSubDre(0); break;
+      case 'dre_centro':       setTab(5); setSubDre(1); break;
+      case 'dre_comparativo':  setTab(5); setSubDre(2); break;
+      case 'dre_legacy':       setTab(5); setSubDre(3); break;
+      case 'generosidade':     setTab(6); break;
+      case 'banco':            setTab(7); setSubBanco(0); break;
+      case 'culto_vivo':       setTab(7); setSubBanco(1); break;
+      case 'pix_cob':          setTab(7); setSubBanco(2); break;
+      case 'pagamentos':       setTab(7); setSubBanco(3); break;
+      case 'boletos':          setTab(7); setSubBanco(4); break;
+      case 'contas':           setTab(8); setSubOp(0); break;
+      case 'recorrentes':      setTab(8); setSubOp(1); break;
+      case 'reembolsos':       setTab(8); setSubOp(2); break;
+      case 'importar':         setTab(8); setSubOp(3); break;
+      case 'fila':             setTab(8); setSubOp(4); break;
+      case 'calendario':       setTab(8); setSubOp(5); break;
+      case 'solicitacoes_fin': setTab(9); setSubGestao(0); break;
+      case 'alertas':          setTab(9); setSubGestao(1); break;
+      case 'closing':          setTab(9); setSubGestao(2); break;
+      case 'audit':            setTab(9); setSubGestao(3); break;
+      case 'config':           setTab(10); break;
+      default:             setTab(0);
+    }
+  };
   const [dash, setDash] = useState(null);
   const [contas, setContas] = useState([]);
   const [categorias, setCategorias] = useState([]);
@@ -184,6 +283,13 @@ export default function Financeiro() {
   const [filtroTipo, setFiltroTipo] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroMes, setFiltroMes] = useState('');
+  // Período: 'mês' (mes/ano) · 'ano' (ano inteiro) · 'custom' (range com calendário)
+  const [filtroPeriodoModo, setFiltroPeriodoModo] = useState('mes');
+  const [filtroAno, setFiltroAno] = useState(new Date().getFullYear());
+  const [filtroMesNum, setFiltroMesNum] = useState(new Date().getMonth());
+  const [filtroInicio, setFiltroInicio] = useState('');
+  const [filtroFim, setFiltroFim] = useState('');
+  const [filtroBusca, setFiltroBusca] = useState('');
 
   // Filtro contas a pagar
   const [filtroPagarStatus, setFiltroPagarStatus] = useState('');
@@ -196,6 +302,13 @@ export default function Financeiro() {
   const [modalTransacao, setModalTransacao] = useState(null);
   const [modalPagar, setModalPagar] = useState(null);
   const [modalReembolso, setModalReembolso] = useState(null);
+
+  // DRE
+  const [dreLoading, setDreLoading] = useState(false);
+  const [dreData, setDreData] = useState(null); // { estrutura, valores, stats }
+  const [dreAno, setDreAno] = useState('todos');
+  const [dreMes, setDreMes] = useState('todos');
+  const [dreExpanded, setDreExpanded] = useState(() => new Set(['3', '4', '3.01', '3.02', '4.01']));
 
   // ── Loaders ──
   const loadDash = useCallback(async () => {
@@ -213,15 +326,29 @@ export default function Financeiro() {
   const loadTransacoes = useCallback(async () => {
     try {
       setLoading(true);
-      const params = {};
+      const params = { limit: 2000 };
       if (filtroContaId) params.conta_id = filtroContaId;
       if (filtroTipo) params.tipo = filtroTipo;
       if (filtroStatus) params.status = filtroStatus;
-      if (filtroMes) params.mes = filtroMes;
+      if (filtroBusca) params.busca = filtroBusca;
+
+      // Período · monta inicio/fim conforme modo
+      if (filtroPeriodoModo === 'mes') {
+        const ini = new Date(filtroAno, filtroMesNum, 1).toISOString().slice(0, 10);
+        const fim = new Date(filtroAno, filtroMesNum + 1, 0).toISOString().slice(0, 10);
+        params.inicio = ini; params.fim = fim;
+      } else if (filtroPeriodoModo === 'ano') {
+        params.inicio = `${filtroAno}-01-01`;
+        params.fim    = `${filtroAno}-12-31`;
+      } else if (filtroPeriodoModo === 'custom') {
+        if (filtroInicio) params.inicio = filtroInicio;
+        if (filtroFim) params.fim = filtroFim;
+      }
+
       setTransacoes(await financeiro.transacoes.list(params));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroContaId, filtroTipo, filtroStatus, filtroMes]);
+  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
 
   const loadContasPagar = useCallback(async () => {
     try {
@@ -244,9 +371,11 @@ export default function Financeiro() {
   }, [filtroReembolsoStatus]);
 
   useEffect(() => { loadDash(); loadContas(); loadCategorias(); }, [loadDash, loadContas, loadCategorias]);
-  useEffect(() => { if (tab === 2) loadTransacoes(); }, [tab, loadTransacoes]);
+  // Nova estrutura · tab 1 = Transações, tab 3 = Contas a Pagar,
+  // tab 8 + subOp 2 = Reembolsos, tab 8 + subOp 0 = Contas
+  useEffect(() => { if (tab === 1) loadTransacoes(); }, [tab, loadTransacoes]);
   useEffect(() => { if (tab === 3) loadContasPagar(); }, [tab, loadContasPagar]);
-  useEffect(() => { if (tab === 4) loadReembolsos(); }, [tab, loadReembolsos]);
+  useEffect(() => { if (tab === 8 && subOp === 2) loadReembolsos(); }, [tab, subOp, loadReembolsos]);
 
   // ── Ações ──
   const handleError = (e) => { setError(e.message); setTimeout(() => setError(''), 4000); };
@@ -321,25 +450,7 @@ export default function Financeiro() {
   // ═══════════════════════════════════════════════════════════
   // TAB: DASHBOARD
   // ═══════════════════════════════════════════════════════════
-  const renderDashboard = () => {
-    if (!dash) return <div style={styles.empty}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></div>;
-    const kpis = [
-      { label: 'Saldo Total', value: fmtMoney(dash.saldoTotal), bg: '#00B39D' },
-      { label: 'Contas Ativas', value: dash.contasAtivas ?? 0, bg: '#3b82f6' },
-      { label: 'Receitas do Mês', value: fmtMoney(dash.receitasMes), bg: '#10b981' },
-      { label: 'Despesas do Mês', value: fmtMoney(dash.despesasMes), bg: '#ef4444' },
-      { label: 'A Pagar Pendentes', value: dash.contasPagarPendentes ?? 0, bg: '#f59e0b' },
-      { label: 'A Pagar Vencidas', value: dash.contasPagarVencidas ?? 0, bg: '#dc2626' },
-      { label: 'Valor a Pagar', value: fmtMoney(dash.valorPagarPendente), bg: '#f59e0b' },
-      { label: 'Reembolsos Pend.', value: dash.reembolsosPendentes ?? 0, bg: '#3b82f6' },
-      { label: 'Valor Reembolsos', value: fmtMoney(dash.valorReembolsosPendentes), bg: 'var(--cbrio-card)' },
-    ];
-    return (
-      <div className="cbrio-stagger" style={styles.kpiGrid}>
-        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={FIN_STAT_SVGS[i % FIN_STAT_SVGS.length]} />)}
-      </div>
-    );
-  };
+  const renderDashboard = () => <DashboardOverview onNavigate={setTab} />;
 
   // ═══════════════════════════════════════════════════════════
   // TAB: CONTAS
@@ -362,12 +473,12 @@ export default function Financeiro() {
             <tr>
               <th style={styles.th}>Nome</th>
               <th style={styles.th}>Banco</th>
-              <th style={styles.th}>Agencia</th>
+              <th style={styles.th}>Agência</th>
               <th style={styles.th}>Conta</th>
               <th style={styles.th}>Tipo</th>
               <th style={styles.th}>Saldo</th>
               <th style={styles.th}>Status</th>
-              {isDiretor && <th style={styles.th}>Acoes</th>}
+              {isDiretor && <th style={styles.th}>Ações</th>}
             </tr>
           </thead>
           <tbody>
@@ -401,32 +512,156 @@ export default function Financeiro() {
   // ═══════════════════════════════════════════════════════════
   // TAB: TRANSACOES
   // ═══════════════════════════════════════════════════════════
-  const renderTransacoes = () => (
+  const renderTransacoes = () => {
+    const MES_NOMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const anosDisponiveis = [];
+    for (let y = new Date().getFullYear() + 1; y >= 2022; y--) anosDisponiveis.push(y);
+    const periodoModos = [
+      { v: 'mes', label: 'Mês' },
+      { v: 'ano', label: 'Ano' },
+      { v: 'custom', label: 'Personalizado' },
+    ];
+    const tituloPeriodo = filtroPeriodoModo === 'mes' ? `${MES_NOMES[filtroMesNum]} de ${filtroAno}`
+      : filtroPeriodoModo === 'ano' ? `Ano ${filtroAno}`
+      : (filtroInicio && filtroFim) ? `${filtroInicio.split('-').reverse().join('/')} a ${filtroFim.split('-').reverse().join('/')}`
+      : 'Selecione período';
+    const totalReceitas = transacoes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor || 0), 0);
+    const totalDespesas = transacoes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor || 0), 0);
+
+    return (
     <>
-      <div style={styles.filterRow}>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroContaId} onChange={e => setFiltroContaId(e.target.value)}>
-          <option value="">Todas as contas</option>
-          {contas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-        </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}>
-          <option value="">Todos os tipos</option>
-          <option value="receita">Receita</option>
-          <option value="despesa">Despesa</option>
-          <option value="transferencia">Transferencia</option>
-        </select>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
-          <option value="">Todos os status</option>
-          <option value="pendente">Pendente</option>
-          <option value="conciliado">Conciliado</option>
-          <option value="cancelado">Cancelado</option>
-        </select>
-        <input className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ width: 160 }} type="month" value={filtroMes} onChange={e => setFiltroMes(e.target.value)} />
-        {isDiretor && (
-          <Button onClick={() => setModalTransacao({
-            conta_id: '', categoria_id: '', tipo: 'despesa', descricao: '', valor: '', data_competencia: '', data_pagamento: '', status: 'pendente', referencia: '', observacoes: '',
-          })}>
-            + Nova Transacao
-          </Button>
+      {/* Card de filtros · layout limpo */}
+      <div style={{ ...styles.card, marginBottom: 16, padding: 16 }}>
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider">Período</div>
+            <div className="text-base font-semibold text-foreground">{tituloPeriodo}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">{transacoes.length} lançamentos · Receitas R$ {totalReceitas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} · Despesas R$ {totalDespesas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+          </div>
+          {isDiretor && (
+            <Button onClick={() => setModalTransacao({
+              conta_id: '', categoria_id: '', tipo: 'despesa', descricao: '', valor: '', data_competencia: '', data_pagamento: '', status: 'pendente', referencia: '', observacoes: '',
+            })}>
+              + Nova Transação
+            </Button>
+          )}
+        </div>
+
+        {/* Linha 1: período */}
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider w-16">Período</span>
+          <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
+            {periodoModos.map(m => (
+              <button key={m.v} onClick={() => setFiltroPeriodoModo(m.v)}
+                className={`px-3 py-1.5 text-xs rounded transition ${
+                  filtroPeriodoModo === m.v ? 'bg-background shadow-sm font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
+                }`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {filtroPeriodoModo === 'mes' && (
+            <>
+              <select value={filtroMesNum} onChange={e => setFiltroMesNum(Number(e.target.value))}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background min-w-[140px]">
+                {MES_NOMES.map((n, i) => <option key={i} value={i}>{n}</option>)}
+              </select>
+              <select value={filtroAno} onChange={e => setFiltroAno(Number(e.target.value))}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background min-w-[90px]">
+                {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </>
+          )}
+          {filtroPeriodoModo === 'ano' && (
+            <select value={filtroAno} onChange={e => setFiltroAno(Number(e.target.value))}
+              className="h-9 px-3 text-sm rounded-md border border-input bg-background min-w-[100px]">
+              {anosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          )}
+          {filtroPeriodoModo === 'custom' && (
+            <>
+              <input type="date" value={filtroInicio} onChange={e => setFiltroInicio(e.target.value)}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
+              <span className="text-xs text-muted-foreground">até</span>
+              <input type="date" value={filtroFim} onChange={e => setFiltroFim(e.target.value)}
+                className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
+            </>
+          )}
+
+          {/* Atalhos rápidos */}
+          <div className="ml-auto flex gap-1">
+            {[
+              { label: '30d', dias: 30 },
+              { label: '90d', dias: 90 },
+              { label: '6m', dias: 180 },
+              { label: '12m', dias: 365 },
+            ].map(q => (
+              <button key={q.label}
+                onClick={() => {
+                  setFiltroPeriodoModo('custom');
+                  const f = new Date(); const i = new Date(); i.setDate(i.getDate() - q.dias);
+                  setFiltroInicio(i.toISOString().slice(0, 10));
+                  setFiltroFim(f.toISOString().slice(0, 10));
+                }}
+                className="h-9 px-2.5 text-[11px] rounded bg-muted/40 hover:bg-muted/60 text-muted-foreground">
+                {q.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Linha 2: filtros */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Conta</label>
+            <select value={filtroContaId} onChange={e => setFiltroContaId(e.target.value)}
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background">
+              <option value="">Todas as contas</option>
+              {contas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Tipo</label>
+            <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background">
+              <option value="">Todos os tipos</option>
+              <option value="receita">Receita</option>
+              <option value="despesa">Despesa</option>
+              <option value="transferencia">Transferência</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Status</label>
+            <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background">
+              <option value="">Todos os status</option>
+              <option value="pendente">Pendente</option>
+              <option value="conciliado">Conciliado</option>
+              <option value="cancelado">Cancelado</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider block mb-1">Buscar descrição</label>
+            <input type="text" value={filtroBusca} onChange={e => setFiltroBusca(e.target.value)}
+              placeholder="Ex: dízimo, pix, fornecedor..."
+              className="h-9 w-full px-3 text-sm rounded-md border border-input bg-background" />
+          </div>
+        </div>
+
+        {/* Limpar */}
+        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroPeriodoModo !== 'mes' ||
+          filtroAno !== new Date().getFullYear() || filtroMesNum !== new Date().getMonth()) && (
+          <button onClick={() => {
+            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca('');
+            setFiltroPeriodoModo('mes');
+            setFiltroAno(new Date().getFullYear());
+            setFiltroMesNum(new Date().getMonth());
+            setFiltroInicio(''); setFiltroFim('');
+          }}
+          className="text-[11px] text-muted-foreground hover:text-foreground underline">
+            Limpar filtros
+          </button>
         )}
       </div>
       <div style={styles.card}>
@@ -439,13 +674,13 @@ export default function Financeiro() {
             <thead>
               <tr>
                 <th style={styles.th}>Data</th>
-                <th style={styles.th}>Descricao</th>
+                <th style={styles.th}>Descrição</th>
                 <th style={styles.th}>Conta</th>
                 <th style={styles.th}>Categoria</th>
                 <th style={styles.th}>Tipo</th>
                 <th style={styles.th}>Valor</th>
                 <th style={styles.th}>Status</th>
-                {isDiretor && <th style={styles.th}>Acoes</th>}
+                {isDiretor && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -484,7 +719,8 @@ export default function Financeiro() {
         )}
       </div>
     </>
-  );
+    );
+  };
 
   // ═══════════════════════════════════════════════════════════
   // TAB: CONTAS A PAGAR
@@ -516,13 +752,13 @@ export default function Financeiro() {
           <table style={styles.table}>
             <thead>
               <tr>
-                <th style={styles.th}>Descricao</th>
+                <th style={styles.th}>Descrição</th>
                 <th style={styles.th}>Fornecedor</th>
                 <th style={styles.th}>Valor</th>
                 <th style={styles.th}>Vencimento</th>
                 <th style={styles.th}>Pagamento</th>
                 <th style={styles.th}>Status</th>
-                {isDiretor && <th style={styles.th}>Acoes</th>}
+                {isDiretor && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -580,12 +816,12 @@ export default function Financeiro() {
           <table style={styles.table}>
             <thead>
               <tr>
-                <th style={styles.th}>Descricao</th>
+                <th style={styles.th}>Descrição</th>
                 <th style={styles.th}>Valor</th>
                 <th style={styles.th}>Data Despesa</th>
                 <th style={styles.th}>Status</th>
-                <th style={styles.th}>Observacoes</th>
-                {isDiretor && <th style={styles.th}>Acoes</th>}
+                <th style={styles.th}>Observações</th>
+                {isDiretor && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -777,6 +1013,252 @@ export default function Financeiro() {
   };
 
   // ═══════════════════════════════════════════════════════════
+  // TAB: DRE
+  // ═══════════════════════════════════════════════════════════
+  const handleDreUpload = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => /\.xlsx?$/i.test(f.name));
+    if (!files.length) { handleError({ message: 'Selecione arquivos .xlsx' }); return; }
+    try {
+      setDreLoading(true);
+      const res = await financeiro.dre.processar(files);
+      setDreData(res);
+      setDreAno('todos');
+      setDreMes('todos');
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setDreLoading(false);
+    }
+  };
+
+  // Soma valores de um cod aplicando filtros ano/mes. Pega tanto folha
+  // exata quanto descendentes (rollup).
+  const dreSomar = (cod) => {
+    if (!dreData) return 0;
+    const isTotalRec = cod === 'TOTAL_REC';
+    const isTotalDesp = cod === 'TOTAL_DESP';
+    const isResultado = cod === 'RESULTADO';
+    let total = 0;
+    for (const [c, ano, mes, v] of dreData.valores) {
+      if (dreAno !== 'todos' && ano !== Number(dreAno)) continue;
+      if (dreMes !== 'todos' && mes !== Number(dreMes)) continue;
+      if (isResultado) total += v;
+      else if (isTotalRec) { if (c.startsWith('3')) total += v; }
+      else if (isTotalDesp) { if (c.startsWith('4')) total += v; }
+      else if (c === cod || c.startsWith(cod + '.')) total += v;
+    }
+    return total;
+  };
+
+  const dreToggle = (cod) => {
+    setDreExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(cod)) next.delete(cod); else next.add(cod);
+      return next;
+    });
+  };
+
+  const dreAnosDisponiveis = (() => {
+    if (!dreData) return [];
+    const anos = new Set(dreData.valores.map(v => v[1]));
+    return [...anos].sort((a, b) => b - a);
+  })();
+
+  const dreMoneyFmt = (v) => {
+    const abs = Math.abs(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return v < 0 ? `(${abs})` : abs;
+  };
+
+  const renderDRE = () => {
+    if (!dreData) {
+      return (
+        <div style={styles.card}>
+          <div style={{ padding: 40, textAlign: 'center' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+              Demonstrativo de Resultados (DRE)
+            </div>
+            <div style={{ fontSize: 13, color: C.text2, marginBottom: 20, maxWidth: 540, margin: '0 auto 20px' }}>
+              Envie um ou mais arquivos <strong>Balanço Ano YYYY.xlsx</strong> da CBRio.
+              O sistema vai consolidar, filtrar receitas/despesas e gerar a DRE hierarquica.
+            </div>
+            <label
+              style={{
+                display: 'inline-block', padding: '12px 24px', borderRadius: 8,
+                background: C.primary, color: '#fff', fontWeight: 600, cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              {dreLoading ? 'Processando...' : 'Selecionar arquivos .xlsx'}
+              <input
+                type="file"
+                accept=".xlsx"
+                multiple
+                disabled={dreLoading}
+                style={{ display: 'none' }}
+                onChange={e => handleDreUpload(e.target.files)}
+              />
+            </label>
+          </div>
+        </div>
+      );
+    }
+
+    const totalRec = dreSomar('TOTAL_REC');
+    const totalDesp = dreSomar('TOTAL_DESP');
+    const resultado = totalRec + totalDesp;
+    const margem = totalRec ? (resultado / totalRec) * 100 : 0;
+
+    const KPIS = [
+      { label: 'Receitas', value: dreMoneyFmt(totalRec), bg: '#10b981' },
+      { label: 'Despesas', value: dreMoneyFmt(totalDesp), bg: '#ef4444' },
+      { label: 'Resultado', value: dreMoneyFmt(resultado), bg: resultado >= 0 ? '#10b981' : '#ef4444' },
+      { label: 'Margem', value: `${margem.toFixed(1)}%`, bg: '#3b82f6' },
+    ];
+
+    const MESES = [
+      { v: '1', n: 'Janeiro' }, { v: '2', n: 'Fevereiro' }, { v: '3', n: 'Marco' },
+      { v: '4', n: 'Abril' }, { v: '5', n: 'Maio' }, { v: '6', n: 'Junho' },
+      { v: '7', n: 'Julho' }, { v: '8', n: 'Agosto' }, { v: '9', n: 'Setembro' },
+      { v: '10', n: 'Outubro' }, { v: '11', n: 'Novembro' }, { v: '12', n: 'Dezembro' },
+    ];
+
+    // Filtra estrutura: oculta linha com valor 0 (deixa só os totais)
+    // mas mantém pais cujos filhos têm valor.
+    const linhasVisiveis = [];
+    for (const item of dreData.estrutura) {
+      const total = dreSomar(item.cod);
+      // Sempre mostrar nível 1 (3, 4), 2, 3. Para 4+ só mostrar se tem valor.
+      if (item.tipo === 'total') {
+        linhasVisiveis.push({ ...item, total });
+        continue;
+      }
+      if (item.level <= 3) {
+        linhasVisiveis.push({ ...item, total });
+      } else if (total !== 0) {
+        linhasVisiveis.push({ ...item, total });
+      }
+    }
+
+    // Esconde linhas cujo pai está colapsado
+    const renderLinhas = linhasVisiveis.filter(item => {
+      if (item.tipo === 'total') return true;
+      if (item.level <= 1) return true;
+      const partes = item.cod.split('.');
+      for (let i = 1; i < partes.length; i++) {
+        const pai = partes.slice(0, i).join('.');
+        if (!dreExpanded.has(pai)) return false;
+      }
+      return true;
+    });
+
+    const temFilho = (cod) => linhasVisiveis.some(it => it.tipo !== 'total' && it.cod !== cod && it.cod.startsWith(cod + '.'));
+
+    return (
+      <>
+        <div style={styles.kpiGrid}>
+          {KPIS.map((k, i) => (
+            <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={FIN_STAT_SVGS[i % FIN_STAT_SVGS.length]} />
+          ))}
+        </div>
+
+        <div style={styles.filterRow}>
+          <select
+            className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={dreAno}
+            onChange={e => setDreAno(e.target.value)}
+          >
+            <option value="todos">Todos os anos</option>
+            {dreAnosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <select
+            className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={dreMes}
+            onChange={e => setDreMes(e.target.value)}
+          >
+            <option value="todos">Todos os meses</option>
+            {MESES.map(m => <option key={m.v} value={m.v}>{m.n}</option>)}
+          </select>
+          <Button variant="outline" onClick={() => window.print()}>Imprimir / PDF</Button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.primary}`, color: C.primary, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            {dreLoading ? 'Processando...' : 'Recarregar .xlsx'}
+            <input
+              type="file"
+              accept=".xlsx"
+              multiple
+              disabled={dreLoading}
+              style={{ display: 'none' }}
+              onChange={e => handleDreUpload(e.target.files)}
+            />
+          </label>
+          <Button variant="ghost" onClick={() => setDreData(null)}>Limpar</Button>
+          <div style={{ marginLeft: 'auto', fontSize: 12, color: C.text3 }}>
+            {dreData.stats.arquivos} arquivo(s) · {dreData.stats.validas.toLocaleString('pt-BR')} lancamentos validos · {dreData.stats.excluidas.toLocaleString('pt-BR')} excluidos
+          </div>
+        </div>
+
+        <div style={styles.card}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={{ ...styles.th, width: '60%' }}>Conta</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Código</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Valor (R$)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {renderLinhas.map(item => {
+                const isTotal = item.tipo === 'total';
+                const isResultado = item.cod === 'RESULTADO';
+                const expandable = !isTotal && temFilho(item.cod);
+                const expanded = dreExpanded.has(item.cod);
+                const corValor = item.total < 0 ? C.red : (item.total > 0 ? C.green : C.text3);
+                let bgRow = 'transparent';
+                let fontWeight = 400;
+                let corLabel = C.text;
+                if (isTotal) {
+                  bgRow = isResultado ? (item.total >= 0 ? C.greenBg : C.redBg) : '#1e3a5f12';
+                  fontWeight = 800;
+                  corLabel = isResultado ? (item.total >= 0 ? C.green : C.red) : '#1e3a5f';
+                } else if (item.level === 1) {
+                  bgRow = '#1e3a5f10';
+                  fontWeight = 800;
+                  corLabel = '#1e3a5f';
+                } else if (item.level === 2) {
+                  fontWeight = 700;
+                } else if (item.level === 3) {
+                  fontWeight = 600;
+                }
+                return (
+                  <tr key={item.cod} style={{ background: bgRow }}>
+                    <td style={{ ...styles.td, paddingLeft: 16 + (isTotal ? 0 : (item.level - 1) * 20), fontWeight, color: corLabel }}>
+                      {expandable && (
+                        <button
+                          onClick={() => dreToggle(item.cod)}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', marginRight: 6, color: C.text2, fontSize: 12, padding: 0 }}
+                        >
+                          {expanded ? '▼' : '▶'}
+                        </button>
+                      )}
+                      {!expandable && !isTotal && <span style={{ display: 'inline-block', width: 18 }} />}
+                      {item.desc}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 12, color: C.text3 }}>
+                      {isTotal ? '' : item.cod}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'right', fontWeight: isTotal || item.level <= 2 ? 700 : fontWeight, color: corValor, fontFamily: 'monospace' }}>
+                      {dreMoneyFmt(item.total)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  };
+
+  // ═══════════════════════════════════════════════════════════
   // RENDER PRINCIPAL
   // ═══════════════════════════════════════════════════════════
   return (
@@ -784,7 +1266,7 @@ export default function Financeiro() {
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Financeiro</div>
-          <div style={styles.subtitle}>Gestao financeira da igreja</div>
+          <div style={styles.subtitle}>Gestão financeira da igreja</div>
         </div>
       </div>
 
@@ -800,11 +1282,73 @@ export default function Financeiro() {
         ))}
       </div>
 
-      {tab === 0 && renderDashboard()}
-      {tab === 1 && renderContas()}
-      {tab === 2 && renderTransacoes()}
+      {/* 0 · Dashboard */}
+      {tab === 0 && <DashboardOverview onNavigate={goTo} />}
+
+      {/* 1 · Transações · todas as transacoes classificadas */}
+      {tab === 1 && renderTransacoes()}
+
+      {/* 2 · Arrecadações · apenas contribuições (3.01.*) */}
+      {tab === 2 && <Arrecadacoes />}
+
+      {/* 3 · Contas a Pagar */}
       {tab === 3 && renderContasPagar()}
-      {tab === 4 && renderReembolsos()}
+
+      {/* 4 · Análises */}
+      {tab === 4 && <Analises />}
+
+      {/* 5 · DRE · sub-abas */}
+      {tab === 5 && (
+        <div>
+          <SubTabBar items={SUBS_DRE} current={subDre} onSelect={setSubDre} />
+          {subDre === 0 && <DreAuto />}
+          {subDre === 1 && <DreCentroCusto />}
+          {subDre === 2 && <DreComparativo />}
+          {subDre === 3 && renderDRE()}
+        </div>
+      )}
+
+      {/* 6 · Generosidade */}
+      {tab === 6 && <Generosidade />}
+
+      {/* 7 · Banco · sub-abas */}
+      {tab === 7 && (
+        <div>
+          <SubTabBar items={SUBS_BANCO} current={subBanco} onSelect={setSubBanco} />
+          {subBanco === 0 && <SantanderTab />}
+          {subBanco === 1 && <CultoAoVivo />}
+          {subBanco === 2 && <PixCobranca />}
+          {subBanco === 3 && <PagamentosContas />}
+          {subBanco === 4 && <BoletosEmitidos />}
+        </div>
+      )}
+
+      {/* 8 · Operacional · sub-abas (contas, recorrentes, reembolsos, importar, fila, calendário) */}
+      {tab === 8 && (
+        <div>
+          <SubTabBar items={SUBS_OPERACIONAL} current={subOp} onSelect={setSubOp} />
+          {subOp === 0 && renderContas()}
+          {subOp === 1 && <Recorrentes />}
+          {subOp === 2 && renderReembolsos()}
+          {subOp === 3 && <ImportarExtratos />}
+          {subOp === 4 && <FilaClassificacao />}
+          {subOp === 5 && <CalendarioFinanceiro />}
+        </div>
+      )}
+
+      {/* 9 · Gestão · sub-abas (solicitações, alertas, fechamento, auditoria) */}
+      {tab === 9 && (
+        <div>
+          <SubTabBar items={SUBS_GESTAO} current={subGestao} onSelect={setSubGestao} />
+          {subGestao === 0 && <SolicitacoesFinanceiro />}
+          {subGestao === 1 && <Alertas />}
+          {subGestao === 2 && <ClosingMensal />}
+          {subGestao === 3 && <AuditLog />}
+        </div>
+      )}
+
+      {/* 10 · Configuração */}
+      {tab === 10 && <EstruturaFiscal />}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}

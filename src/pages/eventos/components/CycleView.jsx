@@ -34,7 +34,7 @@ function sortByUrgency(tasks) {
 }
 function getCategory(task) { return (task.area || '').toLowerCase() || 'outros'; }
 
-// Mapeamento setor → areas do ciclo criativo
+// Mapeamento setor → áreas do ciclo criativo
 const SETOR_AREAS = {
   'Gestão': ['compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha'],
   'Gestao': ['compras', 'financeiro', 'manutencao', 'limpeza', 'cozinha'],
@@ -776,7 +776,7 @@ export default function CycleView({ eventId, eventName }) {
                   ) : (
                     <div style={{ background: '#fee2e220', border: '1px solid #ef444430', borderRadius: 8, padding: 12 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#ef4444', marginBottom: 8 }}>Excluir "{task.titulo}"?</div>
-                      <div style={{ fontSize: 11, color: C.t2, marginBottom: 10 }}>Esta acao nao pode ser desfeita. O card e suas subtarefas serao removidos.</div>
+                      <div style={{ fontSize: 11, color: C.t2, marginBottom: 10 }}>Esta ação não pode ser desfeita. O card e suas subtarefas serão removidos.</div>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button onClick={() => setConfirmDelete(false)}
                           style={{ padding: '6px 14px', borderRadius: 6, border: `1px solid ${C.border}`, background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Cancelar</button>

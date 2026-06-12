@@ -19,6 +19,7 @@ const FAKE_PROFILE = {
   email: 'admin@cbrio.dev',
   role: 'admin',
   area: 'Tecnologia',
+  kpi_areas: [],
   avatar_url: null,
 };
 
@@ -33,7 +34,7 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
     const { data } = await supabase
       .from('profiles')
-      .select('id, name, email, role, area, avatar_url')
+      .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
       .eq('id', userId)
       .single();
     setProfile(data ?? null);
@@ -74,19 +75,10 @@ export function AuthProvider({ children }) {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (_event === 'SIGNED_IN' && session?.user) {
-        const u = session.user;
-        const provider = u.app_metadata?.provider;
-        if (provider === 'azure') {
-          const identities = u.identities || [];
-          const hasEmailIdentity = identities.some(i => i.provider === 'email');
-          if (hasEmailIdentity) {
-            await supabase.auth.signOut();
-            window.location.href = '/login?error=use_email_login';
-            return;
-          }
-        }
-      }
+      // ERP interno · qualquer user autenticado pelo Supabase (email ou OAuth)
+      // entra direto · não tem cadastro público, então não tem risco de
+      // hijacking de email. Microsoft eh restrito ao tenant CBRio e Google
+      // tem email verificado.
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
@@ -101,8 +93,21 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  function supabaseErroMsg() {
+    // Mensagem detalhada · ajuda a debugar config de preview do Vercel
+    const url = !!import.meta.env.VITE_SUPABASE_URL;
+    const key = !!(import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
+    const viteKeys = Object.keys(import.meta.env || {}).filter(k => k.startsWith('VITE_'));
+    const faltam = [];
+    if (!url) faltam.push('VITE_SUPABASE_URL');
+    if (!key) faltam.push('VITE_SUPABASE_ANON_KEY');
+    return `Supabase não configurado · faltam: ${faltam.join(', ') || '(?)'}. `
+      + `Vite ve essas envs: [${viteKeys.join(', ') || 'nenhuma'}]. `
+      + 'Confira no Vercel se cada var tem prefixo VITE_, esta marcada para "Preview" e o deploy foi refeito.';
+  }
+
   async function signInWithGoogle() {
-    if (!supabase) return { error: { message: 'Supabase não configurado' } };
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
     return supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin },
@@ -110,16 +115,48 @@ export function AuthProvider({ children }) {
   }
 
   async function signInWithMicrosoft() {
-    if (!supabase) return { error: { message: 'Supabase não configurado' } };
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
     return supabase.auth.signInWithOAuth({
       provider: 'azure',
-      options: { redirectTo: window.location.origin },
+      // Supabase sempre inclui openid; estes escopos garantem que o Azure
+      // devolva dados suficientes para criar/associar o usuário por e-mail.
+      options: { redirectTo: window.location.origin, scopes: 'email profile' },
     });
   }
 
   async function signInWithEmail(email, password) {
-    if (!supabase) return { error: { message: 'Supabase não configurado' } };
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
     return supabase.auth.signInWithPassword({ email, password });
+  }
+
+  async function sendPasswordReset(email) {
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
+    return supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/redefinir-senha`,
+    });
+  }
+
+  async function updatePasswordWithCurrent(currentPassword, newPassword) {
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
+    const email = user?.email || profile?.email;
+    if (!email) return { error: { message: 'Sessão sem email · refaca login.' } };
+    // Reauth · valida senha atual sem invalidar a sessão
+    const { error: reauthErr } = await supabase.auth.signInWithPassword({ email, password: currentPassword });
+    if (reauthErr) return { error: { message: 'Senha atual incorreta.' } };
+    const { error: updErr } = await supabase.auth.updateUser({ password: newPassword });
+    if (updErr) return { error: updErr };
+    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* não bloqueante */ }
+    await fetchProfile(user.id).catch(() => {});
+    return { error: null };
+  }
+
+  async function updatePasswordOnly(newPassword) {
+    if (!supabase) return { error: { message: supabaseErroMsg() } };
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) return { error };
+    try { await supabase.rpc('app_marcar_senha_trocada'); } catch { /* não bloqueante */ }
+    if (user?.id) await fetchProfile(user.id).catch(() => {});
+    return { error: null };
   }
 
   async function signOut() {
@@ -127,7 +164,11 @@ export function AuthProvider({ children }) {
     if (supabase) await supabase.auth.signOut();
   }
 
+  // Módulos com deny explícito (override nível 0) · vence o bypass de admin/diretor.
+  const modulosBloqueados = permData?.modulosBloqueados || [];
+
   function canAccessModule(moduleNames, tipo = 'leitura', nivelMinimo = 2) {
+    if (moduleNames.some((n) => modulosBloqueados.includes(n))) return false;
     if (['admin', 'diretor'].includes(profile?.role)) return true;
     if (!modulePerms) return false;
     for (const name of moduleNames) {
@@ -138,6 +179,7 @@ export function AuthProvider({ children }) {
   }
 
   function getAccessLevel(moduleNames) {
+    if (moduleNames.some((n) => modulosBloqueados.includes(n))) return 0;
     if (profile?.role === 'admin') return 5;
     if (profile?.role === 'diretor') return 4;
     if (!modulePerms) return 1;
@@ -151,24 +193,35 @@ export function AuthProvider({ children }) {
 
   const userAreas = permData?.areas || [profile?.area].filter(Boolean);
   const userSetores = permData?.setores || [];
+  const cargoNome = permData?.cargoNome || null;
+  const cargoSlug = permData?.cargoSlug || null;
 
   const isVoluntario = profile?.role === 'voluntario';
+  const isMembroOnly = !!profile?.is_membro_only;
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
-  const canRH = canAccessModule(['DP', 'Pessoas']);
-  const canFinanceiro = canAccessModule(['Financeiro']);
-  const canLogistica = canAccessModule(['Logística']);
-  const canPatrimonio = canAccessModule(['Patrimônio']);
-  const canMembresia = canAccessModule(['Membresia']);
-  const canProjetos = canAccessModule(['Projetos', 'Tarefas']);
-  const canExpansao = canAccessModule(['Projetos']);
-  const canAgenda = canAccessModule(['Agenda']);
-  const canIAModulo = canAccessModule(['IA / Agentes']);
-  const canKPIs = isAdmin || canAccessModule(['KPIs', 'Indicadores']);
-  const canCuidados = isAdmin || canAccessModule(['Cuidados']);
-  // Colaborador = admin/diretor ou usuario com qualquer permissao de modulo
-  // (voluntarios e membros sem permissao nao sao colaboradores)
-  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados;
+  // Helpers de gating por módulo · usa slug novo (matriz reunião 2026-05-18)
+  // com fallback para nome antigo pra compatibilidade durante a transicao.
+  const canRH = canAccessModule(['rh', 'RH', 'DP', 'Pessoas']);
+  const canFinanceiro = canAccessModule(['financeiro', 'Financeiro']);
+  const canLogistica = canAccessModule(['logistica', 'Logística']);
+  const canPatrimonio = canAccessModule(['patrimonio', 'Patrimônio']);
+  const canMembresia = canAccessModule(['membresia', 'Membresia']);
+  const canProjetos = canAccessModule(['projetos', 'Projetos', 'Tarefas']);
+  const canExpansao = canAccessModule(['expansao', 'Planejamento Estratégico', 'Expansão', 'Projetos']);
+  const canAgenda = canAccessModule(['eventos', 'Eventos', 'Agenda']);
+  const canIAModulo = canAccessModule(['assistente-ia', 'Assistente IA', 'IA / Agentes']);
+  const canKPIs = isAdmin || canAccessModule(['minha-area', 'Minha Área', 'KPIs', 'Indicadores']);
+  const canCuidados = isAdmin || canAccessModule(['cuidados', 'Cuidados']);
+  // Módulo Processos removido na reunião 2026-05-18 — rota redireciona pra /eventos
+  const canProcessos = false;
+  const canSolicitacoes = isAdmin || canAccessModule(['solicitacoes', 'Solicitações'], 'leitura', 1);
+  const canNPS = isAdmin || canAccessModule(['nps', 'NPS']);
+  const canDadosBrutos = isAdmin || canAccessModule(['dados-brutos', 'Dados Brutos']);
+  const canPainel = isAdmin || canAccessModule(['painel-cbrio', 'Painel CBRio'], 'leitura', 1);
+  // Colaborador = admin/diretor ou usuário com qualquer permissão de módulo
+  // (voluntários e membros sem permissão não são colaboradores)
+  const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados || canSolicitacoes || canDadosBrutos || canNPS;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
   const canIA = isColaborador;
@@ -181,16 +234,25 @@ export function AuthProvider({ children }) {
     isAdmin,
     isDiretor: profile?.role === 'diretor',
     isVoluntario,
+    isMembroOnly,
     isColaborador,
     modulePerms,
+    modulosBloqueados,
     canAccessModule,
-    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs, canCuidados,
+    canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canKPIs, canCuidados, canProcessos, canSolicitacoes, canNPS, canDadosBrutos, canPainel,
     getAccessLevel,
     userAreas,
     userSetores,
+    cargoNome,
+    cargoSlug,
     signInWithMicrosoft,
+    signInWithGoogle,
     signInWithEmail,
+    sendPasswordReset,
+    updatePasswordWithCurrent,
+    updatePasswordOnly,
     signOut,
+    refreshProfile: () => user?.id && fetchProfile(user.id),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -202,14 +264,22 @@ export function useAuth() {
     // During HMR, context can temporarily be null — return a safe fallback
     return {
       user: null, profile: null, loading: true, role: null,
-      isAdmin: false, isDiretor: false, isVoluntario: false, isColaborador: false, modulePerms: null,
+      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, isColaborador: false, modulePerms: null,
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,
       canExpansao: false, canAgenda: false, canIA: false, canCuidados: false,
+      canProcessos: false, canSolicitacoes: false, canNPS: false,
+      canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
+      cargoNome: null, cargoSlug: null,
       signInWithMicrosoft: async () => ({}),
-      signInWithEmail: async () => ({}), signOut: async () => {},
+      signInWithGoogle: async () => ({}),
+      signInWithEmail: async () => ({}),
+      sendPasswordReset: async () => ({}),
+      updatePasswordWithCurrent: async () => ({}),
+      updatePasswordOnly: async () => ({}),
+      signOut: async () => {},
     };
   }
   return ctx;

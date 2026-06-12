@@ -11,11 +11,18 @@ async function gerarTodasNotificacoes() {
   try {
     total += await gerarNotificacoesRH();
     total += await gerarNotificacoesFinanceiro();
+    total += await rodarAnaliseFinanceiraDiaria();
     total += await gerarNotificacoesLogistica();
     total += await gerarNotificacoesPatrimonio();
     total += await gerarNotificacoesMembresia();
     total += await gerarNotificacoesKpis();
     total += await gerarNotificacoesCuidados();
+    total += await gerarNotificacoesJornadaConvertidos();
+    total += await gerarNotificacoesGrupos();
+    total += await gerarNotificacoesRitual();
+    total += await gerarNotificacoesSolicitacoes();
+    total += await gerarNotificacoesMarketing();
+    total += await gerarNotificacoesOnline();
     console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   } catch (e) {
     console.error('[Notificações] Erro:', e.message);
@@ -145,7 +152,7 @@ async function gerarNotificacoesRH() {
     .from('rh_funcionarios')
     .select('id, nome, data_admissao, tipo_contrato')
     .eq('status', 'ativo')
-    .eq('tipo_contrato', 'clt');
+    .ilike('tipo_contrato', 'clt');  // case-insensitive · os dados estão em 'CLT' (uppercase)
 
   for (const func of funcionarios || []) {
     const admissao = new Date(func.data_admissao + 'T12:00:00');
@@ -163,6 +170,27 @@ async function gerarNotificacoesRH() {
         severidade: 'aviso',
         chaveDedup: `exp_vencendo_${func.id}`,
       });
+    }
+  }
+
+  // 7. Reconcilia status de afastamento: quem estava em férias/licença e o período
+  // já acabou volta para 'ativo'. Só RETORNA (a ida pra férias/licença é setada na
+  // aprovação) e NUNCA toca 'inativo' (desligados). Corrige o status que ficava preso.
+  const { data: emAfastamento } = await supabase
+    .from('rh_funcionarios')
+    .select('id')
+    .in('status', ['ferias', 'licenca']);
+  if (emAfastamento && emAfastamento.length) {
+    const { data: ativasHoje } = await supabase
+      .from('rh_ferias_licencas')
+      .select('funcionario_id')
+      .eq('status', 'aprovado')
+      .lte('data_inicio', today)
+      .gte('data_fim', today);
+    const comPeriodoAtivo = new Set((ativasHoje || []).map(f => f.funcionario_id));
+    const voltaram = emAfastamento.filter(f => !comPeriodoAtivo.has(f.id)).map(f => f.id);
+    if (voltaram.length) {
+      await supabase.from('rh_funcionarios').update({ status: 'ativo' }).in('id', voltaram);
     }
   }
 
@@ -238,6 +266,76 @@ async function gerarNotificacoesFinanceiro() {
       severidade: 'aviso',
       chaveDedup: `reembolso_pendente_${r.id}`,
     });
+  }
+
+  // 4. Fila de classificação acumulada (PR B · estrutura fiscal)
+  // Tabela pode não existir em ambientes antigos · try/catch silencioso
+  try {
+    const { count: filaCount } = await supabase
+      .from('fin_fila_classificacao')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pendente');
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (filaCount && filaCount >= 20) {
+      count += await notificar({
+        modulo: 'financeiro',
+        tipo: 'fila_classificacao_alta',
+        titulo: `Fila de classificação com ${filaCount} itens`,
+        mensagem: `Ha ${filaCount} lancamentos aguardando classificação. Revise em /admin/financeiro -> Fila de classificação.`,
+        link: '/admin/financeiro',
+        severidade: filaCount >= 50 ? 'urgente' : 'aviso',
+        chaveDedup: `fila_classificacao_alta_${hoje}`,
+      });
+    }
+
+    // 5. Lancamentos brutos pendentes ha muito tempo (>7d sem classificação)
+    const seteDiasAtras = new Date(Date.now() - 7 * 86400000).toISOString();
+    const { count: brutosVelhos } = await supabase
+      .from('fin_lancamentos_brutos')
+      .select('id', { count: 'exact', head: true })
+      .eq('ja_classificado', false)
+      .lt('created_at', seteDiasAtras);
+
+    if (brutosVelhos && brutosVelhos > 0) {
+      count += await notificar({
+        modulo: 'financeiro',
+        tipo: 'lancamentos_pendentes_antigos',
+        titulo: `${brutosVelhos} lancamentos sem classificar ha >7 dias`,
+        mensagem: `Ha ${brutosVelhos} transacoes importadas ha mais de 7 dias ainda sem classificação. Verifique a fila.`,
+        link: '/admin/financeiro',
+        severidade: 'aviso',
+        chaveDedup: `lanc_pendentes_antigos_${hoje}`,
+      });
+    }
+
+    // 6. Sem upload de extrato ha 10+ dias (alerta operacional)
+    const { data: ultimoUpload } = await supabase
+      .from('fin_uploads')
+      .select('created_at, tipo')
+      .eq('status', 'concluido')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (ultimoUpload && ultimoUpload[0]) {
+      const diasSemUpload = Math.floor((Date.now() - new Date(ultimoUpload[0].created_at).getTime()) / 86400000);
+      if (diasSemUpload >= 10) {
+        count += await notificar({
+          modulo: 'financeiro',
+          tipo: 'sem_upload_recente',
+          titulo: `Sem importar extrato ha ${diasSemUpload} dias`,
+          mensagem: `Último upload foi ha ${diasSemUpload} dias. Considere importar o extrato mais recente.`,
+          link: '/admin/financeiro',
+          severidade: 'aviso',
+          chaveDedup: `sem_upload_${hoje}`,
+        });
+      }
+    }
+  } catch (e) {
+    // Tabelas da PR B podem não existir em ambientes antigos · ignora
+    if (!String(e.message || '').includes('does not exist')) {
+      console.warn('[NOTIF-FIN] Erro nas regras PR B:', e.message);
+    }
   }
 
   return count;
@@ -480,6 +578,516 @@ async function gerarNotificacoesCuidados() {
   }
 
   return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// JORNADA NOVOS CONVERTIDOS — contato pastoral em até 3 dias
+// Líder da área cobra no 2º dia · escala pro Marcelo (Cuidados) no 3º+.
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesJornadaConvertidos() {
+  let count = 0;
+  const DIA = 86400000;
+  const hojeStr = new Date().toISOString().slice(0, 10);
+  const desde = new Date(Date.now() - 30 * DIA).toISOString().slice(0, 10);
+
+  const { data: convs } = await supabase
+    .from('cui_convertidos')
+    .select('id, nome, data_culto, area')
+    .is('deleted_at', null)
+    .is('primeiro_contato_em', null)
+    .gte('data_culto', desde);
+
+  const ehArea = (a) => ['ami', 'bridge', 'online'].includes(a);
+  const moduloArea = (a) => ehArea(a) ? a : 'cuidados';
+  const linkArea = (a) => ehArea(a) ? `/${a}` : '/ministerial/cuidados?tab=primeiros-passos';
+
+  for (const c of convs || []) {
+    const dias = Math.floor((Date.now() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
+    if (dias < 2) continue;
+    const area = c.area || 'sede';
+
+    // 2º dia: líder da área
+    count += await notificar({
+      modulo: moduloArea(area),
+      tipo: 'convertido_sem_contato',
+      titulo: `Sem contato pastoral: ${c.nome}`,
+      mensagem: `${c.nome} se converteu há ${dias} dias e ainda não recebeu contato. Faça o contato e marque o encontro (meta: 3 dias).`,
+      link: linkArea(area),
+      severidade: dias > 3 ? 'warning' : 'info',
+      chaveDedup: `jornada_contato_${c.id}_${hojeStr}`,
+    });
+
+    // 3º+ dia: escala pro Marcelo (Cuidados) cobrar o líder
+    if (dias > 3 && moduloArea(area) !== 'cuidados') {
+      count += await notificar({
+        modulo: 'cuidados',
+        tipo: 'convertido_sem_contato_atrasado',
+        titulo: `Atrasado (${area}): ${c.nome}`,
+        mensagem: `${c.nome} (${area}) está há ${dias} dias sem contato pastoral — passou do prazo de 3 dias. Cobrar o líder da área.`,
+        link: '/ministerial/cuidados?tab=primeiros-passos',
+        severidade: 'warning',
+        chaveDedup: `jornada_contato_esc_${c.id}_${hojeStr}`,
+      });
+    }
+  }
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// GRUPOS — encontros sem registro + membros sem grupo
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesGrupos() {
+  let count = 0;
+  const now = Date.now();
+
+  // 1. Grupos ativos sem encontro recente (limite varia com recorrencia)
+  const limites = { semanal: 14, quinzenal: 21, mensal: 45 };
+  const { data: grupos } = await supabase
+    .from('mem_grupos')
+    .select('id, nome, recorrencia, lider_id, mem_membros!lider_id(nome)')
+    .eq('ativo', true);
+
+  if (grupos?.length) {
+    const grupoIds = grupos.map(g => g.id);
+    const { data: encontros } = await supabase
+      .from('mem_grupo_encontros')
+      .select('grupo_id, data')
+      .in('grupo_id', grupoIds)
+      .order('data', { ascending: false });
+
+    // Mapeia último encontro por grupo
+    const ultimoPorGrupo = {};
+    for (const e of encontros || []) {
+      if (!ultimoPorGrupo[e.grupo_id]) ultimoPorGrupo[e.grupo_id] = e.data;
+    }
+
+    for (const g of grupos) {
+      const recorrencia = g.recorrencia || 'semanal';
+      const limiteDias = limites[recorrencia] || 14;
+      const ultimo = ultimoPorGrupo[g.id];
+      let dias;
+      if (ultimo) {
+        dias = Math.floor((now - new Date(ultimo + 'T12:00:00').getTime()) / 86400000);
+      } else {
+        dias = 999; // grupo sem nenhum encontro registrado
+      }
+      if (dias < limiteDias) continue;
+
+      const lider = g.mem_membros?.nome ? ` (lider: ${g.mem_membros.nome})` : '';
+      const msg = ultimo
+        ? `Grupo ${g.nome}${lider} esta sem encontro registrado ha ${dias} dias.`
+        : `Grupo ${g.nome}${lider} ainda não teve encontro registrado.`;
+
+      // Dedup em janelas de "limiteDias" para não alertar todo dia o mesmo grupo
+      const janela = Math.floor(dias / limiteDias);
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_sem_encontro',
+        titulo: `Grupo sem encontro — ${g.nome}`,
+        mensagem: msg,
+        link: '/grupos',
+        severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
+        chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+      });
+    }
+  }
+
+  // 2. Membros (status = membro_ativo) sem grupo ha 90+ dias
+  const noventaDias = new Date(now - 90 * 86400000).toISOString().slice(0, 10);
+  const { data: membros } = await supabase
+    .from('mem_membros')
+    .select('id, nome, created_at, status, active')
+    .eq('active', true)
+    .eq('status', 'membro_ativo')
+    .lte('created_at', noventaDias);
+
+  if (membros?.length) {
+    const membroIds = membros.map(m => m.id);
+    const { data: participacoes } = await supabase
+      .from('mem_grupo_membros')
+      .select('membro_id')
+      .in('membro_id', membroIds)
+      .is('saiu_em', null);
+
+    const comGrupo = new Set((participacoes || []).map(p => p.membro_id));
+    const semGrupo = membros.filter(m => !comGrupo.has(m.id));
+
+    for (const m of semGrupo) {
+      const dias = Math.floor((now - new Date(m.created_at).getTime()) / 86400000);
+      // Dedup mensal pra não spammar
+      const janela = Math.floor(dias / 30);
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'membro_sem_grupo',
+        titulo: `Membro sem grupo — ${m.nome}`,
+        mensagem: `${m.nome} e membro ha ${dias} dias mas ainda não esta em nenhum grupo de conexão.`,
+        link: '/grupos',
+        severidade: dias >= 180 ? 'aviso' : 'info',
+        chaveDedup: `membro_sem_grupo_${m.id}_${janela}`,
+      });
+    }
+  }
+
+  // 3. Grupos sem visita de supervisão há 60+ dias (agregado · 1 notificação
+  //    semanal pro módulo, não 1 por grupo — alimenta a aba Visitas do /grupos)
+  const { data: supGrupos } = await supabase
+    .from('vw_grupos_supervisao')
+    .select('id, nome, ultima_visita');
+
+  if (supGrupos?.length) {
+    const semVisita = supGrupos.filter(g => {
+      if (!g.ultima_visita) return true;
+      const dias = Math.floor((now - new Date(g.ultima_visita + 'T12:00:00').getTime()) / 86400000);
+      return dias > 60;
+    });
+    if (semVisita.length) {
+      const nomes = semVisita.slice(0, 5).map(g => g.nome).join(', ');
+      const resto = semVisita.length > 5 ? ` e mais ${semVisita.length - 5}` : '';
+      const semana = Math.floor(now / (7 * 86400000)); // dedup semanal
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'grupos_sem_visita',
+        titulo: `${semVisita.length} grupo${semVisita.length !== 1 ? 's' : ''} sem visita há mais de 2 meses`,
+        mensagem: `Sem visita de supervisão há mais de 60 dias: ${nomes}${resto}. Agende as visitas na aba Visitas de Grupos.`,
+        link: '/grupos?tab=visitas',
+        severidade: 'aviso',
+        chaveDedup: `grupos_sem_visita_w${semana}`,
+      });
+    }
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// RITUAL MENSAL · OKR
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesRitual() {
+  let count = 0;
+  const hoje = new Date();
+  const dia = hoje.getDate();
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth() + 1;
+  const periodo = `${ano}-${String(mes).padStart(2, '0')}`;
+
+  // Pegar diretoria geral pra avisos do ritual
+  const { data: diretoria } = await supabase
+    .from('profiles')
+    .select('id, name')
+    .eq('is_diretoria_geral', true)
+    .eq('active', true);
+  const targetIds = (diretoria || []).map(d => d.id);
+
+  // KPIs em alerta este mês
+  const { data: trajs } = await supabase
+    .from('vw_kpi_trajetoria_atual')
+    .select('kpi_id, status_trajetoria');
+  const emAlerta = (trajs || []).filter(t =>
+    t.status_trajetoria === 'critico' || t.status_trajetoria === 'atras'
+  );
+  const totalAlerta = emAlerta.length;
+
+  if (totalAlerta === 0) return 0;
+
+  // Quantos já revisados
+  const ids = emAlerta.map(t => t.kpi_id);
+  const { data: revs } = await supabase
+    .from('okr_revisoes')
+    .select('kpi_id')
+    .in('kpi_id', ids)
+    .eq('periodo_referencia', periodo);
+  const revisados = new Set((revs || []).map(r => r.kpi_id));
+  const totalPendentes = totalAlerta - revisados.size;
+
+  // ─── Aviso dia 5: ritual abre ───
+  if (dia === 5 && totalPendentes > 0 && targetIds.length > 0) {
+    count += await notificar({
+      modulo: 'kpis',
+      tipo: 'ritual_aberto',
+      titulo: `Ritual Mensal — ${totalPendentes} OKR(s) aguardando revisao`,
+      mensagem: `${totalAlerta} KPIs em alerta este mês (${revisados.size} já revisados, ${totalPendentes} pendentes). Acesse o Ritual Mensal para registrar causa, decisão, responsável e próximo passo.`,
+      link: '/ritual',
+      severidade: 'aviso',
+      chaveDedup: `ritual_aberto_${periodo}`,
+      targetIds,
+    });
+  }
+
+  // ─── Aviso dia 15: meio do mês ───
+  if (dia === 15 && totalPendentes > 0 && targetIds.length > 0) {
+    count += await notificar({
+      modulo: 'kpis',
+      tipo: 'ritual_meio_mes',
+      titulo: `Ritual ainda não concluído — ${totalPendentes} pendentes`,
+      mensagem: `Metade do mês já passou. Faltam ${totalPendentes} OKRs em alerta sem revisão registrada.`,
+      link: '/ritual',
+      severidade: 'aviso',
+      chaveDedup: `ritual_meio_${periodo}`,
+      targetIds,
+    });
+  }
+
+  // ─── Aviso dia 25: faltam 5 dias ───
+  if (dia === 25 && totalPendentes > 0 && targetIds.length > 0) {
+    count += await notificar({
+      modulo: 'kpis',
+      tipo: 'ritual_fim_mes',
+      titulo: `Ritual fecha em 5 dias — ${totalPendentes} ainda pendentes`,
+      mensagem: `O mês esta acabando e ainda ha ${totalPendentes} OKRs em alerta sem revisão. Até o fim do mês.`,
+      link: '/ritual',
+      severidade: 'critico',
+      chaveDedup: `ritual_fim_${periodo}`,
+      targetIds,
+    });
+  }
+
+  // ─── Aviso dia 30+: KPIs não revisados viram pendência visível ───
+  // (gerado depois pelo próprio painel — aqui so notificamos)
+
+  // ─── Lembrete semanal (toda quarta) pra preencher KPIs semanais atrasados ───
+  if (hoje.getDay() === 3) { // quarta-feira
+    const { data: kpisSemanais } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, area, lider_funcionario_id')
+      .eq('ativo', true)
+      .eq('periodicidade', 'semanal');
+
+    if (kpisSemanais?.length) {
+      // Achar quem tem registro da semana atual
+      const inicioSemana = new Date(hoje);
+      inicioSemana.setDate(hoje.getDate() - hoje.getDay()); // domingo
+      const inicioSemanaStr = inicioSemana.toISOString().slice(0, 10);
+
+      const { data: regs } = await supabase
+        .from('kpi_registros')
+        .select('indicador_id')
+        .gte('data_preenchimento', inicioSemanaStr);
+      const preenchidos = new Set((regs || []).map(r => r.indicador_id));
+
+      const pendentes = kpisSemanais.filter(k => !preenchidos.has(k.id));
+      if (pendentes.length > 0) {
+        const semanaKey = `${ano}-W${Math.ceil((hoje - new Date(ano, 0, 1)) / 86400000 / 7)}`;
+        count += await notificar({
+          modulo: 'kpis',
+          tipo: 'kpis_semanais_pendentes',
+          titulo: `${pendentes.length} KPI(s) semanal(is) pendente(s)`,
+          mensagem: `Você tem ${pendentes.length} indicadores semanais sem registro nesta semana. Preenche em "Meus KPIs".`,
+          link: '/meus-kpis',
+          severidade: 'info',
+          chaveDedup: `kpis_semanais_${semanaKey}`,
+        });
+      }
+    }
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SOLICITAÇÕES · lembrete de avaliação NPS pós-conclusão
+// Solicitação concluída ha >=24h e <=14d sem nps_nota · pede avaliação.
+// Sem isso os KPIs ADM-*-Q (NPS Gestão+Criativo · 11 KPIs) ficam zerados.
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesSolicitacoes() {
+  let count = 0;
+  const agora = new Date();
+  const ha24h = new Date(agora.getTime() - 24 * 3600 * 1000).toISOString();
+  const ha14d = new Date(agora.getTime() - 14 * 86400 * 1000).toISOString();
+
+  const { data: concluidas } = await supabase
+    .from('solicitacoes')
+    .select('id, titulo, solicitante_id, concluido_em, categoria')
+    .eq('status', 'concluido')
+    .is('nps_nota', null)
+    .not('solicitante_id', 'is', null)
+    .gte('concluido_em', ha14d)
+    .lte('concluido_em', ha24h);
+
+  for (const s of concluidas || []) {
+    // Lembrete único por solicitação · se ignorar, o badge "Avalie" na tela cobre o resto
+    count += await notificar({
+      modulo: 'administrativo',
+      tipo: 'solicitacao_avaliar_lembrete',
+      titulo: `Lembrete: avalie "${s.titulo}"`,
+      mensagem: 'Sua solicitação foi concluída · 30 segundos pra avaliar ajudam o time a melhorar.',
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solic_avaliar_${s.id}`,
+      targetIds: [s.solicitante_id],
+    });
+  }
+
+  // Aprovação hierarquica · lembrete pro diretor de origem com fila parada
+  // ≥24h (Spec 001). Antes da escalacao automática (Fase 11), o ping diario
+  // chama atenção da fila travada · 1 lembrete por solicitação por dia.
+  const { data: aguardandoOrigem } = await supabase
+    .from('solicitacoes')
+    .select('id, titulo, aprovacao_origem_diretor_id, created_at')
+    .eq('aprovacao_origem_status', 'pendente')
+    .not('aprovacao_origem_diretor_id', 'is', null)
+    .lte('created_at', ha24h)
+    .is('deleted_at', null);
+
+  const hojeKey = agora.toISOString().slice(0, 10);
+  for (const s of aguardandoOrigem || []) {
+    count += await notificar({
+      modulo: 'administrativo',
+      tipo: 'solicitacao_aprovacao_origem_lembrete',
+      titulo: `Aguardando sua aprovação: ${s.titulo}`,
+      mensagem: 'Solicitação do seu setor parada há mais de 24h aguardando sua decisão.',
+      link: '/solicitacoes?aba=aprovar',
+      severidade: 'alta',
+      chaveDedup: `solic_aprov_origem_lembrete_${s.id}_${hojeKey}`,
+      targetIds: [s.aprovacao_origem_diretor_id],
+    });
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// MARKETING · cards aguardando solicitante ha >=24h (Spec 014)
+// Cron diario · lembra solicitante a aprovar/sugerir revisão.
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesMarketing() {
+  let count = 0;
+  const agora = new Date();
+  const ha24h = new Date(agora.getTime() - 24 * 3600 * 1000).toISOString();
+  const hojeKey = agora.toISOString().slice(0, 10);
+
+  const { data: cards, error } = await supabase
+    .from('marketing_kanban_cards')
+    .select('id, titulo, solicitacao_id, estado, estado_atualizado_em')
+    .eq('estado', 'aguardando_solicitante')
+    .is('deleted_at', null)
+    .lte('estado_atualizado_em', ha24h);
+
+  if (error) {
+    if (!String(error.message || '').includes('does not exist')) {
+      console.warn('[Marketing notify] erro:', error.message);
+    }
+    return 0;
+  }
+
+  for (const c of cards || []) {
+    if (!c.solicitacao_id) continue;
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('solicitante_id, titulo')
+      .eq('id', c.solicitacao_id)
+      .maybeSingle();
+    if (!sol?.solicitante_id) continue;
+
+    count += await notificar({
+      modulo: 'marketing',
+      tipo: 'marketing_aguardando_solicitante_lembrete',
+      titulo: `Aguardando sua revisão: ${sol.titulo}`,
+      mensagem: 'Preview Marketing parado há mais de 24h aguardando sua aprovação ou sugestão de revisão.',
+      link: '/solicitacoes',
+      severidade: 'alta',
+      chaveDedup: `marketing_aguardando_lembrete_${c.id}_${hojeKey}`,
+      targetIds: [sol.solicitante_id],
+    });
+  }
+
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// ONLINE · BLINDAGEM da coleta automática do YouTube
+// Alerta quando: (a) o token OAuth caiu/esta com erro · (b) um culto online
+// já encerrado não recebeu as metricas automáticas (pico/DS/video_id).
+// Fonte do diagnóstico: collectors.verificarColetaOnline().
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesOnline() {
+  let count = 0;
+  const hojeKey = new Date().toISOString().slice(0, 10);
+  try {
+    const { verificarColetaOnline } = require('./onlineCollectors');
+    const r = await verificarColetaOnline();
+
+    // 1. Token OAuth caiu por completo · falha critica (toda a coleta para)
+    if (!r.token.conectado) {
+      count += await notificar({
+        modulo: 'online',
+        tipo: 'online_oauth_desconectado',
+        titulo: 'YouTube desconectado · coleta online parada',
+        mensagem: 'O canal do YouTube não esta conectado (sem token OAuth valido). Pico, views e demais metricas dos cultos online NÃO estão sendo coletadas. Reconecte em /online > Conectar canal.',
+        link: '/online',
+        severidade: 'alta',
+        chaveDedup: `online_oauth_desconectado_${hojeKey}`,
+      });
+    } else if (r.token.degradado) {
+      // 2. Token conectado mas com erro recente · degradado
+      count += await notificar({
+        modulo: 'online',
+        tipo: 'online_oauth_erro',
+        titulo: 'Coleta online com erro recente',
+        mensagem: `A última coleta do YouTube reportou erro: ${String(r.token.last_error || '').slice(0, 180)}. Verifique a conexão em /online.`,
+        link: '/online',
+        severidade: 'media',
+        chaveDedup: `online_oauth_erro_${hojeKey}`,
+      });
+    }
+
+    // 3. Cultos online encerrados sem metricas automáticas
+    for (const c of r.problemas || []) {
+      count += await notificar({
+        modulo: 'online',
+        tipo: 'online_culto_sem_metricas',
+        titulo: `Culto online sem dados: ${c.nome} (${c.data})`,
+        mensagem: `A coleta automática não preencheu: ${c.faltando.join(', ')}. Pode ser falha do token OAuth, live não detectada ou latencia do YouTube. Verifique em /online.`,
+        link: '/online',
+        severidade: 'media',
+        chaveDedup: `online_culto_sem_metricas_${c.id}_${hojeKey}`,
+      });
+    }
+
+    // 4. Lembrete · decisões online nunca confirmadas (form/manual não tocaram).
+    //    Roteia pra integração (quem lanca decisões) · severidade baixa.
+    for (const c of r.decisoesPendentes || []) {
+      const dica = c.chat_detectou > 0
+        ? ` O chat ao vivo detectou ~${c.chat_detectou} possível(is) decisão(oes) · confirme o número real.`
+        : '';
+      count += await notificar({
+        modulo: 'integracao',
+        tipo: 'online_decisoes_a_confirmar',
+        titulo: `Confirme as decisões online: ${c.nome} (${c.data})`,
+        mensagem: `O culto online de ${c.data} ainda não teve as decisoes/conversoes online confirmadas.${dica} Lance em /integracao (aba Cultos), mesmo que tenha sido zero.`,
+        link: '/integracao',
+        severidade: 'baixa',
+        chaveDedup: `online_decisoes_a_confirmar_${c.id}_${hojeKey}`,
+      });
+    }
+  } catch (e) {
+    if (!String(e.message || '').includes('does not exist')) {
+      console.warn('[Online notify] Erro:', e.message);
+    }
+  }
+  return count;
+}
+
+// ═══════════════════════════════════════════════════════════
+// ANALISE FINANCEIRA DIARIA (H · alertas + forecast)
+// ═══════════════════════════════════════════════════════════
+async function rodarAnaliseFinanceiraDiaria() {
+  try {
+    const { rodarAnaliseDiaria } = require('./analiseFinanceira');
+    const r = await rodarAnaliseDiaria();
+    // Conta criados nao-null
+    let count = 0;
+    if (r.queda) count++;
+    if (Array.isArray(r.sumidos)) count += r.sumidos.length;
+    if (Array.isArray(r.atrasadas)) count += r.atrasadas.length;
+    if (r.pico) count++;
+    return count;
+  } catch (e) {
+    // Tabelas ainda não existem em ambientes antigos · ignora
+    if (!String(e.message || '').includes('does not exist')) {
+      console.warn('[Analise financeira] Erro:', e.message);
+    }
+    return 0;
+  }
 }
 
 module.exports = { gerarTodasNotificacoes };

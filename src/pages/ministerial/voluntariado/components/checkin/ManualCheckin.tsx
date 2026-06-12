@@ -58,9 +58,9 @@ export default function ManualCheckin({ schedules, onCheckIn, onUnscheduledCheck
 
       {filtered.length === 0 && search && (
         <div className="text-center py-4">
-          <p className="text-muted-foreground mb-3">Nenhum voluntario escalado encontrado</p>
+          <p className="text-muted-foreground mb-3">Nenhum voluntário escalado encontrado</p>
           <div className="flex gap-2 justify-center">
-            <Input placeholder="Nome do voluntario" value={unscheduledName} onChange={e => setUnscheduledName(e.target.value)} className="max-w-xs" />
+            <Input placeholder="Nome do voluntário" value={unscheduledName} onChange={e => setUnscheduledName(e.target.value)} className="max-w-xs" />
             <Button onClick={() => { if (unscheduledName.trim()) { onUnscheduledCheckIn(unscheduledName.trim()); setUnscheduledName(''); } }} disabled={!unscheduledName.trim() || isLoading}>
               <UserPlus className="h-4 w-4 mr-1" /> Check-in sem escala
             </Button>

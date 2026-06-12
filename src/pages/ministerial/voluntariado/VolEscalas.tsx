@@ -40,7 +40,7 @@ export default function VolEscalas() {
             <SelectContent>
               {services.map(svc => (
                 <SelectItem key={svc.id} value={svc.id}>
-                  {svc.name} — {format(new Date(svc.scheduled_at), "dd/MM 'as' HH:mm", { locale: ptBR })}
+                  {svc.name} — {format(new Date(svc.scheduled_at), "EEEE, dd/MM", { locale: ptBR })}
                 </SelectItem>
               ))}
             </SelectContent>

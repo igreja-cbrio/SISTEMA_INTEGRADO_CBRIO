@@ -1,65 +1,20 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
-const { supabase, query } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorizeModule('patrimonio'));
 
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
-    // Primary: RPC function — works without DATABASE_URL, bypasses 1k row limit
+    // RPC dedicada (SECURITY DEFINER) · funciona no serverless e ignora o cap de
+    // 1k linhas. (O antigo fallback via pool pg não conecta no Vercel · removido.)
     const { data, error } = await supabase.rpc('pat_dashboard_stats');
     if (error) throw error;
     res.json(data);
   } catch (e) {
     console.error('[PAT] Dashboard RPC falhou:', e.message);
-    // Fallback: direct SQL via pg pool
-    try {
-      const [totais, porCategoria, porLocalizacao, inventarios] = await Promise.all([
-        query(`
-          SELECT 
-            COUNT(*)::int as total,
-            COUNT(*) FILTER (WHERE status = 'ativo')::int as ativos,
-            COUNT(*) FILTER (WHERE status = 'manutencao')::int as manutencao,
-            COUNT(*) FILTER (WHERE status = 'baixado')::int as baixados,
-            COUNT(*) FILTER (WHERE status = 'extraviado')::int as extraviados,
-            COALESCE(SUM(valor_aquisicao), 0)::numeric as valor_total
-          FROM pat_bens
-        `),
-        query(`
-          SELECT COALESCE(c.nome, 'Sem categoria') as nome, COUNT(*)::int as qtd
-          FROM pat_bens b LEFT JOIN pat_categorias c ON b.categoria_id = c.id
-          GROUP BY c.nome
-        `),
-        query(`
-          SELECT COALESCE(l.nome, 'Sem localização') as nome, COUNT(*)::int as qtd
-          FROM pat_bens b LEFT JOIN pat_localizacoes l ON b.localizacao_id = l.id
-          GROUP BY l.nome
-        `),
-        query(`SELECT COUNT(*)::int as total FROM pat_inventarios WHERE status = 'em_andamento'`),
-      ]);
-
-      const t = totais.rows[0];
-      const catObj = {};
-      porCategoria.rows.forEach(r => { catObj[r.nome] = r.qtd; });
-      const locObj = {};
-      porLocalizacao.rows.forEach(r => { locObj[r.nome] = r.qtd; });
-
-      res.json({
-        totalBens: t.total,
-        ativos: t.ativos,
-        manutencao: t.manutencao,
-        baixados: t.baixados,
-        extraviados: t.extraviados,
-        valorTotal: Number(t.valor_total),
-        porCategoria: catObj,
-        porLocalizacao: locObj,
-        inventariosAbertos: inventarios.rows[0].total,
-      });
-    } catch (e2) {
-      console.error('[PAT] Dashboard fallback falhou:', e2.message);
-      res.status(500).json({ error: 'Erro ao carregar dashboard patrimônio' });
-    }
+    res.status(500).json({ error: 'Erro ao carregar dashboard patrimônio' });
   }
 });
 

@@ -198,8 +198,8 @@ function TeamFormDialog({ team, onClose }: { team: VolTeam | null; onClose: () =
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Louvor, Midia, Recepcao" />
           </div>
           <div>
-            <Label>Descricao</Label>
-            <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descricao da equipe (opcional)" />
+            <Label>Descrição</Label>
+            <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descrição da equipe (opcional)" />
           </div>
           <div>
             <Label>Cor</Label>
@@ -318,7 +318,7 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
         <Card className="p-4 space-y-3">
           <div className="flex gap-2">
             <Input
-              placeholder="Buscar voluntario no Planning Center..."
+              placeholder="Buscar voluntário no Planning Center..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearchPC()}
@@ -348,7 +348,7 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
             <div key={m.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card">
               <div className="flex items-center gap-3">
                 {m.profile?.avatar_url ? (
-                  <img src={m.profile.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+                  <img data-foto-avatar="" src={m.profile.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
                 ) : (
                   <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium">
                     {m.volunteer_name.charAt(0)}
@@ -413,7 +413,7 @@ function PositionsList({ teamId, positions }: { teamId: string; positions: VolPo
       )}
 
       {positions.length === 0 ? (
-        <p className="text-center text-muted-foreground py-6">Nenhuma posicao cadastrada</p>
+        <p className="text-center text-muted-foreground py-6">Nenhuma posição cadastrada</p>
       ) : (
         <div className="space-y-1">
           {positions.map(p => (

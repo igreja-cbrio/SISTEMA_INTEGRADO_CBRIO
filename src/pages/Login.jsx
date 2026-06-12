@@ -1,12 +1,31 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LoginShapesBackground } from '../components/ui/shape-landing-hero';
+import AnimatedBackground from './public/AnimatedBackground';
+import { PublicThemeToggle } from './public/publicTheme';
+import { useTheme } from '../contexts/ThemeContext';
 
+// Paleta fixa do login · página sempre dark independente do tema do usuário,
+// senao a fonte fica invisivel em quem ta no tema claro.
+const mkCOL = (isDark) => isDark ? {
+  text: '#f5f5f5', textMuted: '#a3a3a3', textDim: '#737373',
+  border: 'rgba(255,255,255,0.18)', borderFocus: '#00B39D',
+  cardBg: 'rgba(22,22,22,0.78)', cardBorder: 'rgba(255,255,255,0.08)',
+  oauthBg: 'rgba(255,255,255,0.04)', oauthHover: 'rgba(255,255,255,0.08)',
+  pageBg: '#0a0a0a',
+} : {
+  text: '#171717', textMuted: '#525252', textDim: '#737373',
+  border: 'rgba(0,0,0,0.18)', borderFocus: '#00B39D',
+  cardBg: 'rgba(255,255,255,0.92)', cardBorder: 'rgba(0,0,0,0.08)',
+  oauthBg: 'rgba(0,0,0,0.03)', oauthHover: 'rgba(0,0,0,0.07)',
+  pageBg: '#eef2f1',
+};
 
-function FloatingInput({ id, type, icon, label, value, onChange }) {
+function FloatingInput({ id, type, icon, label, value, onChange, rightAction, autoComplete }) {
+  const { isDark } = useTheme();
+  const COL = mkCOL(isDark);
   const [focused, setFocused] = useState(false);
-  const active = focused || value.length > 0;
+  const active = focused || (value && value.length > 0);
 
   return (
     <div style={{ position: 'relative', marginBottom: 24 }}>
@@ -17,24 +36,35 @@ function FloatingInput({ id, type, icon, label, value, onChange }) {
         onChange={onChange}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        autoComplete={autoComplete}
         required
         style={{
-          display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
-          color: 'var(--cbrio-text)', background: 'transparent', border: 'none',
-          borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
+          display: 'block', width: '100%',
+          padding: rightAction ? '10px 36px 10px 0' : '10px 0',
+          fontSize: 15,
+          color: COL.text,
+          background: 'transparent',
+          border: 'none',
+          borderBottom: `2px solid ${focused ? COL.borderFocus : COL.border}`,
           outline: 'none', transition: 'border-color 0.3s', boxSizing: 'border-box',
+          // Forca a cor mesmo quando o navegador autocompleta (Chrome usa amarelo)
+          WebkitTextFillColor: COL.text,
+          caretColor: COL.borderFocus,
         }}
       />
       <label htmlFor={id} style={{
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
         fontSize: active ? 11 : 14,
-        color: focused ? '#00B39D' : 'var(--cbrio-text3)',
+        color: focused ? COL.borderFocus : COL.textMuted,
         transition: 'all 0.2s', pointerEvents: 'none',
         display: 'flex', alignItems: 'center', gap: 6,
       }}>
         {icon}{label}
       </label>
+      {rightAction && (
+        <div style={{ position: 'absolute', right: 0, top: 8 }}>{rightAction}</div>
+      )}
     </div>
   );
 }
@@ -48,18 +78,52 @@ const LockIcon = () => (
 const ArrowIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
 );
+const EyeIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+  </svg>
+);
+const EyeOffIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+    <line x1="1" y1="1" x2="23" y2="23"/>
+  </svg>
+);
 const MicrosoftIcon = () => (
   <svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+);
+const GoogleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 48 48">
+    <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+    <path fill="#FF3D00" d="m6.306 14.691 6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+    <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+    <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+  </svg>
 );
 const PlanningCenterIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#00B39D" strokeWidth="2"/><circle cx="12" cy="12" r="4" fill="#00B39D"/></svg>
 );
 
 export default function Login() {
-  const { signInWithEmail, signInWithMicrosoft, user } = useAuth();
+  const { isDark } = useTheme();
+  const COL = mkCOL(isDark);
+  const { signInWithEmail, signInWithMicrosoft, signInWithGoogle, sendPasswordReset, user } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
+  const [esqueciOpen, setEsqueciOpen] = useState(false);
+  const [esqueciEmail, setEsqueciEmail] = useState('');
+  const [esqueciLoading, setEsqueciLoading] = useState(false);
+  const [esqueciMsg, setEsqueciMsg] = useState(null); // { type: 'success'|'error', text: '...' }
+  // Pré-preenche email se foi marcado "Lembrar de mim" em login anterior.
+  // A sessão Supabase em si já persiste em localStorage automaticamente, então
+  // se a sessão ainda for válida, o redirect pra '/' já acontece via useEffect
+  // abaixo (entrada automática). Esse checkbox controla só o pré-preenchimento
+  // do email pra próxima visita (depois que a sessão expira ou apaga).
+  const REMEMBER_KEY = 'cbrio_remember_email';
+  const savedEmail = typeof window !== 'undefined' ? localStorage.getItem(REMEMBER_KEY) : null;
+  const [email, setEmail] = useState(savedEmail || '');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(!!savedEmail);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [btnHover, setBtnHover] = useState(false);
@@ -67,17 +131,23 @@ export default function Login() {
   // Show OAuth error messages from redirects
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     const oauthError = params.get('error');
-    if (oauthError) {
+    const hashError = hashParams.get('error');
+    const errorCode = params.get('error_code') || hashParams.get('error_code');
+    const errorDescription = params.get('error_description') || hashParams.get('error_description');
+    const authError = oauthError || hashError;
+    if (authError) {
       const msgs = {
         pc_oauth_denied: 'Login com Planning Center foi cancelado.',
         pc_no_email: 'Nenhum e-mail encontrado na sua conta do Planning Center.',
         pc_oauth_failed: 'Erro ao autenticar com Planning Center. Tente novamente.',
-        verify_failed: 'Erro ao verificar sessao. Tente novamente.',
-        use_email_login: 'Voce ja possui uma conta criada com este e-mail. Entre com seu e-mail e senha.',
+        verify_failed: 'Erro ao verificar sessão. Tente novamente.',
+        server_error: 'Erro no provedor de login. Tente novamente.',
       };
-      setError(msgs[oauthError] || 'Erro na autenticacao.');
-      // Clean the URL
+      const baseMessage = msgs[authError] || 'Erro na autenticação.';
+      const detail = errorDescription || errorCode;
+      setError(detail ? `${baseMessage} Detalhe: ${detail}` : baseMessage);
       window.history.replaceState({}, '', '/login');
     }
   }, []);
@@ -93,6 +163,11 @@ export default function Login() {
     const { error: err } = await signInWithEmail(email, password);
     setLoading(false);
     if (err) return setError(err.message);
+    // Persiste / limpa email lembrado conforme o checkbox
+    try {
+      if (rememberMe) localStorage.setItem(REMEMBER_KEY, email);
+      else localStorage.removeItem(REMEMBER_KEY);
+    } catch { /* localStorage pode estar bloqueado (modo anônimo) */ }
     navigate('/');
   }
 
@@ -102,19 +177,65 @@ export default function Login() {
     if (err) setError(err.message);
   }
 
+  async function handleGoogle() {
+    setError('');
+    const { error: err } = await signInWithGoogle();
+    if (err) setError(err.message);
+  }
+
+  function abrirEsqueci() {
+    setEsqueciEmail(email || '');
+    setEsqueciMsg(null);
+    setEsqueciOpen(true);
+  }
+
+  async function enviarReset(e) {
+    e.preventDefault();
+    if (!esqueciEmail || !esqueciEmail.includes('@')) {
+      setEsqueciMsg({ type: 'error', text: 'Informe um e-mail valido.' });
+      return;
+    }
+    setEsqueciLoading(true);
+    setEsqueciMsg(null);
+    const { error: err } = await sendPasswordReset(esqueciEmail.trim().toLowerCase());
+    setEsqueciLoading(false);
+    if (err) {
+      setEsqueciMsg({ type: 'error', text: err.message || 'Erro ao enviar e-mail.' });
+      return;
+    }
+    setEsqueciMsg({
+      type: 'success',
+      text: 'Pronto! Se este e-mail existir no sistema, você receberá um link em alguns minutos.',
+    });
+  }
+
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: '#0a0a0a' }}>
-      <LoginShapesBackground />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', background: COL.pageBg }}>
+      <AnimatedBackground />
+      <PublicThemeToggle />
+
+      {/* Autofill do Chrome usa cor amarela no background · forca o fundo a ficar transparente */}
+      <style>{`
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus,
+        input:-webkit-autofill:active {
+          -webkit-text-fill-color: ${COL.text} !important;
+          -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+          transition: background-color 5000s ease-in-out 0s;
+          caret-color: ${COL.borderFocus};
+        }
+      `}</style>
 
       <div style={{
         position: 'relative', zIndex: 1, width: '100%', maxWidth: 420, margin: '0 16px',
-        background: 'rgba(22,22,22,0.75)', backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20, padding: '40px 36px',
+        background: COL.cardBg, backdropFilter: 'blur(24px)',
+        border: `1px solid ${COL.cardBorder}`, borderRadius: 20, padding: '40px 36px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e5e5e5', margin: 0 }}>CBRio ERP</h1>
-          <p style={{ fontSize: 13, color: '#737373', marginTop: 4 }}>Sistema de gestão interna</p>
+          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.5, margin: 0, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>CBRio ERP</h1>
+          <p style={{ fontSize: 13, color: COL.textDim, marginTop: 4 }}>Sistema de gestão interna</p>
         </div>
 
         {error && (
@@ -127,8 +248,65 @@ export default function Login() {
         )}
 
         <form onSubmit={handleEmail}>
-          <FloatingInput id="email" type="email" icon={<UserIcon />} label="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <FloatingInput id="password" type="password" icon={<LockIcon />} label="Senha" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <FloatingInput
+            id="email" type="email" icon={<UserIcon />} label="E-mail"
+            value={email} onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+          />
+          <FloatingInput
+            id="password"
+            type={showPassword ? 'text' : 'password'}
+            icon={<LockIcon />} label="Senha"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            rightAction={
+              <button
+                type="button"
+                onClick={() => setShowPassword(s => !s)}
+                aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                tabIndex={-1}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: showPassword ? COL.borderFocus : COL.textMuted,
+                  padding: 4, display: 'flex', alignItems: 'center',
+                }}
+              >
+                {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            }
+          />
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 18, gap: 8, flexWrap: 'wrap' }}>
+            <label
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 13, color: COL.textDim,
+                cursor: 'pointer', userSelect: 'none',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: '#00B39D', cursor: 'pointer' }}
+              />
+              <span>Lembrar de mim</span>
+            </label>
+            <button
+              type="button"
+              onClick={abrirEsqueci}
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                color: COL.borderFocus, fontSize: 13, cursor: 'pointer',
+                textDecoration: 'none',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+            >
+              Esqueci minha senha
+            </button>
+          </div>
 
           <button
             type="submit"
@@ -149,19 +327,20 @@ export default function Login() {
         </form>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0' }}>
-          <div style={{ flex: 1, height: 1, background: 'var(--cbrio-border)' }} />
-          <span style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}>ou continue com</span>
-          <div style={{ flex: 1, height: 1, background: 'var(--cbrio-border)' }} />
+          <div style={{ flex: 1, height: 1, background: COL.cardBorder }} />
+          <span style={{ fontSize: 12, color: COL.textDim }}>ou continue com</span>
+          <div style={{ flex: 1, height: 1, background: COL.cardBorder }} />
         </div>
 
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <OAuthButton icon={<MicrosoftIcon />} label="Microsoft" onClick={handleMicrosoft} />
+          <OAuthButton icon={<GoogleIcon />} label="Google" onClick={handleGoogle} />
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 0' }}>
-          <div style={{ flex: 1, height: 1, background: 'var(--cbrio-border)' }} />
-          <span style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}>voluntarios</span>
-          <div style={{ flex: 1, height: 1, background: 'var(--cbrio-border)' }} />
+          <div style={{ flex: 1, height: 1, background: COL.cardBorder }} />
+          <span style={{ fontSize: 12, color: COL.textDim }}>voluntários</span>
+          <div style={{ flex: 1, height: 1, background: COL.cardBorder }} />
         </div>
 
         <div style={{ marginTop: 12 }}>
@@ -172,11 +351,91 @@ export default function Login() {
           />
         </div>
       </div>
+
+      {esqueciOpen && (
+        <div
+          onClick={() => !esqueciLoading && setEsqueciOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 400,
+              background: '#161616', border: `1px solid ${COL.cardBorder}`,
+              borderRadius: 16, padding: 28,
+            }}
+          >
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: COL.text, margin: 0, marginBottom: 6 }}>
+              Recuperar senha
+            </h2>
+            <p style={{ fontSize: 13, color: COL.textDim, margin: 0, marginBottom: 20 }}>
+              Voce vai receber um link no e-mail pra criar uma nova senha.
+            </p>
+
+            <form onSubmit={enviarReset}>
+              <FloatingInput
+                id="esqueci-email" type="email" icon={<UserIcon />} label="E-mail"
+                value={esqueciEmail} onChange={(e) => setEsqueciEmail(e.target.value)}
+                autoComplete="email"
+              />
+
+              {esqueciMsg && (
+                <div style={{
+                  background: esqueciMsg.type === 'success' ? '#00B39D18' : '#ef444418',
+                  border: `1px solid ${esqueciMsg.type === 'success' ? '#00B39D40' : '#ef444440'}`,
+                  borderRadius: 10, padding: '10px 14px',
+                  marginBottom: 16, fontSize: 13,
+                  color: esqueciMsg.type === 'success' ? '#00B39D' : '#ef4444',
+                }}>
+                  {esqueciMsg.text}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setEsqueciOpen(false)}
+                  disabled={esqueciLoading}
+                  style={{
+                    flex: 1, padding: '11px 16px',
+                    background: 'transparent', color: COL.textMuted,
+                    border: `1px solid ${COL.cardBorder}`, borderRadius: 10,
+                    fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={esqueciLoading || esqueciMsg?.type === 'success'}
+                  style={{
+                    flex: 1, padding: '11px 16px',
+                    background: COL.borderFocus, color: '#fff',
+                    border: 'none', borderRadius: 10,
+                    fontSize: 14, fontWeight: 600,
+                    cursor: esqueciLoading ? 'wait' : 'pointer',
+                    opacity: esqueciLoading || esqueciMsg?.type === 'success' ? 0.6 : 1,
+                  }}
+                >
+                  {esqueciLoading ? 'Enviando...' : esqueciMsg?.type === 'success' ? 'Enviado' : 'Enviar link'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function OAuthButton({ icon, label, onClick }) {
+  const { isDark } = useTheme();
+  const COL = mkCOL(isDark);
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -186,9 +445,9 @@ function OAuthButton({ icon, label, onClick }) {
       style={{
         width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
         gap: 10, padding: '11px 16px',
-        background: hover ? 'var(--cbrio-input-bg)' : 'var(--cbrio-modal-bg)',
-        border: '1px solid var(--cbrio-border)', borderRadius: 10,
-        fontSize: 14, fontWeight: 600, color: 'var(--cbrio-text2)',
+        background: hover ? COL.oauthHover : COL.oauthBg,
+        border: `1px solid ${COL.cardBorder}`, borderRadius: 10,
+        fontSize: 14, fontWeight: 600, color: COL.text,
         cursor: 'pointer', transition: 'all 0.3s',
       }}
     >

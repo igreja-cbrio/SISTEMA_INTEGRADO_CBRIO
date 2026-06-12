@@ -1,4 +1,10 @@
 require('dotenv').config();
+
+// Sentry deve inicializar ANTES de qualquer require do app pra capturar
+// erros logo no boot. Se SENTRY_DSN não estiver setado, vira no-op.
+const { initSentryBackend, sentryRequestHandler, sentryErrorHandler } = require('./utils/sentry');
+initSentryBackend();
+
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -11,8 +17,16 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Request handler do Sentry (precisa vir antes de qualquer middleware
+// e antes das rotas para capturar request data nos eventos).
+app.use(sentryRequestHandler());
+
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+// Domínios extras configuraveis via env (CSV) · ex: EXTRA_ALLOWED_ORIGINS="https://x.com,https://y.com"
+const extraOrigins = (process.env.EXTRA_ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
 app.use(cors({
   origin: function (origin, callback) {
     // Allow same-origin (no origin header) and known domains
@@ -20,10 +34,20 @@ app.use(cors({
       'http://localhost:5173',
       'http://localhost:8080',
       process.env.FRONTEND_URL,
+      ...extraOrigins,
     ].filter(Boolean);
-    if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin) || /\.lovable\.app$/.test(origin) || /\.lovableproject\.com$/.test(origin)) {
+    if (
+      !origin ||
+      allowed.includes(origin) ||
+      /\.vercel\.app$/.test(origin) ||
+      /\.lovable\.app$/.test(origin) ||
+      /\.lovableproject\.com$/.test(origin) ||
+      // Domínio próprio CBRio · cbrio.org + qualquer subdominio
+      /^https:\/\/(.+\.)?cbrio\.org$/.test(origin)
+    ) {
       callback(null, true);
     } else {
+      console.warn('[CORS] Origem bloqueada:', origin);
       callback(new Error('Origem não permitida pelo CORS'));
     }
   },
@@ -39,7 +63,8 @@ app.use(rateLimit({
 }));
 app.use(hpp());
 app.use(compression());
-app.use(express.json({ limit: '1mb' }));
+// rawBody capturado pra validar HMAC do webhook do WhatsApp (X-Hub-Signature-256)
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 
 // ── Routes ──
@@ -54,7 +79,12 @@ app.use('/api/strategic', require('./routes/strategic'));
 app.use('/api/meetings', require('./routes/meetings'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/rh', require('./routes/rh'));
+app.use('/api/pcs', require('./routes/pcs'));
 app.use('/api/financeiro', require('./routes/financeiro'));
+app.use('/api/financeiro-v2', require('./routes/financeiroV2'));
+// Cron · registrar ANTES do /api/santander pra evitar collision com middleware authenticate
+app.use('/api/santander/cron', require('./routes/santanderCron'));
+app.use('/api/santander', require('./routes/santander'));
 app.use('/api/logistica', require('./routes/logistica'));
 app.use('/api/ml', require('./routes/ml'));
 app.use('/api/arquivei', require('./routes/arquivei'));
@@ -68,21 +98,84 @@ app.use('/api/notificacoes', require('./routes/notificacoes'));
 app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
 app.use('/api/destaques', require('./routes/destaques'));
+// Rate limit dedicado pros forms públicos (anti-spam · sem auth)
+// Mais restritivo que o limiter global · 30 req/15min por IP em prod
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 30 : 5000),
+  message: { error: 'Muitas tentativas. Aguarde 15 minutos.' },
+  skip: () => process.env.NODE_ENV !== 'production',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/public', publicLimiter);
+
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
+app.use('/api/public/next', require('./routes/publicNext'));
+app.use('/api/public/grupos', require('./routes/publicGrupos'));
+app.use('/api/public/batismo', require('./routes/publicBatismo'));
+app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// Webhook WhatsApp (público · sem auth, fora do publicLimiter pra não
+// perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
+app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
+app.use('/api/whatsapp', require('./routes/whatsapp'));
+// Bot WhatsApp · grupos de conexão (cron estudo/lembretes + admin do estudo)
+app.use('/api/whatsapp-grupos', require('./routes/whatsappGrupos'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
+app.use('/api/producao', require('./routes/producao'));
+app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));
 app.use('/api/grupos', require('./routes/grupos'));
 app.use('/api/kpis/v2', require('./routes/kpisV2'));
 app.use('/api/kpis', require('./routes/kpis'));
+app.use('/api/online', require('./routes/online'));
+app.use('/api/wifi', require('./routes/wifi'));
 app.use('/api/cuidados', require('./routes/cuidados'));
 app.use('/api/integracao', require('./routes/integracao'));
+app.use('/api/next', require('./routes/next'));
 app.use('/api/governanca', require('./routes/governanca'));
+app.use('/api/processos', require('./routes/processos'));
+app.use('/api/jornada', require('./routes/jornada'));
+app.use('/api/encaminhamentos', require('./routes/encaminhamentos'));
+app.use('/api/devocionais', require('./routes/devocionais'));
+app.use('/api/devocional-planos', require('./routes/devocionalPlanos'));
+app.use('/api/devocional-membro', require('./routes/devocionalMembro'));
+app.use('/api/public/devocional', require('./routes/publicDevocional'));
+app.use('/api/bible', require('./routes/bible'));
+app.use('/api/pessoas', require('./routes/pessoas'));
+app.use('/api/nsm', require('./routes/nsm'));
+app.use('/api/painel', require('./routes/painel'));
+app.use('/api/painel-area', require('./routes/painelArea'));
+app.use('/api/totem-kids', require('./routes/totemKids'));
+app.use('/api/estrategia', require('./routes/estrategia'));
+app.use('/api/ritual', require('./routes/ritual'));
+app.use('/api/gestao', require('./routes/gestao'));
+app.use('/api/dados-brutos', require('./routes/dadosBrutos'));
+app.use('/api/dashboard-semanal', require('./routes/dashboardSemanal'));
+app.use('/api/nps', require('./routes/nps'));
+app.use('/api/public/nps', require('./routes/publicNps'));
+app.use('/api/planejamento', require('./routes/planejamento'));
+app.use('/api/apresentacoes', require('./routes/apresentacoes'));
+app.use('/api/lgpd', require('./routes/lgpd'));
+app.use('/api/feedback', require('./routes/feedback'));
 
 // ── Health check ──
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+// Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
+app.get('/api/health', (req, res) => {
+  const { supabase } = require('./utils/supabase');
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    supabase_client: !!supabase,
+    supabase_url_set: !!process.env.SUPABASE_URL,
+    supabase_service_role_set: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    database_url_set: !!process.env.DATABASE_URL,
+    node_env: process.env.NODE_ENV || 'unknown',
+  });
+});
 
 // ── API 404 (evita fallback HTML para rotas inexistentes) ──
 app.use('/api', (req, res) => {
@@ -102,9 +195,26 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
+// ── Sentry error handler (precisa vir antes do nosso) ──
+app.use(sentryErrorHandler());
+
 // ── Error handler ──
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err.message);
+  // Sink de telemetria (Onda 0) · fire-and-forget · NUNCA quebra a resposta ·
+  // sem query/body pra não vazar PII (só rota, método, mensagem e stack).
+  try {
+    const { supabase } = require('./utils/supabase');
+    supabase.from('app_erros_servidor').insert({
+      user_id: req.user?.id || null,
+      user_email: req.user?.email || null,
+      metodo: req.method,
+      rota: String(req.path || req.originalUrl || '').slice(0, 300),
+      mensagem: String(err.message || '').slice(0, 1000),
+      stack: String(err.stack || '').slice(0, 4000),
+      status: err.status || 500,
+    }).then(() => {}, (e) => console.warn('[app_erros_servidor]', e.message));
+  } catch (_) { /* tabela ausente / supabase off · ignora */ }
   res.status(500).json({ error: 'Erro interno do servidor' });
 });
 

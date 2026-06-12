@@ -83,7 +83,7 @@ export default function QrCodeModal({ open, onClose, qrCode, volunteerName }: Qr
     ctx.font = 'bold 22px system-ui, -apple-system, sans-serif';
     ctx.fillText(volunteerName, 24, 106);
 
-    // QR code area
+    // QR code área
     const qrSize = 200;
     const qrX = (w - qrSize - 32) / 2;
     const qrY = 130;

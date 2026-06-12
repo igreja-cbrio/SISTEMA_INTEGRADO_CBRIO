@@ -1,0 +1,379 @@
+// Rota de cron pra sync automático do Santander
+// NÃO usa authenticate · protegida por header X-Cron-Secret (CRON_SECRET env)
+//
+// Fluxo do POST /api/santander/cron/sync:
+//   1. Valida CRON_SECRET
+//   2. Verifica se ENVs Santander estão configuradas (se não, no-op)
+//   3. Busca contas Santander · acha conta cadastrada local
+//   4. Pega extrato dos últimos N dias via API
+//   5. Insere em fin_lancamentos_brutos (idempotente via FITID unique)
+//   6. Roda matchOfxPix + classificarBatch
+//   7. Retorna resumo
+
+const router = require('express').Router();
+const { supabase } = require('../utils/supabase');
+const {
+  AMBIENTE, AGENCIA, CONTA, CNPJ_TITULAR,
+  isConfigured, missingEnv,
+} = require('../services/santander/httpClient');
+const contasService = require('../services/santander/contasService');
+const pixApiService = require('../services/santander/pixApiService');
+const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
+const { isAuthorizedCron } = require('../utils/cronAuth');
+
+function checkCronSecret(req, res, next) {
+  if (!process.env.CRON_SECRET) {
+    return res.status(500).json({ error: 'CRON_SECRET nao configurado' });
+  }
+  // NAO confiar em User-Agent (header controlavel pelo cliente). So o secret vale.
+  if (!isAuthorizedCron(req)) {
+    return res.status(401).json({ error: 'Cron secret invalido' });
+  }
+  next();
+}
+
+router.use(checkCronSecret);
+
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/santander/cron/sync · sync diario do extrato
+// ─────────────────────────────────────────────────────────────────────
+// Handler reutilizavel pra GET (Vercel cron) e POST (manual via secret)
+async function handlerSync(req, res) {
+  const startTime = Date.now();
+
+  // 1. Verifica config Santander
+  if (!isConfigured()) {
+    return res.json({
+      ok: true,
+      skipped: 'santander_nao_configurado',
+      missing_env: missingEnv(),
+      ambiente: AMBIENTE,
+    });
+  }
+
+  try {
+    const { dias = 3, conta_id_override } = req.body || {};
+    const hoje = new Date();
+    const desde = new Date(hoje.getTime() - dias * 86400000);
+    const inicio = desde.toISOString().slice(0, 10);
+    const fim = hoje.toISOString().slice(0, 10);
+
+    // 2. Acha a conta Santander local
+    let contaLocal;
+    if (conta_id_override) {
+      const { data } = await supabase.from('fin_contas').select('*').eq('id', conta_id_override).single();
+      contaLocal = data;
+    } else {
+      // Busca por banco='Santander' OU conta que bate com env
+      const { data: contas } = await supabase
+        .from('fin_contas')
+        .select('*')
+        .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
+      contaLocal = (contas || [])[0];
+    }
+
+    if (!contaLocal) {
+      return res.json({
+        ok: false,
+        erro: 'conta_santander_nao_cadastrada',
+        sugestao: `Cadastre uma conta com banco=Santander ou conta=${CONTA} em /admin/financeiro -> Contas`,
+      });
+    }
+
+    // 3. Pega extrato via API Santander · parsea formato Santander (_content)
+    const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache: false });
+    const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
+
+    // Normaliza formato Santander · estrutura real:
+    //   { transactionId, transactionDate, type, transactionName,
+    //     creditDebitType: 'CREDITO'|'DEBITO', amount, partieNumber, partieBranchCode, ... }
+    const transacoes = itens.map(t => {
+      const isDebito = t.creditDebitType === 'DEBITO';
+      const valorAbs = Number(t.amount || 0);
+      return {
+        id: t.transactionId,
+        data: t.transactionDate,
+        valor: isDebito ? -valorAbs : valorAbs,
+        tipo: t.type,
+        descricao: t.transactionName,
+        partieNome: t.partieName || null,
+        partieDoc: t.partieDocumentNumber || null,
+        partieBranch: t.partieBranchCode || null,
+        partieAccount: t.partieNumber || null,
+        raw: t,
+      };
+    });
+
+    if (transacoes.length === 0) {
+      return res.json({
+        ok: true,
+        conta_id: contaLocal.id,
+        sem_transacoes: true,
+        periodo: { inicio, fim },
+      });
+    }
+    const extrato = { transacoes };
+
+    // 4. Cria registro de upload
+    const { data: uploadRow } = await supabase
+      .from('fin_uploads')
+      .insert({
+        tipo: 'ofx',  // tratado como OFX equivalente
+        conta_id: contaLocal.id,
+        arquivo_nome: `[cron] santander-sync-${fim}.json`,
+        arquivo_tamanho: 0,
+        total_registros: extrato.transacoes.length,
+        data_inicio: inicio,
+        data_fim: fim,
+        status: 'processando',
+      })
+      .select().single();
+
+    // 5. Insere lancamentos brutos
+    let inseridos = 0;
+    let duplicados = 0;
+    let erros = 0;
+
+    for (const t of extrato.transacoes) {
+      const tipoTrn = Number(t.valor) >= 0 ? 'CREDIT' : 'DEBIT';
+      const memo = t.descricao || '';
+
+      // Preferência: doc da Santander (partieDoc), fallback regex no memo
+      let documento = t.partieDoc || null;
+      if (!documento) {
+        const cnpjM = memo.match(/\d{14}/);
+        const cpfM = memo.match(/\d{11}/);
+        if (cnpjM) documento = cnpjM[0];
+        else if (cpfM) documento = cpfM[0];
+      }
+
+      const payload = {
+        fonte: 'santander_api',
+        conta_id: contaLocal.id,
+        data_lancamento: t.data,
+        valor: Math.abs(Number(t.valor)),
+        tipo_trn: tipoTrn,
+        memo,
+        nome_contraparte: t.partieNome || null,
+        documento_contraparte: documento,
+        fitid: t.id || `santander-${t.data}-${t.valor}-${Math.random().toString(36).slice(2, 8)}`,
+        raw_data: { santander_api: t.raw || t },
+        upload_id: uploadRow?.id,
+      };
+
+      const { error } = await supabase.from('fin_lancamentos_brutos').insert(payload);
+      if (error) {
+        if (error.code === '23505') duplicados++;
+        else erros++;
+      } else {
+        inseridos++;
+      }
+    }
+
+    // 6. Roda match com PIX detalhe + classificação
+    const matchResult = await matchOfxPix({ uploadId: uploadRow?.id });
+    const classifResult = await classificarBatch({ uploadId: uploadRow?.id });
+
+    // Finaliza upload
+    if (uploadRow) {
+      await supabase.from('fin_uploads').update({
+        total_novos: inseridos,
+        total_duplicados: duplicados,
+        total_matched_pix: matchResult.matched,
+        total_classificados_auto: classifResult.sugeridos,
+        status: erros > 0 ? 'erro' : 'concluido',
+        erro_msg: erros > 0 ? `${erros} erros durante insert` : null,
+        concluido_em: new Date().toISOString(),
+      }).eq('id', uploadRow.id);
+    }
+
+    res.json({
+      ok: true,
+      ambiente: AMBIENTE,
+      periodo: { inicio, fim },
+      total: extrato.transacoes.length,
+      inseridos, duplicados, erros,
+      match_pix: matchResult,
+      classificacao: classifResult,
+      duracao_ms: Date.now() - startTime,
+    });
+  } catch (e) {
+    console.error('[SANTANDER-CRON] erro:', e.stack || e);
+    res.status(500).json({ error: e.message || 'Erro no sync' });
+  }
+}
+
+router.post('/sync', handlerSync);
+router.get('/sync', handlerSync);  // Vercel cron usa GET
+
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/santander/cron/pix-sync · sync rapido em janelas de culto
+// ─────────────────────────────────────────────────────────────────────
+// Diferente do /sync diario (puxa 3 dias completos), este puxa apenas
+// as últimas 4h do extrato. Roda a cada 3min durante cultos pra alimentar
+// a aba "Culto ao Vivo". Idempotente · transacoes já inseridas viram
+// duplicados via FITID UNIQUE.
+router.post('/pix-sync', async (req, res) => {
+  const startTime = Date.now();
+
+  if (!isConfigured()) {
+    return res.json({ ok: true, skipped: 'santander_nao_configurado' });
+  }
+
+  try {
+    const hoje = new Date();
+    const horas = Math.min(Math.max(Number(req.body?.horas) || 4, 1), 24);
+    const desde = new Date(hoje.getTime() - horas * 3600000);
+    const inicio = desde.toISOString().slice(0, 10);
+    const fim = hoje.toISOString().slice(0, 10);
+
+    // Acha conta Santander
+    const { data: contas } = await supabase
+      .from('fin_contas')
+      .select('*')
+      .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
+    const contaLocal = (contas || [])[0];
+
+    if (!contaLocal) {
+      return res.json({ ok: false, erro: 'conta_santander_nao_cadastrada' });
+    }
+
+    // ─── ESTRATEGIA 1: API PIX dedicada (quando habilitada) ───
+    // Quando SANTANDER_PIX_API_ENABLED=true, busca PIX direto da API PIX
+    // que retorna End-to-End ID + hora exata. Insere em fin_pix_detalhe.
+    let pixApiResult = null;
+    if (pixApiService.isEnabled()) {
+      try {
+        pixApiResult = await pixApiService.buscarPixRecebidos({ inicio, fim });
+        if (pixApiResult?.transacoes?.length) {
+          let pixInseridos = 0;
+          let pixDup = 0;
+          for (const pix of pixApiResult.transacoes) {
+            const { error } = await supabase
+              .from('fin_pix_detalhe')
+              .insert({
+                ...pix,
+                conta_id: contaLocal.id,
+              });
+            if (error) {
+              if (error.code === '23505') pixDup++;
+            } else {
+              pixInseridos++;
+            }
+          }
+          pixApiResult.inseridos = pixInseridos;
+          pixApiResult.duplicados = pixDup;
+        }
+      } catch (e) {
+        console.warn('[pix-sync] API PIX erro:', e.message);
+        pixApiResult = { erro: e.message };
+      }
+    }
+
+    // ─── ESTRATEGIA 2: extrato regular (sempre roda · cobre TED/DOC/PIX out) ───
+    const extrato = await contasService.extrato({ inicio, fim, refresh: false });
+    if (!extrato?.transacoes) {
+      return res.json({
+        ok: true,
+        conta_id: contaLocal.id,
+        sem_transacoes: true,
+        pix_api: pixApiResult,
+      });
+    }
+
+    // Filtra so creditos
+    const creditos = extrato.transacoes.filter(t => Number(t.valor) > 0);
+
+    let inseridos = 0;
+    let duplicados = 0;
+
+    for (const t of creditos) {
+      const memo = t.descricao || t.memo || '';
+      let documento = null;
+      const cnpjM = memo.match(/\d{14}/);
+      const cpfM = memo.match(/\d{11}/);
+      if (cnpjM) documento = cnpjM[0];
+      else if (cpfM) documento = cpfM[0];
+
+      const payload = {
+        fonte: 'santander_api',
+        conta_id: contaLocal.id,
+        data_lancamento: t.data,
+        valor: Number(t.valor),
+        tipo_trn: 'CREDIT',
+        memo,
+        fitid: t.id || t.fitid || `santander-${t.data}-${t.valor}-${Math.random().toString(36).slice(2, 8)}`,
+        documento_contraparte: documento,
+        raw_data: { santander_api: t, source: 'pix-sync' },
+      };
+
+      const { error } = await supabase.from('fin_lancamentos_brutos').insert(payload);
+      if (error) {
+        if (error.code === '23505') duplicados++;
+      } else {
+        inseridos++;
+      }
+    }
+
+    // Roda match com PIX detalhe + classificação em batch
+    const matchResult = await matchOfxPix({ conta_id: contaLocal.id });
+    const classifResult = await classificarBatch({});
+
+    res.json({
+      ok: true,
+      ambiente: AMBIENTE,
+      janela_horas: horas,
+      total_creditos: creditos.length,
+      inseridos, duplicados,
+      match_pix: matchResult,
+      classificacao: classifResult,
+      pix_api: pixApiResult,
+      duracao_ms: Date.now() - startTime,
+    });
+  } catch (e) {
+    console.error('[SANTANDER-PIX-SYNC] erro:', e);
+    res.status(500).json({ error: e.message || 'Erro no pix-sync' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// GET/POST /api/santander/cron/saldo · atualiza snapshot do saldo + fin_contas
+// Roda de hora em hora pra manter o dashboard atualizado sem usuário sincronizar.
+// ─────────────────────────────────────────────────────────────────────
+async function handlerSaldoCron(req, res) {
+  if (!isConfigured()) {
+    return res.json({ ok: true, skipped: 'santander_nao_configurado' });
+  }
+  try {
+    const contas = require('../services/santander/contasService');
+    const saldo = await contas.snapshotSaldoDoDia({ userId: null });
+    res.json({
+      ok: true,
+      available: saldo.available,
+      total: saldo.total,
+      atualizado_em: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error('[SANTANDER-CRON saldo]', e.message);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+}
+router.post('/saldo', handlerSaldoCron);
+router.get('/saldo', handlerSaldoCron);
+
+// ─────────────────────────────────────────────────────────────────────
+// GET /api/santander/cron/health · checa se sync vai funcionar
+// ─────────────────────────────────────────────────────────────────────
+router.get('/health', async (req, res) => {
+  res.json({
+    cron_secret_configurado: !!process.env.CRON_SECRET,
+    santander_configurado: isConfigured(),
+    missing_env: missingEnv(),
+    ambiente: AMBIENTE,
+    agencia: AGENCIA,
+    conta: CONTA,
+    cnpj_titular: CNPJ_TITULAR,
+  });
+});
+
+module.exports = router;

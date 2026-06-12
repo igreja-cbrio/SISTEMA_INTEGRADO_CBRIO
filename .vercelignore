@@ -1,0 +1,5 @@
+agent-worker/
+docs/
+e2e/
+tmp/
+*.log

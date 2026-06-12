@@ -1,0 +1,1081 @@
+// Rotas REST de integração com Santander Open APIs
+// Saldo + extrato (bank_account_information v1) + comprovantes (consult_payment_receipts v2)
+const router = require('express').Router();
+const { authenticate, authorizeModule } = require('../middleware/auth');
+const { supabase } = require('../utils/supabase');
+const {
+  AMBIENTE, BANK_ID, AGENCIA, CONTA, CNPJ_TITULAR,
+  isConfigured, missingEnv, getAccessToken,
+} = require('../services/santander/httpClient');
+const contas = require('../services/santander/contasService');
+const comprovantes = require('../services/santander/comprovantesService');
+
+router.use(authenticate, authorizeModule('santander'));
+
+function userId(req) { return req.user?.id || null; }
+
+// ── Health · checa config e tenta OAuth ────────────────────────────────────
+router.get('/health', async (req, res) => {
+  const miss = missingEnv();
+  if (miss.length) {
+    return res.json({
+      ok: false,
+      configured: false,
+      missing_env: miss,
+      ambiente: AMBIENTE,
+    });
+  }
+  try {
+    const token = await getAccessToken();
+    res.json({
+      ok: true,
+      configured: true,
+      ambiente: AMBIENTE,
+      bank_id: BANK_ID,
+      agencia: AGENCIA,
+      conta: CONTA,
+      cnpj_titular: CNPJ_TITULAR,
+      token_obtained: Boolean(token),
+    });
+  } catch (e) {
+    res.status(503).json({
+      ok: false,
+      configured: true,
+      ambiente: AMBIENTE,
+      error: e.message,
+    });
+  }
+});
+
+// ── Saldo ──────────────────────────────────────────────────────────────────
+router.get('/saldo', async (req, res) => {
+  try {
+    const saldo = await contas.snapshotSaldoDoDia({ userId: userId(req) });
+    res.json(saldo);
+  } catch (e) {
+    console.error('[Santander] saldo:', e.message);
+    res.status(e.status || 500).json({ error: e.message, traceId: e.traceId });
+  }
+});
+
+router.get('/saldo/historico', async (req, res) => {
+  try {
+    const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 365);
+    const data = await contas.historicoSaldo({ dias });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Culto ao Vivo · stats + últimas transacoes ─────────────────────────────
+router.get('/pix/culto-atual', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+
+    // 1. Stats do culto/dia/semana (view consolidada)
+    const { data: stats, error: errStats } = await supabase
+      .from('vw_fin_culto_ao_vivo')
+      .select('*')
+      .maybeSingle();
+    if (errStats) console.warn('[culto-atual] view stats:', errStats.message);
+
+    // 2. Últimas transacoes (creditos · dizimos/ofertas) · ordenadas por
+    // data_lancamento real (não created_at · evita imports retroativos
+    // virem antes de transacoes recentes)
+    const { data: transacoes, error: errTrans } = await supabase
+      .from('fin_lancamentos_brutos')
+      .select('id, data_lancamento, hora_lancamento, valor, memo, documento_contraparte, nome_contraparte, created_at')
+      .eq('tipo_trn', 'CREDIT')
+      .order('data_lancamento', { ascending: false })
+      .order('hora_lancamento', { ascending: false, nullsFirst: false })
+      .limit(limit);
+    if (errTrans) return res.status(500).json({ error: errTrans.message });
+
+    // 3. Soma do dia (fallback se não ha culto ativo · stats fica null)
+    // Filtra por data_lancamento (data real da transacao) e não created_at
+    // (data de importação) · senao import retroativo conta como 'hoje'
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: doDia } = await supabase
+      .from('fin_lancamentos_brutos')
+      .select('valor')
+      .eq('tipo_trn', 'CREDIT')
+      .eq('data_lancamento', hoje);
+    const totalDia = (doDia || []).reduce((s, t) => s + Number(t.valor), 0);
+    const qtdDia = (doDia || []).length;
+
+    res.json({
+      culto_ativo: stats ? {
+        slot_id: stats.culto_slot_id,
+        nome: stats.culto_nome,
+        service_type_slug: stats.service_type_slug,
+        janela_inicio: stats.janela_inicio,
+        janela_fim: stats.janela_fim,
+        total: Number(stats.total_culto || 0),
+        qtd: Number(stats.qtd_culto || 0),
+      } : null,
+      total_dia: stats ? Number(stats.total_dia || 0) : totalDia,
+      qtd_dia: stats ? Number(stats.qtd_dia || 0) : qtdDia,
+      total_semana: stats ? Number(stats.total_semana || 0) : 0,
+      qtd_semana: stats ? Number(stats.qtd_semana || 0) : 0,
+      transacoes: transacoes || [],
+    });
+  } catch (e) {
+    console.error('[culto-atual]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Contas (lista contas do CNPJ na API) ───────────────────────────────────
+router.get('/contas', async (req, res) => {
+  try {
+    const data = await contas.listarContas({ userId: userId(req) });
+    res.json(data);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+// ── Extrato ────────────────────────────────────────────────────────────────
+router.get('/extrato', async (req, res) => {
+  try {
+    const inicio = req.query.inicio;
+    const fim = req.query.fim;
+    if (!inicio || !fim) return res.status(400).json({ error: 'Parametros início e fim são obrigatórios (YYYY-MM-DD)' });
+    const usarCache = req.query.refresh !== '1';
+    const data = await contas.consultarExtrato({ inicio, fim, usarCache, userId: userId(req) });
+    res.json(data);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message, traceId: e.traceId });
+  }
+});
+
+// ── Comprovantes · listagem ────────────────────────────────────────────────
+router.get('/comprovantes', async (req, res) => {
+  try {
+    const { inicio, fim, categoria, beneficiario, limit, offset } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'início e fim são obrigatórios' });
+
+    const data = await comprovantes.listReceipts({
+      startDate: inicio,
+      endDate: fim,
+      category: categoria,
+      beneficiaryDocument: beneficiario,
+      limit: limit ? Number(limit) : 50,
+      offset: offset ? Number(offset) : 0,
+      accountAgency: AGENCIA,
+      accountNumber: CONTA,
+      userId: userId(req),
+    });
+
+    // Enriquece com status local (se já foi baixado)
+    const ids = (data?.paymentsReceipts || [])
+      .map((p) => p?.payment?.paymentId)
+      .filter(Boolean);
+    let locais = {};
+    if (ids.length && supabase) {
+      const { data: rows } = await supabase
+        .from('santander_comprovantes')
+        .select('payment_id, status, storage_path, vinculo_transacao_id, vinculo_pagar_id')
+        .in('payment_id', ids);
+      (rows || []).forEach((r) => { locais[r.payment_id] = r; });
+    }
+    data.localStatus = locais;
+    res.json(data);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message, traceId: e.traceId });
+  }
+});
+
+// ── Comprovante · baixar PDF (fluxo assincrono completo) ───────────────────
+router.post('/comprovantes/:paymentId/baixar', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const metadata = req.body?.metadata || {};
+    const row = await comprovantes.baixarComprovante(paymentId, {
+      userId: userId(req),
+      metadata,
+    });
+    res.json(row);
+  } catch (e) {
+    console.error('[Santander] baixar comprovante:', e.message);
+    res.status(e.status || 500).json({
+      error: e.message,
+      santanderStatus: e.santanderStatus,
+      traceId: e.traceId,
+    });
+  }
+});
+
+router.get('/comprovantes/:paymentId/pdf-url', async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const url = await comprovantes.getSignedUrl(paymentId);
+    if (!url) return res.status(404).json({ error: 'Comprovante não baixado ou não encontrado' });
+    res.json({ url });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Comprovante · vincular a transacao ou conta a pagar ────────────────────
+router.post('/comprovantes/:paymentId/vincular', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { transacao_id, pagar_id } = req.body || {};
+    if (!transacao_id && !pagar_id) return res.status(400).json({ error: 'Informe transacao_id ou pagar_id' });
+
+    const update = {
+      vinculo_transacao_id: transacao_id || null,
+      vinculo_pagar_id: pagar_id || null,
+      vinculado_em: new Date().toISOString(),
+      vinculado_por: userId(req),
+    };
+    const { data, error } = await supabase
+      .from('santander_comprovantes')
+      .update(update)
+      .eq('payment_id', paymentId)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/comprovantes/:paymentId/vincular', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { data, error } = await supabase
+      .from('santander_comprovantes')
+      .update({
+        vinculo_transacao_id: null,
+        vinculo_pagar_id: null,
+        vinculado_em: null,
+        vinculado_por: null,
+      })
+      .eq('payment_id', paymentId)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Listagem local (já baixados / com vinculo)
+router.get('/comprovantes-local', async (req, res) => {
+  try {
+    const { vinculados, transacao_id, pagar_id } = req.query;
+    let q = supabase
+      .from('santander_comprovantes')
+      .select('*')
+      .order('payment_date', { ascending: false, nullsFirst: false })
+      .limit(200);
+    if (vinculados === '1') q = q.or('vinculo_transacao_id.not.is.null,vinculo_pagar_id.not.is.null');
+    if (vinculados === '0') q = q.is('vinculo_transacao_id', null).is('vinculo_pagar_id', null);
+    if (transacao_id) q = q.eq('vinculo_transacao_id', transacao_id);
+    if (pagar_id) q = q.eq('vinculo_pagar_id', pagar_id);
+
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Bulk receipts ──────────────────────────────────────────────────────────
+router.post('/bulk', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { alias, inicio, fim, categorias, beneficiario } = req.body || {};
+    if (!alias || !inicio || !fim) return res.status(400).json({ error: 'alias, início e fim obrigatórios' });
+    const resp = await comprovantes.createBulkOrder({
+      alias,
+      startDate: inicio,
+      endDate: fim,
+      categoryCodes: Array.isArray(categorias) ? categorias : (categorias ? [categorias] : null),
+      payeeDocument: beneficiario,
+      userId: userId(req),
+    });
+    res.json(resp);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message, traceId: e.traceId });
+  }
+});
+
+router.get('/bulk', async (req, res) => {
+  try {
+    if (!supabase) return res.json([]);
+    const { data, error } = await supabase
+      .from('santander_bulk_orders')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/bulk/:orderId', async (req, res) => {
+  try {
+    const resp = await comprovantes.getBulkOrder(req.params.orderId, { userId: userId(req) });
+    res.json(resp);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message, traceId: e.traceId });
+  }
+});
+
+// ── Sync log (debug) ───────────────────────────────────────────────────────
+router.get('/log', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    if (!supabase) return res.json([]);
+    const { data, error } = await supabase
+      .from('santander_sync_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── PIX API · diagnóstico do produto PIX (descobre se Santander libera) ────
+const pixApi = require('../services/santander/pixApiService');
+
+router.get('/pix-api/diagnostico', async (req, res) => {
+  try {
+    if (!pixApi.isEnabled()) {
+      return res.json({
+        habilitado: false,
+        hint: 'Defina env SANTANDER_PIX_API_ENABLED=true pra ativar tentativa de descobrir endpoint PIX',
+        paths_que_serao_testados: pixApi.PIX_API_PATHS,
+      });
+    }
+    const hoje = new Date().toISOString().slice(0, 10);
+    const ontem = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const result = await pixApi.buscarPixRecebidos({ inicio: ontem, fim: hoje });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PIX COBRANÇA · gera QR Code de cobrança imediata (BR Code Open Finance)
+// ════════════════════════════════════════════════════════════════════════════
+const pixCob = require('../services/santander/pixCobrancaService');
+
+// Health · checa toggle e chave
+router.get('/pix-cob/health', async (req, res) => {
+  res.json({
+    habilitado: pixCob.isEnabled(),
+    chave_configurada: !!pixCob.getChave(),
+    chave_preview: pixCob.getChave() ? pixCob.getChave().slice(0, 4) + '***' : null,
+    paths_testados: pixCob.getPathsTestados ? pixCob.getPathsTestados() : null,
+    path_funcionando: pixCob.getPathFuncionando ? pixCob.getPathFuncionando() : null,
+    env_value_raw: process.env.SANTANDER_PIX_COB_ENABLED || '<unset>',
+    hint: pixCob.isEnabled() ? null : 'Setar SANTANDER_PIX_COB_ENABLED=true + SANTANDER_PIX_COB_CHAVE no Vercel (Production) + redeploy',
+  });
+});
+
+// POST · cria cobrança + salva no banco
+router.post('/pix-cob', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const { valor, devedor, solicitacao, expiracao, origem, metadata } = req.body || {};
+    if (!valor || Number(valor) <= 0) {
+      return res.status(400).json({ error: 'valor obrigatorio (> 0)' });
+    }
+
+    const txid = pixCob.gerarTxid('cbrio');
+    let api;
+    try {
+      api = await pixCob.criarCobranca({
+        txid, valor: Number(valor), devedor, solicitacao,
+        expiracao: expiracao ? Number(expiracao) : 3600,
+      });
+    } catch (e) {
+      // Persiste tentativa com status ERRO pra rastrear
+      await supabase.from('santander_pix_cob').insert({
+        txid, valor: Number(valor),
+        devedor_nome: devedor?.nome || null,
+        devedor_cpf_cnpj: (devedor?.cpf || devedor?.cnpj || '').replace(/\D/g, '') || null,
+        solicitacao_pagador: solicitacao || null,
+        expira_em_segundos: expiracao || 3600,
+        status: 'ERRO',
+        chave_pix: pixCob.getChave(),
+        origem: origem || 'manual_admin',
+        metadata: { ...(metadata || {}), erro: e.message?.slice(0, 500) },
+        criado_por: userId(req),
+      });
+      return res.status(502).json({ error: e.message, txid });
+    }
+
+    const { data, error } = await supabase.from('santander_pix_cob').insert({
+      txid,
+      valor: Number(valor),
+      devedor_nome: devedor?.nome || null,
+      devedor_cpf_cnpj: (devedor?.cpf || devedor?.cnpj || '').replace(/\D/g, '') || null,
+      solicitacao_pagador: solicitacao || null,
+      expira_em_segundos: expiracao || 3600,
+      status: api?.status || 'ATIVA',
+      qrcode_payload: api?.pixCopiaECola || null,
+      location_url: api?.location || null,
+      loc_id: api?.loc?.id ? String(api.loc.id) : null,
+      chave_pix: pixCob.getChave(),
+      revisao: api?.revisao || 0,
+      origem: origem || 'manual_admin',
+      metadata: metadata || null,
+      criado_por: userId(req),
+    }).select().single();
+
+    if (error) {
+      return res.status(500).json({ error: error.message, api });
+    }
+    res.json({ cob: data, api });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · lista cobranças do banco (com filtros)
+router.get('/pix-cob', async (req, res) => {
+  try {
+    const { status, limit = 50, origem } = req.query;
+    let q = supabase
+      .from('santander_pix_cob')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(200, Number(limit) || 50));
+    if (status) q = q.eq('status', status);
+    if (origem) q = q.eq('origem', origem);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ items: data, total: data?.length || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · detalhe + refresh status via API
+router.get('/pix-cob/:txid', async (req, res) => {
+  try {
+    const { txid } = req.params;
+    const { data: local } = await supabase
+      .from('santander_pix_cob').select('*').eq('txid', txid).single();
+    if (!local) return res.status(404).json({ error: 'Cobrança não encontrada' });
+
+    // Se ainda esta ATIVA, atualiza status via API
+    if (local.status === 'ATIVA' && pixCob.isEnabled()) {
+      try {
+        const api = await pixCob.consultarCobranca(txid);
+        if (api && api.status !== local.status) {
+          const patch = {
+            status: api.status,
+            revisao: api.revisao || local.revisao,
+          };
+          if (api.status === 'CONCLUIDA' && api.pix && api.pix.length > 0) {
+            const ult = api.pix[api.pix.length - 1];
+            patch.pago_em = ult.horario || new Date().toISOString();
+            patch.pago_valor = Number(ult.valor || 0);
+            patch.pago_e2e_id = ult.endToEndId || null;
+          }
+          await supabase.from('santander_pix_cob').update(patch).eq('txid', txid);
+          return res.json({ ...local, ...patch });
+        }
+      } catch (_) { /* falha silenciosa · retorna local */ }
+    }
+    res.json(local);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH · cancela cobrança
+router.patch('/pix-cob/:txid/cancelar', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const { txid } = req.params;
+    if (pixCob.isEnabled()) {
+      try {
+        await pixCob.cancelarCobranca(txid);
+      } catch (e) {
+        // Continua mesmo se API falhar (cancela so no banco)
+        console.warn('[pix-cob/cancelar] API falhou:', e.message);
+      }
+    }
+    const { data, error } = await supabase
+      .from('santander_pix_cob')
+      .update({ status: 'REMOVIDA_PELO_USUARIO_RECEBEDOR' })
+      .eq('txid', txid).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAGAMENTOS · boleto, tributo, concessionaria, DARF
+// ════════════════════════════════════════════════════════════════════════════
+const pagamentos = require('../services/santander/pagamentosService');
+
+// Health
+router.get('/pagamentos/health', async (req, res) => {
+  res.json({
+    habilitado: pagamentos.isEnabled(),
+    paths_testados: pagamentos.getPathsTestados ? pagamentos.getPathsTestados() : null,
+    path_funcionando: {
+      boleto: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('boleto') : null,
+      tributo: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('tributo') : null,
+      concessionaria: pagamentos.getPathFuncionando ? pagamentos.getPathFuncionando('concessionaria') : null,
+    },
+    env_value_raw: process.env.SANTANDER_PAGTO_ENABLED || '<unset>',
+    hint: pagamentos.isEnabled() ? null : 'Setar SANTANDER_PAGTO_ENABLED=true no Vercel (Production) + redeploy',
+  });
+});
+
+// Parse linha digitavel · valida e retorna metadados
+router.post('/pagamentos/parse', async (req, res) => {
+  try {
+    const { linha } = req.body || {};
+    if (!linha) return res.status(400).json({ error: 'linha obrigatoria' });
+    const parsed = pagamentos.parseLinha(linha);
+    res.json(parsed);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// POST · criar pagamento agendado
+router.post('/pagamentos', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const {
+      linha, dataPagamento, descricao, beneficiarioNome, beneficiarioCnpj,
+      origem, contaPagarId, metadata,
+    } = req.body || {};
+
+    if (!linha) return res.status(400).json({ error: 'linha obrigatoria' });
+    if (!dataPagamento) return res.status(400).json({ error: 'dataPagamento obrigatoria (YYYY-MM-DD)' });
+
+    let parsed;
+    try {
+      parsed = pagamentos.parseLinha(linha);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    // Cria registro local primeiro (status PENDENTE)
+    const baseRow = {
+      tipo: parsed.tipo,
+      linha_digitavel: parsed.linha_digitavel,
+      codigo_barras: parsed.codigo_barras,
+      valor: parsed.valor,
+      data_vencimento: parsed.vencimento,
+      data_pagamento: dataPagamento,
+      beneficiario_nome: beneficiarioNome || null,
+      beneficiario_cnpj: (beneficiarioCnpj || '').replace(/\D/g, '') || null,
+      descricao: descricao || null,
+      status: 'PENDENTE',
+      origem: origem || 'manual_admin',
+      conta_pagar_id: contaPagarId || null,
+      metadata: metadata || null,
+      criado_por: userId(req),
+    };
+
+    let api;
+    try {
+      api = await pagamentos.criarPagamento({
+        tipo: parsed.tipo,
+        linhaDigitavel: parsed.linha_digitavel,
+        codigoBarras: parsed.codigo_barras,
+        valor: parsed.valor,
+        dataPagamento,
+        descricao,
+        beneficiarioNome,
+      });
+    } catch (e) {
+      const { data } = await supabase.from('santander_pagamentos').insert({
+        ...baseRow,
+        status: 'ERRO',
+        status_detalhe: (e.message || '').slice(0, 500),
+      }).select().single();
+      return res.status(502).json({ error: e.message, pagamento: data });
+    }
+
+    const paymentId = api?.paymentId || api?.id || api?.payment_id || null;
+    const apiStatus = pagamentos.mapStatus(api?.status || api?.paymentStatus);
+
+    const { data, error } = await supabase.from('santander_pagamentos').insert({
+      ...baseRow,
+      payment_id: paymentId,
+      status: apiStatus || 'AGENDADO',
+      status_detalhe: api?.statusMessage || api?.message || null,
+      metadata: { ...(metadata || {}), api_response: api },
+    }).select().single();
+
+    if (error) return res.status(500).json({ error: error.message, api });
+    res.json({ pagamento: data, api });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · lista
+router.get('/pagamentos', async (req, res) => {
+  try {
+    const { status, tipo, limit = 50 } = req.query;
+    let q = supabase
+      .from('santander_pagamentos')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(200, Number(limit) || 50));
+    if (status) q = q.eq('status', status);
+    if (tipo) q = q.eq('tipo', tipo);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ items: data, total: data?.length || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · detalhe + refresh status
+router.get('/pagamentos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_pagamentos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'Pagamento não encontrado' });
+
+    // Refresh se ainda em fluxo
+    const inFlight = ['AGENDADO', 'AGUARDANDO_APROVACAO', 'PENDENTE'];
+    if (inFlight.includes(local.status) && local.payment_id && pagamentos.isEnabled()) {
+      try {
+        const api = await pagamentos.consultarPagamento({
+          tipo: local.tipo, paymentId: local.payment_id,
+        });
+        const novoStatus = pagamentos.mapStatus(api?.status || api?.paymentStatus);
+        if (novoStatus && novoStatus !== local.status) {
+          const patch = { status: novoStatus, status_detalhe: api?.statusMessage || null };
+          if (novoStatus === 'EFETIVADO') patch.efetivado_em = new Date().toISOString();
+          if (novoStatus === 'REJEITADO') patch.rejeitado_em = new Date().toISOString();
+          await supabase.from('santander_pagamentos').update(patch).eq('id', id);
+          return res.json({ ...local, ...patch });
+        }
+      } catch (_) { /* silencioso */ }
+    }
+    res.json(local);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH · cancelar agendado
+router.patch('/pagamentos/:id/cancelar', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_pagamentos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'não encontrado' });
+    if (!['AGENDADO', 'AGUARDANDO_APROVACAO', 'PENDENTE'].includes(local.status)) {
+      return res.status(400).json({ error: `Não pode cancelar com status ${local.status}` });
+    }
+
+    if (local.payment_id && pagamentos.isEnabled()) {
+      try {
+        await pagamentos.cancelarPagamento({ tipo: local.tipo, paymentId: local.payment_id });
+      } catch (e) {
+        console.warn('[pagamentos/cancelar] API falhou:', e.message);
+      }
+    }
+
+    const { data, error } = await supabase.from('santander_pagamentos').update({
+      status: 'CANCELADO',
+      cancelado_em: new Date().toISOString(),
+      cancelado_por: userId(req),
+    }).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOLETOS · emissao de boletos pra receita
+// ════════════════════════════════════════════════════════════════════════════
+const boletos = require('../services/santander/boletosService');
+
+// Health · checa config
+router.get('/boletos/health', async (req, res) => {
+  const cfg = boletos.getConfig();
+  res.json({
+    habilitado: cfg.enabled,
+    workspace_configurado: !!cfg.workspace_id,
+    workspace_preview: cfg.workspace_preview,
+    beneficiary_doc: cfg.beneficiary_doc,
+    paths_testados: cfg.base_paths_tested,
+    path_funcionando: cfg.base_path_working,
+    env_value_raw: process.env.SANTANDER_BOLETOS_ENABLED || '<unset>',
+    hint: cfg.enabled && cfg.workspace_id ? null :
+      'Setar SANTANDER_BOLETOS_ENABLED=true + SANTANDER_BOLETOS_WORKSPACE_ID',
+  });
+});
+
+// POST · emitir boleto
+router.post('/boletos', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const {
+      valor, vencimento, pagador, descricao, instrucoes, encargos,
+      origem, metadata,
+    } = req.body || {};
+
+    if (!valor || Number(valor) <= 0) return res.status(400).json({ error: 'valor invalido' });
+    if (!vencimento) return res.status(400).json({ error: 'vencimento obrigatorio (YYYY-MM-DD)' });
+    if (!pagador?.nome) return res.status(400).json({ error: 'pagador.nome obrigatorio' });
+
+    const nossoNumero = await boletos.gerarNossoNumero();
+    const docNorm = String(pagador.documento || '').replace(/\D/g, '');
+    const tipoDoc = docNorm.length === 11 ? 'CPF' : docNorm.length === 14 ? 'CNPJ' : null;
+
+    const baseRow = {
+      nosso_numero: nossoNumero,
+      workspace_id: boletos.getConfig().workspace_id,
+      valor: Number(valor),
+      data_vencimento: vencimento,
+      pagador_nome: pagador.nome,
+      pagador_documento: docNorm || null,
+      pagador_tipo_doc: tipoDoc,
+      pagador_email: pagador.email || null,
+      pagador_telefone: (pagador.telefone || '').replace(/\D/g, '') || null,
+      pagador_logradouro: pagador.logradouro || null,
+      pagador_numero: pagador.numero || null,
+      pagador_bairro: pagador.bairro || null,
+      pagador_cidade: pagador.cidade || null,
+      pagador_uf: pagador.uf || null,
+      pagador_cep: (pagador.cep || '').replace(/\D/g, '') || null,
+      descricao: descricao || null,
+      instrucoes: instrucoes || null,
+      multa_pct: encargos?.multaPct || null,
+      juros_pct_dia: encargos?.jurosPctDia || null,
+      desconto_valor: encargos?.descontoValor || null,
+      desconto_data_limite: encargos?.descontoDataLimite || null,
+      origem: origem || 'manual_admin',
+      metadata: metadata || null,
+      criado_por: userId(req),
+      status: 'PENDENTE',
+    };
+
+    let api;
+    try {
+      api = await boletos.emitirBoleto({
+        nossoNumero,
+        valor: Number(valor),
+        vencimento,
+        pagador,
+        descricao,
+        instrucoes,
+        encargos,
+      });
+    } catch (e) {
+      const { data } = await supabase.from('santander_boletos').insert({
+        ...baseRow, status: 'ERRO',
+        status_detalhe: (e.message || '').slice(0, 500),
+      }).select().single();
+      return res.status(502).json({ error: e.message, boleto: data });
+    }
+
+    const { data, error } = await supabase.from('santander_boletos').insert({
+      ...baseRow,
+      bill_id: api?.id || api?.billId || api?.nsuCode || null,
+      status: boletos.mapStatus(api?.status || api?.bankSlipStatus || 'REGISTRADO'),
+      status_detalhe: api?.statusMessage || null,
+      linha_digitavel: api?.digitableLine || api?.linhaDigitavel || null,
+      codigo_barras: api?.barCode || api?.barcode || null,
+      qrcode_pix: api?.qrCodePix || api?.pix?.emv || null,
+      pdf_url: api?.pdfUrl || api?.documentUrl || null,
+      metadata: { ...(metadata || {}), api_response: api },
+    }).select().single();
+
+    if (error) return res.status(500).json({ error: error.message, api });
+    res.json({ boleto: data, api });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · lista
+router.get('/boletos', async (req, res) => {
+  try {
+    const { status, limit = 50 } = req.query;
+    let q = supabase
+      .from('santander_boletos')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(200, Number(limit) || 50));
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ items: data, total: data?.length || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET · detalhe + refresh status
+router.get('/boletos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_boletos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'Boleto não encontrado' });
+
+    if (['PENDENTE', 'REGISTRADO'].includes(local.status) && boletos.isEnabled()) {
+      try {
+        const api = await boletos.consultarBoleto(local.nosso_numero);
+        const novoStatus = boletos.mapStatus(api?.status || api?.bankSlipStatus);
+        if (novoStatus && novoStatus !== local.status) {
+          const patch = { status: novoStatus, status_detalhe: api?.statusMessage || null };
+          if (novoStatus === 'LIQUIDADO') {
+            patch.liquidado_em = api?.paymentDate || new Date().toISOString();
+            patch.liquidado_valor = Number(api?.paidValue || api?.paymentValue || local.valor);
+          }
+          await supabase.from('santander_boletos').update(patch).eq('id', id);
+          return res.json({ ...local, ...patch });
+        }
+      } catch (_) { /* silencioso */ }
+    }
+    res.json(local);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH · baixar (cancelar) boleto
+router.patch('/boletos/:id/cancelar', authorizeModule('financeiro', 3), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: local } = await supabase
+      .from('santander_boletos').select('*').eq('id', id).single();
+    if (!local) return res.status(404).json({ error: 'não encontrado' });
+    if (['LIQUIDADO', 'BAIXADO', 'CANCELADO'].includes(local.status)) {
+      return res.status(400).json({ error: `Não pode cancelar com status ${local.status}` });
+    }
+
+    if (local.bill_id && boletos.isEnabled()) {
+      try {
+        await boletos.cancelarBoleto(local.nosso_numero);
+      } catch (e) {
+        console.warn('[boletos/cancelar] API falhou:', e.message);
+      }
+    }
+
+    const { data, error } = await supabase.from('santander_boletos').update({
+      status: 'CANCELADO',
+      cancelado_em: new Date().toISOString(),
+      cancelado_por: userId(req),
+    }).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Sync manual do extrato pra fila de classificação ─────────────────────
+// Reusa o handler do cron internamente. Autenticado · so admin/financeiro >=3
+router.post('/sync-extrato-fila', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { dias = 3 } = req.body || {};
+    // Faz a chamada interna via axios? Não · vamos chamar a lógica direto
+    // importando os módulos. Mais simples · evita HTTP interno.
+    const contasService = require('../services/santander/contasService');
+    const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
+    const { CONTA, isConfigured, missingEnv } = require('../services/santander/httpClient');
+
+    if (!isConfigured()) {
+      return res.json({ ok: false, erro: 'Santander não configurado', missing: missingEnv() });
+    }
+
+    const hoje = new Date();
+    const desde = new Date(hoje.getTime() - Math.min(Math.max(Number(dias) || 3, 1), 30) * 86400000);
+    const inicio = desde.toISOString().slice(0, 10);
+    const fim = hoje.toISOString().slice(0, 10);
+
+    const { data: contas } = await supabase
+      .from('fin_contas').select('*')
+      .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
+    const contaLocal = (contas || [])[0];
+    if (!contaLocal) return res.status(400).json({ ok: false, erro: 'Conta Santander não cadastrada' });
+
+    const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache: false });
+    const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
+    if (itens.length === 0) {
+      return res.json({ ok: true, sem_transacoes: true, periodo: { inicio, fim } });
+    }
+
+    const { data: uploadRow } = await supabase.from('fin_uploads').insert({
+      tipo: 'ofx', conta_id: contaLocal.id,
+      arquivo_nome: `[manual] santander-${fim}.json`,
+      arquivo_tamanho: 0, total_registros: itens.length,
+      data_inicio: inicio, data_fim: fim, status: 'processando',
+    }).select().single();
+
+    let inseridos = 0, duplicados = 0, erros = 0;
+    for (const t of itens) {
+      const isDebito = t.creditDebitType === 'DEBITO';
+      const valorAbs = Number(t.amount || 0);
+      let doc = t.partieDocumentNumber || null;
+      const memo = t.transactionName || '';
+      if (!doc) {
+        const cnpjM = memo.match(/\d{14}/);
+        const cpfM = memo.match(/\d{11}/);
+        if (cnpjM) doc = cnpjM[0];
+        else if (cpfM) doc = cpfM[0];
+      }
+      const { error } = await supabase.from('fin_lancamentos_brutos').insert({
+        fonte: 'santander_api', conta_id: contaLocal.id,
+        data_lancamento: t.transactionDate, valor: valorAbs,
+        tipo_trn: isDebito ? 'DEBIT' : 'CREDIT', memo,
+        nome_contraparte: t.partieName || null, documento_contraparte: doc,
+        fitid: t.transactionId || `santander-${t.transactionDate}-${valorAbs}-${Math.random().toString(36).slice(2, 8)}`,
+        raw_data: { santander_api: t },
+        upload_id: uploadRow?.id,
+      });
+      if (error) {
+        if (error.code === '23505') duplicados++;
+        else erros++;
+      } else inseridos++;
+    }
+
+    const matchResult = await matchOfxPix({ uploadId: uploadRow?.id });
+    const classifResult = await classificarBatch({ uploadId: uploadRow?.id });
+
+    if (uploadRow) {
+      await supabase.from('fin_uploads').update({
+        total_novos: inseridos, total_duplicados: duplicados,
+        total_matched_pix: matchResult.matched,
+        total_classificados_auto: classifResult.sugeridos,
+        status: erros > 0 ? 'erro' : 'concluido',
+        erro_msg: erros > 0 ? `${erros} erros` : null,
+        concluido_em: new Date().toISOString(),
+      }).eq('id', uploadRow.id);
+    }
+
+    res.json({ ok: true, total: itens.length, inseridos, duplicados, erros,
+      match_pix: matchResult, classificacao: classifResult });
+  } catch (e) {
+    console.error('[santander/sync-extrato-fila]', e);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
+
+// Histórico de syncs recentes
+router.get('/sync-extrato-historico', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('fin_uploads')
+      .select('id, arquivo_nome, data_inicio, data_fim, total_registros, total_novos, total_duplicados, total_matched_pix, total_classificados_auto, status, erro_msg, created_at, concluido_em')
+      .like('arquivo_nome', '%santander-%')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Importar histórico completo · vários meses em fatias ─────────────────
+// Marcos pediu · importar desde 01/01/2026 (ou outra data) de uma vez.
+// API Santander limita janela por chamada · service já fatia automaticamente.
+router.post('/importar-historico', authorizeModule('santander', 3), async (req, res) => {
+  try {
+    const { desde, ate } = req.body || {};
+    if (!desde) return res.status(400).json({ error: 'desde obrigatorio (YYYY-MM-DD)' });
+    const fim = ate || new Date().toISOString().slice(0, 10);
+
+    const contasService = require('../services/santander/contasService');
+    const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
+    const { CONTA, isConfigured, missingEnv } = require('../services/santander/httpClient');
+
+    if (!isConfigured()) {
+      return res.json({ ok: false, erro: 'Santander não configurado', missing: missingEnv() });
+    }
+
+    const { data: contas } = await supabase
+      .from('fin_contas').select('*')
+      .or(`banco.ilike.%santander%,conta.ilike.%${CONTA}%`);
+    const contaLocal = (contas || [])[0];
+    if (!contaLocal) return res.status(400).json({ ok: false, erro: 'Conta Santander não cadastrada' });
+
+    const extratoApi = await contasService.consultarExtrato({ inicio: desde, fim, usarCache: false });
+    const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
+    if (itens.length === 0) {
+      return res.json({ ok: true, sem_transacoes: true, periodo: { inicio: desde, fim } });
+    }
+
+    const { data: uploadRow } = await supabase.from('fin_uploads').insert({
+      tipo: 'ofx', conta_id: contaLocal.id,
+      arquivo_nome: `[historico] santander-${desde}-${fim}.json`,
+      arquivo_tamanho: 0, total_registros: itens.length,
+      data_inicio: desde, data_fim: fim, status: 'processando',
+    }).select().single();
+
+    let inseridos = 0, duplicados = 0, erros = 0;
+    for (const t of itens) {
+      const isDebito = t.creditDebitType === 'DEBITO';
+      const valorAbs = Number(t.amount || 0);
+      let doc = t.partieDocumentNumber || null;
+      const memo = t.transactionName || '';
+      if (!doc) {
+        const cnpjM = memo.match(/\d{14}/);
+        const cpfM = memo.match(/\d{11}/);
+        if (cnpjM) doc = cnpjM[0];
+        else if (cpfM) doc = cpfM[0];
+      }
+      const { error } = await supabase.from('fin_lancamentos_brutos').insert({
+        fonte: 'santander_api', conta_id: contaLocal.id,
+        data_lancamento: t.transactionDate, valor: valorAbs,
+        tipo_trn: isDebito ? 'DEBIT' : 'CREDIT', memo,
+        nome_contraparte: t.partieName || null, documento_contraparte: doc,
+        fitid: t.transactionId || `santander-${t.transactionDate}-${valorAbs}-${Math.random().toString(36).slice(2, 8)}`,
+        raw_data: { santander_api: t },
+        upload_id: uploadRow?.id,
+      });
+      if (error) {
+        if (error.code === '23505') duplicados++;
+        else erros++;
+      } else inseridos++;
+    }
+
+    const matchResult = await matchOfxPix({ uploadId: uploadRow?.id });
+    const classifResult = await classificarBatch({ uploadId: uploadRow?.id });
+
+    if (uploadRow) {
+      await supabase.from('fin_uploads').update({
+        total_novos: inseridos, total_duplicados: duplicados,
+        total_matched_pix: matchResult.matched,
+        total_classificados_auto: classifResult.sugeridos,
+        status: erros > 0 ? 'erro' : 'concluido',
+        erro_msg: erros > 0 ? `${erros} erros` : null,
+        concluido_em: new Date().toISOString(),
+      }).eq('id', uploadRow.id);
+    }
+
+    res.json({
+      ok: true, periodo: { inicio: desde, fim }, total: itens.length,
+      inseridos, duplicados, erros,
+      match_pix: matchResult, classificacao: classifResult,
+    });
+  } catch (e) {
+    console.error('[santander/importar-historico]', e);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
+
+module.exports = router;

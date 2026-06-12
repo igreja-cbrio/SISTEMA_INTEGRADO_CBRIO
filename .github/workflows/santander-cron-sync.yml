@@ -1,0 +1,51 @@
+name: Santander · Sync extrato (diario)
+
+# Sync diario do extrato Santander via API Open Banking
+# Roda 1x por dia · pega ultimos 3 dias (cobre fins de semana e atraso de processamento)
+#
+# Quando ENVs SANTANDER_* nao estao configuradas no Vercel · o endpoint retorna
+# { ok: true, skipped: 'santander_nao_configurado' } e o workflow termina verde.
+# Quando estao configuradas · puxa extrato, joga em fin_lancamentos_brutos,
+# roda matching com PIX detalhe e classificacao automatica.
+#
+# Secrets necessarios no repo (Settings > Secrets > Actions):
+#   CRON_SECRET    · mesmo valor da env CRON_SECRET no Vercel
+#   APP_BASE_URL   · ex.: https://cbrio.org
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 09:00 UTC = 06:00 BRT diario
+  workflow_dispatch:      # permite run manual via UI
+
+concurrency:
+  group: santander-cron-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger sync endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_BASE_URL" ]; then
+            echo "::warning::CRON_SECRET ou APP_BASE_URL nao configurados"
+            exit 0
+          fi
+          echo "Calling sync endpoint at $APP_BASE_URL/api/santander/cron/sync"
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"dias": 3}' \
+            "$APP_BASE_URL/api/santander/cron/sync")
+          body=$(echo "$response" | head -n -1)
+          status=$(echo "$response" | tail -n 1)
+          echo "HTTP $status"
+          echo "$body" | head -c 2000
+          if [ "$status" -ge 400 ]; then
+            echo "::error::Sync falhou com HTTP $status"
+            exit 1
+          fi

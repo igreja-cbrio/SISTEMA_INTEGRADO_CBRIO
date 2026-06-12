@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
 import { useAuth } from '../../contexts/AuthContext';
 import { membresia, voluntariado } from '../../api';
+import { supabase } from '../../supabaseClient';
 import {
   Users, Search, Plus, ChevronRight, X,
   Phone, Mail, MapPin, Heart, Calendar, Star,
@@ -12,6 +13,7 @@ import {
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
+  TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
@@ -28,6 +30,8 @@ import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from '../../components/ui/tabs';
 import TabCadastros from './TabCadastros';
+import MembersJornadaPanel from '../../components/MembersJornadaPanel';
+import MembrosDuplicadosPanel from '../../components/MembrosDuplicadosPanel';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -50,10 +54,10 @@ const TRILHA_ETAPAS = [
   { key: 'primeiro_contato', label: 'Chegou na Igreja', icon: Star },
   { key: 'conversao', label: 'Conversao', icon: Heart },
   { key: 'conversa_lider', label: 'Conversa com Pastor/Lider', icon: Users },
-  { key: 'next', label: 'Next (Visao e Cultura CBRio)', icon: Calendar },
+  { key: 'next', label: 'Next (Visão e Cultura CBRio)', icon: Calendar },
   { key: 'voluntariado', label: 'Voluntariado (comecou a servir)', icon: UserPlus },
   { key: 'engajamento', label: 'Engajamento ativo', icon: Activity },
-  { key: 'grupo_vida', label: 'Inscricao em Grupo', icon: Home },
+  { key: 'grupo_vida', label: 'Inscrição em Grupo', icon: Home },
   { key: 'generosidade', label: 'Generosidade (contribuicao)', icon: HandCoins },
 ];
 
@@ -327,7 +331,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 
   const processarFoto = (file) => {
     if (!file.type.startsWith('image/')) { toast.error('Selecione uma imagem (JPG, PNG ou WebP).'); return; }
-    if (file.size > 5 * 1024 * 1024) { toast.error('A imagem deve ter no maximo 5 MB.'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('A imagem deve ter no máximo 5 MB.'); return; }
     setFotoFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => setFotoPreview(ev.target.result);
@@ -613,9 +617,11 @@ export default function Membresia() {
   const [kpis, setKpis] = useState({ total: 0, byStatus: {}, familias: 0 });
   const [familias, setFamilias] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const [busca, setBusca] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterPapel, setFilterPapel] = useState('');
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -645,32 +651,70 @@ export default function Membresia() {
   const [loadingVolStatus, setLoadingVolStatus] = useState(false);
   const [indicandoServir, setIndicandoServir] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  // Só a lista de membros depende da busca/filtros · roda 1 request por busca
+  // (não recarrega KPIs/famílias/grupos/ministérios a cada tecla)
+  const fetchMembros = useCallback(async () => {
     try {
       setError('');
+      setSearching(true);
       const params = {};
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
-      const [m, k, f, g, mi] = await Promise.all([
-        membresia.membros.list(Object.keys(params).length ? params : null),
+      if (filterPapel) params.papel = filterPapel;
+      const m = await membresia.membros.list(Object.keys(params).length ? params : null);
+      setMembros(m);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+      setSearching(false);
+    }
+  }, [busca, filterStatus, filterPapel]);
+
+  // Dados auxiliares · carregam uma vez (não mudam com a busca)
+  const fetchAux = useCallback(async () => {
+    try {
+      const [k, f, g, mi] = await Promise.all([
         membresia.kpis(),
         membresia.familias.list(),
         membresia.grupos.list({ ativo: 'true' }).catch(() => []),
         membresia.ministerios.list({ ativo: 'true' }).catch(() => []),
       ]);
-      setMembros(m);
       setKpis(k);
       setFamilias(f);
       setGrupos(g);
       setMinisteriosList(mi);
     } catch (e) {
       setError(e.message);
-    } finally {
-      setLoading(false);
     }
-  }, [busca, filterStatus]);
+  }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Refresh completo · usado após mutações (criar/editar/excluir)
+  const fetchData = useCallback(async () => {
+    await Promise.all([fetchMembros(), fetchAux()]);
+  }, [fetchMembros, fetchAux]);
+
+  // Carga inicial dos auxiliares
+  useEffect(() => { fetchAux(); }, [fetchAux]);
+
+  // Deep-link: ?membro=<id> abre a ficha direto (ex.: vindo dos pedidos de oração)
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('membro');
+    if (id) openDetail(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Busca/filtros · debounce de 300ms (1ª carga é imediata · evita o "quicando")
+  const primeiraBusca = useRef(true);
+  useEffect(() => {
+    if (primeiraBusca.current) {
+      primeiraBusca.current = false;
+      fetchMembros();
+      return;
+    }
+    const t = setTimeout(() => { fetchMembros(); }, 300);
+    return () => clearTimeout(t);
+  }, [fetchMembros]);
 
   const loadVolStatus = async (membroId) => {
     setLoadingVolStatus(true);
@@ -681,6 +725,40 @@ export default function Membresia() {
       setVolStatus(null);
     } finally {
       setLoadingVolStatus(false);
+    }
+  };
+
+  // LGPD · gera relatório completo de dados do membro (auditável)
+  const exportarLgpd = async (membro) => {
+    if (!membro?.id) return;
+    const motivo = window.prompt(
+      `Motivo da exportação LGPD de "${membro.nome}":\n\n` +
+      `(Ex: "Solicitação presencial · CPF verificado", "Pedido por telefone · dados confirmados")\n\n` +
+      `Esta ação fica auditada no sistema. Cancelar pra desistir.`
+    );
+    if (!motivo || !motivo.trim()) return;
+    try {
+      toast.info('Gerando relatório LGPD...');
+      const apiBase = import.meta.env.VITE_API_URL || '/api';
+      const url = `${apiBase}/lgpd/membro/${membro.id}/exportar?motivo=${encodeURIComponent(motivo.trim())}`;
+      const { data: { session } } = await supabase.auth.getSession();
+      const r = await fetch(url, {
+        headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || 'Erro ao gerar relatório');
+      }
+      const json = await r.json();
+      const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
+      const dl = document.createElement('a');
+      dl.href = URL.createObjectURL(blob);
+      dl.download = `lgpd-${membro.nome.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.json`;
+      dl.click();
+      URL.revokeObjectURL(dl.href);
+      toast.success('Relatório LGPD gerado e baixado. Auditado.');
+    } catch (e) {
+      toast.error(`Erro: ${e.message}`);
     }
   };
 
@@ -698,17 +776,28 @@ export default function Membresia() {
     }
   };
 
-  const openDetail = async (id) => {
+  const openDetail = async (mOrId) => {
+    // Aceita id (string) ou objeto da lista. Quando objeto e passado,
+    // aplica render otimista: modal abre na hora com nome/foto/papeis
+    // que já temos da lista, e os dados completos carregam em background.
+    const id = typeof mOrId === 'string' ? mOrId : mOrId?.id;
+
+    // Reset de UI sempre (open inicial)
+    setActiveTab('info');
+    setNovoHist('');
+    setShowFamiliaEdit(false);
+    setShowVolForm(false);
+    setShowCheckinForm(false);
+    setShowContribForm(false);
+    setVolStatus(null);
+
+    if (typeof mOrId === 'object' && mOrId) {
+      setSelectedMembro({ ...mOrId, _optimistic: true });
+    }
+
     try {
       const data = await membresia.membros.get(id);
       setSelectedMembro(data);
-      setActiveTab('info');
-      setNovoHist('');
-      setShowFamiliaEdit(false);
-      setShowVolForm(false);
-      setShowCheckinForm(false);
-      setShowContribForm(false);
-      setVolStatus(null);
       loadVolStatus(id);
     } catch (e) {
       setError(e.message);
@@ -994,9 +1083,11 @@ export default function Membresia() {
 
       {/* Page Tabs: Membros × Cadastros pendentes */}
       <Tabs value={pageTab} onValueChange={setPageTab}>
-        <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5">
+        <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5" data-tour="membresia-tabs">
           {[
             { key: 'membros', label: 'Membros', icon: Users },
+            { key: 'jornada', label: 'Jornada (5 valores)', icon: TrendingUp },
+            { key: 'duplicados', label: 'Duplicados', icon: GitMerge },
             { key: 'cadastros', label: 'Cadastros pendentes', icon: Inbox },
           ].map(t => {
             const Icon = t.icon;
@@ -1028,11 +1119,24 @@ export default function Membresia() {
         <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
           <Search style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 16, height: 16, color: C.text3, zIndex: 1 }} />
           <Input
-            placeholder="Buscar membro..."
+            placeholder="Buscar por nome (ex: matheus toscano)..."
             value={busca}
             onChange={e => setBusca(e.target.value)}
-            style={{ paddingLeft: 36 }}
+            style={{ paddingLeft: 36, paddingRight: busca ? 60 : 12 }}
           />
+          {busca && (
+            <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', gap: 6, zIndex: 1 }}>
+              {searching && <Loader2 className="animate-spin" style={{ width: 15, height: 15, color: C.text3 }} />}
+              <button
+                type="button"
+                onClick={() => setBusca('')}
+                aria-label="Limpar busca"
+                style={{ display: 'flex', background: 'none', border: 'none', cursor: 'pointer', color: C.text3, padding: 0 }}
+              >
+                <X style={{ width: 15, height: 15 }} />
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ minWidth: 180 }}>
           <Select value={filterStatus || '__all__'} onValueChange={v => setFilterStatus(v === '__all__' ? '' : v)}>
@@ -1043,6 +1147,20 @@ export default function Membresia() {
             </SelectContent>
           </Select>
         </div>
+        <div style={{ minWidth: 180 }}>
+          <Select value={filterPapel || '__all__'} onValueChange={v => setFilterPapel(v === '__all__' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="Todos os papéis" /></SelectTrigger>
+            <SelectContent className="z-[1001]">
+              <SelectItem value="__all__">Todos os papéis</SelectItem>
+              <SelectItem value="voluntario">Voluntários</SelectItem>
+              <SelectItem value="visitante">Visitantes</SelectItem>
+              <SelectItem value="grupo_ativo">Em grupo ativo</SelectItem>
+              <SelectItem value="contribuinte">Contribuintes (90d)</SelectItem>
+              <SelectItem value="inscrito_next">Inscritos no NEXT</SelectItem>
+              <SelectItem value="sem_papel">Sem papel ativo</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Table */}
@@ -1050,7 +1168,7 @@ export default function Membresia() {
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
-              {['Nome', 'Família', 'Status', 'Telefone', 'Ministério', ''].map((h, i) => (
+              {['Nome', 'Família', 'Status', 'Papéis', 'Telefone', 'Ministério', ''].map((h, i) => (
                 <th key={i} style={{ textAlign: 'left', padding: '14px 18px', fontSize: 11, fontWeight: 600, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5, background: 'var(--cbrio-table-header)', borderBottom: `1px solid ${C.border}` }}>
                   {h}
                 </th>
@@ -1059,16 +1177,16 @@ export default function Membresia() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
+              <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
             ) : membros.length === 0 ? (
-              <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum membro encontrado</span></div></td></tr>
+              <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum membro encontrado</span></div></td></tr>
             ) : membros.map((m) => (
-              <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m.id)}>
+              <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m)}>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 13, flexShrink: 0, overflow: 'hidden' }}>
                       {m.foto_url ? (
-                        <img src={m.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img data-foto-avatar="" src={m.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
                         m.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
                       )}
@@ -1092,6 +1210,16 @@ export default function Membresia() {
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <Badge status={m.status} />
                 </td>
+                <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 200 }}>
+                    {m.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
+                    {m.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
+                    {m.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}
+                    {m.papeis?.is_contribuinte && <span title="Contribuiu nos últimos 90 dias" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fce7f3', color: '#831843', fontWeight: 700 }}>CTB</span>}
+                    {m.papeis?.is_inscrito_next && <span title={`${m.papeis?.total_inscricoes_next || 0}× NEXT`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#d1fae5', color: '#065f46', fontWeight: 700 }}>NXT{m.papeis?.total_inscricoes_next > 1 ? `×${m.papeis.total_inscricoes_next}` : ''}</span>}
+                    {!m.papeis?.is_voluntario && !m.papeis?.is_visitante && !m.papeis?.in_grupo_ativo && !m.papeis?.is_contribuinte && !m.papeis?.is_inscrito_next && <span style={{ fontSize: 11, color: C.text3 }}>—</span>}
+                  </div>
+                </td>
                 <td style={{ padding: '14px 18px', fontSize: 13, color: C.text2, borderBottom: `1px solid ${C.border}` }}>
                   {m.telefone || '—'}
                 </td>
@@ -1108,6 +1236,14 @@ export default function Membresia() {
       </div>
         </TabsContent>
 
+        <TabsContent value="jornada">
+          <MembersJornadaPanel />
+        </TabsContent>
+
+        <TabsContent value="duplicados">
+          <MembrosDuplicadosPanel />
+        </TabsContent>
+
         <TabsContent value="cadastros">
           <TabCadastros onMembrosChange={fetchData} />
         </TabsContent>
@@ -1122,17 +1258,34 @@ export default function Membresia() {
               <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
                 <div style={{ width: 56, height: 56, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700, fontSize: 20, overflow: 'hidden' }}>
                   {selectedMembro.foto_url ? (
-                    <img src={selectedMembro.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <img data-foto-avatar="" src={selectedMembro.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
                     selectedMembro.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
                   )}
                 </div>
                 <div>
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{selectedMembro.nome}</h2>
-                  <Badge status={selectedMembro.status} />
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <Badge status={selectedMembro.status} />
+                    {selectedMembro.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
+                    {selectedMembro.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
+                    {selectedMembro.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}
+                    {selectedMembro.papeis?.is_contribuinte && <span title="Contribuinte recente" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fce7f3', color: '#831843', fontWeight: 700 }}>CTB</span>}
+                    {selectedMembro.papeis?.is_inscrito_next && <span title={`${selectedMembro.papeis.total_inscricoes_next}× NEXT`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#d1fae5', color: '#065f46', fontWeight: 700 }}>NXT{selectedMembro.papeis.total_inscricoes_next > 1 ? `×${selectedMembro.papeis.total_inscricoes_next}` : ''}</span>}
+                  </div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 4 }}>
+                {isDiretor && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => exportarLgpd(selectedMembro)}
+                    title="Exportar dados (LGPD) · gerar relatório completo"
+                  >
+                    <ShieldCheck style={{ width: 16, height: 16 }} />
+                  </Button>
+                )}
                 {isDiretor && (
                   <Button variant="ghost" size="icon" onClick={() => openEdit(selectedMembro)} title="Editar">
                     <Pencil style={{ width: 16, height: 16 }} />
@@ -1153,6 +1306,7 @@ export default function Membresia() {
                     { key: 'grupo', label: 'Grupo', icon: Users },
                     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
                     { key: 'servico', label: 'Serviço', icon: Sparkles },
+                    { key: 'next', label: 'NEXT', icon: ArrowRightLeft },
                     { key: 'trilha', label: 'Trilha', icon: Star },
                     { key: 'historico', label: 'Histórico', icon: Calendar },
                   ].map(t => {
@@ -1311,7 +1465,7 @@ export default function Membresia() {
                           >
                             <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
                               {f.foto_url ? (
-                                <img src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                               ) : (
                                 f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
                               )}
@@ -1340,6 +1494,16 @@ export default function Membresia() {
 
                 {/* Aba: Grupo de Conexão */}
                 <TabsContent value="grupo" className="mt-4">
+                  {selectedMembro.grupo_atual?.grupo?.id && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => navigate(`/grupos?id=${selectedMembro.grupo_atual.grupo.id}`)}
+                      style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                    >
+                      <span>Abrir grupo no módulo Grupos</span>
+                      <ChevronRight style={{ width: 16, height: 16 }} />
+                    </Button>
+                  )}
                   {selectedMembro.grupo_atual ? (
                     <div style={{ marginBottom: 20 }}>
                       <div style={{ padding: 16, background: C.primaryBg, borderRadius: 12, border: `1px solid ${C.primary}30` }}>
@@ -1459,6 +1623,14 @@ export default function Membresia() {
 
                 {/* Aba: Generosidade */}
                 <TabsContent value="generosidade" className="mt-4">
+                  <Button
+                    variant="ghost"
+                    onClick={() => navigate('/admin/financeiro')}
+                    style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                  >
+                    <span>Abrir módulo Financeiro</span>
+                    <ChevronRight style={{ width: 16, height: 16 }} />
+                  </Button>
                   {(() => {
                     const nivel = NIVEIS_GENEROSIDADE[selectedMembro.nivel_generosidade] || NIVEIS_GENEROSIDADE.nunca_contribuiu;
                     const totais = selectedMembro.totais_ano || { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
@@ -1608,21 +1780,40 @@ export default function Membresia() {
                     return (
                       <>
                         {/* Card de status */}
-                        <div style={{ padding: 14, borderRadius: 12, background: nivel.bg, border: `1px solid ${nivel.cor}30`, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                        <div style={{ padding: 14, borderRadius: 12, background: nivel.bg, border: `1px solid ${nivel.cor}30`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: nivel.cor, fontWeight: 700 }}>Nível de Serviço</div>
                             <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginTop: 2 }}>{nivel.label}</div>
                             <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{nivel.desc}</div>
                           </div>
-                          {selectedMembro.ultimo_checkin && (
-                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                              <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Último check-in</div>
-                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 2 }}>
-                                {new Date(selectedMembro.ultimo_checkin).toLocaleDateString('pt-BR')}
+                          <div style={{ display: 'flex', gap: 16, flexShrink: 0 }}>
+                            {selectedMembro.total_checkins_90d > 0 && (
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Check-ins 90d</div>
+                                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginTop: 2 }}>{selectedMembro.total_checkins_90d}</div>
                               </div>
-                            </div>
-                          )}
+                            )}
+                            {selectedMembro.ultimo_checkin && (
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Último check-in</div>
+                                <div style={{ fontSize: 13, color: C.text, fontWeight: 600, marginTop: 2 }}>
+                                  {new Date(selectedMembro.ultimo_checkin).toLocaleDateString('pt-BR')}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
+                        {/* Botão pra ir ao módulo Voluntariado */}
+                        {selectedMembro.vol_profile_id && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => navigate(`/ministerial/voluntariado?vp=${selectedMembro.vol_profile_id}`)}
+                            style={{ width: '100%', marginBottom: 16, justifyContent: 'space-between' }}
+                          >
+                            <span>Abrir perfil completo no Voluntariado</span>
+                            <ChevronRight style={{ width: 16, height: 16 }} />
+                          </Button>
+                        )}
 
                         {/* Voluntariado no Sistema de Escalas */}
                         <div style={{ padding: 14, borderRadius: 12, background: 'var(--cbrio-input-bg)', border: '1px solid var(--cbrio-border)', marginBottom: 16 }}>
@@ -1888,8 +2079,71 @@ export default function Membresia() {
                   })()}
                 </TabsContent>
 
+                {/* Aba: NEXT (inscrições em eventos) */}
+                <TabsContent value="next" className="mt-4">
+                  <Button
+                    variant="ghost"
+                    onClick={() => navigate('/ministerial/next')}
+                    style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                  >
+                    <span>Abrir módulo NEXT</span>
+                    <ChevronRight style={{ width: 16, height: 16 }} />
+                  </Button>
+                  {(selectedMembro.inscricoes_next || []).length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: C.text3, fontSize: 13, background: 'var(--cbrio-input-bg)', border: `1px dashed ${C.border}`, borderRadius: 12 }}>
+                      Nenhuma inscrição em NEXT registrada.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {(selectedMembro.inscricoes_next || []).map(insc => {
+                        const statusEvento = insc.evento?.status || 'agendado';
+                        const dataEvento = insc.evento?.data ? new Date(insc.evento.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) : 'Sem data';
+                        const indicacoes = [
+                          insc.indicou_batismo && 'Batismo',
+                          insc.indicou_servir && 'Servir',
+                          insc.indicou_grupo && 'Grupo',
+                          insc.indicou_dizimo && 'Dízimo',
+                        ].filter(Boolean);
+                        return (
+                          <div key={insc.id} style={{ padding: 12, borderRadius: 10, background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}` }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12 }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                                  {insc.evento?.titulo || 'NEXT'}
+                                </div>
+                                <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                                  {dataEvento}
+                                  {insc.check_in_at && ' · ✓ Check-in feito'}
+                                </div>
+                                {indicacoes.length > 0 && (
+                                  <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                                    {indicacoes.map(i => (
+                                      <span key={i} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{i}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, background: statusEvento === 'realizado' ? '#d1fae5' : '#fef3c7', color: statusEvento === 'realizado' ? '#065f46' : '#92400e', fontWeight: 700, textTransform: 'uppercase' }}>
+                                {statusEvento}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </TabsContent>
+
                 {/* Aba: Trilha dos Valores */}
                 <TabsContent value="trilha" className="mt-4">
+                  <Button
+                    variant="ghost"
+                    onClick={() => { setSelectedMembro(null); setPageTab('jornada'); }}
+                    style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
+                  >
+                    <span>Ver Jornada completa dos 5 valores</span>
+                    <ChevronRight style={{ width: 16, height: 16 }} />
+                  </Button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                     {TRILHA_ETAPAS.map((etapa, i) => {
                       const registro = selectedMembro.trilha?.find(t => t.etapa === etapa.key);
@@ -1898,49 +2152,113 @@ export default function Membresia() {
                       // Auto-detection from real system data
                       const auto = (() => {
                         const m = selectedMembro;
+                        const fmt = (d) => d ? new Date(d).toLocaleDateString('pt-BR') : null;
                         switch (etapa.key) {
                           case 'primeiro_contato': {
                             if (m.created_at) {
-                              const data = new Date(m.created_at).toLocaleDateString('pt-BR');
-                              return { detected: true, detail: `Cadastrado em ${data}` };
+                              return { detected: true, detail: `Cadastrado em ${fmt(m.created_at)}` };
+                            }
+                            return null;
+                          }
+                          case 'conversao': {
+                            // 1. Trilha explicita (vinda da planilha importada OU registrada)
+                            const t = m.trilha?.find(x => x.etapa === 'conversao' && x.concluida);
+                            if (t) {
+                              const obs = t.observacoes || '';
+                              const isImportado = obs.toLowerCase().includes('importacao')
+                                || obs.toLowerCase().includes('planilha');
+                              const isCulto = obs.toLowerCase().includes('culto');
+                              const fonte = isImportado
+                                ? 'historico importado'
+                                : isCulto
+                                  ? 'decisão em culto'
+                                  : 'registrado';
+                              return {
+                                detected: true,
+                                detail: `Convertido(a) em ${fmt(t.data_conclusao)} · ${fonte}`,
+                              };
+                            }
+                            // 2. Fallback · decisão registrada em culto (cultos_decisoes_pessoas)
+                            if (m.decisoes_culto?.length > 0) {
+                              const d = m.decisoes_culto[0];
+                              const cultoLabel = d.culto?.service_type?.name || 'culto';
+                              return {
+                                detected: true,
+                                detail: `Decisão em ${cultoLabel} em ${fmt(d.culto?.data || d.registrado_em)}`,
+                              };
+                            }
+                            return null;
+                          }
+                          case 'conversa_lider': {
+                            // Encontros de discipulado (jornada180)
+                            if (m.jornada180?.length > 0) {
+                              const ultimo = m.jornada180[0];
+                              const pastor = ultimo.pastor_lider?.name;
+                              const parts = [`${m.jornada180.length} ${m.jornada180.length === 1 ? 'encontro' : 'encontros'}`];
+                              if (ultimo.data_encontro) parts.push(`último em ${fmt(ultimo.data_encontro)}`);
+                              if (pastor) parts.push(`com ${pastor}`);
+                              return { detected: true, detail: parts.join(' · ') };
+                            }
+                            return null;
+                          }
+                          case 'next': {
+                            // Inscrição NEXT com check-in (esteve presente)
+                            const comCheckin = (m.inscricoes_next || []).filter(i => i.check_in_at);
+                            if (comCheckin.length > 0) {
+                              const ultima = comCheckin[0];
+                              const titulo = ultima.evento?.titulo || 'NEXT';
+                              return {
+                                detected: true,
+                                detail: `${titulo} em ${fmt(ultima.check_in_at)}`,
+                              };
                             }
                             return null;
                           }
                           case 'grupo_vida': {
                             if (m.grupo_atual?.grupo) {
                               const g = m.grupo_atual.grupo;
-                              const desde = m.grupo_atual.entrou_em ? new Date(m.grupo_atual.entrou_em).toLocaleDateString('pt-BR') : null;
+                              const desde = fmt(m.grupo_atual.entrou_em);
                               return { detected: true, detail: `${g.nome}${desde ? ` · desde ${desde}` : ''}` };
+                            }
+                            // Histórico · já esteve em grupo
+                            if (m.grupo_historico?.length > 0) {
+                              const ultimo = m.grupo_historico[0];
+                              const nome = ultimo.grupo?.nome || 'grupo';
+                              return { detected: true, detail: `Esteve em ${nome} (saiu em ${fmt(ultimo.saiu_em)})` };
                             }
                             return null;
                           }
                           case 'voluntariado': {
                             if (m.ministerios_ativos?.length > 0) {
                               const nomes = m.ministerios_ativos.map(v => {
-                                const desde = v.desde ? new Date(v.desde).toLocaleDateString('pt-BR') : null;
+                                const desde = fmt(v.desde);
                                 return `${v.ministerio?.nome || 'Ministerio'}${desde ? ` (desde ${desde})` : ''}`;
                               });
                               return { detected: true, detail: nomes.join(', ') };
+                            }
+                            if (m.ministerios_historico?.length > 0) {
+                              return { detected: true, detail: `Já serviu em ${m.ministerios_historico.length} time(s)` };
                             }
                             return null;
                           }
                           case 'generosidade': {
                             if (m.contribuicoes?.length > 0) {
                               const total = m.totais_ano?.total || 0;
-                              const ultima = m.ultima_contribuicao ? new Date(m.ultima_contribuicao).toLocaleDateString('pt-BR') : null;
+                              const ultima = fmt(m.ultima_contribuicao);
                               const parts = [];
                               if (total > 0) parts.push(`R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ano`);
-                              if (ultima) parts.push(`ultima em ${ultima}`);
+                              if (ultima) parts.push(`última em ${ultima}`);
                               return { detected: true, detail: parts.join(' · ') || 'Possui contribuicoes' };
                             }
                             return null;
                           }
                           case 'engajamento': {
+                            // Engajamento = ativo no serviço OU tem check-ins recentes
                             if (m.checkins?.length >= 3 || m.nivel_servico === 'engajado' || m.nivel_servico === 'ativo') {
-                              const ultimo = m.ultimo_checkin ? new Date(m.ultimo_checkin).toLocaleDateString('pt-BR') : null;
+                              const ultimo = fmt(m.ultimo_checkin);
                               const parts = [];
                               if (m.checkins?.length > 0) parts.push(`${m.checkins.length} check-ins recentes`);
-                              if (ultimo) parts.push(`ultimo em ${ultimo}`);
+                              if (ultimo) parts.push(`último em ${ultimo}`);
                               return { detected: true, detail: parts.join(' · ') || 'Engajamento detectado' };
                             }
                             return null;

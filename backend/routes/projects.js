@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
-const { supabase, query: dbQuery } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate);
@@ -28,16 +28,35 @@ router.get('/dashboard', async (req, res) => {
 // ── WORKLOAD VIEW ──
 router.get('/views/workload', async (req, res) => {
   try {
-    const r = await dbQuery('SELECT responsible, count(*) as active FROM project_tasks WHERE status NOT IN (\'concluida\',\'concluido\') GROUP BY responsible ORDER BY active DESC');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+    // Pool pg não conecta no serverless do Vercel → REST + agregação em JS.
+    // Paginado pra não cair no cap de 1000 linhas do PostgREST.
+    let tasks = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('project_tasks')
+        .select('responsible')
+        .not('status', 'in', '("concluida","concluido")')
+        .range(from, from + 999);
+      if (error) throw error;
+      tasks = tasks.concat(data || []);
+      if (!data || data.length < 1000) break;
+    }
+    const counts = {};
+    for (const t of tasks) {
+      const r = t.responsible || '';
+      counts[r] = (counts[r] || 0) + 1;
+    }
+    const rows = Object.entries(counts)
+      .map(([responsible, active]) => ({ responsible, active }))
+      .sort((a, b) => b.active - a.active);
+    res.json(rows);
+  } catch (e) { console.error('[Projects workload]', e.message); res.status(500).json({ error: 'Erro ao calcular workload' }); }
 });
 
 // ── LIST ──
 router.get('/', async (req, res) => {
   try {
     const { year, status, area } = req.query;
-    let q = supabase.from('projects').select('*, project_categories(name, color)');
+    let q = supabase.from('projects').select('*, project_categories(name, color)').is('deleted_at', null);
     if (year) q = q.eq('year', year);
     if (status) q = q.eq('status', status);
     if (area) q = q.eq('area', area);
@@ -102,7 +121,12 @@ router.post('/', authorize('admin', 'diretor'), async (req, res) => {
     const d = req.body;
     const { data, error } = await supabase.from('projects').insert({
       name: d.name, year: d.year || new Date().getFullYear(), description: d.description || '',
-      status: d.status || 'planejamento', responsible: d.responsible || '', area: d.area || '',
+      status: d.status || 'planejamento',
+      responsible: d.responsible || '',           // snapshot TEXT (UI legacy)
+      responsible_id: d.responsible_id || null,   // UUID FK (canonico)
+      leader: d.leader || '',
+      leader_id: d.leader_id || null,
+      area: d.area || '',
       date_start: d.date_start || null, date_end: d.date_end || null,
       budget_planned: d.budget_planned || 0, category_id: d.category_id || null,
       priority: d.priority || 'media', notes: d.notes || '', created_by: req.user.userId,
@@ -120,7 +144,11 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
     const d = req.body;
     const { data, error } = await supabase.from('projects').update({
       name: d.name, year: d.year, description: d.description || '', status: d.status,
-      responsible: d.responsible || '', area: d.area || '',
+      responsible: d.responsible || '',
+      responsible_id: d.responsible_id || null,
+      leader: d.leader || '',
+      leader_id: d.leader_id || null,
+      area: d.area || '',
       date_start: d.date_start || null, date_end: d.date_end || null,
       budget_planned: d.budget_planned || 0, budget_spent: d.budget_spent || 0,
       category_id: d.category_id || null, priority: d.priority || 'media', notes: d.notes || '',
@@ -131,10 +159,15 @@ router.put('/:id', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar projeto' }); }
 });
 
-// ── DELETE ──
+// ── DELETE · soft-delete (preserva histórico de projeto) ──
 router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    await supabase.from('projects').delete().eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'projects',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao excluir projeto' }); }
 });
@@ -171,7 +204,9 @@ router.post('/:id/tasks', authorize('admin', 'diretor'), async (req, res) => {
     const d = req.body;
     const { data, error } = await supabase.from('project_tasks').insert({
       project_id: req.params.id, milestone_id: d.milestone_id || null, name: d.name,
-      responsible: d.responsible || '', area: d.area || '',
+      responsible: d.responsible || '',
+      responsible_id: d.responsible_id || null,
+      area: d.area || '',
       start_date: d.start_date || null, deadline: d.deadline || null,
       status: d.status || 'pendente', priority: d.priority || 'media', description: d.description || '',
       created_by: req.user.userId,
@@ -185,7 +220,10 @@ router.put('/tasks/:taskId', authorize('admin', 'diretor'), async (req, res) => 
   try {
     const d = req.body;
     const { data, error } = await supabase.from('project_tasks').update({
-      name: d.name, responsible: d.responsible || '', area: d.area || '',
+      name: d.name,
+      responsible: d.responsible || '',
+      responsible_id: d.responsible_id || null,
+      area: d.area || '',
       start_date: d.start_date || null, deadline: d.deadline || null,
       status: d.status, priority: d.priority || 'media', description: d.description || '',
     }).eq('id', req.params.taskId).select().single();

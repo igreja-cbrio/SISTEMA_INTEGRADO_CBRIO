@@ -40,6 +40,11 @@ export interface MapGroup {
   lider?: { nome?: string } | null;
   lider_nome?: string | null;
   dist?: number | null;
+  bairro?: string | null;
+  codigo?: string | null;
+  temporada?: string | null;
+  complemento?: string | null;
+  descricao?: string | null;
 }
 
 interface Coords {
@@ -55,6 +60,10 @@ interface GruposMapViewProps {
   onGroupSelect?: (g: MapGroup) => void;
   onGroupSelectLabel?: string;
   className?: string;
+  /** Mapa { temporada_id: { inscricoes_abertas } } para decidir se mostra botão de inscrição */
+  temporadasMap?: Record<string, { inscricoes_abertas: boolean; label?: string }>;
+  /** Se true, popup mostra botão "Inscrever-se" que abre /inscricao-grupos?grupo=<id> em nova aba */
+  mostrarBotaoInscricao?: boolean;
 }
 
 function fmtDist(km: number) {
@@ -147,14 +156,18 @@ export function GruposMapView({
   onGroupSelect,
   onGroupSelectLabel = "Quero participar",
   className,
+  temporadasMap,
+  mostrarBotaoInscricao = false,
 }: GruposMapViewProps) {
   const [theme, setTheme] = useState<"light" | "dark">(defaultTheme);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState<string>("");
+  const [filterBairro, setFilterBairro] = useState<string>("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const flyTargetRef = useRef<MapGroup | null>(null);
   const [flyTarget, setFlyTarget] = useState<MapGroup | null>(null);
+  const [locatedCoords, setLocatedCoords] = useState<Coords | null>(null);
 
   const isKiosk = variant === "kiosk";
 
@@ -165,17 +178,23 @@ export function GruposMapView({
     [grupos]
   );
 
+  const bairros = useMemo(
+    () => Array.from(new Set(grupos.map((g: any) => g.bairro).filter(Boolean))).sort() as string[],
+    [grupos]
+  );
+
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    return grupos.filter((g) => {
+    return grupos.filter((g: any) => {
       if (filterCat && g.categoria !== filterCat) return false;
+      if (filterBairro && g.bairro !== filterBairro) return false;
       if (s) {
-        const hay = `${g.nome ?? ""} ${g.lider?.nome ?? g.lider_nome ?? ""} ${g.local ?? ""}`.toLowerCase();
+        const hay = `${g.nome ?? ""} ${g.lider?.nome ?? g.lider_nome ?? ""} ${g.local ?? ""} ${g.bairro ?? ""}`.toLowerCase();
         if (!hay.includes(s)) return false;
       }
       return true;
     });
-  }, [grupos, search, filterCat]);
+  }, [grupos, search, filterCat, filterBairro]);
 
   const withCoords = filtered.filter((g) => g.lat != null && g.lng != null);
 
@@ -269,6 +288,41 @@ export function GruposMapView({
                       )}
                     >
                       {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {bairros.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <span className={cn("px-2 py-1 text-[10px] uppercase tracking-wide self-center", theme === "dark" ? "text-white/40" : "text-gray-400")}>Bairro:</span>
+                  <button
+                    onClick={() => setFilterBairro("")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-full text-xs transition-colors",
+                      !filterBairro
+                        ? "bg-[#00B39D] text-white"
+                        : theme === "dark"
+                        ? "bg-white/10 text-white/60 hover:bg-white/15"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    )}
+                  >
+                    Todos
+                  </button>
+                  {bairros.map((b) => (
+                    <button
+                      key={b}
+                      onClick={() => setFilterBairro(b === filterBairro ? "" : b)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-full text-xs transition-colors",
+                        filterBairro === b
+                          ? "bg-[#00B39D] text-white"
+                          : theme === "dark"
+                          ? "bg-white/10 text-white/60 hover:bg-white/15"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      )}
+                    >
+                      {b}
                     </button>
                   ))}
                 </div>
@@ -378,6 +432,17 @@ export function GruposMapView({
             </MapMarker>
           )}
 
+          {locatedCoords && (
+            <MapMarker longitude={locatedCoords.lng} latitude={locatedCoords.lat}>
+              <MarkerContent>
+                <MemberPin />
+              </MarkerContent>
+              <MarkerPopup>
+                <p className="text-sm font-semibold">Você está aqui</p>
+              </MarkerPopup>
+            </MapMarker>
+          )}
+
           {withCoords.map((g) => (
             <MapMarker
               key={g.id}
@@ -389,12 +454,18 @@ export function GruposMapView({
                 <GroupPin active={activeId === g.id} />
               </MarkerContent>
               <MarkerPopup>
-                <div className="min-w-[200px] space-y-1.5">
-                  <p className="text-sm font-bold">{g.nome}</p>
+                <div className="min-w-[220px] space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-bold">{g.nome}</p>
+                    {g.codigo && <code className="text-[10px] text-muted-foreground font-mono">{g.codigo}</code>}
+                  </div>
                   {(g.lider?.nome || g.lider_nome) && (
                     <p className="text-xs text-muted-foreground">
-                      Líder: {g.lider?.nome || g.lider_nome}
+                      Líder: <span className="text-foreground">{g.lider?.nome || g.lider_nome}</span>
                     </p>
+                  )}
+                  {g.categoria && (
+                    <p className="text-xs text-muted-foreground">{g.categoria}</p>
                   )}
                   <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     {g.dia_semana != null && (
@@ -404,13 +475,21 @@ export function GruposMapView({
                         {g.horario ? ` • ${String(g.horario).slice(0, 5)}` : ""}
                       </span>
                     )}
-                    {g.local && (
+                    {g.bairro && (
                       <span className="flex items-center gap-1">
                         <MapPin className="h-3 w-3" />
-                        {g.local}
+                        {g.bairro}
                       </span>
                     )}
                   </div>
+                  {g.local && (
+                    <p className="text-xs text-muted-foreground">
+                      {g.local}{g.complemento ? ` — ${g.complemento}` : ''}
+                    </p>
+                  )}
+                  {g.descricao && (
+                    <p className="text-xs text-muted-foreground line-clamp-3">{g.descricao}</p>
+                  )}
                   {g.dist != null && (
                     <p className="text-xs text-[#00B39D] font-medium">
                       {fmtDist(g.dist)} de você
@@ -425,6 +504,27 @@ export function GruposMapView({
                       {onGroupSelectLabel}
                     </Button>
                   )}
+                  {mostrarBotaoInscricao && !onGroupSelect && (() => {
+                    const t = g.temporada && temporadasMap ? temporadasMap[g.temporada] : undefined;
+                    const aberta = t ? t.inscricoes_abertas : false;
+                    if (aberta) {
+                      return (
+                        <a
+                          href={`/inscricao-grupos?grupo=${g.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block w-full mt-1 text-center px-3 py-1.5 rounded-md bg-[#00B39D] hover:bg-[#00B39D]/90 text-white text-sm font-semibold"
+                        >
+                          Inscrever-se neste grupo
+                        </a>
+                      );
+                    }
+                    return (
+                      <div className="mt-1 px-3 py-2 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 text-xs text-center">
+                        Inscrições fechadas. Aguarde a próxima abertura.
+                      </div>
+                    );
+                  })()}
                 </div>
               </MarkerPopup>
             </MapMarker>
@@ -433,8 +533,9 @@ export function GruposMapView({
           <MapControls
             position="bottom-right"
             showZoom
-            showLocate={isKiosk || !!memberCoords}
+            showLocate
             showFullscreen={isKiosk}
+            onLocate={(c) => setLocatedCoords({ lat: c.latitude, lng: c.longitude })}
           />
 
           {/* Theme toggle */}

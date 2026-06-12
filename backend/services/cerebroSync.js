@@ -676,7 +676,7 @@ ${f.observacoes ? `## Observações\n\n${f.observacoes}\n\n` : ''}## Origem
     ];
     const frontmatter = [
       '---',
-      `titulo: "Contribuições ${nomeMes}/${c.ano}"`,
+      `título: "Contribuições ${nomeMes}/${c.ano}"`,
       'tipo: contribuicoes-mensal',
       `data_criacao: ${hoje}`,
       `ultima_atualizacao: ${hoje}`,
