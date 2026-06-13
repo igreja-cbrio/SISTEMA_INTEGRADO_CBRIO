@@ -433,6 +433,17 @@ router.patch('/pedidos-app/:id', authorizeModule('cuidados', 3), async (req, res
       .select('id, tratamento_status, tratado_em')
       .single();
     if (error) throw error;
+
+    // Fecha o ciclo com o membro: push avisando que está sendo cuidado /
+    // foi atendido (a Edge Function ignora 'pendente'). Em background.
+    if (process.env.SUPABASE_URL && tratamento_status !== 'pendente') {
+      fetch(`${process.env.SUPABASE_URL}/functions/v1/notify-cuidado-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inscricao_id: req.params.id, status: tratamento_status }),
+      }).catch((e) => console.error('[CUIDADOS] notify-status falhou:', e.message));
+    }
+
     res.json(data);
   } catch (e) {
     console.error('[CUIDADOS] pedidos-app patch:', e.message);
