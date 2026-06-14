@@ -270,7 +270,7 @@ router.get('/voluntariado/status/:userId', authApp, async (req, res) => {
 // entram na fila da aba "Acompanhamentos" do módulo Cuidados.
 const TIPOS_INSCRICAO = new Set([
   'grupos', 'batismo', 'retiro', 'cursos', 'next', 'voluntariado', 'eventos',
-  'aconselhamento', 'oracao', 'sos',
+  'aconselhamento', 'oracao', 'sos', 'contato',
 ]);
 const TIPOS_CUIDADOS = new Set(['aconselhamento', 'oracao', 'sos']);
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
@@ -353,6 +353,23 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
         severidade: SEV_CUIDADOS[tipo] || 'info',
         chaveDedup: `app_pedido_${inserted.id}`,
       }).catch(e => console.warn('[APP] inscricoes · notificar:', e.message));
+    }
+
+    // Fale Conosco: notifica a secretaria (cai no fallback admin/diretor
+    // se não houver regra de notificação configurada).
+    if (tipo === 'contato') {
+      const nome = dados.nome || req.user?.email || 'Alguém';
+      const msg = extrairMensagem(extras);
+      const assunto = dados.assunto ? ` (${String(dados.assunto).slice(0, 40)})` : '';
+      notificar({
+        modulo: 'membresia',
+        tipo: 'app_contato',
+        titulo: `Fale Conosco — ${nome}${assunto}`,
+        mensagem: `${nome} mandou uma mensagem pelo app${msg ? `: "${String(msg).slice(0, 180)}"` : '.'}`,
+        link: '/ministerial/membresia',
+        severidade: 'info',
+        chaveDedup: `app_contato_${inserted.id}`,
+      }).catch(e => console.warn('[APP] inscricoes · notificar contato:', e.message));
     }
 
     // Mensagem automática de WhatsApp pro membro que pediu aconselhamento pastoral.
