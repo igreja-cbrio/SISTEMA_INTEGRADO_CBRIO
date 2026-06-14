@@ -70,6 +70,16 @@ export default function TotemKidsCheckin() {
   // Modal de cadastro novo
   const [modalNovo, setModalNovo] = useState(false);
 
+  // Pré-check-in pelo app · o responsável preparou no celular e gerou um código
+  const [preCodigo, setPreCodigo] = useState('');
+  const [preBuscando, setPreBuscando] = useState(false);
+  const [preCheckin, setPreCheckin] = useState<{
+    pre_checkin_id: string;
+    responsavel: { membro_id: string; nome: string; telefone: string | null };
+  } | null>(null);
+  const [preFila, setPreFila] = useState<string[]>([]);     // crianca_ids ainda não confirmados
+  const [preCheckinIds, setPreCheckinIds] = useState<string[]>([]); // checkins já criados
+
   const buscaRef = useRef<HTMLInputElement>(null);
 
   // Carrega sessão atual + salas
@@ -126,6 +136,64 @@ export default function TotemKidsCheckin() {
     );
     if (sugerida) setSalaSelecionada(sugerida.id);
   }, [crianca, salas]);
+
+  // Em modo pré-check-in: pré-seleciona o responsável que preparou no app
+  // (só se ele constar como autorizado a buscar a criança · segurança).
+  useEffect(() => {
+    if (!crianca || !preCheckin) return;
+    const resp = (crianca.responsaveis || []).find(
+      r => r.membro_id === preCheckin.responsavel.membro_id && r.autorizado_buscar
+    );
+    if (resp) {
+      setResponsavelSelecionado(preCheckin.responsavel.membro_id);
+      setUsarRespManual(false);
+    }
+  }, [crianca, preCheckin]);
+
+  // Voluntário digita/escaneia o código do app → carrega responsável + filhos
+  // e enfileira pra confirmar um a um (o check-in real continua manual).
+  async function buscarPreCheckin() {
+    const cod = preCodigo.trim().toUpperCase();
+    if (cod.length < 4) {
+      toast.error('Digite o código do app');
+      return;
+    }
+    setPreBuscando(true);
+    try {
+      const r = await totemKids.preCheckin.buscarCodigo(cod);
+      const ids: string[] = (r.criancas || []).map((c: { id: string }) => c.id);
+      if (!ids.length) {
+        toast.error('Nenhuma criança ativa neste pré-check-in');
+        return;
+      }
+      setPreCheckin({ pre_checkin_id: r.pre_checkin_id, responsavel: r.responsavel });
+      setPreCheckinIds([]);
+      setPreFila(ids);
+      setPreCodigo('');
+      toast.success(`Pré-check-in de ${r.responsavel.nome} · ${ids.length} criança(s)`, { duration: 4000 });
+      await carregarCriancaDaFila(ids[0]);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Código inválido ou expirado');
+    } finally {
+      setPreBuscando(false);
+    }
+  }
+
+  async function carregarCriancaDaFila(criancaId: string) {
+    try {
+      const c = await totemKids.criancas.get(criancaId);
+      setCrianca(c);
+    } catch {
+      toast.error('Erro ao carregar a criança do pré-check-in');
+    }
+  }
+
+  // Encerra o modo pré-check-in (concluído ou cancelado) e limpa o estado.
+  function encerrarPreCheckin() {
+    setPreCheckin(null);
+    setPreFila([]);
+    setPreCheckinIds([]);
+  }
 
   async function abrirSessao() {
     // Atalho · cria sessão pro culto mais próximo (admin pode usar)
@@ -199,6 +267,24 @@ export default function TotemKidsCheckin() {
       setPagerSelecionado('');
       setResultados([]);
       carregarPagers();          // o pager usado some da lista de disponíveis
+
+      // Em modo pré-check-in: avança a fila de filhos; ao acabar, marca usado.
+      if (preCheckin && crianca) {
+        const idsFeitos = [...preCheckinIds, r.checkin.id];
+        const restante = preFila.filter(id => id !== crianca.id);
+        setPreCheckinIds(idsFeitos);
+        setPreFila(restante);
+        if (restante.length > 0) {
+          toast.info(`Faltam ${restante.length} · próxima criança`, { duration: 3000 });
+          await carregarCriancaDaFila(restante[0]);
+        } else {
+          try {
+            await totemKids.preCheckin.consumir(preCheckin.pre_checkin_id, { checkin_ids: idsFeitos });
+          } catch { /* não bloqueia o fluxo · o check-in real já foi feito */ }
+          toast.success('Pré-check-in concluído · todas as crianças entraram', { duration: 5000 });
+          encerrarPreCheckin();
+        }
+      }
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro no check-in');
     } finally {
@@ -277,6 +363,36 @@ export default function TotemKidsCheckin() {
       {!crianca ? (
         <Card>
           <CardContent className="p-4 space-y-4">
+            {/* Pré-check-in pelo app · responsável já preparou no celular */}
+            <div className="rounded-lg border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 p-3 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-violet-800 dark:text-violet-200">
+                <Sparkles className="h-4 w-4" /> Chegou pelo app? Digite ou escaneie o código
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Código do app (ex.: 6UCHWQ)"
+                  value={preCodigo}
+                  onChange={e => setPreCodigo(e.target.value.toUpperCase())}
+                  onKeyDown={e => { if (e.key === 'Enter') buscarPreCheckin(); }}
+                  className="h-12 text-lg tracking-widest uppercase font-mono flex-1"
+                  maxLength={8}
+                  autoCapitalize="characters"
+                />
+                <Button
+                  onClick={buscarPreCheckin}
+                  disabled={preBuscando}
+                  variant="default"
+                  size="lg"
+                  className="h-12 bg-violet-600 hover:bg-violet-700 whitespace-nowrap"
+                >
+                  {preBuscando ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Aplicar'}
+                </Button>
+              </div>
+              <p className="text-xs text-violet-700/80 dark:text-violet-300/70">
+                Confira a criança com o responsável antes de imprimir — a entrada continua presencial.
+              </p>
+            </div>
+
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
@@ -351,6 +467,20 @@ export default function TotemKidsCheckin() {
           </CardContent>
         </Card>
       ) : (
+        <>
+        {preCheckin && (
+          <div className="rounded-lg border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-violet-800 dark:text-violet-200">
+              <Sparkles className="h-4 w-4 shrink-0" />
+              <span>
+                Pré-check-in de <b>{preCheckin.responsavel.nome}</b> · faltam <b>{preFila.length}</b> criança(s)
+              </span>
+            </div>
+            <Button variant="ghost" size="sm" className="text-violet-700 dark:text-violet-300" onClick={() => { setCrianca(null); encerrarPreCheckin(); }}>
+              Sair do app
+            </Button>
+          </div>
+        )}
         <CheckinSelecao
           crianca={crianca}
           salas={salas}
@@ -367,7 +497,7 @@ export default function TotemKidsCheckin() {
           setRespManualNome={setRespManualNome}
           respManualTel={respManualTel}
           setRespManualTel={setRespManualTel}
-          onCancelar={() => setCrianca(null)}
+          onCancelar={() => { setCrianca(null); if (preCheckin) encerrarPreCheckin(); }}
           onConfirmar={confirmarCheckin}
           imprimindo={imprimindo}
           onResponsavelCadastrado={async () => {
@@ -378,6 +508,7 @@ export default function TotemKidsCheckin() {
             } catch { /* mantem state atual */ }
           }}
         />
+        </>
       )}
 
       <ModalNovaCrianca

@@ -1054,6 +1054,11 @@ export const totemKids = {
     porCodigo: (codigo) => get(`/totem-kids/checkin/codigo/${encodeURIComponent(codigo)}`),
     atualizar: (id, data) => patch(`/totem-kids/checkin/${id}`, data),
   },
+  // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
+  preCheckin: {
+    buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
+    consumir: (id, data) => post(`/totem-kids/pre-checkin/${id}/consumir`, data),
+  },
   checkout: {
     realizar: (data) => post('/totem-kids/checkout', data),
   },
