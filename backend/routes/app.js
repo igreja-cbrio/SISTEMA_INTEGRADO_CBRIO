@@ -888,4 +888,96 @@ router.post('/kids/pre-checkin', authApp, limiterStrict, async (req, res) => {
   }
 });
 
+// POST /api/app/kids/solicitar-vinculo — o responsável pede pra ser vinculado a
+// uma criança e envia os documentos (criança + pai e/ou mãe). NÃO vincula
+// automaticamente: vira solicitação pendente que a equipe Kids confere e aprova.
+// Os documentos já foram enviados pelo app pro bucket privado kids-documentos;
+// aqui recebemos só os PATHS (que precisam estar na pasta do próprio usuário).
+router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) => {
+  try {
+    const {
+      crianca_nome, crianca_data_nascimento, parentesco, observacao,
+      crianca_doc_path, doc_pai_path, doc_mae_path,
+    } = req.body || {};
+
+    if (!crianca_nome || !String(crianca_nome).trim()) {
+      return res.status(400).json({ error: 'Informe o nome da criança' });
+    }
+    if (!crianca_doc_path) {
+      return res.status(400).json({ error: 'Envie o documento da criança' });
+    }
+    if (!doc_pai_path && !doc_mae_path) {
+      return res.status(400).json({ error: 'Envie o documento do pai e/ou da mãe' });
+    }
+
+    // Segurança: cada documento tem que estar na pasta do próprio usuário
+    // ({auth.uid}/...). Impede apontar arquivo de outra pessoa.
+    const prefixo = `${req.user.id}/`;
+    const paths = [crianca_doc_path, doc_pai_path, doc_mae_path].filter(Boolean);
+    if (paths.some((p) => !String(p).startsWith(prefixo))) {
+      return res.status(403).json({ error: 'Documento inválido.' });
+    }
+
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Complete seu cadastro de membro antes de solicitar.' });
+
+    const parentescosOk = ['mae', 'pai', 'avo_a', 'tio_a', 'tutor', 'outro'];
+    const parent = parentescosOk.includes(parentesco) ? parentesco : 'outro';
+
+    const { data: criado, error } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .insert({
+        solicitante_membro_id: membro.id,
+        solicitante_nome: membro.nome,
+        solicitante_telefone: membro.telefone || null,
+        solicitante_parentesco: parent,
+        crianca_nome: String(crianca_nome).trim(),
+        crianca_data_nascimento: crianca_data_nascimento || null,
+        crianca_doc_path,
+        doc_pai_path: doc_pai_path || null,
+        doc_mae_path: doc_mae_path || null,
+        observacao: observacao ? String(observacao).trim() : null,
+      })
+      .select('id, status, created_at')
+      .single();
+    if (error) throw error;
+
+    notificar({
+      modulo: 'kids',
+      tipo: 'kids_vinculo_solicitacao',
+      titulo: 'Nova solicitação de vínculo Kids',
+      mensagem: `${membro.nome} pediu vínculo com ${String(crianca_nome).trim()}. Confira os documentos e aprove.`,
+      link: '/ministerial/totem-kids/vinculos',
+      severidade: 'aviso',
+      chaveDedup: `kids_vinculo_${criado.id}`,
+    }).catch((e) => console.warn('[APP] solicitar-vinculo · notificar:', e.message));
+
+    res.status(201).json(criado);
+  } catch (e) {
+    console.error('[APP] kids/solicitar-vinculo:', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar a solicitação' });
+  }
+});
+
+// GET /api/app/kids/minhas-solicitacoes — status das solicitações do membro.
+router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ solicitacoes: [] });
+
+    const { data } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('id, crianca_nome, status, motivo_rejeicao, created_at, decidido_em')
+      .eq('solicitante_membro_id', membro.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    res.json({ solicitacoes: data || [] });
+  } catch (e) {
+    console.error('[APP] kids/minhas-solicitacoes:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar solicitações' });
+  }
+});
+
 module.exports = router;

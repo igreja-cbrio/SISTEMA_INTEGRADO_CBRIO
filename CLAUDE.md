@@ -1646,6 +1646,26 @@ via `window.print` na Brother QL-820NWB default do Windows).
   (responsável + filhos com sala sugerida · 404/410) e `POST /pre-checkin/:id/
   consumir` (auditoria). `TotemKidsCheckin` ganhou o card "Chegou pelo app?" que
   enfileira os filhos e reusa o fluxo de check-in 1 a 1 (confere+imprime). PR #1017.
+- **Vínculo criança↔responsável pelo app + aprovação (2026-06-14)**: o vínculo
+  NUNCA é automático (segurança de menor). O responsável pede pelo app e envia
+  **documentos de identidade** (criança obrigatório + pai e/ou mãe, ao menos um);
+  a equipe Kids confere e aprova/rejeita. Tabela `kids_vinculo_solicitacoes`
+  (PII de menor · `deleted_at` + whitelist + RLS contextual + audit trigger ·
+  migration `20260614160000` · aplicada em prod). Documentos num bucket
+  **privado** `kids-documentos`: o app sobe direto pra `{auth.uid}/...` (storage
+  policy só de INSERT no próprio prefixo · sem leitura via client) e manda só os
+  PATHS; a equipe vê via **signed URL** (15 min) gerada pelo backend (service
+  role). App: `POST /app/kids/solicitar-vinculo` (valida prefixo do path = uid) +
+  `GET /app/kids/minhas-solicitacoes`. Totem: `GET/POST
+  /totem-kids/vinculo-solicitacoes[...]` (list · detalhe com signed URLs ·
+  aprovar = cria criança se nova + upsert `kids_responsaveis` autorizado_buscar ·
+  rejeitar com motivo). Tela `TotemKidsVinculos` (rota
+  `/ministerial/totem-kids/vinculos` · botão "Vínculos" no check-in).
+- **Modo totem na tela de check-in (2026-06-14)**: botão "Modo totem" em
+  `TotemKidsCheckin` entra em fullscreen (Fullscreen API) + overlay
+  `fixed inset-0 z-[60]` cobrindo o AppShell; esconde a navegação e deixa só o
+  check-in. Sair exige **PIN** (criado na 1ª vez · localStorage
+  `cbrio-totem-kids-pin`), igual ao totem de membros (`TotemMembro.tsx`).
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
