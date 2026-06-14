@@ -21,6 +21,7 @@ const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { safeEqual } = require('../utils/cronAuth');
+const { notificar } = require('../services/notificar');
 
 // authenticate aplicado condicionalmente abaixo · rotas /display/* e
 // /chamadas com estacao_token bypassam pra display sem login
@@ -2142,6 +2143,167 @@ router.post('/pre-checkin/:id/consumir', authorizeModule('kids', 2), async (req,
   } catch (e) {
     console.error('[TOTEM-KIDS] pre-checkin/consumir:', e.message);
     res.status(500).json({ error: 'Erro ao consumir pré-check-in' });
+  }
+});
+
+// ============================================================
+// Solicitações de vínculo (criança↔responsável) feitas pelo app
+// A equipe Kids confere os documentos e aprova/rejeita. Aprovar cria a
+// criança (se nova) + o vínculo kids_responsaveis (autorizado_buscar).
+// ============================================================
+
+// GET /pre-checkin é separado · aqui /vinculo-solicitacoes
+// GET /vinculo-solicitacoes?status=pendente — lista pra triagem
+router.get('/vinculo-solicitacoes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pendente');
+    let q = supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('id, solicitante_nome, solicitante_telefone, solicitante_parentesco, crianca_nome, crianca_data_nascimento, status, motivo_rejeicao, observacao, created_at, decidido_em, decidido_por_nome')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (status && status !== 'todos') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar solicitações' });
+  }
+});
+
+// GET /vinculo-solicitacoes/:id — detalhe + signed URLs dos documentos (15 min)
+router.get('/vinculo-solicitacoes/:id', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { data: s, error } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!s) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    const signed = async (path) => {
+      if (!path) return null;
+      const { data } = await supabase.storage.from('kids-documentos').createSignedUrl(path, 900);
+      return data?.signedUrl || null;
+    };
+    const [crianca_doc_url, doc_pai_url, doc_mae_url] = await Promise.all([
+      signed(s.crianca_doc_path), signed(s.doc_pai_path), signed(s.doc_mae_path),
+    ]);
+
+    res.json({ ...s, crianca_doc_url, doc_pai_url, doc_mae_url });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes detalhe:', e.message);
+    res.status(500).json({ error: 'Erro ao abrir solicitação' });
+  }
+});
+
+// POST /vinculo-solicitacoes/:id/aprovar — cria criança (se nova) + vínculo
+router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: s } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!s) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (s.status !== 'pendente') return res.status(409).json({ error: 'Solicitação já decidida' });
+
+    // 1. Resolve a criança: usa a apontada, ou cria nova na família do solicitante.
+    let criancaId = s.crianca_id;
+    if (!criancaId) {
+      // garante família do solicitante
+      const { data: membro } = await supabase
+        .from('mem_membros').select('id, nome, familia_id').eq('id', s.solicitante_membro_id).maybeSingle();
+      if (!membro) return res.status(400).json({ error: 'Membro solicitante não encontrado' });
+      let familiaId = membro.familia_id;
+      if (!familiaId) {
+        const { data: f, error: fe } = await supabase
+          .from('mem_familias').insert({ nome: `Familia ${membro.nome.split(' ')[0]}` }).select('id').single();
+        if (fe) throw fe;
+        familiaId = f.id;
+        await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', membro.id);
+      }
+      const { data: criada, error: ce } = await supabase
+        .from('kids_criancas')
+        .insert({
+          nome: s.crianca_nome,
+          data_nascimento: s.crianca_data_nascimento || null,
+          familia_id: familiaId,
+          visitante: true,
+          created_by: req.user?.id || null,
+        })
+        .select('id')
+        .single();
+      if (ce) throw ce;
+      criancaId = criada.id;
+    }
+
+    // 2. Cria/garante o vínculo do solicitante como responsável autorizado.
+    const { error: ve } = await supabase
+      .from('kids_responsaveis')
+      .upsert({
+        crianca_id: criancaId,
+        membro_id: s.solicitante_membro_id,
+        parentesco: s.solicitante_parentesco || 'outro',
+        autorizado_buscar: true,
+      }, { onConflict: 'crianca_id,membro_id' });
+    if (ve) throw ve;
+
+    // 3. Marca a solicitação como aprovada.
+    const { error: ue } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .update({
+        status: 'aprovado',
+        crianca_criada_id: criancaId,
+        decidido_por: req.user?.id || null,
+        decidido_por_nome: req.user?.name || req.user?.email || null,
+        decidido_em: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', s.id);
+    if (ue) throw ue;
+
+    res.json({ ok: true, crianca_id: criancaId });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes aprovar:', e.message);
+    res.status(500).json({ error: 'Erro ao aprovar solicitação' });
+  }
+});
+
+// POST /vinculo-solicitacoes/:id/rejeitar { motivo } — não cria vínculo
+router.post('/vinculo-solicitacoes/:id/rejeitar', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const motivo = req.body?.motivo ? String(req.body.motivo).trim() : null;
+    const { data: s } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('id, status')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!s) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (s.status !== 'pendente') return res.status(409).json({ error: 'Solicitação já decidida' });
+
+    const { error } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .update({
+        status: 'rejeitado',
+        motivo_rejeicao: motivo,
+        decidido_por: req.user?.id || null,
+        decidido_por_nome: req.user?.name || req.user?.email || null,
+        decidido_em: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', s.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes rejeitar:', e.message);
+    res.status(500).json({ error: 'Erro ao rejeitar solicitação' });
   }
 });
 

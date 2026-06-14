@@ -1059,6 +1059,13 @@ export const totemKids = {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
     consumir: (id, data) => post(`/totem-kids/pre-checkin/${id}/consumir`, data),
   },
+  // Solicitações de vínculo (criança↔responsável) feitas pelo app · equipe aprova
+  vinculos: {
+    list: (status = 'pendente') => get(`/totem-kids/vinculo-solicitacoes?status=${encodeURIComponent(status)}`),
+    get: (id) => get(`/totem-kids/vinculo-solicitacoes/${id}`),
+    aprovar: (id) => post(`/totem-kids/vinculo-solicitacoes/${id}/aprovar`, {}),
+    rejeitar: (id, motivo) => post(`/totem-kids/vinculo-solicitacoes/${id}/rejeitar`, { motivo }),
+  },
   checkout: {
     realizar: (data) => post('/totem-kids/checkout', data),
   },

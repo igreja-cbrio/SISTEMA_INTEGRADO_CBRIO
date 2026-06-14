@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet } from 'lucide-react';
+import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet, ShieldCheck, Maximize, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -80,7 +80,44 @@ export default function TotemKidsCheckin() {
   const [preFila, setPreFila] = useState<string[]>([]);     // crianca_ids ainda não confirmados
   const [preCheckinIds, setPreCheckinIds] = useState<string[]>([]); // checkins já criados
 
+  // Modo totem · trava o tablet em tela cheia; sair exige PIN (como no totem de membros)
+  const [totemMode, setTotemMode] = useState(false);
+  const [pinModal, setPinModal] = useState(false);
+  const [pinSetup, setPinSetup] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinErro, setPinErro] = useState('');
+
   const buscaRef = useRef<HTMLInputElement>(null);
+
+  const PIN_KEY = 'cbrio-totem-kids-pin';
+
+  function ativarTotem() {
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    setTotemMode(true);
+  }
+  function iniciarModoTotem() {
+    const stored = localStorage.getItem(PIN_KEY);
+    if (!stored) { setPinSetup(true); setPinInput(''); setPinErro(''); setPinModal(true); }
+    else ativarTotem();
+  }
+  function pedirSairTotem() {
+    setPinSetup(false); setPinInput(''); setPinErro(''); setPinModal(true);
+  }
+  function confirmarPin() {
+    if (pinSetup) {
+      if (pinInput.length < 4) { setPinErro('O PIN precisa ter ao menos 4 dígitos'); return; }
+      localStorage.setItem(PIN_KEY, pinInput);
+      setPinModal(false); setPinInput('');
+      ativarTotem();
+    } else {
+      const stored = localStorage.getItem(PIN_KEY) || '';
+      if (pinInput === stored) {
+        setPinModal(false); setPinInput('');
+        setTotemMode(false);
+        if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      } else { setPinErro('PIN incorreto'); setPinInput(''); }
+    }
+  }
 
   // Carrega sessão atual + salas
   useEffect(() => {
@@ -323,6 +360,7 @@ export default function TotemKidsCheckin() {
   const estacaoPareada = getEstacaoPareada();
 
   return (
+    <div className={totemMode ? 'fixed inset-0 z-[60] bg-background overflow-y-auto' : ''}>
     <div className="max-w-4xl mx-auto p-3 md:p-4 space-y-3 md:space-y-4">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
@@ -342,21 +380,35 @@ export default function TotemKidsCheckin() {
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
-            <LogOut className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Checkout</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/decisoes')}>
-            <Sparkles className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Decisões</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
-            <span className="md:inline">Painel</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
-            <Printer className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Etiqueta</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/configuracoes')}>
-            <Settings className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Config</span>
-          </Button>
+          {totemMode ? (
+            <Button variant="destructive" size="sm" onClick={pedirSairTotem}>
+              <Lock className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Sair do modo totem</span>
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
+                <LogOut className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Checkout</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/decisoes')}>
+                <Sparkles className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Decisões</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/vinculos')}>
+                <ShieldCheck className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Vínculos</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
+                <span className="md:inline">Painel</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
+                <Printer className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Etiqueta</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/configuracoes')}>
+                <Settings className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Config</span>
+              </Button>
+              <Button variant="default" size="sm" className="bg-pink-600 hover:bg-pink-700" onClick={iniciarModoTotem}>
+                <Maximize className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Modo totem</span>
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -521,6 +573,39 @@ export default function TotemKidsCheckin() {
           setBusca('');
         }}
       />
+
+      {/* Modo totem · cria/pede PIN */}
+      <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle>{pinSetup ? 'Ativar modo totem' : 'Sair do modo totem'}</DialogTitle>
+            <DialogDescription>
+              {pinSetup
+                ? 'Crie um PIN. Ele será pedido pra sair do modo totem (trava o tablet na tela de check-in).'
+                : 'Digite o PIN pra sair do modo totem.'}
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="password"
+            inputMode="numeric"
+            autoFocus
+            placeholder="PIN"
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
+            onKeyDown={(e) => { if (e.key === 'Enter') confirmarPin(); }}
+            className="text-center text-2xl tracking-widest font-mono h-14"
+            maxLength={8}
+          />
+          {pinErro && <p className="text-sm text-red-500 text-center">{pinErro}</p>}
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => { setPinModal(false); setPinInput(''); setPinErro(''); }}>Cancelar</Button>
+            <Button className="flex-1 bg-pink-600 hover:bg-pink-700" onClick={confirmarPin}>
+              {pinSetup ? 'Ativar' : 'Sair'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
     </div>
   );
 }
