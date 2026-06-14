@@ -336,7 +336,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         *, familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
-          id, parentesco, autorizado_buscar, contato_emergencia, observacao,
+          id, membro_id, parentesco, autorizado_buscar, contato_emergencia, observacao,
           membro:mem_membros(id, nome, telefone, cpf, foto_url, email)
         )
       `)
@@ -2068,6 +2068,80 @@ router.post('/pager/bridge/envios/:id/resultado', async (req, res) => {
   } catch (e) {
     console.error('[totemKids/pager/bridge/resultado]', e.message);
     res.status(500).json({ error: 'Erro ao registrar resultado' });
+  }
+});
+
+// ── Pré-check-in (vindo do app de membros) ─────────────────────────────────
+// GET /pre-checkin/codigo/:codigo — o voluntário escaneia/digita o código do
+// app e recebe responsável + filhos (com sala sugerida) pra confirmar e
+// imprimir. Só pré-popula; o check-in real continua sendo o POST /checkin.
+router.get('/pre-checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const codigo = String(req.params.codigo || '').trim().toUpperCase();
+    if (!codigo) return res.status(400).json({ error: 'Código vazio' });
+
+    const { data: pre } = await supabase
+      .from('kids_pre_checkins')
+      .select('*')
+      .eq('codigo', codigo)
+      .eq('status', 'pendente')
+      .maybeSingle();
+    if (!pre) return res.status(404).json({ error: 'Pré-check-in não encontrado ou já usado' });
+    if (new Date(pre.expira_em) < new Date()) {
+      return res.status(410).json({ error: 'Pré-check-in expirado. Peça pro responsável gerar de novo.' });
+    }
+
+    const { data: criancas } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, data_nascimento, sexo, foto_url, observacoes_medicas, necessidades_especiais')
+      .in('id', pre.crianca_ids)
+      .eq('ativo', true);
+
+    const enriquecidas = await Promise.all((criancas || []).map(async (c) => {
+      let idadeMeses = null;
+      if (c.data_nascimento) {
+        const nasc = new Date(c.data_nascimento);
+        idadeMeses = Math.floor((Date.now() - nasc.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+      }
+      const sala = await sugerirSala(idadeMeses);
+      return { ...c, idade_meses: idadeMeses, sala_sugerida: sala };
+    }));
+
+    res.json({
+      pre_checkin_id: pre.id,
+      responsavel: {
+        membro_id: pre.responsavel_membro_id,
+        nome: pre.responsavel_nome,
+        telefone: pre.responsavel_telefone,
+      },
+      criancas: enriquecidas,
+    });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] pre-checkin/codigo:', e.message);
+    res.status(500).json({ error: 'Erro ao ler pré-check-in' });
+  }
+});
+
+// POST /pre-checkin/:id/consumir { checkin_ids } — marca como usado após o
+// voluntário confirmar os check-ins reais (auditoria: quem e quais).
+router.post('/pre-checkin/:id/consumir', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { checkin_ids } = req.body || {};
+    const { error } = await supabase
+      .from('kids_pre_checkins')
+      .update({
+        status: 'usado',
+        usado_em: new Date().toISOString(),
+        usado_por: req.user?.id || null,
+        checkin_ids: Array.isArray(checkin_ids) ? checkin_ids : null,
+      })
+      .eq('id', req.params.id)
+      .eq('status', 'pendente');
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] pre-checkin/consumir:', e.message);
+    res.status(500).json({ error: 'Erro ao consumir pré-check-in' });
   }
 });
 

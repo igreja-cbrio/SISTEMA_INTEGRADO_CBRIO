@@ -789,4 +789,103 @@ router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (
   }
 });
 
+// ── Kids · pré-check-in pelo app ───────────────────────────────────────────
+// O responsável prepara o check-in (escolhe os filhos), gera um código/QR,
+// e no totem o voluntário aplica. NÃO faz a entrada/retirada — só adianta.
+
+// GET /api/app/kids/meus-filhos — crianças de quem o membro é responsável
+// AUTORIZADO (autorizado_buscar=true) + pré-check-in pendente, se houver.
+router.get('/kids/meus-filhos', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ membro: null, filhos: [], preCheckin: null });
+
+    const { data: vinculos } = await supabase
+      .from('kids_responsaveis')
+      .select('crianca_id, parentesco, kids_criancas!inner(id, nome, data_nascimento, observacoes_medicas, ativo)')
+      .eq('membro_id', membro.id)
+      .eq('autorizado_buscar', true);
+
+    const filhos = (vinculos || [])
+      .map((v) => (Array.isArray(v.kids_criancas) ? v.kids_criancas[0] : v.kids_criancas))
+      .filter((c) => c && c.ativo)
+      .map((c) => ({
+        id: c.id,
+        nome: c.nome,
+        data_nascimento: c.data_nascimento,
+        observacoes_medicas: c.observacoes_medicas || null,
+      }));
+
+    // pré-check-in pendente e não expirado
+    const { data: pre } = await supabase
+      .from('kids_pre_checkins')
+      .select('id, codigo, crianca_ids, criado_em, expira_em')
+      .eq('responsavel_membro_id', membro.id)
+      .eq('status', 'pendente')
+      .gt('expira_em', new Date().toISOString())
+      .order('criado_em', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    res.json({ membro: { id: membro.id, nome: membro.nome }, filhos, preCheckin: pre || null });
+  } catch (e) {
+    console.error('[APP] kids/meus-filhos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar' });
+  }
+});
+
+// POST /api/app/kids/pre-checkin { crianca_ids: [] } — gera o código/QR.
+router.post('/kids/pre-checkin', authApp, limiterStrict, async (req, res) => {
+  try {
+    const { crianca_ids } = req.body || {};
+    if (!Array.isArray(crianca_ids) || crianca_ids.length === 0) {
+      return res.status(400).json({ error: 'Selecione ao menos uma criança' });
+    }
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro de membro não encontrado' });
+
+    // valida: TODAS as crianças são filhos AUTORIZADOS deste membro
+    const { data: vinculos } = await supabase
+      .from('kids_responsaveis')
+      .select('crianca_id')
+      .eq('membro_id', membro.id)
+      .eq('autorizado_buscar', true)
+      .in('crianca_id', crianca_ids);
+    const permitidos = new Set((vinculos || []).map((v) => v.crianca_id));
+    if (crianca_ids.some((id) => !permitidos.has(id))) {
+      return res.status(403).json({ error: 'Você só pode preparar o check-in dos seus filhos.' });
+    }
+
+    // cancela pendentes anteriores (só 1 ativo por responsável)
+    await supabase
+      .from('kids_pre_checkins')
+      .update({ status: 'cancelado' })
+      .eq('responsavel_membro_id', membro.id)
+      .eq('status', 'pendente');
+
+    const { data: codigoRow } = await supabase.rpc('fn_kids_pre_checkin_codigo');
+    const codigo = codigoRow || Math.random().toString(36).slice(2, 8).toUpperCase();
+    const expira = new Date(Date.now() + 12 * 3600 * 1000).toISOString();
+
+    const { data: criado, error } = await supabase
+      .from('kids_pre_checkins')
+      .insert({
+        codigo,
+        responsavel_membro_id: membro.id,
+        responsavel_nome: membro.nome,
+        responsavel_telefone: membro.telefone || null,
+        crianca_ids,
+        expira_em: expira,
+      })
+      .select('id, codigo, crianca_ids, expira_em')
+      .single();
+    if (error) throw error;
+
+    res.status(201).json(criado);
+  } catch (e) {
+    console.error('[APP] kids/pre-checkin:', e.message);
+    res.status(500).json({ error: 'Não foi possível gerar o check-in' });
+  }
+});
+
 module.exports = router;
