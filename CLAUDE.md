@@ -1632,6 +1632,20 @@ via `window.print` na Brother QL-820NWB default do Windows).
   bearer `PAGER_BRIDGE_TOKEN` · `DRY_RUN=1` testa sem hardware) consome a fila
   `kids_pager_envios`; catálogo `kids_pagers`; `kids_checkins.pager_id`. Aba
   Pagers no admin.
+- **Pré-check-in pelo app (2026-06-14)**: o responsável prepara o check-in dos
+  filhos no app de membros e gera um código/QR de 6 chars; no totem o voluntário
+  digita/escaneia, confere e imprime. **NÃO substitui a mediação presencial** —
+  entrada/retirada continuam com o voluntário; o app NÃO faz checkout remoto
+  (decisão de segurança). Tabela `kids_pre_checkins` (código único, crianca_ids,
+  status pendente/usado/expirado/cancelado, expira em 12h · RLS: responsável vê/
+  cria só os próprios via `current_user_membro_id()`, equipe kids ≥1 lê) +
+  `fn_kids_pre_checkin_codigo()` (migration `20260614120000` · aplicada em prod).
+  App: `GET/POST /api/app/kids/{meus-filhos,pre-checkin}` (valida que todas as
+  crianças são filhos `autorizado_buscar` do membro · 403 senão · cancela
+  pendente anterior). Totem: `GET /totem-kids/pre-checkin/codigo/:codigo`
+  (responsável + filhos com sala sugerida · 404/410) e `POST /pre-checkin/:id/
+  consumir` (auditoria). `TotemKidsCheckin` ganhou o card "Chegou pelo app?" que
+  enfileira os filhos e reusa o fluxo de check-in 1 a 1 (confere+imprime). PR #1017.
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
