@@ -394,7 +394,6 @@ function ConvertidoModal({
           <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
           <div><Label>Data do culto</Label><Input type="date" value={form.data_culto} onChange={e => setForm({ ...form, data_culto: e.target.value })} /></div>
           <div className="flex items-center gap-4 flex-wrap">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.atendido_apos_culto} onChange={e => setForm({ ...form, atendido_apos_culto: e.target.checked })} />Atendido após culto</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.cadastrado} onChange={e => setForm({ ...form, cadastrado: e.target.checked })} />Cadastrado</label>
           </div>
           <p className="text-xs text-muted-foreground rounded-md border border-border p-2.5" style={{ background: 'var(--cbrio-input-bg)' }}>
@@ -1348,7 +1347,7 @@ export default function Cuidados() {
           )}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted-foreground">
-              <strong className="text-foreground">{convertidos.length}</strong> convertidos · {convertPendentes > 0 ? <span className="text-warning">{convertPendentes} ainda nao atendidos</span> : <span className="text-primary">todos atendidos</span>}
+              <strong className="text-foreground">{convertidos.length}</strong> convertidos
             </div>
             {podeEditarCuidados && (
               <Button onClick={() => { setEditConvert(null); setModalConvert(true); }}>
@@ -1370,8 +1369,6 @@ export default function Cuidados() {
               <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
-                <SelectItem value="pendentes">Pendentes de atendimento</SelectItem>
-                <SelectItem value="atendidos">Já atendidas</SelectItem>
                 <SelectItem value="encontro_marcado">Com encontro marcado</SelectItem>
                 <SelectItem value="sem_encontro">Sem encontro marcado</SelectItem>
                 <SelectItem value="aguardando_desfecho">Aguardando desfecho</SelectItem>
@@ -1405,7 +1402,6 @@ export default function Cuidados() {
                 <TableRow>
                   <TableHead>Nome</TableHead>
                   <TableHead>Data culto</TableHead>
-                  <TableHead>Atendido</TableHead>
                   <TableHead>Encontro</TableHead>
                   <TableHead>Jornada</TableHead>
                   <TableHead>Tags</TableHead>
@@ -1414,13 +1410,13 @@ export default function Cuidados() {
               </TableHeader>
               <TableBody>
                 {convertidosFiltrados.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
                   </TableCell></TableRow>
                 ) : convertidosFiltrados.map(c => {
                   const tags: string[] = Array.isArray(c.tags) ? c.tags : [];
                   return (
-                    <TableRow key={c.id} className={!c.atendido_apos_culto ? 'border-l-2 border-l-warning' : undefined}>
+                    <TableRow key={c.id}>
                       <TableCell className="font-medium">
                         <button
                           type="button"
@@ -1432,9 +1428,6 @@ export default function Cuidados() {
                         </button>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
-                      <TableCell>
-                        <input type="checkbox" checked={!!c.atendido_apos_culto} disabled={!podeEditarCuidados} onChange={e => marcarAtendido(c.id, e.target.checked)} />
-                      </TableCell>
                       <TableCell>
                         {c.encontro_marcado ? (
                           <div className="flex items-center gap-1.5 text-primary text-xs">
@@ -1481,6 +1474,22 @@ export default function Cuidados() {
                         )}
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
+                        {(() => {
+                          const tel = String(c.telefone || '').replace(/\D/g, '');
+                          if (!tel) return null;
+                          const primeiro = String(c.nome || '').trim().split(/\s+/)[0] || '';
+                          const msg = `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
+                          return (
+                            <a
+                              href={`https://wa.me/55${tel}?text=${encodeURIComponent(msg)}`}
+                              target="_blank" rel="noopener noreferrer" title="Enviar WhatsApp"
+                              onClick={e => e.stopPropagation()}
+                              className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent align-middle"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                            </a>
+                          );
+                        })()}
                         {podeEditarCuidados && (
                           <>
                             {!c.encontro_marcado && (
