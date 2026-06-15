@@ -26,7 +26,10 @@ const s = {
   kpi: (color) => ({ padding: '14px 16px', borderRadius: 10, border: `1px solid ${C.border}`, borderLeft: `3px solid ${color}` }),
 };
 
-const TIPO_LABEL = { clt: 'CLT', pj: 'PJ', voluntario: 'Voluntário', estagiario: 'Estagiário' };
+// tipo_contrato é gravado em MAIÚSCULAS no banco (CHECK: CLT/PJ/PJ+/PREBENDA).
+// As chaves precisam casar com isso — senão o filtro e os rótulos não resolvem.
+const TIPO_LABEL = { CLT: 'CLT', PJ: 'PJ', 'PJ+': 'PJ+', PREBENDA: 'Prebenda' };
+const ehPJ = (t) => String(t || '').toUpperCase().startsWith('PJ'); // cobre PJ e PJ+
 
 export default function TabFolha() {
   const [funcs, setFuncs] = useState([]);
@@ -49,7 +52,7 @@ export default function TabFolha() {
   function exportCSV(data) {
     const headers = ['Nome','Cargo','Área','Tipo','Salário','Alimentação','Transporte','Saúde','Plano Saúde','INSS','IR','FGTS','Rem. Bruta','Rem. Líquida','Custo Total'];
     const rows = data.map(f => {
-      const isPJ = f.tipo_contrato === 'pj';
+      const isPJ = ehPJ(f.tipo_contrato);
       const benef = Number(f.alimentacao||0)+Number(f.transporte||0)+Number(f.saude||0)+Number(f.plano_saude||0);
       return [
         f.nome, f.cargo, f.area||'', TIPO_LABEL[f.tipo_contrato]||f.tipo_contrato,
@@ -84,7 +87,7 @@ export default function TabFolha() {
   const totIR = filtered.reduce((s, f) => s + Number(f.ir || 0), 0);
   const totDescontos = totFGTS + totINSS + totIR;
   const totCusto = filtered.reduce((s, f) => {
-    if (f.tipo_contrato === 'pj') {
+    if (ehPJ(f.tipo_contrato)) {
       const benPJ = Number(f.alimentacao || 0) + Number(f.transporte || 0) + Number(f.saude || 0) + Number(f.plano_saude || 0) + Number(f.seguro_vida || 0) + Number(f.educacao || 0) + Number(f.gratificacao || 0) + Number(f.complemento_salario || 0);
       return s + Number(f.salario || 0) + benPJ;
     }
@@ -102,7 +105,7 @@ export default function TabFolha() {
     const totalBenef = beneficios.reduce((s, b) => s + Number(b.v), 0);
     const bruto = Number(func.remuneracao_bruta || func.salario || 0) + totalBenef;
     const mes = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-    const isPJ = func.tipo_contrato === 'pj';
+    const isPJ = ehPJ(func.tipo_contrato);
 
     const w = window.open('', '_blank');
     w.document.write(`<html><head><title>Holerite — ${func.nome}</title>
@@ -204,7 +207,7 @@ export default function TabFolha() {
             : filtered.length === 0 ? <tr><td style={s.td} colSpan={9}><div style={s.empty}>Nenhum colaborador ativo</div></td></tr>
             : filtered.sort((a, b) => a.nome.localeCompare(b.nome)).map(f => {
               const benef = Number(f.alimentacao || 0) + Number(f.transporte || 0) + Number(f.saude || 0) + Number(f.plano_saude || 0) + Number(f.seguro_vida || 0) + Number(f.educacao || 0) + Number(f.gratificacao || 0) + Number(f.complemento_salario || 0);
-              const isPJ = f.tipo_contrato === 'pj';
+              const isPJ = ehPJ(f.tipo_contrato);
               return (
                 <tr key={f.id}>
                   <td style={s.td}>

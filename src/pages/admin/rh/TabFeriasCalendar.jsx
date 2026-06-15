@@ -143,8 +143,11 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
   }
 
   async function handleSave() {
+    // rh.ferias.create espera (funcionario_id, dados) — passar só `form` mandava o
+    // objeto como id na URL (/funcionarios/[object Object]/ferias) e falhava em silêncio.
+    if (!form.funcionario_id) return;
     try {
-      await rh.ferias.create(form);
+      await rh.ferias.create(form.funcionario_id, form);
       setIsNewOpen(false);
       setForm({ tipo: 'ferias' });
       loadFerias();
@@ -517,7 +520,7 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsNewOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSave}>Solicitar</Button>
+            <Button onClick={handleSave} disabled={!form.funcionario_id || !form.data_inicio || !form.data_fim}>Solicitar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
