@@ -894,6 +894,8 @@ export default function Solicitacoes() {
         </div>
       ) : view === 'atender' ? (
         /* ── Kanban Board (managers/admins) ── */
+        <>
+        <TermometroRefeitas />
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {columns.map(col => (
             <div
@@ -934,6 +936,7 @@ export default function Solicitacoes() {
             </div>
           ))}
         </div>
+        </>
       ) : (
         /* ── Simple list (collaborators) ── */
         <div className="space-y-3">
@@ -2119,6 +2122,35 @@ const MOTIVOS_PROBLEMA = [
 ];
 const MOTIVO_LABEL = { descricao: 'Descrição', escopo: 'Escopo', data: 'Data', cancelamento: 'Cancelamento' };
 
+// Termômetro "pedimos bem?" · % das solicitações que precisaram de ajuste (90d).
+// Diagnóstico NÃO punitivo (decisão do Marcos) · só na aba "Para Atender" (gestão/responsável).
+function TermometroRefeitas() {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.diagnosticoRefeitas(90).then(r => { if (alive) setD(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!d || !d.total_periodo) return null;
+  const pct = d.pct_refeitas;
+  const cor = pct >= 25 ? 'text-red-600 dark:text-red-400'
+    : pct >= 12 ? 'text-amber-600 dark:text-amber-400'
+    : 'text-emerald-600 dark:text-emerald-400';
+  return (
+    <Card className="p-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-1">
+      <span className="text-xs font-medium text-muted-foreground">Pedimos bem? · últimos 90 dias</span>
+      <span className="flex items-baseline gap-1.5">
+        <span className={`text-lg font-bold ${cor}`}>{pct}%</span>
+        <span className="text-xs text-muted-foreground">precisaram de ajuste ({d.refeitas} de {d.total_periodo})</span>
+      </span>
+      {d.devolucoes > 0 && (
+        <span className="text-xs text-muted-foreground">{d.devolucoes} devolvida(s) pela área</span>
+      )}
+      <span className="text-[10px] text-muted-foreground/70 ml-auto">termômetro · não punitivo</span>
+    </Card>
+  );
+}
+
 function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
   const [linha, setLinha] = useState([]);
   const [aberto, setAberto] = useState(false);
@@ -2174,6 +2206,11 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
 
   return (
     <div className="space-y-3 pt-3 border-t border-border">
+      {item.vezes_refeita > 0 && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          Esta solicitação foi ajustada {item.vezes_refeita}× durante o processo.
+        </p>
+      )}
       {emAjuste && isSolicitante && (
         <div className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Ajuste solicitado · corrija e reenvie</p>

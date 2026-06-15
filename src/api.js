@@ -1285,6 +1285,7 @@ export const solicitacoes = {
   timeline:        (id) => get(`/solicitacoes/${id}/timeline`),
   relatarProblema: (id, motivo, comentario) => post(`/solicitacoes/${id}/relatar-problema`, { motivo, comentario }),
   reenviar:        (id, campos) => post(`/solicitacoes/${id}/reenviar`, campos || {}),
+  diagnosticoRefeitas: (dias = 90) => get(`/solicitacoes/dashboard/refeitas?dias=${dias}`),
 };
 
 export const producao = {

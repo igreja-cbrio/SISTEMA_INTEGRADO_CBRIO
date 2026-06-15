@@ -926,6 +926,11 @@ router.post('/:id/relatar-problema', async (req, res) => {
     if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
       return res.status(400).json({ error: 'Solicitação já encerrada · não é possível relatar problema.' });
     }
+    // Já em ajuste: não re-pausa (preservaria status_antes_ajuste/sla_pausado_em
+    // originais) · o solicitante deve editar e reenviar. Cancelar ainda é possível.
+    if (sol.status === 'aguardando_ajuste' && motivo !== 'cancelamento') {
+      return res.status(400).json({ error: 'Já está aguardando ajuste · edite e reenvie (ou cancele).' });
+    }
 
     const lado = isSolic ? 'solicitante' : 'responsavel';
     await supabase.from('solicitacao_ajustes').insert({
@@ -1527,6 +1532,54 @@ router.get('/dashboard/urgencia-frequente', async (req, res) => {
     res.json(lista);
   } catch (e) {
     console.error('[SOLICITACOES] urgencia-frequente:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /dashboard/refeitas?dias=90 · termômetro "pedimos bem?" (NÃO punitivo · Fase 1)
+// % das solicitações do período que precisaram de ajuste (refação pelo solicitante)
+// + nº de devoluções (a área pediu clareza). Gestão (admin/diretor) ou responsável.
+router.get('/dashboard/refeitas', async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (!['admin', 'diretor'].includes(role)) {
+      const { data: rr } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('area').eq('profile_id', req.user.userId).limit(1);
+      if (!rr || !rr.length) return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 7), 365);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+
+    const [{ count: totalPeriodo }, { data: ajustes }] = await Promise.all([
+      supabase.from('solicitacoes').select('id', { count: 'exact', head: true })
+        .gte('created_at', desde).is('deleted_at', null),
+      supabase.from('solicitacao_ajustes').select('solicitacao_id, lado, motivo')
+        .gte('created_at', desde),
+    ]);
+
+    const refeitasSet = new Set();
+    const devolucoesSet = new Set();
+    const porMotivo = { descricao: 0, escopo: 0, data: 0, cancelamento: 0 };
+    (ajustes || []).forEach(a => {
+      porMotivo[a.motivo] = (porMotivo[a.motivo] || 0) + 1;
+      if (a.motivo === 'cancelamento') return;
+      if (a.lado === 'solicitante') refeitasSet.add(a.solicitacao_id);
+      else if (a.lado === 'responsavel') devolucoesSet.add(a.solicitacao_id);
+    });
+
+    const total = totalPeriodo || 0;
+    const refeitas = refeitasSet.size;
+    res.json({
+      dias,
+      total_periodo: total,
+      refeitas,
+      devolucoes: devolucoesSet.size,
+      pct_refeitas: total > 0 ? Math.round((refeitas / total) * 1000) / 10 : 0,
+      por_motivo: porMotivo,
+    });
+  } catch (e) {
+    console.error('[SOLICITACOES] dashboard-refeitas:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

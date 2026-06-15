@@ -64,4 +64,81 @@ DROP POLICY IF EXISTS solic_ajustes_service ON public.solicitacao_ajustes;
 CREATE POLICY solic_ajustes_service ON public.solicitacao_ajustes
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+-- ----------------------------------------------------------------------------
+-- 3. SLA PAUSAVEL · a view passa a respeitar sla_pausado_em
+-- ----------------------------------------------------------------------------
+-- Enquanto a solicitacao esta em 'aguardando_ajuste' (com o solicitante), o SLA
+-- da area NAO deve correr. Antes a view comparava sempre now() · uma solicitacao
+-- parada com o solicitante aparecia "atrasada" e contaminava o KPI ADM de SLA.
+-- Agora o relogio congela em sla_pausado_em durante a pausa (COALESCE). No
+-- reenvio o backend zera sla_pausado_em E empurra os deadlines pelo tempo parado
+-- · entao o trecho ja-respondido/concluido continua medindo contra o prazo
+-- estendido (sem dupla contagem). A unica mudanca aqui sao os 4 ramos de SLA.
+-- DROP+CREATE (igual a 20260528500000) · so o agg_solicitacoes_kpi le esta view.
+DROP VIEW IF EXISTS public.vw_solicitacoes_sla;
+CREATE VIEW public.vw_solicitacoes_sla AS
+ SELECT id,
+        titulo,
+        descricao,
+        justificativa,
+        categoria,
+        urgencia,
+        status,
+        valor_estimado,
+        solicitante_id,
+        responsavel_id,
+        area_solicitante,
+        observacoes,
+        created_at,
+        updated_at,
+        area_responsavel,
+        area_cliente,
+        subcategoria,
+        eh_urgente,
+        justificativa_urgencia,
+        data_necessaria,
+        respondido_em,
+        concluido_em,
+        sla_resposta_deadline,
+        sla_resolucao_deadline,
+        precisa_aprovacao_financeira,
+        aprovado_financeiro_em,
+        aprovado_financeiro_por,
+        nps_nota,
+        nps_comentario,
+        proposta_orcamento,
+        proposta_cronograma,
+        espaco_solicitado,
+        data_uso,
+        horario_inicio,
+        horario_fim,
+        qtde_pessoas,
+        -- "relogio" do SLA · congela em sla_pausado_em durante o ajuste
+        CASE
+            WHEN respondido_em IS NULL AND COALESCE(sla_pausado_em, now()) > sla_resposta_deadline THEN 'atrasado'::text
+            WHEN respondido_em IS NULL THEN 'aguardando_resposta'::text
+            WHEN respondido_em > sla_resposta_deadline THEN 'respondeu_atrasado'::text
+            ELSE 'respondeu_no_prazo'::text
+        END AS sla_resposta_status,
+        CASE
+            WHEN concluido_em IS NULL AND COALESCE(sla_pausado_em, now()) > sla_resolucao_deadline THEN 'atrasado'::text
+            WHEN concluido_em IS NULL THEN 'em_andamento'::text
+            WHEN concluido_em > sla_resolucao_deadline THEN 'concluiu_atrasado'::text
+            ELSE 'concluiu_no_prazo'::text
+        END AS sla_resolucao_status,
+        CASE
+            WHEN respondido_em IS NOT NULL THEN EXTRACT(epoch FROM respondido_em - created_at) / 3600::numeric
+            ELSE EXTRACT(epoch FROM COALESCE(sla_pausado_em, now()) - created_at) / 3600::numeric
+        END AS horas_para_resposta,
+        CASE
+            WHEN concluido_em IS NOT NULL THEN EXTRACT(epoch FROM concluido_em - created_at) / 3600::numeric
+            ELSE EXTRACT(epoch FROM COALESCE(sla_pausado_em, now()) - created_at) / 3600::numeric
+        END AS horas_total
+   FROM public.solicitacoes s;
+
+GRANT SELECT ON public.vw_solicitacoes_sla TO authenticated, service_role;
+
+COMMENT ON VIEW public.vw_solicitacoes_sla IS
+  'Solicitacoes com flags de SLA. Fase 1: respeita sla_pausado_em (SLA congela durante aguardando_ajuste).';
+
 COMMIT;
