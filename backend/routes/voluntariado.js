@@ -8,6 +8,8 @@ const { notificar } = require('../services/notificar');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { requireCron } = require('../utils/cronAuth');
 const antecedentes = require('../services/antecedentesCriminais');
+const multer = require('multer');
+const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 // ── Cron (sem login · CRON_SECRET) ──────────────────────────────────────────
 // Processa as triagens de antecedentes pendentes (Kids/Bridge) via Infosimples.
@@ -23,6 +25,181 @@ router.get('/cron/antecedentes', requireCron, async (req, res) => {
 });
 
 router.use(authenticate, authorizeModule('membresia', 1));
+
+// ══════════════════════════════════════════════════════════════
+// CONTROLE DE FREQUÊNCIA · histórico de serviços (planilha) + vínculo
+// "Quantas vezes serviu e em qual culto" · ativos/inativos (90 dias).
+// ══════════════════════════════════════════════════════════════
+function normNome(s) {
+  return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+function cultoCanonico(s) {
+  const n = normNome(s);
+  if (n.startsWith('sab')) return 'Sábado';
+  if (n.startsWith('dom')) return 'Domingo';
+  if (n.startsWith('qua')) return 'Quarta';
+  return (s || '—').toString().trim() || '—';
+}
+// CSV simples (aspas opcionais) → array de objetos por header
+function parseCsv(texto) {
+  const linhas = texto.replace(/\r/g, '').split('\n').filter(l => l.trim().length);
+  if (!linhas.length) return [];
+  const splitLinha = (l) => {
+    const out = []; let cur = ''; let q = false;
+    for (let i = 0; i < l.length; i++) {
+      const c = l[i];
+      if (c === '"') { if (q && l[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+      else if (c === ',' && !q) { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur); return out;
+  };
+  const header = splitLinha(linhas[0]).map(h => normNome(h));
+  return linhas.slice(1).map(l => {
+    const cels = splitLinha(l); const obj = {};
+    header.forEach((h, i) => { obj[h] = (cels[i] || '').trim(); });
+    return obj;
+  });
+}
+
+// Casa nomes da planilha (não vinculados) com vol_profiles por nome normalizado.
+// Match só quando o nome normalizado é único entre os perfis (ambíguo não casa).
+async function rematchFrequencia() {
+  const { data: profs } = await supabase.from('vol_profiles').select('id, full_name');
+  const map = new Map(); const dup = new Set();
+  for (const p of profs || []) {
+    const k = normNome(p.full_name);
+    if (!k) continue;
+    if (map.has(k)) dup.add(k); else map.set(k, p.id);
+  }
+  for (const k of dup) map.delete(k);
+  // nomes distintos ainda não vinculados (via view · ~<1000 linhas)
+  const { data: pend } = await supabase.from('vw_vol_frequencia')
+    .select('nome_norm').is('vol_profile_id', null);
+  const nomes = [...new Set((pend || []).map(r => r.nome_norm))];
+  let n = 0;
+  for (const nm of nomes) {
+    const pid = map.get(nm);
+    if (!pid) continue;
+    const { error } = await supabase.from('vol_servicos_historico')
+      .update({ vol_profile_id: pid }).eq('nome_norm', nm).is('vol_profile_id', null);
+    if (!error) n += 1;
+  }
+  return n;
+}
+
+// POST /api/voluntariado/frequencia/importar (multipart 'arquivo' CSV: nome,data,culto[,mes])
+router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie o arquivo CSV em "arquivo".' });
+    const linhas = parseCsv(req.file.buffer.toString('utf-8'));
+    const origem = (req.body?.origem || 'planilha_2026').toString().slice(0, 40);
+    const vistos = new Set();
+    const registros = [];
+    let ignoradas = 0;
+    for (const l of linhas) {
+      const nome = (l['nome'] || '').trim();
+      const data = (l['data'] || '').trim();
+      if (!nome || !/^\d{4}-\d{2}-\d{2}$/.test(data)) { ignoradas++; continue; }
+      const culto = cultoCanonico(l['culto']);
+      const nome_norm = normNome(nome);
+      const k = `${nome_norm}|${data}|${culto}`;
+      if (vistos.has(k)) continue;
+      vistos.add(k);
+      registros.push({ nome_planilha: nome, nome_norm, data, culto_label: culto, mes: (l['mes'] || null), origem });
+    }
+    if (!registros.length) return res.status(400).json({ error: 'Nenhuma linha válida no CSV (esperado colunas nome,data,culto).' });
+
+    let inseridas = 0;
+    for (let i = 0; i < registros.length; i += 500) {
+      const lote = registros.slice(i, i + 500);
+      const { error } = await supabase.from('vol_servicos_historico')
+        .upsert(lote, { onConflict: 'nome_norm,data,culto_label,origem', ignoreDuplicates: true });
+      if (error) return res.status(400).json({ error: 'Falha ao gravar: ' + error.message });
+      inseridas += lote.length;
+    }
+    const vinculadas = await rematchFrequencia();
+    res.json({ recebidas: linhas.length, processadas: registros.length, ignoradas, nomes_vinculados: vinculadas });
+  } catch (e) {
+    console.error('[vol] importar frequencia', e.message);
+    res.status(500).json({ error: 'Erro ao importar o controle' });
+  }
+});
+
+// GET /api/voluntariado/frequencia?status=ativos|inativos&vinculo=nao&busca=
+router.get('/frequencia', async (req, res) => {
+  try {
+    let q = supabase.from('vw_vol_frequencia').select('*');
+    if (req.query.status === 'ativos') q = q.eq('ativo', true);
+    else if (req.query.status === 'inativos') q = q.eq('ativo', false);
+    if (req.query.vinculo === 'nao') q = q.is('vol_profile_id', null);
+    else if (req.query.vinculo === 'sim') q = q.not('vol_profile_id', 'is', null);
+    if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
+    q = q.order('ultimo_servico', { ascending: false }).limit(2000);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    const total = (data || []).length;
+    const ativos = (data || []).filter(r => r.ativo).length;
+    res.json({ resumo: { total, ativos, inativos: total - ativos }, itens: data || [] });
+  } catch (e) {
+    console.error('[vol] frequencia', e.message);
+    res.status(500).json({ error: 'Erro ao carregar frequência' });
+  }
+});
+
+// GET /api/voluntariado/frequencia/detalhe?nome_norm=&profile_id=  → datas/cultos
+router.get('/frequencia/detalhe', async (req, res) => {
+  try {
+    let q = supabase.from('vol_servicos_historico')
+      .select('data, culto_label, mes, origem, nome_planilha').is('deleted_at', null);
+    if (req.query.profile_id) q = q.eq('vol_profile_id', req.query.profile_id);
+    else if (req.query.nome_norm) q = q.eq('nome_norm', req.query.nome_norm);
+    else return res.status(400).json({ error: 'Informe profile_id ou nome_norm' });
+    const { data, error } = await q.order('data', { ascending: false }).limit(500);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao carregar detalhe' });
+  }
+});
+
+// GET /api/voluntariado/frequencia/perfis?q=  → busca voluntários pra vincular
+router.get('/frequencia/perfis', async (req, res) => {
+  try {
+    let q = supabase.from('vol_profiles').select('id, full_name').order('full_name').limit(20);
+    if (req.query.q) q = q.ilike('full_name', `%${req.query.q}%`);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao buscar perfis' });
+  }
+});
+
+// POST /api/voluntariado/frequencia/vincular { nome_norm, vol_profile_id }
+router.post('/frequencia/vincular', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const { nome_norm, vol_profile_id } = req.body || {};
+    if (!nome_norm || !vol_profile_id) return res.status(400).json({ error: 'nome_norm e vol_profile_id obrigatórios' });
+    const { error } = await supabase.from('vol_servicos_historico')
+      .update({ vol_profile_id }).eq('nome_norm', nome_norm).is('deleted_at', null);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao vincular' });
+  }
+});
+
+// POST /api/voluntariado/frequencia/revincular  → roda o match automático de novo
+router.post('/frequencia/revincular', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const n = await rematchFrequencia();
+    res.json({ nomes_vinculados: n });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao revincular' });
+  }
+});
 
 // Mensagem automática de WhatsApp · boas-vindas ao voluntário que se inscreve
 // (config/edição em /whatsapp-auto/* · gerencia a chave 'voluntariado_inscricao')

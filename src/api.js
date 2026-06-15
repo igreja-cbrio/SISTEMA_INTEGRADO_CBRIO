@@ -831,6 +831,18 @@ export const logistica = {
     create: (data) => post('/logistica/movimentacoes', data),
     historico: (codigo) => get(`/logistica/movimentacoes/historico/${encodeURIComponent(codigo)}`),
   },
+  // Estoque (Fase 3a) · catálogo + razão (saldo derivado) + validade/FEFO + consumo
+  estoque: {
+    produtos: (params) => get('/logistica/estoque/produtos' + (params ? '?' + new URLSearchParams(params) : '')),
+    criarProduto: (data) => post('/logistica/estoque/produtos', data),
+    atualizarProduto: (id, data) => patch(`/logistica/estoque/produtos/${id}`, data),
+    removerProduto: (id) => del(`/logistica/estoque/produtos/${id}`),
+    movimentacoes: (params) => get('/logistica/estoque/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    lancar: (movimentos) => post('/logistica/estoque/movimentacoes', Array.isArray(movimentos) ? { movimentos } : movimentos),
+    lotes: (dias) => get('/logistica/estoque/lotes' + (dias ? `?dias=${dias}` : '')),
+    consumo: (dias = 90) => get(`/logistica/estoque/consumo?dias=${dias}`),
+    gerarCompra: (produto_ids) => post('/logistica/estoque/gerar-compra', { produto_ids }),
+  },
 };
 
 export const patrimonio = {
@@ -1275,6 +1287,9 @@ export const solicitacoes = {
   relatarProblema: (id, motivo, comentario) => post(`/solicitacoes/${id}/relatar-problema`, { motivo, comentario }),
   reenviar:        (id, campos) => post(`/solicitacoes/${id}/reenviar`, campos || {}),
   diagnosticoRefeitas: (dias = 90) => get(`/solicitacoes/dashboard/refeitas?dias=${dias}`),
+  // Ponte estoque (Fase 3a-2) · atender pela estoque dá baixa + resolve
+  estoqueProdutos: (busca) => get('/solicitacoes/estoque/produtos' + (busca ? '?busca=' + encodeURIComponent(busca) : '')),
+  atenderEstoque: (id, itens, observacao) => post(`/solicitacoes/${id}/atender-estoque`, { itens, observacao }),
 };
 
 export const producao = {
@@ -1673,6 +1688,15 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Controle de frequência (histórico da planilha + check-ins) · ativos/inativos
+  frequencia: {
+    list: (params) => get('/voluntariado/frequencia' + (params ? '?' + new URLSearchParams(params) : '')),
+    detalhe: (params) => get('/voluntariado/frequencia/detalhe?' + new URLSearchParams(params)),
+    perfis: (q) => get('/voluntariado/frequencia/perfis' + (q ? '?q=' + encodeURIComponent(q) : '')),
+    vincular: (nome_norm, vol_profile_id) => post('/voluntariado/frequencia/vincular', { nome_norm, vol_profile_id }),
+    revincular: () => post('/voluntariado/frequencia/revincular', {}),
+    importar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/frequencia/importar', fd); },
+  },
   // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)
   whatsappAuto: {
     config: () => get('/voluntariado/whatsapp-auto/config'),
