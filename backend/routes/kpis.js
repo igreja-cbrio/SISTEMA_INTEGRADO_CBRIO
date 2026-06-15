@@ -384,6 +384,34 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     console.error('[kpis/decisoes-pessoas POST]', error.message);
     return res.status(500).json({ error: error.message });
   }
+
+  // Avisa o time de Cuidados (Marcelo + Wesley) pra entrar em contato com quem
+  // tomou a decisão. Fire-and-forget · não bloqueia a resposta. Kids fica fora
+  // (criança não entra na jornada/NSM). Dedup por decisão (não duplica em edição).
+  if (tipo !== 'kids') {
+    (async () => {
+      try {
+        const { data: equipe } = await supabase.from('profiles')
+          .select('id').in('email', ['marcelo.soares@cbrio.org', 'wesley.ramos@cbrio.org']);
+        const ids = (equipe || []).map(p => p.id).filter(Boolean);
+        if (!ids.length) return;
+        const nomePessoa = String(nome).trim();
+        await notificar({
+          modulo: 'cuidados',
+          tipo: 'nova_aceitacao',
+          titulo: `🙌 Nova decisão: ${nomePessoa}`,
+          mensagem: `${nomePessoa} tomou uma decisão${telLimpo ? ` · ${telLimpo}` : ''}${tipo === 'online' ? ' (online)' : ''}. Entre em contato pra acompanhar nos próximos passos.`,
+          link: '/ministerial/cuidados?tab=convertidos',
+          severidade: 'info',
+          chaveDedup: `nova_aceitacao_${data.id}`,
+          targetIds: ids,
+        });
+      } catch (e) {
+        console.error('[kpis/decisoes-pessoas] notif cuidados:', e.message);
+      }
+    })();
+  }
+
   res.status(201).json(data);
 });
 
