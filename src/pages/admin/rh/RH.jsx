@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
@@ -158,122 +158,59 @@ function sugerirCargoPermissao(cargoRh, cargos) {
   return bestScore >= 1 ? best : null;
 }
 
-// ── TAB: ACESSOS · cargo RH × cargo de permissão (relatório read-only) ──
-function AcessosTab({ onDetail }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [erro, setErro] = useState('');
-  const [filtro, setFiltro] = useState('todos'); // todos | sem_acesso | divergente
-
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      try { const d = await rh.acessos(); if (vivo) setData(d); }
-      catch (e) { if (vivo) setErro(e.message || 'Erro ao carregar'); }
-      finally { if (vivo) setLoading(false); }
-    })();
-    return () => { vivo = false; };
-  }, []);
-
-  if (loading) return <div className="py-12 text-center text-sm text-muted-foreground">Carregando acessos…</div>;
-  if (erro) return <div className="py-12 text-center text-sm text-destructive">{erro}</div>;
-  if (!data) return null;
-
-  const cargos = data.cargos || [];
-  const itens = (data.itens || []).map(i => {
+// ── Acesso ao sistema · índice + célula (migrado da antiga aba "Acessos") ──
+// Cruza o relatório read-only de /rh/acessos (situação por colaborador ATIVO)
+// com a sugestão de cargo pelo título do RH. Alimenta a coluna "Acesso" e o
+// filtro do Diretório de Colaboradores. A configuração em si fica na ficha
+// (FuncionarioDetailPanel → "Permissões do Sistema").
+function buildAcessoIndex(acessos) {
+  const cargos = acessos?.cargos || [];
+  const map = {};
+  let semAcesso = 0, comAcesso = 0, divergente = 0;
+  (acessos?.itens || []).forEach(i => {
     const sug = sugerirCargoPermissao(i.cargo_rh, cargos);
-    const divergente = i.situacao === 'com_acesso' && sug && i.cargo_perm_id && sug.id !== i.cargo_perm_id;
-    return { ...i, sugestao: sug, divergente };
+    const div = i.situacao === 'com_acesso' && sug && i.cargo_perm_id && sug.id !== i.cargo_perm_id;
+    map[i.id] = { ...i, sugestao: sug, divergente: div };
+    if (i.situacao === 'sem_acesso') semAcesso += 1;
+    else { comAcesso += 1; if (div) divergente += 1; }
   });
-  const nDiverg = itens.filter(i => i.divergente).length;
-  const filtrados = itens.filter(i =>
-    filtro === 'sem_acesso' ? i.situacao === 'sem_acesso'
-      : filtro === 'divergente' ? i.divergente
-        : true
-  );
+  return { map, total: comAcesso + semAcesso, comAcesso, semAcesso, divergente, carregado: !!acessos };
+}
 
-  const cards = [
-    { title: 'Colaboradores ativos', value: data.resumo.total, color: '#3b82f6', f: 'todos' },
-    { title: 'Com acesso ao sistema', value: data.resumo.com_acesso, color: '#10b981', f: 'todos' },
-    { title: 'Sem acesso', value: data.resumo.sem_acesso, color: '#ef4444', f: 'sem_acesso' },
-    { title: 'Cargo divergente da sugestão', value: nDiverg, color: '#f59e0b', f: 'divergente' },
-  ];
-
+// Célula da coluna "Acesso" no diretório.
+function AcessoCell({ info, carregado }) {
+  // Sem entrada no relatório: inativos (o relatório só lista ativos) ou carregando.
+  if (!info) return <span className="text-sm text-muted-foreground">{carregado ? '—' : '…'}</span>;
+  if (info.situacao === 'sem_acesso') {
+    return (
+      <div>
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>
+          <ShieldCheck className="h-3 w-3" /> Sem acesso
+        </span>
+        {info.motivo && <div className="text-[11px] text-muted-foreground mt-0.5">{info.motivo}</div>}
+      </div>
+    );
+  }
+  const sugNome = info.sugestao ? (info.sugestao.nome_completo || info.sugestao.nome) : null;
   return (
-    <div className="space-y-5 pt-4 pb-8">
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-        {cards.map(c => (
-          <StatisticsCard key={c.title} title={c.title} value={c.value} icon={ShieldCheck} iconColor={c.color} onClick={() => setFiltro(c.f)} />
-        ))}
-      </div>
-
-      <p className="text-xs text-muted-foreground leading-relaxed">
-        O <b>cargo do RH</b> (título de folha) e o <b>cargo de permissão</b> (que dá acesso ao sistema) são cadastros
-        separados, ligados pelo e-mail. A <b>sugestão</b> é uma estimativa pelo título do RH — revise antes de aplicar.
-        Clique em <b>Configurar acesso</b> pra ajustar na ficha do colaborador (lá dá pra aplicar a sugestão num clique).
-      </p>
-
-      <div className="flex gap-2 flex-wrap">
-        {[['todos', 'Todos'], ['sem_acesso', 'Sem acesso'], ['divergente', 'Divergentes']].map(([k, l]) => (
-          <button key={k} onClick={() => setFiltro(k)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${filtro === k ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
-            {l}
-          </button>
-        ))}
-      </div>
-
-      <div className="overflow-x-auto rounded-md" style={{ border: `1px solid var(--cbrio-border)` }}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Colaborador</th>
-              <th style={styles.th}>Cargo (RH)</th>
-              <th style={styles.th}>Acesso (permissão)</th>
-              <th style={styles.th}>Sugestão pelo RH</th>
-              <th style={styles.th}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtrados.length === 0 && (
-              <tr><td colSpan={5}><div className="py-8 text-center text-sm text-muted-foreground">Nenhum colaborador neste filtro</div></td></tr>
-            )}
-            {filtrados.map(i => (
-              <tr key={i.id} className="cbrio-row hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => onDetail(i.id)}>
-                <td style={styles.td}>
-                  <div className="font-medium text-sm">{i.nome}</div>
-                  {i.email && <div className="text-xs text-muted-foreground truncate max-w-[220px]">{i.email}</div>}
-                </td>
-                <td style={styles.td}>
-                  <span className="text-sm">{i.cargo_rh || '—'}</span>
-                  {i.area_rh && <div className="text-xs text-muted-foreground">{i.area_rh}</div>}
-                </td>
-                <td style={styles.td}>
-                  {i.situacao === 'sem_acesso'
-                    ? <div>
-                        <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>Sem acesso</span>
-                        {i.motivo && <div className="text-[11px] text-muted-foreground mt-0.5">{i.motivo}</div>}
-                      </div>
-                    : <span className="text-sm">{i.cargo_perm_nome || '—'}</span>}
-                </td>
-                <td style={styles.td}>
-                  {i.sugestao
-                    ? <span className="text-sm" style={{ color: i.divergente ? '#b45309' : 'var(--cbrio-text)' }}>
-                      {i.sugestao.nome_completo || i.sugestao.nome}
-                      {i.divergente && <span className="text-[10px] ml-1 text-amber-600">≠ atual</span>}
-                    </span>
-                    : <span className="text-sm text-muted-foreground">—</span>}
-                </td>
-                <td style={styles.td}>
-                  <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); onDetail(i.id); }}>Configurar acesso</Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div>
+      <span className="text-sm">{info.cargo_perm_nome || '—'}</span>
+      {info.divergente && sugNome && (
+        <div className="text-[11px] text-amber-600 mt-0.5" title={`Sugestão pelo cargo do RH: ${sugNome}`}>
+          ≠ sugestão ({sugNome})
+        </div>
+      )}
     </div>
   );
 }
+
+// Chips de filtro de acesso no diretório (com contador) — migrados da antiga aba.
+const ACESSO_FILTROS = [
+  ['todos', 'Todos'],
+  ['com_acesso', 'Com acesso'],
+  ['sem_acesso', 'Sem acesso'],
+  ['divergente', 'Divergentes'],
+];
 
 // ── Shared inline styles (kept for backward compat, gradually migrate to Tailwind) ──
 const styles = {
@@ -349,7 +286,6 @@ const TABS = [
   { key: 'pcs', label: 'PCS', icon: Scale },
   { key: 'admissao', label: 'Admissão', icon: UserPlus },
   { key: 'organograma', label: 'Organograma', icon: Network },
-  { key: 'acessos', label: 'Acessos', icon: ShieldCheck },
   { key: 'folha', label: 'Folha', icon: Receipt },
   { key: 'avaliacoes', label: 'Avaliações', icon: Star },
   { key: 'treinamentos', label: 'Treinamentos', icon: Briefcase },
@@ -369,6 +305,7 @@ export default function RH() {
   const [tab, setTab] = useState('dashboard');
   const [dash, setDash] = useState(null);
   const [funcs, setFuncs] = useState([]);
+  const [acessos, setAcessos] = useState(null); // relatório de acesso ao sistema (cruza ativos × usuários × cargos)
   const [treinos, setTreinos] = useState([]);
   const [setores, setSetores] = useState([]);
   const [areas, setAreas] = useState([]);
@@ -412,6 +349,12 @@ export default function RH() {
     finally { setLoading(false); }
   }, [filtroStatus, filtroArea, busca]);
 
+  // Relatório de acesso: read-only, alimenta a coluna "Acesso" do diretório.
+  // Falha silenciosa — sem ele a coluna só mostra "—" (não derruba o diretório).
+  const loadAcessos = useCallback(async () => {
+    try { setAcessos(await rh.acessos()); } catch (e) { console.error('[RH] acessos:', e); }
+  }, []);
+
   const loadTreinos = useCallback(async () => {
     try { setTreinos(await rh.treinamentos.list()); } catch (e) { console.error(e); }
   }, []);
@@ -427,7 +370,7 @@ export default function RH() {
     } catch (e) { console.error(e); }
   }, []);
 
-  useEffect(() => { loadDash(); loadFuncs(); loadTreinos(); loadSetores(); }, []);
+  useEffect(() => { loadDash(); loadFuncs(); loadAcessos(); loadTreinos(); loadSetores(); }, []);
   useEffect(() => { loadFuncs(); }, [filtroStatus, filtroArea, busca]);
 
   // ── Handlers ──
@@ -440,7 +383,7 @@ export default function RH() {
       if (data.id) await rh.funcionarios.update(data.id, data);
       else await rh.funcionarios.create(data);
       setModalFunc(null);
-      loadFuncs(); loadDash();
+      loadFuncs(); loadDash(); loadAcessos();
       if (data.id && anterior) {
         // Snapshot pré-edição pra permitir desfazer (toast com ação)
         const restaura = {};
@@ -475,14 +418,14 @@ export default function RH() {
     try {
       await rh.funcionarios.desligar(desligarFunc.id, { data_demissao, motivo });
       setDesligarFunc(null); setModalDetail(null);
-      loadFuncs(); loadDash();
+      loadFuncs(); loadDash(); loadAcessos();
       showSuccess('Colaborador desligado · histórico preservado');
     } catch (e) { showToast(e.message); }
   }
 
   function reativarFuncionario(id) {
     askConfirm('Reativar este colaborador (voltar para ativo)?', async () => {
-      try { await rh.funcionarios.reativar(id); loadFuncs(); loadDash(); setModalDetail(null); showSuccess('Colaborador reativado'); }
+      try { await rh.funcionarios.reativar(id); loadFuncs(); loadDash(); loadAcessos(); setModalDetail(null); showSuccess('Colaborador reativado'); }
       catch (e) { showToast(e.message); }
     });
   }
@@ -579,10 +522,10 @@ export default function RH() {
         </TabsContent>
         <TabsContent value="colaboradores">
           <FuncionariosTab
-            funcs={funcs} loading={loading} busca={busca} setBusca={setBusca}
+            funcs={funcs} acessos={acessos} loading={loading} busca={busca} setBusca={setBusca}
             filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
             filtroArea={filtroArea} setFiltroArea={setFiltroArea}
-            onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
+            onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); loadAcessos(); }}
             showToast={showToast}
           />
         </TabsContent>
@@ -590,8 +533,7 @@ export default function RH() {
         <TabsContent value="admissao">
           <TabAdmissao />
         </TabsContent>
-        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); }} /></TabsContent>
-        <TabsContent value="acessos"><AcessosTab onDetail={openDetail} /></TabsContent>
+        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); loadAcessos(); }} /></TabsContent>
         <TabsContent value="folha">{podeRemun && <TabFolha />}</TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
         <TabsContent value="treinamentos">
@@ -628,11 +570,11 @@ export default function RH() {
           showSuccess('Colaborador atualizado!');
           const refreshed = await rh.funcionarios.get(modalDetail.id);
           setModalDetail(refreshed);
-          loadFuncs(); loadDash();
+          loadFuncs(); loadDash(); loadAcessos();
         }}
         onChanged={async () => {
           try { const r = await rh.funcionarios.get(modalDetail.id); setModalDetail(r); } catch { /* noop */ }
-          loadFuncs(); loadDash();
+          loadFuncs(); loadDash(); loadAcessos();
         }}
         onPhotoUpdated={(novoUrl) => {
           setModalDetail((prev) => prev ? { ...prev, foto_url: novoUrl } : prev);
@@ -866,11 +808,26 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, showToast }) {
+function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
+  const [filtroAcesso, setFiltroAcesso] = useState('todos'); // todos | com_acesso | sem_acesso | divergente
   const setError = (msg) => { setLocalError(msg); if (showToast) showToast(msg, msg.includes('concluída') ? 'success' : 'warning'); };
+
+  // Índice de acesso (situação por colaborador ativo) + filtro client-side.
+  const acessoIdx = useMemo(() => buildAcessoIndex(acessos), [acessos]);
+  const funcsVisiveis = useMemo(() => {
+    if (filtroAcesso === 'todos') return funcs;
+    return funcs.filter(f => {
+      const info = acessoIdx.map[f.id];
+      if (!info) return false; // inativos / fora do relatório não casam num filtro de acesso
+      if (filtroAcesso === 'divergente') return info.divergente;
+      return info.situacao === filtroAcesso;
+    });
+  }, [funcs, filtroAcesso, acessoIdx]);
+  const acessoContagem = { todos: funcsVisiveis.length, com_acesso: acessoIdx.comAcesso, sem_acesso: acessoIdx.semAcesso, divergente: acessoIdx.divergente };
+  const acessoLabel = (info) => !info ? '—' : info.situacao === 'sem_acesso' ? 'Sem acesso' : (info.cargo_perm_nome || '—');
 
   async function handleCSVImport(e) {
     const file = e.target.files?.[0];
@@ -910,7 +867,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <CardTitle style={{ color: 'var(--cbrio-text)' }}>Diretório de Colaboradores</CardTitle>
-            <CardDescription style={{ color: 'var(--cbrio-text3)' }}>{funcs.length} colaboradores encontrados</CardDescription>
+            <CardDescription style={{ color: 'var(--cbrio-text3)' }}>{funcsVisiveis.length} colaboradores encontrados</CardDescription>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative">
@@ -941,16 +898,28 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
             </ShadSelect>
           </div>
         </div>
-        <div className="flex gap-2 mt-2 justify-end">
-          <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCSVImport} />
-          <Button variant="outline" size="sm" onClick={() => csvRef.current?.click()}>Importar CSV</Button>
-          <Button variant="outline" size="sm" onClick={() => {
-            const headers = ['Nome', 'Cargo', 'Área', 'Contrato', 'Admissão', 'Status', 'Email'];
-            const rows = funcs.map(f => [f.nome, f.cargo, f.area || '', f.tipo_contrato, f.data_admissao || '', f.status, f.email || '']);
-            exportPDF('Colaboradores', headers, rows, { subtitle: `${funcs.length} colaboradores` });
-          }}>
-            <Download className="h-3.5 w-3.5" /> Exportar
-          </Button>
+        <div className="flex flex-col gap-2 mt-2 sm:flex-row sm:items-center sm:justify-between">
+          {/* Filtro de acesso ao sistema (migrado da antiga aba "Acessos") */}
+          <div className="flex gap-2 flex-wrap items-center">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Acesso:</span>
+            {ACESSO_FILTROS.map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setFiltroAcesso(k)} disabled={!acessoIdx.carregado}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${filtroAcesso === k ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+                {l}{k !== 'todos' && acessoIdx.carregado ? ` (${acessoContagem[k]})` : ''}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 justify-end">
+            <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCSVImport} />
+            <Button variant="outline" size="sm" onClick={() => csvRef.current?.click()}>Importar CSV</Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              const headers = ['Nome', 'Cargo', 'Área', 'Contrato', 'Admissão', 'Status', 'Acesso', 'Email'];
+              const rows = funcsVisiveis.map(f => [f.nome, f.cargo, f.area || '', f.tipo_contrato, f.data_admissao || '', f.status, acessoLabel(acessoIdx.map[f.id]), f.email || '']);
+              exportPDF('Colaboradores', headers, rows, { subtitle: `${funcsVisiveis.length} colaboradores` });
+            }}>
+              <Download className="h-3.5 w-3.5" /> Exportar
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="px-5 pb-5">
@@ -960,6 +929,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
               <tr>
                 <th style={styles.th}>Nome</th>
                 <th style={styles.th}>Cargo</th>
+                <th style={styles.th}>Acesso</th>
                 <th style={styles.th}>Área</th>
                 <th style={styles.th}>Contrato</th>
                 <th style={styles.th}>Admissão</th>
@@ -968,9 +938,9 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
-              {!loading && funcs.length === 0 && <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><Users className="h-5 w-5 text-muted-foreground" /></div><span className="text-sm font-medium text-foreground">Nenhum colaborador encontrado</span><span className="text-xs text-muted-foreground">Tente ajustar os filtros</span></div></td></tr>}
-              {funcs.map(f => (
+              {loading && <tr><td colSpan={8}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
+              {!loading && funcsVisiveis.length === 0 && <tr><td colSpan={8}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><Users className="h-5 w-5 text-muted-foreground" /></div><span className="text-sm font-medium text-foreground">Nenhum colaborador encontrado</span><span className="text-xs text-muted-foreground">Tente ajustar os filtros</span></div></td></tr>}
+              {funcsVisiveis.map(f => (
                 <tr key={f.id} className="cbrio-row hover:bg-muted/50 transition-colors"
                   onClick={() => onDetail(f.id)}>
                   <td style={{ ...styles.td, fontWeight: 600 }}>
@@ -989,6 +959,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                     </div>
                   </td>
                   <td style={styles.td}><span className="text-sm">{f.cargo}</span></td>
+                  <td style={styles.td}><AcessoCell info={acessoIdx.map[f.id]} carregado={acessoIdx.carregado} /></td>
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{f.area || '—'}</span></td>
                   <td style={styles.td}><span className="text-sm">{TIPO_CONTRATO[f.tipo_contrato] || f.tipo_contrato}</span></td>
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{fmtDate(f.data_admissao)}</span></td>
