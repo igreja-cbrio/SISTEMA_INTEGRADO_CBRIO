@@ -497,7 +497,8 @@ function RelatorioView() {
         </select>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 20 }}>
+      {/* 3 colunas fixas → 3 + 3 (Vencendo nunca fica órfão numa linha) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, marginBottom: 20 }}>
         <div style={st.kpi(C.green)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.valor_total)}</div><div style={{ fontSize: 12, color: C.text2 }}>Valor em estoque</div></div>
         <div style={st.kpi(C.primary)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{r.produtos}</div><div style={{ fontSize: 12, color: C.text2 }}>Produtos ativos</div></div>
         <div style={st.kpi(C.red)}><div style={{ fontSize: 20, fontWeight: 700, color: r.a_repor ? C.red : C.text }}>{r.a_repor}</div><div style={{ fontSize: 12, color: C.text2 }}>A repor</div></div>
