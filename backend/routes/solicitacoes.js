@@ -142,14 +142,25 @@ router.get('/', async (req, res) => {
     const role = req.user.role;
     const granular = req.user.granular;
 
-    const { categoria, status, mine, aba } = req.query;
+    const { categoria, status, mine, aba, periodo } = req.query;
     let q = supabase
       .from('solicitacoes')
       .select('*')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
     if (categoria) q = q.eq('categoria', categoria);
     if (status) q = q.eq('status', status);
+
+    // Período padrão (Fase 2) · bound por updated_at pra não estourar o cap de
+    // 1000 linhas do PostgREST conforme o volume cresce. Filtra por updated_at
+    // (não created_at) pra manter visível o que teve atividade recente, mesmo
+    // criado há tempos. 'tudo' remove o limite. aba=aprovar não filtra (a fila
+    // de decisão é pequena e recente por natureza).
+    if (aba !== 'aprovar') {
+      const dias = periodo === 'tudo' ? 0 : (parseInt(periodo, 10) || 365);
+      if (dias > 0) q = q.gte('updated_at', new Date(Date.now() - dias * 86400000).toISOString());
+    }
 
     if (aba === 'aprovar') {
       // Aba do diretor de origem · so o que o user precisa aprovar.
