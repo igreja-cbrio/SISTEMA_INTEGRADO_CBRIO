@@ -100,6 +100,10 @@
     {
       "path": "/api/whatsapp-grupos/cron/diario",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/voluntariado/cron/antecedentes",
+      "schedule": "0 8 * * *"
     }
   ],
   "rewrites": [
