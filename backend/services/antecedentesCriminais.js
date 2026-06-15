@@ -16,23 +16,21 @@
 
 const { supabase } = require('../utils/supabase');
 
-// Endpoint configurável (confirmar o path exato no painel da conta Infosimples).
+// Endpoint da consulta "Antecedentes Criminais / Polícia Federal / Emitir".
+// Configurável por env caso a conta exponha outro path.
 const INFOSIMPLES_URL =
   process.env.INFOSIMPLES_ANTECEDENTES_URL ||
-  'https://api.infosimples.com/api/v2/consultas/dpf/antecedentes-criminais';
-const TIMEOUT_MS = Number(process.env.INFOSIMPLES_TIMEOUT_MS || 90000);
+  'https://api.infosimples.com/api/v2/consultas/antecedentes-criminais/pf/emit';
+const TIMEOUT_MS = Number(process.env.INFOSIMPLES_TIMEOUT_MS || 60000);
 
 function isConfigured() {
   return !!process.env.INFOSIMPLES_API_TOKEN;
 }
 
-// yyyy-mm-dd → dd/mm/yyyy (formato usual de birthdate na Infosimples)
-function toBrDate(d) {
+// birthdate exigido em ISO 8601 (YYYY-MM-DD, com zeros à esquerda).
+function isoDate(d) {
   if (!d) return null;
-  const s = String(d).slice(0, 10);
-  const [y, m, dd] = s.split('-');
-  if (!y || !m || !dd) return s;
-  return `${dd}/${m}/${y}`;
+  return String(d).slice(0, 10);
 }
 
 // ----------------------------------------------------------------------------
@@ -44,17 +42,20 @@ async function consultarInfosimplesPF({ nome, cpf, nome_mae, nome_pai, data_nasc
     return { ok: false, status: 'pendente', erro: 'INFOSIMPLES_API_TOKEN ausente' };
   }
 
-  const body = {
+  // A Infosimples espera os parâmetros como form-urlencoded (ver doc/snippet).
+  // `timeout` em segundos, com margem abaixo do nosso abort pra receber a
+  // resposta antes de cancelar a requisição.
+  const apiTimeoutSec = Math.max(30, Math.floor(TIMEOUT_MS / 1000) - 10);
+  const body = new URLSearchParams({
     token: process.env.INFOSIMPLES_API_TOKEN,
-    cpf: (cpf || '').replace(/\D+/g, ''),
     nome: nome || '',
+    birthdate: isoDate(data_nascimento) || '',
+    cpf: (cpf || '').replace(/\D+/g, ''),
     nome_mae: nome_mae || '',
     nome_pai: nome_pai || '',
-    birthdate: toBrDate(data_nascimento) || '',
     uf_nascimento: uf_nascimento || '',
-    // Infosimples espera o timeout em segundos.
-    timeout: Math.max(30, Math.floor(TIMEOUT_MS / 1000)),
-  };
+    timeout: String(apiTimeoutSec),
+  });
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -62,8 +63,8 @@ async function consultarInfosimplesPF({ nome, cpf, nome_mae, nome_pai, data_nasc
   try {
     const resp = await fetch(INFOSIMPLES_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body,
       signal: ctrl.signal,
     });
     json = await resp.json().catch(() => ({ code: resp.status, code_message: 'Resposta não-JSON do provedor' }));
