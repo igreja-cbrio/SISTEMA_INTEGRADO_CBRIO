@@ -11,7 +11,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, Filter, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -164,6 +164,13 @@ export default function Solicitacoes() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
+  // Fase 2 · filtros de escala + período + layout da fila
+  const [filterArea, setFilterArea] = useState('todas');
+  const [filterStatus, setFilterStatus] = useState('todos');
+  const [busca, setBusca] = useState('');
+  const [slaOnly, setSlaOnly] = useState(false);
+  const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
+  const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'kanban' | 'lista'
 
   // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
   // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
@@ -249,6 +256,8 @@ export default function Solicitacoes() {
       let params = {};
       if (view === 'minhas') params = { mine: 'true' };
       else if (view === 'aprovar') params = { aba: 'aprovar' };
+      // Período padrão bound (Fase 2) · não se aplica à fila de aprovação.
+      if (view !== 'aprovar') params.periodo = periodo;
       const data = await api.list(params);
       setItems(data);
     } catch (e) {
@@ -287,7 +296,7 @@ export default function Solicitacoes() {
   const loadRef = useRef(load);
   useEffect(() => { loadRef.current = load; });
 
-  useEffect(() => { load(); }, [view]);
+  useEffect(() => { load(); }, [view, periodo]);
 
   // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitações` recarrega
   // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
@@ -313,10 +322,26 @@ export default function Solicitacoes() {
     };
   }, [profile?.id, isResponsavel]);
 
+  // Opções dos filtros derivadas do conjunto carregado (sempre relevantes).
+  const areasOpts = useMemo(
+    () => [...new Set(items.map(i => i.area_responsavel).filter(Boolean))].sort(),
+    [items]);
+  const statusOpts = useMemo(
+    () => [...new Set(items.map(i => i.status).filter(Boolean))].sort(),
+    [items]);
+
   const filtered = useMemo(() => {
-    if (filterCat === 'todas') return items;
-    return items.filter(i => i.categoria === filterCat);
-  }, [items, filterCat]);
+    let r = items;
+    if (filterCat !== 'todas')    r = r.filter(i => i.categoria === filterCat);
+    if (filterArea !== 'todas')   r = r.filter(i => i.area_responsavel === filterArea);
+    if (filterStatus !== 'todos') r = r.filter(i => i.status === filterStatus);
+    if (slaOnly)                  r = r.filter(isSlaEstourando);
+    const t = busca.trim().toLowerCase();
+    if (t) r = r.filter(i =>
+      (i.titulo || '').toLowerCase().includes(t) ||
+      (i.descricao || '').toLowerCase().includes(t));
+    return r;
+  }, [items, filterCat, filterArea, filterStatus, slaOnly, busca]);
 
   const columns = useMemo(() => {
     return KANBAN_COLUMNS.map(col => ({
@@ -461,21 +486,6 @@ export default function Solicitacoes() {
             >
               <Users className="h-4 w-4" /> Responsáveis
             </Button>
-          )}
-          {/* Category filter — only for responsáveis */}
-          {isResponsavel && (
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <Select value={filterCat} onValueChange={setFilterCat}>
-                <SelectTrigger className="w-[160px] h-9 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todas">Todas</SelectItem>
-                  {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
           )}
 
           {/* New request — everyone */}
@@ -866,6 +876,66 @@ export default function Solicitacoes() {
         </div>
       )}
 
+      {/* Fase 2 · barra de filtros (atender + minhas · não na aprovação) */}
+      {view !== 'aprovar' && !loading && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar título ou descrição" className="pl-8 h-9" />
+          </div>
+          <Select value={filterCat} onValueChange={setFilterCat}>
+            <SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue placeholder="Categoria" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todas">Todas categorias</SelectItem>
+              {CATEGORIAS.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {view === 'atender' && areasOpts.length > 1 && (
+            <Select value={filterArea} onValueChange={setFilterArea}>
+              <SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue placeholder="Área" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas áreas</SelectItem>
+                {areasOpts.map(a => <SelectItem key={a} value={a}>{AREA_LABELS[a] || a}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          {statusOpts.length > 1 && (
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos status</SelectItem>
+                {statusOpts.map(s => <SelectItem key={s} value={s}>{getStatusMeta(s).label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          <Select value={periodo} onValueChange={setPeriodo}>
+            <SelectTrigger className="w-[140px] h-9 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="90">Últimos 90 dias</SelectItem>
+              <SelectItem value="180">Últimos 6 meses</SelectItem>
+              <SelectItem value="365">Último ano</SelectItem>
+              <SelectItem value="730">Últimos 2 anos</SelectItem>
+              <SelectItem value="tudo">Tudo</SelectItem>
+            </SelectContent>
+          </Select>
+          {view === 'atender' && (
+            <Button variant={slaOnly ? 'default' : 'outline'} size="sm"
+              onClick={() => setSlaOnly(s => !s)} className="h-9 gap-1.5">
+              <Clock className="h-4 w-4" /> SLA estourando
+            </Button>
+          )}
+          {view === 'atender' && (
+            <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
+              <button type="button" onClick={() => setAtenderLayout('kanban')}
+                className={`px-3 h-9 text-sm ${atenderLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+              <button type="button" onClick={() => setAtenderLayout('lista')}
+                className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Content: Kanban so na view 'atender' · Lista de aprovação em 'aprovar' · Lista simples nas demais. */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh]">
@@ -896,6 +966,10 @@ export default function Solicitacoes() {
         /* ── Kanban Board (managers/admins) ── */
         <>
         <TermometroRefeitas />
+        {atenderLayout === 'lista' ? (
+          <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
+            emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {columns.map(col => (
             <div
@@ -936,80 +1010,12 @@ export default function Solicitacoes() {
             </div>
           ))}
         </div>
+        )}
         </>
       ) : (
-        /* ── Simple list (collaborators) ── */
-        <div className="space-y-3">
-          {filtered.length === 0 ? (
-            <Card className="p-8 text-center">
-              <List className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-              <p className="text-muted-foreground">Você ainda não tem solicitações.</p>
-              <p className="text-sm text-muted-foreground mt-1">Clique em "Nova Solicitação" para começar.</p>
-            </Card>
-          ) : (
-            filtered.map(item => {
-              const cat = getCatMeta(item.categoria);
-              const urg = getUrgMeta(item.urgencia);
-              const st = getStatusMeta(item.status);
-              const date = new Date(item.created_at).toLocaleDateString('pt-BR');
-              const precisaAvaliar = item.status === 'concluido'
-                && item.solicitante_id === profile?.id
-                && item.nps_nota == null;
-              const aguardandoOrigem = item.status === 'aguardando_aprovacao_origem'
-                && ['pendente', 'triagem'].includes(item.aprovacao_origem_status);
-              const emTriagem = item.aprovacao_origem_status === 'triagem';
-              const diretorNome = item.aprovacao_origem_diretor?.name;
-              const foiRejeitada = item.status === 'rejeitado' && item.aprovacao_origem_status === 'rejeitada';
-              return (
-                <Card
-                  key={item.id}
-                  className={`p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                    precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' :
-                    aguardandoOrigem ? 'border-l-4 border-l-violet-500 bg-violet-500/5' : ''
-                  }`}
-                  onClick={() => setDetailItem(item)}
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <Badge className={`text-xs shrink-0 ${cat.color}`}>{cat.label}</Badge>
-                      <p className="text-sm font-medium text-foreground truncate">{item.titulo}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      {precisaAvaliar && (
-                        <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 gap-1">
-                          <Star className="h-3 w-3" /> Avalie
-                        </Badge>
-                      )}
-                      {item.ml_last_status && ML_STATUS_META[item.ml_last_status] && (
-                        <Badge className={`text-xs ${ML_STATUS_META[item.ml_last_status].color}`}>
-                          {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
-                        </Badge>
-                      )}
-                      <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
-                      <Badge className={`text-xs ${st.color}`}>{st.label}</Badge>
-                      <span className="text-xs text-muted-foreground">{date}</span>
-                    </div>
-                  </div>
-                  {aguardandoOrigem && (
-                    <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
-                      {emTriagem
-                        ? <>⏳ Em triagem · definindo o aprovador{item.eh_urgente ? ' · urgente' : ''}</>
-                        : <>⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}</>}
-                    </p>
-                  )}
-                  {foiRejeitada && item.aprovacao_origem_motivo && (
-                    <p className="text-xs text-red-700 dark:text-red-400 mt-2">
-                      <span className="font-medium">Rejeitada:</span> {item.aprovacao_origem_motivo}
-                    </p>
-                  )}
-                  {item.descricao && !aguardandoOrigem && !foiRejeitada && (
-                    <p className="text-xs text-muted-foreground mt-2 line-clamp-1">{item.descricao}</p>
-                  )}
-                </Card>
-              );
-            })
-          )}
-        </div>
+        /* ── Lista simples (minhas) · mesmo componente do modo Lista da fila ── */
+        <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
+          emptyMsg="Nenhuma solicitação para os filtros atuais." />
       )}
 
       {/* Detail dialog */}
@@ -1021,12 +1027,113 @@ export default function Solicitacoes() {
         onStatusChange={handleStatusChange}
         onNpsSubmit={handleNpsSubmit}
         onItemRefresh={async () => {
-          // recarrega a lista e atualiza o detailItem com a versão fresca
-          const data = await api.list();
+          // recarrega a lista (respeitando view + período) e atualiza o detailItem
+          const params = {};
+          if (view === 'minhas') params.mine = 'true';
+          else if (view === 'aprovar') params.aba = 'aprovar';
+          if (view !== 'aprovar') params.periodo = periodo;
+          const data = await api.list(params);
           setItems(data);
           setDetailItem(curr => (curr ? data.find(d => d.id === curr.id) || curr : curr));
         }}
       />
+    </div>
+  );
+}
+
+// Fase 2 · rótulos de área (area_responsavel) pro filtro e pra lista da fila.
+const AREA_LABELS = {
+  reserva_espaco: 'Reserva de espaço', cozinha: 'Cozinha', limpeza: 'Limpeza',
+  manutencao: 'Manutenção', logistica_estoque: 'Estoque', logistica_compras: 'Compras',
+  ti: 'TI', rh: 'RH', financeiro: 'Financeiro', marketing: 'Marketing', producao: 'Produção',
+};
+
+// "SLA estourando" = não pausado/encerrado E prazo ativo vencido ou < 24h pra
+// vencer (mesma régua do getSlaBadge, que mostra badge quando < 24h ou atrasado).
+function isSlaEstourando(item) {
+  const fora = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado', 'aguardando_ajuste'].includes(item.status);
+  if (fora) return false;
+  const ativo = !item.respondido_em ? item.sla_resposta_deadline : item.sla_resolucao_deadline;
+  if (!ativo) return false;
+  return (new Date(ativo).getTime() - Date.now()) / 3600000 < 24;
+}
+
+// Lista plana de solicitações · reusada na aba "Minhas" e no modo Lista da fila
+// "Para Atender" (a "Caixa da Área": filtre por área e veja a fila daquela área).
+function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg }) {
+  if (!items || items.length === 0) {
+    return (
+      <Card className="p-8 text-center">
+        <List className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+        <p className="text-muted-foreground">{emptyMsg || 'Nenhuma solicitação.'}</p>
+      </Card>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {items.map(item => {
+        const cat = getCatMeta(item.categoria);
+        const urg = getUrgMeta(item.urgencia);
+        const st = getStatusMeta(item.status);
+        const sla = getSlaBadge(item);
+        const date = new Date(item.created_at).toLocaleDateString('pt-BR');
+        const precisaAvaliar = item.status === 'concluido' && item.solicitante_id === profileId && item.nps_nota == null;
+        const aguardandoOrigem = item.status === 'aguardando_aprovacao_origem' && ['pendente', 'triagem'].includes(item.aprovacao_origem_status);
+        const emTriagem = item.aprovacao_origem_status === 'triagem';
+        const diretorNome = item.aprovacao_origem_diretor?.name;
+        const foiRejeitada = item.status === 'rejeitado' && item.aprovacao_origem_status === 'rejeitada';
+        return (
+          <Card
+            key={item.id}
+            className={`p-4 cursor-pointer hover:shadow-md transition-shadow ${
+              precisaAvaliar ? 'border-l-4 border-l-amber-500 bg-amber-500/5' :
+              aguardandoOrigem ? 'border-l-4 border-l-violet-500 bg-violet-500/5' : ''
+            }`}
+            onClick={() => onOpen(item)}
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <Badge className={`text-xs shrink-0 ${cat.color}`}>{cat.label}</Badge>
+                <p className="text-sm font-medium text-foreground truncate">{item.titulo}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {precisaAvaliar && (
+                  <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 gap-1">
+                    <Star className="h-3 w-3" /> Avalie
+                  </Badge>
+                )}
+                {item.ml_last_status && ML_STATUS_META[item.ml_last_status] && (
+                  <Badge className={`text-xs ${ML_STATUS_META[item.ml_last_status].color}`}>
+                    {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
+                  </Badge>
+                )}
+                {item.area_responsavel && (
+                  <Badge className="text-xs bg-muted text-muted-foreground hidden sm:inline-flex">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</Badge>
+                )}
+                {sla && <Badge className={`text-xs ${sla.color}`}>{sla.label}</Badge>}
+                <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
+                <Badge className={`text-xs ${st.color}`}>{st.label}</Badge>
+                <span className="text-xs text-muted-foreground">{date}</span>
+              </div>
+            </div>
+            {aguardandoOrigem && (
+              <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
+                {emTriagem
+                  ? <>⏳ Em triagem · definindo o aprovador{item.eh_urgente ? ' · urgente' : ''}</>
+                  : <>⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}</>}
+              </p>
+            )}
+            {foiRejeitada && item.aprovacao_origem_motivo && (
+              <p className="text-xs text-red-700 dark:text-red-400 mt-2">
+                <span className="font-medium">Rejeitada:</span> {item.aprovacao_origem_motivo}
+              </p>
+            )}
+            {item.descricao && !aguardandoOrigem && !foiRejeitada && (
+              <p className="text-xs text-muted-foreground mt-2 line-clamp-1">{item.descricao}</p>
+            )}
+          </Card>
+        );
+      })}
     </div>
   );
 }
