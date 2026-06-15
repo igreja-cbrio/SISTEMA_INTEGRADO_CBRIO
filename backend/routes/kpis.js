@@ -392,7 +392,7 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     (async () => {
       try {
         const { data: equipe } = await supabase.from('profiles')
-          .select('id').in('email', ['marcelo.soares@cbrio.org', 'wesley@cbrio.com.br']);
+          .select('id').in('email', ['marcelo.soares@cbrio.org', 'wesley.ramos@cbrio.org']);
         const ids = (equipe || []).map(p => p.id).filter(Boolean);
         if (!ids.length) return;
         const nomePessoa = String(nome).trim();
