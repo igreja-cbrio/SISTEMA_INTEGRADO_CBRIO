@@ -9,6 +9,7 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { acharOuCriar, buscarCandidatos } = require('../services/membroMatch');
 
 router.use(authenticate);
 
@@ -17,52 +18,11 @@ function cleanCpf(cpf) {
 }
 
 // ---------------------------------------------------------------------------
-// findOrCreateMembro: dado cpf/email/telefone/nome, acha mem_membros existente
-// ou cria um novo (status='visitante'). Retorna { membro_id, created, conflicts }.
-// Usado por outras rotas (next, voluntariado, etc) para evitar duplicacao.
+// findOrCreateMembro: acha mem_membros existente (cpf -> email) ou cria novo.
+// A lógica de matching vive em services/membroMatch (fonte única · "guardar na
+// origem"). Mantido aqui pelo nome porque next/voluntariado importam daqui.
 // ---------------------------------------------------------------------------
-async function findOrCreateMembro({ cpf, email, telefone, nome, status = 'visitante' }) {
-  const cleanedCpf = cleanCpf(cpf);
-  const cleanedEmail = email ? String(email).trim().toLowerCase() : null;
-  const cleanedTel = telefone ? String(telefone).replace(/\D/g, '') : null;
-
-  // 1) Busca por CPF (mais confiavel)
-  if (cleanedCpf && cleanedCpf.length === 11) {
-    const { data } = await supabase
-      .from('mem_membros')
-      .select('id, nome, email, status')
-      .eq('cpf', cleanedCpf)
-      .maybeSingle();
-    if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
-  }
-
-  // 2) Por email
-  if (cleanedEmail) {
-    const { data } = await supabase
-      .from('mem_membros')
-      .select('id, nome, email')
-      .ilike('email', cleanedEmail)
-      .limit(1);
-    if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
-  }
-
-  // 3) Cria novo
-  const payload = {
-    nome: nome || 'Sem nome',
-    email: cleanedEmail || null,
-    telefone: cleanedTel || null,
-    cpf: cleanedCpf && cleanedCpf.length === 11 ? cleanedCpf : null,
-    status,
-    active: true,
-  };
-  const { data, error } = await supabase
-    .from('mem_membros')
-    .insert(payload)
-    .select('id')
-    .single();
-  if (error) throw error;
-  return { membro_id: data.id, created: true };
-}
+const findOrCreateMembro = acharOuCriar;
 
 // ---------------------------------------------------------------------------
 // GET /api/pessoas/lookup
@@ -82,16 +42,8 @@ router.get('/lookup', async (req, res) => {
       return res.status(400).json({ error: 'Informe ao menos cpf, email ou telefone' });
     }
 
-    // Constroi OR para encontrar o melhor match em mem_membros
-    let q = supabase.from('mem_membros').select('id, nome, email, telefone, cpf, status, foto_url, familia_id');
-    const ors = [];
-    if (cpf && cpf.length === 11) ors.push(`cpf.eq.${cpf}`);
-    if (email) ors.push(`email.ilike.${emailEsc}`);
-    if (tel) ors.push(`telefone.ilike.%${tel}%`);
-    if (ors.length === 0) return res.json({ found: false });
-
-    const { data: membros, error } = await q.or(ors.join(',')).limit(5);
-    if (error) throw error;
+    // Melhor match em mem_membros via serviço de matching (fonte única)
+    const membros = await buscarCandidatos({ cpf, email, telefone: tel }, { limit: 5 });
 
     if (!membros || membros.length === 0) {
       // Fallback: busca em int_visitantes / next_inscricoes (sem mem_membros ainda)
