@@ -842,6 +842,7 @@ export const logistica = {
     lotes: (dias) => get('/logistica/estoque/lotes' + (dias ? `?dias=${dias}` : '')),
     consumo: (dias = 90) => get(`/logistica/estoque/consumo?dias=${dias}`),
     gerarCompra: (produto_ids) => post('/logistica/estoque/gerar-compra', { produto_ids }),
+    relatorio: (dias = 90) => get(`/logistica/estoque/relatorio?dias=${dias}`),
   },
 };
 
