@@ -876,6 +876,7 @@ export const rh = {
     remove: (id) => del(`/rh/funcionarios/${id}`),
     desligar: (id, data) => post(`/rh/funcionarios/${id}/desligar`, data),
     reativar: (id) => post(`/rh/funcionarios/${id}/reativar`),
+    concluirAdmissao: (id) => post(`/rh/funcionarios/${id}/concluir-admissao`),
     setGestor: (id, gestorId) => put(`/rh/funcionarios/${id}/gestor`, { gestor_id: gestorId || null }),
     uploadFoto: (id, file) => {
       const fd = new FormData();
@@ -928,14 +929,8 @@ export const rh = {
     concluir: (id) => post(`/rh/avaliacoes/${id}/concluir`),
     iniciarCiclo: (data) => post('/rh/avaliacoes/iniciar-ciclo', data),
   },
-  admissoes: {
-    list: (params) => get('/rh/admissoes' + (params ? '?' + new URLSearchParams(params) : '')),
-    get: (id) => get(`/rh/admissoes/${id}`),
-    create: (data) => post('/rh/admissoes', data),
-    update: (id, data) => patch(`/rh/admissoes/${id}`, data),
-    remove: (id) => del(`/rh/admissoes/${id}`),
-    concluir: (id) => post(`/rh/admissoes/${id}/concluir`),
-  },
+  // Admissão agora é um status do colaborador (em_admissao) — ver rh.funcionarios
+  // (create com status 'em_admissao', update de admissao_dados, concluirAdmissao).
 };
 
 export const pcs = {
