@@ -726,20 +726,25 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus, podeRemun = false }) 
       <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
         <CardHeader className="px-5 pt-5 pb-1">
           <CardTitle className="text-sm font-semibold text-foreground">Saúde do quadro</CardTitle>
-          <p className="text-xs text-muted-foreground mt-0.5">Entradas, saídas e total de colaboradores por mês · {meses} meses</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Entradas/saídas (eixo esq.) e total no quadro (eixo dir., ampliado pra destacar a variação) · {meses} meses</p>
         </CardHeader>
         <CardContent className="px-2 pb-4 pt-2">
           {!series ? <div className="h-[300px] rounded-xl bg-muted animate-pulse" /> : (
             <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart data={quadro} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <ComposedChart data={quadro} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" vertical={false} />
                 <XAxis dataKey="mesLabel" tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} width={32} />
+                {/* Eixo esquerdo · fluxo (entradas/saídas), começa no zero */}
+                <YAxis yAxisId="fluxo" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} width={28} />
+                {/* Eixo direito · total no quadro, AUTO-ZOOM na faixa onde varia (pra ver ±1) */}
+                <YAxis yAxisId="total" orientation="right" allowDecimals={false} width={34}
+                  domain={[(min) => Math.max(0, Math.floor(min) - 2), (max) => Math.ceil(max) + 2]}
+                  tick={{ fontSize: 11, fill: '#00B39D' }} axisLine={false} tickLine={false} />
                 <Tooltip contentStyle={tipTooltip} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar name="Entradas" dataKey="entradas" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={22} />
-                <Bar name="Saídas" dataKey="saidas" fill="#ef4444" radius={[3, 3, 0, 0]} maxBarSize={22} />
-                <Line name="Total no quadro" type="monotone" dataKey="headcount" stroke="#00B39D" strokeWidth={2.5} dot={{ r: 2 }} />
+                <Bar yAxisId="fluxo" name="Entradas" dataKey="entradas" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Bar yAxisId="fluxo" name="Saídas" dataKey="saidas" fill="#ef4444" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Line yAxisId="total" name="Total no quadro" type="monotone" dataKey="headcount" stroke="#00B39D" strokeWidth={2.5} dot={{ r: 2 }} />
               </ComposedChart>
             </ResponsiveContainer>
           )}
