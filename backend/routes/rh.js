@@ -43,7 +43,7 @@ async function preencherFotoDoPerfil(funcs) {
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
-    let query = supabase.from('rh_funcionarios').select('id, status, tipo_contrato, area');
+    let query = supabase.from('rh_funcionarios').select('id, status, tipo_contrato, area, data_admissao, data_demissao, salario, custo_total_mensal');
     query = applyAccessFilter(query, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
     const { data: funcionarios, error } = await query;
 
@@ -54,6 +54,22 @@ router.get('/dashboard', async (req, res) => {
     const ferias = funcionarios.filter(f => f.status === 'ferias').length;
     const licenca = funcionarios.filter(f => f.status === 'licenca').length;
     const inativos = funcionarios.filter(f => f.status === 'inativo').length;
+    const emAdmissao = funcionarios.filter(f => f.status === 'em_admissao').length;
+
+    // Admissões / desligamentos nos últimos 12 meses + turnover.
+    // Turnover = desligamentos no período ÷ ativos atuais × 100 (sem histórico de
+    // headcount, usamos os ativos como denominador · rótulo deixa claro na UI).
+    const umAnoAtras = new Date(); umAnoAtras.setFullYear(umAnoAtras.getFullYear() - 1);
+    const limiteAno = umAnoAtras.toISOString().slice(0, 10);
+    const admissoesAno = funcionarios.filter(f => f.data_admissao && f.data_admissao >= limiteAno).length;
+    const desligamentosAno = funcionarios.filter(f => f.data_demissao && f.data_demissao >= limiteAno).length;
+    const turnover = ativos > 0 ? Math.round((desligamentosAno / ativos) * 1000) / 10 : 0;
+
+    // Folha / custo só pra quem pode ver remuneração (mesma regra do resto do RH).
+    const podeRemun = podeEditarRemuneracao(req);
+    const ativosList = funcionarios.filter(f => f.status === 'ativo');
+    const totalSalarios = podeRemun ? ativosList.reduce((s, f) => s + Number(f.salario || 0), 0) : null;
+    const custoMensal = podeRemun ? ativosList.reduce((s, f) => s + Number(f.custo_total_mensal || f.salario || 0), 0) : null;
 
     // Contagem por tipo de contrato
     const porContrato = {};
@@ -90,7 +106,10 @@ router.get('/dashboard', async (req, res) => {
       .order('data_expiracao');
 
     res.json({
-      total, ativos, ferias, licenca, inativos,
+      total, ativos, ferias, licenca, inativos, emAdmissao,
+      admissoesPendentes: emAdmissao,
+      admissoesAno, desligamentosAno, turnover,
+      totalSalarios, custoMensal,
       porContrato, porArea,
       feriasProximas: feriasProximas || [],
       docsVencendo: docsVencendo || [],
@@ -377,6 +396,7 @@ router.put('/funcionarios/:id', async (req, res) => {
 // real do desligamento + motivo, use POST /funcionarios/:id/desligar.
 router.delete('/funcionarios/:id', async (req, res) => {
   try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para desligar colaborador (exige nível alto em RH).' });
     const { error } = await supabase
       .from('rh_funcionarios')
       .update({ status: 'inativo', data_demissao: new Date().toISOString().split('T')[0] })
@@ -394,6 +414,7 @@ router.delete('/funcionarios/:id', async (req, res) => {
 // histórico, com a data real de desligamento + motivo opcional.
 router.post('/funcionarios/:id/desligar', async (req, res) => {
   try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para desligar colaborador (exige nível alto em RH).' });
     const { data_demissao, motivo } = req.body || {};
     const payload = {
       status: 'inativo',
@@ -417,6 +438,7 @@ router.post('/funcionarios/:id/desligar', async (req, res) => {
 // POST /api/rh/funcionarios/:id/reativar — volta um ex-colaborador pra ativo.
 router.post('/funcionarios/:id/reativar', async (req, res) => {
   try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para reativar colaborador (exige nível alto em RH).' });
     const { data, error } = await supabase
       .from('rh_funcionarios')
       .update({ status: 'ativo', data_demissao: null, motivo_desligamento: null })
@@ -803,6 +825,7 @@ router.put('/treinamentos/:id', async (req, res) => {
 // DELETE /api/rh/treinamentos/:id
 router.delete('/treinamentos/:id', async (req, res) => {
   try {
+    if (!(['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 3)) return res.status(403).json({ error: 'Sem permissão para excluir treinamento (exige RH nível ≥ 3).' });
     const { error } = await supabase.from('rh_treinamentos').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
@@ -961,6 +984,7 @@ router.patch('/ferias/:id', async (req, res) => {
 // DELETE /api/rh/ferias/:id
 router.delete('/ferias/:id', async (req, res) => {
   try {
+    if (!(['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 3)) return res.status(403).json({ error: 'Sem permissão para excluir férias/licença (exige RH nível ≥ 3).' });
     const { error } = await supabase.from('rh_ferias_licencas').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });

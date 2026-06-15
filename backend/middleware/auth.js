@@ -638,23 +638,21 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
 
   if (level >= 4) return query; // admin/diretor vê tudo
 
+  // Nível 3 = escopo por ÁREA. Com áreas atribuídas, filtra por elas.
+  // SEM áreas, NÃO pode ver tudo (era fail-open · vazava todos os registros,
+  // inclusive salário no payload) — cai pro escopo "próprio" via ownerColumn.
   if (level === 3 && areaColumn) {
     const areas = getUserAreas(req);
-    if (areas.length > 0) {
-      query = query.in(areaColumn, areas);
-    }
-    return query;
+    if (areas.length > 0) return query.in(areaColumn, areas);
   }
 
-  if (level === 2 && ownerColumn) {
+  if ((level === 2 || level === 3) && ownerColumn) {
     const val = ownerEmail ? req.user.email : req.user.userId;
-    query = query.eq(ownerColumn, val);
-    return query;
+    return query.eq(ownerColumn, val);
   }
 
-  // level 1 ou sem owner column: retorna nada
-  query = query.eq('id', '00000000-0000-0000-0000-000000000000');
-  return query;
+  // level 1, ou 3-sem-área-sem-owner: retorna nada
+  return query.eq('id', '00000000-0000-0000-0000-000000000000');
 }
 
 module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP };
