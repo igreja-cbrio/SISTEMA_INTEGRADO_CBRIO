@@ -524,7 +524,8 @@ function RelatorioView() {
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 16 }}>
+      {/* 5 painéis em 3 colunas fixas → 3 + 2 (Vencendo nunca sobra esticado numa linha) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
         <Painel title="Valor em estoque por categoria">
           {rel.por_categoria.length === 0 ? <div style={st.empty}>—</div> : rel.por_categoria.map(c => (
             <div key={c.categoria} style={{ marginBottom: 8 }}>
