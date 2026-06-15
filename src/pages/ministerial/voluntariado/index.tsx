@@ -10,6 +10,7 @@ import VolEscalas from './VolEscalas';
 import VolRelatorios from './VolRelatorios';
 import VolInscricoes from './VolInscricoes';
 import VolEncaminhados from './VolEncaminhados';
+import VolFrequencia from './VolFrequencia';
 import VolQrCodes from './VolQrCodes';
 import VolAdmin from './VolAdmin';
 import VolEquipes from './VolEquipes';
@@ -57,6 +58,7 @@ export default function Voluntariado() {
         <Route path="relatorios" element={<VolRelatorios />} />
         <Route path="inscricoes" element={<VolInscricoes />} />
         <Route path="encaminhados" element={<VolEncaminhados />} />
+        <Route path="frequencia" element={<VolFrequencia />} />
         <Route path="qrcodes" element={<VolQrCodes />} />
         <Route path="lista" element={<VolLista />} />
         <Route path="admin" element={<VolAdmin />} />
