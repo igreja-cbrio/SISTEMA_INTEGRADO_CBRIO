@@ -841,6 +841,7 @@ export const logistica = {
     lancar: (movimentos) => post('/logistica/estoque/movimentacoes', Array.isArray(movimentos) ? { movimentos } : movimentos),
     lotes: (dias) => get('/logistica/estoque/lotes' + (dias ? `?dias=${dias}` : '')),
     consumo: (dias = 90) => get(`/logistica/estoque/consumo?dias=${dias}`),
+    gerarCompra: (produto_ids) => post('/logistica/estoque/gerar-compra', { produto_ids }),
   },
 };
 
@@ -1286,6 +1287,9 @@ export const solicitacoes = {
   relatarProblema: (id, motivo, comentario) => post(`/solicitacoes/${id}/relatar-problema`, { motivo, comentario }),
   reenviar:        (id, campos) => post(`/solicitacoes/${id}/reenviar`, campos || {}),
   diagnosticoRefeitas: (dias = 90) => get(`/solicitacoes/dashboard/refeitas?dias=${dias}`),
+  // Ponte estoque (Fase 3a-2) · atender pela estoque dá baixa + resolve
+  estoqueProdutos: (busca) => get('/solicitacoes/estoque/produtos' + (busca ? '?busca=' + encodeURIComponent(busca) : '')),
+  atenderEstoque: (id, itens, observacao) => post(`/solicitacoes/${id}/atender-estoque`, { itens, observacao }),
 };
 
 export const producao = {

@@ -692,4 +692,32 @@ router.get('/estoque/consumo', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao calcular consumo' }); }
 });
 
+// POST /estoque/gerar-compra · cria UMA solicitação de compra a partir dos produtos
+// a repor selecionados (ponte estoque → compras · entra na fila do Amaury, fluxo ML).
+router.post('/estoque/gerar-compra', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.produto_ids) ? req.body.produto_ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um produto.' });
+    const { data: prods } = await supabase.from('vw_log_estoque_saldo')
+      .select('nome,saldo,quantidade_minima,unidade').in('id', ids);
+    if (!prods || !prods.length) return res.status(400).json({ error: 'Produtos não encontrados.' });
+    const linhas = prods.map(p => {
+      const sug = Math.max((Number(p.quantidade_minima) || 0) - (Number(p.saldo) || 0), 0);
+      const un = p.unidade ? ` ${p.unidade}` : '';
+      return `• ${p.nome} — repor ${sug || '?'}${un} (saldo ${p.saldo} / mín ${p.quantidade_minima})`;
+    });
+    const titulo = prods.length === 1 ? `Repor estoque: ${prods[0].nome}` : `Repor estoque (${prods.length} itens)`;
+    const descricao = 'Reposição de estoque (gerado pela aba Estoque da Logística):\n' + linhas.join('\n');
+    const { data, error } = await supabase.from('solicitacoes').insert({
+      titulo, categoria: 'compras', area_responsavel: 'logistica_compras', subcategoria: 'default',
+      urgencia: 'normal', eh_urgente: false, descricao, itens: linhas.join('\n'),
+      status: 'pendente', solicitante_id: req.user.userId, area_cliente: 'logistica',
+      aprovacao_origem_status: 'dispensada', aprovacao_origem_motivo: 'Reposição interna de estoque (logística)',
+      aprovacao_origem_em: new Date().toISOString(),
+    }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao gerar solicitação de compra' }); }
+});
+
 module.exports = router;
