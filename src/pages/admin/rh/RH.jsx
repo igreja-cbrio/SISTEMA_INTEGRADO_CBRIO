@@ -12,7 +12,7 @@ import { rh, permissoes } from '../../../api';
 import { exportCSV, exportPDF } from '../../../lib/export';
 import { supabase } from '../../../supabaseClient';
 import { C, fmtDate, fmtMoney, TIPO_CONTRATO, TIPO_FERIAS, FERIAS_STATUS } from '../../../lib/theme';
-import TabAdmissao from './TabAdmissao';
+import { AdmissaoFormModal, ContratoEditorModal, gerarContratoAdmissao, formParaFuncionario, funcionarioParaForm } from './admissao';
 import TabFolha from './TabFolha';
 import TabAvaliacoes from './TabAvaliacoes';
 import TabExtras from './TabExtras';
@@ -90,6 +90,7 @@ function DesligarModal({ func, onClose, onConfirm }) {
 // Legacy compat maps (local uses { c, bg, label } shape)
 const STATUS_COLORS = {
   ativo: { c: C.green, bg: C.greenBg, label: 'Ativo' },
+  em_admissao: { c: '#8b5cf6', bg: '#8b5cf618', label: 'Em admissão' },
   inativo: { c: '#737373', bg: '#73737318', label: 'Inativo' },
   ferias: { c: C.blue, bg: C.blueBg, label: 'Férias' },
   licenca: { c: C.amber, bg: C.amberBg, label: 'Licença' },
@@ -284,7 +285,6 @@ const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'colaboradores', label: 'Colaboradores', icon: Users },
   { key: 'pcs', label: 'PCS', icon: Scale },
-  { key: 'admissao', label: 'Admissão', icon: UserPlus },
   { key: 'organograma', label: 'Organograma', icon: Network },
   { key: 'folha', label: 'Folha', icon: Receipt },
   { key: 'avaliacoes', label: 'Avaliações', icon: Star },
@@ -324,6 +324,9 @@ export default function RH() {
   const [modalDetail, setModalDetail] = useState(null);
   const [modalDoc, setModalDoc] = useState(null);
   const [desligarFunc, setDesligarFunc] = useState(null); // colaborador sendo desligado
+  const [modalAdmissao, setModalAdmissao] = useState(null); // null=fechado, {}=nova, {...}=editar
+  const [modalContrato, setModalContrato] = useState(null); // editor de contrato da admissão
+  const [savingAdm, setSavingAdm] = useState(false);
 
   // Toast & confirmação
   const [toast, setToast] = useState(null); // { message, type }
@@ -406,6 +409,51 @@ export default function RH() {
         showSuccess('Colaborador criado!');
       }
     } catch (e) { showToast(e.message); }
+  }
+
+  // ── Admissão · novo contratado entra "em_admissao" e vira "ativo" ao concluir ──
+  async function saveAdmissao(form) {
+    setSavingAdm(true);
+    try {
+      const payload = formParaFuncionario(form);
+      if (form.id) await rh.funcionarios.update(form.id, payload);
+      else await rh.funcionarios.create({ ...payload, status: 'em_admissao' });
+      setModalAdmissao(null);
+      loadFuncs(); loadDash(); loadAcessos();
+      showSuccess(form.id ? 'Admissão atualizada!' : 'Admissão criada · colaborador em admissão');
+    } catch (e) { showToast(e.message); }
+    finally { setSavingAdm(false); }
+  }
+
+  function concluirAdmissao(id) {
+    askConfirm('Concluir a admissão? O colaborador passa a Ativo.', async () => {
+      try {
+        await rh.funcionarios.concluirAdmissao(id);
+        setModalDetail(null);
+        loadFuncs(); loadDash(); loadAcessos();
+        showSuccess('Admissão concluída · colaborador ativo');
+      } catch (e) { showToast(e.message); }
+    });
+  }
+
+  function abrirContratoAdmissao(func) {
+    const adm = funcionarioParaForm(func);
+    if (!adm.contrato_editado) adm.contrato_editado = gerarContratoAdmissao(adm);
+    setModalContrato(adm);
+  }
+
+  async function salvarContratoAdmissao(adm) {
+    setSavingAdm(true);
+    try {
+      // Persiste só o jsonb admissao_dados (contrato + etapa), sem mexer nas demais colunas.
+      const payload = formParaFuncionario({ ...adm, etapa: adm.etapa || 'contrato_gerado' });
+      await rh.funcionarios.update(adm.id, { admissao_dados: payload.admissao_dados });
+      setModalContrato(null);
+      if (modalDetail?.id === adm.id) { try { setModalDetail(await rh.funcionarios.get(adm.id)); } catch { /* noop */ } }
+      loadFuncs();
+      showSuccess('Contrato salvo');
+    } catch (e) { showToast(e.message); }
+    finally { setSavingAdm(false); }
   }
 
   // Abre o diálogo de desligamento (data real + motivo) · NÃO apaga o registro
@@ -526,13 +574,11 @@ export default function RH() {
             filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
             filtroArea={filtroArea} setFiltroArea={setFiltroArea}
             onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); loadAcessos(); }}
+            onNovaAdmissao={() => setModalAdmissao({})}
             showToast={showToast}
           />
         </TabsContent>
         <TabsContent value="pcs">{podeRemun && <TabPCS />}</TabsContent>
-        <TabsContent value="admissao">
-          <TabAdmissao />
-        </TabsContent>
         <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); loadAcessos(); }} /></TabsContent>
         <TabsContent value="folha">{podeRemun && <TabFolha />}</TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
@@ -563,6 +609,9 @@ export default function RH() {
         onEdit={(f) => { setModalDetail(null); setModalFunc(f); }}
         onDelete={abrirDesligamento}
         onReativar={reativarFuncionario}
+        onEditAdmissao={(func) => setModalAdmissao(funcionarioParaForm(func))}
+        onContratoAdmissao={abrirContratoAdmissao}
+        onConcluirAdmissao={concluirAdmissao}
         onNewDoc={(funcId) => setModalDoc({ funcionario_id: funcId })}
         onDeleteDoc={deleteDocumento}
         onSaveInline={async (updated) => {
@@ -584,6 +633,10 @@ export default function RH() {
       <DocumentoFormModal open={!!modalDoc} data={modalDoc} onClose={() => setModalDoc(null)} onSave={saveDocumento} />
 
       <DesligarModal func={desligarFunc} onClose={() => setDesligarFunc(null)} onConfirm={confirmarDesligamento} />
+
+      {/* Admissão · form (nova/editar) + editor de contrato */}
+      {modalAdmissao && <AdmissaoFormModal data={modalAdmissao} onClose={() => setModalAdmissao(null)} onSave={saveAdmissao} saving={savingAdm} />}
+      {modalContrato && <ContratoEditorModal data={modalContrato} onClose={() => setModalContrato(null)} onSave={salvarContratoAdmissao} saving={savingAdm} />}
 
       {/* Toast & Confirm */}
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
@@ -808,7 +861,7 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, showToast }) {
+function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, onNovaAdmissao, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
@@ -910,6 +963,11 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
             ))}
           </div>
           <div className="flex gap-2 justify-end">
+            {onNovaAdmissao && (
+              <Button size="sm" onClick={onNovaAdmissao}>
+                <UserPlus className="h-3.5 w-3.5" /> Nova admissão
+              </Button>
+            )}
             <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCSVImport} />
             <Button variant="outline" size="sm" onClick={() => csvRef.current?.click()}>Importar CSV</Button>
             <Button variant="outline" size="sm" onClick={() => {
@@ -2683,7 +2741,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
   );
 }
 
-function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
+function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onEditAdmissao, onContratoAdmissao, onConcluirAdmissao, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
@@ -2849,6 +2907,26 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         </div>
         <div style={{ padding: '24px 28px' }}>
+      {/* Admissão · onboarding em andamento (tudo que tinha no módulo de admissão) */}
+      {data.status === 'em_admissao' && !editMode && (
+        <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1px solid #8b5cf640', background: '#8b5cf60d' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: 0.5 }}>📋 Em admissão</div>
+          <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>Onboarding em andamento · conclua o processo para ativar o colaborador.</div>
+          {data.admissao_dados && (data.admissao_dados.rg || data.admissao_dados.pj_cnpj || data.admissao_dados.pj_razao_social || data.admissao_dados.endereco) && (
+            <div style={{ fontSize: 12, color: C.text2, marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              {data.admissao_dados.rg && <div>RG: <b style={{ color: C.text }}>{data.admissao_dados.rg}</b></div>}
+              {data.admissao_dados.pj_cnpj && <div>CNPJ: <b style={{ color: C.text }}>{data.admissao_dados.pj_cnpj}</b></div>}
+              {data.admissao_dados.pj_razao_social && <div style={{ gridColumn: '1 / -1' }}>Razão social: <b style={{ color: C.text }}>{data.admissao_dados.pj_razao_social}</b></div>}
+              {data.admissao_dados.endereco && <div style={{ gridColumn: '1 / -1' }}>Endereço: <b style={{ color: C.text }}>{data.admissao_dados.endereco}</b></div>}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            {onEditAdmissao && <Button variant="outline" size="sm" onClick={() => onEditAdmissao(data)}><Pencil className="h-3.5 w-3.5" /> Editar dados</Button>}
+            {onContratoAdmissao && <Button variant="outline" size="sm" onClick={() => onContratoAdmissao(data)}>{data.admissao_dados?.contrato_editado ? 'Ver/editar contrato' : 'Gerar contrato'}</Button>}
+            {podeRemun && onConcluirAdmissao && <Button size="sm" onClick={() => onConcluirAdmissao(data.id)}>✓ Concluir admissão</Button>}
+          </div>
+        </div>
+      )}
       {/* Avatar + Info principal */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
         <div style={{ position: 'relative', flexShrink: 0 }}>

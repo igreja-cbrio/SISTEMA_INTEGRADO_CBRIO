@@ -234,10 +234,13 @@ router.get('/funcionarios/:id', async (req, res) => {
 // POST /api/rh/funcionarios
 router.post('/funcionarios', async (req, res) => {
   try {
-    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, remuneracao_bruta, grau_id, data_enquadramento, observacoes, setor_id, foto_url } = req.body;
+    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, remuneracao_bruta, grau_id, data_enquadramento, observacoes, setor_id, foto_url, status, admissao_dados } = req.body;
     if (!nome || !cargo || !data_admissao) {
       return res.status(400).json({ error: 'Nome, cargo e data de admissão são obrigatórios' });
     }
+    // Novo contratado pode entrar "em admissão" (onboarding) e só virar 'ativo' ao
+    // concluir. Qualquer outro valor no create cai no default 'ativo' (sem injeção).
+    const statusInicial = status === 'em_admissao' ? 'em_admissao' : 'ativo';
 
     // Remuneracao no cadastro inicial · so quem tem nivel alto em RH define.
     const podeRemun = ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
@@ -248,6 +251,8 @@ router.post('/funcionarios', async (req, res) => {
       setor_id: setor_id ? parseInt(setor_id, 10) : null,
       foto_url: foto_url || null,
       data_admissao,
+      status: statusInicial,
+      admissao_dados: admissao_dados || null,
       salario: podeRemun ? (salario || null) : null,
       remuneracao_bruta: podeRemun ? (remuneracao_bruta || null) : null,
       grau_id: podeRemun ? (grau_id || null) : null,
@@ -319,9 +324,11 @@ const RH_FIELD_TYPES = {
   bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
   data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date',
   grau_id: 'uuid',
+  admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
 };
 function coerceRh(val, type) {
   if (val === undefined) return undefined;       // nao veio no body → nao mexe na coluna
+  if (type === 'json') return val ?? null;       // objeto jsonb passa direto (null limpa)
   if (val === '' || val === null) return null;   // vazio → null
   if (type === 'num') { const n = Number(val); return Number.isFinite(n) ? n : null; }
   if (type === 'int') { const n = parseInt(val, 10); return Number.isFinite(n) ? n : null; }
@@ -421,6 +428,31 @@ router.post('/funcionarios/:id/reativar', async (req, res) => {
   } catch (e) {
     console.error('[RH] Reativar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao reativar funcionário' });
+  }
+});
+
+// POST /api/rh/funcionarios/:id/concluir-admissao — encerra o onboarding:
+// o colaborador "em admissão" passa a 'ativo'. Mudança de vínculo (status) →
+// gated igual aos demais (só nível alto em RH / admin / diretor).
+router.post('/funcionarios/:id/concluir-admissao', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) {
+      return res.status(403).json({ error: 'Sem permissão para concluir admissão (exige nível alto em RH).' });
+    }
+    const { data, error } = await supabase
+      .from('rh_funcionarios')
+      .update({ status: 'ativo' })
+      .eq('id', req.params.id)
+      .eq('status', 'em_admissao') // só conclui quem está em admissão (idempotente/seguro)
+      .select()
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(409).json({ error: 'Colaborador não está em admissão.' });
+    enqueueSync('funcionario', req.params.id, 'upsert').catch(() => {});
+    res.json(data);
+  } catch (e) {
+    console.error('[RH] Concluir admissão:', e.message);
+    res.status(500).json({ error: 'Erro ao concluir admissão' });
   }
 });
 
