@@ -876,6 +876,7 @@ export const patrimonio = {
 
 export const rh = {
   dashboard: () => get('/rh/dashboard'),
+  dashboardSeries: (meses = 12) => get(`/rh/dashboard/series?meses=${meses}`),
   acessos: () => get('/rh/acessos'),
   organograma: {
     ia: (instrucao) => post('/rh/organograma/ia', { instrucao }),

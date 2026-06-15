@@ -120,6 +120,56 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
+// GET /api/rh/dashboard/series?meses=N — séries mensais pros gráficos do dashboard.
+// quadro: entradas/saídas/headcount por mês (de data_admissao/data_demissao).
+// folha:  snapshots mensais (rh_folha_snapshots) · só pra quem vê remuneração.
+router.get('/dashboard/series', async (req, res) => {
+  try {
+    const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 36);
+    let q = supabase.from('rh_funcionarios').select('data_admissao, data_demissao').is('deleted_at', null);
+    q = applyAccessFilter(q, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: funcs, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+
+    const hoje = new Date();
+    const quadro = [];
+    for (let i = meses - 1; i >= 0; i--) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      const ini = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      const fimD = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const fim = `${fimD.getFullYear()}-${String(fimD.getMonth() + 1).padStart(2, '0')}-${String(fimD.getDate()).padStart(2, '0')}`;
+      const entradas = (funcs || []).filter(f => f.data_admissao && f.data_admissao >= ini && f.data_admissao <= fim).length;
+      const saidas = (funcs || []).filter(f => f.data_demissao && f.data_demissao >= ini && f.data_demissao <= fim).length;
+      const headcount = (funcs || []).filter(f => f.data_admissao && f.data_admissao <= fim && (!f.data_demissao || f.data_demissao > fim)).length;
+      quadro.push({ mes: ini.slice(0, 7), entradas, saidas, headcount });
+    }
+
+    // Folha (snapshots) · só remuneração — não vaza salário pra quem não pode ver.
+    const podeRemun = podeEditarRemuneracao(req);
+    let folha = [];
+    if (podeRemun) {
+      const desde = new Date(hoje.getFullYear(), hoje.getMonth() - (meses - 1), 1);
+      const desdeStr = `${desde.getFullYear()}-${String(desde.getMonth() + 1).padStart(2, '0')}-01`;
+      const { data: snaps } = await supabase
+        .from('rh_folha_snapshots')
+        .select('mes, total_salarios, total_custo, headcount')
+        .gte('mes', desdeStr)
+        .order('mes');
+      folha = (snaps || []).map(s => ({
+        mes: String(s.mes).slice(0, 7),
+        total_salarios: Number(s.total_salarios) || 0,
+        total_custo: Number(s.total_custo) || 0,
+        headcount: s.headcount,
+      }));
+    }
+
+    res.json({ quadro, folha, podeRemun });
+  } catch (e) {
+    console.error('[RH] Dashboard series:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar séries do dashboard' });
+  }
+});
+
 // ── ACESSOS · cargo RH × cargo de permissão ────────────────
 // Relatório read-only: cruza rh_funcionarios (ativos) com o cadastro de
 // permissões (`usuarios` por e-mail → `cargos`) pra mostrar quem está SEM

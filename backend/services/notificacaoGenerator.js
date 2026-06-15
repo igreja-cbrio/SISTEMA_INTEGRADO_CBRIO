@@ -10,6 +10,7 @@ async function gerarTodasNotificacoes() {
   let total = 0;
   try {
     total += await gerarNotificacoesRH();
+    await snapshotFolhaMensal(); // foto mensal da folha (não gera notificação)
     total += await gerarNotificacoesFinanceiro();
     total += await rodarAnaliseFinanceiraDiaria();
     total += await gerarNotificacoesLogistica();
@@ -209,6 +210,28 @@ async function gerarNotificacoesRH() {
   }
 
   return count;
+}
+
+// Foto mensal da folha (caminho B · exatidão daqui pra frente). UPSERT do mês
+// corrente todo dia → o mês atual reflete "agora"; meses passados ficam
+// congelados no último valor do mês. Alimenta o gráfico de folha do dashboard.
+async function snapshotFolhaMensal() {
+  try {
+    const mes = new Date().toISOString().slice(0, 8) + '01'; // YYYY-MM-01
+    const { data: ativos } = await supabase
+      .from('rh_funcionarios')
+      .select('salario, custo_total_mensal')
+      .eq('status', 'ativo')
+      .is('deleted_at', null);
+    const totalSalarios = (ativos || []).reduce((s, f) => s + Number(f.salario || 0), 0);
+    const totalCusto = (ativos || []).reduce((s, f) => s + Number(f.custo_total_mensal || f.salario || 0), 0);
+    await supabase.from('rh_folha_snapshots').upsert(
+      { mes, total_salarios: totalSalarios, total_custo: totalCusto, headcount: (ativos || []).length, atualizado_em: new Date().toISOString() },
+      { onConflict: 'mes' }
+    );
+  } catch (e) {
+    console.error('[RH] snapshot folha:', e.message);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════

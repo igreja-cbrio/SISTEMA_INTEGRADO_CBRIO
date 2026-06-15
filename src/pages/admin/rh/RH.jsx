@@ -12,6 +12,7 @@ import { rh, permissoes } from '../../../api';
 import { exportCSV, exportPDF } from '../../../lib/export';
 import { supabase } from '../../../supabaseClient';
 import { C, fmtDate, fmtMoney, TIPO_CONTRATO, TIPO_FERIAS, FERIAS_STATUS } from '../../../lib/theme';
+import { ResponsiveContainer, ComposedChart, AreaChart, BarChart, PieChart, Pie, Cell, Bar, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { AdmissaoFormModal, ContratoEditorModal, gerarContratoAdmissao, formParaFuncionario, funcionarioParaForm } from './admissao';
 import TabFolha from './TabFolha';
 import TabAvaliacoes from './TabAvaliacoes';
@@ -654,6 +655,14 @@ export default function RH() {
 // TAB: DASHBOARD
 // ═══════════════════════════════════════════════════════════
 function DashboardTab({ dash, onNavigate, setFiltroStatus, podeRemun = false }) {
+  const [meses, setMeses] = useState(12);
+  const [series, setSeries] = useState(null); // { quadro, folha, podeRemun }
+  useEffect(() => {
+    let vivo = true;
+    rh.dashboardSeries(meses).then(s => { if (vivo) setSeries(s); }).catch(() => { if (vivo) setSeries({ quadro: [], folha: [] }); });
+    return () => { vivo = false; };
+  }, [meses]);
+
   if (!dash) return (
     <div className="space-y-4 py-6">
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
@@ -671,124 +680,166 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus, podeRemun = false }) 
 
   const goTo = (tabKey, status) => { if (setFiltroStatus) setFiltroStatus(status || ''); if (onNavigate) onNavigate(tabKey); };
 
-  const fmtM = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}` : '—';
+  const fmtMes = (m) => {
+    const [y, mo] = String(m || '').split('-');
+    const nomes = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+    return mo ? `${nomes[+mo - 1]}/${String(y).slice(2)}` : m;
+  };
+  const tipoCores = { CLT: '#3b82f6', PJ: '#8b5cf6', 'PJ+': '#a855f7', PREBENDA: '#f59e0b' };
+  const tipoData = Object.entries(dash.porContrato || {}).map(([k, v]) => ({ name: TIPO_CONTRATO[k] || k, value: v, cor: tipoCores[k] || '#94a3b8' }));
+  const tipoTotal = tipoData.reduce((a, b) => a + b.value, 0);
+  const areaData = Object.entries(dash.porArea || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k, value: v }));
+  const quadro = (series?.quadro || []).map(q => ({ ...q, mesLabel: fmtMes(q.mes) }));
+  const folha = (series?.folha || []).map(f => ({ ...f, mesLabel: fmtMes(f.mes) }));
+  const tipTooltip = { background: 'var(--cbrio-card)', border: '1px solid var(--cbrio-border)', borderRadius: 8, fontSize: 12, color: 'var(--cbrio-text)' };
 
-  // Primary KPIs — 4 big cards
-  const primaryStats = [
-    { title: 'Total Colaboradores', value: dash.total, icon: Users, iconColor: '#3b82f6', onClick: () => goTo('colaboradores') },
+  const anchors = [
+    { title: 'Total', value: dash.total, icon: Users, iconColor: '#3b82f6', onClick: () => goTo('colaboradores') },
     { title: 'Ativos', value: dash.ativos, icon: Users, iconColor: '#10b981', onClick: () => goTo('colaboradores', 'ativo') },
-    { title: 'Em Férias / Licença', value: (dash.ferias || 0) + (dash.licenca || 0), icon: CalendarDays, iconColor: '#f59e0b', onClick: () => goTo('ferias'), subtitle: `${dash.ferias || 0} férias · ${dash.licenca || 0} licença` },
-    // Custo mensal só pra quem vê remuneração (backend só devolve nesse caso).
-    ...(podeRemun ? [{ title: 'Custo Mensal', value: fmtM(dash.custoMensal), icon: Briefcase, iconColor: '#ef4444' }] : []),
-  ];
-
-  // Secondary KPIs
-  const secondaryStats = [
-    { title: 'Admissões (12m)', value: dash.admissoesAno ?? 0, icon: UserPlus, iconColor: '#10b981' },
-    { title: 'Desligamentos (12m)', value: dash.desligamentosAno ?? 0, icon: Users, iconColor: '#ef4444' },
-    { title: 'Inativos', value: dash.inativos, icon: Users, iconColor: '#6b7280', onClick: () => goTo('colaboradores', 'inativo') },
-    { title: 'Turnover (12m)', value: `${dash.turnover || 0}%`, icon: Briefcase, iconColor: dash.turnover > 15 ? '#ef4444' : '#10b981' },
     { title: 'Em admissão', value: dash.admissoesPendentes ?? 0, icon: UserPlus, iconColor: '#8b5cf6', onClick: () => goTo('colaboradores', 'em_admissao') },
-    ...(podeRemun ? [{ title: 'Folha Salarial', value: fmtM(dash.totalSalarios), icon: Receipt, iconColor: '#00B39D' }] : []),
+    { title: 'Em Férias / Licença', value: (dash.ferias || 0) + (dash.licenca || 0), icon: CalendarDays, iconColor: '#f59e0b', onClick: () => goTo('ferias'), subtitle: `${dash.ferias || 0} férias · ${dash.licenca || 0} licença` },
   ];
 
   return (
-    <div className="space-y-8 pt-4 pb-8">
-      {/* Primary KPI Cards — 4 columns, generous size */}
+    <div className="space-y-6 pt-4 pb-8">
+      {/* Âncoras + seletor de período */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Resumo Geral</h3>
-        <div className="cbrio-stagger grid gap-5 grid-cols-2 lg:grid-cols-4">
-          {primaryStats.map((stat) => (
-            <StatisticsCard
-              key={stat.title}
-              title={stat.title}
-              value={stat.value}
-              icon={stat.icon}
-              iconColor={stat.iconColor}
-              onClick={stat.onClick}
-              subtitle={stat.subtitle}
-            />
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Resumo</h3>
+          <div className="flex gap-1">
+            {[12, 24].map(n => (
+              <button key={n} onClick={() => setMeses(n)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${meses === n ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+                {n} meses
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="cbrio-stagger grid gap-4 grid-cols-2 lg:grid-cols-4">
+          {anchors.map((stat) => (
+            <StatisticsCard key={stat.title} title={stat.title} value={stat.value} icon={stat.icon} iconColor={stat.iconColor} onClick={stat.onClick} subtitle={stat.subtitle} />
           ))}
         </div>
       </section>
 
-      {/* Secondary metrics — 3 columns on large, never smaller than comfortable */}
-      <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Métricas Detalhadas</h3>
-        <div className="cbrio-stagger grid gap-5 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-          {secondaryStats.map((stat) => (
-            <StatisticsCard
-              key={stat.title}
-              title={stat.title}
-              value={stat.value}
-              icon={stat.icon}
-              iconColor={stat.iconColor}
-              onClick={stat.onClick}
-            />
-          ))}
-        </div>
-      </section>
+      {/* Gráfico 1 · Saúde do quadro (entradas, saídas e total) */}
+      <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
+        <CardHeader className="px-5 pt-5 pb-1">
+          <CardTitle className="text-sm font-semibold text-foreground">Saúde do quadro</CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">Entradas, saídas e total de colaboradores por mês · {meses} meses</p>
+        </CardHeader>
+        <CardContent className="px-2 pb-4 pt-2">
+          {!series ? <div className="h-[300px] rounded-xl bg-muted animate-pulse" /> : (
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={quadro} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" vertical={false} />
+                <XAxis dataKey="mesLabel" tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} width={32} />
+                <Tooltip contentStyle={tipTooltip} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar name="Entradas" dataKey="entradas" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Bar name="Saídas" dataKey="saidas" fill="#ef4444" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Line name="Total no quadro" type="monotone" dataKey="headcount" stroke="#00B39D" strokeWidth={2.5} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Main content — 3 column layout using full width */}
-      <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Distribuição e Alertas</h3>
-        <div className="grid gap-5 lg:grid-cols-3">
-          {/* Por tipo de contrato */}
+      {/* Gráfico 2 (folha · só remuneração) + Gráfico 3a (tipo de contrato) */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {podeRemun && (
           <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
-            <CardHeader className="px-5 pt-5 pb-3">
-              <CardTitle className="text-sm font-semibold text-foreground">Por Tipo de Contrato</CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">Distribuição por vínculo</p>
+            <CardHeader className="px-5 pt-5 pb-1">
+              <CardTitle className="text-sm font-semibold text-foreground">Folha por mês</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">Salários e custo total · foto mensal (exata daqui pra frente)</p>
             </CardHeader>
-            <CardContent className="px-5 pb-6">
-              {Object.entries(dash.porContrato || {}).length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-6">Nenhum dado</p>
+            <CardContent className="px-2 pb-3 pt-2">
+              {!series ? <div className="h-[260px] rounded-xl bg-muted animate-pulse" /> : folha.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-16">Sem snapshots ainda.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <AreaChart data={folha} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gFolha" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#00B39D" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#00B39D" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" vertical={false} />
+                    <XAxis dataKey="mesLabel" tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} width={52} tickFormatter={(v) => `R$${(v / 1000).toLocaleString('pt-BR')}k`} />
+                    <Tooltip contentStyle={tipTooltip} formatter={(v) => fmtMoney(v)} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Area name="Salários" type="monotone" dataKey="total_salarios" stroke="#00B39D" strokeWidth={2} fill="url(#gFolha)" />
+                    <Line name="Custo total" type="monotone" dataKey="total_custo" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
               )}
-              {Object.entries(dash.porContrato || {}).map(([tipo, qtd]) => {
-                const total = Object.values(dash.porContrato || {}).reduce((a, b) => a + b, 0);
-                const pct = total > 0 ? Math.round((qtd / total) * 100) : 0;
-                return (
-                  <div key={tipo} className="py-3 border-b border-border/30 last:border-0">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-sm text-foreground font-medium">{TIPO_CONTRATO[tipo] || tipo}</span>
-                      <span className="text-sm font-bold text-foreground tabular-nums">{qtd}</span>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+              {series && folha.length <= 1 && (
+                <p className="text-[11px] text-muted-foreground px-3 mt-1">A série de folha começa agora (caminho de exatidão) e ganha um ponto a cada mês.</p>
+              )}
             </CardContent>
           </Card>
+        )}
 
-          {/* Por área — taller */}
-          <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm lg:row-span-2">
-            <CardHeader className="px-5 pt-5 pb-3">
-              <CardTitle className="text-sm font-semibold text-foreground">Por Área</CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">{Object.keys(dash.porArea || {}).length} áreas com colaboradores</p>
-            </CardHeader>
-            <CardContent className="px-5 pb-6 max-h-[480px] overflow-y-auto">
-              {Object.entries(dash.porArea || {}).length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-6">Nenhum dado</p>
-              )}
-              {Object.entries(dash.porArea || {}).sort((a, b) => b[1] - a[1]).map(([area, qtd]) => {
-                const total = Object.values(dash.porArea || {}).reduce((a, b) => a + b, 0);
-                const pct = total > 0 ? Math.round((qtd / total) * 100) : 0;
-                return (
-                  <div key={area} className="flex items-center gap-3 py-2.5 border-b border-border/30 last:border-0">
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-foreground truncate block">{area}</span>
+        <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
+          <CardHeader className="px-5 pt-5 pb-1">
+            <CardTitle className="text-sm font-semibold text-foreground">Por tipo de contrato</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">Composição do vínculo</p>
+          </CardHeader>
+          <CardContent className="px-5 pb-6">
+            {tipoData.length === 0 ? <p className="text-sm text-muted-foreground text-center py-10">Nenhum dado</p> : (
+              <div className="flex items-center gap-4">
+                <ResponsiveContainer width="55%" height={180}>
+                  <PieChart>
+                    <Pie data={tipoData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                      {tipoData.map((d, i) => <Cell key={i} fill={d.cor} />)}
+                    </Pie>
+                    <Tooltip contentStyle={tipTooltip} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex-1 space-y-1.5">
+                  {tipoData.map(d => (
+                    <div key={d.name} className="flex items-center gap-2 text-sm">
+                      <span className="size-2.5 rounded-full shrink-0" style={{ background: d.cor }} />
+                      <span className="text-foreground flex-1">{d.name}</span>
+                      <span className="font-bold tabular-nums">{d.value}</span>
+                      <span className="text-xs text-muted-foreground w-9 text-right">{tipoTotal ? Math.round(d.value / tipoTotal * 100) : 0}%</span>
                     </div>
-                    <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
-                      <div className="h-full rounded-full bg-primary/70 transition-all" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="text-sm font-bold text-foreground tabular-nums w-8 text-right shrink-0">{qtd}</span>
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
+      {/* Gráfico 3b · Por área */}
+      <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
+        <CardHeader className="px-5 pt-5 pb-1">
+          <CardTitle className="text-sm font-semibold text-foreground">Por área</CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">{areaData.length} áreas com colaboradores</p>
+        </CardHeader>
+        <CardContent className="px-3 pb-5 pt-2">
+          {areaData.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">Nenhum dado</p> : (
+            <ResponsiveContainer width="100%" height={Math.max(160, areaData.length * 30 + 10)}>
+              <BarChart data={areaData} layout="vertical" margin={{ top: 0, right: 24, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" horizontal={false} />
+                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11, fill: 'var(--cbrio-text2)' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tipTooltip} cursor={{ fill: 'var(--cbrio-border)', opacity: 0.3 }} />
+                <Bar dataKey="value" fill="#00B39D" radius={[0, 4, 4, 0]} maxBarSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Alertas operacionais */}
+      <section>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Alertas operacionais</h3>
+        <div className="grid gap-5 lg:grid-cols-2">
           {/* Férias próximas */}
           <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
             <CardHeader className="px-5 pt-5 pb-3">
