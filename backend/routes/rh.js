@@ -688,15 +688,12 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
     if (!tipo || !nome) return res.status(400).json({ error: 'Tipo e nome são obrigatórios' });
 
     let finalStoragePath = storage_path || null;
-    let sharepointUrl = null;
-    let sharepointItemId = null;
+    let extArquivo = null;
 
-    // Se veio arquivo, fazer upload para Supabase + SharePoint
+    // Se veio arquivo, sobe pro Supabase (acesso rápido).
     if (req.file) {
-      const ext = (req.file.originalname || nome).split('.').pop();
-      const supaPath = `documentos/${req.params.id}/${Date.now()}_${sanitizePath(nome)}.${ext}`;
-
-      // Upload para Supabase (acesso rapido)
+      extArquivo = (req.file.originalname || nome).split('.').pop();
+      const supaPath = `documentos/${req.params.id}/${Date.now()}_${sanitizePath(nome)}.${extArquivo}`;
       const { error: upErr } = await supabase.storage
         .from('rh-fotos')
         .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
@@ -705,31 +702,12 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
         const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(supaPath);
         finalStoragePath = urlData.publicUrl;
       }
-
-      // Upload para SharePoint em background
-      if (SHAREPOINT_CONFIGURED) {
-        (async () => {
-          try {
-            const { data: func } = await supabase.from('rh_funcionarios').select('nome').eq('id', req.params.id).single();
-            const nomePasta = sanitizePath(func?.nome || req.params.id);
-            const result = await uploadModuleFile('rh', `Documentos/${nomePasta}`, `${sanitizePath(nome)}.${ext}`, req.file.buffer);
-            // Atualizar registro com dados do SharePoint
-            if (result.url) {
-              await supabase.from('rh_documentos')
-                .update({ sharepoint_url: result.url, sharepoint_item_id: result.itemId })
-                .eq('funcionario_id', req.params.id)
-                .eq('nome', nome)
-                .order('created_at', { ascending: false })
-                .limit(1);
-            }
-            console.log(`[RH] Documento sincronizado com SharePoint: ${nomePasta}/${nome}`);
-          } catch (spErr) {
-            console.error('[RH] SharePoint sync erro (nao-critico):', spErr.message);
-          }
-        })();
-      }
     }
 
+    // Insere PRIMEIRO pra ter o id do documento. A sincronização do SharePoint
+    // (background) passa a atualizar ESTE registro POR id — antes rodava antes do
+    // insert e atualizava por funcionario_id+nome+limit(1), podendo carimbar o
+    // documento errado quando havia 2 docs de mesmo nome (ou nenhum, se 1º).
     const { data, error } = await supabase
       .from('rh_documentos')
       .insert({
@@ -742,6 +720,28 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
       .single();
 
     if (error) return res.status(400).json({ error: error.message });
+
+    // SharePoint em background · atualiza o documento recém-criado (por id).
+    if (req.file && SHAREPOINT_CONFIGURED) {
+      const buffer = req.file.buffer;
+      const docId = data.id;
+      (async () => {
+        try {
+          const { data: func } = await supabase.from('rh_funcionarios').select('nome').eq('id', req.params.id).single();
+          const nomePasta = sanitizePath(func?.nome || req.params.id);
+          const result = await uploadModuleFile('rh', `Documentos/${nomePasta}`, `${sanitizePath(nome)}.${extArquivo}`, buffer);
+          if (result.url) {
+            await supabase.from('rh_documentos')
+              .update({ sharepoint_url: result.url, sharepoint_item_id: result.itemId })
+              .eq('id', docId);
+          }
+          console.log(`[RH] Documento sincronizado com SharePoint: ${nomePasta}/${nome}`);
+        } catch (spErr) {
+          console.error('[RH] SharePoint sync erro (nao-critico):', spErr.message);
+        }
+      })();
+    }
+
     res.json(data);
   } catch (e) {
     console.error('[RH] Criar documento:', e.message);

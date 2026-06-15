@@ -178,7 +178,7 @@ async function gerarNotificacoesRH() {
   // aprovação) e NUNCA toca 'inativo' (desligados). Corrige o status que ficava preso.
   const { data: emAfastamento } = await supabase
     .from('rh_funcionarios')
-    .select('id')
+    .select('id, nome, status')
     .in('status', ['ferias', 'licenca']);
   if (emAfastamento && emAfastamento.length) {
     const { data: ativasHoje } = await supabase
@@ -188,9 +188,23 @@ async function gerarNotificacoesRH() {
       .lte('data_inicio', today)
       .gte('data_fim', today);
     const comPeriodoAtivo = new Set((ativasHoje || []).map(f => f.funcionario_id));
-    const voltaram = emAfastamento.filter(f => !comPeriodoAtivo.has(f.id)).map(f => f.id);
+    const voltaram = emAfastamento.filter(f => !comPeriodoAtivo.has(f.id));
     if (voltaram.length) {
-      await supabase.from('rh_funcionarios').update({ status: 'ativo' }).in('id', voltaram);
+      await supabase.from('rh_funcionarios').update({ status: 'ativo' }).in('id', voltaram.map(f => f.id));
+      // Avisa o RH (líder/coordenação) que o afastamento terminou e o status voltou
+      // automaticamente para Ativo — pra conferir retorno efetivo do colaborador.
+      for (const f of voltaram) {
+        const oQue = f.status === 'licenca' ? 'licença' : 'férias';
+        count += await notificar({
+          modulo: 'rh',
+          tipo: 'afastamento_encerrado',
+          titulo: `Retorno de ${oQue} — ${f.nome}`,
+          mensagem: `O período de ${oQue} de ${f.nome} terminou. O status foi atualizado automaticamente para Ativo.`,
+          link: '/admin/rh',
+          severidade: 'info',
+          chaveDedup: `afastamento_encerrado_${f.id}_${today}`,
+        });
+      }
     }
   }
 
