@@ -41,10 +41,8 @@ function cultoCanonico(s) {
   if (n.startsWith('qua')) return 'Quarta';
   return (s || '—').toString().trim() || '—';
 }
-// CSV simples (aspas opcionais) → array de objetos por header
-function parseCsv(texto) {
-  const linhas = texto.replace(/\r/g, '').split('\n').filter(l => l.trim().length);
-  if (!linhas.length) return [];
+// CSV → grade (array de arrays), respeitando aspas
+function parseCsvGrade(texto) {
   const splitLinha = (l) => {
     const out = []; let cur = ''; let q = false;
     for (let i = 0; i < l.length; i++) {
@@ -55,12 +53,81 @@ function parseCsv(texto) {
     }
     out.push(cur); return out;
   };
-  const header = splitLinha(linhas[0]).map(h => normNome(h));
-  return linhas.slice(1).map(l => {
-    const cels = splitLinha(l); const obj = {};
-    header.forEach((h, i) => { obj[h] = (cels[i] || '').trim(); });
-    return obj;
-  });
+  return texto.replace(/\r/g, '').split('\n').map(splitLinha);
+}
+// Célula de data (Date, serial Excel, dd/mm/aaaa, aaaa-mm-dd) → ISO 'aaaa-mm-dd'
+function parseDataCel(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return isNaN(v) ? null : v.toISOString().slice(0, 10);
+  if (typeof v === 'number') return v > 40000 ? serialParaISO(v) : null;
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return null;
+}
+const MESES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+// Extrai registros {nome,data,culto,mes} de uma GRADE. Aceita 2 layouts:
+// (a) simples: cabeçalho com colunas nome,data,culto[,mes];
+// (b) controle: linha 0 = dia, linha 1 = data por coluna, linhas 2+ = nomes.
+function extrairRegistrosDeGrade(aoa, mesLabel) {
+  if (!aoa || aoa.length < 2) return [];
+  const head0 = (aoa[0] || []).map(c => normNome(c));
+  const idxNome = head0.indexOf('nome');
+  const idxData = head0.indexOf('data');
+  const out = [];
+  if (idxNome >= 0 && idxData >= 0) {
+    const idxCulto = head0.indexOf('culto');
+    const idxMes = head0.indexOf('mes');
+    for (let r = 1; r < aoa.length; r++) {
+      const row = aoa[r] || [];
+      const nome = (row[idxNome] == null ? '' : String(row[idxNome])).trim();
+      const data = parseDataCel(row[idxData]);
+      if (!nome || !data) continue;
+      out.push({ nome, data, culto: cultoCanonico(idxCulto >= 0 ? row[idxCulto] : ''), mes: (idxMes >= 0 ? String(row[idxMes] || '') : mesLabel) || null });
+    }
+    return out;
+  }
+  const diaRow = aoa[0] || [];
+  const dataRow = aoa[1] || [];
+  const dateCols = [];
+  for (let c = 0; c < dataRow.length; c++) {
+    const iso = parseDataCel(dataRow[c]);
+    if (iso) dateCols.push({ c, iso, culto: cultoCanonico(diaRow[c]) });
+  }
+  if (!dateCols.length) return [];
+  for (let r = 2; r < aoa.length; r++) {
+    const row = aoa[r] || [];
+    for (const dc of dateCols) {
+      const nome = (row[dc.c] == null ? '' : String(row[dc.c])).trim();
+      if (!nome) continue;
+      const mes = mesLabel || MESES_PT[Number(dc.iso.slice(5, 7)) - 1] || null;
+      out.push({ nome, data: dc.iso, culto: dc.culto, mes });
+    }
+  }
+  return out;
+}
+
+// Excel serial → ISO (epoch 1899-12-30)
+function serialParaISO(n) {
+  const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(n)) * 86400000);
+  return isNaN(d) ? null : d.toISOString().slice(0, 10);
+}
+// Extrai a planilha de CONTROLE direto do .xlsx (abas por mês): coluna A = lista
+// mestre, B = QUANT, e as colunas a partir da C trazem, por data (linha 2) e dia
+// (linha 1), os NOMES de quem serviu (linhas 3+). Vira [{nome,data,culto,mes}].
+function extrairControleXlsx(buffer) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const registros = [];
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    registros.push(...extrairRegistrosDeGrade(aoa, sheetName));
+  }
+  return registros;
 }
 
 // Casa nomes da planilha (não vinculados) com vol_profiles por nome normalizado.
@@ -89,38 +156,51 @@ async function rematchFrequencia() {
   return n;
 }
 
-// POST /api/voluntariado/frequencia/importar (multipart 'arquivo' CSV: nome,data,culto[,mes])
+// POST /api/voluntariado/frequencia/importar (multipart 'arquivo')
+// Aceita a planilha de CONTROLE (.xlsx ou .csv · colunas por data) OU um CSV
+// simples (nome,data,culto[,mes]). Detecta o formato automaticamente.
 router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.single('arquivo'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Envie o arquivo CSV em "arquivo".' });
-    const linhas = parseCsv(req.file.buffer.toString('utf-8'));
+    if (!req.file) return res.status(400).json({ error: 'Envie o arquivo em "arquivo".' });
     const origem = (req.body?.origem || 'planilha_2026').toString().slice(0, 40);
+    const fname = (req.file.originalname || '').toLowerCase();
+    const ehXlsx = fname.endsWith('.xlsx') || fname.endsWith('.xls') || /spreadsheet|excel|officedocument/.test(req.file.mimetype || '');
+
+    let brutos;
+    try {
+      brutos = ehXlsx
+        ? extrairControleXlsx(req.file.buffer)
+        : extrairRegistrosDeGrade(parseCsvGrade(req.file.buffer.toString('utf-8')), null);
+    } catch (e) {
+      console.error('[vol] parse import', e.message);
+      return res.status(400).json({ error: 'Não consegui ler o arquivo. Envie a planilha de controle (.xlsx) ou o CSV exportado dela.' });
+    }
+
     const vistos = new Set();
     const registros = [];
-    let ignoradas = 0;
-    for (const l of linhas) {
-      const nome = (l['nome'] || '').trim();
-      const data = (l['data'] || '').trim();
-      if (!nome || !/^\d{4}-\d{2}-\d{2}$/.test(data)) { ignoradas++; continue; }
-      const culto = cultoCanonico(l['culto']);
+    for (const b of brutos) {
+      const nome = (b.nome || '').trim();
+      if (!nome || !/^\d{4}-\d{2}-\d{2}$/.test(b.data || '')) continue;
+      const culto = cultoCanonico(b.culto);
       const nome_norm = normNome(nome);
-      const k = `${nome_norm}|${data}|${culto}`;
+      if (!nome_norm) continue;
+      const k = `${nome_norm}|${b.data}|${culto}`;
       if (vistos.has(k)) continue;
       vistos.add(k);
-      registros.push({ nome_planilha: nome, nome_norm, data, culto_label: culto, mes: (l['mes'] || null), origem });
+      registros.push({ nome_planilha: nome, nome_norm, data: b.data, culto_label: culto, mes: b.mes || null, origem });
     }
-    if (!registros.length) return res.status(400).json({ error: 'Nenhuma linha válida no CSV (esperado colunas nome,data,culto).' });
+    if (!registros.length) {
+      return res.status(400).json({ error: 'Não encontrei serviços na planilha. Envie a planilha de controle (.xlsx ou .csv com colunas por data) ou um CSV com colunas nome,data,culto.' });
+    }
 
-    let inseridas = 0;
     for (let i = 0; i < registros.length; i += 500) {
       const lote = registros.slice(i, i + 500);
       const { error } = await supabase.from('vol_servicos_historico')
         .upsert(lote, { onConflict: 'nome_norm,data,culto_label,origem', ignoreDuplicates: true });
       if (error) return res.status(400).json({ error: 'Falha ao gravar: ' + error.message });
-      inseridas += lote.length;
     }
     const vinculadas = await rematchFrequencia();
-    res.json({ recebidas: linhas.length, processadas: registros.length, ignoradas, nomes_vinculados: vinculadas });
+    res.json({ processadas: registros.length, nomes_vinculados: vinculadas });
   } catch (e) {
     console.error('[vol] importar frequencia', e.message);
     res.status(500).json({ error: 'Erro ao importar o controle' });

@@ -79,10 +79,10 @@ export default function VolFrequencia() {
         </div>
         <div className="flex items-center gap-2">
           <label className="inline-flex">
-            <input type="file" accept=".csv,text/csv" className="hidden"
+            <input type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) importar(f); e.currentTarget.value = ''; }} />
             <Button asChild variant="outline" size="sm" className="gap-1.5" disabled={importando}>
-              <span>{importando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Importar planilha (CSV)</span>
+              <span>{importando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Importar planilha (.xlsx/.csv)</span>
             </Button>
           </label>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={revincularNomes} disabled={revinc}>
