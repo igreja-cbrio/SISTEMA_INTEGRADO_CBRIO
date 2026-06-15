@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/contexts/AuthContext'
+import { navItemAllowed } from '@/lib/menuAccess'
 import {
   Search, Users, DollarSign, Truck, Tag, CalendarDays,
   FolderKanban, BookOpen, ClipboardList, Bot, User,
@@ -14,23 +16,29 @@ interface SearchItem {
   path: string
   icon: React.ElementType
   category: string
+  // Gate de permissão · mesmas chaves do NAV_ITEMS (ver src/lib/menuAccess).
+  // Sem perm/module = público. Mantém a busca ⌘K em sincronia com o menu.
+  perm?: string
+  module?: string
+  moduleMin?: number
 }
 
+// Gates espelham o ModuleGuard das rotas (src/App.tsx) · igual ao menu.
 const PAGES: SearchItem[] = [
   { label: 'Dashboard', description: 'Página inicial', path: '/', icon: LayoutDashboard, category: 'Geral' },
   { label: 'Meu Perfil', description: 'Seus dados e configurações', path: '/perfil', icon: User, category: 'Geral' },
-  { label: 'Solicitações', description: 'TI, compras, reembolsos e infraestrutura', path: '/solicitacoes', icon: ClipboardList, category: 'Geral' },
-  { label: 'Recursos Humanos', description: 'Colaboradores, treinamentos e férias', path: '/admin/rh', icon: Users, category: 'Administrativo' },
-  { label: 'Financeiro', description: 'Contas, transações e reembolsos', path: '/admin/financeiro', icon: DollarSign, category: 'Administrativo' },
-  { label: 'Logística', description: 'Fornecedores, compras e pedidos', path: '/admin/logistica', icon: Truck, category: 'Administrativo' },
-  { label: 'Patrimônio', description: 'Bens, localizações e inventário', path: '/admin/patrimonio', icon: Tag, category: 'Administrativo' },
-  { label: 'Assistente IA', description: 'Agentes de auditoria e análise', path: '/assistente-ia', icon: Bot, category: 'Administrativo' },
-  { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos' },
-  { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos' },
+  { label: 'Solicitações', description: 'TI, compras, reembolsos e infraestrutura', path: '/solicitacoes', icon: ClipboardList, category: 'Geral', perm: 'isColaborador' },
+  { label: 'Recursos Humanos', description: 'Colaboradores, treinamentos e férias', path: '/admin/rh', icon: Users, category: 'Administrativo', perm: 'canRH' },
+  { label: 'Financeiro', description: 'Contas, transações e reembolsos', path: '/admin/financeiro', icon: DollarSign, category: 'Administrativo', perm: 'canFinanceiro' },
+  { label: 'Logística', description: 'Fornecedores, compras e pedidos', path: '/admin/logistica', icon: Truck, category: 'Administrativo', perm: 'canLogistica' },
+  { label: 'Patrimônio', description: 'Bens, localizações e inventário', path: '/admin/patrimonio', icon: Tag, category: 'Administrativo', perm: 'canPatrimonio' },
+  { label: 'Assistente IA', description: 'Agentes de auditoria e análise', path: '/assistente-ia', icon: Bot, category: 'Administrativo', perm: 'canIA' },
+  { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos', perm: 'canAgenda' },
+  { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos', perm: 'canProjetos' },
   { label: 'Gestão Anual', description: 'Próximo ano e resultados · eventos e projetos', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
-  { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos' },
-  { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial' },
-  { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial' },
+  { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos', module: 'expansao' },
+  { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial', perm: 'canMembresia' },
+  { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial', module: 'cuidados' },
 ]
 
 export function CommandSearch() {
@@ -40,14 +48,18 @@ export function CommandSearch() {
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+  const auth = useAuth()
+
+  // Só lista as páginas que o usuário consegue de fato abrir (mesma regra do menu).
+  const visiblePages = PAGES.filter(p => navItemAllowed(p, auth as Record<string, unknown>))
 
   const filtered = query.trim()
-    ? PAGES.filter(p =>
+    ? visiblePages.filter(p =>
         p.label.toLowerCase().includes(query.toLowerCase()) ||
         p.description.toLowerCase().includes(query.toLowerCase()) ||
         p.category.toLowerCase().includes(query.toLowerCase())
       )
-    : PAGES
+    : visiblePages
 
   const handleOpen = useCallback(() => {
     setOpen(true)
