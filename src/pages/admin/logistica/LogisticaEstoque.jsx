@@ -497,8 +497,7 @@ function RelatorioView() {
         </select>
       </div>
 
-      {/* 3 colunas fixas → 3 + 3 (Vencendo nunca fica órfão numa linha) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 20 }}>
         <div style={st.kpi(C.green)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.valor_total)}</div><div style={{ fontSize: 12, color: C.text2 }}>Valor em estoque</div></div>
         <div style={st.kpi(C.primary)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{r.produtos}</div><div style={{ fontSize: 12, color: C.text2 }}>Produtos ativos</div></div>
         <div style={st.kpi(C.red)}><div style={{ fontSize: 20, fontWeight: 700, color: r.a_repor ? C.red : C.text }}>{r.a_repor}</div><div style={{ fontSize: 12, color: C.text2 }}>A repor</div></div>
@@ -539,6 +538,13 @@ function RelatorioView() {
         <Painel title="Mais consumidos (saídas no período)">
           {rel.top_consumo.length === 0 ? <div style={st.empty}>Sem saídas.</div> : (
             <table style={st.table}><tbody>{rel.top_consumo.map((t, i) => (
+              <tr key={i}><td style={tdc}>{t.nome}</td><td style={{ ...tdc, textAlign: 'right', color: C.text2 }}>{t.qtd}</td><td style={{ ...tdc, textAlign: 'right', fontWeight: 600 }}>{fmtMoney(t.valor)}</td></tr>
+            ))}</tbody></table>
+          )}
+        </Painel>
+        <Painel title="Mais recebidos (entradas no período)">
+          {!rel.top_entradas || rel.top_entradas.length === 0 ? <div style={st.empty}>Sem entradas.</div> : (
+            <table style={st.table}><tbody>{rel.top_entradas.map((t, i) => (
               <tr key={i}><td style={tdc}>{t.nome}</td><td style={{ ...tdc, textAlign: 'right', color: C.text2 }}>{t.qtd}</td><td style={{ ...tdc, textAlign: 'right', fontWeight: 600 }}>{fmtMoney(t.valor)}</td></tr>
             ))}</tbody></table>
           )}

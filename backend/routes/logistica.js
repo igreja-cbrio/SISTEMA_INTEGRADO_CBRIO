@@ -743,7 +743,7 @@ router.get('/estoque/relatorio', async (req, res) => {
     }
     const valorUn = id => Number(pmap[id]?.valor_unitario) || 0;
 
-    const meses = {}, consumo = {}, porArea = {}, comGiro = new Set();
+    const meses = {}, consumo = {}, recebido = {}, porArea = {}, comGiro = new Set();
     let entradasQ = 0, saidasQ = 0, entradasV = 0, saidasV = 0;
     for (const m of movs) {
       const mes = String(m.data_movimentacao).slice(0, 7);
@@ -756,6 +756,7 @@ router.get('/estoque/relatorio', async (req, res) => {
         const k = m.area_destino || '(sem área)'; porArea[k] = (porArea[k] || 0) + v;
       } else if (m.tipo === 'entrada') {
         meses[mes].entradas += v; entradasQ += q; entradasV += v;
+        const re = (recebido[m.produto_id] = recebido[m.produto_id] || { qtd: 0, valor: 0 }); re.qtd += q; re.valor += v;
       } else { // ajuste · sinal define entrada/saída
         if (m.quantidade >= 0) { meses[mes].entradas += v; } else { meses[mes].saidas += v; }
       }
@@ -781,6 +782,7 @@ router.get('/estoque/relatorio', async (req, res) => {
       por_categoria: Object.values(cat).map(c => ({ ...c, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor),
       serie_mensal: Object.values(meses).sort((a, b) => a.mes.localeCompare(b.mes)).map(x => ({ mes: x.mes, entradas: r2(x.entradas), saidas: r2(x.saidas) })),
       top_consumo: Object.entries(consumo).map(([id, c]) => ({ nome: pmap[id]?.nome || '?', qtd: c.qtd, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor).slice(0, 10),
+      top_entradas: Object.entries(recebido).map(([id, c]) => ({ nome: pmap[id]?.nome || '?', qtd: c.qtd, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor).slice(0, 10),
       parados: (prods || []).filter(p => p.saldo > 0 && !comGiro.has(p.id)).map(p => ({ nome: p.nome, saldo: p.saldo, valor: Number(p.valor_total) || 0 })).sort((a, b) => b.valor - a.valor).slice(0, 12),
       consumo_area: Object.entries(porArea).map(([area, valor]) => ({ area, valor: r2(valor) })).sort((a, b) => b.valor - a.valor),
     });
