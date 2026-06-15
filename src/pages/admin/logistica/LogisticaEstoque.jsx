@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import { logistica } from '../../../api';
 import { toast } from 'sonner';
 
@@ -71,7 +72,7 @@ export default function LogisticaEstoque() {
   return (
     <div>
       <div style={st.subtabs}>
-        {[['produtos', 'Produtos'], ['lancar', 'Lançar'], ['movs', 'Movimentações'], ['validade', 'Validade'], ['consumo', 'Consumo por área']].map(([k, lbl]) => (
+        {[['produtos', 'Produtos'], ['lancar', 'Lançar'], ['movs', 'Movimentações'], ['validade', 'Validade'], ['consumo', 'Consumo por área'], ['relatorios', 'Relatórios']].map(([k, lbl]) => (
           <button key={k} style={st.subtab(sub === k)} onClick={() => setSub(k)}>{lbl}</button>
         ))}
       </div>
@@ -84,6 +85,7 @@ export default function LogisticaEstoque() {
       {sub === 'movs' && <MovsView />}
       {sub === 'validade' && <ValidadeView />}
       {sub === 'consumo' && <ConsumoView />}
+      {sub === 'relatorios' && <RelatorioView />}
     </div>
   );
 }
@@ -456,6 +458,111 @@ function ConsumoView() {
                 ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Relatórios (visão geral do estoque) ────────────────────────────────────────
+function RelatorioView() {
+  const [dias, setDias] = useState(90);
+  const [rel, setRel] = useState(null);
+  const [lotes, setLotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([logistica.estoque.relatorio(dias), logistica.estoque.lotes(30)])
+      .then(([r, l]) => { setRel(r); setLotes(Array.isArray(l) ? l : []); })
+      .catch(e => toast.error(e.message)).finally(() => setLoading(false));
+  }, [dias]);
+
+  if (loading || !rel) return <div style={st.empty}>Carregando relatório...</div>;
+  const r = rel.resumo;
+  const maxCat = Math.max(1, ...rel.por_categoria.map(c => c.valor));
+  const serie = rel.serie_mensal.map(s => ({ ...s, lbl: `${s.mes.slice(5)}/${s.mes.slice(2, 4)}` }));
+  const Painel = ({ title, children }) => (
+    <div style={{ ...st.card, padding: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>{title}</div>
+      {children}
+    </div>
+  );
+  const tdc = { ...st.td, padding: '6px 4px' };
+
+  return (
+    <div>
+      <div style={st.filterRow}>
+        <label style={{ fontSize: 13, color: C.text2 }}>Período:</label>
+        <select style={st.input} value={dias} onChange={e => setDias(Number(e.target.value))}>
+          <option value={30}>30 dias</option><option value={90}>90 dias</option><option value={180}>6 meses</option><option value={365}>1 ano</option>
+        </select>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 20 }}>
+        <div style={st.kpi(C.green)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.valor_total)}</div><div style={{ fontSize: 12, color: C.text2 }}>Valor em estoque</div></div>
+        <div style={st.kpi(C.primary)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{r.produtos}</div><div style={{ fontSize: 12, color: C.text2 }}>Produtos ativos</div></div>
+        <div style={st.kpi(C.red)}><div style={{ fontSize: 20, fontWeight: 700, color: r.a_repor ? C.red : C.text }}>{r.a_repor}</div><div style={{ fontSize: 12, color: C.text2 }}>A repor</div></div>
+        <div style={st.kpi(C.amber)}><div style={{ fontSize: 20, fontWeight: 700, color: lotes.length ? C.amber : C.text }}>{lotes.length}</div><div style={{ fontSize: 12, color: C.text2 }}>Vencendo (30d)</div></div>
+        <div style={st.kpi(C.green)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.entradas_valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Entradas no período</div></div>
+        <div style={st.kpi(C.red)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.saidas_valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Saídas no período</div></div>
+      </div>
+
+      <div style={{ ...st.card, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Entradas × Saídas por mês (R$)</div>
+        {serie.length === 0 ? <div style={st.empty}>Sem movimentações no período.</div> : (
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={serie} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" />
+              <XAxis dataKey="lbl" tick={{ fontSize: 12, fill: C.text2 }} />
+              <YAxis tick={{ fontSize: 11, fill: C.text2 }} width={52} />
+              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="entradas" name="Entradas" fill={C.green} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="saidas" name="Saídas" fill={C.red} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 16 }}>
+        <Painel title="Valor em estoque por categoria">
+          {rel.por_categoria.length === 0 ? <div style={st.empty}>—</div> : rel.por_categoria.map(c => (
+            <div key={c.categoria} style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: C.text, marginBottom: 3 }}>
+                <span>{c.categoria} <span style={{ color: C.text3 }}>({c.produtos})</span></span><span style={{ fontWeight: 600 }}>{fmtMoney(c.valor)}</span>
+              </div>
+              <div style={{ height: 6, background: 'var(--cbrio-border)', borderRadius: 4 }}><div style={{ height: 6, width: `${(c.valor / maxCat) * 100}%`, background: C.primary, borderRadius: 4 }} /></div>
+            </div>
+          ))}
+        </Painel>
+        <Painel title="Mais consumidos (saídas no período)">
+          {rel.top_consumo.length === 0 ? <div style={st.empty}>Sem saídas.</div> : (
+            <table style={st.table}><tbody>{rel.top_consumo.map((t, i) => (
+              <tr key={i}><td style={tdc}>{t.nome}</td><td style={{ ...tdc, textAlign: 'right', color: C.text2 }}>{t.qtd}</td><td style={{ ...tdc, textAlign: 'right', fontWeight: 600 }}>{fmtMoney(t.valor)}</td></tr>
+            ))}</tbody></table>
+          )}
+        </Painel>
+        <Painel title="Capital parado (sem saída no período)">
+          {rel.parados.length === 0 ? <div style={st.empty}>Tudo girando 🎉</div> : (
+            <table style={st.table}><tbody>{rel.parados.map((p, i) => (
+              <tr key={i}><td style={tdc}>{p.nome}</td><td style={{ ...tdc, textAlign: 'right', color: C.text2 }}>{p.saldo}</td><td style={{ ...tdc, textAlign: 'right', fontWeight: 600 }}>{fmtMoney(p.valor)}</td></tr>
+            ))}</tbody></table>
+          )}
+        </Painel>
+        <Painel title="Consumo por área">
+          {rel.consumo_area.length === 0 ? <div style={st.empty}>Sem saídas.</div> : (
+            <table style={st.table}><tbody>{rel.consumo_area.map((a, i) => (
+              <tr key={i}><td style={tdc}>{a.area}</td><td style={{ ...tdc, textAlign: 'right', fontWeight: 600 }}>{fmtMoney(a.valor)}</td></tr>
+            ))}</tbody></table>
+          )}
+        </Painel>
+        <Painel title="Vencendo em 30 dias">
+          {lotes.length === 0 ? <div style={st.empty}>Nenhum lote vencendo 🎉</div> : (
+            <table style={st.table}><tbody>{lotes.slice(0, 12).map((l, i) => {
+              const dd = diasAte(l.validade);
+              return <tr key={i}><td style={tdc}>{l.produto}</td><td style={{ ...tdc, textAlign: 'right', color: C.text2 }}>{l.restante}</td><td style={{ ...tdc, textAlign: 'right', color: dd < 0 ? C.red : C.amber }}>{dd < 0 ? `−${-dd}d` : `${dd}d`}</td></tr>;
+            })}</tbody></table>
+          )}
+        </Painel>
       </div>
     </div>
   );
