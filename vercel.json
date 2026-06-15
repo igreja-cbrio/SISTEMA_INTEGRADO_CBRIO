@@ -104,6 +104,10 @@
     {
       "path": "/api/voluntariado/cron/antecedentes",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/notificacoes/cron/alerta-culto-dados",
+      "schedule": "0 13 * * 1"
     }
   ],
   "rewrites": [
