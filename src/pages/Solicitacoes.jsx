@@ -1605,6 +1605,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
+  const [atenderEstoque, setAtenderEstoque] = useState(false); // ponte estoque (Fase 3a-2)
 
   if (!item) return null;
   const cat = getCatMeta(item.categoria);
@@ -1804,7 +1805,18 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                 </>
               )}
               {item.status === 'aprovado' && <Button size="sm" onClick={() => setActionPending('concluido')}>Concluir</Button>}
+              {/* Ponte estoque · só faz sentido em pedidos de material (logística) ativos */}
+              {['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
+                && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem'].includes(item.status)
+                && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pela estoque</Button>}
             </div>
+          )}
+          {atenderEstoque && (
+            <AtenderEstoqueModal
+              solicitacao={item}
+              onClose={() => setAtenderEstoque(false)}
+              onDone={() => { setAtenderEstoque(false); onItemRefresh?.(); onClose(); }}
+            />
           )}
 
           {/* Fase 1 · Relatar Problema / Reenviar + linha do tempo (visível pros dois lados) */}
@@ -2255,6 +2267,83 @@ function TermometroRefeitas() {
       )}
       <span className="text-[10px] text-muted-foreground/70 ml-auto">termômetro · não punitivo</span>
     </Card>
+  );
+}
+
+// Ponte estoque (Fase 3a-2) · o responsável atende a solicitação dando baixa no
+// estoque (itens que já temos) → conclui a solicitação. Comprar segue o fluxo de compras.
+function AtenderEstoqueModal({ solicitacao, onClose, onDone }) {
+  const [produtos, setProdutos] = useState([]);
+  const [busca, setBusca] = useState('');
+  const [sel, setSel] = useState('');
+  const [qtd, setQtd] = useState('');
+  const [fila, setFila] = useState([]);
+  const [obs, setObs] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api.estoqueProdutos().then(d => { if (alive) setProdutos(Array.isArray(d) ? d : []); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const prodMap = useMemo(() => Object.fromEntries(produtos.map(p => [p.id, p])), [produtos]);
+  const filtrados = useMemo(() => {
+    const t = busca.trim().toLowerCase();
+    return (t ? produtos.filter(p => p.nome.toLowerCase().includes(t)) : produtos).slice(0, 100);
+  }, [produtos, busca]);
+
+  function adicionar() {
+    const p = prodMap[sel]; const q = Number(qtd);
+    if (!p) { toast.error('Escolha um produto.'); return; }
+    if (!q || q <= 0) { toast.error('Quantidade inválida.'); return; }
+    setFila(f => [...f, { produto_id: p.id, nome: p.nome, quantidade: q, saldo: p.saldo }]);
+    setSel(''); setQtd('');
+  }
+  async function confirmar() {
+    if (!fila.length) { toast.error('Adicione ao menos um item.'); return; }
+    setSaving(true);
+    try {
+      await api.atenderEstoque(solicitacao.id, fila.map(f => ({ produto_id: f.produto_id, quantidade: f.quantidade })), obs.trim() || null);
+      toast.success('Baixa registrada · solicitação concluída.');
+      onDone();
+    } catch (e) { toast.error(e.message || 'Erro ao atender pela estoque'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>Atender pela estoque</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">Dá baixa no estoque dos itens que já temos e conclui <span className="font-medium">{solicitacao.titulo}</span>.</p>
+          <Input placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} />
+          <div className="flex gap-2 items-center">
+            <select className="flex h-9 flex-1 min-w-0 rounded-md border border-input bg-background px-2 text-sm" value={sel} onChange={e => setSel(e.target.value)}>
+              <option value="">Selecione o produto...</option>
+              {filtrados.map(p => <option key={p.id} value={p.id}>{p.nome} (saldo {p.saldo})</option>)}
+            </select>
+            <Input type="number" min="0" step="any" className="w-20" placeholder="Qtd" value={qtd} onChange={e => setQtd(e.target.value)} />
+            <Button type="button" size="sm" variant="outline" onClick={adicionar}>+</Button>
+          </div>
+          {fila.length > 0 && (
+            <div className="space-y-1 rounded-md border border-border p-2">
+              {fila.map((f, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span>{f.nome} · <span className="font-medium">{f.quantidade}</span>{f.quantidade > f.saldo ? <span className="text-amber-600"> (saldo {f.saldo}!)</span> : ''}</span>
+                  <button type="button" className="text-red-600 text-xs" onClick={() => setFila(x => x.filter((_, j) => j !== i))}>remover</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <Input placeholder="Observação (opcional)" value={obs} onChange={e => setObs(e.target.value)} />
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
+            <Button size="sm" onClick={confirmar} disabled={saving || !fila.length}>{saving ? 'Baixando...' : 'Dar baixa e concluir'}</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

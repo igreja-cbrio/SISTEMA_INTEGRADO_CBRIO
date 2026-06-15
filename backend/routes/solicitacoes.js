@@ -1595,4 +1595,83 @@ router.get('/dashboard/refeitas', async (req, res) => {
   }
 });
 
+// ── PONTE ESTOQUE (Fase 3a-2) · atender uma solicitação dando baixa no estoque ──
+// O Amaury (responsável da logística) vê o pedido na fila e, se já temos o item
+// aqui, "atende pela estoque": baixa o(s) produto(s) + resolve a solicitação.
+// (A outra saída — comprar — segue pelo fluxo de compras que já existe.)
+
+// GET /estoque/produtos · picker do catálogo (com saldo) pra montar a baixa
+router.get('/estoque/produtos', async (req, res) => {
+  try {
+    const busca = (req.query.busca || '').toString().replace(/[,()*:%]/g, ' ').trim();
+    let q = supabase.from('vw_log_estoque_saldo').select('id,nome,categoria,unidade,saldo')
+      .eq('ativo', true).order('nome').limit(1000);
+    if (busca) q = q.ilike('nome', `%${busca}%`);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /:id/atender-estoque · body { itens:[{produto_id, quantidade}], observacao? }
+router.post('/:id/atender-estoque', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const { itens, observacao } = req.body || {};
+    if (!Array.isArray(itens) || !itens.length) return res.status(400).json({ error: 'Informe ao menos um item.' });
+
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, area_cliente, categoria, titulo, status, observacoes')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    // permissão · admin/diretor, responsável direto, ou responsável da área
+    const isAdm = ['admin', 'diretor'].includes(req.user.role);
+    const isResp = sol.responsavel_id === userId;
+    let isAreaResp = false;
+    if (!isAdm && !isResp && sol.area_responsavel) {
+      const { data: rr } = await supabase.from('area_solicitacoes_responsaveis')
+        .select('profile_id').eq('area', sol.area_responsavel).eq('profile_id', userId).maybeSingle();
+      isAreaResp = !!rr;
+    }
+    if (!isAdm && !isResp && !isAreaResp) return res.status(403).json({ error: 'Sem permissão.' });
+    if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Solicitação já encerrada.' });
+    }
+
+    const rows = [];
+    for (const it of itens) {
+      const qtd = Number(it.quantidade);
+      if (!it.produto_id || !qtd || qtd <= 0) return res.status(400).json({ error: 'Item inválido (produto + quantidade > 0).' });
+      rows.push({
+        produto_id: it.produto_id, tipo: 'saida', quantidade: qtd,
+        data_movimentacao: new Date().toISOString().slice(0, 10),
+        area_destino: sol.area_cliente || null,
+        motivo: `Atende solicitação: ${sol.titulo}`,
+        origem_solicitacao_id: sol.id, feito_por: userId,
+      });
+    }
+    const { error: movErr } = await supabase.from('log_estoque_movimentacoes').insert(rows);
+    if (movErr) return res.status(400).json({ error: 'Erro ao baixar do estoque: ' + movErr.message });
+
+    const obs = `${sol.observacoes ? sol.observacoes + '\n' : ''}Atendido pela estoque por ${userName || 'logística'}${observacao ? ` · ${observacao}` : ''}.`;
+    const { data, error } = await supabase.from('solicitacoes')
+      .update({ status: 'concluido', observacoes: obs }).eq('id', sol.id).select('*').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    notificar({
+      modulo: CATEGORIA_MODULO[sol.categoria] || 'logistica',
+      tipo: 'solicitacao_status',
+      titulo: `Atendida pela estoque: ${sol.titulo}`,
+      mensagem: `${userName || 'A logística'} atendeu sua solicitação com itens que já tínhamos no estoque.`,
+      link: '/solicitacoes', severidade: 'info',
+      chaveDedup: `solicitacao_atendida_estoque_${sol.id}`,
+      targetIds: [sol.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify atender-estoque:', err.message));
+
+    res.json(data);
+  } catch (e) { console.error('[SOLICITACOES] atender-estoque:', e.message); res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

@@ -91,6 +91,17 @@ export default function LogisticaEstoque() {
 // ── Produtos ─────────────────────────────────────────────────────────────────
 function ProdutosView({ produtos, loading, filtro, setFiltro, totais, onChanged }) {
   const [edit, setEdit] = useState(null); // produto em edição/criação
+  const [sel, setSel] = useState(() => new Set()); // ids marcados p/ gerar compra
+  const toggle = (id) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  async function gerarCompra() {
+    if (!sel.size) return;
+    try {
+      await logistica.estoque.gerarCompra([...sel]);
+      toast.success('Solicitação de compra criada · está na fila da Logística (/solicitações).');
+      setSel(new Set());
+    } catch (e) { toast.error(e.message); }
+  }
 
   async function remover(p) {
     if (!window.confirm(`Desativar "${p.nome}"? O histórico é preservado.`)) return;
@@ -114,22 +125,25 @@ function ProdutosView({ produtos, loading, filtro, setFiltro, totais, onChanged 
           {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <button style={st.btn(filtro.repor ? 'primary' : 'sec')} onClick={() => setFiltro(f => ({ ...f, repor: !f.repor }))}>A repor</button>
+        {sel.size > 0 && <button style={st.btn('primary')} onClick={gerarCompra}>Gerar compra ({sel.size})</button>}
         <button style={{ ...st.btn('primary'), marginLeft: 'auto' }} onClick={() => setEdit({})}>+ Novo produto</button>
       </div>
 
       <div style={st.card}>
         <table style={st.table}>
           <thead><tr>
+            <th style={{ ...st.th, width: 32 }}></th>
             <th style={st.th}>Produto</th><th style={st.th}>Categoria</th>
             <th style={{ ...st.th, textAlign: 'right' }}>Saldo</th><th style={{ ...st.th, textAlign: 'right' }}>Mínimo</th>
             <th style={{ ...st.th, textAlign: 'right' }}>Valor un.</th><th style={{ ...st.th, textAlign: 'right' }}>Total</th>
             <th style={st.th}></th><th style={st.th}></th>
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={st.td} colSpan={8}>Carregando...</td></tr>
-              : produtos.length === 0 ? <tr><td colSpan={8} style={st.empty}>Nenhum produto.</td></tr>
+            {loading ? <tr><td style={st.td} colSpan={9}>Carregando...</td></tr>
+              : produtos.length === 0 ? <tr><td colSpan={9} style={st.empty}>Nenhum produto.</td></tr>
                 : produtos.map(p => (
-                  <tr key={p.id}>
+                  <tr key={p.id} style={sel.has(p.id) ? { background: C.primary + '10' } : undefined}>
+                    <td style={st.td}><input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} /></td>
                     <td style={st.td}>
                       {p.nome}
                       {p.controla_validade && <span style={{ ...st.badge(C.blue, C.blueBg), marginLeft: 6 }}>validade</span>}
@@ -344,8 +358,8 @@ function MovsView() {
         <table style={st.table}>
           <thead><tr><th style={st.th}>Data</th><th style={st.th}>Tipo</th><th style={st.th}>Produto</th><th style={{ ...st.th, textAlign: 'right' }}>Qtd</th><th style={st.th}>Validade</th><th style={st.th}>Área</th><th style={st.th}>Por</th><th style={st.th}>Motivo</th></tr></thead>
           <tbody>
-            {loading ? <tr><td style={st.td} colSpan={8}>Carregando...</td></tr>
-              : movs.length === 0 ? <tr><td colSpan={8} style={st.empty}>Sem movimentações no período.</td></tr>
+            {loading ? <tr><td style={st.td} colSpan={9}>Carregando...</td></tr>
+              : movs.length === 0 ? <tr><td colSpan={9} style={st.empty}>Sem movimentações no período.</td></tr>
                 : movs.map(m => (
                   <tr key={m.id}>
                     <td style={st.td}>{fmtDate(m.data_movimentacao)}</td>
