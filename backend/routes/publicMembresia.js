@@ -501,8 +501,11 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         const existing = users?.find(u => (u.email || '').toLowerCase() === emailLimpo);
         if (existing) {
           authUserId = existing.id;
-          // Atualiza a senha (pode ter esquecido ou estar criando senha pela 1a vez)
-          await supabase.auth.admin.updateUserById(existing.id, { password: senha });
+          // SEGURANÇA: NÃO sobrescrever a senha de uma conta que já existe.
+          // Este endpoint é público (sem login) — resetar a senha aqui permitia
+          // que qualquer pessoa assumisse a conta de outra só sabendo o e-mail
+          // (account takeover). Quem já tem conta e esqueceu a senha recupera
+          // pelo fluxo próprio (/redefinir-senha · e-mail enviado ao dono).
         } else {
           const { data: created, error: createErr } = await supabase.auth.admin.createUser({
             email: emailLimpo,
