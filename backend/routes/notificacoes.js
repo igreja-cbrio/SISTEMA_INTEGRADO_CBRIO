@@ -24,7 +24,40 @@ router.get('/cron', async (req, res) => {
   }
 });
 
+// Cron de segunda 10h BRT · alerta de dados de culto não lançados (→ Marcelo)
+// Protegido por CRON_SECRET (Vercel injeta Authorization: Bearer <CRON_SECRET>).
+router.get('/cron/alerta-culto-dados', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return res.status(500).json({ error: 'CRON_SECRET não configurado' });
+  const provided = req.headers.authorization || '';
+  const expected = `Bearer ${cronSecret}`;
+  if (provided.length !== expected.length ||
+      !require('crypto').timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { enviarAlertaCultoSemDados } = require('../services/alertaCulto');
+    const r = await enviarAlertaCultoSemDados();
+    res.json({ success: true, ...r });
+  } catch (e) {
+    console.error('[Cron alerta-culto]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.use(authenticate);
+
+// POST /api/notificacoes/alerta-culto/testar — dispara o alerta manualmente (admin)
+router.post('/alerta-culto/testar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { enviarAlertaCultoSemDados, apurarCultosPendentes } = require('../services/alertaCulto');
+    if (req.query.dry === '1') return res.json({ pendentes: await apurarCultosPendentes() });
+    const r = await enviarAlertaCultoSemDados();
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // GET /api/notificacoes — listar notificações do usuário logado
 router.get('/', async (req, res) => {
