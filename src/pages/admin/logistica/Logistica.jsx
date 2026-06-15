@@ -3,6 +3,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { logistica, ml, arquivei } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
+import LogisticaEstoque from './LogisticaEstoque';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -116,7 +117,7 @@ function Badge({ status, map }) {
 // Quem precisa abrir solicitação de compras hoje vai em /solicitacoes,
 // escolhe categoria=compras e o fluxo segue com SLA/NPS/notificacao do
 // solicitante automática.
-const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio'];
+const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio', 'Estoque'];
 
 // ═══════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -346,6 +347,7 @@ export default function Logistica() {
 
       {tab === 4 && <ComprasMLTab />}
       {tab === 5 && <RastreioMLTab />}
+      {tab === 6 && <LogisticaEstoque />}
 
       {/* ── MODAIS ─────────────────────────────────────────── */}
 
