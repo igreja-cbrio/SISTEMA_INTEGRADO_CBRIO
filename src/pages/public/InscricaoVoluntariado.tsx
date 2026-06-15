@@ -251,6 +251,8 @@ export default function InscricaoVoluntariado() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  // Consentimento LGPD pra consulta de antecedentes (obrigatório Kids/Bridge).
+  const [consentAntecedentes, setConsentAntecedentes] = useState(false);
   const { C } = usePublicTheme();
 
   // Opções vem do banco (gerenciadas no módulo de voluntariado). Fallback fica
@@ -315,6 +317,7 @@ export default function InscricaoVoluntariado() {
     if (!form.data_nascimento) return setError('Informe sua data de nascimento');
     if (ministerios.length === 0) return setError('Escolha ao menos uma área pra servir');
     if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mãe obrigatório para Kids/Bridge');
+    if (precisaDadosMenor && !consentAntecedentes) return setError('Autorize a consulta de antecedentes criminais para servir no Kids/Bridge');
 
     setLoading(true);
     try {
@@ -330,6 +333,7 @@ export default function InscricaoVoluntariado() {
         participou_next: form.participou_next || null,
         dom_predominante: form.dom_predominante || null,
         ministerios_interesse: ministerios,
+        consentimento_antecedentes: precisaDadosMenor ? consentAntecedentes : false,
         website: form.website,
       });
       setSent(true);
@@ -491,6 +495,26 @@ export default function InscricaoVoluntariado() {
                   onChange={set('nome_mae')}
                   required
                 />
+              )}
+              {precisaDadosMenor && (
+                <label style={{
+                  display: 'flex', gap: 10, alignItems: 'flex-start',
+                  background: '#00B39D14', border: '1px solid #00B39D40',
+                  borderRadius: 12, padding: '14px 16px', marginBottom: 16, cursor: 'pointer',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={consentAntecedentes}
+                    onChange={(e) => setConsentAntecedentes(e.target.checked)}
+                    style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                    Autorizo a CBRio a consultar meus <strong>antecedentes criminais</strong> para fins
+                    de triagem de voluntariado no ministério infantil/adolescentes. Entendo que é uma
+                    medida de proteção das crianças e adolescentes e que meus dados serão tratados de
+                    forma confidencial, conforme a LGPD.
+                  </span>
+                </label>
               )}
 
               <SectionTitle>Sua história com a gente</SectionTitle>

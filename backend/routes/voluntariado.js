@@ -6,8 +6,23 @@ const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
 const { notificar } = require('../services/notificar');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
+const { requireCron } = require('../utils/cronAuth');
+const antecedentes = require('../services/antecedentesCriminais');
 const multer = require('multer');
 const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+
+// ── Cron (sem login · CRON_SECRET) ──────────────────────────────────────────
+// Processa as triagens de antecedentes pendentes (Kids/Bridge) via Infosimples.
+// Inerte se INFOSIMPLES_API_TOKEN não estiver configurado.
+router.get('/cron/antecedentes', requireCron, async (req, res) => {
+  try {
+    const r = await antecedentes.processarPendentes({ limite: 25 });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[vol/cron/antecedentes]', e.message);
+    res.status(500).json({ error: 'Erro no cron de antecedentes' });
+  }
+});
 
 router.use(authenticate, authorizeModule('membresia', 1));
 
@@ -2438,6 +2453,26 @@ router.patch('/inscricoes/:id', async (req, res) => {
       return res.status(403).json({ error: 'Sem permissão para alterar a inscrição' });
     }
 
+    // Trava de segurança · Kids/Bridge não integra sem triagem de antecedentes
+    // liberada (nada consta / aprovação manual / dispensa registrada).
+    if (status === 'integrado') {
+      const { data: insc } = await supabase.from('vol_inscricoes')
+        .select('area').eq('id', req.params.id).maybeSingle();
+      const areaInsc = String(insc?.area || '').toLowerCase();
+      if (areaInsc === 'kids' || areaInsc === 'bridge') {
+        const { data: chk } = await supabase.from('vol_background_checks')
+          .select('status').eq('inscricao_id', req.params.id)
+          .is('deleted_at', null).order('created_at', { ascending: false })
+          .limit(1).maybeSingle();
+        if (!chk || !antecedentes.STATUS_LIBERADOS.has(chk.status)) {
+          return res.status(409).json({
+            error: 'Triagem de antecedentes pendente — só é possível integrar após a verificação ser liberada (nada consta, aprovação manual ou dispensa).',
+            code: 'antecedentes_pendentes',
+          });
+        }
+      }
+    }
+
     const patch = { status, updated_at: new Date().toISOString() };
     if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
     if (status === 'integrado') patch.integrado_em = new Date().toISOString().slice(0, 10);
@@ -2479,6 +2514,115 @@ router.patch('/inscricoes/:id', async (req, res) => {
   } catch (e) {
     console.error('[inscricao status]', e.message);
     res.status(500).json({ error: 'Erro ao atualizar inscrição' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// TRIAGEM DE ANTECEDENTES (Kids/Bridge) · PII sensível
+// Leitura/ação restrita a quem triagem (voluntariado/kids/bridge >=3).
+// ══════════════════════════════════════════════════════════════
+const BGCHECK_FIELDS =
+  'id, inscricao_id, area, status, resultado, certidao_url, consulta_erro, ' +
+  'consentimento, consentimento_em, consulta_em, revisado_por_nome, revisado_em, ' +
+  'observacoes, created_at, updated_at';
+
+function nivelTriagem(req) {
+  if (['admin', 'diretor'].includes(req.user.role)) return 5;
+  return Math.max(
+    getEffectiveLevel(req, 'voluntariado') || 0,
+    getEffectiveLevel(req, 'kids') || 0,
+    getEffectiveLevel(req, 'bridge') || 0,
+  );
+}
+
+// GET /inscricoes/:id/antecedentes — triagem mais recente da inscrição.
+router.get('/inscricoes/:id/antecedentes', async (req, res) => {
+  try {
+    if (nivelTriagem(req) < 3) return res.status(403).json({ error: 'Sem permissão para ver antecedentes' });
+    const { data, error } = await supabase.from('vol_background_checks')
+      .select(BGCHECK_FIELDS)
+      .eq('inscricao_id', req.params.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1).maybeSingle();
+    if (error) throw error;
+    res.json({ check: data || null, autoConfigurado: antecedentes.isConfigured() });
+  } catch (e) {
+    console.error('[antecedentes get]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar triagem' });
+  }
+});
+
+// POST /inscricoes/:id/antecedentes/consultar — roda a consulta automática.
+router.post('/inscricoes/:id/antecedentes/consultar', async (req, res) => {
+  try {
+    if (nivelTriagem(req) < 3) return res.status(403).json({ error: 'Sem permissão' });
+    const { data: insc } = await supabase.from('vol_inscricoes')
+      .select('id, area, membro_id, nome_completo, nome, sobrenome, cpf, nome_mae, data_nascimento')
+      .eq('id', req.params.id).maybeSingle();
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    const area = String(insc.area || '').toLowerCase();
+    if (area !== 'kids' && area !== 'bridge') {
+      return res.status(400).json({ error: 'Triagem de antecedentes só se aplica a Kids/Bridge' });
+    }
+    if (!antecedentes.isConfigured()) {
+      return res.status(400).json({ error: 'Consulta automática indisponível (token não configurado). Faça a triagem manual.', code: 'sem_token' });
+    }
+    // Garante a triagem (consentimento atestado pela coordenação ao acionar).
+    const chk = await antecedentes.criarCheckParaInscricao(insc, { consentimento: true, origem: 'coordenacao' });
+    if (!chk) return res.status(500).json({ error: 'Não foi possível abrir a triagem' });
+    const r = await antecedentes.processarCheck(chk.id);
+    const { data } = await supabase.from('vol_background_checks')
+      .select(BGCHECK_FIELDS).eq('id', chk.id).maybeSingle();
+    res.json({ ...r, check: data || null });
+  } catch (e) {
+    console.error('[antecedentes consultar]', e.message);
+    res.status(500).json({ error: 'Erro ao consultar antecedentes' });
+  }
+});
+
+// PATCH /antecedentes/:id — revisão humana (aprovar / reprovar / dispensar).
+router.patch('/antecedentes/:id', async (req, res) => {
+  try {
+    if (nivelTriagem(req) < 3) return res.status(403).json({ error: 'Sem permissão' });
+    const { acao, observacoes } = req.body || {};
+    const MAP = { aprovar: 'aprovado_manual', reprovar: 'reprovado', dispensar: 'dispensado' };
+    if (!MAP[acao]) return res.status(400).json({ error: 'Ação inválida' });
+    const patch = {
+      status: MAP[acao],
+      observacoes: observacoes !== undefined ? (observacoes || null) : undefined,
+      revisado_por: req.user.userId || null,
+      revisado_por_nome: req.user.name || req.user.email || null,
+      revisado_em: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    Object.keys(patch).forEach((k) => patch[k] === undefined && delete patch[k]);
+    const { data, error } = await supabase.from('vol_background_checks')
+      .update(patch).eq('id', req.params.id).is('deleted_at', null)
+      .select(BGCHECK_FIELDS).single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[antecedentes revisar]', e.message);
+    res.status(500).json({ error: 'Erro ao revisar triagem' });
+  }
+});
+
+// GET /antecedentes/pendentes — triagens que exigem ação (card de alerta).
+router.get('/antecedentes/pendentes', async (req, res) => {
+  try {
+    if (nivelTriagem(req) < 3) return res.status(403).json({ error: 'Sem permissão' });
+    const { data, error } = await supabase.from('vol_background_checks')
+      .select(BGCHECK_FIELDS + ', vol_inscricoes(nome_completo)')
+      .is('deleted_at', null)
+      .in('status', ['pendente', 'possivel_registro', 'erro'])
+      .order('created_at', { ascending: true })
+      .limit(200);
+    if (error) throw error;
+    res.json({ rows: data || [], autoConfigurado: antecedentes.isConfigured() });
+  } catch (e) {
+    console.error('[antecedentes pendentes]', e.message);
+    res.status(500).json({ error: 'Erro ao listar pendências' });
   }
 });
 

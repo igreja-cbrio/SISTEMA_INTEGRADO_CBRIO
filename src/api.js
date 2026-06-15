@@ -1733,6 +1733,11 @@ export const voluntariado = {
   },
   // Triagem: muda o status da inscrição (inscrito → enviado_ministerio → integrado)
   atualizarInscricao: (id, status) => patch(`/voluntariado/inscricoes/${id}`, { status }),
+  // Triagem de antecedentes criminais (Kids/Bridge)
+  antecedentes: (inscricaoId) => get(`/voluntariado/inscricoes/${inscricaoId}/antecedentes`),
+  consultarAntecedentes: (inscricaoId) => post(`/voluntariado/inscricoes/${inscricaoId}/antecedentes/consultar`, {}),
+  revisarAntecedentes: (checkId, data) => patch(`/voluntariado/antecedentes/${checkId}`, data),
+  antecedentesPendentes: () => get('/voluntariado/antecedentes/pendentes'),
   // Encontros 1x1 mensais (líder <-> voluntário)
   teamMembers: (teamId, yearMonth) =>
     get(`/voluntariado/team/${teamId}/members${yearMonth ? `?year_month=${yearMonth}` : ''}`),
