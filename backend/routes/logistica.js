@@ -720,4 +720,71 @@ router.post('/estoque/gerar-compra', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao gerar solicitação de compra' }); }
 });
 
+// GET /estoque/relatorio?dias=90 · consolidado pro painel de relatórios do estoque
+router.get('/estoque/relatorio', async (req, res) => {
+  try {
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 7), 730);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+
+    const { data: prods } = await supabase.from('vw_log_estoque_saldo')
+      .select('id,nome,categoria,saldo,valor_unitario,valor_total,precisa_repor').eq('ativo', true);
+    const pmap = Object.fromEntries((prods || []).map(p => [p.id, p]));
+
+    // movimentações do período (paginado · evita o cap de 1000 do PostgREST)
+    let movs = [], from = 0;
+    while (true) {
+      const { data, error } = await supabase.from('log_estoque_movimentacoes')
+        .select('produto_id,tipo,quantidade,data_movimentacao,area_destino')
+        .gte('data_movimentacao', desde).order('data_movimentacao').range(from, from + 999);
+      if (error) break;
+      movs = movs.concat(data || []);
+      if (!data || data.length < 1000) break;
+      from += 1000;
+    }
+    const valorUn = id => Number(pmap[id]?.valor_unitario) || 0;
+
+    const meses = {}, consumo = {}, porArea = {}, comGiro = new Set();
+    let entradasQ = 0, saidasQ = 0, entradasV = 0, saidasV = 0;
+    for (const m of movs) {
+      const mes = String(m.data_movimentacao).slice(0, 7);
+      meses[mes] = meses[mes] || { mes, entradas: 0, saidas: 0 };
+      const q = Math.abs(m.quantidade), v = q * valorUn(m.produto_id);
+      if (m.tipo === 'saida') {
+        meses[mes].saidas += v; saidasQ += q; saidasV += v;
+        const c = (consumo[m.produto_id] = consumo[m.produto_id] || { qtd: 0, valor: 0 }); c.qtd += q; c.valor += v;
+        comGiro.add(m.produto_id);
+        const k = m.area_destino || '(sem área)'; porArea[k] = (porArea[k] || 0) + v;
+      } else if (m.tipo === 'entrada') {
+        meses[mes].entradas += v; entradasQ += q; entradasV += v;
+      } else { // ajuste · sinal define entrada/saída
+        if (m.quantidade >= 0) { meses[mes].entradas += v; } else { meses[mes].saidas += v; }
+      }
+    }
+
+    const cat = {};
+    (prods || []).forEach(p => {
+      const k = p.categoria || '(sem categoria)';
+      cat[k] = cat[k] || { categoria: k, produtos: 0, valor: 0 };
+      cat[k].produtos++; cat[k].valor += Number(p.valor_total) || 0;
+    });
+    const r2 = n => Math.round(n * 100) / 100;
+
+    res.json({
+      dias,
+      resumo: {
+        produtos: (prods || []).length,
+        valor_total: r2((prods || []).reduce((s, p) => s + (Number(p.valor_total) || 0), 0)),
+        a_repor: (prods || []).filter(p => p.precisa_repor).length,
+        entradas_valor: r2(entradasV), saidas_valor: r2(saidasV),
+        entradas_qtd: entradasQ, saidas_qtd: saidasQ,
+      },
+      por_categoria: Object.values(cat).map(c => ({ ...c, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor),
+      serie_mensal: Object.values(meses).sort((a, b) => a.mes.localeCompare(b.mes)).map(x => ({ mes: x.mes, entradas: r2(x.entradas), saidas: r2(x.saidas) })),
+      top_consumo: Object.entries(consumo).map(([id, c]) => ({ nome: pmap[id]?.nome || '?', qtd: c.qtd, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor).slice(0, 10),
+      parados: (prods || []).filter(p => p.saldo > 0 && !comGiro.has(p.id)).map(p => ({ nome: p.nome, saldo: p.saldo, valor: Number(p.valor_total) || 0 })).sort((a, b) => b.valor - a.valor).slice(0, 12),
+      consumo_area: Object.entries(porArea).map(([area, valor]) => ({ area, valor: r2(valor) })).sort((a, b) => b.valor - a.valor),
+    });
+  } catch (e) { res.status(500).json({ error: 'Erro ao gerar relatório' }); }
+});
+
 module.exports = router;
