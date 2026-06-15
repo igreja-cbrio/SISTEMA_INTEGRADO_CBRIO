@@ -861,6 +861,199 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// FASE 1 · Linha do tempo + "Relatar Problema" (alteração/devolução) + reenvio
+// ══════════════════════════════════════════════════════════════════════════
+
+// GET /:id/timeline · fases (solicitacoes_eventos) + ajustes (solicitacao_ajustes)
+// mesclados em ordem · visível pro solicitante E pro responsável.
+router.get('/:id/timeline', async (req, res) => {
+  try {
+    const [{ data: eventos }, { data: ajustes }] = await Promise.all([
+      supabase.from('solicitacoes_eventos').select('*').eq('solicitacao_id', req.params.id).order('created_at', { ascending: true }),
+      supabase.from('solicitacao_ajustes').select('*').eq('solicitacao_id', req.params.id).order('created_at', { ascending: true }),
+    ]);
+    const ids = [...new Set([
+      ...(eventos || []).map(e => e.ator_id),
+      ...(ajustes || []).map(a => a.autor_id),
+    ].filter(Boolean))];
+    let nomes = {};
+    if (ids.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+      nomes = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+    }
+    const linha = [
+      ...(eventos || []).map(e => ({ tipo: 'evento', em: e.created_at, status_anterior: e.status_anterior, status_novo: e.status_novo, ator: nomes[e.ator_id] || null, observacao: e.observacao })),
+      ...(ajustes || []).map(a => ({ tipo: 'ajuste', em: a.created_at, lado: a.lado, motivo: a.motivo, comentario: a.comentario, ator: nomes[a.autor_id] || null })),
+    ].sort((x, y) => new Date(x.em).getTime() - new Date(y.em).getTime());
+    res.json(linha);
+  } catch (e) {
+    console.error('[SOLICITACOES] timeline:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /:id/relatar-problema · body { motivo, comentario }
+// motivo ∈ descricao|escopo|data → 'aguardando_ajuste' (volta editável pro
+// solicitante · pausa o SLA · vezes_refeita++). motivo='cancelamento' → 'cancelado'.
+// O `lado` (solicitante/responsável) sai de quem aciona (KPI diagnóstico).
+router.post('/:id/relatar-problema', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const { motivo, comentario } = req.body || {};
+    if (!['descricao', 'escopo', 'data', 'cancelamento'].includes(motivo)) {
+      return res.status(400).json({ error: 'Motivo inválido.' });
+    }
+
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, categoria, titulo, status, vezes_refeita')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const isSolic = sol.solicitante_id === userId;
+    const isResp = sol.responsavel_id === userId;
+    let isAreaResp = false;
+    if (!isAdmin && !isResp && sol.area_responsavel) {
+      const { data: rr } = await supabase.from('area_solicitacoes_responsaveis')
+        .select('profile_id').eq('area', sol.area_responsavel).eq('profile_id', userId).maybeSingle();
+      isAreaResp = !!rr;
+    }
+    const podeGerir = isAdmin || isResp || isAreaResp;
+    if (!isSolic && !podeGerir) return res.status(403).json({ error: 'Sem permissão.' });
+    if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Solicitação já encerrada · não é possível relatar problema.' });
+    }
+    // Já em ajuste: não re-pausa (preservaria status_antes_ajuste/sla_pausado_em
+    // originais) · o solicitante deve editar e reenviar. Cancelar ainda é possível.
+    if (sol.status === 'aguardando_ajuste' && motivo !== 'cancelamento') {
+      return res.status(400).json({ error: 'Já está aguardando ajuste · edite e reenvie (ou cancele).' });
+    }
+
+    const lado = isSolic ? 'solicitante' : 'responsavel';
+    await supabase.from('solicitacao_ajustes').insert({
+      solicitacao_id: sol.id, autor_id: userId, lado, motivo, comentario: comentario || null,
+    });
+
+    const modulo = CATEGORIA_MODULO[sol.categoria] || 'administrativo';
+
+    if (motivo === 'cancelamento') {
+      const { data, error } = await supabase.from('solicitacoes')
+        .update({ status: 'cancelado' }).eq('id', sol.id).select('*').single();
+      if (error) throw error;
+      notificar({
+        modulo, tipo: 'solicitacao_status',
+        titulo: `Cancelada: ${sol.titulo}`,
+        mensagem: `${userName || 'Usuário'} cancelou a solicitação${comentario ? ` · ${comentario}` : ''}.`,
+        link: '/solicitacoes', severidade: 'info',
+        chaveDedup: `solicitacao_cancelada_${sol.id}`,
+        ...(lado === 'responsavel' ? { targetIds: [sol.solicitante_id].filter(Boolean) } : {}),
+      }).catch(err => console.error('[SOLICITACOES] notify cancelar:', err.message));
+      return res.json(data);
+    }
+
+    const update = {
+      status: 'aguardando_ajuste',
+      status_antes_ajuste: sol.status,
+      sla_pausado_em: new Date().toISOString(),
+      vezes_refeita: (sol.vezes_refeita || 0) + 1,
+    };
+    const { data, error } = await supabase.from('solicitacoes')
+      .update(update).eq('id', sol.id).select('*').single();
+    if (error) throw error;
+
+    const MOTIVO_LABEL = { descricao: 'descrição', escopo: 'escopo', data: 'data' };
+    if (lado === 'responsavel') {
+      notificar({
+        modulo, tipo: 'solicitacao_status',
+        titulo: `Sua solicitação voltou para ajuste: ${sol.titulo}`,
+        mensagem: `${userName || 'A área'} pediu ajuste em ${MOTIVO_LABEL[motivo]}${comentario ? `: ${comentario}` : ''}. Edite e reenvie.`,
+        link: '/solicitacoes', severidade: 'alta',
+        chaveDedup: `solicitacao_devolvida_${sol.id}_${new Date(update.sla_pausado_em).getTime()}`,
+        targetIds: [sol.solicitante_id].filter(Boolean),
+      }).catch(err => console.error('[SOLICITACOES] notify devolucao:', err.message));
+    } else {
+      notificar({
+        modulo, tipo: 'solicitacao_status',
+        titulo: `Solicitante vai ajustar: ${sol.titulo}`,
+        mensagem: `${userName || 'O solicitante'} sinalizou ajuste em ${MOTIVO_LABEL[motivo]}${comentario ? `: ${comentario}` : ''}. O SLA fica pausado até o reenvio.`,
+        link: '/solicitacoes', severidade: 'info',
+        chaveDedup: `solicitacao_ajuste_solic_${sol.id}_${new Date(update.sla_pausado_em).getTime()}`,
+      }).catch(err => console.error('[SOLICITACOES] notify ajuste:', err.message));
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] relatar-problema:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /:id/reenviar · solicitante edita (opcional) e reenvia uma solicitação
+// que estava em aguardando_ajuste. Restaura o status anterior e RETOMA o SLA
+// (empurra os deadlines pelo tempo parado · a área não é penalizada).
+router.post('/:id/reenviar', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { titulo, descricao, justificativa, data_necessaria } = req.body || {};
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, status, status_antes_ajuste, sla_pausado_em, sla_resposta_deadline, sla_resolucao_deadline, categoria, titulo, area_responsavel')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    if (sol.solicitante_id !== userId && !isAdmin) {
+      return res.status(403).json({ error: 'Só o solicitante pode reenviar.' });
+    }
+    if (sol.status !== 'aguardando_ajuste') {
+      return res.status(400).json({ error: 'Solicitação não está aguardando ajuste.' });
+    }
+
+    const update = {
+      status: sol.status_antes_ajuste || 'pendente',
+      status_antes_ajuste: null,
+      sla_pausado_em: null,
+    };
+    if (titulo !== undefined) update.titulo = titulo;
+    if (descricao !== undefined) update.descricao = descricao;
+    if (justificativa !== undefined) update.justificativa = justificativa;
+    if (data_necessaria !== undefined) update.data_necessaria = data_necessaria || null;
+
+    // Retoma o SLA · empurra os prazos pelo tempo pausado
+    if (sol.sla_pausado_em) {
+      const pausaMs = Date.now() - new Date(sol.sla_pausado_em).getTime();
+      if (pausaMs > 0) {
+        if (sol.sla_resposta_deadline) update.sla_resposta_deadline = new Date(new Date(sol.sla_resposta_deadline).getTime() + pausaMs).toISOString();
+        if (sol.sla_resolucao_deadline) update.sla_resolucao_deadline = new Date(new Date(sol.sla_resolucao_deadline).getTime() + pausaMs).toISOString();
+      }
+    }
+
+    const { data, error } = await supabase.from('solicitacoes')
+      .update(update).eq('id', sol.id).select('*').single();
+    if (error) throw error;
+
+    const modulo = CATEGORIA_MODULO[sol.categoria] || 'administrativo';
+    resolverDestinatarios(modulo).then(managers => {
+      if (managers.length) {
+        notificar({
+          modulo, tipo: 'solicitacao_status',
+          titulo: `Reenviada: ${data.titulo}`,
+          mensagem: `O solicitante ajustou e reenviou · voltou pra fila ${data.area_responsavel || ''}.`,
+          link: '/solicitacoes', severidade: 'info',
+          chaveDedup: `solicitacao_reenviada_${sol.id}_${Date.now()}`,
+          targetIds: managers,
+        }).catch(err => console.error('[SOLICITACOES] notify reenviar:', err.message));
+      }
+    }).catch(err => console.error('[SOLICITACOES] resolve managers reenviar:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] reenviar:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── SLA definitions (catalogo de prazos) ───────────────────────
 router.get('/sla-defs', async (req, res) => {
   try {
@@ -1339,6 +1532,54 @@ router.get('/dashboard/urgencia-frequente', async (req, res) => {
     res.json(lista);
   } catch (e) {
     console.error('[SOLICITACOES] urgencia-frequente:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /dashboard/refeitas?dias=90 · termômetro "pedimos bem?" (NÃO punitivo · Fase 1)
+// % das solicitações do período que precisaram de ajuste (refação pelo solicitante)
+// + nº de devoluções (a área pediu clareza). Gestão (admin/diretor) ou responsável.
+router.get('/dashboard/refeitas', async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (!['admin', 'diretor'].includes(role)) {
+      const { data: rr } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('area').eq('profile_id', req.user.userId).limit(1);
+      if (!rr || !rr.length) return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 7), 365);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+
+    const [{ count: totalPeriodo }, { data: ajustes }] = await Promise.all([
+      supabase.from('solicitacoes').select('id', { count: 'exact', head: true })
+        .gte('created_at', desde).is('deleted_at', null),
+      supabase.from('solicitacao_ajustes').select('solicitacao_id, lado, motivo')
+        .gte('created_at', desde),
+    ]);
+
+    const refeitasSet = new Set();
+    const devolucoesSet = new Set();
+    const porMotivo = { descricao: 0, escopo: 0, data: 0, cancelamento: 0 };
+    (ajustes || []).forEach(a => {
+      porMotivo[a.motivo] = (porMotivo[a.motivo] || 0) + 1;
+      if (a.motivo === 'cancelamento') return;
+      if (a.lado === 'solicitante') refeitasSet.add(a.solicitacao_id);
+      else if (a.lado === 'responsavel') devolucoesSet.add(a.solicitacao_id);
+    });
+
+    const total = totalPeriodo || 0;
+    const refeitas = refeitasSet.size;
+    res.json({
+      dias,
+      total_periodo: total,
+      refeitas,
+      devolucoes: devolucoesSet.size,
+      pct_refeitas: total > 0 ? Math.round((refeitas / total) * 1000) / 10 : 0,
+      por_motivo: porMotivo,
+    });
+  } catch (e) {
+    console.error('[SOLICITACOES] dashboard-refeitas:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

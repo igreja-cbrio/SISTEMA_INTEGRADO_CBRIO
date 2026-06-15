@@ -1281,6 +1281,11 @@ export const solicitacoes = {
   desvincularML: (id) => del(`/solicitacoes/${id}/vincular-ml`),
   atualizarML:  (id) => post(`/solicitacoes/${id}/atualizar-ml`, {}),
   mlTimeline:   (id) => get(`/solicitacoes/${id}/ml-timeline`),
+  // Fase 1 · linha do tempo + Relatar Problema (alteração/devolução) + reenvio
+  timeline:        (id) => get(`/solicitacoes/${id}/timeline`),
+  relatarProblema: (id, motivo, comentario) => post(`/solicitacoes/${id}/relatar-problema`, { motivo, comentario }),
+  reenviar:        (id, campos) => post(`/solicitacoes/${id}/reenviar`, campos || {}),
+  diagnosticoRefeitas: (dias = 90) => get(`/solicitacoes/dashboard/refeitas?dias=${dias}`),
 };
 
 export const producao = {

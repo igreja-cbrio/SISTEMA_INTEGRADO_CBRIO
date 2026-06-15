@@ -55,11 +55,11 @@ const URGENCIAS = [
 // em_atendimento/aguardando_entrega/avaliado não caiam em coluna nenhuma e sumiam do board.
 // aguardando_aprovacao_origem fica de fora de proposito (vive na aba "Aprovar").
 const KANBAN_COLUMNS = [
-  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira'] },
+  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-t-blue-500',    match: ['em_analise'] },
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-t-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
   { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-t-emerald-600', match: ['concluido', 'avaliado'] },
-  { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-t-red-500',     match: ['rejeitado'] },
+  { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-t-red-500',     match: ['rejeitado', 'cancelado'] },
 ];
 
 const STATUS_LABELS = {
@@ -73,6 +73,8 @@ const STATUS_LABELS = {
   rejeitado: { label: 'Rejeitado', color: 'bg-red-500/15 text-red-700 dark:text-red-400' },
   concluido: { label: 'Concluído', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
   avaliado: { label: 'Avaliado', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+  aguardando_ajuste: { label: 'Aguardando ajuste', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  cancelado: { label: 'Cancelado', color: 'bg-muted text-muted-foreground' },
 };
 
 function getCatMeta(cat) {
@@ -892,6 +894,8 @@ export default function Solicitacoes() {
         </div>
       ) : view === 'atender' ? (
         /* ── Kanban Board (managers/admins) ── */
+        <>
+        <TermometroRefeitas />
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {columns.map(col => (
             <div
@@ -932,6 +936,7 @@ export default function Solicitacoes() {
             </div>
           ))}
         </div>
+        </>
       ) : (
         /* ── Simple list (collaborators) ── */
         <div className="space-y-3">
@@ -1027,7 +1032,8 @@ export default function Solicitacoes() {
 }
 
 function getSlaBadge(item) {
-  const concluido = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado'].includes(item.status);
+  // aguardando_ajuste = SLA pausado (com o solicitante) · não mostra contagem.
+  const concluido = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado', 'aguardando_ajuste'].includes(item.status);
   if (concluido) return null;
   const ativo = !item.respondido_em ? item.sla_resposta_deadline : item.sla_resolucao_deadline;
   if (!ativo) return null;
@@ -1694,6 +1700,16 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
+          {/* Fase 1 · Relatar Problema / Reenviar + linha do tempo (visível pros dois lados) */}
+          {!actionPending && (
+            <SolicitacaoHistorico
+              item={item}
+              isAdmin={isAdmin}
+              currentUserId={currentUserId}
+              onChanged={() => onItemRefresh?.()}
+            />
+          )}
+
           {/* Marketing · acompanhamento pelo solicitante (redesenho = campanha · legado = card) */}
           {item.categoria === 'marketing' && item.solicitante_id === currentUserId && (
             item.marketing_campanha
@@ -2088,6 +2104,203 @@ function NpsBlock({ item, onSubmit }) {
       <Button size="sm" onClick={handleSubmit} disabled={submitting} className="w-full">
         {submitting ? 'Enviando...' : 'Enviar avaliação'}
       </Button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Fase 1 · Linha do tempo + "Relatar Problema" (alteração/devolução) + Reenviar
+// Solicitante: pede alteração/cancelamento na própria · Responsável/admin:
+// devolve por falta de clareza (não pune o SLA da área). Em ajuste, o solicitante
+// edita e reenvia. A linha do tempo (eventos + ajustes) aparece pros dois lados.
+// ═══════════════════════════════════════════════════════════════════════
+const MOTIVOS_PROBLEMA = [
+  { value: 'descricao', label: 'Descrição' },
+  { value: 'escopo', label: 'Escopo' },
+  { value: 'data', label: 'Data' },
+  { value: 'cancelamento', label: 'Cancelamento' },
+];
+const MOTIVO_LABEL = { descricao: 'Descrição', escopo: 'Escopo', data: 'Data', cancelamento: 'Cancelamento' };
+
+// Termômetro "pedimos bem?" · % das solicitações que precisaram de ajuste (90d).
+// Diagnóstico NÃO punitivo (decisão do Marcos) · só na aba "Para Atender" (gestão/responsável).
+function TermometroRefeitas() {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.diagnosticoRefeitas(90).then(r => { if (alive) setD(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!d || !d.total_periodo) return null;
+  const pct = d.pct_refeitas;
+  const cor = pct >= 25 ? 'text-red-600 dark:text-red-400'
+    : pct >= 12 ? 'text-amber-600 dark:text-amber-400'
+    : 'text-emerald-600 dark:text-emerald-400';
+  return (
+    <Card className="p-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-1">
+      <span className="text-xs font-medium text-muted-foreground">Pedimos bem? · últimos 90 dias</span>
+      <span className="flex items-baseline gap-1.5">
+        <span className={`text-lg font-bold ${cor}`}>{pct}%</span>
+        <span className="text-xs text-muted-foreground">precisaram de ajuste ({d.refeitas} de {d.total_periodo})</span>
+      </span>
+      {d.devolucoes > 0 && (
+        <span className="text-xs text-muted-foreground">{d.devolucoes} devolvida(s) pela área</span>
+      )}
+      <span className="text-[10px] text-muted-foreground/70 ml-auto">termômetro · não punitivo</span>
+    </Card>
+  );
+}
+
+function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
+  const [linha, setLinha] = useState([]);
+  const [aberto, setAberto] = useState(false);
+  const [motivo, setMotivo] = useState('descricao');
+  const [comentario, setComentario] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [edit, setEdit] = useState({
+    titulo: item.titulo || '', descricao: item.descricao || '',
+    justificativa: item.justificativa || '', data_necessaria: item.data_necessaria || '',
+  });
+
+  const isSolicitante = item.solicitante_id === currentUserId;
+  const emAjuste = item.status === 'aguardando_ajuste';
+  const encerrada = ['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(item.status);
+  const podeRelatar = (isSolicitante || isAdmin) && !encerrada && !emAjuste;
+
+  useEffect(() => {
+    let alive = true;
+    api.timeline(item.id).then(d => { if (alive) setLinha(Array.isArray(d) ? d : []); }).catch(() => {});
+    return () => { alive = false; };
+  }, [item.id, item.status, item.vezes_refeita]);
+
+  async function enviarProblema() {
+    if (motivo !== 'cancelamento' && comentario.trim().length < 3) {
+      toast.error('Conte rapidamente o que precisa ajustar.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.relatarProblema(item.id, motivo, comentario.trim() || null);
+      toast.success(motivo === 'cancelamento' ? 'Solicitação cancelada.' : 'Enviado · foi para ajuste.');
+      setAberto(false); setComentario('');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao relatar problema'); }
+    finally { setSubmitting(false); }
+  }
+
+  async function reenviar() {
+    if (!edit.titulo.trim()) { toast.error('O título não pode ficar vazio.'); return; }
+    setSubmitting(true);
+    try {
+      await api.reenviar(item.id, {
+        titulo: edit.titulo.trim(), descricao: edit.descricao,
+        justificativa: edit.justificativa, data_necessaria: edit.data_necessaria || null,
+      });
+      toast.success('Reenviada · voltou para a fila.');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao reenviar'); }
+    finally { setSubmitting(false); }
+  }
+
+  const ultimoAjuste = [...linha].reverse().find(l => l.tipo === 'ajuste' && l.motivo !== 'cancelamento');
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      {item.vezes_refeita > 0 && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          Esta solicitação foi ajustada {item.vezes_refeita}× durante o processo.
+        </p>
+      )}
+      {emAjuste && isSolicitante && (
+        <div className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Ajuste solicitado · corrija e reenvie</p>
+          {ultimoAjuste && (
+            <p className="text-xs text-muted-foreground">
+              Pedido em <span className="font-medium">{MOTIVO_LABEL[ultimoAjuste.motivo]}</span>
+              {ultimoAjuste.comentario ? `: ${ultimoAjuste.comentario}` : ''}
+            </p>
+          )}
+          <div className="space-y-2">
+            <Label className="text-xs">Título</Label>
+            <Input value={edit.titulo} onChange={e => setEdit(s => ({ ...s, titulo: e.target.value }))} />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Descrição</Label>
+            <Textarea rows={2} value={edit.descricao} onChange={e => setEdit(s => ({ ...s, descricao: e.target.value }))} />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Justificativa</Label>
+            <Textarea rows={2} value={edit.justificativa} onChange={e => setEdit(s => ({ ...s, justificativa: e.target.value }))} />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Data necessária</Label>
+            <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
+              onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
+          </div>
+          <Button size="sm" onClick={reenviar} disabled={submitting} className="w-full">
+            {submitting ? 'Reenviando...' : 'Reenviar solicitação'}
+          </Button>
+        </div>
+      )}
+
+      {podeRelatar && (
+        aberto ? (
+          <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/30">
+            <p className="text-sm font-medium text-foreground">Relatar problema</p>
+            <p className="text-xs text-muted-foreground">
+              {isSolicitante ? 'Precisa alterar ou cancelar este pedido?' : 'Devolver para o solicitante ajustar (não conta contra o SLA da área).'}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {MOTIVOS_PROBLEMA.map(m => (
+                <button key={m.value} type="button" onClick={() => setMotivo(m.value)}
+                  className={`px-2.5 py-1 rounded-md border text-xs transition ${motivo === m.value ? 'bg-primary text-primary-foreground border-primary' : 'bg-background border-border hover:border-primary'}`}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <Textarea rows={2} value={comentario} onChange={e => setComentario(e.target.value)}
+              placeholder={motivo === 'cancelamento' ? 'Motivo do cancelamento (opcional)' : 'O que precisa mudar?'} />
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="outline" onClick={() => { setAberto(false); setComentario(''); }}>Fechar</Button>
+              <Button size="sm" onClick={enviarProblema} disabled={submitting}
+                className={motivo === 'cancelamento' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}>
+                {submitting ? 'Enviando...' : (motivo === 'cancelamento' ? 'Cancelar solicitação' : 'Enviar')}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => setAberto(true)}>Relatar problema</Button>
+        )
+      )}
+
+      {linha.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5" /> Linha do tempo
+          </p>
+          <ul className="space-y-2">
+            {linha.map((l, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs">
+                <span className="mt-0.5">{l.tipo === 'ajuste' ? (l.motivo === 'cancelamento' ? '✖' : '✏️') : '•'}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">
+                      {l.tipo === 'ajuste'
+                        ? `${l.lado === 'responsavel' ? 'Devolução' : 'Ajuste pedido'} · ${MOTIVO_LABEL[l.motivo] || l.motivo}`
+                        : getStatusMeta(l.status_novo).label}
+                    </span>
+                    <span className="text-muted-foreground text-[10px] whitespace-nowrap">
+                      {new Date(l.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  {l.comentario && <p className="text-muted-foreground">{l.comentario}</p>}
+                  {l.ator && <p className="text-muted-foreground text-[10px]">por {l.ator}</p>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
