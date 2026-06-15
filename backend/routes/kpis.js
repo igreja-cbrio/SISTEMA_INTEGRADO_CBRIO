@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
@@ -18,6 +18,10 @@ function authorizeIntegracao(req, res, next) {
   if (['admin', 'diretor'].includes(u.role)) return next();
   const areas = (u.kpi_areas || []).map(a => String(a).toLowerCase());
   if (areas.includes('integracao')) return next();
+  // Honra a matriz granular (cargo × módulo): nível >=2 em integracao = lançar
+  // dado bruto. Ex.: supervisor-jornada (Marcelo) tem nível 3 pela matriz sem
+  // estar em kpi_areas — sem isto, o guard legado o bloqueava (403).
+  if ((getEffectiveLevel(req, 'integracao') || 0) >= 2) return next();
   return res.status(403).json({
     error: 'Sem permissão · necessário ser admin, diretor ou líder de Integração',
   });
