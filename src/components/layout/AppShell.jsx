@@ -28,7 +28,6 @@ import {
 } from '../ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
@@ -431,7 +430,7 @@ export default function AppShell() {
                     </button>
                   </div>
                 </div>
-                <ScrollArea className="max-h-[400px]">
+                <div className="max-h-[400px] overflow-y-auto overscroll-contain">
                   {notifsLoading ? (
                     <div className="flex items-center justify-center py-8">
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
@@ -472,7 +471,7 @@ export default function AppShell() {
                       })}
                     </div>
                   )}
-                </ScrollArea>
+                </div>
               </DropdownMenuContent>
             </DropdownMenu>
 
