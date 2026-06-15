@@ -285,7 +285,6 @@ const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'colaboradores', label: 'Colaboradores', icon: Users },
   { key: 'pcs', label: 'PCS', icon: Scale },
-  { key: 'organograma', label: 'Organograma', icon: Network },
   { key: 'folha', label: 'Folha', icon: Receipt },
   { key: 'avaliacoes', label: 'Avaliações', icon: Star },
   { key: 'treinamentos', label: 'Treinamentos', icon: Briefcase },
@@ -575,11 +574,13 @@ export default function RH() {
             filtroArea={filtroArea} setFiltroArea={setFiltroArea}
             onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); loadAcessos(); }}
             onNovaAdmissao={() => setModalAdmissao({})}
+            onVerOrganograma={() => setTab('organograma')}
             showToast={showToast}
           />
         </TabsContent>
         <TabsContent value="pcs">{podeRemun && <TabPCS />}</TabsContent>
-        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); loadAcessos(); }} /></TabsContent>
+        {/* Organograma · acessado pelo botão no Diretório de Colaboradores (sem aba própria) */}
+        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onVoltar={() => setTab('colaboradores')} onChanged={() => { loadFuncs(); loadDash(); loadAcessos(); }} /></TabsContent>
         <TabsContent value="folha">{podeRemun && <TabFolha />}</TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
         <TabsContent value="treinamentos">
@@ -862,7 +863,7 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus, podeRemun = false }) 
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, onNovaAdmissao, showToast }) {
+function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, onNovaAdmissao, onVerOrganograma, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
@@ -969,6 +970,11 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
                 <UserPlus className="h-3.5 w-3.5" /> Nova admissão
               </Button>
             )}
+            {onVerOrganograma && (
+              <Button variant="outline" size="sm" onClick={onVerOrganograma}>
+                <Network className="h-3.5 w-3.5" /> Organograma
+              </Button>
+            )}
             <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCSVImport} />
             <Button variant="outline" size="sm" onClick={() => csvRef.current?.click()}>Importar CSV</Button>
             <Button variant="outline" size="sm" onClick={() => {
@@ -1052,107 +1058,9 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
 // ═══════════════════════════════════════════════════════════
 // TAB: TREINAMENTOS
 // ═══════════════════════════════════════════════════════════
-// ── Helpers de materiais ──
-const TIPO_MATERIAL = {
-  material: 'Material', questionario: 'Questionário', video: 'Vídeo',
-  apresentacao: 'Apresentação', documento: 'Documento',
-};
-const MATERIAL_STATUS = {
-  pendente: { c: C.amber, bg: C.amberBg, label: 'Pendente' },
-  visualizado: { c: C.blue, bg: C.blueBg, label: 'Visualizado' },
-  concluido: { c: C.green, bg: C.greenBg, label: 'Concluído' },
-};
-const FILE_ICONS = { 'application/pdf': '📄', 'application/vnd.ms-powerpoint': '📊', 'application/vnd.openxmlformats-officedocument.presentationml.presentation': '📊' };
-const getFileIcon = (mime) => FILE_ICONS[mime] || '📎';
-
-function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever, onReload, showToast }) {
+function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever, showToast }) {
   const [inscrevendo, setInscrevendo] = useState(null);
   const [funcSel, setFuncSel] = useState('');
-  // Materiais
-  const [materiaisPorTreino, setMateriaisPorTreino] = useState({});
-  const [expandido, setExpandido] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [showAddMaterial, setShowAddMaterial] = useState(null);
-  const [matForm, setMatForm] = useState({ titulo: '', tipo: 'material', descricao: '', obrigatorio: false });
-  const [matFile, setMatFile] = useState(null);
-  const [showEnviar, setShowEnviar] = useState(null); // material_id
-  const [enviarSel, setEnviarSel] = useState([]);
-  const fileRef = useRef(null);
-
-  async function loadMateriais(treinamentoId) {
-    try {
-      const data = await rh.materiais.list({ treinamento_id: treinamentoId });
-      setMateriaisPorTreino(prev => ({ ...prev, [treinamentoId]: data }));
-    } catch (e) { console.error(e); }
-  }
-
-  async function toggleExpand(treinoId) {
-    if (expandido === treinoId) { setExpandido(null); return; }
-    setExpandido(treinoId);
-    await loadMateriais(treinoId);
-  }
-
-  async function handleUploadMaterial(treinoId) {
-    if (!matForm.titulo) { showToast?.('Título é obrigatório'); return; }
-    setUploading(true);
-    try {
-      let arquivo_url = null, arquivo_nome = null, arquivo_tipo = null;
-      if (matFile) {
-        const ext = matFile.name.split('.').pop();
-        const filePath = `treinamentos/${treinoId}/${crypto.randomUUID()}.${ext}`;
-        const { error } = await supabase.storage.from('rh-materiais').upload(filePath, matFile, { upsert: true });
-        if (error) throw error;
-        const { data: { publicUrl } } = supabase.storage.from('rh-materiais').getPublicUrl(filePath);
-        arquivo_url = publicUrl;
-        arquivo_nome = matFile.name;
-        arquivo_tipo = matFile.type;
-      }
-      await rh.materiais.create({
-        treinamento_id: treinoId, titulo: matForm.titulo, descricao: matForm.descricao,
-        tipo: matForm.tipo, obrigatorio: matForm.obrigatorio,
-        arquivo_url, arquivo_nome, arquivo_tipo,
-      });
-      setShowAddMaterial(null);
-      setMatForm({ titulo: '', tipo: 'material', descricao: '', obrigatorio: false });
-      setMatFile(null);
-      await loadMateriais(treinoId);
-    } catch (err) {
-      console.error(err);
-      showToast?.('Erro ao adicionar material: ' + err.message);
-    } finally { setUploading(false); }
-  }
-
-  async function handleEnviar(materialId, treinoId) {
-    if (!enviarSel.length) return;
-    try {
-      await rh.materiais.enviar(materialId, { funcionario_ids: enviarSel });
-      setShowEnviar(null);
-      setEnviarSel([]);
-      await loadMateriais(treinoId);
-    } catch (e) { showToast?.(e.message); }
-  }
-
-  async function handleStatusUpdate(mfId, status, treinoId) {
-    try {
-      await rh.materiais.atualizarStatus(mfId, { status });
-      await loadMateriais(treinoId);
-    } catch (e) { showToast?.(e.message); }
-  }
-
-  async function handleDeleteMaterial(matId, treinoId) {
-    try { await rh.materiais.remove(matId); await loadMateriais(treinoId); }
-    catch (e) { showToast?.(e.message); }
-  }
-
-  function handleFileDrop(e) {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) setMatFile(file);
-  }
-
-  const toggleFuncSel = (id) => {
-    setEnviarSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
 
   function gerarCertificado(treino, func) {
     if (!func) return;
@@ -1205,9 +1113,6 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
 
       <div style={{ display: 'grid', gap: 16 }}>
         {treinos.map(t => {
-          const materiais = materiaisPorTreino[t.id] || [];
-          const isExpanded = expandido === t.id;
-
           return (
             <div key={t.id} style={styles.card}>
               <div style={styles.cardHeader}>
@@ -1295,226 +1200,6 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                   </div>
                 ) : (
                   <Button variant="ghost" className="mt-1.5 text-xs" onClick={() => setInscrevendo(t.id)}>+ Inscrever colaborador</Button>
-                )}
-              </div>
-
-              {/* Materiais — expandível */}
-              <div style={{ borderTop: `1px solid ${C.border}` }}>
-                <Button
-                  variant="ghost"
-                  onClick={() => toggleExpand(t.id)}
-                  className="w-full justify-between rounded-none h-auto py-3 px-5"
-                >
-                  <span style={{ fontSize: 11, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    📁 Materiais{materiais.length > 0 ? ` (${materiais.length})` : ''}
-                  </span>
-                  <span style={{ fontSize: 14, color: C.text3, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)', display: 'inline-block' }}>▼</span>
-                </Button>
-
-                {isExpanded && (
-                  <div style={{ padding: '0 20px 16px' }}>
-                    {materiais.length === 0 && <div style={{ fontSize: 13, color: C.text3, padding: '8px 0' }}>Nenhum material adicionado</div>}
-
-                    {materiais.map(mat => {
-                      const destinatarios = mat.rh_materiais_funcionarios || [];
-                      const pendentes = destinatarios.filter(d => d.status === 'pendente');
-                      const visualizados = destinatarios.filter(d => d.status === 'visualizado');
-                      const concluidos = destinatarios.filter(d => d.status === 'concluido');
-
-                      return (
-                        <div key={mat.id} style={{ background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16, marginBottom: 12, border: `1px solid ${C.border}` }}>
-                          {/* Header do material */}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <span style={{ fontSize: 16 }}>{mat.arquivo_tipo ? getFileIcon(mat.arquivo_tipo) : '📁'}</span>
-                                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{mat.titulo}</span>
-                                <span style={styles.badge(C.blue, C.blueBg)}>{TIPO_MATERIAL[mat.tipo] || mat.tipo}</span>
-                                {mat.obrigatorio && <span style={styles.badge(C.red, C.redBg)}>Obrigatório</span>}
-                              </div>
-                              {mat.descricao && <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>{mat.descricao}</div>}
-                              {mat.arquivo_nome && (
-                                <a href={mat.arquivo_url} target="_blank" rel="noopener noreferrer"
-                                  style={{ fontSize: 12, color: C.primary, textDecoration: 'none', marginTop: 4, display: 'inline-block' }}>
-                                  {mat.arquivo_nome} ↗
-                                </a>
-                              )}
-                            </div>
-                            <Button variant="ghost" size="sm" style={{ color: C.red }} onClick={() => handleDeleteMaterial(mat.id, t.id)}>
-                              <Trash2 style={{ width: 13, height: 13 }} />
-                            </Button>
-                          </div>
-
-                          {/* Resumo de status */}
-                          {destinatarios.length > 0 && (
-                            <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: C.amber }}>⏳ {pendentes.length} pendente{pendentes.length !== 1 ? 's' : ''}</span>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: C.blue }}>👁 {visualizados.length} visualizado{visualizados.length !== 1 ? 's' : ''}</span>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: C.green }}>✓ {concluidos.length} concluído{concluidos.length !== 1 ? 's' : ''}</span>
-                            </div>
-                          )}
-
-                          {/* Lista de destinatários */}
-                          {destinatarios.length > 0 && (
-                            <div style={{ marginBottom: 8 }}>
-                              {destinatarios.map(d => (
-                                <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    {d.funcionario?.foto_url ? (
-                                      <img data-foto-avatar="" src={d.funcionario.foto_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
-                                    ) : (
-                                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>
-                                        {(d.funcionario?.nome || '?')[0].toUpperCase()}
-                                      </div>
-                                    )}
-                                    <div>
-                                      <div style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{d.funcionario?.nome}</div>
-                                      <div style={{ fontSize: 11, color: C.text3 }}>{d.funcionario?.cargo}</div>
-                                    </div>
-                                  </div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <Badge status={d.status} map={MATERIAL_STATUS} />
-                                    {d.status === 'pendente' && (
-                                      <Button variant="ghost" size="sm" className="text-[10px]"
-                                        onClick={() => handleStatusUpdate(d.id, 'concluido', t.id)}>Marcar concluído</Button>
-                                    )}
-                                    {d.status === 'visualizado' && (
-                                      <Button variant="ghost" size="sm" className="text-[10px]"
-                                        onClick={() => handleStatusUpdate(d.id, 'concluido', t.id)}>Marcar concluído</Button>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Enviar para colaboradores */}
-                          {showEnviar === mat.id ? (
-                            <div style={{ background: C.card, borderRadius: 8, padding: 12, border: `1px solid ${C.border}`, marginTop: 8 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: C.text2, marginBottom: 8, textTransform: 'uppercase' }}>Enviar para colaboradores</div>
-                              <div style={{ maxHeight: 180, overflowY: 'auto', marginBottom: 8 }}>
-                                {funcs.filter(f => f.status === 'ativo').map(f => {
-                                  const jaEnviado = destinatarios.some(d => d.funcionario?.id === f.id);
-                                  return (
-                                    <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: jaEnviado ? 'default' : 'pointer', opacity: jaEnviado ? 0.5 : 1 }}>
-                                      <input type="checkbox" disabled={jaEnviado} checked={jaEnviado || enviarSel.includes(f.id)} onChange={() => toggleFuncSel(f.id)} />
-                                      {f.foto_url ? (
-                                        <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
-                                      ) : (
-                                        <div style={{ width: 24, height: 24, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
-                                          {(f.nome || '?')[0].toUpperCase()}
-                                        </div>
-                                      )}
-                                      <span style={{ fontSize: 13 }}>{f.nome} <span style={{ color: C.text3, fontSize: 11 }}>— {f.cargo}</span></span>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                              <div style={{ display: 'flex', gap: 8 }}>
-                                <Button size="sm"
-                                  onClick={() => handleEnviar(mat.id, t.id)} disabled={!enviarSel.length}>
-                                  Enviar ({enviarSel.length})
-                                </Button>
-                                <Button variant="ghost" size="sm"
-                                  onClick={() => { setShowEnviar(null); setEnviarSel([]); }}>Cancelar</Button>
-                                <Button variant="ghost" size="sm" style={{ marginLeft: 'auto' }}
-                                  onClick={() => {
-                                    const todos = funcs.filter(f => f.status === 'ativo' && !destinatarios.some(d => d.funcionario?.id === f.id)).map(f => f.id);
-                                    setEnviarSel(todos);
-                                  }}>Selecionar todos</Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <Button variant="ghost" className="text-xs mt-1"
-                              onClick={() => { setShowEnviar(mat.id); setEnviarSel([]); }}>
-                              + Enviar para colaboradores
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Adicionar Material */}
-                    {showAddMaterial === t.id ? (
-                      <div style={{ background: C.card, borderRadius: 10, padding: 16, border: `1px dashed ${C.primary}` }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Novo Material</div>
-                        <div style={styles.formRow}>
-                          <Input label="Título *" value={matForm.titulo} onChange={e => setMatForm(f => ({ ...f, titulo: e.target.value }))} />
-                          <div style={styles.formGroup}>
-                            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Tipo</label>
-                            <ShadSelect value={matForm.tipo} onValueChange={v => setMatForm(f => ({ ...f, tipo: v }))}>
-                              <SelectTrigger className="w-full">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {Object.entries(TIPO_MATERIAL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-                              </SelectContent>
-                            </ShadSelect>
-                          </div>
-                        </div>
-                        <div style={styles.formGroup}>
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Descrição</label>
-                          <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 50, resize: 'vertical' }} value={matForm.descricao} onChange={e => setMatForm(f => ({ ...f, descricao: e.target.value }))} />
-                        </div>
-                        <div style={styles.formGroup}>
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
-                            <input type="checkbox" checked={matForm.obrigatorio} onChange={e => setMatForm(f => ({ ...f, obrigatorio: e.target.checked }))} />
-                            Obrigatório
-                          </label>
-                        </div>
-
-                        {/* Upload de arquivo — drag & drop */}
-                        <div style={styles.formGroup}>
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Arquivo (PDF, PPT, etc.)</label>
-                          <div
-                            onDragOver={e => e.preventDefault()}
-                            onDrop={handleFileDrop}
-                            onClick={() => fileRef.current?.click()}
-                            style={{
-                              border: `2px dashed ${C.border}`, borderRadius: 10, padding: 16, textAlign: 'center',
-                              cursor: 'pointer', transition: 'border-color 0.2s',
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.borderColor = C.primary}
-                            onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
-                          >
-                            <input ref={fileRef} type="file" accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.mp4" style={{ display: 'none' }}
-                              onChange={e => { setMatFile(e.target.files?.[0] || null); }} />
-                            {matFile ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }}>
-                                <span style={{ fontSize: 22 }}>{getFileIcon(matFile.type)}</span>
-                                <div style={{ textAlign: 'left' }}>
-                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{matFile.name}</div>
-                                  <div style={{ fontSize: 11, color: C.text3 }}>{(matFile.size / 1024 / 1024).toFixed(1)} MB</div>
-                                </div>
-                                <Button variant="ghost" type="button" onClick={e => { e.stopPropagation(); setMatFile(null); if (fileRef.current) fileRef.current.value = ''; }}
-                                  style={{ color: C.red }} className="text-sm">✕</Button>
-                              </div>
-                            ) : (
-                              <>
-                                <div style={{ fontSize: 24, marginBottom: 4 }}>📁</div>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Arraste um arquivo aqui</div>
-                                <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>ou clique para selecionar — PDF, PPT, DOC, XLS, imagens</div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                          <Button onClick={() => handleUploadMaterial(t.id)} disabled={uploading}>
-                            {uploading ? 'Enviando...' : 'Adicionar Material'}
-                          </Button>
-                          <Button variant="ghost" onClick={() => { setShowAddMaterial(null); setMatFile(null); setMatForm({ titulo: '', tipo: 'material', descricao: '', obrigatorio: false }); }}>
-                            Cancelar
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button variant="outline" className="text-xs mt-1"
-                        onClick={() => setShowAddMaterial(t.id)}>
-                        + Adicionar Material
-                      </Button>
-                    )}
-                  </div>
                 )}
               </div>
             </div>
@@ -1654,7 +1339,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
   );
 }
 
-function OrgChartTab({ funcs, onDetail, onChanged }) {
+function OrgChartTab({ funcs, onDetail, onChanged, onVoltar }) {
   const ativos = funcs.filter(f => f.status === 'ativo');
   const containerRef = useRef(null);
   const contentRef = useRef(null);
@@ -1898,7 +1583,20 @@ function OrgChartTab({ funcs, onDetail, onChanged }) {
     );
   }
 
-  const roots = getChildren(null);
+  // Raízes = sem gestor OU gestor fora do conjunto visível (órfão · gestor inativo,
+  // ou viewer escopado por área cujo gestor está fora do escopo). Antes só
+  // `gestor_id === null` virava raiz → quem é escopado podia ver o chart VAZIO.
+  const idsVisiveis = new Set(ativos.map(f => f.id));
+  const passaFiltroRaiz = (f) => {
+    if (filterArea !== 'all' && f.area !== filterArea) return false;
+    if (searchTerm && !f.nome.toLowerCase().includes(searchTerm.toLowerCase()) && !(f.cargo || '').toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    return true;
+  };
+  let roots = ativos.filter(f => !f.gestor_id || !idsVisiveis.has(f.gestor_id)).filter(passaFiltroRaiz).sort((a, b) => a.nome.localeCompare(b.nome));
+  // Rede de segurança: nunca renderiza vazio quando há gente e nenhum filtro ativo.
+  if (roots.length === 0 && ativos.length > 0 && filterArea === 'all' && !searchTerm) {
+    roots = [...ativos].sort((a, b) => a.nome.localeCompare(b.nome));
+  }
   const comGestor = ativos.filter(f => f.gestor_id).length;
 
   // Centraliza o conteúdo na área visível (o organograma nasce alinhado à
@@ -1921,6 +1619,14 @@ function OrgChartTab({ funcs, onDetail, onChanged }) {
 
   return (
     <>
+      {/* Voltar pro Diretório — o organograma é acessado por botão em Colaboradores */}
+      {onVoltar && (
+        <div className="mb-3">
+          <Button variant="ghost" size="sm" onClick={onVoltar} className="gap-1.5 -ml-2 text-muted-foreground">
+            <span aria-hidden>←</span> Colaboradores
+          </Button>
+        </div>
+      )}
       {/* Assistente de IA · organize por descrição */}
       <div className="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
         <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-foreground">
