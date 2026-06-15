@@ -831,6 +831,17 @@ export const logistica = {
     create: (data) => post('/logistica/movimentacoes', data),
     historico: (codigo) => get(`/logistica/movimentacoes/historico/${encodeURIComponent(codigo)}`),
   },
+  // Estoque (Fase 3a) · catálogo + razão (saldo derivado) + validade/FEFO + consumo
+  estoque: {
+    produtos: (params) => get('/logistica/estoque/produtos' + (params ? '?' + new URLSearchParams(params) : '')),
+    criarProduto: (data) => post('/logistica/estoque/produtos', data),
+    atualizarProduto: (id, data) => patch(`/logistica/estoque/produtos/${id}`, data),
+    removerProduto: (id) => del(`/logistica/estoque/produtos/${id}`),
+    movimentacoes: (params) => get('/logistica/estoque/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    lancar: (movimentos) => post('/logistica/estoque/movimentacoes', Array.isArray(movimentos) ? { movimentos } : movimentos),
+    lotes: (dias) => get('/logistica/estoque/lotes' + (dias ? `?dias=${dias}` : '')),
+    consumo: (dias = 90) => get(`/logistica/estoque/consumo?dias=${dias}`),
+  },
 };
 
 export const patrimonio = {
