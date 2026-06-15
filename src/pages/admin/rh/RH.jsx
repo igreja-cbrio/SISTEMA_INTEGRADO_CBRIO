@@ -566,7 +566,7 @@ export default function RH() {
         </ScrollArea>
 
         <TabsContent value="dashboard">
-          <DashboardTab dash={dash} onNavigate={setTab} setFiltroStatus={setFiltroStatus} />
+          <DashboardTab dash={dash} onNavigate={setTab} setFiltroStatus={setFiltroStatus} podeRemun={podeRemun} />
         </TabsContent>
         <TabsContent value="colaboradores">
           <FuncionariosTab
@@ -652,7 +652,7 @@ export default function RH() {
 // ═══════════════════════════════════════════════════════════
 // TAB: DASHBOARD
 // ═══════════════════════════════════════════════════════════
-function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
+function DashboardTab({ dash, onNavigate, setFiltroStatus, podeRemun = false }) {
   if (!dash) return (
     <div className="space-y-4 py-6">
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
@@ -677,7 +677,8 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
     { title: 'Total Colaboradores', value: dash.total, icon: Users, iconColor: '#3b82f6', onClick: () => goTo('colaboradores') },
     { title: 'Ativos', value: dash.ativos, icon: Users, iconColor: '#10b981', onClick: () => goTo('colaboradores', 'ativo') },
     { title: 'Em Férias / Licença', value: (dash.ferias || 0) + (dash.licenca || 0), icon: CalendarDays, iconColor: '#f59e0b', onClick: () => goTo('ferias'), subtitle: `${dash.ferias || 0} férias · ${dash.licenca || 0} licença` },
-    { title: 'Custo Mensal', value: fmtM(dash.custoMensal), icon: Briefcase, iconColor: '#ef4444' },
+    // Custo mensal só pra quem vê remuneração (backend só devolve nesse caso).
+    ...(podeRemun ? [{ title: 'Custo Mensal', value: fmtM(dash.custoMensal), icon: Briefcase, iconColor: '#ef4444' }] : []),
   ];
 
   // Secondary KPIs
@@ -685,9 +686,9 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
     { title: 'Admissões (12m)', value: dash.admissoesAno ?? 0, icon: UserPlus, iconColor: '#10b981' },
     { title: 'Desligamentos (12m)', value: dash.desligamentosAno ?? 0, icon: Users, iconColor: '#ef4444' },
     { title: 'Inativos', value: dash.inativos, icon: Users, iconColor: '#6b7280', onClick: () => goTo('colaboradores', 'inativo') },
-    { title: 'Turnover', value: `${dash.turnover || 0}%`, icon: Briefcase, iconColor: dash.turnover > 15 ? '#ef4444' : '#10b981' },
-    { title: 'Admissões Pend.', value: dash.admissoesPendentes ?? 0, icon: UserPlus, iconColor: '#f59e0b' },
-    { title: 'Folha Salarial', value: fmtM(dash.totalSalarios), icon: Receipt, iconColor: '#00B39D' },
+    { title: 'Turnover (12m)', value: `${dash.turnover || 0}%`, icon: Briefcase, iconColor: dash.turnover > 15 ? '#ef4444' : '#10b981' },
+    { title: 'Em admissão', value: dash.admissoesPendentes ?? 0, icon: UserPlus, iconColor: '#8b5cf6', onClick: () => goTo('colaboradores', 'em_admissao') },
+    ...(podeRemun ? [{ title: 'Folha Salarial', value: fmtM(dash.totalSalarios), icon: Receipt, iconColor: '#00B39D' }] : []),
   ];
 
   return (
