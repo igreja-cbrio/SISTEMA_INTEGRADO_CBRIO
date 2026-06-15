@@ -2264,7 +2264,9 @@ function BeneficiosSection({ data, onSave }) {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const activeBenefits = BENEFICIOS_FIELDS.filter(b => Number(data[b.key]) > 0);
-  const isPJ = data.tipo_contrato === 'pj';
+  // tipo_contrato é gravado em MAIÚSCULAS (CLT/PJ/PJ+/PREBENDA) — comparar com
+  // 'pj' minúsculo nunca casava, tratando PJ como CLT na remuneração/descontos.
+  const isPJ = String(data.tipo_contrato || '').toUpperCase().startsWith('PJ');
   const remLiquida = isPJ ? data.salario : data.remuneracao_liquida;
 
   function startEdit() {
@@ -2424,31 +2426,25 @@ function BeneficiosSection({ data, onSave }) {
   );
 }
 
+// Chaves em MAIÚSCULAS pra casar com tipo_contrato do banco (CLT/PJ/PJ+/PREBENDA).
+// PJ/PJ+ usam o conjunto PJ; CLT/PREBENDA usam o conjunto CLT (ver docKeyDe()).
 const DOCS_OBRIGATORIOS = {
-  clt: [
+  CLT: [
     { tipo: 'contrato', label: 'Contrato de Trabalho' },
     { tipo: 'rg', label: 'RG' },
     { tipo: 'cpf', label: 'CPF' },
     { tipo: 'ctps', label: 'CTPS' },
     { tipo: 'comprovante_residencia', label: 'Comprovante de Residência' },
   ],
-  pj: [
+  PJ: [
     { tipo: 'contrato', label: 'Contrato de Prestação de Serviços' },
     { tipo: 'cnpj', label: 'Cartão CNPJ' },
     { tipo: 'cpf', label: 'CPF do Representante' },
     { tipo: 'rg', label: 'RG do Representante' },
   ],
-  voluntario: [
-    { tipo: 'contrato', label: 'Termo de Voluntariado' },
-    { tipo: 'rg', label: 'RG' },
-  ],
-  estagiario: [
-    { tipo: 'contrato', label: 'Contrato de Estágio' },
-    { tipo: 'rg', label: 'RG' },
-    { tipo: 'cpf', label: 'CPF' },
-    { tipo: 'comprovante_matricula', label: 'Comprovante de Matrícula' },
-  ],
 };
+// PJ e PJ+ → conjunto PJ; o resto (CLT/PREBENDA) → conjunto CLT.
+const docKeyDe = (t) => String(t || '').toUpperCase().startsWith('PJ') ? 'PJ' : 'CLT';
 
 function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
   const [uploading, setUploading] = useState(false);
@@ -2456,7 +2452,7 @@ function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
   const fileRef = useRef(null);
 
   // Verificar docs obrigatórios faltando
-  const obrigatorios = DOCS_OBRIGATORIOS[data.tipo_contrato] || [];
+  const obrigatorios = DOCS_OBRIGATORIOS[docKeyDe(data.tipo_contrato)] || [];
   const docsExistentes = (data.documentos || []).map(d => d.tipo?.toLowerCase());
   const docsFaltando = obrigatorios.filter(req => !docsExistentes.some(t => t === req.tipo || t?.includes(req.tipo)));
   const today = new Date().toISOString().slice(0, 10);
