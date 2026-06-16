@@ -108,7 +108,7 @@ function somaSecao(etapas, secao) {
   return { exec: hasE ? exec : null, prev: hasP ? prev : null };
 }
 function serializeEtapas(etapas) {
-  return JSON.stringify((etapas || []).map(e => ({ t: e.titulo, p: e.previsto_str, x: e.executado_str, o: e.observacao, s: e.secao })));
+  return JSON.stringify((etapas || []).map(e => ({ t: e.titulo, p: e.previsto_str, x: e.executado_str, o: e.observacao, s: e.secao, ti: e.tipo, c: e.categoria_especial })));
 }
 
 const ABAS = [
@@ -284,52 +284,135 @@ function MiniCard({ culto, onClick }) {
 }
 
 // ── Editor de etapas (cronograma · momentos do culto) ─────────────────────────
+const CATS_ESP = [
+  { v: 'ceia', label: 'Ceia' },
+  { v: 'batismo', label: 'Batismo' },
+  { v: 'apresentacao_bebes', label: 'Apresentação de bebês' },
+  { v: 'outros', label: 'Outros' },
+];
+const labelCatEsp = (v) => (CATS_ESP.find(c => c.v === v)?.label) || 'Especial';
+
 function EtapasEditor({ etapas, setEtapas }) {
   const setRow = (key, patch) => setEtapas(arr => arr.map(e => e.key === key ? { ...e, ...patch } : e));
+  const removeRow = (key) => setEtapas(arr => arr.filter(e => e.key !== key));
+  const [novaEsp, setNovaEsp] = useState(null); // { categoria, nome, executado_str, aposKey }
 
-  const culto = somaSecao(etapas, 'culto');
+  const culto = somaSecao(etapas, 'culto');     // inclui as especiais (estão na seção culto)
   const pos = somaSecao(etapas, 'pos_culto');
   const estourouCulto = culto.exec != null && culto.prev != null && culto.exec > culto.prev;
+  const especiais = etapas.filter(e => e.tipo === 'especial');
+  const ancoras = etapas.filter(e => (e.secao || 'culto') === 'culto'); // pra "entrou após"
 
-  const colGrid = '22px 1fr 58px 58px minmax(80px,1fr)';
+  const colGrid = '22px 1fr 54px 54px minmax(72px,1fr) 22px';
+
+  let nStd = 0;
+  const linhas = etapas.map(e => {
+    const ehPos = (e.secao || 'culto') === 'pos_culto';
+    const ehEsp = e.tipo === 'especial';
+    const num = ehPos ? '·' : ehEsp ? '★' : (++nStd);
+    return { e, ehPos, ehEsp, num };
+  });
+
+  const adicionarEspecial = () => {
+    const cat = novaEsp.categoria;
+    const nome = (novaEsp.nome || '').trim() || labelCatEsp(cat);
+    const nova = { key: rid(), titulo: nome, previsto_str: '', executado_str: novaEsp.executado_str || '', observacao: '', secao: 'culto', tipo: 'especial', categoria_especial: cat };
+    setEtapas(arr => {
+      const copy = [...arr];
+      if (novaEsp.aposKey === '__inicio__') { copy.unshift(nova); return copy; }
+      const idx = copy.findIndex(x => x.key === novaEsp.aposKey);
+      if (idx < 0) {
+        const posIdx = copy.findIndex(x => (x.secao || 'culto') === 'pos_culto');
+        if (posIdx < 0) copy.push(nova); else copy.splice(posIdx, 0, nova);
+      } else copy.splice(idx + 1, 0, nova);
+      return copy;
+    });
+    setNovaEsp(null);
+  };
 
   return (
     <div>
       <p style={{ fontSize: 11, color: C.t3, margin: '0 0 8px' }}>
-        Lance o <strong>tempo executado</strong> de cada momento em <strong>mm:ss</strong> (ex.: 5:45). A soma é o tempo do culto. Os nomes e o previsto seguem o roteiro padrão (edite na aba “Modelos”).
+        Lance o <strong>tempo executado</strong> de cada momento em <strong>mm:ss</strong> (ex.: 5:45). Nomes e previsto seguem o roteiro (aba “Modelos”). Use <strong>+ Atividade especial</strong> pra registrar ceia, batismo, etc.
       </p>
       <div style={{ overflowX: 'auto' }}>
-        <div style={{ minWidth: 380 }}>
+        <div style={{ minWidth: 400 }}>
           {/* cabeçalho */}
           <div style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, padding: '0 2px 4px', fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            <span>#</span><span>Momento</span><span style={{ textAlign: 'center' }}>Prev.</span><span style={{ textAlign: 'center' }}>Exec.</span><span>Obs.</span>
+            <span>#</span><span>Momento</span><span style={{ textAlign: 'center' }}>Prev.</span><span style={{ textAlign: 'center' }}>Exec.</span><span>Obs.</span><span />
           </div>
           {etapas.length === 0 && (
             <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', padding: '8px 2px' }}>
               Nenhum momento no roteiro. Configure o roteiro na aba “Modelos”.
             </div>
           )}
-          {etapas.map((e, i) => {
-            const ehPos = (e.secao || 'culto') === 'pos_culto';
+          {linhas.map(({ e, ehPos, ehEsp, num }, i) => {
             const exSeg = parseMMSS(e.executado_str);
             const prSeg = parseMMSS(e.previsto_str);
-            const estourouEtapa = exSeg != null && prSeg != null && exSeg > prSeg;
+            const estourouEtapa = !ehEsp && exSeg != null && prSeg != null && exSeg > prSeg;
+            const bg = ehEsp ? '#F59E0B14' : ehPos ? `${C.primary}08` : 'transparent';
             return (
-              <div key={e.key} style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '3px 2px', borderTop: i === 0 ? 'none' : `1px dashed ${C.border}`, background: ehPos ? `${C.primary}08` : 'transparent' }}>
-                <span style={{ fontSize: 10, color: C.t3, textAlign: 'center' }}>{ehPos ? '·' : i + 1}</span>
-                <span style={{ fontSize: 12, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>{e.titulo}{ehPos && <span style={{ fontSize: 8, color: C.t3, fontWeight: 700, marginLeft: 5 }}>PÓS</span>}</span>
-                <span style={{ fontSize: 11, color: C.t3, textAlign: 'center' }}>{fmtMMSSdash(prSeg)}</span>
+              <div key={e.key} style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '3px 2px', borderTop: i === 0 ? 'none' : `1px dashed ${C.border}`, background: bg }}>
+                <span style={{ fontSize: 10, color: ehEsp ? '#B45309' : C.t3, textAlign: 'center' }}>{num}</span>
+                {ehEsp ? (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                    <span style={{ fontSize: 8, fontWeight: 800, color: '#B45309', background: '#F59E0B22', borderRadius: 4, padding: '1px 4px', whiteSpace: 'nowrap' }}>{labelCatEsp(e.categoria_especial)}</span>
+                    <input value={e.titulo} onChange={ev => setRow(e.key, { titulo: ev.target.value })} placeholder="Atividade" style={{ ...inpSm, padding: '4px 6px' }} />
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 12, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>{e.titulo}{ehPos && <span style={{ fontSize: 8, color: C.t3, fontWeight: 700, marginLeft: 5 }}>PÓS</span>}</span>
+                )}
+                <span style={{ fontSize: 11, color: C.t3, textAlign: 'center' }}>{ehEsp ? '—' : fmtMMSSdash(prSeg)}</span>
                 <input value={e.executado_str} onChange={ev => setRow(e.key, { executado_str: ev.target.value })} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: estourouEtapa ? '#EF4444' : C.text, fontWeight: 600 }} />
-                <input value={e.observacao} onChange={ev => setRow(e.key, { observacao: ev.target.value })} placeholder="ex.: pregador" style={{ ...inpSm }} />
+                <input value={e.observacao} onChange={ev => setRow(e.key, { observacao: ev.target.value })} placeholder={ehEsp ? 'obs' : 'ex.: pregador'} style={{ ...inpSm }} />
+                {ehEsp
+                  ? <button onClick={() => removeRow(e.key)} title="Remover atividade especial" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, justifySelf: 'center' }}><Trash2 size={12} /></button>
+                  : <span />}
               </div>
             );
           })}
         </div>
       </div>
 
+      {/* adicionar atividade especial */}
+      {!novaEsp ? (
+        <button onClick={() => setNovaEsp({ categoria: 'ceia', nome: '', executado_str: '', aposKey: ancoras.length ? ancoras[ancoras.length - 1].key : '__inicio__' })} style={{ ...chip, marginTop: 8, color: '#B45309', borderColor: '#F59E0B66' }}>
+          <Plus size={11} /> Atividade especial
+        </button>
+      ) : (
+        <div style={{ marginTop: 8, padding: 10, background: '#F59E0B0E', border: '1px solid #F59E0B44', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#B45309' }}>Nova atividade especial</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={novaEsp.categoria} onChange={ev => setNovaEsp(s => ({ ...s, categoria: ev.target.value }))} style={{ ...inpSm, width: 'auto' }}>
+              {CATS_ESP.map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
+            </select>
+            {novaEsp.categoria === 'outros' && (
+              <input value={novaEsp.nome} onChange={ev => setNovaEsp(s => ({ ...s, nome: ev.target.value }))} placeholder="Qual atividade?" style={{ ...inpSm, width: 150 }} />
+            )}
+            <input value={novaEsp.executado_str} onChange={ev => setNovaEsp(s => ({ ...s, executado_str: ev.target.value }))} placeholder="mm:ss" style={{ ...inpSm, width: 70, textAlign: 'center' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: C.t3 }}>entrou após:</span>
+            <select value={novaEsp.aposKey} onChange={ev => setNovaEsp(s => ({ ...s, aposKey: ev.target.value }))} style={{ ...inpSm, width: 'auto' }}>
+              <option value="__inicio__">(início do culto)</option>
+              {ancoras.map(a => <option key={a.key} value={a.key}>{a.titulo}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={adicionarEspecial} style={{ ...btnPrimary, background: '#F59E0B', padding: '6px 12px' }}><Plus size={12} /> Adicionar</button>
+            <button onClick={() => setNovaEsp(null)} style={{ ...btnGhost, padding: '6px 12px' }}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
       {/* somatório · culto e pós-culto SEPARADOS (não somam) */}
       <div style={{ marginTop: 10, padding: 10, background: C.inputBg, borderRadius: 8, fontSize: 12, display: 'flex', flexDirection: 'column', gap: 5 }}>
         <LinhaSoma label="Tempo de culto" exec={culto.exec} prev={culto.prev} corExec={estourouCulto ? '#EF4444' : C.text} bold />
+        {especiais.length > 0 && (
+          <div style={{ fontSize: 10, color: '#B45309', paddingLeft: 2 }}>
+            ↳ inclui especiais: {especiais.map(e => `${labelCatEsp(e.categoria_especial)} ${fmtMMSSdash(parseMMSS(e.executado_str))}`).join(' · ')}
+          </div>
+        )}
         <LinhaSoma label="Tempo de pós-culto" exec={pos.exec} prev={pos.prev} />
       </div>
     </div>
@@ -370,8 +453,8 @@ function ModalProducao({ culto, onClose, onSaved }) {
       setForm(formInicial);
       // etapas do culto, ou pré-carrega do roteiro padrão se ainda não houver
       const base = (d.etapas && d.etapas.length)
-        ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtMMSS(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto' }))
-        : (d.roteiro || []).map(r => ({ key: rid(), titulo: r.titulo || '', previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto' }));
+        ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtMMSS(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto', tipo: e.tipo || 'padrao', categoria_especial: e.categoria_especial || null }))
+        : (d.roteiro || []).map(r => ({ key: rid(), titulo: r.titulo || '', previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto', tipo: 'padrao', categoria_especial: null }));
       // pós-culto sempre por último (sort estável preserva a ordem dentro de cada seção)
       base.sort((a, b) => (a.secao === 'pos_culto' ? 1 : 0) - (b.secao === 'pos_culto' ? 1 : 0));
       setEtapas(base);
@@ -418,6 +501,8 @@ function ModalProducao({ culto, onClose, onSaved }) {
           executado_seg: parseMMSS(e.executado_str),
           observacao: e.observacao?.trim() || null,
           secao: e.secao || 'culto',
+          tipo: e.tipo || 'padrao',
+          categoria_especial: e.categoria_especial || null,
         }));
       await prodApi.salvarEtapas(culto.id, etapasPayload);
       await prodApi.salvarCulto(culto.id, {
@@ -573,6 +658,10 @@ function AbaAcumulado({ modo }) {
           <Kpi titulo="Checklist executado" valor={data.totais.checklist_pct == null ? '—' : `${data.totais.checklist_pct}%`} cor="#10B981" />
           <Kpi titulo="Falhas técnicas" valor={data.totais.falhas_tecnicas} cor="#EF4444" />
           <Kpi titulo="Ocorr. estrutura" valor={data.totais.ocorrencias_estrutura} cor="#F59E0B" />
+          {data.especiais && (
+            <Kpi titulo="Cultos c/ atividade especial" valor={`${data.especiais.cultos_com_especial}/${data.especiais.cultos_no_periodo}`}
+              sub={`rotina ${data.especiais.cultos_rotina} · outros ${data.especiais.cultos_outros}`} cor="#B45309" />
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -626,6 +715,33 @@ function AbaAcumulado({ modo }) {
                   </tr>
                 ))}
                 {(data.por_etapa || []).length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem etapas lançadas no período.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <h3 style={subTit}>Atividades especiais (por que o culto passa de 60)</h3>
+            <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
+              {data.especiais
+                ? `${data.especiais.cultos_com_especial} de ${data.especiais.cultos_no_periodo} cultos tiveram atividade especial · rotina (ceia/batismo/apresentação): ${data.especiais.cultos_rotina} · outros: ${data.especiais.cultos_outros}.`
+                : ''}
+            </p>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
+                  {['Atividade', 'Tipo', 'Ocorrências', 'Duração média'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {(data.especiais?.por_categoria || []).map(c => (
+                  <tr key={c.categoria} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>{c.label}</td>
+                    <td style={{ ...td, color: c.rotina ? C.t2 : '#B45309', fontWeight: c.rotina ? 400 : 700 }}>{c.rotina ? 'Rotina' : 'Outros'}</td>
+                    <td style={td}>{c.ocorrencias}</td>
+                    <td style={td}>{fmtMMSSdash(c.duracao_media_seg)}</td>
+                  </tr>
+                ))}
+                {(data.especiais?.por_categoria || []).length === 0 && <tr><td colSpan={4} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Nenhuma atividade especial no período.</td></tr>}
               </tbody>
             </table>
           </div>

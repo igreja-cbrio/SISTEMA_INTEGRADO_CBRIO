@@ -34,6 +34,8 @@ async function responsaveisProducao() {
 const SEVERIDADES = ['baixa', 'media', 'alta', 'critica'];
 const TIPOS_OCORR = ['tecnica', 'estrutura'];
 const SECOES = ['culto', 'pos_culto'];
+const CATEGORIAS_ESPECIAIS = ['ceia', 'batismo', 'apresentacao_bebes', 'outros'];
+const CATEGORIAS_ROTINA = ['ceia', 'batismo', 'apresentacao_bebes']; // 'outros' = fora da rotina
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 // segundos · inteiro não-negativo ou null (tempo mm:ss de uma etapa)
@@ -221,6 +223,7 @@ router.get('/culto/:id', authorizeModule('producao', 1), async (req, res) => {
         id: e.id, ordem: e.ordem, titulo: e.titulo,
         previsto_seg: e.previsto_seg, executado_seg: e.executado_seg,
         observacao: e.observacao, secao: e.secao,
+        tipo: e.tipo || 'padrao', categoria_especial: e.categoria_especial || null,
       })),
       roteiro: roteiroDoCulto,
     });
@@ -270,15 +273,21 @@ router.put('/culto/:id/etapas', authorizeModule('producao', 2), async (req, res)
 
     const rows = entrada
       .filter(e => e && String(e.titulo || '').trim().length >= 1)
-      .map((e, i) => ({
-        culto_id: cultoId,
-        ordem: Number.isFinite(Number(e.ordem)) ? Number(e.ordem) : i + 1,
-        titulo: String(e.titulo).trim().slice(0, 200),
-        previsto_seg: intSegOrNull(e.previsto_seg),
-        executado_seg: intSegOrNull(e.executado_seg),
-        observacao: e.observacao ? String(e.observacao).trim().slice(0, 500) : null,
-        secao: SECOES.includes(e.secao) ? e.secao : 'culto',
-      }));
+      .map((e, i) => {
+        const especial = e.tipo === 'especial';
+        return {
+          culto_id: cultoId,
+          ordem: Number.isFinite(Number(e.ordem)) ? Number(e.ordem) : i + 1,
+          titulo: String(e.titulo).trim().slice(0, 200),
+          previsto_seg: intSegOrNull(e.previsto_seg),
+          executado_seg: intSegOrNull(e.executado_seg),
+          observacao: e.observacao ? String(e.observacao).trim().slice(0, 500) : null,
+          secao: SECOES.includes(e.secao) ? e.secao : 'culto',
+          tipo: especial ? 'especial' : 'padrao',
+          categoria_especial: especial && CATEGORIAS_ESPECIAIS.includes(e.categoria_especial)
+            ? e.categoria_especial : null,
+        };
+      });
 
     // replace: limpa as etapas atuais do culto e reinsere
     const { error: delErr } = await supabase
@@ -529,7 +538,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
         supabase.from('culto_producao_ocorrencias').select('*').in('culto_id', ids),
         supabase.from('culto_producao_checklist').select('culto_id, feito').in('culto_id', ids),
         supabase.from('vol_service_types').select('id, name, meta_duracao_min'),
-        supabase.from('culto_producao_etapas').select('culto_id, titulo, previsto_seg, executado_seg, secao').in('culto_id', ids),
+        supabase.from('culto_producao_etapas').select('culto_id, titulo, previsto_seg, executado_seg, secao, tipo, categoria_especial').in('culto_id', ids),
       ]);
       prod = r[0].data || []; ocorr = r[1].data || []; marks = r[2].data || []; serviceTypes = r[3].data || []; etapas = r[4].data || [];
     }
@@ -647,7 +656,34 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
       estouro_pct: g.n_ambos ? Math.round((g.estouros / g.n_ambos) * 100) : null,
     })).sort((a, b) => (b.desvio_medio_seg ?? -1e9) - (a.desvio_medio_seg ?? -1e9));
 
-    res.json({ periodo: { desde, ate }, totais, detalhado, por_etapa });
+    // Atividades especiais (ceia/batismo/apresentação/outros) · mapeia por que o
+    // culto passa de 60. Conta quantos CULTOS tiveram especial + por categoria.
+    const CAT_LABEL = { ceia: 'Ceia', batismo: 'Batismo', apresentacao_bebes: 'Apresentação de bebês', outros: 'Outros' };
+    const espRows = etapas.filter(e => e.tipo === 'especial');
+    const cultosComEspecial = new Set(espRows.map(e => e.culto_id));
+    const cultosComRotina = new Set();
+    const cultosComOutros = new Set();
+    const catMap = {};
+    for (const e of espRows) {
+      const cat = CATEGORIAS_ESPECIAIS.includes(e.categoria_especial) ? e.categoria_especial : 'outros';
+      if (CATEGORIAS_ROTINA.includes(cat)) cultosComRotina.add(e.culto_id); else cultosComOutros.add(e.culto_id);
+      if (!catMap[cat]) catMap[cat] = { categoria: cat, label: CAT_LABEL[cat], ocorrencias: 0, soma_exec: 0, n_exec: 0 };
+      catMap[cat].ocorrencias++;
+      if (e.executado_seg != null) { catMap[cat].soma_exec += e.executado_seg; catMap[cat].n_exec++; }
+    }
+    const especiais = {
+      cultos_no_periodo: cultos?.length || 0,
+      cultos_com_especial: cultosComEspecial.size,
+      cultos_rotina: cultosComRotina.size,
+      cultos_outros: cultosComOutros.size,
+      por_categoria: CATEGORIAS_ESPECIAIS.map(c => catMap[c]).filter(Boolean).map(g => ({
+        categoria: g.categoria, label: g.label, ocorrencias: g.ocorrencias,
+        rotina: CATEGORIAS_ROTINA.includes(g.categoria),
+        duracao_media_seg: g.n_exec ? Math.round(g.soma_exec / g.n_exec) : null,
+      })).sort((a, b) => b.ocorrencias - a.ocorrencias),
+    };
+
+    res.json({ periodo: { desde, ate }, totais, detalhado, por_etapa, especiais });
   } catch (e) {
     console.error('producao/acumulado:', e.message);
     res.status(500).json({ error: 'Erro ao agregar dados' });
