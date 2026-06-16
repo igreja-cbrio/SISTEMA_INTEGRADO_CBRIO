@@ -2523,3 +2523,25 @@ suas pessoas numa aba, com detalhe **sem contribuições**.
 - ⚠️ Editar `frequenta_area` na Membresia (UI) ficou de fora (só leitura por ora);
   o vínculo vem do cadastro do app. Pessoas já existentes não têm `frequenta_area`
   até se cadastrarem/escolherem (forward-looking).
+
+## WhatsApp · disparos pra eventos do app (2026-06-16)
+
+Camada `notificarMembro(membroId, chave, params)` em `services/whatsappService.js`
+dispara templates da Cloud API pros membros, a partir de eventos do app —
+**plug-and-play**: enquanto o env do nome do template estiver vazio, é **no-op
+gracioso** (não quebra o fluxo). Respeita **opt-in** (`mem_membros.whatsapp_optin`,
+migration `20260616160000`): obrigatório pra Marketing; pra Utility só se
+`WHATSAPP_OPTIN_OBRIGATORIO=1`. Token = `WHATSAPP_ACCESS_TOKEN` (o mesmo do bot) +
+`WHATSAPP_PHONE_NUMBER_ID`.
+
+- **Chaves → env do template:** inscricao_confirmada=`WHATSAPP_TEMPLATE_INSCRICAO` ·
+  doacao_recebida=`WHATSAPP_TEMPLATE_DOACAO` · kids_vinculo=`WHATSAPP_TEMPLATE_KIDS_VINCULO` ·
+  kids_precheckin=`WHATSAPP_TEMPLATE_KIDS_PRECHECKIN` · batismo_lembrete=`WHATSAPP_TEMPLATE_BATISMO` ·
+  escala_voluntario=`WHATSAPP_TEMPLATE_ESCALA` · aniversario=`WHATSAPP_TEMPLATE_ANIVERSARIO` (Marketing).
+- **Já ligados:** confirmação de inscrição (`app.js` POST /app/inscricoes ·
+  grupos/batismo/next/voluntariado/retiro/cursos/eventos · {{1}} nome {{2}} tipo) e
+  vínculo Kids aprovado/recusado (`totemKids.js` · {{1}} criança {{2}} aprovado/recusado).
+- **A ligar quando útil:** doação (vem do webhook Stripe / Edge Function — fora do
+  Express), batismo lembrete (cron), escala, aniversário. O helper já está pronto.
+- **Pra ativar um template:** aprovar na Meta → setar o env com o nome exato → começa
+  a enviar (respeitando opt-in). Opt-in marcado no app (Configurações → Notificações).
