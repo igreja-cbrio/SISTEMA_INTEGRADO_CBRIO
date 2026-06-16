@@ -1,6 +1,8 @@
-# Sistema CBRio · Project View
+# Sistema CBRio · Project View (v2)
 
-**Período:** 10/04/2026 (início) → 20/05/2026 (hoje · 40 dias) · documento solicitado por Eduardo Gnisci (Diretor Geral)
+**Período:** 10/04/2026 (início) → 16/06/2026 (hoje · 68 dias corridos · 46 dias úteis) · documento solicitado por Eduardo Gnisci (Diretor Geral)
+
+> **v2 · 16/06/2026.** Esta é a continuação do relatório de 20/05 (40 dias / 28 dias úteis). O **Período 1** (10/04→20/05) está preservado; o **Período 2** (20/05→16/06 · 18 dias úteis) foi acrescentado com tudo que entrou desde então — com destaque para o **módulo Criativo/Marketing inteiro** (que estava em 5%), **Totem Kids**, **Bot WhatsApp**, **Next-Batismo** e uma **blindagem de segurança** (auditoria de 29 achados + correção de account-takeover).
 
 ---
 
@@ -8,31 +10,62 @@
 
 | Métrica | Valor | Detalhe |
 |---|---|---|
-| **Horas gastas (40 dias)** | **560h** | 829 commits · 28 dias úteis · Marcos + Matheus |
-| **das quais horas extras** | **112h** | Só Matheus (4h/dia extras × 28 dias) |
-| **Horas restantes (estimativa)** | **~600h** | Pendências + módulos novos |
-| **Onboarding (horas extras)** | **~420h** | 15 entregas × 28h (2h/dia × 14d) |
-| **Total projetado** | **~1.580h** | Dev + onboarding · 2 devs |
+| **Horas gastas (acumulado · 46 dias úteis)** | **920h** | Período 1 (560h) + Período 2 (360h) · Marcos + Matheus |
+| **das quais horas extras** | **184h** | Só Matheus (4h/dia extras × 46 dias) |
+| **Horas restantes (dev puro)** | **~425h** | Pendências de cada módulo · caiu de ~600h |
+| **Onboarding (horas extras)** | **~360h** | 15+ entregas × 28h (2h/dia × 14d) |
+| **Total projetado** | **~1.705h** | Dev + onboarding · 2 devs |
 
-### Distribuição por desenvolvedor (40 dias · 28 dias úteis)
+### Os dois períodos lado a lado
 
-| Dev | Commits | Regulares | Extras | Total | Detalhe |
+| Período | Dias úteis | Marcos | Matheus | Total | Evidência (git · origin/main) |
 |---|---|---|---|---|---|
-| **Marcos Paulo** | 330 | **224h** | 0h | **224h** | 8h/dia · 28 dias úteis · sem horas extras |
-| **Matheus Toscano** | 500 | **224h** | **112h** | **336h** | 8h normais + 4h extras/dia × 28 dias |
-| **TOTAL** | 830 | 448h | 112h | **560h** | |
+| **P1 · 10/04 → 20/05** | 28 | 224h | 336h | **560h** | ~830 commits · 238 migrations · ~177k linhas |
+| **P2 · 20/05 → 16/06** | 18 | 144h | 216h | **360h** | 605 commits + 355 PRs (até #1071) · ~200 migrations · +163k linhas |
+| **Acumulado** | **46** | **368h** | **552h** | **920h** | ~1.460 commits de conteúdo · 439 migrations no total |
 
-> Marcos: trabalhou apenas as 8h regulares por dia útil. Matheus: 8h regulares + 4h extras diárias (mencionou trabalhar de madrugada/noite). Commits do "Claude" e "gpt-engineer-app[bot]" (Lovable) atribuídos ao Matheus conforme orientação. Horas arredondadas · não incluem reuniões de alinhamento.
+### Distribuição por desenvolvedor (acumulado · 46 dias úteis)
 
-### Leitura recomendada · output produzido (não tempo presente)
+| Dev | Regulares | Extras | Total | Detalhe |
+|---|---|---|---|---|
+| **Marcos Paulo** | **368h** | 0h | **368h** | 8h/dia · 46 dias úteis · sem horas extras |
+| **Matheus Toscano** | **368h** | **184h** | **552h** | 8h normais + 4h extras/dia × 46 dias |
+| **TOTAL** | 736h | 184h | **920h** | |
 
-A medida mais defensável é **output equivalente**, não horas de relógio:
-- **Marcos · 224h de output** (dev manual · 8h/dia × 28 dias úteis · ritmo manual)
-- **Matheus · 336h de output** (8h manuais + 4h equivalentes via IA em paralelo · 28 dias úteis)
+> Marcos: trabalha as 8h regulares por dia útil. Matheus: 8h regulares + 4h extras diárias (noite/madrugada). Horas arredondadas · não incluem reuniões de alinhamento. **Dias úteis do Período 2:** 19 dias seg–sex, descontando Corpus Christi (04/06, feriado municipal no Rio) → **18 dias úteis efetivos**.
 
-A produtividade por hora é praticamente idêntica entre os dois (295 vs 337 linhas/hora · 1,47 vs 1,49 commits/hora). A diferença está no **multiplicador de ferramentas**: Matheus opera Lovable + Claude em paralelo, gerando volume equivalente a mais horas de dev manual em menos tempo de presença real. Por isso o número 336h **não significa "Matheus enrolado mais tempo"**, e sim **"Matheus entregou volume equivalente a 336h de dev manual"**.
+### Leitura recomendada · output produzido (não tempo de relógio)
 
-Conforme as IAs evoluem, esse multiplicador tende a crescer · o número 336h pode subir sem necessariamente aumentar o tempo de presença.
+A medida mais defensável continua sendo **output equivalente**, não horas de relógio. A grande mudança do Período 2 é de **ferramenta**:
+
+- No **Período 1**, só o Matheus operava com IA pesada (Lovable + Claude). O Marcos fazia dev manual.
+- No **Período 2**, **os dois passaram a operar via Claude Code como ferramenta principal**, com autonomia de deploy ponta a ponta (branch → PR → CI Vercel → merge → produção). O multiplicador de ferramentas, que antes era só do Matheus, **agora se aplica aos dois**.
+
+O efeito é visível no volume: **605 commits de conteúdo + 355 PRs mergeadas + ~200 migrations + ~135k linhas líquidas em 18 dias úteis** (P2), contra ~830 commits em 28 dias úteis (P1) — quase o dobro de densidade de entrega por dia. Por isso as horas-relógio **não capturam** o que foi feito: o número 360h do P2 representa **volume equivalente a muito mais que 360h de dev manual**. Conforme as IAs evoluem, esse multiplicador tende a crescer.
+
+> Authorship bruto dos commits no P2 (origin/main): Marcos 480 · Matheus 298 · "Claude" (Claude Code, usado por ambos) 182. As horas seguem calculadas por calendário (presença), não por commit — a contagem de commits é só evidência de atividade.
+
+---
+
+## Período 2 · o que entrou (20/05 → 16/06)
+
+Resumo do que foi de fato entregue/avançado neste mês, antes do detalhamento por módulo:
+
+- **Criativo/Marketing — do zero ao ar (5% → 85%).** Módulo inteiro construído em ~25 specs + redesenho em 6 fases + consolidação em 4 abas (Kanban · Planner · Analytics · Admin), com intake por dor, triagem, campanhas/entregáveis, planner de capacidade por slots/dia, épicos de evento, checklists, upload SharePoint e 4 KPIs próprios. **Maior entrega do período.**
+- **Totem Kids — substituto do Planning Center.** Check-in/checkout com etiqueta de segurança, painel ao vivo, salas, TVs de chamada de pickup, integração com pagers físicos (LRS Freedom). 660 famílias + 894 crianças importadas.
+- **Bot WhatsApp.** Coleta passiva de líderes → IA (Claude Haiku) em 2 personas (institucional + coleta conversacional) → coleta por **formulário nativo (WhatsApp Flows)**. Número 21 99907-9031.
+- **Jornada NSM medida de verdade (liberada 10/06 pra todos os ministérios).** 3 marcos (Batismo 90d · Next 90d · Reunião aceita) virando KPI por coorte, KRs ligados à fonte, "engajou" materializa vínculo real.
+- **Cuidados reformulado (Fases 1·2·3 no ar).** Encontro pastoral + encaminhamento pra valores (Grupos/Voluntários/Jornada 180) com caixa de entrada e devolutiva por área; dashboard; aconselhamento unificado; Jornada 180 como estrutura própria de turmas.
+- **Next-Batismo (novo módulo gated).** "Check de pessoas" no funil Next × Batismo × convertido → Membresia (operado pelo Kevyn). Serviço unificado de matching de membros (dedup + acha-ou-cria).
+- **Solicitações oficializadas (substituem o Google Form).** Aprovação hierárquica por diretor de origem (transversal), 5 fluxos (reembolso/reserva/compras/pagamento/serviço), Kanban|Lista + filtros, **Estoque na Logística** (260 produtos, FEFO, consumo por área), NF→entrada, cotação antes do financeiro.
+- **RH com gráficos e folha histórica.** Dashboard recharts (saúde do quadro + folha por mês via snapshots diários), Admissão como status do colaborador, organograma, fixes de PJ/férias, auth fail-open fechado.
+- **Produção de Culto (novo módulo).** KPIs técnicos por culto + cronograma por etapas em mm:ss (Previsto × Executado), espelhando a planilha de cronograma.
+- **Monitoramento OKR.** Aba que reproduz a planilha "cabeça do Juninho" (1 NSM → 9 OKRs em 4 blocos), auto-alimentada onde há fonte real.
+- **OKR · KRs medidos por KPI.** KR respondido pelo KPI central, sem entrada manual; triagem de remoção dos não-mensuráveis.
+- **Agente Executor Financeiro (worker Railway).** 1º agente "ativo" (propõe ações financeiras → fila de aprovação humana).
+- **/novosite.** Prévia da home do novo site público (teste de layout isolado).
+- **Segurança.** Auditoria multi-agente (29 achados · 4 críticos corrigidos + levas de remediação), **fix de account-takeover** (cadastro público resetava senha de conta existente) e varredura 15/06 + lockdown de RLS (PR #1026).
+- **Permissões.** Juninho restrito a 3 telas, role editável na tela de Usuários, cargos de culto sem módulos de admin, acesso "só um módulo" (Produção).
 
 ---
 
@@ -48,403 +81,254 @@ Conforme as IAs evoluem, esse multiplicador tende a crescer · o número 336h po
 
 ## Entregas Intermediárias · 6 módulos macro
 
-| # | Módulo | Progresso | Gasto | Restante | Status |
+| # | Módulo | Progresso | Gasto (acum.) | Restante | Status |
 |---|---|---|---|---|---|
-| 1 | **Administração** | 75% | 160h | *175h* | 🟡 Em curso |
-| 2 | **Inteligência** | 70% | 125h | *110h* | 🟡 Em curso |
-| 3 | **Planejamento** | 60% | 110h | *120h* | 🟡 Em curso |
-| 4 | **Ministerial** | 65% | 115h | *80h* | 🟡 Em curso |
-| 5 | **Cultos** | 25% | 30h | *55h* | 🟡 Em curso |
-| 6 | **Criativo** (Marketing) | 5% | 0h | *120h* | ⚪ Pendente |
+| 1 | **Administração** | 90% | 240h | *~115h* | 🟢 Quase pronto |
+| 2 | **Inteligência** | 82% | 175h | *~80h* | 🟡 Em curso |
+| 3 | **Planejamento** | 65% | 120h | *~105h* | 🟡 Em curso |
+| 4 | **Ministerial** | 88% | 215h | *~55h* | 🟢 Quase pronto |
+| 5 | **Cultos** | 58% | 65h | *~40h* | 🟡 Em curso |
+| 6 | **Criativo** (Marketing) | 85% | 105h | *~30h* | 🟢 Quase pronto |
+
+> No P1 esta tabela era: Adm 75%/160h · Intel 70%/125h · Plan 60%/110h · Min 65%/115h · Cultos 25%/30h · Criativo 5%/0h. O salto do **Criativo (5%→85%)** e do **Cultos (25%→58%)** é onde mais entrou trabalho no Período 2.
 
 ---
 
 ## 1. Administração
 
-**160h gastas · ~175h restantes · 75% concluído**
+**240h gastas · ~115h restantes · 90% concluído** *(P1: 160h/75%)*
 
-Gestão (RH, Financeiro, Logística, Hospitalidade, Patrimônio, TI) + Solicitações + Permissões. Cobertura ampla, refinamento em andamento.
+Gestão (RH, Financeiro, Logística, Hospitalidade, Patrimônio, TI) + Solicitações + Permissões.
 
-### 1.1 RH — 45h gastas · *50h restantes* · 🟡 Em curso (Marcos · Matheus)
+### Período 2 · novidades
+- **Solicitações oficializadas (substituem o Google Form):** aprovação hierárquica por diretor de origem (transversal a todas as áreas), **5 fluxos** (reembolso · reserva de espaço · compras · pagamento · serviço/manutenção), histórico/linha do tempo, "Relatar Problema", SLA pausável, **Kanban | Lista + filtros** + caixa por área, **cotação antes do financeiro** (compras → logística cota → Yago aprova sobre o cotado).
+- **Estoque (na Logística):** saldo derivado, validade FEFO, consumo por área, 260 produtos importados do SharePoint, atender-pela-estoque, gerar-compra do "a repor", NF escaneada → entradas (loop compra↔estoque fechado).
+- **RH com gráficos:** dashboard recharts (saúde do quadro + folha salarial por mês via snapshots diários), Admissão virou status `em_admissao` com contrato na ficha, organograma como botão em Colaboradores, fixes de PJ/férias (avisa RH no retorno), aba Acessos virou coluna no Diretório, **auth fail-open fechado**.
+- **Permissões:** Juninho (presidente) restrito a 3 telas, **role editável na tela de Usuários** (sem SQL), cargos de culto sem módulos de admin, padrão "acesso só a UM módulo" (Produção · André e Gabriel).
+- **Patrimônio:** correção do pool-pg (não conectava no Vercel serverless).
 
-Dashboard · PCS · Cargos · Salários · Colaboradores · Organograma · Folha · Avaliações 360 · Treinamentos · Férias · Licenças · Onboarding Juliana
+### 1.1 RH — 60h gastas · *~35h restantes* · 🟢 Quase pronto (Marcos · Matheus)
+Dashboard (recharts) · PCS · Cargos · Salários · Colaboradores · Organograma · Folha (snapshots) · Admissão · Férias/Licenças.
+- Avaliações 360 (FIDS) · *~20h* · ⚪ Pendente
+- Treinamentos · *~15h* · ⚪ Pendente
+- Projeto "cargos RH × permissões" com a Juliana (unir estrutura de cargos + expectativas + PDI à matriz) · *retomar* · 🔵 Planejado
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| Dashboard de funcionários ativos/inativos | 6h | 🟢 Entregue |
-| Lista de colaboradores + filtros | 4h | 🟢 Entregue |
-| Organograma visual | 5h | 🟢 Entregue |
-| Folha salarial + custo mensal | 5h | 🟢 Entregue |
-| PCS · Plano de Cargos e Salários (graus, critérios, progressões) | 14h | 🟢 Entregue |
-| Férias / licenças / dia extra | 6h | 🟢 Entregue |
-| Foto funcionário + avatar | 3h | 🟢 Entregue |
-| Avaliações 360 (FIDS) | *~20h* | ⚪ Pendente |
-| Módulo de treinamentos | *~16h* | ⚪ Pendente |
-| Onboarding Juliana (RH) ajustes finais | *~14h* | ⚪ Pendente |
+### 1.2 Financeiro — 22h gastas · *~80h restantes* · 🟡 Em curso (Matheus)
+Lançamentos · Reembolsos · **Agente Executor Financeiro** (worker Railway · propõe → fila de aprovação).
+- Integração API Santander (banco principal) · *~60h* · ⚪ Pendente (apoio dev Santander)
+- Regra contábil travada: **empréstimo não é receita ordinária** (cashflow de financiamento).
 
-### 1.2 Financeiro — 20h gastas · *80h restantes* · 🟡 Em curso (Matheus)
+### 1.3 Logística & Compras — 45h gastas · *~15h restantes* · 🟢 Quase pronto (Matheus · Marcos)
+Fornecedores · Pedidos · Mercado Livre + rastreio · **Estoque (FEFO, 260 produtos)** · NF→entrada · cotação.
+- WhatsApp acionar-fornecedor (`wa.me` → auto quando app Meta for Live) · *~10h* · 🔵 Adiado pelo Marcos
+- Notas fiscais não-ML (API genérica) · *~12h* · ⚪ Pendente
 
-Contas a pagar/receber · Reembolsos · Vencimentos · API bancária (Santander)
+### 1.4 Patrimônio — 18h gastas · *~5h restantes* · 🟢 Entregue (Marcos)
+Bens · QR codes · Movimentações. Fix de pool-pg no `/dashboard`.
 
-| Subetapa | Horas | Status | Nota |
-|---|---|---|---|
-| Lançamentos básicos (entradas/saídas) | 10h | 🟢 Entregue | |
-| Reembolsos via Solicitações (PIX/transferência + comprovante) | 10h | 🟢 Entregue | |
-| Integração API Santander (banco principal) | *~60h* | ⚪ Pendente | Apoio dev Santander |
-| Outras APIs bancárias | *~20h* | ⚪ Pendente | |
+### 1.5 Hospitalidade — 14h gastas · *~12h restantes* · 🟡 Em curso (Marcos · Matheus)
+Reserva de espaço · Cozinha · Manutenção (via Solicitações).
+- **Projeto módulo Hospitalidade** (Manutenção + Reserva, dono Amaury): manutenção = triagem interno/externo (externo reusa a cotação) · *~15h* · 🔵 Planejado (depois de fechar a cotação).
 
-### 1.3 Logística & Compras — 25h gastas · *30h restantes* · 🟡 Em curso (Matheus · Marcos)
+### 1.6 TI — 5h gastas · *0h* · 🟢 Entregue (Marcos)
 
-Fornecedores · Pedidos · Notas fiscais · Mercado Livre · Rastreio · WhatsApp
+### 1.7 Solicitações — 55h gastas · *~10h restantes* · 🟢 Entregue (Marcos · Matheus)
+Coração dos KPIs ADM. Aprovação hierárquica (Spec 001) · 5 fluxos · SLA · NPS interno · Kanban|Lista + filtros + caixa por área · cotação.
+- Calendário visual de reservas (conflitos) · *~10h* · ⚪ Pendente
+- Offboarding (revogar acesso) · 🔵 Adiado (trazer desenho antes · flag no `authenticate`)
 
-| Subetapa | Horas | Status | Nota |
-|---|---|---|---|
-| Dashboard de logística + fornecedores | 5h | 🟢 Entregue | |
-| Pedidos via Solicitações (categoria compras) | 5h | 🟢 Entregue | |
-| Integração Mercado Livre (9/10 compras) | 10h | 🟢 Entregue | |
-| Tracking ML auto (cron 15min) | 5h | 🟢 Entregue | |
-| WhatsApp Business (cadastro número + integração) | *~16h* | 🟡 Em curso | Aguarda número |
-| Notas fiscais não-ML (API genérica) | *~12h* | ⚪ Pendente | |
-| Teste vinculação compras → solicitações | *~2h* | 🟡 Em curso | Feito, sem teste |
-
-### 1.4 Patrimônio — 18h gastas · *5h restantes* · 🟢 Entregue (Marcos)
-
-Bens · QR codes · Movimentações
-
-| Subetapa | Horas | Status |
-|---|---|---|
-| Lista de bens + categoria + localização | 8h | 🟢 Entregue |
-| QR code + scanner mobile | 5h | 🟢 Entregue |
-| Movimentações (de→para, responsável, data) | 5h | 🟢 Entregue |
-| Decidir manter ou remover aba "Inventário" | *~5h* | 🟡 Em curso |
-
-### 1.5 Hospitalidade — 12h gastas · *10h restantes* · 🟡 Em curso (Marcos · Matheus)
-
-Secretaria (reserva espaço) · Cozinha · Manutenção
-
-| Subetapa | Horas | Status |
-|---|---|---|
-| Reserva de espaço via Solicitações | 6h | 🟢 Entregue |
-| Categoria cozinha (eventos) via Solicitações | 3h | 🟢 Entregue |
-| Categoria manutenção via Solicitações | 3h | 🟢 Entregue |
-| Calendário visual de reservas (conflitos) | *~10h* | ⚪ Pendente |
-
-### 1.6 TI — 5h gastas · *0h restantes* · 🟢 Entregue (Marcos)
-
-Chamados via Solicitações
-
-### 1.7 Solicitações — 35h gastas · *15h restantes* · 🟢 Entregue (Marcos · Matheus)
-
-Coração dos KPIs ADM · 8+ categorias · SLA · NPS interno · Kanban
-
-| Subetapa | Horas | Status |
-|---|---|---|
-| Schema com SLA + áreas responsáveis + categorias | 10h | 🟢 Entregue |
-| Backend CRUD + triggers SLA realtime | 10h | 🟢 Entregue |
-| UI Kanban + filtros + minhas solicitações | 8h | 🟢 Entregue |
-| NPS pós-conclusão (badge + cron lembrete) | 5h | 🟢 Entregue |
-| ML tracking + WhatsApp notify (stub feature flag) | 2h | 🟢 Entregue |
-| Calendário visual de reservas | *~10h* | ⚪ Pendente |
-| Dashboard de urgência frequente | *~5h* | ⚪ Pendente |
-
-### 1.8 Permissões — 30h gastas · *20h restantes* · 🟡 Em curso (Marcos)
-
-Matriz cargo×módulo · Usuários · Overrides · Boost por área
-
-| Subetapa | Horas | Status |
-|---|---|---|
-| Schema · cargos, módulos, matriz, overrides | 8h | 🟢 Entregue |
-| Middleware authorizeModule + cache 5min | 5h | 🟢 Entregue |
-| Boost por área · 1 cargo + N áreas dão admin no módulo | 4h | 🟢 Entregue |
-| UI /admin/permissoes · Matriz + Usuários (cargo, áreas, overrides) | 10h | 🟢 Entregue |
-| Sync profiles→usuarios + ROLE_MAP limpeza | 3h | 🟢 Entregue |
-| Atribuição cargos em massa + cargos novos (coord adoração/produção/online) | *~10h* | 🟡 Em curso |
-| Migrar ModuleGuard pra slugs (limpeza) | *~10h* | ⚪ Pendente |
+### 1.8 Permissões — 36h gastas · *~12h restantes* · 🟢 Quase pronto (Marcos)
+Matriz cargo×módulo · Usuários · Overrides · Boost por área · role editável na UI · menu/⌘K espelha rotas (fix de itens fantasma).
+- Migrar ModuleGuard pra slugs (limpeza) · *~10h* · ⚪ Pendente
 
 ---
 
 ## 2. Inteligência
 
-**125h gastas · ~110h restantes · 70% concluído**
+**175h gastas · ~80h restantes · 82% concluído** *(P1: 125h/70%)*
 
-Painel CBRio · ~150 KPIs · Dashboard semanal · NPS · Minha Área · Dados Brutos · Assistente IA. Estrutura completa, validação pós-uso em andamento.
+Painel CBRio · ~150 KPIs · Dashboard semanal · NPS · Minha Área · Dados Brutos · Assistente IA · OKR.
 
-### 2.1 Painel CBRio — 35h gastas · *20h restantes* · 🟢 Entregue (Marcos · Matheus)
+### Período 2 · novidades
+- **Monitoramento OKR** (`/monitoramento-okr`): reproduz a planilha "cabeça do Juninho" (1 NSM → 9 OKRs em 4 blocos · ~25 indicadores), auto-alimentada onde há fonte real, com gráfico mensal por tático. Fix do pool-pg → RPC.
+- **OKR · KRs medidos por KPI** (Frente B): KR respondido pelo KPI central, sem entrada manual; cascata geral agrega dos filhos medidos; triagem de remoção de 201 KRs não-mensuráveis (reversível).
+- **Agente Executor Financeiro** (worker Railway · Claude Agent SDK): 1º agente ativo do sistema, propõe ações → humano aprova → handler aplica.
+- **Engajamento de Conteúdo** (estrutura pronta no Online · YouTube Analytics).
 
-NSM · Mandalas · Matriz 6×5 · Alertas · Drill-down de KPI/pessoas
+### 2.1 Painel CBRio — 40h gastas · *~15h restantes* · 🟢 Entregue (Marcos · Matheus)
+NSM · Mandalas · Matriz 6×5 · Alertas · Drill-down de KPI/pessoas · carrossel de tendências.
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| NSM + 3 segmentados (CBRio, Online, CBA) | 5h | 🟢 Entregue |
-| Carrossel de 6 mandalas (5 valores + visão geral) | 5h | 🟢 Entregue |
-| Matriz Valor × Área 6×5 colorida + drill-down célula | 6h | 🟢 Entregue |
-| Carrossel de tendências temporais (5 valores) | 5h | 🟢 Entregue |
-| Top 3 alertas críticos | 3h | 🟢 Entregue |
-| Drill-down de KPI individual (/painel/kpi/:id) | 6h | 🟢 Entregue |
-| Lista de pessoas NSM (camada 4) | 5h | 🟢 Entregue |
-| Validação pós-implementação (1 mês de avaliação) | *~20h* | 🟡 Em curso |
+### 2.2 Dashboard Semanal — 22h gastas · *~12h restantes* · 🟡 Em curso (Matheus)
+Substitui Power BI · indicadores + metas + gráficos. Default "semana atual" (#1071).
 
-### 2.2 Dashboard Semanal — 20h gastas · *15h restantes* · 🟡 Em curso (Matheus)
+### 2.3 Minha Área — 12h gastas · *~6h restantes* · 🟢 Entregue (Marcos)
 
-Substitui Power BI · indicadores semanais + metas + tipos de gráfico
+### 2.4 Dados Brutos — 18h gastas · *~6h restantes* · 🟢 Entregue (Marcos)
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| Dashboard semanal (substitui Power BI) | 10h | 🟢 Entregue |
-| Filtros por indicador, semana, acumulado mensal | 4h | 🟢 Entregue |
-| Aba "Metas" pra diretoria (alto nível, sem operacional) | 6h | 🟢 Entregue |
-| Criar indicador com IA (descrição → indicador) | *~8h* | 🟡 Em curso |
-| Unificar metas (dashboard ↔ /gestao) | *~7h* | ⚪ Pendente |
+### 2.5 NPS — 16h gastas · *~40h restantes* · 🟡 Em curso (Matheus)
+Aguarda módulo NPS rodar pesquisa (avaliação de voluntários, institucional, telão pós-culto).
 
-### 2.3 Minha Área — 12h gastas · *8h restantes* · 🟢 Entregue (Marcos)
+### 2.6 Gestão (PMO) — 18h gastas · *~12h restantes* · 🟡 Em curso (Marcos)
+Estrutura OKR · saúde do sistema · OKR medido por KPI.
 
-KPIs filtrados pela área/valor do líder
-
-### 2.4 Dados Brutos — 18h gastas · *8h restantes* · 🟢 Entregue (Marcos)
-
-Líder preenche número absoluto · sistema calcula KPI · ~35 tipos seedados
-
-### 2.5 NPS — 16h gastas · *40h restantes* · 🟡 Em curso (Matheus)
-
-Pesquisas geradas por IA · análise automática · 5 contextos KPI
-
-| Subetapa | Horas | Status |
-|---|---|---|
-| Schema · pesquisas + respostas + sync KPI | 5h | 🟢 Entregue |
-| IA Haiku gera perguntas + análise sentimento | 6h | 🟢 Entregue |
-| NPS Culto · contexto + KPIs CULTO-NPS-* | 5h | 🟢 Entregue |
-| Avaliação de voluntários (NPS específico) | *~12h* | ⚪ Pendente |
-| Avaliação institucional geral | *~12h* | ⚪ Pendente |
-| Apresentação telão (QR pra preencher pós-culto) | *~16h* | ⚪ Pendente |
-
-### 2.6 Gestão (PMO) — 15h gastas · *15h restantes* · 🟡 Em curso (Marcos)
-
-Estrutura OKR · saúde do sistema · líderes em pendência
-
-### 2.7 Assistente IA / Cérebro CBRio — 9h gastas · *10h restantes* · 🟡 Em curso (Matheus)
-
-Chat IA + agentes auditoria + processamento SharePoint→Obsidian
-
-| Subetapa | Horas | Status |
-|---|---|---|
-| Chat IA com documentos da igreja | 5h | 🟢 Entregue |
-| Cérebro · SharePoint → notas Obsidian (Haiku) | 4h | 🟡 Em curso |
-| Agentes de auditoria (membresia, financeiro, etc) | *~10h* | 🟡 Em curso |
+### 2.7 Assistente IA / Cérebro CBRio — 14h gastas · *~8h restantes* · 🟡 Em curso (Matheus)
+Chat IA · Cérebro SharePoint→Obsidian · agentes de auditoria. `/status` e webhook ganharam auth na leva de segurança.
 
 ---
 
 ## 3. Planejamento
 
-**110h gastas · ~120h restantes · 60% concluído**
+**120h gastas · ~105h restantes · 65% concluído** *(P1: 110h/60%)*
 
-Eventos (ciclo criativo + KPIs) · Projetos · Expansão · Planejamento Anual · Governança · Ritual · Revisão Estratégica.
+Eventos · Projetos · Expansão · Planejamento Anual · Governança · Ritual · Revisão Estratégica.
 
-### 3.1 Eventos — 35h gastas · *30h restantes* · 🟡 Em curso (Marcos)
+### Período 2 · novidades
+- **Eventos × Marketing:** ciclo criativo do evento aparece no Kanban do Marketing por fase (épicos), com padrões por fase (etiqueta+dono+esforço automáticos).
+- Fix de pool-pg em `/views` e `/workload` (Projetos).
 
-Ciclo criativo · Fases · Tarefas · Documentos · KPIs por evento
+### 3.1 Eventos — 38h gastas · *~28h restantes* · 🟡 Em curso (Marcos)
+Ciclo criativo · Fases · Tarefas · Documentos · KPIs por evento · integração com Marketing.
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| Schema · eventos + ciclos + fases + tarefas + subtarefas | 10h | 🟢 Entregue |
-| UI Lista + Kanban + Gantt + Home | 15h | 🟢 Entregue |
-| Templates por categoria de evento | 5h | 🟢 Entregue |
-| KPIs operacionais (score documento → área → evento) | 5h | 🟢 Entregue |
-| Filtro kanban por área (coord-marketing, etc) | *~5h* | 🟡 Em curso |
-| Teste com Criativo (Pedro Paiva) | *~10h* | 🟡 Em curso |
-| Approvals + workflow aprovação documentos | *~15h* | ⚪ Pendente |
+### 3.2 Projetos — 26h gastas · *~14h restantes* · 🟢 Entregue (Marcos · Matheus)
 
-### 3.2 Projetos — 25h gastas · *15h restantes* · 🟢 Entregue (Marcos · Matheus)
+### 3.3 Expansão — 15h gastas · *~30h restantes* · 🟡 Em curso (Marcos)
 
-Lista · Kanban · Gantt · Detalhe · Tarefas · Riscos · Orçamento
+### 3.4 Planejamento Anual — 12h gastas · *~10h restantes* · 🟡 Em curso (Marcos)
 
-### 3.3 Expansão — 15h gastas · *30h restantes* · 🟡 Em curso (Marcos)
+### 3.5 Governança — 10h gastas · *~8h restantes* · 🟡 Em curso (Marcos)
 
-Marcos estratégicos · cascata de impacto · até 2029
+### 3.6 Ritual — 8h gastas · *~15h restantes* · 🟡 Em curso (Marcos)
 
-### 3.4 Planejamento Anual — 12h gastas · *10h restantes* · 🟡 Em curso (Marcos)
+### 3.7 Revisão Estratégica — 5h gastas · *0h* · 🟢 Entregue (Marcos)
 
-Ciclo de propostas · workflow aprovação · filtro de ano
-
-### 3.5 Governança — 10h gastas · *8h restantes* · 🟡 Em curso (Marcos)
-
-Ciclo mensal (OKR → DRE → KPI → Conselho)
-
-### 3.6 Ritual — 8h gastas · *15h restantes* · 🟡 Em curso (Marcos)
-
-Revisão mensal diretoria · 5 nominais · causa-decisão-resp-próximo passo
-
-### 3.7 Revisão Estratégica — 5h gastas · *5h restantes* · 🟢 Entregue (Marcos)
-
-Edição direta de projetos/marcos · cascata de impacto · log
-
-### 3.8 Processos / OKR estratégico — 0h · *0h* · ⚪ Descontinuado
-
-> Decisão da reunião de permissões (2026-05-18): módulo Processos foi removido. Rota `/processos` redireciona pra `/eventos`.
+### 3.8 Processos / OKR estratégico — 0h · ⚪ Descontinuado (decisão de 18/05 · `/processos` → `/eventos`)
 
 ---
 
 ## 4. Ministerial · preenchimento por valor da Jornada
 
-**115h gastas · ~80h restantes · 65% concluído**
+**215h gastas · ~55h restantes · 88% concluído** *(P1: 115h/65%)*
 
 Cadastro e jornada dos membros nos 5 valores (Seguir, Conectar, Investir, Servir, Generosidade).
 
-### 4.1 Integração — 30h gastas · *10h restantes* · 🟢 Entregue (Marcos)
+### Período 2 · novidades
+- **Jornada NSM medida de verdade (liberada 10/06 pra todos os ministérios · fim do piloto só-Integração):** 3 marcos (Batismo 90d · Next 90d · Reunião aceita) viram KPI por coorte; numerador real; "engajou" materializa vínculo; ponte do valor Servir; KPIs nativos.
+- **Cuidados reformulado (Fases 1·2·3 no ar):** dashboard do pastor · encontro pastoral (data/hora/quem/compareceu) · encaminhamento pros valores (Grupos/Voluntários/Jornada 180) com caixa de entrada + devolutiva por área · aconselhamento unificado · "Próximos passos" (Convertidos+Primeiros passos fundidos) · Jornada 180 como estrutura própria de turmas.
+- **Jornada do novo convertido (90 dias por área):** Contato ≤3d · Batismo ≤90d · Next ≤90d, com responsabilidade seguindo a área de culto + escalação (Marcelo Soares supervisiona de Cuidados).
+- **Next-Batismo (novo módulo gated):** "check de pessoas" no funil Next × Batismo × convertido → Membresia (Kevyn opera). Serviço unificado de matching (`membroMatch`). Fases 0·1·2 no ar; grupo/servir do Next convergem pra `jornada_encaminhamentos`.
+- **Bot WhatsApp:** coleta passiva → IA Haiku 2 personas → formulário nativo (WhatsApp Flows). (publish bloqueado por integridade da Meta enquanto o app não vai Live.)
+- **Grupos:** aba Relatórios de KPIs, aba Encaminhados, líder em treinamento, supervisão (visitas/observações).
+- **Integração:** % de ocupação de assentos na aba Frequência.
+- **Batismos:** tempo de conversão até o batismo (por pessoa + média).
+- **Totem Kids:** ver módulo Cultos/operacional abaixo (ferramenta do ministério infantil).
 
-Cultos · Frequência · Decisões (presencial/online/Kids) · Batismos · Histórico
+### 4.1 Integração — 35h gastas · *~6h restantes* · 🟢 Entregue (Marcos)
+Cultos · Frequência · Decisões (presencial/online/Kids) · Batismos · Histórico · ocupação de assentos. Onboarding da Lorena concluído.
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| Schema cultos + decisões + batismos + triggers | 10h | 🟢 Entregue |
-| Calendário semanal de cultos (mobile-friendly) | 5h | 🟢 Entregue |
-| Modal adaptativo (presencial/online/Kids/Bridge/AMI) | 5h | 🟢 Entregue |
-| Aba Decisões (toggle Por culto / Pessoas + CPF) | 5h | 🟢 Entregue |
-| Cadastro flexível (CPF/nascimento opcionais) | 3h | 🟢 Entregue |
-| Cutoff de gaps históricos (2026-05-18) | 2h | 🟢 Entregue |
-| Onboarding com Lorena (Integração) finalização | *~10h* | 🟡 Em curso |
+### 4.2 Membresia — 28h gastas · *~6h restantes* · 🟢 Entregue (Matheus · Marcos)
+Cadastros · Trilha 5 valores · Jornada 180 · Duplicados · **Merge dinâmico** (`merge_membros` v2) · serviço `membroMatch` unificado.
 
-### 4.2 Membresia — 25h gastas · *10h restantes* · 🟢 Entregue (Matheus · Marcos)
+### 4.3 Cuidados — 30h gastas · *~6h restantes* · 🟢 Entregue (Marcos · Matheus)
+Reformulação completa (Fases 1·2·3) · encontro pastoral · encaminhamento + devolutiva · Jornada 180 turmas.
 
-Cadastros · Trilha 5 valores · Jornada 180 · Duplicados · Merge
+### 4.4 NEXT — 16h gastas · *~8h restantes* · 🟡 Em curso (Matheus)
+Porta de entrada · inscrições · check-in · indicações · integra com Next-Batismo.
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| Schema membros + famílias + trilha valores | 8h | 🟢 Entregue |
-| Aba Duplicados · detecção + merge_membros() | 5h | 🟢 Entregue |
-| Jornada 180 cadastros + encontros | 5h | 🟢 Entregue |
-| Foto membro + scanner ID | 4h | 🟢 Entregue |
-| Importação CSV histórico | 3h | 🟢 Entregue |
-| Promover órfãos · cadastros pendentes | *~10h* | 🟡 Em curso |
+### 4.5 Voluntariado — 20h gastas · *~6h restantes* · 🟢 Entregue (Matheus · Marcos)
+Check-in · Escalas · QR · Self-service · recebe encaminhamentos de Cuidados/Next.
 
-### 4.3 Cuidados — 15h gastas · *8h restantes* · 🟢 Entregue (Marcos · Matheus)
+### 4.6 Grupos — 22h gastas · *~8h restantes* · 🟢 Quase pronto (Matheus)
+Grupos · supervisão · QR · mapa · materiais · Relatórios de KPIs · Encaminhados · pessoas/visitas.
 
-Capelania · Aconselhamento · Jornada 180 acompanhamentos · Convertidos
+### 4.7 Devocional — 18h gastas · *~22h restantes* · 🟡 Em curso (Matheus)
+Planos · API.Bible · Haiku gera reflexão · check-in. Chave API.Bible rotacionada + movida pra env (segurança).
+- Envio WhatsApp diário · *~12h* · 🟡 aguarda app Meta Live
+- Trilha personalizada (múltiplos planos) · *~10h* · ⚪ Pendente
 
-### 4.4 NEXT — 12h gastas · *10h restantes* · 🟡 Em curso (Matheus)
-
-Porta de entrada · inscrições · check-in · indicações
-
-### 4.5 Voluntariado — 18h gastas · *10h restantes* · 🟢 Entregue (Matheus · Marcos)
-
-Check-in · Escalas · QR codes · Self-service
-
-### 4.6 Grupos — 15h gastas · *10h restantes* · 🟡 Em curso (Matheus)
-
-Grupos de conexão · supervisão · QR · mapa · materiais
-
-### 4.7 Devocional — 15h gastas · *25h restantes* · 🟡 Em curso (Matheus)
-
-Planos · API.Bible · Haiku gera reflexão · check-in · WhatsApp envio
-
-| Subetapa | Horas | Status | Nota |
-|---|---|---|---|
-| Schema · planos + itens + check-in mem_devocionais | 5h | 🟢 Entregue | |
-| Geração IA (Haiku) · prompt com texto bíblico completo | 5h | 🟢 Entregue | |
-| UI /devocional/hoje + login membro | 5h | 🟢 Entregue | |
-| Sync RH → mem_membros (todos funcionários acessam) | 1h | 🟢 Entregue | |
-| Envio WhatsApp diário (feature flag) | *~12h* | 🟡 Em curso | Aguarda credenciais Meta |
-| Trilha personalizada · múltiplos planos por pessoa | *~10h* | ⚪ Pendente | |
-| Métricas (engajamento · streak · semana) | *~3h* | 🟡 Em curso | |
-
-### 4.8 Notificações — 10h gastas · *5h restantes* · 🟢 Entregue (Matheus)
-
-Push web · cron diário · regras por módulo · realtime
+### 4.8 Notificações — 10h gastas · *~5h restantes* · 🟢 Entregue (Matheus)
 
 ---
 
-## 5. Cultos · visualização de dados por culto
+## 5. Cultos · visualização + operação por culto
 
-**30h gastas · ~55h restantes · 25% concluído**
+**65h gastas · ~40h restantes · 58% concluído** *(P1: 30h/25%)*
 
-Drill-down read-only de indicadores filtrados por tipo de culto. Preenchimento via Integração. AMI/Kids/Bridge/Online; Sede e CBA são representados pelos indicadores totais.
+Drill-down read-only por tipo de culto + operação de Produção e Kids.
 
-### 5.1 Online (YouTube) — 25h gastas · *15h restantes* · 🟢 Entregue (Matheus)
+### Período 2 · novidades
+- **Produção de Culto (novo módulo):** KPIs técnicos por culto (pontualidade, checklist, ocorrências) + **cronograma por etapas em mm:ss** (Previsto × Executado, soma = tempo do culto), espelhando a planilha "Cronograma Culto". Roteiro padrão 60:00 + 3:00 pós-culto.
+- **Totem Kids (substituto do Planning Center):** check-in/checkout com etiqueta de segurança de 4 chars, painel ao vivo, salas, TVs de chamada de pickup (Fire TV), **integração com pagers físicos** (LRS Freedom · agente local). 660 famílias + 894 crianças importadas.
+- **Online:** estrutura de Engajamento de Conteúdo (retenção/share/CTR) pronta pra YouTube Analytics.
+- Rotas dos cultos saíram de `/ministerial/*` pra raiz (`/ami`, `/bridge`, `/online`, `/kids`).
 
-Canal · séries · vídeos · OAuth Analytics · DS/DDUS auto · pico live
+### 5.1 Online (YouTube) — 27h gastas · *~12h restantes* · 🟢 Entregue (Matheus)
+Canal · séries · vídeos · OAuth Analytics · DS/DDUS auto · pico live · engajamento (estrutura).
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| Schema · canal_snapshot + series + videos | 5h | 🟢 Entregue |
-| Sync YouTube Data API (séries = playlists) | 5h | 🟢 Entregue |
-| OAuth + Analytics API · pico, DS, DDUS auto | 8h | 🟢 Entregue |
-| UI redesign mobile + cards de série | 5h | 🟢 Entregue |
-| Métricas avançadas (retenção, share, CTR) | *~12h* | 🟡 Em curso |
-| Status assinaturas + tráfego por vídeo | *~3h* | 🟡 Em curso |
+### 5.2 Produção de Culto — 18h gastas · *~8h restantes* · 🟢 Quase pronto (Marcos)
+6 sub-abas (Preenchimento, Acumulado, Detalhado, Checklists, Solicitações, Desempenho) + cronograma por etapas. André + Gabriel com acesso "só Produção".
 
-### 5.2 CBKids — 2h gastas · *8h restantes* · 🟡 Em curso (Marcos)
+### 5.3 Totem Kids — 14h gastas · *~10h restantes* · 🟡 Em curso (Marcos)
+App 100% funcional · aguarda hardware (Fire TVs) + setup Brother + culto piloto.
 
-Indicadores do ministério infantil (read-only)
+### 5.4 CBKids / AMI / Bridge (painéis read-only) — 6h gastas · *~10h restantes* · 🟡 Em curso (Marcos)
+Páginas prontas · popular KPIs específicos + definir líderes.
 
-| Subetapa | Horas | Status |
-|---|---|---|
-| Página PainelArea (componente reusável) | 1h | 🟢 Entregue |
-| Migration módulo kids + matriz · boost por área | 1h | 🟢 Entregue |
-| Popular KPIs específicos (decisões kids, frequência, batismos) | *~5h* | ⚪ Pendente |
-| Definir líder + onboarding | *~3h* | ⚪ Pendente |
-
-### 5.3 AMI — 2h gastas · *8h restantes* · 🟡 Em curso (Marcos)
-
-Indicadores do culto AMI (adolescentes/jovens)
-
-### 5.4 Bridge — 1h gasta · *14h restantes* · 🟡 Em curso (Marcos)
-
-Indicadores do culto Bridge (transição)
-
-| Subetapa | Horas | Status |
-|---|---|---|
-| Módulo criado · página pronta | 1h | 🟢 Entregue |
-| Popular KPIs Bridge (nenhum ativo hoje) | *~10h* | ⚪ Pendente |
-| Definir líder + onboarding | *~4h* | ⚪ Pendente |
-
-### 5.5 Sede / CBA — Descartado
-
-Não terão módulo próprio · representados nos indicadores totais.
-
-### 5.6 Futuro · menu agregado "Cultos" — *10h* — 🔵 Planejado
-
-Submenu lateral com 4 cultos · idéia levantada na conversa.
+### 5.5 Sede / CBA — Descartado (representados nos indicadores totais)
 
 ---
 
 ## 6. Criativo · Marketing
 
-**0h gastas · ~120h restantes · 5% concluído**
+**105h gastas · ~30h restantes · 85% concluído** *(P1: 0h/5% — era o único módulo intocado)*
 
-Único módulo praticamente intocado · vamos definir com Pepe Menezes (Diretor Criativo) o que precisa antes de desenvolver.
+**A maior virada do Período 2.** O módulo saiu de "pendente" para "quase pronto" — construído em ~25 specs + redesenho em 6 fases + consolidação em 4 abas, mais o /novosite.
 
-| Etapa | Horas | Status | Responsável |
-|---|---|---|---|
-| **Discovery** (definir requisitos com Pepe + Pedro Paiva) | *~10h* | 🔵 Planejado | Marcos |
-| **Campanhas · Calendário editorial** | *~30h* | ⚪ Pendente | — |
-| **Banco de criativos** (peças entregues) | *~25h* | ⚪ Pendente | — |
-| **KPIs marketing** (engajamento social, alcance, conversão) | *~25h* | ⚪ Pendente | — |
-| **Integração com fluxo de Solicitações** (job criativo) | *~20h* | ⚪ Pendente | — |
-| **Subáreas** (Produção, Adoração, Online) · estrutura nos cargos já criados | *~10h* | 🟡 Estrutura pronta | Marcos |
+| Etapa | Horas | Status |
+|---|---|---|
+| **Fundação** (schema · 7 tabelas · RLS · seed equipe · matriz/boost) | 14h | 🟢 Entregue |
+| **Intake por dor** (solicitante pede por dor, não por entregável) | 6h | 🟢 Entregue |
+| **Triagem + Campanhas** (Pedro decide solução, cria entregáveis) | 12h | 🟢 Entregue |
+| **Kanban (6 colunas, Trello-like)** + filtros + realtime | 14h | 🟢 Entregue |
+| **Planner de capacidade** (slots/dia, Gantt arrastável, dias úteis) | 12h | 🟢 Entregue |
+| **Épicos de evento** (ciclo criativo do /eventos por fase) | 8h | 🟢 Entregue |
+| **Checklists + referências + upload SharePoint (Graph)** | 8h | 🟢 Entregue |
+| **4 KPIs próprios** (prazo, lead time, throughput, demanda/capacidade) | 6h | 🟢 Entregue |
+| **Analytics + Admin** (membros, etiquetas, recorrentes, overrides) | 10h | 🟢 Entregue |
+| **Aprovação da campanha + revisão (1×) + NPS** | 6h | 🟢 Entregue |
+| **/novosite** (prévia da home do site público · teste de layout) | 9h | 🟢 Entregue |
+| Maturação dos KPIs (precisa ~1 sem de histórico real) | *~10h* | 🟡 Em curso |
+| Discovery final com Pepe Menezes (refinamentos) | *~10h* | 🔵 Planejado |
+| Subáreas (Produção, Adoração, Online) · estrutura nos cargos | *~10h* | 🟡 Estrutura pronta |
+
+> Decisões-chave do redesenho (Pedro Paiva + Marcos): solicitante pede por **dor** → diretor aprova → cai na **Triagem** do Pedro → ele cria a campanha com N entregáveis (dono + duração + 2 prazos) → **planner por slots/dia** (não horas) → produção → revisão → entrega. "Kanban melhor que o Trello."
 
 ---
 
-## Onboarding · 15 entregas previstas (horas extras · não bloqueia dev)
+## Onboarding · entregas previstas (horas extras · não bloqueia dev)
 
-Cada módulo entregue a uma pessoa-chave demanda **2h/dia × 14 dias = 28h** de acompanhamento de 1 dev (Marcos ou Matheus), em horas extras do expediente. **Não impede desenvolvimento de outros módulos no período.**
+Cada módulo entregue a uma pessoa-chave demanda **~2h/dia × 14 dias = 28h** de acompanhamento de 1 dev, em horas extras. **Não impede o desenvolvimento de outros módulos no período.** No Período 2 vários começaram (e novas pessoas entraram no sistema).
 
-| # | Pessoa | Módulo | Horas | Dev acompanhando | Status |
+| # | Pessoa | Módulo | Horas | Dev | Status |
 |---|---|---|---|---|---|
-| 1 | Lorena Andrade | Integração | 28h | Marcos | 🟡 Em curso |
-| 2 | Juliana Leão | RH | 28h | Marcos | 🔵 Planejado |
+| 1 | Lorena Andrade | Integração | 28h | Marcos | 🟢 Concluído |
+| 2 | Juliana Leão | RH | 28h | Marcos | 🟡 Em curso |
 | 3 | Yago Torres | Financeiro | 28h | Matheus | 🔵 Planejado |
-| 4 | Amaury | Compras (Logística) | 28h | Matheus | 🔵 Planejado |
+| 4 | Amaury | Compras / Logística / Estoque | 28h | Matheus | 🟡 Em curso |
 | 5 | Erivelton | Patrimônio | 28h | Marcos | 🔵 Planejado |
 | 6 | Diego Assis | TI / Solicitações | 28h | Marcos | 🔵 Planejado |
 | 7 | Jéssica Salviano | Hospitalidade (cozinha/manutenção) | 28h | Marcos | 🔵 Planejado |
 | 8 | Arthur Serpa | Painel CBRio + Ritual | 28h | Marcos | 🔵 Planejado |
 | 9 | Eduardo Gnisci | Gestão (PMO) | 28h | Marcos | 🔵 Planejado |
 | 10 | Pedro Paiva | Eventos · Marketing | 28h | Marcos | 🟡 Em curso |
-| 11 | Pepe Menezes | Cultos · Criativo | 28h | Matheus | 🔵 Planejado |
-| 12 | Pedro Fernandes | Produção | 28h | Matheus | 🔵 Planejado |
+| 11 | Pepe Menezes | Criativo | 28h | Matheus | 🔵 Planejado |
+| 12 | Pedro Fernandes | Produção | 28h | Matheus | 🟡 Em curso |
 | 13 | Renata Martins | Online | 28h | Matheus | 🔵 Planejado |
-| 14 | Nélio (Grupos) | Grupos | 28h | Matheus | 🔵 Planejado |
-| 15 | Líder NEXT (a definir) | NEXT | 28h | Matheus | 🔵 Planejado |
-| | | **TOTAL** | **420h** | | |
+| 14 | Nélio + Natasha | Grupos | 28h | Matheus | 🟡 Em curso |
+| 15 | Marcelo Soares | Cuidados / Supervisão jornada | 28h | Marcos | 🟡 Em curso |
+| 16 | Kevyn | Next-Batismo | 28h | Marcos | 🟡 Em curso |
+| 17 | André + Gabriel | Produção (acesso só Produção) | 28h | Marcos | 🟡 Em curso |
+| 18 | Matheus + Marcelo | Membresia (piloto) | 28h | Matheus | 🟡 Em curso |
+| | | **TOTAL (≈)** | **~360h restantes** | | de ~500h previstas |
 
 ---
 
@@ -452,48 +336,49 @@ Cada módulo entregue a uma pessoa-chave demanda **2h/dia × 14 dias = 28h** de 
 
 ### A. Segurança da Informação & LGPD
 
-- **RLS (Row-Level Security)** habilitado em todas as tabelas críticas (Supabase). Backend usa service-role · escrita controlada por middleware.
-- **Permissões granulares**: cargo × módulo + override individual + expiração. Auditável.
-- **Modificadores LGPD**: `+E` (pode exportar) controla exportação de CPF, telefone e dados financeiros. Sem isso, dados sensíveis bloqueados na UI.
-- **Dados de menores (Kids)**: decisões de crianças cadastradas com dados do responsável; fluxo separado da Jornada (não impacta NSM, evita criação automática de membro).
-- **OAuth YouTube**: refresh_token guardado em `online_oauth_tokens` com RLS service_role only. State HMAC anti-CSRF.
-- **WhatsApp Business**: pendente · credenciais Meta sob feature flag (`WHATSAPP_ENABLED`).
-- **Senhas/tokens**: nada hardcoded · só em variáveis de ambiente do Vercel.
-- **Audit trail**: `revision_log` (revisão estratégica), `governance_meetings` (atas), `mem_merge_log` (snapshot pré-merge de duplicados).
+Frente que ganhou peso no Período 2:
 
-> **Reforço sugerido:** revisão LGPD formal antes do go-live geral. Estimado *~16h* de auditoria interna.
+- **Auditoria de segurança ampla (workflow multi-agente):** 29 achados confirmados (4 críticos · 13 altos · 8 médios · 4 baixos). Os **4 críticos** foram corrigidos (escalonamento de privilégio em `usuarios`, PII em timeline pastoral, hard-delete sem authorize, overload de função financeira) + **5 levas de remediação** (injeção PostgREST, soft-deletes seguros, guarda na cascata de meta, pool-pg → REST, auth em endpoints do Cérebro).
+- **Account-takeover corrigido (PR #1021):** o cadastro público resetava a senha de uma conta existente (qualquer um, sabendo só o e-mail). 1º acesso virou obrigatório; `seed.js` removido; regra: rota pública nunca seta senha.
+- **Varredura 15/06 + lockdown (PR #1026):** tabelas `vol_*` estavam abertas a `anon` (pior caso) → fechadas, + `mem_cadastros`, `rh_avaliacao_fatores`, Cérebro e operacionais.
+- **RLS** em todas as tabelas críticas · **permissões granulares** (cargo × módulo + override + expiração) · **modificador `+E`** controla exportação de PII (CPF/telefone/financeiro) · **dados de menores (Kids)** com fluxo separado da Jornada · **audit log** em 8 tabelas sensíveis · segredos só em env do Vercel (chave API.Bible rotacionada).
+- **Pendente:** revisão LGPD formal antes do go-live geral (*~16h*); fallbacks `MEM_QR_SALT`/Cérebro; soft-deletes agregados.
 
 ### B. Manutenção prevista pós go-live
 
-- **1 mês de avaliação Painel + Dashboard semanal** (mencionado na reunião): garantir que os 150 KPIs estão sendo preenchidos corretamente e calculados como esperado.
-- **Bugs de produção**: ~4h/semana de cada dev nos primeiros 2 meses (estimativa).
-- **Migração de schema futura**: planejada quando colunas `responsible`/`leader` em `projects` migrarem de texto livre pra UUID.
-- **Particionamento de tabelas grandes** (mem_contribuicoes ~600k/ano): planejado pra quando passar 10k+ membros.
-- **Read replica do Supabase**: planejado pra quando crescer 25k+ pessoas.
+- **1 mês de avaliação Painel + Dashboard semanal:** garantir que os ~150 KPIs são preenchidos e calculados certo.
+- **Bugs de produção:** ~4h/semana de cada dev nos primeiros 2 meses.
+- **Migração de schema:** `responsible`/`leader` (texto → UUID); soft-deletes agregados (cultos/decisões/encontros).
+- **Escala:** particionamento de tabelas grandes (10k+ membros) · read replica (25k+ pessoas).
 
-### C. Custos · horas de desenvolvimento (base: 28 dias úteis)
+### C. Custos · horas brutas de desenvolvimento
 
 | Período | Marcos | Matheus | Total | Comentário |
 |---|---|---|---|---|
-| **Regulares** (28 dias × 8h) | 224h | 224h | **448h** | 10/04 → 20/05 |
-| **Horas extras** (Matheus 4h/dia) | 0h | 112h | **112h** | Só Matheus · noite/madrugada |
-| **40 dias gastos · subtotal** | **224h** | **336h** | **560h** | Commits 829 |
-| **Estimado restante** (dev puro) | *~250h* | *~350h* | ***~600h*** | Pendências de cada módulo + Criativo do zero |
-| **Onboarding** (horas extras) | *~210h* | *~210h* | ***~420h*** | 15 pessoas × 28h cada · não bloqueia dev |
-| **TOTAL projetado** | **~684h** | **~896h** | **~1.580h** | Marcos + Matheus combinados |
+| **Regulares P1** (28d × 8h) | 224h | 224h | **448h** | 10/04 → 20/05 |
+| **Extras P1** (Matheus 4h/dia) | 0h | 112h | **112h** | só Matheus · noite/madrugada |
+| **Subtotal P1** | **224h** | **336h** | **560h** | ~830 commits · 238 migrations |
+| **Regulares P2** (18d × 8h) | 144h | 144h | **288h** | 20/05 → 16/06 |
+| **Extras P2** (Matheus 4h/dia) | 0h | 72h | **72h** | só Matheus |
+| **Subtotal P2** | **144h** | **216h** | **360h** | 605 commits + 355 PRs · ~200 migrations |
+| **GASTO acumulado** | **368h** | **552h** | **920h** | 46 dias úteis |
+| **Estimado restante** (dev) | *~190h* | *~235h* | ***~425h*** | pendências de cada módulo |
+| **Onboarding** (extras) | *~180h* | *~180h* | ***~360h*** | 15+ pessoas × 28h |
+| **TOTAL projetado** | **~738h** | **~967h** | **~1.705h** | Marcos + Matheus combinados |
 
-> Marcos: 8h/dia em dias úteis · backend + integrações + UI principal · sem horas extras. Matheus: 8h regulares + 4h extras/dia (noite/madrugada) · Lovable + Claude AI + UI complementar + integrações externas (YouTube, ML, devocional). Onboarding pós go-live é tratado como horas extras de ambos. Não inclui reuniões de alinhamento.
+> O total projetado subiu de ~1.580h (P1) para ~1.705h mesmo com 360h entregues, porque o **escopo cresceu além do previsto**: o Marketing inteiro, o Totem Kids, o Bot WhatsApp, o módulo Next-Batismo e a blindagem de segurança não estavam dimensionados no relatório de 20/05. As **horas restantes de dev caíram** (de ~600h para ~425h).
 
 ### D. Stack técnica
 
-- **Frontend**: React 18 + Vite + TypeScript/JSX (misto) + shadcn/ui + Tailwind + react-router
-- **Backend**: Express.js · Vercel serverless (`api/index.js`)
-- **Banco**: Supabase (PostgreSQL + Auth + RLS) · 238 migrations versionadas em 40 dias
-- **Integrações**: YouTube Data + Analytics API (OAuth), Mercado Livre API, Microsoft Graph (SharePoint/Cérebro), Anthropic Claude (Haiku) para IA, WhatsApp Cloud API (planejado)
-- **Cron**: Vercel cron (diários) + GitHub Actions (sub-diários · ex: live monitor YouTube 5min)
+- **Frontend:** React 18 + Vite + TypeScript/JSX + shadcn/ui + Tailwind + react-router
+- **Backend:** Express.js · Vercel serverless (`api/index.js`) + **worker Railway** (Agente Executor Financeiro · Claude Agent SDK)
+- **Banco:** Supabase (PostgreSQL + Auth + RLS) · **439 migrations** versionadas
+- **Integrações:** YouTube Data + Analytics (OAuth), Mercado Livre, Microsoft Graph (SharePoint/Cérebro), Anthropic Claude (Haiku/Opus), **WhatsApp Cloud API + Flows**, LRS Freedom (pagers Kids), API.Bible (devocional)
+- **Cron:** Vercel cron (diários) + GitHub Actions (sub-diários · ex: live monitor YouTube 5min)
+- **Ferramenta de dev:** Claude Code (autonomia de deploy: branch → PR → CI Vercel → merge → produção) — adotado pelos dois devs no Período 2.
 
 ---
 
-*Gerado em 2026-05-20 · base: `git log` de 10/04 a 20/05 · 829 commits · 238 migrations · ~177k linhas adicionadas*
+*Gerado em 2026-06-16 · base: `git log` de origin/main · acumulado ~1.460 commits de conteúdo + ~1.070 PRs · 439 migrations · Período 2 (20/05→16/06): 605 commits + 355 PRs, ~200 migrations, +163k linhas (líquido +135k).*
 
-*Sistema CBRio · documento solicitado por Eduardo Gnisci (Diretor Geral)*
+*Sistema CBRio · documento solicitado por Eduardo Gnisci (Diretor Geral) · v2 estende o relatório de 20/05/2026.*
