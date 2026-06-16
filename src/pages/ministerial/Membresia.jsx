@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
@@ -48,6 +48,12 @@ const STATUS_MAP = {
   membro_ativo: { c: C.primary, bg: C.primaryBg, label: 'Membro Ativo' },
   inativo: { c: C.red, bg: C.redBg, label: 'Inativo' },
   transferido: { c: C.amber, bg: C.amberBg, label: 'Transferido' },
+};
+
+const FAIXA_LABEL = { crianca: 'Crianças', adolescente: 'Adolescentes', jovem: 'Jovens', adulto: 'Adultos' };
+const PAPEL_LABEL = {
+  voluntario: 'Voluntários', visitante: 'Visitantes', grupo_ativo: 'Em grupo ativo',
+  contribuinte: 'Contribuintes', inscrito_next: 'Inscritos no NEXT', sem_papel: 'Sem papel ativo',
 };
 
 const TRILHA_ETAPAS = [
@@ -687,6 +693,16 @@ export default function Membresia() {
     }
   }, [busca, filterStatus, filterPapel, filterFaixa]);
 
+  // Card inteligente · título muda conforme o filtro ativo
+  const filtroResumo = useMemo(() => {
+    const partes = [];
+    if (filterFaixa) partes.push(FAIXA_LABEL[filterFaixa] || filterFaixa);
+    if (filterStatus) partes.push(STATUS_MAP[filterStatus]?.label || filterStatus);
+    if (filterPapel) partes.push(PAPEL_LABEL[filterPapel] || filterPapel);
+    if (busca) partes.push(`"${busca.trim()}"`);
+    return { ativo: partes.length > 0, titulo: partes.join(' · ') };
+  }, [filterFaixa, filterStatus, filterPapel, busca]);
+
   // Dados auxiliares · carregam uma vez (não mudam com a busca)
   const fetchAux = useCallback(async () => {
     try {
@@ -1130,6 +1146,25 @@ export default function Membresia() {
         <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b" />
         <StatisticsCard title="Contribuintes Ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e" />
       </div>
+
+      {/* Card inteligente do filtro · título muda conforme o que foi filtrado */}
+      {filtroResumo.ativo && (
+        <div style={{ marginBottom: 28, padding: '16px 20px', borderRadius: 14, background: C.primaryBg, border: `1.5px solid ${C.primary}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.6 }}>Filtrando · {filtroResumo.titulo}</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: C.text, lineHeight: 1.1, marginTop: 2 }}>
+              {searching ? '…' : membros.length}
+              <span style={{ fontSize: 15, fontWeight: 600, color: C.text2, marginLeft: 8 }}>{membros.length === 1 ? 'pessoa' : 'pessoas'}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => { setFilterStatus(''); setFilterPapel(''); setFilterFaixa(''); setBusca(''); }}
+            style={{ fontSize: 13, fontWeight: 600, color: C.primary, background: 'transparent', border: `1px solid ${C.primary}`, borderRadius: 999, padding: '7px 16px', cursor: 'pointer' }}
+          >
+            Limpar filtros
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
