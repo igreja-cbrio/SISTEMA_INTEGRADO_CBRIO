@@ -262,9 +262,9 @@ async function notificarSolicitante({ solicitacao, status, descricao, isFirstLin
     const link = (process.env.FRONTEND_URL || '').replace(/\/+$/, '') + '/solicitacoes';
     await wpp.sendPedidoAtualizado(profile.telefone, {
       primeiroNome,
-      tituloSolicitacao: solicitacao.titulo,
+      tituloSolicitacao: solicitacao.titulo || 'sua solicitação',
       statusLabel: meta.label,
-      detalhe: descricao || '',
+      detalhe: descricao || meta.label,
       link,
     });
   } else {
