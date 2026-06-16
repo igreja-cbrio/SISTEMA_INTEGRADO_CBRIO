@@ -193,6 +193,25 @@ router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.s
       return res.status(400).json({ error: 'Não encontrei serviços na planilha. Envie a planilha de controle (.xlsx ou .csv com colunas por data) ou um CSV com colunas nome,data,culto.' });
     }
 
+    // Filtra "nomes" que são posição/equipe/equipamento (não pessoas).
+    let ignoradosNaoPessoa = 0;
+    try {
+      const { nomesNaoPessoa } = require('../services/volNomeFiltro');
+      const skip = await nomesNaoPessoa(registros.map(r => r.nome_planilha));
+      if (skip.size) {
+        const antes = registros.length;
+        for (let i = registros.length - 1; i >= 0; i--) {
+          if (skip.has(registros[i].nome_norm)) registros.splice(i, 1);
+        }
+        ignoradosNaoPessoa = antes - registros.length;
+      }
+    } catch (e) {
+      console.warn('[vol] filtro nao-pessoa:', e.message);
+    }
+    if (!registros.length) {
+      return res.status(400).json({ error: 'Todas as linhas foram identificadas como posição/equipe (não pessoas). Confira se os nomes das pessoas estão na planilha.' });
+    }
+
     for (let i = 0; i < registros.length; i += 500) {
       const lote = registros.slice(i, i + 500);
       const { error } = await supabase.from('vol_servicos_historico')
@@ -200,7 +219,7 @@ router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.s
       if (error) return res.status(400).json({ error: 'Falha ao gravar: ' + error.message });
     }
     const vinculadas = await rematchFrequencia();
-    res.json({ processadas: registros.length, nomes_vinculados: vinculadas });
+    res.json({ processadas: registros.length, nomes_vinculados: vinculadas, ignorados_nao_pessoa: ignoradosNaoPessoa });
   } catch (e) {
     console.error('[vol] importar frequencia', e.message);
     res.status(500).json({ error: 'Erro ao importar o controle' });

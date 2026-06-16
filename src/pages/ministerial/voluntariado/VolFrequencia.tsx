@@ -51,7 +51,8 @@ export default function VolFrequencia() {
     setImportando(true);
     try {
       const r = await api.frequencia.importar(file);
-      toast.success(`Importado: ${r.processadas} registros · ${r.nomes_vinculados} nomes vinculados automaticamente`);
+      const ign = r.ignorados_nao_pessoa ? ` · ${r.ignorados_nao_pessoa} ignorados (posição/equipe)` : '';
+      toast.success(`Importado: ${r.processadas} registros · ${r.nomes_vinculados} nomes vinculados automaticamente${ign}`);
       carregar();
     } catch (e: any) { toast.error(e.message || 'Erro ao importar'); }
     finally { setImportando(false); }
