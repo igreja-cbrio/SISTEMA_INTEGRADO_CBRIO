@@ -159,9 +159,8 @@ export default function Producao() {
 // ── Aba Preenchimento (semana) ───────────────────────────────────────────────
 function AbaSemana() {
   const hoje = new Date();
-  const [semanaInicio, setSemanaInicio] = useState(() => {
-    const ini = inicioSemana(hoje); ini.setDate(ini.getDate() - 7); return ini;
-  });
+  // Abre na semana atual por padrão (setas navegam pra semanas anteriores).
+  const [semanaInicio, setSemanaInicio] = useState(() => inicioSemana(hoje));
   const [cultos, setCultos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
