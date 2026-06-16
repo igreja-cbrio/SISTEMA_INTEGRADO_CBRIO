@@ -426,6 +426,11 @@ export default function Solicitacoes() {
   }
 
   async function handleStatusChange(id, newStatus, observacoes) {
+    // Atualização otimista · o card move pra coluna na hora (sem esperar o
+    // round-trip). Guarda o status antigo pra reverter se o servidor falhar.
+    const statusAntigo = items.find(i => i.id === id)?.status;
+    if (statusAntigo === newStatus && !observacoes) return; // no-op · nada mudou
+    setItems(prev => prev.map(i => i.id === id ? { ...i, status: newStatus } : i));
     try {
       const payload = { status: newStatus };
       if (observacoes) payload.observacoes = observacoes;
@@ -436,8 +441,10 @@ export default function Solicitacoes() {
       } else {
         toast.success('Status atualizado');
       }
-      load();
+      load(); // reconcilia em segundo plano · não bloqueia o movimento do card
     } catch (e) {
+      // reverte a posição do card
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: statusAntigo } : i));
       toast.error(e.message);
     }
   }
@@ -1005,7 +1012,13 @@ export default function Solicitacoes() {
                 setDragOverCol(null);
                 if (!isResponsavel) return;
                 const itemId = e.dataTransfer.getData('text/plain');
-                if (itemId) handleStatusChange(itemId, col.key);
+                if (!itemId) return;
+                // Ignora drop na MESMA coluna · não dispara update nem toast
+                // (evita lançamento redundante que mexeria em SLA/indicadores).
+                const item = items.find(i => i.id === itemId);
+                const colAtual = KANBAN_COLUMNS.find(c => (c.match || [c.key]).includes(item?.status))?.key;
+                if (!item || colAtual === col.key) return;
+                handleStatusChange(itemId, col.key);
               }}
             >
               <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color.replace('border-t-', 'border-b-')}`}>
