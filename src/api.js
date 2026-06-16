@@ -1697,6 +1697,8 @@ export const voluntariado = {
     perfis: (q) => get('/voluntariado/frequencia/perfis' + (q ? '?q=' + encodeURIComponent(q) : '')),
     vincular: (nome_norm, vol_profile_id) => post('/voluntariado/frequencia/vincular', { nome_norm, vol_profile_id }),
     revincular: () => post('/voluntariado/frequencia/revincular', {}),
+    sugerirVinculos: () => post('/voluntariado/frequencia/sugerir-vinculos', {}),
+    vincularLote: (vinculos) => post('/voluntariado/frequencia/vincular-lote', { vinculos }),
     importar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/frequencia/importar', fd); },
   },
   // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)

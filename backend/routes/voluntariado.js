@@ -300,6 +300,72 @@ router.post('/frequencia/revincular', authorizeModule('membresia', 2), async (re
   }
 });
 
+// POST /api/voluntariado/frequencia/sugerir-vinculos → IA cruza os nomes NÃO
+// vinculados com os perfis e devolve sugestões pra REVISÃO (não vincula nada).
+router.post('/frequencia/sugerir-vinculos', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    // nomes não vinculados (via view · 1 linha por pessoa)
+    const pend = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase.from('vw_vol_frequencia')
+        .select('nome_norm, nome, total_servicos')
+        .is('vol_profile_id', null)
+        .range(from, from + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || !data.length) break;
+      pend.push(...data);
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+    const nomes = pend.map(r => ({ nome_norm: r.nome_norm, nome: r.nome, total: r.total_servicos }));
+    if (!nomes.length) return res.json({ sugestoes: [] });
+
+    // todos os perfis (paginado · cap 1000 do PostgREST)
+    const perfis = [];
+    from = 0;
+    while (true) {
+      const { data } = await supabase.from('vol_profiles')
+        .select('id, full_name').range(from, from + 999);
+      if (!data || !data.length) break;
+      perfis.push(...data);
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+
+    const { sugerirVinculos } = require('../services/volVinculoIA');
+    const sugestoes = await sugerirVinculos(nomes, perfis);
+    // anexa o total de serviços de cada nome (pra UI priorizar)
+    const totalPorNome = new Map(nomes.map(n => [n.nome_norm, n.total]));
+    for (const s of sugestoes) s.total_servicos = totalPorNome.get(s.nome_norm) ?? 0;
+    res.json({ sugestoes });
+  } catch (e) {
+    console.error('[vol] sugerir-vinculos', e.message);
+    res.status(500).json({ error: 'Erro ao gerar sugestões' });
+  }
+});
+
+// POST /api/voluntariado/frequencia/vincular-lote → aplica os vínculos APROVADOS
+// { vinculos: [{ nome_norm, vol_profile_id }] }
+router.post('/frequencia/vincular-lote', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const vinculos = Array.isArray(req.body?.vinculos) ? req.body.vinculos : [];
+    let vinculados = 0;
+    for (const v of vinculos) {
+      if (!v?.nome_norm || !v?.vol_profile_id) continue;
+      const { error } = await supabase.from('vol_servicos_historico')
+        .update({ vol_profile_id: v.vol_profile_id })
+        .eq('nome_norm', v.nome_norm)
+        .is('vol_profile_id', null)
+        .is('deleted_at', null);
+      if (!error) vinculados += 1;
+    }
+    res.json({ vinculados });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao vincular em lote' });
+  }
+});
+
 // Mensagem automática de WhatsApp · boas-vindas ao voluntário que se inscreve
 // (config/edição em /whatsapp-auto/* · gerencia a chave 'voluntariado_inscricao')
 mountWhatsappAuto(router, { chave: 'voluntariado_inscricao', modulo: 'voluntariado', authorizeModule });
