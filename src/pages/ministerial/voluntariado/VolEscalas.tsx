@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,8 +11,9 @@ import { CalendarPlus } from 'lucide-react';
 
 export default function VolEscalas() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { data: services = [], isLoading } = useUpcomingServices();
-  const [selectedServiceId, setSelectedServiceId] = useState('');
+  const [selectedServiceId, setSelectedServiceId] = useState(searchParams.get('serviceId') || '');
   const { data: schedules = [] } = useServiceSchedules(selectedServiceId || undefined);
 
   const selectedService = services.find(s => s.id === selectedServiceId);
