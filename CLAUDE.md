@@ -2496,3 +2496,30 @@ Marcos vai definir os KPIs especificos de cada reuniao. Estrutura
 pronta para receber — por enquanto os dados automaticos puxam
 resumos dos modulos (projetos, financeiro, cultos, pendencias).
 
+
+## Membresia · faixa etária + ministério (AMI/Bridge) auto-declarado (2026-06-16)
+
+Pedido do Matheus: o cadastro do app pergunta (escolha única) se a pessoa
+frequenta **AMI / Bridge / nenhum**; e a pessoa entra na Membresia já **tageada
+por faixa etária** pela data de nascimento. Líderes de AMI/Bridge passam a ver
+suas pessoas numa aba, com detalhe **sem contribuições**.
+
+- **Migration `20260616120000`**: `mem_membros.frequenta_area` (CHECK ami/bridge,
+  nullable · índice parcial) + `fn_faixa_etaria(date)` (criança <13, adolescente
+  13–17, jovem 18–30, adulto 31+). Aplicada em prod.
+- **App**: cadastro grava `frequenta_area` via metadata → trigger
+  `handle_new_user` (em `supabase/handle_new_user_membro.sql`, aplicado em prod;
+  valida ami/bridge, e se o membro já existir preenche se estiver vazio).
+- **Membresia** (`Membresia.jsx`): badge de faixa etária + badge AMI/BRIDGE no
+  cabeçalho do detalhe (detalhe usa `select *` → já traz `frequenta_area`). A
+  faixa é derivada no front (helper inline); não é coluna.
+- **AMI/Bridge** (`PainelArea.jsx` + novo `PainelAreaPessoas.jsx`): aba
+  **"Pessoas"** (só `area in (ami,bridge)`) lista `mem_membros` com
+  `frequenta_area = área`, filtros por faixa + busca; clicar abre detalhe.
+  Backend `routes/painelArea.js`: `GET /:area/pessoas` e `GET /:area/pessoas/:id`
+  (este NÃO retorna contribuições — regra "líder de área não vê doação" também no
+  servidor, não só na UI; valida que a pessoa é da área). Guard
+  `authorizeModule('painel-area', 1)` (boost de área cobre os líderes).
+- ⚠️ Editar `frequenta_area` na Membresia (UI) ficou de fora (só leitura por ora);
+  o vínculo vem do cadastro do app. Pessoas já existentes não têm `frequenta_area`
+  até se cadastrarem/escolherem (forward-looking).

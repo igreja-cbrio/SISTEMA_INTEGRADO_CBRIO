@@ -1282,6 +1282,16 @@ export default function Membresia() {
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{selectedMembro.nome}</h2>
                   <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     <Badge status={selectedMembro.status} />
+                    {(() => {
+                      const dn = selectedMembro.data_nascimento;
+                      if (!dn) return null;
+                      const n = new Date(dn); if (isNaN(n.getTime())) return null;
+                      const h = new Date(); let i = h.getFullYear() - n.getFullYear();
+                      const mo = h.getMonth() - n.getMonth(); if (mo < 0 || (mo === 0 && h.getDate() < n.getDate())) i--;
+                      const fa = i < 13 ? ['Criança', '#fce7f3', '#831843'] : i <= 17 ? ['Adolescente', '#fef3c7', '#92400e'] : i <= 30 ? ['Jovem', '#e0f2fe', '#075985'] : ['Adulto', '#f1f5f9', '#334155'];
+                      return <span title={`${i} anos`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: fa[1], color: fa[2], fontWeight: 700 }}>{fa[0].toUpperCase()}</span>;
+                    })()}
+                    {selectedMembro.frequenta_area && <span title="Ministério que declarou frequentar (cadastro do app)" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#cffafe', color: '#155e75', fontWeight: 700 }}>{String(selectedMembro.frequenta_area).toUpperCase()}</span>}
                     {selectedMembro.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
                     {selectedMembro.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
                     {selectedMembro.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}

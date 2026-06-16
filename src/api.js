@@ -1016,6 +1016,10 @@ export const painelArea = {
   // Registra NPS mensal · body: { nota: 0-10, mês?: 'YYYY-MM', qtd_respostas?, observação? }
   // Requer nível >= 3 no módulo da área (coord da área)
   registrarNps: (area, body) => post(`/painel-area/${encodeURIComponent(area)}/nps`, body),
+  // Aba Pessoas (AMI/Bridge) · quem declarou frequentar a área, com faixa etária
+  pessoas: (area) => get(`/painel-area/${encodeURIComponent(area)}/pessoas`),
+  // Detalhe da pessoa (sem contribuições)
+  pessoa: (area, id) => get(`/painel-area/${encodeURIComponent(area)}/pessoas/${id}`),
 };
 
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
