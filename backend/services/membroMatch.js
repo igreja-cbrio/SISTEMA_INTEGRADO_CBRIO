@@ -121,10 +121,80 @@ async function acharOuCriar({ cpf, email, telefone, nome, status = 'visitante' }
   return { membro_id: data.id, created: true };
 }
 
+// ── Nome: comparação conservadora pra AUTO-link ──────────────────────────────
+function normalizarNome(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function _bigrams(s) {
+  const m = new Map();
+  for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m.set(g, (m.get(g) || 0) + 1); }
+  return m;
+}
+function _dice(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const ba = _bigrams(a), bb = _bigrams(b);
+  let inter = 0, ta = 0, tb = 0;
+  for (const v of ba.values()) ta += v;
+  for (const [g, v] of bb) { tb += v; if (ba.has(g)) inter += Math.min(v, ba.get(g)); }
+  return ta + tb === 0 ? 0 : (2 * inter) / (ta + tb);
+}
+// CONSERVADOR de propósito (≥0.90) · só pra decidir AUTO-link por telefone.
+// Nomes "parecidos" abaixo disso NÃO ligam sozinhos — viram fila do Kevyn.
+function nomesMesmaPessoa(a, b) {
+  const x = normalizarNome(a), y = normalizarNome(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  return _dice(x, y) >= 0.90;
+}
+
+// acharOuCriarGuardado · "guardar na origem" (Marcos · 2026-06-16). Política:
+//   CPF exato → liga · e-mail exato → liga · telefone + NOME batendo → liga ·
+//   senão CRIA stub. NUNCA liga por telefone/e-mail sozinho (família compartilha
+//   o número/e-mail · auto-link errado junta pessoas distintas = pior que
+//   duplicata). Colisão de telefone sem nome batendo cria stub e a
+//   vw_membros_duplicados / vw_nb_duplicados_suspeitos + a fila do Kevyn pegam.
+// `extra` = campos extras pro insert (ex.: data_nascimento, familia_id).
+async function acharOuCriarGuardado({ cpf, email, telefone, nome, status = 'visitante', extra = {} } = {}) {
+  const cpf11 = normalizarCpf(cpf);
+  const emailLc = normalizarEmail(email);
+  const tel = normalizarTelefone(telefone);
+
+  if (cpf11) {
+    const { data } = await supabase.from('mem_membros').select('id').eq('cpf', cpf11).maybeSingle();
+    if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
+  }
+  if (emailLc) {
+    const { data } = await supabase.from('mem_membros').select('id').ilike('email', emailLc).limit(1);
+    if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
+  }
+  if (tel && nome) {
+    const cands = await buscarCandidatos({ telefone }, { limit: 8 });
+    const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
+    if (hit) return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
+  }
+
+  const { data, error } = await supabase.from('mem_membros').insert({
+    nome: nome || 'Sem nome',
+    email: emailLc || null,
+    telefone: tel || null,
+    cpf: cpf11,
+    status,
+    active: true,
+    ...extra,
+  }).select('id').single();
+  if (error) throw error;
+  return { membro_id: data.id, created: true, matched_by: null };
+}
+
 module.exports = {
   normalizarCpf,
   normalizarTelefone,
   normalizarEmail,
+  normalizarNome,
+  nomesMesmaPessoa,
   buscarCandidatos,
   acharOuCriar,
+  acharOuCriarGuardado,
 };

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
@@ -532,20 +533,18 @@ router.post('/me/register-member', async (req, res) => {
 
     const fullName = `${nome.trim()} ${sobrenome.trim()}`.replace(/\s+/g, ' ');
 
-    // Se já existe membro com esse CPF, reutilizar em vez de duplicar
-    let { data: membro } = await supabase.from('mem_membros')
-      .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
-
-    if (!membro) {
-      const { data: created, error } = await supabase.from('mem_membros').insert({
-        nome: fullName,
-        cpf: cleanCpf,
-        telefone: cleanPhone,
-        status: 'visitante',
-        active: true,
-      }).select('id, nome, telefone, email').single();
-      if (error) return res.status(400).json({ error: error.message });
-      membro = created;
+    // Guarda na origem: CPF→e-mail→(telefone+nome)→cria · não faz mais INSERT
+    // cru (matcher compartilhado · colisão sem nome batendo vira fila do Kevyn).
+    let membro;
+    try {
+      const r = await acharOuCriarGuardado({
+        cpf: cleanCpf, telefone: cleanPhone, nome: fullName, status: 'visitante',
+      });
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, telefone, email').eq('id', r.membro_id).single();
+      membro = data;
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
     }
 
     // Buscar ou criar vol_profile e vincular
