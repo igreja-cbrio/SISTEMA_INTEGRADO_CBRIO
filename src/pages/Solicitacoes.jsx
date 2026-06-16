@@ -321,7 +321,12 @@ export default function Solicitacoes() {
   const loadRef = useRef(load);
   useEffect(() => { loadRef.current = load; });
 
-  useEffect(() => { load(); }, [view, periodo]);
+  // Ao trocar de aba/período: mostra "carregando" e LIMPA a lista da aba anterior antes
+  // do fetch. Sem isso, ao voltar de "Aprovar" (vazia) pra "Para Atender" a tela exibia
+  // o Kanban SEM cards (a lista vazia herdada) durante os ~2s do carregamento — parecia
+  // que "os cards sumiram". O realtime (loadRef.current) NÃO passa por aqui: atualiza em
+  // silêncio, sem spinner, pra não piscar a cada evento.
+  useEffect(() => { setLoading(true); setItems([]); load(); }, [view, periodo]);
 
   // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitações` recarrega
   // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
