@@ -4,6 +4,7 @@ const router = require('express').Router();
 // 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -1080,16 +1081,19 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
       const { data: cad } = await supabase.from('mem_cadastros_pendentes')
         .select('*').eq('id', pedido.cadastro_pendente_id).single();
       if (cad) {
-        const { data: novoMembro, error: eMembro } = await supabase.from('mem_membros').insert({
-          nome: cad.nome,
-          email: cad.email,
-          telefone: cad.telefone,
-          data_nascimento: cad.data_nascimento || null,
-          status: 'visitante',
-          active: true,
-        }).select().single();
-        if (eMembro) throw eMembro;
-        membroId = novoMembro.id;
+        // Guarda na origem: o cadastro público já detecta duplicata
+        // (duplicado_de_id) · se detectou, LIGA ao membro existente em vez de
+        // criar de novo. Senão, passa pelo matcher compartilhado (CPF/e-mail/
+        // telefone+nome) · não faz mais INSERT cru.
+        if (cad.duplicado_de_id) {
+          membroId = cad.duplicado_de_id;
+        } else {
+          const r = await acharOuCriarGuardado({
+            cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
+            extra: { data_nascimento: cad.data_nascimento || null },
+          });
+          membroId = r.membro_id;
+        }
         // Marca cadastro como aprovado
         await supabase.from('mem_cadastros_pendentes')
           .update({ status: 'aprovado' }).eq('id', pedido.cadastro_pendente_id);
