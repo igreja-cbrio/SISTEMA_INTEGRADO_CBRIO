@@ -197,7 +197,6 @@ export function AuthProvider({ children }) {
   const cargoSlug = permData?.cargoSlug || null;
 
   const isVoluntario = profile?.role === 'voluntario';
-  const isMembroOnly = !!profile?.is_membro_only;
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
   // Helpers de gating por módulo · usa slug novo (matriz reunião 2026-05-18)
@@ -222,6 +221,11 @@ export function AuthProvider({ children }) {
   // Colaborador = admin/diretor ou usuário com qualquer permissão de módulo
   // (voluntários e membros sem permissão não são colaboradores)
   const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados || canSolicitacoes || canDadosBrutos || canNPS;
+  // "Membro só do app devocional" só vale pra ROTEAMENTO quando a pessoa não é
+  // colaborador. Evita que um staff que um dia entrou pelo devocional (flag
+  // is_membro_only=true grudada no profile) fique preso na tela do devocional
+  // ao logar com as credenciais reais.
+  const isMembroOnly = !!profile?.is_membro_only && !isColaborador;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
   const canIA = isColaborador;
