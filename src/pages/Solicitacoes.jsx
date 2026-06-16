@@ -160,6 +160,9 @@ function RecorrenteToggle({ form, setForm }) {
 export default function Solicitacoes() {
   const { profile, isAdmin } = useAuth();
   const [items, setItems] = useState([]);
+  // De qual aba/período a lista carregada pertence · evita renderizar a lista de uma
+  // aba enquanto o usuário já está em outra (o "aparece tudo e some" ao trocar de aba).
+  const [itemsView, setItemsView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [filterCat, setFilterCat] = useState('todas');
@@ -266,6 +269,7 @@ export default function Solicitacoes() {
   const loadSeq = useRef(0);
   async function load() {
     const seq = ++loadSeq.current;
+    const key = `${view}:${periodo}`; // identidade (aba/período) desta carga
     try {
       // view='minhas' sempre filtra pelo solicitante atual · view='atender'
       // delega o filtro pro backend (responsável ve da área dele, admin ve tudo).
@@ -278,6 +282,7 @@ export default function Solicitacoes() {
       const data = await api.list(params);
       if (seq !== loadSeq.current) return; // chegou tarde · uma carga mais nova venceu
       setItems(data);
+      setItemsView(key); // libera o render: a lista agora é desta aba
     } catch (e) {
       if (seq === loadSeq.current) toast.error(e.message);
     } finally {
@@ -322,6 +327,14 @@ export default function Solicitacoes() {
   useEffect(() => { loadRef.current = load; });
 
   useEffect(() => { load(); }, [view, periodo]);
+
+  // A lista (items) pode ainda ser da aba ANTERIOR enquanto o load() da aba nova não
+  // volta. itemsFresh só é true quando a lista carregada é da aba/período atuais ·
+  // enquanto não for, o render mostra "carregando" no lugar da lista errada. Isso mata o
+  // "aparece tudo e some" ao trocar de aba (a lista de outra aba sendo filtrada na tela).
+  // O realtime recarrega a MESMA aba, então itemsFresh continua true (atualiza sem spinner).
+  const viewKey = `${view}:${periodo}`;
+  const itemsFresh = itemsView === viewKey;
 
   // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitações` recarrega
   // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
@@ -969,7 +982,7 @@ export default function Solicitacoes() {
       )}
 
       {/* Content: Kanban so na view 'atender' · Lista de aprovação em 'aprovar' · Lista simples nas demais. */}
-      {loading ? (
+      {(loading || !itemsFresh) ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
         </div>
