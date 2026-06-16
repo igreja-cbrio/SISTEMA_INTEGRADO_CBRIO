@@ -1328,6 +1328,23 @@ export const producao = {
   },
 };
 
+// "Check de pessoas" do funil Next/Batismo/convertido (resolução de identidade)
+export const nextBatismo = {
+  resumo: () => get('/next-batismo/resumo'),
+  duplicados: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/next-batismo/duplicados' + (qs ? '?' + qs : ''));
+  },
+  semVinculo: () => get('/next-batismo/sem-vinculo'),
+  candidatos: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/next-batismo/candidatos' + (qs ? '?' + qs : ''));
+  },
+  ligar: (data) => post('/next-batismo/ligar', data),
+  ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
+  fundir: (data) => post('/next-batismo/fundir', data),
+};
+
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),

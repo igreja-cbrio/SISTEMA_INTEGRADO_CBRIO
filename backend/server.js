@@ -137,6 +137,7 @@ app.use('/api/wifi', require('./routes/wifi'));
 app.use('/api/cuidados', require('./routes/cuidados'));
 app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/next', require('./routes/next'));
+app.use('/api/next-batismo', require('./routes/nextBatismo'));
 app.use('/api/governanca', require('./routes/governanca'));
 app.use('/api/processos', require('./routes/processos'));
 app.use('/api/jornada', require('./routes/jornada'));

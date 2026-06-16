@@ -20,7 +20,7 @@ import {
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -118,6 +118,7 @@ const NAV_ITEMS = [
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
+          { label: 'Next - Batismo', description: 'Check de pessoas · liga inscrição ao membro certo e funde cadastros duplicados', icon: UserSearch, path: '/next-batismo', module: 'next-batismo' },
         ],
       },
       {
