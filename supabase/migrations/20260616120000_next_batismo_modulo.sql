@@ -186,20 +186,27 @@ COMMENT ON VIEW public.vw_nb_duplicados_suspeitos IS
   'Fase 1 Next-Batismo · duplicatas do funil novo (convertido recém-chegado). Estende vw_membros_duplicados com nome_parecido sem chave forte (revisão humana, nunca auto-merge). Restrito ao universo novo + exclui mem_duplicados_ignorados.';
 
 -- ----------------------------------------------------------------------------
--- 4. Acesso do Kevyn (operador da fila) · override de menor privilégio
---    nível 3 (ligar/fundir) SÓ no next-batismo · nada além.
---    ⚠️ Trocar o e-mail abaixo pelo login real do Kevyn antes de aplicar.
---    INSERT ... SELECT resolve usuário+módulo pelos TIPOS NATIVOS das colunas
---    (em prod usuarios.id e modulos.id são INTEGER, não uuid · drift conhecido)
---    → robusto ao tipo. No-op se o Kevyn ainda não logou (sem linha em usuarios);
---    nesse caso, conceder por /admin/permissoes após o 1º login dele.
+-- 4. Kevyn Ricardo Veiga de Oliveira (operador da fila) · colaborador no sistema
+--    de permissão + acesso de menor privilégio ao next-batismo.
+--    (A) garante a linha em `usuarios` (cargo base assistente-area · o real dele,
+--        Marcos refina depois). (B) override next-batismo nível 3 (ligar/fundir).
+--    ⚠️ A CONTA DE LOGIN (auth.users + profiles) é criada à parte (onboarding
+--    padrão) · esta linha de `usuarios` é reusada por e-mail no 1º login dele.
+--    INSERT ... SELECT usa os tipos nativos das colunas (drift int/uuid). Idempotente.
 -- ----------------------------------------------------------------------------
+INSERT INTO public.usuarios (nome, email, cargo_id, ativo)
+SELECT 'Kevyn Ricardo Veiga de Oliveira', 'kevyn.ricardo@cbrio.org',
+       (SELECT id FROM public.cargos WHERE slug = 'assistente-area' LIMIT 1), true
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.usuarios WHERE LOWER(TRIM(email)) = 'kevyn.ricardo@cbrio.org'
+);
+
 INSERT INTO public.permissoes_modulo (usuario_id, modulo_id, nivel_leitura, nivel_escrita)
 SELECT u.id, m.id, 3, 3
   FROM public.usuarios u
   CROSS JOIN public.modulos m
  WHERE m.slug = 'next-batismo'
-   AND LOWER(TRIM(u.email)) = LOWER(TRIM('KEVYN_EMAIL_AQUI'))
+   AND LOWER(TRIM(u.email)) = 'kevyn.ricardo@cbrio.org'
 ON CONFLICT (usuario_id, modulo_id) DO UPDATE
   SET nivel_leitura = 3, nivel_escrita = 3;
 
