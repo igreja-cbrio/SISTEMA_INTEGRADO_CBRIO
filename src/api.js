@@ -1281,6 +1281,8 @@ export const solicitacoes = {
   alcadas:        () => get('/solicitacoes/alcadas'),
   aprovarOrigem:  (id) => patch(`/solicitacoes/${id}/aprovar-origem`, {}),
   rejeitarOrigem: (id, motivo) => patch(`/solicitacoes/${id}/rejeitar-origem`, { motivo }),
+  // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
+  registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
   areaResponsaveis: {
     list:    () => get('/solicitacoes/area-responsaveis'),
     save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),

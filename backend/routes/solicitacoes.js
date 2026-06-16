@@ -629,15 +629,24 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
     }
 
     const novoResponsavelId = atual.responsavel_id;
+    // Próximo portao após o diretor de origem:
+    //   compras/servico  -> EM_COTACAO · a logistica levanta valor+fornecedor ANTES
+    //                       do financeiro (o Yago aprova sobre o valor real cotado).
+    //   reembolso/pagamento (e demais c/ alcada) -> aprovação financeira direta.
+    //   resto -> fila da área alvo (pendente).
+    const ehCotacao = ['compras', 'servico'].includes(atual.categoria);
+    let proximoStatus;
+    if (ehCotacao) {
+      proximoStatus = 'em_cotacao';
+    } else if (atual.precisa_aprovacao_financeira && !atual.aprovado_financeiro_em) {
+      proximoStatus = 'aguardando_aprovacao_financeira';
+    } else {
+      proximoStatus = 'pendente';
+    }
     const update = {
       aprovacao_origem_status: 'aprovada',
       aprovacao_origem_em: new Date().toISOString(),
-      // Após a aprovação de origem, segue pro próximo portao: aprovação financeira
-      // (se exigida e ainda não feita · ex: compras/reembolso/alcada) ou direto pra
-      // fila da área alvo (pendente). Sem isso, compras roteadas pulavam o financeiro.
-      status: (atual.precisa_aprovacao_financeira && !atual.aprovado_financeiro_em)
-        ? 'aguardando_aprovacao_financeira'
-        : 'pendente',
+      status: proximoStatus,
     };
     // Se super-admin esta aprovando como fallback, registra quem foi
     if (!isDiretorAlvo && isSuperAdmin) {
@@ -659,7 +668,9 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
       modulo,
       tipo: 'solicitacao_status',
       titulo: `Aprovada: ${data.titulo}`,
-      mensagem: `${userName || 'Diretor'} aprovou sua solicitação. Foi para a fila ${data.area_responsavel || 'da area alvo'}.`,
+      mensagem: ehCotacao
+        ? `${userName || 'Diretor'} aprovou sua solicitação. Foi pra cotação na logística (valor e fornecedor) antes do financeiro.`
+        : `${userName || 'Diretor'} aprovou sua solicitação. Foi para a fila ${data.area_responsavel || 'da area alvo'}.`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_origem_${data.id}`,
@@ -673,8 +684,10 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
           notificar({
             modulo,
             tipo: 'solicitacao',
-            titulo: `Nova na fila: ${data.titulo}`,
-            mensagem: `Solicitação aprovada pelo diretor · pronta para atendimento.`,
+            titulo: ehCotacao ? `Cotar: ${data.titulo}` : `Nova na fila: ${data.titulo}`,
+            mensagem: ehCotacao
+              ? `Solicitação aprovada pelo diretor · registre a cotação (valor + fornecedor) pra seguir pro financeiro.`
+              : `Solicitação aprovada pelo diretor · pronta para atendimento.`,
             link: '/solicitacoes',
             severidade: 'info',
             chaveDedup: `solicitacao_pos_aprovacao_${data.id}`,
@@ -688,6 +701,82 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
   } catch (e) {
     console.error('[SOLICITACOES] aprovar-origem:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao aprovar solicitação' });
+  }
+});
+
+// ── COTACAO (compras/servico) · a logistica levanta valor+fornecedor ANTES do ──
+// financeiro. Marcos (2026-06-16): "primeiro vem a cotacao, depois a aprovacao do
+// financeiro" · o Yago decide sobre o valor real, nao sobre uma estimativa cega.
+async function podeCotar(req, sol) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  const mp = req.user.granular?.modulePerms || {};
+  const log = mp.logistica || mp.Logistica;
+  if (log && (log.leitura >= 3 || log.escrita >= 3)) return true;
+  if (!sol?.area_responsavel) return false;
+  const { data } = await supabase
+    .from('area_solicitacoes_responsaveis')
+    .select('profile_id')
+    .eq('area', sol.area_responsavel)
+    .eq('profile_id', req.user.userId)
+    .maybeSingle();
+  return !!data;
+}
+
+router.post('/:id/registrar-cotacao', async (req, res) => {
+  try {
+    const { valor_cotado, fornecedor, observacao } = req.body || {};
+    const valor = Number(valor_cotado);
+    if (valor_cotado == null || valor_cotado === '' || Number.isNaN(valor) || valor < 0) {
+      return res.status(400).json({ error: 'Informe o valor cotado (número ≥ 0).' });
+    }
+    const { data: atual, error: getErr } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (getErr) throw getErr;
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.status !== 'em_cotacao') {
+      return res.status(400).json({ error: 'Esta solicitação não está em cotação.' });
+    }
+    if (!(await podeCotar(req, atual))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar a cotação.' });
+    }
+
+    // Grava a cotacao e manda pro financeiro · o Yago aprova sobre o valor cotado.
+    // valor_estimado passa a refletir o cotado (alcada/relatorios usam o valor real).
+    const updates = {
+      valor_cotado: valor,
+      cotacao_fornecedor: fornecedor || null,
+      cotacao_observacao: observacao || null,
+      cotacao_em: new Date().toISOString(),
+      cotacao_por: req.user.userId,
+      valor_estimado: valor,
+      precisa_aprovacao_financeira: true,
+      status: 'aguardando_aprovacao_financeira',
+    };
+    const { data, error } = await supabase
+      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+
+    // Notifica o financeiro (Yago) que ha cotacao pra aprovar
+    resolverDestinatarios('financeiro').then(managers => {
+      const alvo = [...new Set((managers || []).filter(Boolean))];
+      if (alvo.length) {
+        notificar({
+          modulo: 'financeiro',
+          tipo: 'solicitacao_status',
+          titulo: `Cotação pronta: ${data.titulo}`,
+          mensagem: `A logística cotou R$ ${valor.toFixed(2)}${fornecedor ? ` (${fornecedor})` : ''} · aguarda sua aprovação financeira.`,
+          link: '/solicitacoes',
+          severidade: 'info',
+          chaveDedup: `solicitacao_cotacao_${data.id}`,
+          targetIds: alvo,
+        }).catch(err => console.error('[SOLICITACOES] notify cotacao:', err.message));
+      }
+    }).catch(err => console.error('[SOLICITACOES] resolve financeiro:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] registrar-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao registrar cotação' });
   }
 });
 
@@ -1359,6 +1448,8 @@ router.get('/pendentes-financeiro', async (req, res) => {
       .neq('status', 'rejeitado')
       // Ainda aguardando o diretor de origem · so cai no financeiro depois (Spec 001)
       .neq('status', 'aguardando_aprovacao_origem')
+      // Compras/servico em cotacao · o Yago so ve depois que a logistica cotar (valor real)
+      .neq('status', 'em_cotacao')
       .is('deleted_at', null)
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });
