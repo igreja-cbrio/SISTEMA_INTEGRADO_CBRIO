@@ -208,6 +208,13 @@ function SugestoesIaModal({ onClose, onDone }: { onClose: () => void; onDone: ()
   const comSugestao = sugestoes.filter(s => s.sugestao);
   const semSugestao = sugestoes.filter(s => !s.sugestao);
   const selecionados = comSugestao.filter(s => sel[s.nome_norm]);
+  const todosMarcados = comSugestao.length > 0 && selecionados.length === comSugestao.length;
+
+  function alternarTodos(marcar: boolean) {
+    const novo: Record<string, boolean> = {};
+    if (marcar) for (const s of comSugestao) novo[s.nome_norm] = true;
+    setSel(novo);
+  }
 
   async function aplicar() {
     if (!selecionados.length) return;
@@ -238,7 +245,16 @@ function SugestoesIaModal({ onClose, onDone }: { onClose: () => void; onDone: ()
           <p className="py-8 text-center text-sm text-muted-foreground">Não há nomes não vinculados. Tudo certo!</p>
         ) : (
           <>
-            <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1 space-y-1.5">
+            {comSugestao.length > 0 && (
+              <label className="flex items-center gap-2 px-1 text-sm font-medium text-foreground cursor-pointer select-none">
+                <input type="checkbox" className="h-4 w-4 accent-[#00B39D]"
+                  checked={todosMarcados}
+                  ref={(el) => { if (el) el.indeterminate = selecionados.length > 0 && !todosMarcados; }}
+                  onChange={(e) => alternarTodos(e.target.checked)} />
+                {todosMarcados ? 'Limpar seleção' : 'Selecionar todos'} ({comSugestao.length})
+              </label>
+            )}
+            <div className="max-h-[50vh] overflow-y-auto -mx-1 px-1 space-y-1.5">
               {comSugestao.map(s => (
                 <label key={s.nome_norm} className="flex items-center gap-3 p-2.5 rounded-lg border bg-card cursor-pointer hover:bg-accent/40">
                   <input type="checkbox" className="h-4 w-4 accent-[#00B39D]"
