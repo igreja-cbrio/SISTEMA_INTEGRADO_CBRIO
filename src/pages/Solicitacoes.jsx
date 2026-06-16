@@ -177,6 +177,7 @@ export default function Solicitacoes() {
   // via /meu-papel · colaborador comum so ve "Minhas Solicitações".
   // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
   const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0, eh_triagem_admin: false, pendentes_triagem: 0 });
+  const [papelCarregado, setPapelCarregado] = useState(false);
   const atendeAreas = papel.atende;
   const ehDiretorOrigem = papel.eh_diretor_origem;
   const pendentesOrigem = papel.pendentes_origem || 0;
@@ -206,20 +207,28 @@ export default function Solicitacoes() {
         const r = await api.meuPapel?.();
         if (alive && r) setPapel(r);
       } catch (_) {}
+      finally { if (alive) setPapelCarregado(true); }
     })();
     return () => { alive = false; };
   }, []);
 
-  // Responsavel/admin comeca na visão operacional (atender) se ainda não trocou de aba.
-  // Se for diretor de origem com fila pendente, comeca em 'aprovar'.
+  // Posicionamento inicial · UMA vez, depois que o papel carregou de verdade.
+  // Responsavel/admin começa na visão operacional ('atender'); diretor de origem
+  // ou triagem com fila pendente começa em 'aprovar'.
+  // ⚠️ Roda só uma vez (posicionouRef): antes, `pendentesAprovar` estava nas deps
+  // e este efeito re-disparava a cada aprovação · ao zerar a fila ele CHUTAVA o
+  // usuário de "Aprovar" pra "Atender" no meio do trabalho (a aba "sumia e voltava"
+  // sozinha). Depois do posicionamento inicial, só o clique do usuário troca de aba.
+  const posicionouRef = useRef(false);
   useEffect(() => {
-    if (viewTouched) return;
+    if (viewTouched || posicionouRef.current || !papelCarregado) return;
+    posicionouRef.current = true;
     if (ehAprovador && pendentesAprovar > 0) {
       setView('aprovar');
     } else if (isAdmin || atendeAreas) {
       setView('atender');
     }
-  }, [isAdmin, atendeAreas, ehAprovador, pendentesAprovar, viewTouched]);
+  }, [papelCarregado, isAdmin, atendeAreas, ehAprovador, pendentesAprovar, viewTouched]);
 
   // Form state
   const FORM_INITIAL = {
@@ -248,7 +257,13 @@ export default function Solicitacoes() {
   // Área do solicitante · NÃO ha mais seletor (2026-06-01). O backend deriva a
   // área de quem preenche (usuario_areas/kpi_areas) e grava em area_cliente p/ KPI.
 
+  // Guard contra respostas obsoletas: cada load() pega um número de sequência e
+  // só o MAIS RECENTE aplica seu resultado. O realtime dispara load()s concorrentes
+  // a cada mudança na tabela; sem isso, um fetch que partiu ANTES de uma aprovação
+  // commitar podia resolver depois e "ressuscitar" o card recém-aprovado.
+  const loadSeq = useRef(0);
   async function load() {
+    const seq = ++loadSeq.current;
     try {
       // view='minhas' sempre filtra pelo solicitante atual · view='atender'
       // delega o filtro pro backend (responsável ve da área dele, admin ve tudo).
@@ -259,15 +274,20 @@ export default function Solicitacoes() {
       // Período padrão bound (Fase 2) · não se aplica à fila de aprovação.
       if (view !== 'aprovar') params.periodo = periodo;
       const data = await api.list(params);
+      if (seq !== loadSeq.current) return; // chegou tarde · uma carga mais nova venceu
       setItems(data);
     } catch (e) {
-      toast.error(e.message);
+      if (seq === loadSeq.current) toast.error(e.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }
 
   async function handleAprovarOrigem(id) {
+    // Optimista · tira o card da fila na hora pra não "piscar" enquanto o backend
+    // processa e o realtime recarrega. Em erro, o load() reconcilia com o servidor
+    // (traz o card de volta se a aprovação não foi aplicada).
+    setItems(prev => prev.filter(i => i.id !== id));
     try {
       await api.aprovarOrigem(id);
       toast.success('Solicitação aprovada.');
@@ -275,10 +295,12 @@ export default function Solicitacoes() {
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao aprovar.');
+      load();
     }
   }
 
   async function handleRejeitarOrigem(id, motivo) {
+    setItems(prev => prev.filter(i => i.id !== id));
     try {
       await api.rejeitarOrigem(id, motivo);
       toast.success('Solicitação rejeitada.');
@@ -286,6 +308,7 @@ export default function Solicitacoes() {
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao rejeitar.');
+      load();
     }
   }
 
