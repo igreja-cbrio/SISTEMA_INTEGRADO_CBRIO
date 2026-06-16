@@ -69,6 +69,7 @@ export default function Grupos() {
   const [detailData, setDetailData] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [importLideresOpen, setImportLideresOpen] = useState(false);
   const [editData, setEditData] = useState(null);
   const [saving, setSaving] = useState(false);
   const [addMembroOpen, setAddMembroOpen] = useState(false);
@@ -808,7 +809,12 @@ export default function Grupos() {
     <div className="cbrio-grupos-page" style={{ padding: '24px 20px', maxWidth: 1240, margin: '0 auto' }}>
       <div className="cbrio-grupos-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
-        {tabAtiva === 'grupos' && podeEditarGrupos && <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>}
+        {tabAtiva === 'grupos' && podeEditarGrupos && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="outline" onClick={() => setImportLideresOpen(true)}><FileUp size={16} style={{ marginRight: 6 }} /> Importar líderes</Button>
+            <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>
+          </div>
+        )}
       </div>
 
       {/* Tabs principais · centralizadas; quebram em 2 linhas se faltar espaço */}
@@ -1320,7 +1326,139 @@ export default function Grupos() {
       </>}
 
       <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
+      {importLideresOpen && <ImportLideresModal onClose={() => setImportLideresOpen(false)} onDone={() => { setImportLideresOpen(false); load(); }} />}
     </div>
+  );
+}
+
+// ── MODAL · Importar líderes dos grupos (planilha + IA · review-before-apply) ──
+const CONF_LIDER = {
+  exata: { label: 'Idêntico', cls: 'bg-emerald-100 text-emerald-700' },
+  alta: { label: 'Alta', cls: 'bg-emerald-100 text-emerald-700' },
+  media: { label: 'Média', cls: 'bg-amber-100 text-amber-700' },
+  baixa: { label: 'Baixa', cls: 'bg-slate-100 text-slate-600' },
+  nenhuma: { label: 'Sem sugestão', cls: 'bg-slate-100 text-slate-500' },
+};
+
+function ImportLideresModal({ onClose, onDone }) {
+  const [fase, setFase] = useState('upload'); // upload | analisando | revisao
+  const [itens, setItens] = useState([]);
+  const [sel, setSel] = useState({});
+  const [salvando, setSalvando] = useState(false);
+
+  async function analisar(file) {
+    if (!file) return;
+    setFase('analisando');
+    try {
+      const r = await api.importarLideresAnalisar(file);
+      const its = r.itens || [];
+      setItens(its);
+      const pre = {};
+      for (const it of its) if (it.grupo_id && it.sugestao && (it.confianca === 'exata' || it.confianca === 'alta')) pre[it.grupo_id] = true;
+      setSel(pre);
+      setFase('revisao');
+    } catch (e) { toast.error(e.message || 'Erro ao analisar a planilha'); setFase('upload'); }
+  }
+
+  const comSugestao = itens.filter(i => i.grupo_id && i.sugestao);
+  const semLider = itens.filter(i => i.grupo_id && !i.sugestao);
+  const semGrupo = itens.filter(i => !i.grupo_id);
+  const selecionados = comSugestao.filter(i => sel[i.grupo_id]);
+  const todosMarcados = comSugestao.length > 0 && selecionados.length === comSugestao.length;
+
+  function alternarTodos(marcar) {
+    const novo = {};
+    if (marcar) for (const i of comSugestao) novo[i.grupo_id] = true;
+    setSel(novo);
+  }
+
+  async function aplicar() {
+    if (!selecionados.length) return;
+    setSalvando(true);
+    try {
+      const vinculos = selecionados.map(i => ({ grupo_id: i.grupo_id, membro_id: i.sugestao.membro_id }));
+      const r = await api.importarLideresAplicar(vinculos);
+      toast.success(`${r.aplicados} líder(es) vinculados aos grupos`);
+      onDone();
+    } catch (e) { toast.error(e.message || 'Erro ao aplicar'); setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Importar líderes dos grupos</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Envie a planilha com as colunas <strong>Grupo</strong> e <strong>Líder</strong>. A IA casa o líder de cada grupo com o cadastro de membros. Revise e marque os corretos — nada é gravado sem você aprovar.
+        </p>
+
+        {fase === 'upload' && (
+          <label className="block mt-2">
+            <input type="file" accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; analisar(f); e.currentTarget.value = ''; }} />
+            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium cursor-pointer">
+              <FileUp size={16} /> Escolher planilha (.xlsx/.csv)
+            </span>
+          </label>
+        )}
+
+        {fase === 'analisando' && (
+          <div className="py-10 text-center text-sm text-muted-foreground">analisando os nomes…</div>
+        )}
+
+        {fase === 'revisao' && (
+          <>
+            {comSugestao.length > 0 && (
+              <label className="flex items-center gap-2 px-1 text-sm font-medium text-foreground cursor-pointer select-none">
+                <input type="checkbox" className="h-4 w-4 accent-[#00B39D]" checked={todosMarcados}
+                  ref={(el) => { if (el) el.indeterminate = selecionados.length > 0 && !todosMarcados; }}
+                  onChange={(e) => alternarTodos(e.target.checked)} />
+                {todosMarcados ? 'Limpar seleção' : 'Selecionar todos'} ({comSugestao.length})
+              </label>
+            )}
+            <div className="max-h-[50vh] overflow-y-auto -mx-1 px-1 space-y-1.5">
+              {comSugestao.map(i => (
+                <label key={i.grupo_id} className="flex items-center gap-3 p-2.5 rounded-lg border bg-card cursor-pointer hover:bg-accent/40">
+                  <input type="checkbox" className="h-4 w-4 accent-[#00B39D]" checked={!!sel[i.grupo_id]}
+                    onChange={(e) => setSel(p => ({ ...p, [i.grupo_id]: e.target.checked }))} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-foreground truncate">{i.grupo_nome}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      líder: {i.sugestao.nome}
+                      {i.lider_atual_nome && i.lider_atual_nome !== i.sugestao.nome && <span className="text-amber-600"> · substitui {i.lider_atual_nome}</span>}
+                    </div>
+                  </div>
+                  <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full ${CONF_LIDER[i.confianca]?.cls || CONF_LIDER.nenhuma.cls}`}>{CONF_LIDER[i.confianca]?.label || i.confianca}</span>
+                </label>
+              ))}
+              {(semLider.length > 0 || semGrupo.length > 0) && (
+                <div className="pt-2 space-y-1">
+                  {semLider.length > 0 && <p className="text-xs font-medium text-muted-foreground px-1">Sem líder identificado ({semLider.length}) — vincule manualmente no grupo</p>}
+                  {semLider.map((i, k) => (
+                    <div key={'sl' + k} className="flex items-center justify-between p-2 rounded-lg border border-dashed bg-muted/30 text-sm">
+                      <span className="truncate text-foreground">{i.grupo_nome} <span className="text-xs text-muted-foreground">· planilha: {i.lider_planilha}</span></span>
+                    </div>
+                  ))}
+                  {semGrupo.length > 0 && <p className="text-xs font-medium text-muted-foreground px-1 pt-1">Grupo não encontrado no sistema ({semGrupo.length})</p>}
+                  {semGrupo.map((i, k) => (
+                    <div key={'sg' + k} className="flex items-center justify-between p-2 rounded-lg border border-dashed bg-muted/30 text-sm">
+                      <span className="truncate text-muted-foreground">{i.grupo_planilha} · líder: {i.lider_planilha}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t">
+              <span className="text-xs text-muted-foreground">{selecionados.length} de {comSugestao.length} selecionados</span>
+              <Button onClick={aplicar} disabled={salvando || !selecionados.length}>
+                {salvando ? 'Aplicando…' : `Aplicar selecionados (${selecionados.length})`}
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
