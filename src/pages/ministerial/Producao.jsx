@@ -81,20 +81,14 @@ function fmtDesvio(seg) {
   const sinal = seg > 0 ? '+' : seg < 0 ? '−' : '';
   return `${sinal}${fmtMMSS(Math.abs(seg))}`;
 }
-// Máscara MM:SS · só dígitos, no máximo 4, ':' automático entre minutos e segundos.
-// Segundos travados em 00-59. Garante que o dado sempre venha no formato certo.
+// Máscara mm:ss preenchendo da DIREITA (estilo app de banco): os 2 últimos
+// dígitos são sempre os segundos. Só dígitos, no máximo 4.
+// Ex.: "100" → "1:00" · "545" → "5:45" · "5" → "0:05" · "3000" → "30:00".
 function maskMMSS(raw) {
   const d = String(raw || '').replace(/\D/g, '').slice(0, 4);
-  if (d.length <= 2) return d;
-  let ss = d.slice(2);
-  if (ss.length === 2 && Number(ss) > 59) ss = '59';
-  return d.slice(0, 2) + ':' + ss;
-}
-// Valor inicial do input mm:ss · minutos sempre com 2 dígitos (round-trip da máscara)
-function fmtInput(seg) {
-  if (seg == null) return '';
-  const s = Math.max(0, Math.round(Number(seg)));
-  return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+  if (!d) return '';
+  const p = d.padStart(3, '0');
+  return `${parseInt(p.slice(0, -2), 10)}:${p.slice(-2)}`;
 }
 // "5:45" → 345 · "0:30" → 30 · número puro = minutos ("30" → 1800, "5.5" → 330)
 function parseMMSS(str) {
@@ -461,7 +455,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
       setForm(formInicial);
       // etapas do culto, ou pré-carrega do roteiro padrão se ainda não houver
       const base = (d.etapas && d.etapas.length)
-        ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtInput(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto', tipo: e.tipo || 'padrao', categoria_especial: e.categoria_especial || null }))
+        ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtMMSS(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto', tipo: e.tipo || 'padrao', categoria_especial: e.categoria_especial || null }))
         : (d.roteiro || []).map(r => ({ key: rid(), titulo: r.titulo || '', previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto', tipo: 'padrao', categoria_especial: null }));
       // pós-culto sempre por último (sort estável preserva a ordem dentro de cada seção)
       base.sort((a, b) => (a.secao === 'pos_culto' ? 1 : 0) - (b.secao === 'pos_culto' ? 1 : 0));
@@ -872,7 +866,7 @@ function RoteiroEditor({ tipos }) {
     setLoading(true);
     try {
       const r = await prodApi.roteiroEtapas.list();
-      setRoteiro((r || []).map(e => ({ ...e, previsto_str: fmtInput(e.previsto_seg) })));
+      setRoteiro((r || []).map(e => ({ ...e, previsto_str: fmtMMSS(e.previsto_seg) })));
     } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
   }, []);
@@ -896,7 +890,7 @@ function RoteiroEditor({ tipos }) {
   };
   const salvarPrevisto = async (r) => {
     const seg = parseMMSS(r.previsto_str) ?? 0;
-    setLocal(r.id, { previsto_seg: seg, previsto_str: fmtInput(seg) });
+    setLocal(r.id, { previsto_seg: seg, previsto_str: fmtMMSS(seg) });
     await salvarCampo(r.id, 'previsto_seg', seg);
   };
   const criar = async () => {
