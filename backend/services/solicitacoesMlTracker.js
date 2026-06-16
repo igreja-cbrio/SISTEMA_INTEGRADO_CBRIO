@@ -267,6 +267,19 @@ async function notificarSolicitante({ solicitacao, status, descricao, isFirstLin
       detalhe: descricao || '',
       link,
     });
+  } else {
+    // Sem telefone · pede pro solicitante cadastrar pra receber o rastreio no
+    // WhatsApp. Dedup por usuário (1 aviso, não a cada mudança de status).
+    await notificar({
+      modulo: 'logistica',
+      tipo: 'cadastrar_telefone',
+      titulo: '📱 Cadastre seu telefone para receber o rastreio no WhatsApp',
+      mensagem: `Sua compra "${solicitacao.titulo}" tem rastreio do Mercado Livre. Cadastre seu telefone no perfil para receber as atualizações de entrega no WhatsApp.`,
+      link: '/perfil',
+      severidade: 'info',
+      chaveDedup: `perfil_sem_telefone_ml_${solicitacao.solicitante_id}`,
+      targetIds: [solicitacao.solicitante_id],
+    }).catch(e => console.error('[ML-TRACK] notify cadastrar telefone:', e.message));
   }
 
   // 3. Quando a encomenda é ENTREGUE, avisa também a EQUIPE de logística
