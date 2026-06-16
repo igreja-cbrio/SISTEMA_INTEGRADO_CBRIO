@@ -81,6 +81,21 @@ function fmtDesvio(seg) {
   const sinal = seg > 0 ? '+' : seg < 0 ? '−' : '';
   return `${sinal}${fmtMMSS(Math.abs(seg))}`;
 }
+// Máscara MM:SS · só dígitos, no máximo 4, ':' automático entre minutos e segundos.
+// Segundos travados em 00-59. Garante que o dado sempre venha no formato certo.
+function maskMMSS(raw) {
+  const d = String(raw || '').replace(/\D/g, '').slice(0, 4);
+  if (d.length <= 2) return d;
+  let ss = d.slice(2);
+  if (ss.length === 2 && Number(ss) > 59) ss = '59';
+  return d.slice(0, 2) + ':' + ss;
+}
+// Valor inicial do input mm:ss · minutos sempre com 2 dígitos (round-trip da máscara)
+function fmtInput(seg) {
+  if (seg == null) return '';
+  const s = Math.max(0, Math.round(Number(seg)));
+  return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+}
 // "5:45" → 345 · "0:30" → 30 · número puro = minutos ("30" → 1800, "5.5" → 330)
 function parseMMSS(str) {
   if (str == null) return null;
@@ -355,15 +370,12 @@ function EtapasEditor({ etapas, setEtapas }) {
               <div key={e.key} style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '3px 2px', borderTop: i === 0 ? 'none' : `1px dashed ${C.border}`, background: bg }}>
                 <span style={{ fontSize: 10, color: ehEsp ? '#B45309' : C.t3, textAlign: 'center' }}>{num}</span>
                 {ehEsp ? (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                    <span style={{ fontSize: 8, fontWeight: 800, color: '#B45309', background: '#F59E0B22', borderRadius: 4, padding: '1px 4px', whiteSpace: 'nowrap' }}>{labelCatEsp(e.categoria_especial)}</span>
-                    <input value={e.titulo} onChange={ev => setRow(e.key, { titulo: ev.target.value })} placeholder="Atividade" style={{ ...inpSm, padding: '4px 6px' }} />
-                  </span>
+                  <input value={e.titulo} onChange={ev => setRow(e.key, { titulo: ev.target.value })} placeholder="Atividade especial" title={`Atividade especial · ${labelCatEsp(e.categoria_especial)}`} style={{ ...inpSm, padding: '4px 6px' }} />
                 ) : (
                   <span style={{ fontSize: 12, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>{e.titulo}{ehPos && <span style={{ fontSize: 8, color: C.t3, fontWeight: 700, marginLeft: 5 }}>PÓS</span>}</span>
                 )}
                 <span style={{ fontSize: 11, color: C.t3, textAlign: 'center' }}>{ehEsp ? '—' : fmtMMSSdash(prSeg)}</span>
-                <input value={e.executado_str} onChange={ev => setRow(e.key, { executado_str: ev.target.value })} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: estourouEtapa ? '#EF4444' : C.text, fontWeight: 600 }} />
+                <input value={e.executado_str} onChange={ev => setRow(e.key, { executado_str: maskMMSS(ev.target.value) })} inputMode="numeric" maxLength={5} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: estourouEtapa ? '#EF4444' : C.text, fontWeight: 600 }} />
                 <input value={e.observacao} onChange={ev => setRow(e.key, { observacao: ev.target.value })} placeholder={ehEsp ? 'obs' : 'ex.: pregador'} style={{ ...inpSm }} />
                 {ehEsp
                   ? <button onClick={() => removeRow(e.key)} title="Remover atividade especial" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, justifySelf: 'center' }}><Trash2 size={12} /></button>
@@ -380,25 +392,21 @@ function EtapasEditor({ etapas, setEtapas }) {
           <Plus size={11} /> Atividade especial
         </button>
       ) : (
-        <div style={{ marginTop: 8, padding: 10, background: '#F59E0B0E', border: '1px solid #F59E0B44', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#B45309' }}>Nova atividade especial</div>
+        <div style={{ marginTop: 8, padding: 10, background: '#F59E0B0E', border: '1px solid #F59E0B44', borderRadius: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#B45309', marginBottom: 6 }}>Nova atividade especial</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <select value={novaEsp.categoria} onChange={ev => setNovaEsp(s => ({ ...s, categoria: ev.target.value }))} style={{ ...inpSm, width: 'auto' }}>
               {CATS_ESP.map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
             </select>
             {novaEsp.categoria === 'outros' && (
-              <input value={novaEsp.nome} onChange={ev => setNovaEsp(s => ({ ...s, nome: ev.target.value }))} placeholder="Qual atividade?" style={{ ...inpSm, width: 150 }} />
+              <input value={novaEsp.nome} onChange={ev => setNovaEsp(s => ({ ...s, nome: ev.target.value }))} placeholder="Qual atividade?" style={{ ...inpSm, width: 140 }} />
             )}
-            <input value={novaEsp.executado_str} onChange={ev => setNovaEsp(s => ({ ...s, executado_str: ev.target.value }))} placeholder="mm:ss" style={{ ...inpSm, width: 70, textAlign: 'center' }} />
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: C.t3 }}>entrou após:</span>
+            <input value={novaEsp.executado_str} onChange={ev => setNovaEsp(s => ({ ...s, executado_str: maskMMSS(ev.target.value) }))} inputMode="numeric" maxLength={5} placeholder="mm:ss" style={{ ...inpSm, width: 64, textAlign: 'center' }} />
+            <span style={{ fontSize: 11, color: C.t3 }}>após:</span>
             <select value={novaEsp.aposKey} onChange={ev => setNovaEsp(s => ({ ...s, aposKey: ev.target.value }))} style={{ ...inpSm, width: 'auto' }}>
               <option value="__inicio__">(início do culto)</option>
               {ancoras.map(a => <option key={a.key} value={a.key}>{a.titulo}</option>)}
             </select>
-          </div>
-          <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={adicionarEspecial} style={{ ...btnPrimary, background: '#F59E0B', padding: '6px 12px' }}><Plus size={12} /> Adicionar</button>
             <button onClick={() => setNovaEsp(null)} style={{ ...btnGhost, padding: '6px 12px' }}>Cancelar</button>
           </div>
@@ -453,7 +461,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
       setForm(formInicial);
       // etapas do culto, ou pré-carrega do roteiro padrão se ainda não houver
       const base = (d.etapas && d.etapas.length)
-        ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtMMSS(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto', tipo: e.tipo || 'padrao', categoria_especial: e.categoria_especial || null }))
+        ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtInput(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto', tipo: e.tipo || 'padrao', categoria_especial: e.categoria_especial || null }))
         : (d.roteiro || []).map(r => ({ key: rid(), titulo: r.titulo || '', previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto', tipo: 'padrao', categoria_especial: null }));
       // pós-culto sempre por último (sort estável preserva a ordem dentro de cada seção)
       base.sort((a, b) => (a.secao === 'pos_culto' ? 1 : 0) - (b.secao === 'pos_culto' ? 1 : 0));
@@ -864,7 +872,7 @@ function RoteiroEditor({ tipos }) {
     setLoading(true);
     try {
       const r = await prodApi.roteiroEtapas.list();
-      setRoteiro((r || []).map(e => ({ ...e, previsto_str: fmtMMSS(e.previsto_seg) })));
+      setRoteiro((r || []).map(e => ({ ...e, previsto_str: fmtInput(e.previsto_seg) })));
     } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
   }, []);
@@ -888,7 +896,7 @@ function RoteiroEditor({ tipos }) {
   };
   const salvarPrevisto = async (r) => {
     const seg = parseMMSS(r.previsto_str) ?? 0;
-    setLocal(r.id, { previsto_seg: seg, previsto_str: fmtMMSS(seg) });
+    setLocal(r.id, { previsto_seg: seg, previsto_str: fmtInput(seg) });
     await salvarCampo(r.id, 'previsto_seg', seg);
   };
   const criar = async () => {
@@ -934,7 +942,7 @@ function RoteiroEditor({ tipos }) {
             <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, opacity: r.ativo ? 1 : 0.5 }}>
               <span style={{ fontSize: 10, color: C.t3, width: 18, textAlign: 'center' }}>{r.ordem}</span>
               <input value={r.titulo} onChange={e => setLocal(r.id, { titulo: e.target.value })} onBlur={e => salvarCampo(r.id, 'titulo', e.target.value.trim())} style={{ ...inp, flex: 1, padding: '6px 8px' }} />
-              <input value={r.previsto_str} onChange={e => setLocal(r.id, { previsto_str: e.target.value })} onBlur={() => salvarPrevisto(r)} placeholder="mm:ss" style={{ ...inp, width: 70, padding: '6px 8px', textAlign: 'center' }} />
+              <input value={r.previsto_str} onChange={e => setLocal(r.id, { previsto_str: maskMMSS(e.target.value) })} onBlur={() => salvarPrevisto(r)} inputMode="numeric" maxLength={5} placeholder="mm:ss" style={{ ...inp, width: 70, padding: '6px 8px', textAlign: 'center' }} />
               <select value={r.secao} onChange={e => { setLocal(r.id, { secao: e.target.value }); salvarCampo(r.id, 'secao', e.target.value); }} style={{ ...inp, width: 'auto', padding: '6px 8px' }}>
                 <option value="culto">Culto</option>
                 <option value="pos_culto">Pós-culto</option>
@@ -947,7 +955,7 @@ function RoteiroEditor({ tipos }) {
 
           <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <input type="text" value={novo.titulo} onChange={e => setNovo(n => ({ ...n, titulo: e.target.value }))} style={{ ...inp, flex: 2, minWidth: 160 }} placeholder="Novo momento (ex.: Música 1)" />
-            <input type="text" value={novo.previsto_str} onChange={e => setNovo(n => ({ ...n, previsto_str: e.target.value }))} style={{ ...inp, width: 80 }} placeholder="mm:ss" />
+            <input type="text" value={novo.previsto_str} onChange={e => setNovo(n => ({ ...n, previsto_str: maskMMSS(e.target.value) }))} inputMode="numeric" maxLength={5} style={{ ...inp, width: 80 }} placeholder="mm:ss" />
             <select value={novo.secao} onChange={e => setNovo(n => ({ ...n, secao: e.target.value }))} style={{ ...inp, width: 'auto' }}>
               <option value="culto">Culto</option>
               <option value="pos_culto">Pós-culto</option>
