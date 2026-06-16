@@ -189,24 +189,19 @@ COMMENT ON VIEW public.vw_nb_duplicados_suspeitos IS
 -- 4. Acesso do Kevyn (operador da fila) · override de menor privilégio
 --    nível 3 (ligar/fundir) SÓ no next-batismo · nada além.
 --    ⚠️ Trocar o e-mail abaixo pelo login real do Kevyn antes de aplicar.
---    Defensivo: no-op se o Kevyn ainda não logou (sem linha em usuarios).
---    Nesse caso, conceder por /admin/permissoes após o 1º login dele.
+--    INSERT ... SELECT resolve usuário+módulo pelos TIPOS NATIVOS das colunas
+--    (em prod usuarios.id e modulos.id são INTEGER, não uuid · drift conhecido)
+--    → robusto ao tipo. No-op se o Kevyn ainda não logou (sem linha em usuarios);
+--    nesse caso, conceder por /admin/permissoes após o 1º login dele.
 -- ----------------------------------------------------------------------------
-DO $$
-DECLARE v_uid uuid; v_mod uuid; v_email text := 'KEVYN_EMAIL_AQUI';
-BEGIN
-  SELECT id INTO v_uid FROM public.usuarios WHERE LOWER(TRIM(email)) = LOWER(TRIM(v_email));
-  SELECT id INTO v_mod FROM public.modulos WHERE slug = 'next-batismo';
-  IF v_uid IS NOT NULL AND v_mod IS NOT NULL THEN
-    INSERT INTO public.permissoes_modulo (usuario_id, modulo_id, nivel_leitura, nivel_escrita)
-    VALUES (v_uid, v_mod, 3, 3)
-    ON CONFLICT (usuario_id, modulo_id) DO UPDATE
-      SET nivel_leitura = 3, nivel_escrita = 3;
-    RAISE NOTICE 'Override next-batismo nível 3 concedido a %', v_email;
-  ELSE
-    RAISE NOTICE 'Kevyn (%) ainda sem conta em usuarios · conceder via /admin/permissoes após o 1º login', v_email;
-  END IF;
-END $$;
+INSERT INTO public.permissoes_modulo (usuario_id, modulo_id, nivel_leitura, nivel_escrita)
+SELECT u.id, m.id, 3, 3
+  FROM public.usuarios u
+  CROSS JOIN public.modulos m
+ WHERE m.slug = 'next-batismo'
+   AND LOWER(TRIM(u.email)) = LOWER(TRIM('KEVYN_EMAIL_AQUI'))
+ON CONFLICT (usuario_id, modulo_id) DO UPDATE
+  SET nivel_leitura = 3, nivel_escrita = 3;
 
 -- ----------------------------------------------------------------------------
 -- Conferência:
