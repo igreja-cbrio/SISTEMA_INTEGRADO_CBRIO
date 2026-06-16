@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,27 @@ export default function VolEquipes() {
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
 
+  // Áreas já usadas (pra reaproveitar no campo do formulário)
+  const areasExistentes = useMemo(
+    () => [...new Set(teams.map(t => (t.area || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [teams],
+  );
+
+  // Equipes agrupadas por área · "Sem área" sempre por último
+  const grupos = useMemo(() => {
+    const map = new Map<string, VolTeam[]>();
+    for (const t of teams) {
+      const key = (t.area || '').trim() || 'Sem área';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(t);
+    }
+    return [...map.entries()].sort((a, b) => {
+      if (a[0] === 'Sem área') return 1;
+      if (b[0] === 'Sem área') return -1;
+      return a[0].localeCompare(b[0]);
+    });
+  }, [teams]);
+
   if (isLoading) {
     return <div className="flex items-center justify-center py-20"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" /></div>;
   }
@@ -52,60 +73,70 @@ export default function VolEquipes() {
           </CardContent>
         </Card>
       ) : (
-        <div className="rounded-lg border bg-card divide-y">
-          {teams.map(team => {
-            const memberCount = team.members?.length ?? 0;
-            const positionCount = team.positions?.length ?? 0;
-            return (
-              <div
-                key={team.id}
-                role="button"
-                tabIndex={0}
-                className="flex items-center gap-3 px-4 py-3 hover:bg-accent/40 cursor-pointer transition-colors"
-                onClick={() => setSelectedTeamId(team.id)}
-                onKeyDown={e => { if (e.key === 'Enter') setSelectedTeamId(team.id); }}
-              >
-                <div
-                  className="h-2.5 w-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: team.color || '#737373' }}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-medium truncate">{team.name}</p>
-                    {!team.is_active && (
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">Inativa</Badge>
-                    )}
-                  </div>
-                  {team.leader && (
-                    <p className="text-xs text-muted-foreground truncate">
-                      Lider: {team.leader.full_name}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
-                  <span className="flex items-center gap-1" title="Membros">
-                    <Users className="h-3.5 w-3.5" />
-                    {memberCount}
-                  </span>
-                  {positionCount > 0 && (
-                    <span className="hidden sm:flex items-center gap-1" title="Posicoes">
-                      <Briefcase className="h-3.5 w-3.5" />
-                      {positionCount}
-                    </span>
-                  )}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={e => { e.stopPropagation(); setEditTeam(team); }}
-                  title="Editar equipe"
-                >
-                  <Edit2 className="h-3.5 w-3.5" />
-                </Button>
+        <div className="space-y-5">
+          {grupos.map(([area, lista]) => (
+            <div key={area}>
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <h2 className="text-sm font-semibold text-foreground">{area}</h2>
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{lista.length}</Badge>
               </div>
-            );
-          })}
+              <div className="rounded-lg border bg-card divide-y">
+                {lista.map(team => {
+                  const memberCount = team.members?.length ?? 0;
+                  const positionCount = team.positions?.length ?? 0;
+                  return (
+                    <div
+                      key={team.id}
+                      role="button"
+                      tabIndex={0}
+                      className="flex items-center gap-3 px-4 py-3 hover:bg-accent/40 cursor-pointer transition-colors"
+                      onClick={() => setSelectedTeamId(team.id)}
+                      onKeyDown={e => { if (e.key === 'Enter') setSelectedTeamId(team.id); }}
+                    >
+                      <div
+                        className="h-2.5 w-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: team.color || '#737373' }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium truncate">{team.name}</p>
+                          {!team.is_active && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0">Inativa</Badge>
+                          )}
+                        </div>
+                        {team.leader && (
+                          <p className="text-xs text-muted-foreground truncate">
+                            Lider: {team.leader.full_name}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
+                        <span className="flex items-center gap-1" title="Membros">
+                          <Users className="h-3.5 w-3.5" />
+                          {memberCount}
+                        </span>
+                        {positionCount > 0 && (
+                          <span className="hidden sm:flex items-center gap-1" title="Posicoes">
+                            <Briefcase className="h-3.5 w-3.5" />
+                            {positionCount}
+                          </span>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={e => { e.stopPropagation(); setEditTeam(team); }}
+                        title="Editar equipe"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -114,6 +145,7 @@ export default function VolEquipes() {
       {(showCreateDialog || editTeam) && (
         <TeamFormDialog
           team={editTeam}
+          areas={areasExistentes}
           onClose={() => { setShowCreateDialog(false); setEditTeam(null); }}
         />
       )}
@@ -162,17 +194,18 @@ function SyncMembersButton() {
   );
 }
 
-function TeamFormDialog({ team, onClose }: { team: VolTeam | null; onClose: () => void }) {
+function TeamFormDialog({ team, areas = [], onClose }: { team: VolTeam | null; areas?: string[]; onClose: () => void }) {
   const createTeam = useCreateTeam();
   const updateTeam = useUpdateTeam();
   const deleteTeam = useDeleteTeam();
   const [name, setName] = useState(team?.name || '');
   const [description, setDescription] = useState(team?.description || '');
   const [color, setColor] = useState(team?.color || TEAM_COLORS[0]);
+  const [area, setArea] = useState(team?.area || '');
 
   const handleSave = () => {
     if (!name.trim()) return toast.error('Nome obrigatorio');
-    const data = { name: name.trim(), description: description.trim() || null, color };
+    const data = { name: name.trim(), description: description.trim() || null, color, area: area.trim() || null };
     if (team) {
       updateTeam.mutate({ id: team.id, data }, { onSuccess: () => { toast.success('Equipe atualizada'); onClose(); }, onError: () => toast.error('Erro ao atualizar') });
     } else {
@@ -196,6 +229,19 @@ function TeamFormDialog({ team, onClose }: { team: VolTeam | null; onClose: () =
           <div>
             <Label>Nome</Label>
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Louvor, Midia, Recepcao" />
+          </div>
+          <div>
+            <Label>Área</Label>
+            <Input
+              value={area}
+              onChange={e => setArea(e.target.value)}
+              placeholder="Ex: Produção, Kids, Louvor, Acolhimento"
+              list="vol-team-areas"
+            />
+            <datalist id="vol-team-areas">
+              {areas.map(a => <option key={a} value={a} />)}
+            </datalist>
+            <p className="text-[11px] text-muted-foreground mt-1">Agrupa a equipe nesta área na lista. Reaproveite uma área já existente pra juntar os times.</p>
           </div>
           <div>
             <Label>Descrição</Label>

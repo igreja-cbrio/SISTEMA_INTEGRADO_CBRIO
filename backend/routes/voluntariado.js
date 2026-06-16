@@ -2016,10 +2016,10 @@ router.get('/teams-manage', async (req, res) => {
 
 router.post('/teams-manage', async (req, res) => {
   try {
-    const { name, description, color, leader_profile_id, sort_order } = req.body;
+    const { name, description, color, leader_profile_id, sort_order, area } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatorio' });
     const { data, error } = await supabase.from('vol_teams')
-      .insert({ name, description, color, leader_profile_id, sort_order: sort_order || 0 }).select().single();
+      .insert({ name, description, color, leader_profile_id, sort_order: sort_order || 0, area: area || null }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao criar equipe' }); }
@@ -2027,9 +2027,9 @@ router.post('/teams-manage', async (req, res) => {
 
 router.put('/teams-manage/:id', async (req, res) => {
   try {
-    const { name, description, color, leader_profile_id, is_active, sort_order } = req.body;
+    const { name, description, color, leader_profile_id, is_active, sort_order, area } = req.body;
     const { data, error } = await supabase.from('vol_teams')
-      .update({ name, description, color, leader_profile_id, is_active, sort_order })
+      .update({ name, description, color, leader_profile_id, is_active, sort_order, area })
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
