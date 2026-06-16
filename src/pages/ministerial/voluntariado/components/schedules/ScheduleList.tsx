@@ -1,16 +1,27 @@
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Check, Clock, X } from 'lucide-react';
+import { Check, Clock, X, ChevronRight } from 'lucide-react';
 import type { VolSchedule } from '../../types';
+import VolunteerDetailDialog from './VolunteerDetailDialog';
 
 interface ScheduleListProps {
   schedules: VolSchedule[];
 }
 
 export default function ScheduleList({ schedules }: ScheduleListProps) {
+  const [selected, setSelected] = useState<{ id: string | null; name: string } | null>(null);
+
   return (
     <div className="space-y-2">
       {schedules.map(s => (
-        <div key={s.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
+        <div
+          key={s.id}
+          role="button"
+          tabIndex={0}
+          onClick={() => setSelected({ id: s.volunteer_id, name: s.volunteer_name })}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected({ id: s.volunteer_id, name: s.volunteer_name }); } }}
+          className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/40 cursor-pointer active:scale-[0.99] transition-transform"
+        >
           <div className="flex items-center gap-3">
             {s.check_in ? (
               <div className="h-8 w-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
@@ -30,17 +41,27 @@ export default function ScheduleList({ schedules }: ScheduleListProps) {
               {s.team_name && <p className="text-sm text-muted-foreground">{s.team_name}{s.position_name ? ` - ${s.position_name}` : ''}</p>}
             </div>
           </div>
-          <Badge variant="outline" className={
-            s.check_in ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-            : s.confirmation_status === 'declined' ? 'bg-red-100 text-red-800'
-            : s.confirmation_status === 'pending' ? 'bg-yellow-100 text-yellow-800'
-            : ''
-          }>
-            {s.check_in ? 'Presente' : s.confirmation_status === 'declined' ? 'Recusou' : s.confirmation_status === 'pending' ? 'Pendente' : 'Confirmado'}
-          </Badge>
+          <div className="flex items-center gap-2 shrink-0">
+            <Badge variant="outline" className={
+              s.check_in ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+              : s.confirmation_status === 'declined' ? 'bg-red-100 text-red-800'
+              : s.confirmation_status === 'pending' ? 'bg-yellow-100 text-yellow-800'
+              : ''
+            }>
+              {s.check_in ? 'Presente' : s.confirmation_status === 'declined' ? 'Recusou' : s.confirmation_status === 'pending' ? 'Pendente' : 'Confirmado'}
+            </Badge>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          </div>
         </div>
       ))}
       {schedules.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhuma escala encontrada</p>}
+
+      <VolunteerDetailDialog
+        volunteerId={selected?.id ?? null}
+        volunteerName={selected?.name ?? ''}
+        open={!!selected}
+        onOpenChange={(v) => { if (!v) setSelected(null); }}
+      />
     </div>
   );
 }
