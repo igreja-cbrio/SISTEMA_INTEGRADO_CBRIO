@@ -1300,6 +1300,7 @@ export const producao = {
   semana:       (inicio, fim) => get(`/producao/semana?inicio=${inicio}&fim=${fim}`),
   culto:        (id) => get(`/producao/culto/${id}`),
   salvarCulto:  (id, data) => put(`/producao/culto/${id}`, data),
+  salvarEtapas: (cultoId, etapas) => put(`/producao/culto/${cultoId}/etapas`, { etapas }),
   addOcorrencia:(id, data) => post(`/producao/culto/${id}/ocorrencias`, data),
   removerOcorrencia: (id) => del(`/producao/ocorrencias/${id}`),
   salvarChecklist: (cultoId, marks) => put(`/producao/culto/${cultoId}/checklist`, { marks }),
@@ -1311,6 +1312,13 @@ export const producao = {
     create: (data) => post('/producao/checklist-itens', data),
     update: (id, data) => patch(`/producao/checklist-itens/${id}`, data),
     remove: (id) => del(`/producao/checklist-itens/${id}`),
+  },
+  // Roteiro padrão (cronograma) por tipo de culto · aba admin
+  roteiroEtapas: {
+    list:   () => get('/producao/roteiro-etapas'),
+    create: (data) => post('/producao/roteiro-etapas', data),
+    update: (id, data) => patch(`/producao/roteiro-etapas/${id}`, data),
+    remove: (id) => del(`/producao/roteiro-etapas/${id}`),
   },
 };
 
