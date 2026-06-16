@@ -2,7 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
-  getPCCredentials, fetchWithRetry, fetchAllPlans,
+  getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
   processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
   fetchAllServiceTypes, backfillVolProfilesCpf,
 } = require('../services/planningCenter');
