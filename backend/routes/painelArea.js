@@ -627,29 +627,60 @@ function faixaEtaria(dataNasc) {
   return 'adulto';
 }
 
-// GET /:area/pessoas — lista de pessoas que frequentam o ministério (ami/bridge)
+// Faixa 13–30 (adolescente+jovem) → janela de data de nascimento.
+function janelaJovemAdolescente() {
+  const h = new Date();
+  const fmt = (y) => `${y}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;
+  return { minBirth: fmt(h.getFullYear() - 31), maxBirth: fmt(h.getFullYear() - 13) };
+}
+
+// GET /:area/pessoas — quem DECLAROU frequentar o ministério + todos os
+// jovens/adolescentes (potenciais). Cada pessoa tem `frequenta_declarado`.
 router.get('/:area/pessoas', authorizeModule('painel-area', 1), async (req, res) => {
   try {
     const area = String(req.params.area).toLowerCase();
     if (!['ami', 'bridge'].includes(area)) {
       return res.status(400).json({ error: 'Aba Pessoas só existe para AMI e Bridge' });
     }
-    const { data, error } = await supabase
-      .from('mem_membros')
-      .select('id, nome, foto_url, telefone, data_nascimento, status')
-      .eq('frequenta_area', area)
-      .is('deleted_at', null)
-      .order('nome')
-      .limit(1000);
-    if (error) throw error;
+    const { minBirth, maxBirth } = janelaJovemAdolescente();
+    const orFilter = `frequenta_area.eq.${area},and(data_nascimento.gt.${minBirth},data_nascimento.lte.${maxBirth})`;
 
-    const pessoas = (data || []).map((m) => ({ ...m, faixa_etaria: faixaEtaria(m.data_nascimento) }));
+    // paginado (pode passar de 1000 jovens/adolescentes)
+    let all = [];
+    let from = 0;
+    const page = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .select('id, nome, foto_url, telefone, data_nascimento, status, frequenta_area')
+        .is('deleted_at', null)
+        .or(orFilter)
+        .order('nome')
+        .range(from, from + page - 1);
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    const pessoas = all.map((m) => ({
+      ...m,
+      faixa_etaria: faixaEtaria(m.data_nascimento),
+      frequenta_declarado: m.frequenta_area === area,
+    }));
     const por_faixa = pessoas.reduce((acc, p) => {
       const f = p.faixa_etaria || 'sem_data';
       acc[f] = (acc[f] || 0) + 1;
       return acc;
     }, {});
-    res.json({ pessoas, total: pessoas.length, por_faixa });
+    const confirmados = pessoas.filter((p) => p.frequenta_declarado).length;
+    res.json({
+      pessoas,
+      total: pessoas.length,
+      confirmados,
+      potenciais: pessoas.length - confirmados,
+      por_faixa,
+    });
   } catch (e) {
     console.error('painel-area/pessoas:', e.message);
     res.status(500).json({ error: 'Erro ao listar pessoas' });
@@ -673,9 +704,12 @@ router.get('/:area/pessoas/:id', authorizeModule('painel-area', 1), async (req, 
       .maybeSingle();
     if (error) throw error;
     if (!m) return res.status(404).json({ error: 'Pessoa não encontrada' });
-    // só pessoas do ministério desta área (defesa: líder de área não bisbilhota fora)
-    if (m.frequenta_area !== area) {
-      return res.status(403).json({ error: 'Esta pessoa não frequenta este ministério.' });
+    // escopo: quem declarou esta área OU é jovem/adolescente (potencial).
+    // Defesa no servidor: líder de área não abre ficha de adulto de fora.
+    const faixa = faixaEtaria(m.data_nascimento);
+    const ehPotencial = faixa === 'jovem' || faixa === 'adolescente';
+    if (m.frequenta_area !== area && !ehPotencial) {
+      return res.status(403).json({ error: 'Pessoa fora do escopo deste ministério.' });
     }
 
     // família (nome)

@@ -12,7 +12,7 @@ import { Card } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../components/ui/dialog';
-import { Loader2, Search, User, Baby, Phone, Mail, Users, HeartHandshake, Route as RouteIcon, ShieldCheck } from 'lucide-react';
+import { Loader2, Search, User, Baby, Phone, Mail, Users, HeartHandshake, Route as RouteIcon, ShieldCheck, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
 const FAIXA = {
@@ -40,11 +40,15 @@ function idadeLabel(dataNasc) {
 }
 
 export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
+  const areaLabel = area === 'ami' ? 'AMI' : 'Bridge';
+  const outraLabel = area === 'ami' ? 'Bridge' : 'AMI';
   const [lista, setLista] = useState([]);
   const [porFaixa, setPorFaixa] = useState({});
+  const [resumo, setResumo] = useState({ confirmados: 0, potenciais: 0 });
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
   const [filtroFaixa, setFiltroFaixa] = useState('todas');
+  const [filtroTipo, setFiltroTipo] = useState('todos'); // todos | confirmados | potenciais
   const [sel, setSel] = useState(null);          // detalhe carregado
   const [carregandoDet, setCarregandoDet] = useState(false);
 
@@ -54,6 +58,7 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
       const r = await api.pessoas(area);
       setLista(r.pessoas || []);
       setPorFaixa(r.por_faixa || {});
+      setResumo({ confirmados: r.confirmados || 0, potenciais: r.potenciais || 0 });
     } catch (e) {
       toast.error(e?.message || 'Erro ao carregar pessoas');
     } finally {
@@ -78,11 +83,13 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
   const filtrada = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return lista.filter((p) => {
+      if (filtroTipo === 'confirmados' && !p.frequenta_declarado) return false;
+      if (filtroTipo === 'potenciais' && p.frequenta_declarado) return false;
       if (filtroFaixa !== 'todas' && (p.faixa_etaria || 'sem_data') !== filtroFaixa) return false;
       if (q && !String(p.nome || '').toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [lista, busca, filtroFaixa]);
+  }, [lista, busca, filtroFaixa, filtroTipo]);
 
   if (carregando) {
     return <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin" style={{ color: accent }} /></div>;
@@ -91,8 +98,29 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Pessoas que declararam frequentar este ministério no cadastro do app. Clique pra ver o detalhamento (contribuições não aparecem aqui).
+        Quem <b>confirmou</b> frequentar o {areaLabel} no cadastro do app + todos os <b>jovens e adolescentes</b> (potenciais). Clique pra ver o detalhamento (contribuições não aparecem aqui).
       </p>
+
+      {/* Confirmaram x Potenciais */}
+      <div className="flex flex-wrap gap-2">
+        {[
+          { v: 'todos', label: 'Todos', n: lista.length },
+          { v: 'confirmados', label: `Frequentam o ${areaLabel}`, n: resumo.confirmados },
+          { v: 'potenciais', label: 'Potenciais (jovem/adolescente)', n: resumo.potenciais },
+        ].map((t) => {
+          const ativo = filtroTipo === t.v;
+          return (
+            <button
+              key={t.v}
+              onClick={() => setFiltroTipo(t.v)}
+              className={`px-3 py-1.5 rounded-full text-sm border font-medium transition ${ativo ? 'text-white' : 'bg-card hover:bg-accent'}`}
+              style={ativo ? { backgroundColor: accent, borderColor: accent } : undefined}
+            >
+              {t.label} <span className="opacity-70">({t.n})</span>
+            </button>
+          );
+        })}
+      </div>
 
       {/* Resumo por faixa · botões-filtro */}
       <div className="flex flex-wrap gap-2">
@@ -143,9 +171,17 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
                 <div className="font-medium truncate">{p.nome}</div>
                 <div className="text-xs text-muted-foreground truncate">
                   {idadeLabel(p.data_nascimento) || 'idade —'}{p.status ? ` · ${p.status}` : ''}
+                  {!p.frequenta_declarado && p.frequenta_area ? ` · frequenta o ${outraLabel}` : ''}
                 </div>
               </div>
-              <FaixaBadge faixa={p.faixa_etaria} />
+              <div className="flex items-center gap-1.5 shrink-0">
+                {p.frequenta_declarado && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    <Check className="h-3 w-3" /> Frequenta
+                  </span>
+                )}
+                <FaixaBadge faixa={p.faixa_etaria} />
+              </div>
             </button>
           ))}
         </div>
@@ -173,9 +209,16 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
                 )}
                 <div>
                   <div className="text-lg font-bold">{sel.membro.nome}</div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <FaixaBadge faixa={sel.membro.faixa_etaria} />
                     {sel.membro.status && <Badge variant="secondary" className="text-xs">{sel.membro.status}</Badge>}
+                    {sel.membro.frequenta_area === area ? (
+                      <Badge variant="outline" className="text-xs bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300">Frequenta o {areaLabel}</Badge>
+                    ) : sel.membro.frequenta_area ? (
+                      <Badge variant="outline" className="text-xs">Frequenta o {outraLabel}</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">Potencial</Badge>
+                    )}
                   </div>
                 </div>
               </div>
