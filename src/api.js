@@ -268,6 +268,8 @@ export const grupos = {
   registrarPresenca: (participacaoId) => patch(`/grupos/participacao/${participacaoId}/presenca`, {}),
   materiais: (params) => get('/grupos/materiais' + (params ? '?' + new URLSearchParams(params) : '')),
   uploadMaterial: (formData) => requestFile('/grupos/materiais', formData),
+  importarLideresAnalisar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/grupos/importar-lideres/analisar', fd, { timeoutMs: 120_000 }); },
+  importarLideresAplicar: (vinculos) => post('/grupos/importar-lideres/aplicar', { vinculos }),
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
   encontro: (encontroId) => get(`/grupos/encontros/${encontroId}`),
