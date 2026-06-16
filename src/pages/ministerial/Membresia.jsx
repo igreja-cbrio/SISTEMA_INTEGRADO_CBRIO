@@ -622,6 +622,7 @@ export default function Membresia() {
   const [busca, setBusca] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
+  const [filterFaixa, setFilterFaixa] = useState('');
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -675,6 +676,7 @@ export default function Membresia() {
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
       if (filterPapel) params.papel = filterPapel;
+      if (filterFaixa) params.faixa = filterFaixa;
       const m = await membresia.membros.list(Object.keys(params).length ? params : null);
       setMembros(m);
     } catch (e) {
@@ -683,7 +685,7 @@ export default function Membresia() {
       setLoading(false);
       setSearching(false);
     }
-  }, [busca, filterStatus, filterPapel]);
+  }, [busca, filterStatus, filterPapel, filterFaixa]);
 
   // Dados auxiliares · carregam uma vez (não mudam com a busca)
   const fetchAux = useCallback(async () => {
@@ -1173,6 +1175,18 @@ export default function Membresia() {
               <SelectItem value="contribuinte">Contribuintes (90d)</SelectItem>
               <SelectItem value="inscrito_next">Inscritos no NEXT</SelectItem>
               <SelectItem value="sem_papel">Sem papel ativo</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div style={{ minWidth: 180 }}>
+          <Select value={filterFaixa || '__all__'} onValueChange={v => setFilterFaixa(v === '__all__' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="Todas as idades" /></SelectTrigger>
+            <SelectContent className="z-[1001]">
+              <SelectItem value="__all__">Todas as idades</SelectItem>
+              <SelectItem value="crianca">Crianças (até 12)</SelectItem>
+              <SelectItem value="adolescente">Adolescentes (13–17)</SelectItem>
+              <SelectItem value="jovem">Jovens (18–30)</SelectItem>
+              <SelectItem value="adulto">Adultos (31+)</SelectItem>
             </SelectContent>
           </Select>
         </div>
