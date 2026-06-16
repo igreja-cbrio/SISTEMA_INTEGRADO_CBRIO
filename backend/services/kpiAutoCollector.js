@@ -153,14 +153,14 @@ async function cohortNoPrazoPct({ inicio, fim, area, marco }) {
 const COLLECTORS = {
   // ── Cultos: AMI (separado de Bridge) ──
   'cultos.ami_freq': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vw_culto_stats').select('nome, presencial_adulto').gte('data', inicio).lt('data', fim);
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, presencial_adulto').gte('data', inicio).lt('data', fim);
     const ami = (data || []).filter(isAmiCulto);
     const total = ami.reduce((s, c) => s + (c.presencial_adulto || 0), 0);
     return { valor: total, observacao: `${ami.length} culto(s) AMI` };
   },
 
   'cultos.ami_conv': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vw_culto_stats').select('nome, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
     const ami = (data || []).filter(isAmiCulto);
     const total = ami.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
     return { valor: total, observacao: `${ami.length} culto(s) AMI` };
@@ -168,14 +168,14 @@ const COLLECTORS = {
 
   // ── Cultos: Bridge (separado de AMI) ──
   'cultos.bridge_freq': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vw_culto_stats').select('nome, presencial_adulto').gte('data', inicio).lt('data', fim);
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, presencial_adulto').gte('data', inicio).lt('data', fim);
     const bridge = (data || []).filter(isBridgeCulto);
     const total = bridge.reduce((s, c) => s + (c.presencial_adulto || 0), 0);
     return { valor: total, observacao: `${bridge.length} culto(s) Bridge` };
   },
 
   'cultos.bridge_conv': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vw_culto_stats').select('nome, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
     const bridge = (data || []).filter(isBridgeCulto);
     const total = bridge.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
     return { valor: total, observacao: `${bridge.length} culto(s) Bridge` };
@@ -183,13 +183,13 @@ const COLLECTORS = {
 
   // ── Cultos: AMI+Bridge consolidado (DEPRECATED — manter até cleanup) ──
   'cultos.amibridge_freq': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vw_culto_stats').select('nome, presencial_adulto').gte('data', inicio).lt('data', fim);
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, presencial_adulto').gte('data', inicio).lt('data', fim);
     const total = (data || []).filter(isAmiBridgeCulto).reduce((s, c) => s + (c.presencial_adulto || 0), 0);
     return { valor: total, observacao: `${(data || []).filter(isAmiBridgeCulto).length} culto(s) AMI/Bridge (DEPRECATED)` };
   },
 
   'cultos.amibridge_conv': async ({ inicio, fim }) => {
-    const { data } = await supabase.from('vw_culto_stats').select('nome, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
+    const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, decisoes_presenciais, decisoes_online').gte('data', inicio).lt('data', fim);
     const total = (data || []).filter(isAmiBridgeCulto).reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
     return { valor: total, observacao: 'DEPRECATED: usar cultos.ami_conv ou cultos.bridge_conv' };
   },
