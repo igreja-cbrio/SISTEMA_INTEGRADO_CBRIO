@@ -1,0 +1,11 @@
+-- Drift git<->prod: o enum public.area_adm_resp foi criado em producao antes do
+-- valor 'limpeza' entrar na definicao. O CREATE TYPE da 20260512100000 e'
+-- guardado por EXCEPTION WHEN duplicate_object, entao se o tipo ja existia (de
+-- uma versao anterior, sem 'limpeza'), os valores novos da definicao NAO sao
+-- re-adicionados. Resultado em prod: cadastrar responsavel da area "Limpeza" em
+-- /admin/solicitacoes-responsaveis falha com:
+--   invalid input value for enum area_adm_resp: "limpeza"
+--
+-- ADD VALUE IF NOT EXISTS e' idempotente e backward-compatible (em bancos que
+-- ja tem o valor, vira no-op).
+ALTER TYPE public.area_adm_resp ADD VALUE IF NOT EXISTS 'limpeza';
