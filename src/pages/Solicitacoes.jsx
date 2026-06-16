@@ -267,6 +267,17 @@ export default function Solicitacoes() {
   // a cada mudança na tabela; sem isso, um fetch que partiu ANTES de uma aprovação
   // commitar podia resolver depois e "ressuscitar" o card recém-aprovado.
   const loadSeq = useRef(0);
+  // Cache de itens por aba (viewKey) · navegação instantânea: a aba já carregada abre na
+  // hora e revalida por baixo (ver useEffect [view, periodo] e o pré-load no mount).
+  const cacheRef = useRef({});
+  // Remove um item da lista E do cache da aba atual (optimista do aprovar/rejeitar) ·
+  // mantém o cache consistente pra a navegação não "ressuscitar" o item removido.
+  function dropItem(id) {
+    const keep = (arr) => (arr || []).filter(i => i.id !== id);
+    setItems(keep);
+    const key = `${view}:${periodo}`;
+    if (cacheRef.current[key]) cacheRef.current[key] = keep(cacheRef.current[key]);
+  }
   async function load() {
     const seq = ++loadSeq.current;
     const key = `${view}:${periodo}`; // identidade (aba/período) desta carga
@@ -283,6 +294,7 @@ export default function Solicitacoes() {
       if (seq !== loadSeq.current) return; // chegou tarde · uma carga mais nova venceu
       setItems(data);
       setItemsView(key); // libera o render: a lista agora é desta aba
+      cacheRef.current[key] = data; // alimenta o cache (navegação instantânea entre abas)
     } catch (e) {
       if (seq === loadSeq.current) toast.error(e.message);
     } finally {
@@ -294,7 +306,7 @@ export default function Solicitacoes() {
     // Optimista · tira o card da fila na hora pra não "piscar" enquanto o backend
     // processa e o realtime recarrega. Em erro, o load() reconcilia com o servidor
     // (traz o card de volta se a aprovação não foi aplicada).
-    setItems(prev => prev.filter(i => i.id !== id));
+    dropItem(id);
     try {
       await api.aprovarOrigem(id);
       toast.success('Solicitação aprovada.');
@@ -307,7 +319,7 @@ export default function Solicitacoes() {
   }
 
   async function handleRejeitarOrigem(id, motivo) {
-    setItems(prev => prev.filter(i => i.id !== id));
+    dropItem(id);
     try {
       await api.rejeitarOrigem(id, motivo);
       toast.success('Solicitação rejeitada.');
@@ -326,7 +338,14 @@ export default function Solicitacoes() {
   const loadRef = useRef(load);
   useEffect(() => { loadRef.current = load; });
 
-  useEffect(() => { load(); }, [view, periodo]);
+  useEffect(() => {
+    // Aba já visitada? mostra o cache na hora (sem spinner) e revalida por baixo.
+    // Senão, o itemsFresh (abaixo) segura com "carregando" até o load() voltar.
+    const k = `${view}:${periodo}`;
+    const cached = cacheRef.current[k];
+    if (cached) { setItems(cached); setItemsView(k); }
+    load();
+  }, [view, periodo]);
 
   // A lista (items) pode ainda ser da aba ANTERIOR enquanto o load() da aba nova não
   // volta. itemsFresh só é true quando a lista carregada é da aba/período atuais ·
@@ -335,6 +354,26 @@ export default function Solicitacoes() {
   // O realtime recarrega a MESMA aba, então itemsFresh continua true (atualiza sem spinner).
   const viewKey = `${view}:${periodo}`;
   const itemsFresh = itemsView === viewKey;
+
+  // Pré-carrega as abas que o usuário vê, ao ABRIR a página · assim trocar de aba fica
+  // instantâneo (o cache já está quente). Só popula o cache; a view atual o load() cobre.
+  async function prefetchAba(v) {
+    const key = `${v}:${periodo}`;
+    if (cacheRef.current[key]) return;
+    let params = {};
+    if (v === 'minhas') params = { mine: 'true' };
+    else if (v === 'aprovar') params = { aba: 'aprovar' };
+    if (v !== 'aprovar') params.periodo = periodo;
+    try { cacheRef.current[key] = await api.list(params); } catch { /* silencioso · a aba carrega normal ao ser aberta */ }
+  }
+  useEffect(() => {
+    if (!papelCarregado) return;
+    const abas = [];
+    if (isAdmin || atendeAreas) abas.push('atender');
+    if (ehAprovador) abas.push('aprovar');
+    abas.push('minhas');
+    abas.forEach(v => { if (v !== view) prefetchAba(v); });
+  }, [papelCarregado, periodo, isAdmin, atendeAreas, ehAprovador, view]);
 
   // Realtime · qualquer INSERT/UPDATE/DELETE em `solicitações` recarrega
   // o kanban/lista. Debounce 400ms agrega rajadas (ex: trigger de SLA
