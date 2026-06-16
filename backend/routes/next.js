@@ -311,14 +311,50 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
         .upsert(linha, { onConflict: 'inscricao_id,tipo' });
     }
 
-    // Notificar áreas
+    // Fase 2 · ponte pra caixa unificada de encaminhamentos: grupo/servir viram
+    // encaminhamento na MESMA caixa que Grupos/Voluntariado já trabalham (com
+    // devolutiva + "engajou" materializando o vínculo na NSM). batismo→Integração
+    // e dízimo→generosidade seguem só em next_indicacoes (sem caixa consumidora).
+    const CONVERGE = {
+      grupo:  { destino: 'grupos',      valor_alvo: 'conectar', link: '/grupos' },
+      servir: { destino: 'voluntarios', valor_alvo: 'servir',   link: '/ministerial/voluntariado/encaminhados' },
+    };
+    const nomeCompleto = `${insc.nome || ''} ${insc.sobrenome || ''}`.trim() || insc.nome || 'Sem nome';
+    for (const t of validos) {
+      const cv = CONVERGE[t];
+      if (!cv) continue;
+      try {
+        // idempotente: 1 encaminhamento por (inscrição × destino)
+        const { data: jaTem } = await supabase
+          .from('jornada_encaminhamentos')
+          .select('id')
+          .eq('next_inscricao_id', req.params.id)
+          .eq('destino', cv.destino)
+          .is('deleted_at', null)
+          .limit(1).maybeSingle();
+        if (jaTem) continue;
+        await supabase.from('jornada_encaminhamentos').insert({
+          origem: 'next',
+          next_inscricao_id: req.params.id,
+          membro_id: insc.membro_id || null,
+          nome: nomeCompleto,
+          telefone: insc.telefone || null,
+          destino: cv.destino,
+          valor_alvo: cv.valor_alvo,
+          observacao: observacoes || null,
+          encaminhado_por: req.user?.id || null,
+        });
+      } catch (e) { console.error('[next] encaminhamento:', e.message); }
+    }
+
+    // Notificar áreas · grupo/servir levam pra caixa da área (devolutiva lá)
     for (const t of validos) {
       try {
         await notificar({
           modulo: TIPOS_AREA[t].area,
           titulo: TIPOS_AREA[t].titulo,
           mensagem: `${insc.nome} ${insc.sobrenome || ''} indicou ${t} no NEXT.`,
-          link: '/ministerial/next?tab=indicacoes',
+          link: CONVERGE[t]?.link || '/ministerial/next?tab=indicacoes',
         });
       } catch (e) { console.error('[next] notificar:', e.message); }
     }
