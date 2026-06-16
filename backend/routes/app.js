@@ -959,6 +959,41 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
   }
 });
 
+// GET /api/app/whatsapp-optin — consentimento atual do membro pra WhatsApp.
+router.get('/whatsapp-optin', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ optin: false, optin_em: null });
+    const { data } = await supabase
+      .from('mem_membros')
+      .select('whatsapp_optin, whatsapp_optin_em')
+      .eq('id', membro.id)
+      .maybeSingle();
+    res.json({ optin: !!data?.whatsapp_optin, optin_em: data?.whatsapp_optin_em || null });
+  } catch (e) {
+    console.error('[APP] whatsapp-optin get:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar preferência' });
+  }
+});
+
+// POST /api/app/whatsapp-optin { optin } — grava consentimento (LGPD: + data).
+router.post('/whatsapp-optin', authApp, async (req, res) => {
+  try {
+    const optin = !!req.body?.optin;
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro de membro não encontrado' });
+    const { error } = await supabase
+      .from('mem_membros')
+      .update({ whatsapp_optin: optin, whatsapp_optin_em: new Date().toISOString() })
+      .eq('id', membro.id);
+    if (error) throw error;
+    res.json({ ok: true, optin });
+  } catch (e) {
+    console.error('[APP] whatsapp-optin post:', e.message);
+    res.status(500).json({ error: 'Não foi possível salvar' });
+  }
+});
+
 // GET /api/app/kids/minhas-solicitacoes — status das solicitações do membro.
 router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
   try {
