@@ -55,6 +55,7 @@ const URGENCIAS = [
 // em_atendimento/aguardando_entrega/avaliado não caiam em coluna nenhuma e sumiam do board.
 // aguardando_aprovacao_origem fica de fora de proposito (vive na aba "Aprovar").
 const KANBAN_COLUMNS = [
+  { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-t-cyan-500',    match: ['em_cotacao'] },
   { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-t-blue-500',    match: ['em_analise'] },
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-t-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
@@ -64,6 +65,7 @@ const KANBAN_COLUMNS = [
 
 const STATUS_LABELS = {
   aguardando_aprovacao_origem: { label: 'Aguardando aprovação', color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400' },
+  em_cotacao: { label: 'Em cotação', color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400' },
   pendente: { label: 'Pendente', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
   aguardando_aprovacao_financeira: { label: 'Aprov. financeira', color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400' },
   em_analise: { label: 'Em Análise', color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
@@ -993,7 +995,7 @@ export default function Solicitacoes() {
           <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {columns.map(col => (
             <div
               key={col.key}
@@ -1625,6 +1627,72 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   );
 }
 
+// Cotação (compras/serviço) · a logística registra valor+fornecedor ANTES do financeiro.
+// Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação do financeiro" · o Yago
+// decide sobre o valor real. jaCotado mostra read-only (todos veem · inclusive o Yago) ·
+// em_cotacao + canCotar mostra o formulário pra logística registrar.
+function CotacaoBlock({ item, canCotar, onChanged }) {
+  const emCotacao = item.status === 'em_cotacao';
+  const jaCotado = item.valor_cotado != null;
+  const [valor, setValor] = useState('');
+  const [fornecedor, setFornecedor] = useState('');
+  const [obs, setObs] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const fmtBRL = (n) => `R$ ${Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+
+  async function registrar() {
+    const v = Number(valor);
+    if (valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor cotado.'); return; }
+    setSubmitting(true);
+    try {
+      await api.registrarCotacao(item.id, {
+        valor_cotado: v,
+        fornecedor: fornecedor.trim() || undefined,
+        observacao: obs.trim() || undefined,
+      });
+      toast.success('Cotação registrada · enviada pro financeiro.');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao registrar cotação'); }
+    finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="space-y-2 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground">Cotação</p>
+      {jaCotado ? (
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div><span className="text-muted-foreground">Valor cotado</span><p className="font-medium">{fmtBRL(item.valor_cotado)}</p></div>
+          {item.cotacao_fornecedor && <div><span className="text-muted-foreground">Fornecedor</span><p className="font-medium">{item.cotacao_fornecedor}</p></div>}
+          {item.cotacao_observacao && <div className="col-span-2"><span className="text-muted-foreground">Observação</span><p className="text-sm whitespace-pre-wrap">{item.cotacao_observacao}</p></div>}
+        </div>
+      ) : emCotacao && canCotar ? (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">Levante o valor com o fornecedor. Ao registrar, segue pro financeiro aprovar.</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Valor cotado (R$) *</Label>
+              <Input type="number" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+            </div>
+            <div>
+              <Label className="text-xs">Fornecedor</Label>
+              <Input value={fornecedor} onChange={e => setFornecedor(e.target.value)} placeholder="Nome do fornecedor" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Observação (opcional)</Label>
+            <Textarea rows={2} value={obs} onChange={e => setObs(e.target.value)} placeholder="Condições, prazo de entrega, link da cotação..." />
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={registrar} disabled={submitting}>{submitting ? 'Registrando...' : 'Registrar cotação → financeiro'}</Button>
+          </div>
+        </div>
+      ) : emCotacao ? (
+        <p className="text-xs text-muted-foreground">Aguardando a logística registrar a cotação (valor + fornecedor).</p>
+      ) : null}
+    </div>
+  );
+}
+
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
@@ -1816,6 +1884,11 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                 </a>
               )}
             </div>
+          )}
+
+          {/* Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro */}
+          {['compras', 'servico'].includes(item.categoria) && (item.status === 'em_cotacao' || item.valor_cotado != null) && (
+            <CotacaoBlock item={item} canCotar={isAdmin} onChanged={() => onItemRefresh?.()} />
           )}
 
           {isAdmin && !actionPending && (
