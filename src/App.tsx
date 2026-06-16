@@ -375,24 +375,37 @@ function VolunteerShell() {
   );
 }
 
+// Home pós-login. Quem tem acesso a um ÚNICO módulo abre direto nele
+// (ex.: colaborador só de Produção → /producao) em vez do dashboard.
+function homeRoute(auth: Record<string, unknown>): string {
+  if (auth.isMembroOnly) return '/devocional/hoje';
+  if (auth.isVoluntario) return '/voluntariado/checkin';
+  const modulePerms = auth.modulePerms as Record<string, { leitura?: number }> | null | undefined;
+  if (!auth.isAdmin && modulePerms) {
+    const distintos = new Set<object>();
+    for (const v of Object.values(modulePerms)) if (v && (v.leitura || 0) > 0) distintos.add(v);
+    if (distintos.size === 1 && (modulePerms.producao?.leitura || 0) > 0) return '/producao';
+  }
+  return '/dashboard';
+}
+
 function DefaultRedirect() {
-  const { user, loading, isVoluntario, isMembroOnly } = useAuth();
+  const auth = useAuth();
+  const { user, loading } = auth;
   if (loading) return <Loading />;
   // No ambiente demo, o link publico e a raiz · manda pro auto-login.
   if (!user && DEMO_MODE) return <Navigate to="/demo" replace />;
   if (!user) return <Navigate to={loginRedirectTarget()} replace />;
-  if (isMembroOnly) return <Navigate to="/devocional/hoje" replace />;
-  if (isVoluntario) return <Navigate to="/voluntariado/checkin" replace />;
-  return <Navigate to="/dashboard" replace />;
+  return <Navigate to={homeRoute(auth as Record<string, unknown>)} replace />;
 }
 
 function AppRoutes() {
-  const { user, loading, isVoluntario, isMembroOnly } = useAuth();
+  const { user, loading } = useAuth();
   if (loading) return <Loading />;
 
   return (
     <Routes>
-      <Route path="/login" element={user ? (isMembroOnly ? <Navigate to="/devocional/hoje" replace /> : isVoluntario ? <Navigate to="/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
+      <Route path="/login" element={user ? <DefaultRedirect /> : <Login />} />
       <Route path="/redefinir-senha" element={<RedefinirSenha />} />
 
       {/* Demonstracao · login automatico com usuario demo (so com VITE_DEMO_MODE) */}

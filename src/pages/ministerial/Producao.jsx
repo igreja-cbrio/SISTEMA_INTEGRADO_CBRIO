@@ -19,7 +19,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save,
   Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2, TrendingUp,
-  Inbox, Gauge, Activity, ListOrdered,
+  Inbox, Gauge, Activity,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { producao as prodApi, solicitacoes as solicApi } from '../../api';
@@ -285,41 +285,29 @@ function MiniCard({ culto, onClick }) {
 }
 
 // ── Editor de etapas (cronograma · momentos do culto) ─────────────────────────
-function EtapasEditor({ etapas, setEtapas, roteiro, meta }) {
+function EtapasEditor({ etapas, setEtapas }) {
   const setRow = (key, patch) => setEtapas(arr => arr.map(e => e.key === key ? { ...e, ...patch } : e));
-  const removeRow = (key) => setEtapas(arr => arr.filter(e => e.key !== key));
-  const addRow = (secao = 'culto') => setEtapas(arr => [...arr, { key: rid(), titulo: '', previsto_str: '', executado_str: '', observacao: '', secao }]);
-  const carregarRoteiro = () => {
-    if (!roteiro?.length) return;
-    setEtapas(roteiro.map(r => ({ key: rid(), titulo: r.titulo, previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto' })));
-  };
 
   const culto = somaSecao(etapas, 'culto');
   const pos = somaSecao(etapas, 'pos_culto');
-  const temPos = etapas.some(e => (e.secao || 'culto') === 'pos_culto');
-  const metaSeg = (Number(meta) || 60) * 60;
-  const execTotal = (culto.exec ?? 0) + (pos.exec ?? 0);
-  const prevTotal = (culto.prev ?? 0) + (pos.prev ?? 0);
-  const temExecTotal = culto.exec != null || pos.exec != null;
-  const temPrevTotal = culto.prev != null || pos.prev != null;
-  const estourouCulto = culto.exec != null && culto.exec > metaSeg;
+  const estourouCulto = culto.exec != null && culto.prev != null && culto.exec > culto.prev;
 
-  const colGrid = '20px 1fr 60px 60px minmax(70px,1fr) 30px 26px';
+  const colGrid = '22px 1fr 58px 58px minmax(80px,1fr)';
 
   return (
     <div>
       <p style={{ fontSize: 11, color: C.t3, margin: '0 0 8px' }}>
-        Lance o tempo de cada momento em <strong>mm:ss</strong> (ex.: 5:45). O total do culto é a soma dos executados.
+        Lance o <strong>tempo executado</strong> de cada momento em <strong>mm:ss</strong> (ex.: 5:45). A soma é o tempo do culto. Os nomes e o previsto seguem o roteiro padrão (edite na aba “Modelos”).
       </p>
       <div style={{ overflowX: 'auto' }}>
-        <div style={{ minWidth: 420 }}>
+        <div style={{ minWidth: 380 }}>
           {/* cabeçalho */}
           <div style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, padding: '0 2px 4px', fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            <span>#</span><span>Momento</span><span style={{ textAlign: 'center' }}>Prev.</span><span style={{ textAlign: 'center' }}>Exec.</span><span>Obs.</span><span style={{ textAlign: 'center' }}>Pós</span><span />
+            <span>#</span><span>Momento</span><span style={{ textAlign: 'center' }}>Prev.</span><span style={{ textAlign: 'center' }}>Exec.</span><span>Obs.</span>
           </div>
           {etapas.length === 0 && (
             <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', padding: '8px 2px' }}>
-              Nenhum momento. {roteiro?.length ? 'Carregue o roteiro padrão ou adicione manualmente.' : 'Adicione os momentos do culto.'}
+              Nenhum momento no roteiro. Configure o roteiro na aba “Modelos”.
             </div>
           )}
           {etapas.map((e, i) => {
@@ -328,36 +316,22 @@ function EtapasEditor({ etapas, setEtapas, roteiro, meta }) {
             const prSeg = parseMMSS(e.previsto_str);
             const estourouEtapa = exSeg != null && prSeg != null && exSeg > prSeg;
             return (
-              <div key={e.key} style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '2px 2px', borderTop: i === 0 ? 'none' : `1px dashed ${C.border}` }}>
-                <span style={{ fontSize: 10, color: C.t3, textAlign: 'center' }}>{i + 1}</span>
-                <input value={e.titulo} onChange={ev => setRow(e.key, { titulo: ev.target.value })} placeholder="Momento" style={{ ...inpSm }} />
-                <input value={e.previsto_str} onChange={ev => setRow(e.key, { previsto_str: ev.target.value })} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: C.t2 }} />
+              <div key={e.key} style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '3px 2px', borderTop: i === 0 ? 'none' : `1px dashed ${C.border}`, background: ehPos ? `${C.primary}08` : 'transparent' }}>
+                <span style={{ fontSize: 10, color: C.t3, textAlign: 'center' }}>{ehPos ? '·' : i + 1}</span>
+                <span style={{ fontSize: 12, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>{e.titulo}{ehPos && <span style={{ fontSize: 8, color: C.t3, fontWeight: 700, marginLeft: 5 }}>PÓS</span>}</span>
+                <span style={{ fontSize: 11, color: C.t3, textAlign: 'center' }}>{fmtMMSSdash(prSeg)}</span>
                 <input value={e.executado_str} onChange={ev => setRow(e.key, { executado_str: ev.target.value })} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: estourouEtapa ? '#EF4444' : C.text, fontWeight: 600 }} />
                 <input value={e.observacao} onChange={ev => setRow(e.key, { observacao: ev.target.value })} placeholder="ex.: pregador" style={{ ...inpSm }} />
-                <input type="checkbox" checked={ehPos} onChange={ev => setRow(e.key, { secao: ev.target.checked ? 'pos_culto' : 'culto' })} title="Pós-culto" style={{ justifySelf: 'center' }} />
-                <button onClick={() => removeRow(e.key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, justifySelf: 'center' }}><Trash2 size={12} /></button>
               </div>
             );
           })}
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-        <button onClick={() => addRow('culto')} style={{ ...chip }}><Plus size={11} /> Momento</button>
-        {!temPos && <button onClick={() => addRow('pos_culto')} style={{ ...chip }}><Plus size={11} /> Pós-culto</button>}
-        {roteiro?.length > 0 && <button onClick={carregarRoteiro} style={{ ...chip }}><ListOrdered size={11} /> Carregar roteiro padrão</button>}
-      </div>
-
-      {/* somatório */}
-      <div style={{ marginTop: 10, padding: 10, background: C.inputBg, borderRadius: 8, fontSize: 12 }}>
-        <LinhaSoma label="Tempo de culto" exec={culto.exec} prev={culto.prev} corExec={estourouCulto ? '#EF4444' : C.text} />
-        {temPos && <LinhaSoma label="Pós-culto" exec={pos.exec} prev={pos.prev} />}
-        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
-          <LinhaSoma label="Total" exec={temExecTotal ? execTotal : null} prev={temPrevTotal ? prevTotal : null} bold />
-        </div>
-        <div style={{ fontSize: 10, color: estourouCulto ? '#B45309' : C.t3, marginTop: 4 }}>
-          Alvo do culto: {meta} min{estourouCulto ? ` · passou ${fmtMMSS(culto.exec - metaSeg)}` : ''}
-        </div>
+      {/* somatório · culto e pós-culto SEPARADOS (não somam) */}
+      <div style={{ marginTop: 10, padding: 10, background: C.inputBg, borderRadius: 8, fontSize: 12, display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <LinhaSoma label="Tempo de culto" exec={culto.exec} prev={culto.prev} corExec={estourouCulto ? '#EF4444' : C.text} bold />
+        <LinhaSoma label="Tempo de pós-culto" exec={pos.exec} prev={pos.prev} />
       </div>
     </div>
   );
@@ -385,8 +359,6 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
   const inicialRef = useRef(null); // snapshot do estado carregado · detecta alterações não salvas
 
-  const meta = det?.culto?.meta_duracao_min ?? culto.producao?.meta_duracao_min ?? 60;
-
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
@@ -401,6 +373,8 @@ function ModalProducao({ culto, onClose, onSaved }) {
       const base = (d.etapas && d.etapas.length)
         ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtMMSS(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto' }))
         : (d.roteiro || []).map(r => ({ key: rid(), titulo: r.titulo || '', previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto' }));
+      // pós-culto sempre por último (sort estável preserva a ordem dentro de cada seção)
+      base.sort((a, b) => (a.secao === 'pos_culto' ? 1 : 0) - (b.secao === 'pos_culto' ? 1 : 0));
       setEtapas(base);
       const m = {};
       (d.checklist || []).forEach(it => { m[it.item_id] = { feito: it.feito, observacao: it.observacao || '' }; });
@@ -484,7 +458,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
         <div style={{ padding: 16 }}>
           {/* Cronograma · tempo por momento */}
           <SecaoTitulo icone={Clock} cor="#0EA5E9" titulo="Cronograma · tempo por momento" />
-          <EtapasEditor etapas={etapas} setEtapas={setEtapas} roteiro={det?.roteiro || []} meta={meta} />
+          <EtapasEditor etapas={etapas} setEtapas={setEtapas} />
           <div style={{ marginTop: 10, marginBottom: 16 }}>
             <Field label="Observação da pontualidade (opcional, mesmo passando do tempo)">
               <input type="text" value={form.pontualidade_obs} onChange={e => setForm(f => ({ ...f, pontualidade_obs: e.target.value }))} style={inp} placeholder="Ex.: ministração estendida, batismos…" />
