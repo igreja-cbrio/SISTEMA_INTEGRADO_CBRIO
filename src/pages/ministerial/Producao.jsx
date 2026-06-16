@@ -3,19 +3,23 @@
 // ============================================================================
 // Espelha a Integração: semana de cultos + preenchimento por culto.
 // Sub-abas:
-//   - Preenchimento (semana · calendário + modal com 4 grupos de métrica)
-//   - Acumulado (totais do período)
-//   - Detalhado (por tipo de culto)
-//   - Checklists (template editável · admin nível 3)
+//   - Preenchimento (semana · calendário + modal com cronograma por etapas)
+//   - Acumulado (totais do período · previsto × executado · aderência)
+//   - Detalhado (por tipo de culto + estouro por etapa)
+//   - Modelos (roteiro do culto + duração-alvo + checklist · admin nível 3)
 //   - Solicitações (fila da Produção · andamento direto)
 //   - Desempenho (KPIs próprios + SLA + NPS vs outras áreas criativas)
+//
+// Cronograma (2026-06-16): a equipe lança o tempo POR MOMENTO (mm:ss) e a soma
+// dos executados é o tempo do culto — como na planilha "Cronograma Culto".
+// "Previsto" vem do roteiro padrão; "Executado" a equipe preenche.
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save,
   Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2, TrendingUp,
-  Inbox, Gauge, Activity,
+  Inbox, Gauge, Activity, ListOrdered,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { producao as prodApi, solicitacoes as solicApi } from '../../api';
@@ -64,11 +68,54 @@ function formataDataCurta(dataStr) {
   return { dia: dt.getDate(), diaSemana: DIAS[dt.getDay()] };
 }
 
+// ── Tempo mm:ss ↔ segundos ────────────────────────────────────────────────────
+const rid = () => Math.random().toString(36).slice(2, 9);
+function fmtMMSS(seg) {
+  if (seg == null || seg === '' || Number.isNaN(Number(seg))) return '';
+  const s = Math.max(0, Math.round(Number(seg)));
+  return `${Math.floor(s / 60)}:${pad(s % 60)}`;
+}
+function fmtMMSSdash(seg) { return seg == null ? '—' : fmtMMSS(seg); }
+function fmtDesvio(seg) {
+  if (seg == null) return '—';
+  const sinal = seg > 0 ? '+' : seg < 0 ? '−' : '';
+  return `${sinal}${fmtMMSS(Math.abs(seg))}`;
+}
+// "5:45" → 345 · "0:30" → 30 · número puro = minutos ("30" → 1800, "5.5" → 330)
+function parseMMSS(str) {
+  if (str == null) return null;
+  const s = String(str).trim();
+  if (!s) return null;
+  if (s.includes(':')) {
+    const [mm, ss] = s.split(':');
+    const m = parseInt(mm, 10) || 0;
+    const sec = parseInt(ss, 10) || 0;
+    if (m < 0 || sec < 0) return null;
+    return m * 60 + sec;
+  }
+  const n = parseFloat(s.replace(',', '.'));
+  if (Number.isNaN(n) || n < 0) return null;
+  return Math.round(n * 60);
+}
+// soma { exec, prev } (seg) de uma seção das etapas · null se não há valor
+function somaSecao(etapas, secao) {
+  let exec = 0, hasE = false, prev = 0, hasP = false;
+  for (const e of etapas) {
+    if ((e.secao || 'culto') !== secao) continue;
+    const x = parseMMSS(e.executado_str); if (x != null) { exec += x; hasE = true; }
+    const p = parseMMSS(e.previsto_str); if (p != null) { prev += p; hasP = true; }
+  }
+  return { exec: hasE ? exec : null, prev: hasP ? prev : null };
+}
+function serializeEtapas(etapas) {
+  return JSON.stringify((etapas || []).map(e => ({ t: e.titulo, p: e.previsto_str, x: e.executado_str, o: e.observacao, s: e.secao })));
+}
+
 const ABAS = [
   { key: 'semana',       label: 'Preenchimento', icon: Calendar },
   { key: 'acumulado',    label: 'Acumulado',     icon: TrendingUp },
   { key: 'detalhado',    label: 'Detalhado',     icon: Activity },
-  { key: 'checklists',   label: 'Checklists',    icon: ListChecks },
+  { key: 'checklists',   label: 'Modelos',       icon: ListChecks },
   { key: 'solicitacoes', label: 'Solicitações',  icon: Inbox },
   { key: 'desempenho',   label: 'Desempenho',    icon: Gauge },
 ];
@@ -80,7 +127,7 @@ export default function Producao() {
       <header style={{ marginBottom: 16, borderLeft: `4px solid ${C.primary}`, paddingLeft: 12 }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0, color: C.text }}>Produção de Culto</h1>
         <p style={{ fontSize: 13, color: C.t3, margin: '4px 0 0' }}>
-          Indicadores técnicos por culto · solicitações da Produção · desempenho da área
+          Cronograma e indicadores técnicos por culto · solicitações da Produção · desempenho da área
         </p>
       </header>
 
@@ -102,7 +149,7 @@ export default function Producao() {
       {aba === 'semana'       && <AbaSemana />}
       {aba === 'acumulado'    && <AbaAcumulado modo="acumulado" />}
       {aba === 'detalhado'    && <AbaAcumulado modo="detalhado" />}
-      {aba === 'checklists'   && <AbaChecklists />}
+      {aba === 'checklists'   && <AbaModelos />}
       {aba === 'solicitacoes' && <AbaSolicitacoes />}
       {aba === 'desempenho'   && <AbaDesempenho />}
     </div>
@@ -213,6 +260,7 @@ function MiniCard({ culto, onClick }) {
   const ok = culto.producao_preenchido;
   const cor = culto.service_type_color || C.primary;
   const dur = culto.producao?.duracao_minutos;
+  const prev = culto.producao?.duracao_prevista_min;
   const meta = culto.producao?.meta_duracao_min ?? 60;
   const atrasou = dur != null && dur > meta;
   const ocorr = (culto.ocorrencias?.tecnica || 0) + (culto.ocorrencias?.estrutura || 0);
@@ -228,11 +276,101 @@ function MiniCard({ culto, onClick }) {
       </div>
       <span style={{ fontSize: 10, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>{culto.service_type_name || culto.nome}</span>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 1 }}>
-        {dur != null && <span style={{ fontSize: 9, color: atrasou ? '#EF4444' : C.t3 }}>{dur}min</span>}
+        {dur != null && <span style={{ fontSize: 9, color: atrasou ? '#EF4444' : C.t3 }}>{dur}min{prev != null ? <span style={{ color: C.t3 }}>/{prev}</span> : ''}</span>}
         {(culto.checklist?.total || 0) > 0 && <span style={{ fontSize: 9, color: C.t3 }}>· {culto.checklist.feitos}/{culto.checklist.total} ✓</span>}
         {ocorr > 0 && <span style={{ fontSize: 9, color: '#EF4444' }}>· {ocorr} ⚠</span>}
       </div>
     </button>
+  );
+}
+
+// ── Editor de etapas (cronograma · momentos do culto) ─────────────────────────
+function EtapasEditor({ etapas, setEtapas, roteiro, meta }) {
+  const setRow = (key, patch) => setEtapas(arr => arr.map(e => e.key === key ? { ...e, ...patch } : e));
+  const removeRow = (key) => setEtapas(arr => arr.filter(e => e.key !== key));
+  const addRow = (secao = 'culto') => setEtapas(arr => [...arr, { key: rid(), titulo: '', previsto_str: '', executado_str: '', observacao: '', secao }]);
+  const carregarRoteiro = () => {
+    if (!roteiro?.length) return;
+    setEtapas(roteiro.map(r => ({ key: rid(), titulo: r.titulo, previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto' })));
+  };
+
+  const culto = somaSecao(etapas, 'culto');
+  const pos = somaSecao(etapas, 'pos_culto');
+  const temPos = etapas.some(e => (e.secao || 'culto') === 'pos_culto');
+  const metaSeg = (Number(meta) || 60) * 60;
+  const execTotal = (culto.exec ?? 0) + (pos.exec ?? 0);
+  const prevTotal = (culto.prev ?? 0) + (pos.prev ?? 0);
+  const temExecTotal = culto.exec != null || pos.exec != null;
+  const temPrevTotal = culto.prev != null || pos.prev != null;
+  const estourouCulto = culto.exec != null && culto.exec > metaSeg;
+
+  const colGrid = '20px 1fr 60px 60px minmax(70px,1fr) 30px 26px';
+
+  return (
+    <div>
+      <p style={{ fontSize: 11, color: C.t3, margin: '0 0 8px' }}>
+        Lance o tempo de cada momento em <strong>mm:ss</strong> (ex.: 5:45). O total do culto é a soma dos executados.
+      </p>
+      <div style={{ overflowX: 'auto' }}>
+        <div style={{ minWidth: 420 }}>
+          {/* cabeçalho */}
+          <div style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, padding: '0 2px 4px', fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            <span>#</span><span>Momento</span><span style={{ textAlign: 'center' }}>Prev.</span><span style={{ textAlign: 'center' }}>Exec.</span><span>Obs.</span><span style={{ textAlign: 'center' }}>Pós</span><span />
+          </div>
+          {etapas.length === 0 && (
+            <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', padding: '8px 2px' }}>
+              Nenhum momento. {roteiro?.length ? 'Carregue o roteiro padrão ou adicione manualmente.' : 'Adicione os momentos do culto.'}
+            </div>
+          )}
+          {etapas.map((e, i) => {
+            const ehPos = (e.secao || 'culto') === 'pos_culto';
+            const exSeg = parseMMSS(e.executado_str);
+            const prSeg = parseMMSS(e.previsto_str);
+            const estourouEtapa = exSeg != null && prSeg != null && exSeg > prSeg;
+            return (
+              <div key={e.key} style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '2px 2px', borderTop: i === 0 ? 'none' : `1px dashed ${C.border}` }}>
+                <span style={{ fontSize: 10, color: C.t3, textAlign: 'center' }}>{i + 1}</span>
+                <input value={e.titulo} onChange={ev => setRow(e.key, { titulo: ev.target.value })} placeholder="Momento" style={{ ...inpSm }} />
+                <input value={e.previsto_str} onChange={ev => setRow(e.key, { previsto_str: ev.target.value })} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: C.t2 }} />
+                <input value={e.executado_str} onChange={ev => setRow(e.key, { executado_str: ev.target.value })} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: estourouEtapa ? '#EF4444' : C.text, fontWeight: 600 }} />
+                <input value={e.observacao} onChange={ev => setRow(e.key, { observacao: ev.target.value })} placeholder="ex.: pregador" style={{ ...inpSm }} />
+                <input type="checkbox" checked={ehPos} onChange={ev => setRow(e.key, { secao: ev.target.checked ? 'pos_culto' : 'culto' })} title="Pós-culto" style={{ justifySelf: 'center' }} />
+                <button onClick={() => removeRow(e.key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, justifySelf: 'center' }}><Trash2 size={12} /></button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <button onClick={() => addRow('culto')} style={{ ...chip }}><Plus size={11} /> Momento</button>
+        {!temPos && <button onClick={() => addRow('pos_culto')} style={{ ...chip }}><Plus size={11} /> Pós-culto</button>}
+        {roteiro?.length > 0 && <button onClick={carregarRoteiro} style={{ ...chip }}><ListOrdered size={11} /> Carregar roteiro padrão</button>}
+      </div>
+
+      {/* somatório */}
+      <div style={{ marginTop: 10, padding: 10, background: C.inputBg, borderRadius: 8, fontSize: 12 }}>
+        <LinhaSoma label="Tempo de culto" exec={culto.exec} prev={culto.prev} corExec={estourouCulto ? '#EF4444' : C.text} />
+        {temPos && <LinhaSoma label="Pós-culto" exec={pos.exec} prev={pos.prev} />}
+        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
+          <LinhaSoma label="Total" exec={temExecTotal ? execTotal : null} prev={temPrevTotal ? prevTotal : null} bold />
+        </div>
+        <div style={{ fontSize: 10, color: estourouCulto ? '#B45309' : C.t3, marginTop: 4 }}>
+          Alvo do culto: {meta} min{estourouCulto ? ` · passou ${fmtMMSS(culto.exec - metaSeg)}` : ''}
+        </div>
+      </div>
+    </div>
+  );
+}
+function LinhaSoma({ label, exec, prev, corExec, bold }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, fontWeight: bold ? 700 : 500 }}>
+      <span style={{ color: C.t2 }}>{label}</span>
+      <span>
+        <span style={{ color: corExec || C.text, fontWeight: 700 }}>{fmtMMSSdash(exec)}</span>
+        <span style={{ color: C.t3, fontSize: 11 }}> / prev {fmtMMSSdash(prev)}</span>
+      </span>
+    </div>
   );
 }
 
@@ -241,7 +379,8 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const [det, setDet] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ duracao_minutos: '', pontualidade_obs: '', observacoes: '' });
+  const [etapas, setEtapas] = useState([]);
+  const [form, setForm] = useState({ pontualidade_obs: '', observacoes: '' });
   const [marks, setMarks] = useState({}); // item_id -> {feito, observação}
   const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
   const inicialRef = useRef(null); // snapshot do estado carregado · detecta alterações não salvas
@@ -254,27 +393,28 @@ function ModalProducao({ culto, onClose, onSaved }) {
       const d = await prodApi.culto(culto.id);
       setDet(d);
       const formInicial = {
-        duracao_minutos: d.producao?.duracao_minutos ?? '',
         pontualidade_obs: d.producao?.pontualidade_obs ?? '',
         observacoes: d.producao?.observacoes ?? '',
       };
       setForm(formInicial);
+      // etapas do culto, ou pré-carrega do roteiro padrão se ainda não houver
+      const base = (d.etapas && d.etapas.length)
+        ? d.etapas.map(e => ({ key: rid(), titulo: e.titulo || '', previsto_str: fmtMMSS(e.previsto_seg), executado_str: fmtMMSS(e.executado_seg), observacao: e.observacao || '', secao: e.secao || 'culto' }))
+        : (d.roteiro || []).map(r => ({ key: rid(), titulo: r.titulo || '', previsto_str: fmtMMSS(r.previsto_seg), executado_str: '', observacao: '', secao: r.secao || 'culto' }));
+      setEtapas(base);
       const m = {};
       (d.checklist || []).forEach(it => { m[it.item_id] = { feito: it.feito, observacao: it.observacao || '' }; });
       setMarks(m);
-      inicialRef.current = JSON.stringify({ form: formInicial, marks: m });
+      inicialRef.current = JSON.stringify({ etapas: serializeEtapas(base), form: formInicial, marks: m });
     } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
   }, [culto.id]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const temAlteracoes =
-    (inicialRef.current !== null && JSON.stringify({ form, marks }) !== inicialRef.current) ||
+    (inicialRef.current !== null && JSON.stringify({ etapas: serializeEtapas(etapas), form, marks }) !== inicialRef.current) ||
     novaOcorr.descricao.trim() !== '' || novaOcorr.momento.trim() !== '';
   const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
-
-  const dur = Number(form.duracao_minutos);
-  const atrasou = form.duracao_minutos !== '' && !Number.isNaN(dur) && dur > meta;
 
   const addOcorrencia = async () => {
     if (!novaOcorr.descricao.trim() || novaOcorr.descricao.trim().length < 3) {
@@ -296,8 +436,18 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const submit = async () => {
     setSaving(true);
     try {
+      const etapasPayload = etapas
+        .filter(e => String(e.titulo || '').trim())
+        .map((e, i) => ({
+          ordem: i + 1,
+          titulo: e.titulo.trim(),
+          previsto_seg: parseMMSS(e.previsto_str),
+          executado_seg: parseMMSS(e.executado_str),
+          observacao: e.observacao?.trim() || null,
+          secao: e.secao || 'culto',
+        }));
+      await prodApi.salvarEtapas(culto.id, etapasPayload);
       await prodApi.salvarCulto(culto.id, {
-        duracao_minutos: form.duracao_minutos === '' ? null : Number(form.duracao_minutos),
         pontualidade_obs: form.pontualidade_obs?.trim() || null,
         observacoes: form.observacoes?.trim() || null,
       });
@@ -318,7 +468,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
       {...backdropProps}
       style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
     >
-      <div onClick={e => e.stopPropagation()} style={{ background: C.modalBg, borderRadius: 12, maxWidth: 620, width: '100%', maxHeight: '92vh', overflow: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.modalBg, borderRadius: 12, maxWidth: 680, width: '100%', maxHeight: '92vh', overflow: 'auto' }}>
         <header style={{ padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <div>
             <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>{culto.nome || culto.service_type_name}</h2>
@@ -332,21 +482,14 @@ function ModalProducao({ culto, onClose, onSaved }) {
 
         {loading ? <div style={{ ...loadingBox, margin: 16 }}>Carregando…</div> : (
         <div style={{ padding: 16 }}>
-          {/* Pontualidade */}
-          <SecaoTitulo icone={Clock} cor="#0EA5E9" titulo="Pontualidade · duração do culto" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 6 }}>
-            <Field label={`Duração (min) · alvo ${meta}`}>
-              <input type="number" min="0" value={form.duracao_minutos} onChange={e => setForm(f => ({ ...f, duracao_minutos: e.target.value }))} style={inp} autoFocus />
-            </Field>
-            <Field label="Observação (opcional, mesmo passando do tempo)">
-              <input type="text" value={form.pontualidade_obs} onChange={e => setForm(f => ({ ...f, pontualidade_obs: e.target.value }))} style={inp} placeholder="Ex: ministração estendida, batismos…" />
+          {/* Cronograma · tempo por momento */}
+          <SecaoTitulo icone={Clock} cor="#0EA5E9" titulo="Cronograma · tempo por momento" />
+          <EtapasEditor etapas={etapas} setEtapas={setEtapas} roteiro={det?.roteiro || []} meta={meta} />
+          <div style={{ marginTop: 10, marginBottom: 16 }}>
+            <Field label="Observação da pontualidade (opcional, mesmo passando do tempo)">
+              <input type="text" value={form.pontualidade_obs} onChange={e => setForm(f => ({ ...f, pontualidade_obs: e.target.value }))} style={inp} placeholder="Ex.: ministração estendida, batismos…" />
             </Field>
           </div>
-          {atrasou && (
-            <div style={{ fontSize: 11, color: '#B45309', background: '#F59E0B18', borderRadius: 6, padding: '6px 10px', marginBottom: 16 }}>
-              Passou do alvo de {meta} min ({dur} min). A observação é opcional — registre o motivo se quiser deixar rastro.
-            </div>
-          )}
 
           {/* Ocorrências */}
           <SecaoTitulo icone={ShieldAlert} cor="#EF4444" titulo="Ocorrências · falhas técnicas e estabilidade" />
@@ -383,7 +526,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
           <SecaoTitulo icone={ListChecks} cor="#10B981" titulo={`Checklist técnico · ${checklistFeitos}/${checklistTotal} executados`} />
           {checklistTotal === 0 ? (
             <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', marginBottom: 16 }}>
-              Nenhum item de checklist cadastrado. Cadastre na aba “Checklists”.
+              Nenhum item de checklist cadastrado. Cadastre na aba “Modelos”.
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
@@ -437,6 +580,8 @@ function AbaAcumulado({ modo }) {
     return () => { alive = false; };
   }, [periodo]);
 
+  const aderCor = (v) => v == null ? C.primary : v >= 90 ? '#10B981' : v >= 75 ? '#F59E0B' : '#EF4444';
+
   return (
     <section>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
@@ -448,43 +593,77 @@ function AbaAcumulado({ modo }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
           <Kpi titulo="Cultos preenchidos" valor={`${data.totais.cultos_preenchidos}/${data.totais.cultos_no_periodo}`} />
           <Kpi titulo="Pontualidade" valor={data.totais.pontualidade_pct == null ? '—' : `${data.totais.pontualidade_pct}%`} cor="#0EA5E9" />
-          <Kpi titulo="Duração média" valor={data.totais.duracao_media_min == null ? '—' : `${data.totais.duracao_media_min} min`} />
+          <Kpi titulo="Duração média (executado)" valor={data.totais.duracao_media_min == null ? '—' : `${data.totais.duracao_media_min} min`} />
+          <Kpi titulo="Duração prevista média" valor={data.totais.duracao_prevista_media_min == null ? '—' : `${data.totais.duracao_prevista_media_min} min`} />
+          <Kpi titulo="Aderência ao roteiro" valor={data.totais.aderencia_pct == null ? '—' : `${data.totais.aderencia_pct}%`}
+            sub={data.totais.desvio_medio_seg == null ? null : `desvio médio ${fmtDesvio(data.totais.desvio_medio_seg)}`} cor={aderCor(data.totais.aderencia_pct)} />
           <Kpi titulo="Checklist executado" valor={data.totais.checklist_pct == null ? '—' : `${data.totais.checklist_pct}%`} cor="#10B981" />
           <Kpi titulo="Falhas técnicas" valor={data.totais.falhas_tecnicas} cor="#EF4444" />
           <Kpi titulo="Ocorr. estrutura" valor={data.totais.ocorrencias_estrutura} cor="#F59E0B" />
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-            <thead>
-              <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                {['Tipo de culto', 'Cultos', 'Preench.', 'Pontual.', 'Dur. média', 'Checklist', 'Falhas', 'Estrutura'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {data.detalhado.map(t => (
-                <tr key={t.tipo} style={{ borderBottom: `1px solid ${C.border}` }}>
-                  <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>{t.tipo}</td>
-                  <td style={td}>{t.cultos}</td>
-                  <td style={td}>{t.preenchidos}</td>
-                  <td style={td}>{t.pontualidade_pct == null ? '—' : `${t.pontualidade_pct}%`}</td>
-                  <td style={td}>{t.duracao_media_min == null ? '—' : `${t.duracao_media_min}min`}</td>
-                  <td style={td}>{t.checklist_pct == null ? '—' : `${t.checklist_pct}%`}</td>
-                  <td style={{ ...td, color: t.falhas_tecnicas > 0 ? '#EF4444' : C.t3 }}>{t.falhas_tecnicas}</td>
-                  <td style={{ ...td, color: t.ocorrencias_estrutura > 0 ? '#F59E0B' : C.t3 }}>{t.ocorrencias_estrutura}</td>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          <div style={{ overflowX: 'auto' }}>
+            <h3 style={subTit}>Por tipo de culto</h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
+                  {['Tipo de culto', 'Cultos', 'Preench.', 'Pontual.', 'Dur. média', 'Prev. média', 'Checklist', 'Falhas', 'Estrutura'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
                 </tr>
-              ))}
-              {data.detalhado.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem dados no período.</td></tr>}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.detalhado.map(t => (
+                  <tr key={t.tipo} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>{t.tipo}</td>
+                    <td style={td}>{t.cultos}</td>
+                    <td style={td}>{t.preenchidos}</td>
+                    <td style={td}>{t.pontualidade_pct == null ? '—' : `${t.pontualidade_pct}%`}</td>
+                    <td style={td}>{t.duracao_media_min == null ? '—' : `${t.duracao_media_min}min`}</td>
+                    <td style={td}>{t.duracao_prevista_media_min == null ? '—' : `${t.duracao_prevista_media_min}min`}</td>
+                    <td style={td}>{t.checklist_pct == null ? '—' : `${t.checklist_pct}%`}</td>
+                    <td style={{ ...td, color: t.falhas_tecnicas > 0 ? '#EF4444' : C.t3 }}>{t.falhas_tecnicas}</td>
+                    <td style={{ ...td, color: t.ocorrencias_estrutura > 0 ? '#F59E0B' : C.t3 }}>{t.ocorrencias_estrutura}</td>
+                  </tr>
+                ))}
+                {data.detalhado.length === 0 && <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem dados no período.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <h3 style={subTit}>Estouro por etapa (previsto × executado)</h3>
+            <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>Onde o tempo mais foge do cronograma. Ordenado pelo maior estouro médio.</p>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
+                  {['Momento', 'Cultos', 'Previsto', 'Executado', 'Desvio médio', '% que estourou'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {(data.por_etapa || []).map(e => (
+                  <tr key={e.titulo} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>
+                      {e.titulo}{e.secao === 'pos_culto' && <span style={{ fontSize: 9, color: C.t3, fontWeight: 700, marginLeft: 6 }}>PÓS</span>}
+                    </td>
+                    <td style={td}>{e.ocorrencias}</td>
+                    <td style={td}>{fmtMMSSdash(e.previsto_medio_seg)}</td>
+                    <td style={td}>{fmtMMSSdash(e.executado_medio_seg)}</td>
+                    <td style={{ ...td, color: e.desvio_medio_seg == null ? C.t3 : e.desvio_medio_seg > 0 ? '#EF4444' : e.desvio_medio_seg < 0 ? '#10B981' : C.t2, fontWeight: 600 }}>{fmtDesvio(e.desvio_medio_seg)}</td>
+                    <td style={td}>{e.estouro_pct == null ? '—' : `${e.estouro_pct}%`}</td>
+                  </tr>
+                ))}
+                {(data.por_etapa || []).length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem etapas lançadas no período.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </section>
   );
 }
 
-// ── Aba Checklists (template · admin) ─────────────────────────────────────────
-function AbaChecklists() {
+// ── Aba Modelos (roteiro + duração-alvo + checklist · admin) ──────────────────
+function AbaModelos() {
   const [itens, setItens] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -525,6 +704,9 @@ function AbaChecklists() {
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Roteiro do culto (cronograma · Previsto de cada momento) */}
+      <RoteiroEditor tipos={tipos} />
+
       {/* Duração-alvo por tipo de culto (pontualidade) */}
       <div>
         <h3 style={subTit}>Duração-alvo por tipo de culto (pontualidade)</h3>
@@ -579,6 +761,113 @@ function AbaChecklists() {
         )}
       </div>
     </section>
+  );
+}
+
+// ── Roteiro padrão (cronograma) · admin ───────────────────────────────────────
+function RoteiroEditor({ tipos }) {
+  const [roteiro, setRoteiro] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [escopo, setEscopo] = useState(''); // '' = geral (service_type_id null)
+  const [novo, setNovo] = useState({ titulo: '', previsto_str: '', secao: 'culto' });
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await prodApi.roteiroEtapas.list();
+      setRoteiro((r || []).map(e => ({ ...e, previsto_str: fmtMMSS(e.previsto_seg) })));
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const filtradas = useMemo(() => roteiro
+    .filter(r => escopo === '' ? r.service_type_id == null : r.service_type_id === escopo)
+    .sort((a, b) => (a.ordem || 0) - (b.ordem || 0)), [roteiro, escopo]);
+
+  const soma = useMemo(() => {
+    const s = { culto: 0, pos: 0 };
+    filtradas.forEach(r => { if (r.secao === 'pos_culto') s.pos += (r.previsto_seg || 0); else s.culto += (r.previsto_seg || 0); });
+    return s;
+  }, [filtradas]);
+
+  const setLocal = (id, patch) => setRoteiro(arr => arr.map(r => r.id === id ? { ...r, ...patch } : r));
+
+  const salvarCampo = async (id, campo, valor) => {
+    try { await prodApi.roteiroEtapas.update(id, { [campo]: valor }); }
+    catch (e) { toast.error(formatErro(e)); carregar(); }
+  };
+  const salvarPrevisto = async (r) => {
+    const seg = parseMMSS(r.previsto_str) ?? 0;
+    setLocal(r.id, { previsto_seg: seg, previsto_str: fmtMMSS(seg) });
+    await salvarCampo(r.id, 'previsto_seg', seg);
+  };
+  const criar = async () => {
+    if (!novo.titulo.trim()) { toast.error('Nome do momento obrigatório'); return; }
+    try {
+      const ordem = (filtradas.reduce((a, r) => Math.max(a, r.ordem || 0), 0)) + 1;
+      await prodApi.roteiroEtapas.create({
+        titulo: novo.titulo.trim(),
+        previsto_seg: parseMMSS(novo.previsto_str) ?? 0,
+        service_type_id: escopo || null,
+        secao: novo.secao,
+        ordem,
+      });
+      setNovo({ titulo: '', previsto_str: '', secao: 'culto' });
+      carregar(); toast.success('Momento adicionado');
+    } catch (e) { toast.error(formatErro(e)); }
+  };
+  const remover = async (id) => {
+    if (!window.confirm('Remover este momento do roteiro?')) return;
+    try { await prodApi.roteiroEtapas.remove(id); carregar(); } catch (e) { toast.error(formatErro(e)); }
+  };
+
+  return (
+    <div>
+      <h3 style={subTit}>Roteiro do culto (cronograma · tempo previsto)</h3>
+      <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
+        O “Previsto” de cada momento. Pré-carrega o modal de preenchimento. O “Geral” vale para qualquer tipo sem roteiro próprio.
+      </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: C.t3 }}>Roteiro de:</span>
+        <select value={escopo} onChange={e => setEscopo(e.target.value)} style={{ ...inp, width: 'auto', minWidth: 180, padding: '6px 10px' }}>
+          <option value="">Geral (todos os tipos)</option>
+          {tipos.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: C.t2 }}>
+          Tempo previsto: <strong>{fmtMMSS(soma.culto) || '0:00'}</strong>{soma.pos > 0 ? <> · + pós {fmtMMSS(soma.pos)}</> : ''}
+        </span>
+      </div>
+
+      {loading ? <div style={loadingBox}>Carregando…</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {filtradas.map(r => (
+            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, opacity: r.ativo ? 1 : 0.5 }}>
+              <span style={{ fontSize: 10, color: C.t3, width: 18, textAlign: 'center' }}>{r.ordem}</span>
+              <input value={r.titulo} onChange={e => setLocal(r.id, { titulo: e.target.value })} onBlur={e => salvarCampo(r.id, 'titulo', e.target.value.trim())} style={{ ...inp, flex: 1, padding: '6px 8px' }} />
+              <input value={r.previsto_str} onChange={e => setLocal(r.id, { previsto_str: e.target.value })} onBlur={() => salvarPrevisto(r)} placeholder="mm:ss" style={{ ...inp, width: 70, padding: '6px 8px', textAlign: 'center' }} />
+              <select value={r.secao} onChange={e => { setLocal(r.id, { secao: e.target.value }); salvarCampo(r.id, 'secao', e.target.value); }} style={{ ...inp, width: 'auto', padding: '6px 8px' }}>
+                <option value="culto">Culto</option>
+                <option value="pos_culto">Pós-culto</option>
+              </select>
+              <button onClick={() => { setLocal(r.id, { ativo: !r.ativo }); salvarCampo(r.id, 'ativo', !r.ativo); }} style={{ ...chip, ...(r.ativo ? chipSel : {}) }}>{r.ativo ? 'Ativo' : 'Inativo'}</button>
+              <button onClick={() => remover(r.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4 }}><Trash2 size={14} /></button>
+            </div>
+          ))}
+          {filtradas.length === 0 && <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic' }}>Nenhum momento neste roteiro. Adicione abaixo.</div>}
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input type="text" value={novo.titulo} onChange={e => setNovo(n => ({ ...n, titulo: e.target.value }))} style={{ ...inp, flex: 2, minWidth: 160 }} placeholder="Novo momento (ex.: Música 1)" />
+            <input type="text" value={novo.previsto_str} onChange={e => setNovo(n => ({ ...n, previsto_str: e.target.value }))} style={{ ...inp, width: 80 }} placeholder="mm:ss" />
+            <select value={novo.secao} onChange={e => setNovo(n => ({ ...n, secao: e.target.value }))} style={{ ...inp, width: 'auto' }}>
+              <option value="culto">Culto</option>
+              <option value="pos_culto">Pós-culto</option>
+            </select>
+            <button onClick={criar} style={btnPrimary}><Plus size={13} /> Adicionar</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -701,10 +990,11 @@ function sevCor(s) { return { baixa: '#10B981', media: '#F59E0B', alta: '#EF4444
 function statusCor(s) { return { no_alvo: '#10B981', atrasado: '#F59E0B', critico: '#EF4444' }[s] || C.primary; }
 
 const inp = { width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text, fontSize: 12, boxSizing: 'border-box', fontFamily: 'inherit' };
+const inpSm = { width: '100%', padding: '5px 7px', borderRadius: 5, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text, fontSize: 12, boxSizing: 'border-box', fontFamily: 'inherit' };
 const btnNav = { padding: 6, borderRadius: 6, background: C.card, color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
 const btnPrimary = { padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700, background: C.primary, color: '#fff', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' };
 const btnGhost = { padding: '8px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: 'transparent', color: C.t2, border: `1px solid ${C.border}`, cursor: 'pointer' };
-const chip = { padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.t2 };
+const chip = { padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.t2, display: 'inline-flex', alignItems: 'center', gap: 4 };
 const chipSel = { border: `1px solid ${C.primary}`, background: C.primaryBg, color: C.primary };
 const td = { padding: '8px 10px', color: C.t2 };
 const subTit = { fontSize: 12, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 10px' };
