@@ -5,8 +5,15 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Activity, Upload, RefreshCw, Search, Link2, Loader2, CheckCircle2 } from 'lucide-react';
+import { Activity, Upload, RefreshCw, Search, Link2, Loader2, CheckCircle2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
+
+type Sugestao = {
+  nome_norm: string; nome: string; total_servicos: number;
+  sugestao: { profile_id: string; full_name: string } | null;
+  confianca: 'exata' | 'alta' | 'media' | 'baixa' | 'nenhuma';
+  motivo: string;
+};
 
 type Row = {
   chave: string; vol_profile_id: string | null; nome_norm: string; nome: string;
@@ -30,6 +37,7 @@ export default function VolFrequencia() {
   const [revinc, setRevinc] = useState(false);
   const [detalhe, setDetalhe] = useState<Row | null>(null);
   const [vincular, setVincular] = useState<Row | null>(null);
+  const [iaOpen, setIaOpen] = useState(false);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -88,6 +96,9 @@ export default function VolFrequencia() {
           </label>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={revincularNomes} disabled={revinc}>
             {revinc ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />} Revincular nomes
+          </Button>
+          <Button size="sm" className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90" onClick={() => setIaOpen(true)}>
+            <Sparkles className="h-3.5 w-3.5" /> Vincular com IA
           </Button>
         </div>
       </div>
@@ -161,7 +172,110 @@ export default function VolFrequencia() {
 
       {detalhe && <DetalheModal row={detalhe} onClose={() => setDetalhe(null)} />}
       {vincular && <VincularModal row={vincular} onClose={() => setVincular(null)} onDone={() => { setVincular(null); carregar(); }} />}
+      {iaOpen && <SugestoesIaModal onClose={() => setIaOpen(false)} onDone={() => { setIaOpen(false); carregar(); }} />}
     </div>
+  );
+}
+
+const CONF_BADGE: Record<Sugestao['confianca'], { label: string; cls: string }> = {
+  exata: { label: 'Idêntico', cls: 'bg-emerald-100 text-emerald-700' },
+  alta: { label: 'Alta', cls: 'bg-emerald-100 text-emerald-700' },
+  media: { label: 'Média', cls: 'bg-amber-100 text-amber-700' },
+  baixa: { label: 'Baixa', cls: 'bg-slate-100 text-slate-600' },
+  nenhuma: { label: 'Sem sugestão', cls: 'bg-slate-100 text-slate-500' },
+};
+
+function SugestoesIaModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [sugestoes, setSugestoes] = useState<Sugestao[]>([]);
+  const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    api.frequencia.sugerirVinculos()
+      .then((r: any) => {
+        const ss: Sugestao[] = r.sugestoes || [];
+        setSugestoes(ss);
+        // pré-seleciona só os de confiança idêntica/alta (resto exige aprovação)
+        const pre: Record<string, boolean> = {};
+        for (const s of ss) if (s.sugestao && (s.confianca === 'exata' || s.confianca === 'alta')) pre[s.nome_norm] = true;
+        setSel(pre);
+      })
+      .catch((e: any) => toast.error(e.message || 'Erro ao gerar sugestões'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const comSugestao = sugestoes.filter(s => s.sugestao);
+  const semSugestao = sugestoes.filter(s => !s.sugestao);
+  const selecionados = comSugestao.filter(s => sel[s.nome_norm]);
+
+  async function aplicar() {
+    if (!selecionados.length) return;
+    setSalvando(true);
+    try {
+      const vinculos = selecionados.map(s => ({ nome_norm: s.nome_norm, vol_profile_id: s.sugestao!.profile_id }));
+      const r = await api.frequencia.vincularLote(vinculos);
+      toast.success(`${r.vinculados} nome(s) vinculados`);
+      onDone();
+    } catch (e: any) { toast.error(e.message || 'Erro ao vincular'); setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Vincular com IA</DialogTitle>
+          <DialogDescription>
+            A IA cruzou os nomes não vinculados com os voluntários do sistema. Revise e marque os que estão corretos — nada é vinculado sem você aprovar.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="py-10 text-center text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin inline" /> analisando os nomes…
+          </div>
+        ) : sugestoes.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Não há nomes não vinculados. Tudo certo!</p>
+        ) : (
+          <>
+            <div className="max-h-[55vh] overflow-y-auto -mx-1 px-1 space-y-1.5">
+              {comSugestao.map(s => (
+                <label key={s.nome_norm} className="flex items-center gap-3 p-2.5 rounded-lg border bg-card cursor-pointer hover:bg-accent/40">
+                  <input type="checkbox" className="h-4 w-4 accent-[#00B39D]"
+                    checked={!!sel[s.nome_norm]}
+                    onChange={(e) => setSel(p => ({ ...p, [s.nome_norm]: e.target.checked }))} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground truncate">{s.nome}</span>
+                      <span className="text-xs text-muted-foreground shrink-0">({s.total_servicos} serv.)</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">→ {s.sugestao!.full_name}</div>
+                  </div>
+                  <Badge className={`shrink-0 ${CONF_BADGE[s.confianca].cls}`}>{CONF_BADGE[s.confianca].label}</Badge>
+                </label>
+              ))}
+              {semSugestao.length > 0 && (
+                <div className="pt-2">
+                  <p className="text-xs font-medium text-muted-foreground px-1 mb-1">Sem correspondência ({semSugestao.length}) — vincule manualmente pela lista</p>
+                  {semSugestao.map(s => (
+                    <div key={s.nome_norm} className="flex items-center justify-between p-2.5 rounded-lg border border-dashed bg-muted/30">
+                      <span className="text-sm text-foreground truncate">{s.nome} <span className="text-xs text-muted-foreground">({s.total_servicos} serv.)</span></span>
+                      <Badge className="bg-slate-100 text-slate-500 shrink-0">Sem sugestão</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t">
+              <span className="text-xs text-muted-foreground">{selecionados.length} de {comSugestao.length} selecionados</span>
+              <Button onClick={aplicar} disabled={salvando || !selecionados.length} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
+                {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Aplicar selecionados ({selecionados.length})
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
