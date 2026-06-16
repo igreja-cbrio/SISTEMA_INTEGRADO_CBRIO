@@ -10,13 +10,15 @@
 --   -> aprovacao financeira (Yago decide sobre o valor COTADO) -> logistica compra.
 -- Reembolso/pagamento (valor ja conhecido) seguem direto pro financeiro, sem cotacao.
 --
--- Esta migration so prepara o SCHEMA (status + campos da cotacao). O backend liga
--- o fluxo: aprovar-origem manda compras/servico pra 'em_cotacao'; o endpoint novo
--- registrar-cotacao grava valor+fornecedor e move pra 'aguardando_aprovacao_financeira'.
+-- O backend liga o fluxo no caminho normal: aprovar-origem manda compras/servico pra
+-- 'em_cotacao'; o endpoint novo registrar-cotacao grava valor+fornecedor e move pra
+-- 'aguardando_aprovacao_financeira'.
 --
--- O trigger tg_solicitacoes_calcula_sla NAO muda: 'em_cotacao' chega por UPDATE, e o
--- trigger so recalcula SLA quando eh_urgente muda no UPDATE; precisa_aprovacao_financeira
--- ja foi setado=true no INSERT (compras/servico sempre passam pelo Yago).
+-- Esta migration prepara o SCHEMA (status + campos) E recria o trigger
+-- tg_solicitacoes_calcula_sla (secao 3) pra cobrir o ATALHO da origem DISPENSADA
+-- (diretoria/sem-diretor nao passam pelo aprovar-origem): nesse caso compras/servico
+-- caem em 'em_cotacao' ja no INSERT, em vez de pular direto pro Yago. O resto do
+-- trigger (SLA deadlines, alcada) e' identico ao 20260601120000.
 --
 -- Idempotente. Atomica. Aditiva (nao-destrutiva).
 -- ============================================================================
