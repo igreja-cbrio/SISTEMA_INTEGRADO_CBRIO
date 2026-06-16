@@ -250,6 +250,7 @@ const WifiModulo = lazyWithRetry(() => import('./pages/ministerial/Wifi'));
 const Producao = lazyWithRetry(() => import('./pages/ministerial/Producao'));
 const ColetaCulto = lazyWithRetry(() => import('./pages/ministerial/coleta/ColetaCulto'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
+const NextBatismo = lazyWithRetry(() => import('./pages/ministerial/NextBatismo'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
@@ -497,6 +498,7 @@ function AppRoutes() {
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
+        <Route path="/next-batismo" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}
         <Route path="/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><PainelKids /></Suspense></ModuleGuard>} />

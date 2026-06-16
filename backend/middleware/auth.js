@@ -31,6 +31,7 @@ const ROUTE_MODULE_MAP = {
   'online':       ['online'],
   'wifi':         ['wifi'],
   'next':         ['next'],
+  'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
   'grupos':       ['grupos'],
