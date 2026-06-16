@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { dispararAuto } = require('../services/whatsappAuto');
+const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
@@ -273,6 +274,11 @@ const TIPOS_INSCRICAO = new Set([
   'aconselhamento', 'oracao', 'sos', 'contato',
 ]);
 const TIPOS_CUIDADOS = new Set(['aconselhamento', 'oracao', 'sos']);
+// Tipos que geram confirmação por WhatsApp (template cbrio_inscricao_confirmada)
+const LABEL_INSCRICAO_WPP = {
+  grupos: 'Grupos de Conexão', batismo: 'Batismo', next: 'NEXT',
+  voluntariado: 'Voluntariado', retiro: 'Retiro', cursos: 'Cursos', eventos: 'Eventos',
+};
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
 // Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
 const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
@@ -379,6 +385,16 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
           refId: inserted.id, telefone: dados.telefone, nome: dados.nome, origem: 'app',
         });
       } catch (e) { console.warn('[APP] aconselhamento whatsapp:', e.message); }
+    }
+
+    // Confirmação ao membro via WhatsApp · template aprovado (no-op até configurar
+    // o env do template + opt-in respeitado dentro de notificarMembro).
+    if (LABEL_INSCRICAO_WPP[tipo]) {
+      resolveMembroApp(req).then((m) => {
+        if (!m?.id) return;
+        const primeiroNome = String(m.nome || dados.nome || '').split(' ')[0] || 'Olá';
+        return wpp.notificarMembro(m.id, 'inscricao_confirmada', [primeiroNome, LABEL_INSCRICAO_WPP[tipo]]);
+      }).catch((e) => console.warn('[APP] inscricao wpp:', e.message));
     }
 
     res.status(201).json({ ok: true, id: inserted.id, message: 'Solicitação recebida! Nossa equipe entrará em contato.' });

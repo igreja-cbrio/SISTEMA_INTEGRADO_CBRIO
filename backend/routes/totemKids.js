@@ -22,6 +22,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { safeEqual } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
+const wpp = require('../services/whatsappService');
 
 // authenticate aplicado condicionalmente abaixo · rotas /display/* e
 // /chamadas com estacao_token bypassam pra display sem login
@@ -2268,6 +2269,10 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
       .eq('id', s.id);
     if (ue) throw ue;
 
+    // Avisa o responsável no WhatsApp (no-op até template aprovado/configurado).
+    wpp.notificarMembro(s.solicitante_membro_id, 'kids_vinculo', [s.crianca_nome, 'aprovado'])
+      .catch((e) => console.warn('[TOTEM-KIDS] vinculo wpp:', e.message));
+
     res.json({ ok: true, crianca_id: criancaId });
   } catch (e) {
     console.error('[TOTEM-KIDS] vinculo-solicitacoes aprovar:', e.message);
@@ -2281,7 +2286,7 @@ router.post('/vinculo-solicitacoes/:id/rejeitar', authorizeModule('kids', 3), as
     const motivo = req.body?.motivo ? String(req.body.motivo).trim() : null;
     const { data: s } = await supabase
       .from('kids_vinculo_solicitacoes')
-      .select('id, status')
+      .select('id, status, solicitante_membro_id, crianca_nome')
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .maybeSingle();
@@ -2300,6 +2305,10 @@ router.post('/vinculo-solicitacoes/:id/rejeitar', authorizeModule('kids', 3), as
       })
       .eq('id', s.id);
     if (error) throw error;
+
+    wpp.notificarMembro(s.solicitante_membro_id, 'kids_vinculo', [s.crianca_nome, 'recusado'])
+      .catch((e) => console.warn('[TOTEM-KIDS] vinculo wpp:', e.message));
+
     res.json({ ok: true });
   } catch (e) {
     console.error('[TOTEM-KIDS] vinculo-solicitacoes rejeitar:', e.message);
