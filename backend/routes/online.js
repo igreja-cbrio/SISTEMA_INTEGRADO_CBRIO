@@ -66,6 +66,12 @@ router.get('/cron/catch-up', autorizaCron, async (req, res) => {
     res.json(await collectors.catchUpMetricas({ limit }));
   } catch (e) { console.error('[catch-up]', e.message); res.status(500).json({ error: e.message }); }
 });
+// Engajamento de conteúdo (OKR cabeça do Juninho) · refresca o mês atual + anterior
+// todo dia (barato · 2 chamadas Analytics). O backfill do ano inteiro é pelo botão.
+router.get('/cron/engajamento-collect', autorizaCron, async (_req, res) => {
+  try { res.json(await collectors.engajamentoCollector({ mesesRecentes: 2 })); }
+  catch (e) { console.error('[engajamento-collect]', e.message); res.status(500).json({ error: e.message }); }
+});
 
 // Blindagem · roda DEPOIS dos demais coletores do dia. Self-heal: tenta um
 // catch-up antes de verificar; se ainda faltar metrica (ou o token caiu),
@@ -240,6 +246,13 @@ router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (req, res)
   try {
     const limit = Math.min(Number(req.query.limit) || 5, 20);
     res.json(await collectors.catchUpMetricas({ limit }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Engajamento de conteúdo · backfill do ano (jan→hoje). ?ano=2026 opcional.
+router.post('/coletar/engajamento', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const ano = req.query.ano ? Number(req.query.ano) : undefined;
+    res.json(await collectors.engajamentoCollector({ ano }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

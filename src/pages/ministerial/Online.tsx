@@ -422,6 +422,26 @@ function OAuthStatusCardInner() {
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
   });
 
+  // Engajamento de conteúdo (OKR cabeça do Juninho) · backfill do ano (jan→hoje)
+  const coletarEngajamento = useMutation({
+    mutationFn: () => online.coletar.engajamento(),
+    onSuccess: (r: any) => {
+      const linhas = (r?.resultados || []).filter((x: any) => !x.error);
+      const ult = linhas[linhas.length - 1];
+      if (ult) {
+        const ret = ult.retencao != null ? `${ult.retencao}%` : '—';
+        const comp = ult.compartilhamento != null ? `${ult.compartilhamento}%` : '—';
+        const cli = ult.cliques_series != null ? `${ult.cliques_series}%` : '—';
+        toast.success(`Engajamento ${String(ult.mes).slice(0, 7)} · retenção ${ret} · compart. ${comp} · cliques ${cli}`);
+      } else {
+        const err = (r?.resultados || []).find((x: any) => x.error);
+        toast.message(err ? `Sem dados: ${err.error}` : `Coleta executada (${r?.coletados || 0} meses).`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['online', 'engajamento'] });
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro na coleta de engajamento'),
+  });
+
   const conectado = status?.conectado;
 
   return (
@@ -486,6 +506,10 @@ function OAuthStatusCardInner() {
               <Button size="sm" variant="outline" onClick={() => coletarDdus.mutate()} disabled={coletarDdus.isPending}>
                 {coletarDdus.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
                 DDUS (D+7)
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => coletarEngajamento.mutate()} disabled={coletarEngajamento.isPending}>
+                {coletarEngajamento.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                Engajamento (ano)
               </Button>
               <Button size="sm" variant="ghost" onClick={() => desconectar.mutate()} disabled={desconectar.isPending}>
                 <Unlink className="h-3.5 w-3.5 mr-1.5" />

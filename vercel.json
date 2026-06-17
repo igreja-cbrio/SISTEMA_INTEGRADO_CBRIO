@@ -74,6 +74,10 @@
       "schedule": "0 13 * * *"
     },
     {
+      "path": "/api/online/cron/engajamento-collect",
+      "schedule": "45 12 * * *"
+    },
+    {
       "path": "/api/online/cron/verificar",
       "schedule": "0 14 * * *"
     },
