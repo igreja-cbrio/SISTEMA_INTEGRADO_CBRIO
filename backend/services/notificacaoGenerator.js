@@ -45,7 +45,7 @@ async function gerarNotificacoesRH() {
   // 1. Férias vencendo em 7 dias (data_fim próxima)
   const { data: feriasVencendo } = await supabase
     .from('rh_ferias_licencas')
-    .select('id, funcionario_id, tipo, data_inicio, data_fim, rh_funcionarios(nome)')
+    .select('id, funcionario_id, tipo, data_inicio, data_fim, rh_funcionarios!funcionario_id(nome)')
     .eq('status', 'aprovado')
     .gte('data_fim', today)
     .lte('data_fim', in7d);
@@ -67,7 +67,7 @@ async function gerarNotificacoesRH() {
   // 2. Férias começando em 3 dias
   const { data: feriasInicio } = await supabase
     .from('rh_ferias_licencas')
-    .select('id, funcionario_id, tipo, data_inicio, rh_funcionarios(nome)')
+    .select('id, funcionario_id, tipo, data_inicio, rh_funcionarios!funcionario_id(nome)')
     .eq('status', 'aprovado')
     .gte('data_inicio', today)
     .lte('data_inicio', in3d);
@@ -89,7 +89,7 @@ async function gerarNotificacoesRH() {
   // 3. Férias pendentes de aprovação há muito tempo
   const { data: feriasPendentes } = await supabase
     .from('rh_ferias_licencas')
-    .select('id, funcionario_id, created_at, rh_funcionarios(nome)')
+    .select('id, funcionario_id, created_at, rh_funcionarios!funcionario_id(nome)')
     .eq('status', 'pendente');
 
   for (const f of feriasPendentes || []) {

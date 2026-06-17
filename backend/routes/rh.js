@@ -90,7 +90,7 @@ router.get('/dashboard', async (req, res) => {
     const em30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const { data: feriasProximas } = await supabase
       .from('rh_ferias_licencas')
-      .select('*, rh_funcionarios(nome)')
+      .select('*, rh_funcionarios!funcionario_id(nome)')
       .in('status', ['pendente', 'aprovado'])
       .gte('data_inicio', hoje)
       .lte('data_inicio', em30)
@@ -248,7 +248,7 @@ router.get('/funcionarios', async (req, res) => {
     const { status, area, busca, tipo_contrato } = req.query;
     let query = supabase
       .from('rh_funcionarios')
-      .select('*, rh_ferias_licencas(tipo, data_inicio, data_fim, status)')
+      .select('*, rh_ferias_licencas!funcionario_id(tipo, data_inicio, data_fim, status)')
       .order('nome');
 
     // Filtro de acesso por nível: área (3) ou pessoal (2)
@@ -948,7 +948,7 @@ router.get('/ferias', async (req, res) => {
     const { status } = req.query;
     let query = supabase
       .from('rh_ferias_licencas')
-      .select('*, rh_funcionarios(nome, cargo, area)')
+      .select('*, rh_funcionarios!funcionario_id(nome, cargo, area), substituto:rh_funcionarios!substituto_id(nome)')
       .order('data_inicio', { ascending: false });
 
     if (status) query = query.eq('status', status);
