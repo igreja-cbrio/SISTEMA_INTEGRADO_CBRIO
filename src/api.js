@@ -1009,6 +1009,21 @@ export const appAnalytics = {
   aoVivo: () => get('/app-analytics/ao-vivo'),
 };
 
+// Comunicados / Mural (criados no Marketing → app)
+export const comunicados = {
+  list: () => get('/comunicados'),
+  create: (data) => post('/comunicados', data),
+  update: (id, data) => put(`/comunicados/${id}`, data),
+  publicar: (id) => post(`/comunicados/${id}/publicar`, {}),
+  arquivar: (id) => post(`/comunicados/${id}/arquivar`, {}),
+  remove: (id) => del(`/comunicados/${id}`),
+  uploadFoto: (file) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    return requestFile('/comunicados/upload-foto', fd);
+  },
+};
+
 export const painelArea = {
   // params: { período?: '30d'|'90d'|'180d'|'365d', desde?: 'YYYY-MM-DD', até?: 'YYYY-MM-DD' }
   get: (area, params = {}) => {

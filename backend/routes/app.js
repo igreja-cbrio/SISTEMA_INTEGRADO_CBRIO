@@ -1031,6 +1031,30 @@ router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
   }
 });
 
+// GET /api/app/comunicados — mural do membro (publicados, segmentados).
+router.get('/comunicados', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    const segmentos = ['todos'];
+    if (membro?.id) {
+      const { data: m } = await supabase.from('mem_membros').select('frequenta_area').eq('id', membro.id).maybeSingle();
+      if (m?.frequenta_area) segmentos.push(m.frequenta_area);
+    }
+    const { data } = await supabase
+      .from('comunicados')
+      .select('id, titulo, corpo, foto_url, segmento, publicado_em')
+      .eq('status', 'publicado')
+      .is('deleted_at', null)
+      .in('segmento', segmentos)
+      .order('publicado_em', { ascending: false })
+      .limit(50);
+    res.json({ comunicados: data || [] });
+  } catch (e) {
+    console.error('[APP] comunicados:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar comunicados' });
+  }
+});
+
 // POST /api/app/telemetria { eventos: [{tipo,nome,props,plataforma,app_version}] }
 // Ingestão de telemetria do app (telas/ações/erros). Auth opcional (captura
 // também pré-login). NUNCA devolve erro pro app (telemetria não pode quebrar).

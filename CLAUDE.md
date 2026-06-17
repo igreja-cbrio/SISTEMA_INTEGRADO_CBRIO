@@ -2558,3 +2558,18 @@ eventos/usuários por dia, telas mais vistas, ações, erros recentes, plataform
 App: `lib/telemetria.ts` (`trackTela`/`trackEvento`/`trackErro` + handler global de
 erro + flush por tamanho/timer/background) ligado no `app/_layout.tsx` (init + cada
 tela via `usePathname`). Próximas features chamam `trackEvento` pra medir adoção.
+
+## Comunicados / Mural (2026-06-16 · Fase 2 do app)
+
+Conteúdo criado no **Marketing** → **mural do app** + **push segmentado**.
+Tabela `comunicados` (migration `20260616210000` · bucket público `comunicados`
+pra foto · RLS marketing≥1 lê / ≥3 escreve · service role). Backend
+`routes/comunicados.js` (`/api/comunicados` · CRUD + `/upload-foto` multer +
+`/:id/publicar` → fan-out push) e `GET /api/app/comunicados` (mural do membro:
+status publicado, segmento 'todos' OU `frequenta_area` do membro). Push: Edge
+Function **`notify-comunicado`** (app repo · `--no-verify-jwt`) — alvos =
+`app_push_tokens` (filtra por `frequenta_area` se segmento ≠ todos) → `notificar`
+(app_notificacoes + Expo). Front sistema: aba **Comunicados** no Marketing
+(`MarketingComunicados.jsx` · `/marketing/comunicados`). App: `mural.tsx`
+(`/mural`, item "Avisos" no Menu) + tap da push tipo `comunicado` → /mural.
+Segmentos: todos/ami/bridge/online/sede/kids.
