@@ -586,7 +586,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     for (const c of cultos || []) {
       const key = c.service_type_name || 'Outros';
       if (!porTipo[key]) porTipo[key] = { tipo: key, cultos: 0, preenchidos: 0, no_horario: 0,
-        soma_dur: 0, soma_prev_seg: 0, n_prev: 0, falhas: 0, estrutura: 0, marcas: 0, marcas_feitas: 0 };
+        soma_dur: 0, soma_prev_seg: 0, n_prev: 0, soma_desvio_pct: 0, n_ader: 0, falhas: 0, estrutura: 0, marcas: 0, marcas_feitas: 0 };
       porTipo[key].cultos++;
     }
     for (const p of prodComDur) {
@@ -602,6 +602,13 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
       if (!porTipo[key]) continue;
       porTipo[key].soma_prev_seg += p.duracao_prevista_seg;
       porTipo[key].n_prev++;
+    }
+    for (const p of comAmbos) {
+      const c = cultoById[p.culto_id]; if (!c) continue;
+      const key = c.service_type_name || 'Outros';
+      if (!porTipo[key]) continue;
+      porTipo[key].soma_desvio_pct += Math.abs(p.duracao_segundos - p.duracao_prevista_seg) / p.duracao_prevista_seg * 100;
+      porTipo[key].n_ader++;
     }
     for (const o of ocorr) {
       const c = cultoById[o.culto_id]; if (!c) continue;
@@ -621,6 +628,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
       cultos: t.cultos,
       preenchidos: t.preenchidos,
       pontualidade_pct: t.preenchidos ? Math.round((t.no_horario / t.preenchidos) * 100) : null,
+      aderencia_pct: t.n_ader ? Math.max(0, Math.round(100 - t.soma_desvio_pct / t.n_ader)) : null,
       duracao_media_min: t.preenchidos ? Math.round(t.soma_dur / t.preenchidos) : null,
       duracao_prevista_media_min: t.n_prev ? Math.round(t.soma_prev_seg / t.n_prev / 60) : null,
       checklist_pct: t.marcas ? Math.round((t.marcas_feitas / t.marcas) * 100) : null,
