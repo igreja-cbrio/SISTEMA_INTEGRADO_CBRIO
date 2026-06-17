@@ -151,6 +151,7 @@ app.use('/api/pessoas', require('./routes/pessoas'));
 app.use('/api/nsm', require('./routes/nsm'));
 app.use('/api/painel', require('./routes/painel'));
 app.use('/api/painel-area', require('./routes/painelArea'));
+app.use('/api/app-analytics', require('./routes/appAnalytics'));
 app.use('/api/totem-kids', require('./routes/totemKids'));
 app.use('/api/estrategia', require('./routes/estrategia'));
 app.use('/api/ritual', require('./routes/ritual'));

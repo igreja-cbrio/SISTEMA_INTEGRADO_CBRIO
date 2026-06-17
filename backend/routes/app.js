@@ -1031,4 +1031,29 @@ router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
   }
 });
 
+// POST /api/app/telemetria { eventos: [{tipo,nome,props,plataforma,app_version}] }
+// Ingestão de telemetria do app (telas/ações/erros). Auth opcional (captura
+// também pré-login). NUNCA devolve erro pro app (telemetria não pode quebrar).
+router.post('/telemetria', tryAuth, async (req, res) => {
+  try {
+    const eventos = Array.isArray(req.body?.eventos) ? req.body.eventos.slice(0, 50) : [];
+    if (!eventos.length) return res.json({ ok: true, gravados: 0 });
+    const uid = req.user?.id || null;
+    const rows = eventos.map((e) => ({
+      tipo: ['tela', 'acao', 'erro'].includes(e?.tipo) ? e.tipo : 'acao',
+      nome: String(e?.nome || 'desconhecido').slice(0, 120),
+      props: e?.props && typeof e.props === 'object' ? e.props : null,
+      plataforma: e?.plataforma ? String(e.plataforma).slice(0, 20) : null,
+      app_version: e?.app_version ? String(e.app_version).slice(0, 40) : null,
+      user_id: uid,
+    }));
+    const { error } = await supabase.from('app_eventos').insert(rows);
+    if (error) throw error;
+    res.json({ ok: true, gravados: rows.length });
+  } catch (e) {
+    console.warn('[APP] telemetria:', e.message);
+    res.json({ ok: false }); // nunca 500 pro app
+  }
+});
+
 module.exports = router;
