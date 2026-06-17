@@ -288,6 +288,10 @@ const PCONTATO_STATUS: { v: string; label: string; positivo?: boolean }[] = [
   { v: 'sem_retorno',         label: 'Sem retorno do responsável' },
   { v: 'numero_errado',       label: 'Número errado' },
 ];
+// Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
+// independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
+// (e vazio) NÃO contam como contato feito.
+const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
 
 // Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
 const JORNADA_ST: Record<string, { label: string; color: string }> = {
@@ -1027,21 +1031,22 @@ export default function Cuidados() {
     return m;
   }, [jornadaData]);
 
-  async function marcarContato(id: string) {
-    try {
-      await cuidadosApi.convertidos.registrarContato(id);
-      toast.success('Contato registrado');
-      loadAll();
-    } catch (e: any) { toast.error(e.message); }
-  }
 
-  // Status do primeiro contato (otimista). "Atendido"/"Atendido e respondido"
-  // também marcam atendido_apos_culto (mantém o flag legado coerente).
+  // Status do primeiro contato (otimista). O 1º contato NÃO se marca à mão — se FAZ:
+  // ao selecionar uma opção de contato feito, carimba primeiro_contato_em (balão verde
+  // em todas as telas + KPI). "Sem retorno"/"Número errado"/vazio limpam (não-feito).
+  // O atendimento é registrado à parte (Agendar encontro → visitas agendadas).
   async function setPcStatus(id: string, value: string) {
     const v = value || null;
     const anterior = convertidos;
+    const cur: any = convertidos.find((x: any) => x.id === id);
     const patch: any = { primeiro_contato_status: v };
-    if (v === 'atendido' || v === 'atendido_respondido') patch.atendido_apos_culto = true;
+    if (v === 'atendido_respondido') patch.atendido_apos_culto = true;
+    if (v && CONTATO_FEITO.has(v)) {
+      if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString();
+    } else {
+      patch.primeiro_contato_em = null;
+    }
     setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, ...patch } : x));
     try {
       await cuidadosApi.convertidos.update(id, patch);
@@ -1495,17 +1500,14 @@ export default function Cuidados() {
                       <TableCell>
                         {(() => {
                           const j = jMap.get(c.id);
-                          if (!j) return <span className="text-xs text-muted-foreground">—</span>;
+                          // Contato se FAZ pelo status do dropdown → verde automático.
+                          const contatoOk = CONTATO_FEITO.has(c.primeiro_contato_status) || !!j?.contato?.feito;
+                          const contatoM = contatoOk ? { feito: true, status: 'feito' } : (j?.contato || { feito: false, status: 'no_prazo' });
                           return (
-                            <div className="flex flex-col gap-1 items-start">
-                              <div className="flex gap-1">
-                                <JornadaPill label="Contato" m={j.contato} />
-                                <JornadaPill label="Batismo" m={j.batismo} />
-                                <JornadaPill label="Next" m={j.next} />
-                              </div>
-                              {podeEditarCuidados && !j.contato?.feito && (
-                                <button onClick={() => marcarContato(c.id)} className="text-[10px] text-primary hover:underline">marcar contato</button>
-                              )}
+                            <div className="flex gap-1">
+                              <JornadaPill label="Contato" m={contatoM} />
+                              {j && <JornadaPill label="Batismo" m={j.batismo} />}
+                              {j && <JornadaPill label="Next" m={j.next} />}
                             </div>
                           );
                         })()}
