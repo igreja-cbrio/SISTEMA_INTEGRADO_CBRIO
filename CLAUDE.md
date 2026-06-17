@@ -2582,3 +2582,13 @@ saiu_em null) com info (dia/horário/local/foto), **líder** (nome+telefone p/
 horário) e **materiais** (`mem_grupo_documentos` por grupo_ids → URL pública do
 bucket eventos-anexos). App: tela `meu-grupo.tsx` (`/meu-grupo`, item "Meu grupo"
 no Menu). Sem RSVP/presença por ora (follow-up · não há infra de confirmação).
+
+## App · Pregações / Transmissão (2026-06-17 · Fase 5)
+
+Expõe ao app os vídeos do canal YouTube (módulo Online). `GET /api/app/videos`
+(app.js · authApp): 30 vídeos mais recentes (`online_videos` · titulo, video_id,
+thumbnail_url, publicado_em, duration_seconds, serie), 20 séries
+(`online_series`) e `canal_live` (`youtube.com/channel/<YOUTUBE_CHANNEL_ID ou
+default CBRio>/live`). **Somente leitura** (a coleta do YouTube continua no cron
+do `/online`); sem migration, sem env nova. App: tela `videos.tsx` (`/videos` ·
+atalho na Home + "Pregações" no Menu) abre os vídeos no YouTube via Linking.
