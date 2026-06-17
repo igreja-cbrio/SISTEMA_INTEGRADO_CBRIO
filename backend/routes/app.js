@@ -904,6 +904,90 @@ router.post('/kids/pre-checkin', authApp, limiterStrict, async (req, res) => {
   }
 });
 
+// GET /api/app/kids/filho/:id — detalhe do filho (responsável autorizado):
+// info + sala sugerida + histórico de check-ins + foto (se consentida).
+router.get('/kids/filho/:id', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro não encontrado' });
+    // segurança: só responsável autorizado da criança
+    const { data: vinc } = await supabase
+      .from('kids_responsaveis')
+      .select('id, parentesco')
+      .eq('membro_id', membro.id)
+      .eq('crianca_id', req.params.id)
+      .eq('autorizado_buscar', true)
+      .maybeSingle();
+    if (!vinc) return res.status(403).json({ error: 'Você não é responsável autorizado desta criança.' });
+
+    const { data: c } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, data_nascimento, foto_url, foto_consentimento_em, observacoes_medicas, necessidades_especiais')
+      .eq('id', req.params.id)
+      .eq('ativo', true)
+      .maybeSingle();
+    if (!c) return res.status(404).json({ error: 'Criança não encontrada' });
+
+    const idadeMeses = c.data_nascimento
+      ? Math.floor((Date.now() - new Date(c.data_nascimento).getTime()) / (1000 * 60 * 60 * 24 * 30.44))
+      : null;
+
+    // sala sugerida pela faixa etária
+    let salaSugerida = null;
+    if (idadeMeses != null) {
+      const { data: salas } = await supabase
+        .from('kids_salas')
+        .select('nome, cor, faixa_etaria_min_meses, faixa_etaria_max_meses')
+        .eq('ativo', true);
+      const s = (salas || []).find((x) => x.faixa_etaria_min_meses <= idadeMeses && x.faixa_etaria_max_meses >= idadeMeses);
+      if (s) salaSugerida = { nome: s.nome, cor: s.cor };
+    }
+
+    // histórico de check-ins
+    const { data: checkins } = await supabase
+      .from('kids_checkins')
+      .select('id, checkin_at, checkout_at, fez_decisao_jesus, sala:kids_salas(nome, cor), sessao:kids_sessoes(culto:cultos(nome, data))')
+      .eq('crianca_id', req.params.id)
+      .order('checkin_at', { ascending: false })
+      .limit(20);
+
+    const historico = (checkins || []).map((k) => {
+      const sala = Array.isArray(k.sala) ? k.sala[0] : k.sala;
+      const sessao = Array.isArray(k.sessao) ? k.sessao[0] : k.sessao;
+      const culto = sessao && (Array.isArray(sessao.culto) ? sessao.culto[0] : sessao.culto);
+      return {
+        id: k.id,
+        checkin_at: k.checkin_at,
+        checkout_at: k.checkout_at,
+        decisao: !!k.fez_decisao_jesus,
+        sala: sala?.nome || null,
+        cor: sala?.cor || null,
+        culto: culto?.nome || null,
+        data: culto?.data || null,
+      };
+    });
+
+    res.json({
+      crianca: {
+        id: c.id,
+        nome: c.nome,
+        data_nascimento: c.data_nascimento,
+        idade_meses: idadeMeses,
+        observacoes_medicas: c.observacoes_medicas || null,
+        necessidades_especiais: c.necessidades_especiais || null,
+        parentesco: vinc.parentesco || null,
+        foto_url: c.foto_consentimento_em ? c.foto_url : null, // só com consentimento
+      },
+      sala_sugerida: salaSugerida,
+      total_checkins: historico.length,
+      historico,
+    });
+  } catch (e) {
+    console.error('[APP] kids/filho:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar' });
+  }
+});
+
 // POST /api/app/kids/solicitar-vinculo — o responsável pede pra ser vinculado a
 // uma criança e envia os documentos (criança + pai e/ou mãe). NÃO vincula
 // automaticamente: vira solicitação pendente que a equipe Kids confere e aprova.
