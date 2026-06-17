@@ -429,6 +429,32 @@ function LinhaSoma({ label, exec, prev, corExec, bold }) {
     </div>
   );
 }
+// Barra comparativa (min) · parte base (cinza) + parte da atividade especial (âmbar)
+function BarraImpacto({ label, min, extra, max }) {
+  const larg = (v) => `${Math.max(0, Math.round((v / (max || 1)) * 100))}%`;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+      <span style={{ fontSize: 11, color: C.t2, width: 132, flexShrink: 0 }}>{label}</span>
+      {min == null ? (
+        <span style={{ fontSize: 11, color: C.t3 }}>—</span>
+      ) : (() => {
+        const x = Math.min(extra || 0, min);
+        const base = min - x;
+        return (
+          <>
+            <div style={{ flex: 1, display: 'flex', height: 16, background: C.inputBg, borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ width: larg(base), background: C.t3, opacity: 0.45 }} />
+              {x > 0 && <div style={{ width: larg(x), background: '#F59E0B' }} title={`atividade especial · ${x} min`} />}
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.text, width: 84, flexShrink: 0, textAlign: 'right' }}>
+              {min} min{x > 0 ? <span style={{ color: '#B45309', fontWeight: 400 }}> (+{x})</span> : ''}
+            </span>
+          </>
+        );
+      })()}
+    </div>
+  );
+}
 
 // ── Modal de preenchimento da Produção ───────────────────────────────────────
 function ModalProducao({ culto, onClose, onSaved }) {
@@ -725,10 +751,27 @@ function AbaDetalhado() {
                 ? `${data.especiais.cultos_com_especial} de ${data.especiais.cultos_no_periodo} cultos tiveram atividade especial · rotina (ceia/batismo/apresentação): ${data.especiais.cultos_rotina} · outros: ${data.especiais.cultos_outros}.`
                 : ''}
             </p>
+
+            {data.especiais && data.especiais.cultos_com_especial > 0 && (() => {
+              const esp = data.especiais;
+              const impMin = esp.impacto_medio_seg != null ? Math.round(esp.impacto_medio_seg / 60) : null;
+              const maxMin = Math.max(esp.duracao_media_com_min || 0, esp.duracao_media_sem_min || 0, 1);
+              return (
+                <div style={{ marginBottom: 16, padding: 12, background: '#F59E0B0E', border: '1px solid #F59E0B33', borderRadius: 10 }}>
+                  <div style={{ fontSize: 12, color: C.text, marginBottom: 10 }}>
+                    Impacto na duração: as atividades especiais adicionam em média <strong style={{ color: '#B45309' }}>+{impMin ?? '—'} min</strong>
+                    {esp.impacto_medio_pct != null && <> (~{esp.impacto_medio_pct}% do tempo)</>} aos cultos em que entram.
+                  </div>
+                  <BarraImpacto label="Culto sem especial" min={esp.duracao_media_sem_min} extra={0} max={maxMin} />
+                  <BarraImpacto label="Culto com especial" min={esp.duracao_media_com_min} extra={impMin} max={maxMin} />
+                </div>
+              );
+            })()}
+
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                  {['Atividade', 'Tipo', 'Ocorrências', 'Duração média'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                  {['Atividade', 'Tipo', 'Ocorrências', 'Impacto (min)', '% do culto'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -737,10 +780,20 @@ function AbaDetalhado() {
                     <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>{c.label}</td>
                     <td style={{ ...td, color: c.rotina ? C.t2 : '#B45309', fontWeight: c.rotina ? 400 : 700 }}>{c.rotina ? 'Rotina' : 'Outros'}</td>
                     <td style={td}>{c.ocorrencias}</td>
-                    <td style={td}>{fmtMMSSdash(c.duracao_media_seg)}</td>
+                    <td style={{ ...td, color: '#B45309', fontWeight: 600 }}>{c.duracao_media_seg == null ? '—' : `+${fmtMMSS(c.duracao_media_seg)}`}</td>
+                    <td style={td}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 36, flexShrink: 0 }}>{c.impacto_pct == null ? '—' : `${c.impacto_pct}%`}</span>
+                        {c.impacto_pct != null && (
+                          <div style={{ flex: 1, minWidth: 40, height: 8, background: C.inputBg, borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ width: `${Math.min(100, c.impacto_pct)}%`, height: '100%', background: '#F59E0B' }} />
+                          </div>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
-                {(data.especiais?.por_categoria || []).length === 0 && <tr><td colSpan={4} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Nenhuma atividade especial no período.</td></tr>}
+                {(data.especiais?.por_categoria || []).length === 0 && <tr><td colSpan={5} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Nenhuma atividade especial no período.</td></tr>}
               </tbody>
             </table>
           </div>

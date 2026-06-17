@@ -667,27 +667,48 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     // Atividades especiais (ceia/batismo/apresentação/outros) · mapeia por que o
     // culto passa de 60. Conta quantos CULTOS tiveram especial + por categoria.
     const CAT_LABEL = { ceia: 'Ceia', batismo: 'Batismo', apresentacao_bebes: 'Apresentação de bebês', outros: 'Outros' };
+    const totalByCulto = {}; // culto_id -> duração total executada (seg)
+    prod.forEach(p => { if (p.duracao_segundos != null) totalByCulto[p.culto_id] = p.duracao_segundos; });
     const espRows = etapas.filter(e => e.tipo === 'especial');
     const cultosComEspecial = new Set(espRows.map(e => e.culto_id));
     const cultosComRotina = new Set();
     const cultosComOutros = new Set();
+    const espByCulto = {}; // culto_id -> soma do executado das especiais
     const catMap = {};
     for (const e of espRows) {
       const cat = CATEGORIAS_ESPECIAIS.includes(e.categoria_especial) ? e.categoria_especial : 'outros';
       if (CATEGORIAS_ROTINA.includes(cat)) cultosComRotina.add(e.culto_id); else cultosComOutros.add(e.culto_id);
-      if (!catMap[cat]) catMap[cat] = { categoria: cat, label: CAT_LABEL[cat], ocorrencias: 0, soma_exec: 0, n_exec: 0 };
+      if (!catMap[cat]) catMap[cat] = { categoria: cat, label: CAT_LABEL[cat], ocorrencias: 0, soma_exec: 0, n_exec: 0, soma_pct: 0, n_pct: 0 };
       catMap[cat].ocorrencias++;
-      if (e.executado_seg != null) { catMap[cat].soma_exec += e.executado_seg; catMap[cat].n_exec++; }
+      if (e.executado_seg != null) {
+        catMap[cat].soma_exec += e.executado_seg; catMap[cat].n_exec++;
+        espByCulto[e.culto_id] = (espByCulto[e.culto_id] || 0) + e.executado_seg;
+        if (totalByCulto[e.culto_id] > 0) { catMap[cat].soma_pct += e.executado_seg / totalByCulto[e.culto_id] * 100; catMap[cat].n_pct++; }
+      }
     }
+    // Impacto atribuível: minutos/% que as especiais adicionam por culto que as teve
+    const addSegs = Object.values(espByCulto);
+    const impacto_medio_seg = addSegs.length ? Math.round(addSegs.reduce((a, b) => a + b, 0) / addSegs.length) : null;
+    const pctList = Object.keys(espByCulto).filter(id => totalByCulto[id] > 0).map(id => espByCulto[id] / totalByCulto[id] * 100);
+    const impacto_medio_pct = pctList.length ? Math.round(pctList.reduce((a, b) => a + b, 0) / pctList.length) : null;
+    // Comparação com × sem especial (duração total média, em min)
+    const avgMin = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length / 60) : null);
+    const comTotais = Object.keys(totalByCulto).filter(id => cultosComEspecial.has(id)).map(id => totalByCulto[id]);
+    const semTotais = Object.keys(totalByCulto).filter(id => !cultosComEspecial.has(id)).map(id => totalByCulto[id]);
     const especiais = {
       cultos_no_periodo: cultos?.length || 0,
       cultos_com_especial: cultosComEspecial.size,
       cultos_rotina: cultosComRotina.size,
       cultos_outros: cultosComOutros.size,
+      impacto_medio_seg,
+      impacto_medio_pct,
+      duracao_media_com_min: avgMin(comTotais),
+      duracao_media_sem_min: avgMin(semTotais),
       por_categoria: CATEGORIAS_ESPECIAIS.map(c => catMap[c]).filter(Boolean).map(g => ({
         categoria: g.categoria, label: g.label, ocorrencias: g.ocorrencias,
         rotina: CATEGORIAS_ROTINA.includes(g.categoria),
         duracao_media_seg: g.n_exec ? Math.round(g.soma_exec / g.n_exec) : null,
+        impacto_pct: g.n_pct ? Math.round(g.soma_pct / g.n_pct) : null,
       })).sort((a, b) => b.ocorrencias - a.ocorrencias),
     };
 
