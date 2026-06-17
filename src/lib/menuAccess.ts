@@ -101,6 +101,11 @@ const DOMINIO_POR_PATH: Record<string, { dom: Dominio; slug?: string }> = {
   '/ministerial/membresia': { dom: 'membresia' },
 };
 
+// Sempre visíveis pra qualquer colaborador (decisão do Marcos · 2026-06-17):
+// visão macro aberta a todos. A aba Financeira do Dashboard Semanal segue
+// restrita DENTRO da própria página (admin + diretores + time financeiro).
+const PUBLICO_TODOS = new Set(['/painel', '/dashboard-semanal']);
+
 const CRIATIVO_CARGOS = new Set(['coordenador-marketing', 'assistente-marketing', 'lider-producao', 'assistente-producao', 'diretor-criativo']);
 const MINISTERIAL_CARGOS = new Set(['lider-ministerial', 'assistente-ministerial', 'assistente-area', 'coordenador-voluntarios', 'supervisor-jornada', 'diretor-ministerial']);
 
@@ -168,6 +173,11 @@ export function navItemAllowed(item: NavGate, auth: AuthLike): boolean {
   // Deny explícito vence o bypass de admin (override nível 0 / perm negada).
   if (item.perm && auth[item.perm] === false) return false;
   if (item.module && modulosBloqueados.includes(item.module)) return false;
+
+  // Visão macro aberta a todos (Painel CBRio · Dashboard Semanal). Fica DEPOIS
+  // do deny explícito (um bloqueio nível-0 ainda vence) e ANTES do gate de
+  // módulo — assim aparece mesmo pra quem não tem o módulo na matriz.
+  if (item.path && PUBLICO_TODOS.has(item.path)) return true;
 
   // Camada de PERFIL (declutter por domínio) · MENU-ONLY · não bloqueia rota.
   const d = item.path ? DOMINIO_POR_PATH[item.path] : undefined;
