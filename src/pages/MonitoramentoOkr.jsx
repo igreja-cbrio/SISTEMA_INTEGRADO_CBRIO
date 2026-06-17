@@ -162,7 +162,7 @@ const BLOCOS = [
         objetivo: 'Melhorar o clima organizacional do staff CBRio com ações baseadas na cultura',
         envolvida: 'RH',
         taticos: [
-          { ind: 'Nota Q12', alvo: '100% da nova nota desejada alcançada', memoria: 'Avaliação pela plataforma do Gallup', precisa: 'a nota do Gallup Q12 (exportação) — lanço por período' },
+          { ind: 'Nota Q12', alvo: '≥ 4,3 no Q12', memoria: 'Avaliação pela plataforma do Gallup', live: 'q12', alvoNum: 4.3, cmp: 'gte', casas: 2 },
           { ind: 'Engajamento nos treinamentos propostos', alvo: '80%', memoria: 'Criação de planilha de presença', precisa: 'a presença nos treinamentos (o RH já tem rh_treinamentos — confirmo se está sendo preenchido e puxo)' },
           { ind: 'Rotatividade do Staff', alvo: '< 10%', memoria: 'Acompanhamento por meio da planilha de pessoal', live: 'rotatividade', alvoNum: 10, cmp: 'lte' },
         ],
@@ -407,7 +407,7 @@ function TaticoRow({ tatico, metricas }) {
         </div>
         <div style={{ flexShrink: 0, textAlign: 'right', minWidth: 60 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: corNum, lineHeight: 1 }}>
-            {m ? `${fmt(m.valor)}${m.unidade}` : '—'}
+            {m ? `${fmt(m.valor, tatico.casas)}${m.unidade}` : '—'}
           </div>
         </div>
       </button>
