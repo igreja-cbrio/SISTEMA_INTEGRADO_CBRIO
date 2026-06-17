@@ -1003,6 +1003,11 @@ export const notificacoes = {
   },
 };
 
+// Analytics do app de membros (telemetria · visto no sistema)
+export const appAnalytics = {
+  resumo: (dias = 14) => get(`/app-analytics/resumo?dias=${dias}`),
+};
+
 export const painelArea = {
   // params: { período?: '30d'|'90d'|'180d'|'365d', desde?: 'YYYY-MM-DD', até?: 'YYYY-MM-DD' }
   get: (area, params = {}) => {

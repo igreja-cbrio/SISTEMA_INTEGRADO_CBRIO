@@ -2545,3 +2545,16 @@ migration `20260616160000`): obrigatório pra Marketing; pra Utility só se
   Express), batismo lembrete (cron), escala, aniversário. O helper já está pronto.
 - **Pra ativar um template:** aprovar na Meta → setar o env com o nome exato → começa
   a enviar (respeitando opt-in). Opt-in marcado no app (Configurações → Notificações).
+
+## App · Telemetria (analytics de uso + erros · 2026-06-16)
+
+Fase 1 do programa de features do app. O app de membros loga **telas, ações e
+erros (crash JS)** em `app_eventos` (migration `20260616180000` · append-only ·
+RLS service_role · sem PII), via `POST /api/app/telemetria` (`tryAuth` · batch ≤50 ·
+nunca 500 pro app). Dashboard no sistema: `GET /api/app-analytics/resumo?dias=` →
+RPC `fn_app_telemetria_resumo` (1 query JSONB · evita o cap de 1000) →
+tela **`/admin/app-analytics`** (`AppAnalytics.jsx` · guard `dashboard`≥1):
+eventos/usuários por dia, telas mais vistas, ações, erros recentes, plataformas/versões.
+App: `lib/telemetria.ts` (`trackTela`/`trackEvento`/`trackErro` + handler global de
+erro + flush por tamanho/timer/background) ligado no `app/_layout.tsx` (init + cada
+tela via `usePathname`). Próximas features chamam `trackEvento` pra medir adoção.
