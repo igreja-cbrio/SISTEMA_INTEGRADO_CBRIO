@@ -1031,6 +1031,66 @@ router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
   }
 });
 
+// Próximo encontro a partir do dia da semana (0=Dom..6=Sáb) + horário.
+function proximoEncontroISO(diaSemana, horario) {
+  if (diaSemana === null || diaSemana === undefined) return null;
+  const now = new Date();
+  const delta = ((Number(diaSemana) - now.getDay()) + 7) % 7;
+  const [hh, mm] = String(horario || '19:00').split(':').map((x) => parseInt(x, 10) || 0);
+  const d = new Date(now);
+  d.setDate(now.getDate() + delta);
+  d.setHours(hh, mm, 0, 0);
+  if (delta === 0 && d.getTime() < now.getTime()) d.setDate(d.getDate() + 7);
+  return d.toISOString();
+}
+
+// GET /api/app/meu-grupo — grupo(s) de conexão ativos do membro: info, líder,
+// próximo encontro e materiais. Pra experiência "já estou no grupo".
+router.get('/meu-grupo', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ grupos: [] });
+    const { data: vinculos } = await supabase
+      .from('mem_grupo_membros')
+      .select('grupo_id, funcao, mem_grupos(id, nome, dia_semana, horario, local, foto_url, lider_id)')
+      .eq('membro_id', membro.id)
+      .is('saiu_em', null);
+
+    const grupos = [];
+    for (const v of vinculos || []) {
+      const g = Array.isArray(v.mem_grupos) ? v.mem_grupos[0] : v.mem_grupos;
+      if (!g) continue;
+      let lider = null;
+      if (g.lider_id) {
+        const { data: l } = await supabase.from('mem_membros').select('nome, telefone').eq('id', g.lider_id).maybeSingle();
+        if (l) lider = { nome: l.nome, telefone: l.telefone };
+      }
+      const { data: docs } = await supabase
+        .from('mem_grupo_documentos')
+        .select('id, nome, comentario, storage_path, created_at')
+        .contains('grupo_ids', [g.id])
+        .order('created_at', { ascending: false })
+        .limit(15);
+      const materiais = (docs || []).map((d) => ({
+        id: d.id,
+        nome: d.nome,
+        comentario: d.comentario || null,
+        url: d.storage_path ? supabase.storage.from('eventos-anexos').getPublicUrl(d.storage_path).data.publicUrl : null,
+      }));
+      grupos.push({
+        id: g.id, nome: g.nome, dia_semana: g.dia_semana, horario: g.horario,
+        local: g.local, foto_url: g.foto_url, funcao: v.funcao, lider,
+        proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario),
+        materiais,
+      });
+    }
+    res.json({ grupos });
+  } catch (e) {
+    console.error('[APP] meu-grupo:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seu grupo' });
+  }
+});
+
 // GET /api/app/comunicados — mural do membro (publicados, segmentados).
 router.get('/comunicados', authApp, async (req, res) => {
   try {

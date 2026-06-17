@@ -2573,3 +2573,12 @@ Function **`notify-comunicado`** (app repo · `--no-verify-jwt`) — alvos =
 (`MarketingComunicados.jsx` · `/marketing/comunicados`). App: `mural.tsx`
 (`/mural`, item "Avisos" no Menu) + tap da push tipo `comunicado` → /mural.
 Segmentos: todos/ami/bridge/online/sede/kids.
+
+## App · Meu Grupo de Conexão (2026-06-16 · Fase 3)
+
+`GET /api/app/meu-grupo` (app.js): grupos ativos do membro (`mem_grupo_membros`
+saiu_em null) com info (dia/horário/local/foto), **líder** (nome+telefone p/
+"falar com o líder" via wa.me), **próximo encontro** (calculado de dia_semana+
+horário) e **materiais** (`mem_grupo_documentos` por grupo_ids → URL pública do
+bucket eventos-anexos). App: tela `meu-grupo.tsx` (`/meu-grupo`, item "Meu grupo"
+no Menu). Sem RSVP/presença por ora (follow-up · não há infra de confirmação).
