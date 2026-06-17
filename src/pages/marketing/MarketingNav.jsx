@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { useAuth } from '../../contexts/AuthContext';
-import { Kanban, CalendarRange, BarChart3, Settings } from 'lucide-react';
+import { Kanban, CalendarRange, BarChart3, Settings, Megaphone } from 'lucide-react';
 
 // Header do Marketing consolidado em 4 telas (Kanban · Planner · Analytics · Admin)
 // · destaca a aba atual. Triagem/Fila/Ciclo viraram parte do Kanban; Calendário → Planner.
@@ -16,6 +16,7 @@ export default function MarketingNav() {
   const items = [
     { path: '/marketing',                  label: 'Kanban',     icon: Kanban },
     ...(isCoord ? [{ path: '/marketing/planner', label: 'Planner', icon: CalendarRange }] : []),
+    { path: '/marketing/comunicados',      label: 'Comunicados', icon: Megaphone },
     { path: '/marketing/analytics',        label: 'Analytics',  icon: BarChart3 },
     ...(isCoord ? [{ path: '/marketing/admin', label: 'Admin', icon: Settings }] : []),
   ];
