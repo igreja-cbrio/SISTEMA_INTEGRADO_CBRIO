@@ -2583,6 +2583,23 @@ horário) e **materiais** (`mem_grupo_documentos` por grupo_ids → URL pública
 bucket eventos-anexos). App: tela `meu-grupo.tsx` (`/meu-grupo`, item "Meu grupo"
 no Menu). Sem RSVP/presença por ora (follow-up · não há infra de confirmação).
 
+## App · Modo Culto · decisão de fé pelo app (2026-06-17)
+
+"Segunda tela" do culto no app + **decisão de fé** que entra por **fila de
+revisão** (decisão da liderança: NADA do app entra direto na NSM). Migration
+`20260617180000` (aplicada em prod): tabela `app_decisoes` (PII · membro_id +
+culto_id + ambiente presencial/online + tipo aceitar/reconciliacao/rededicacao/
+batismo/outro + status pendente/confirmada/descartada + decisao_id · deleted_at +
+whitelist + RLS contextual) e libera `fonte='app'` em `cultos_decisoes_pessoas`.
+- **App**: `GET /app/culto/agora` (culto de hoje + link ao vivo + jaRegistrou),
+  `POST /app/culto/decisao` (insere pendente · dedup 1/dia · notifica Integração).
+- **Integração**: `GET /integracao/decisoes-app` + `/:id/confirmar` (cria a
+  decisão oficial em `cultos_decisoes_pessoas` com `fonte='app'` → entra na NSM
+  via trigger) + `/:id/descartar`. UI: `DecisoesApp.tsx` no topo da aba Decisões
+  (`vis_decisoes`) do `/integracao`. Notificação `decisao_app` → módulo integracao.
+- App (tela `modo-culto.tsx` · `/modo-culto`, "No culto" no Menu + atalho Home):
+  ao vivo + cartão de decisão + anotações da pregação (locais no aparelho).
+
 ## App · Pregações / Transmissão (2026-06-17 · Fase 5)
 
 Expõe ao app os vídeos do canal YouTube (módulo Online). `GET /api/app/videos`
