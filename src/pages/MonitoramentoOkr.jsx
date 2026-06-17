@@ -74,7 +74,7 @@ const BLOCOS = [
         envolvida: 'Cuidados',
         taticos: [
           { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', memoria: 'Planilha comparando o número de convertidos com o número de atendidos — semanal', precisa: 'registrar a data do 1º contato pastoral de cada convertido (hoje só temos a data da decisão)' },
-          { ind: '% convertidos presentes no Acompanhamento "1º Encontro" com pastores', alvo: '70%', live: 'cafe_atendidos', alvoNum: 70, cmp: 'gte' },
+          { ind: '% de novos convertidos com primeiro contato feito', alvo: '70%', memoria: 'Respondeu + Atendido + Atendido e respondido ÷ total (exclui número errado) · acompanhamento do Cuidados · 90 dias', live: 'cafe_atendidos', alvoNum: 70, cmp: 'gte' },
           { ind: '% de pessoas do Acompanhamento "1º Encontro" que concluíram o Next', alvo: '50%', memoria: 'Planilha comparando convertidos com participantes no Next — mensal', precisa: 'marcar quem veio do Acompanhamento e concluiu o Next (as inscrições do Next já existem; falta ligar a origem)' },
         ],
       },
