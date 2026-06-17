@@ -46,6 +46,25 @@ function intSegOrNull(v) {
   return n;
 }
 
+// Busca TODAS as linhas de uma query (o PostgREST capa em 1000/página). Sem isso,
+// o /acumulado trunca silenciosamente quando o período acumula muitas etapas
+// (~10/culto) ou marcações de checklist (~6/culto) — passa de 1000 em ~3 meses de
+// uso semanal e degrada estouro-por-etapa, atividades especiais e checklist.
+// buildQuery DEVE incluir um .order() determinístico (senão range pula/duplica).
+async function fetchAllPaged(buildQuery) {
+  const page = 1000;
+  let all = [], from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + page - 1);
+    if (error) throw error;
+    const rows = data || [];
+    all = all.concat(rows);
+    if (rows.length < page) break;
+    from += page;
+  }
+  return all;
+}
+
 // itens de checklist aplicáveis a um culto (genéricos + do tipo do culto)
 function itensAplicaveis(template, serviceTypeId) {
   return template.filter(i => i.service_type_id == null || i.service_type_id === serviceTypeId);
@@ -533,14 +552,16 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
 
     let prod = [], ocorr = [], marks = [], serviceTypes = [], etapas = [];
     if (ids.length > 0) {
-      const r = await Promise.all([
-        supabase.from('culto_producao').select('*').in('culto_id', ids),
-        supabase.from('culto_producao_ocorrencias').select('*').in('culto_id', ids),
-        supabase.from('culto_producao_checklist').select('culto_id, feito').in('culto_id', ids),
-        supabase.from('vol_service_types').select('id, name, meta_duracao_min'),
-        supabase.from('culto_producao_etapas').select('culto_id, titulo, previsto_seg, executado_seg, secao, tipo, categoria_especial').in('culto_id', ids),
+      // Paginadas (crescem por culto · sem isso truncariam em 1000). Cada uma com
+      // um .order() determinístico pra paginação por range não pular/duplicar.
+      const [prodR, ocorrR, marksR, stR, etapasR] = await Promise.all([
+        fetchAllPaged(() => supabase.from('culto_producao').select('*').in('culto_id', ids).order('culto_id')),
+        fetchAllPaged(() => supabase.from('culto_producao_ocorrencias').select('*').in('culto_id', ids).order('id')),
+        fetchAllPaged(() => supabase.from('culto_producao_checklist').select('culto_id, feito').in('culto_id', ids).order('culto_id').order('item_id')),
+        supabase.from('vol_service_types').select('id, name, meta_duracao_min'), // catálogo pequeno (~7) · sem paginação
+        fetchAllPaged(() => supabase.from('culto_producao_etapas').select('culto_id, titulo, previsto_seg, executado_seg, secao, tipo, categoria_especial').in('culto_id', ids).order('culto_id').order('ordem')),
       ]);
-      prod = r[0].data || []; ocorr = r[1].data || []; marks = r[2].data || []; serviceTypes = r[3].data || []; etapas = r[4].data || [];
+      prod = prodR; ocorr = ocorrR; marks = marksR; serviceTypes = stR.data || []; etapas = etapasR;
     }
     const metaByType = {};
     serviceTypes.forEach(s => { metaByType[s.id] = s.meta_duracao_min ?? 60; });
