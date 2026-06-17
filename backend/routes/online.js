@@ -66,7 +66,7 @@ router.get('/cron/catch-up', autorizaCron, async (req, res) => {
     res.json(await collectors.catchUpMetricas({ limit }));
   } catch (e) { console.error('[catch-up]', e.message); res.status(500).json({ error: e.message }); }
 });
-// Engajamento de conteúdo (OKR cabeça do Juninho) · refresca o mês atual + anterior
+// Engajamento de conteúdo do canal · refresca o mês atual + anterior
 // todo dia (barato · 2 chamadas Analytics). O backfill do ano inteiro é pelo botão.
 router.get('/cron/engajamento-collect', autorizaCron, async (_req, res) => {
   try { res.json(await collectors.engajamentoCollector({ mesesRecentes: 2 })); }
@@ -261,7 +261,7 @@ router.post('/coletar/engajamento', authorize('admin', 'diretor'), async (req, r
 // KPIs de engajamento de conteúdo do canal (retenção média, taxa de
 // compartilhamento, cliques em séries) · mês mais recente de online_engajamento.
 // Estrutura pronta pra receber dados da API/Analytics do YouTube; enquanto não há
-// coleta, devolve 0 (não "—"). Mesma fonte que alimenta a aba /monitoramento-okr.
+// coleta, devolve 0 (não "—").
 // ---------------------------------------------------------------------------
 router.get('/engajamento', async (_req, res) => {
   try {

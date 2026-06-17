@@ -823,9 +823,8 @@ async function catchUpMetricas({ limit = 5 } = {}) {
 
 // ---------------------------------------------------------------------------
 // engajamentoCollector · agrega o engajamento de conteúdo do CANAL por mês e
-// faz UPSERT em online_engajamento (1 linha por mês). Alimenta o OKR
-// "Engajamento de Conteúdo" (cabeça do Juninho) no /monitoramento-okr + o card
-// de Engajamento em /online.
+// faz UPSERT em online_engajamento (1 linha por mês). Alimenta o card de
+// Engajamento de conteúdo em /online.
 //   - retencao_media_pct        = averageViewPercentage do mês
 //   - taxa_compartilhamento_pct = shares ÷ views × 100 (a API do YouTube não
 //                                 expõe impressões/alcance · views é o proxy)
