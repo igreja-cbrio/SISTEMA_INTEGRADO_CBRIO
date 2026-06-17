@@ -1316,8 +1316,24 @@ router.get('/check-ins', async (req, res) => {
 
 router.post('/check-ins', async (req, res) => {
   try {
-    const { schedule_id, volunteer_id, service_id, method, is_unscheduled } = req.body;
+    const { schedule_id, volunteer_id, service_id, method, is_unscheduled, checked_in_at } = req.body;
     if (!method) return res.status(400).json({ error: 'method obrigatorio' });
+
+    // Hora real do check-in (preserva o horário de check-ins feitos OFFLINE no
+    // totem, que só chegam aqui na sincronização posterior). Aceita só uma data
+    // válida, não futura (tolera 5 min de skew) e dos últimos 7 dias; senão usa
+    // o default now() do banco.
+    let checkedInAt = null;
+    if (checked_in_at) {
+      const t = new Date(checked_in_at);
+      const ms = t.getTime();
+      if (!Number.isNaN(ms)) {
+        const now = Date.now();
+        if (ms <= now + 5 * 60 * 1000 && ms >= now - 7 * 24 * 60 * 60 * 1000) {
+          checkedInAt = t.toISOString();
+        }
+      }
+    }
 
     // Auto-detectar "sem escala" se não informado explicitamente:
     // - sem schedule_id vinculado E
@@ -1340,6 +1356,7 @@ router.post('/check-ins', async (req, res) => {
         checked_in_by: req.user.userId,
         method,
         is_unscheduled: resolvedUnscheduled || false,
+        ...(checkedInAt ? { checked_in_at: checkedInAt } : {}),
       }).select().single();
 
     if (error) {

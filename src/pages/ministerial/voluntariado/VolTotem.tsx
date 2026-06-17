@@ -9,10 +9,18 @@ import { useFaceDetection, useFaceMatch } from './hooks/useVolFace';
 import {
   QrCode, Scan, CheckCircle2, XCircle, RefreshCw, Maximize, ArrowLeft,
   ScanFace, Smartphone, Camera, Loader2, Hand, Search, Check, UserPlus,
+  Wifi, WifiOff, CloudUpload,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { VolSchedule } from './types';
+import {
+  saveTodayServices, getTodayServices, saveProfiles, getProfiles,
+  saveServiceSchedules, getServiceSchedules,
+  enqueueCheckin, getQueueCount, buildLocalDoneSet, checkinKey,
+  resolveQrOffline, isNetworkError, isDuplicateError, syncQueue,
+  type CheckinPayload, type CheckinDisplay,
+} from './services/offlineCheckin';
 
 type CheckinMode = 'qr_scan' | 'facial' | 'qr_fixo' | 'manual';
 type TotemState = 'idle' | 'scanning' | 'success' | 'error' | 'already';
@@ -22,6 +30,7 @@ interface CheckInResult {
   team?: string | null;
   position?: string | null;
   unscheduled?: boolean;
+  queued?: boolean; // salvo offline · aguardando sincronização
 }
 
 export default function VolTotem() {
@@ -40,6 +49,11 @@ export default function VolTotem() {
   const [clock, setClock] = useState(new Date());
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Estado de rede / fila offline
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [pending, setPending] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+
   // QR scan refs
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const processingRef = useRef(false);
@@ -54,6 +68,7 @@ export default function VolTotem() {
   const [allProfiles, setAllProfiles] = useState<any[]>([]);
   const [manualSearch, setManualSearch] = useState('');
   const [manualLoading, setManualLoading] = useState(false);
+  const [localDone, setLocalDone] = useState<Set<string>>(new Set());
 
   // Facial recognition
   const face = useFaceDetection();
@@ -66,17 +81,57 @@ export default function VolTotem() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load today's services
+  // ── Rede + sincronização da fila offline ──
+  const refreshPending = useCallback(() => setPending(getQueueCount()), []);
+  const refreshLocalDone = useCallback(() => {
+    if (selectedServiceId) setLocalDone(buildLocalDoneSet(selectedServiceId));
+  }, [selectedServiceId]);
+
+  const runSync = useCallback(async () => {
+    if (!navigator.onLine || getQueueCount() === 0) { refreshPending(); return; }
+    setSyncing(true);
+    try { await syncQueue(); } finally { setSyncing(false); refreshPending(); refreshLocalDone(); }
+  }, [refreshPending, refreshLocalDone]);
+
   useEffect(() => {
-    voluntariado.services.today().then((data: any) => {
-      setServices(data || []);
-      if (data?.length === 1 && !selectedServiceId) setSelectedServiceId(data[0].id);
-    }).catch(() => {});
+    refreshPending();
+    const onOnline = () => { setIsOnline(true); runSync(); };
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    // tenta esvaziar a fila ao abrir e periodicamente enquanto houver pendência
+    runSync();
+    const iv = setInterval(() => {
+      if (navigator.onLine && getQueueCount() > 0) runSync();
+      else refreshPending();
+    }, 15000);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      clearInterval(iv);
+    };
+  }, [runSync, refreshPending]);
+
+  // Load today's services (rede → cache fallback offline)
+  useEffect(() => {
+    voluntariado.services.today()
+      .then((data: any) => {
+        const list = data || [];
+        setServices(list);
+        saveTodayServices(list);
+        if (list.length === 1 && !selectedServiceId) setSelectedServiceId(list[0].id);
+      })
+      .catch(() => {
+        const cached = getTodayServices();
+        setServices(cached);
+        if (cached.length === 1 && !selectedServiceId) setSelectedServiceId(cached[0].id);
+      });
   }, []);
 
   // When service is selected, start the active mode
   useEffect(() => {
     if (!selectedServiceId) return;
+    refreshLocalDone();
     startMode(checkinMode);
     return () => { stopAllModes(); };
   }, [selectedServiceId, checkinMode]);
@@ -107,6 +162,88 @@ export default function VolTotem() {
 
   const switchMode = (mode: CheckinMode) => {
     setCheckinMode(mode);
+  };
+
+  // ── Reset / finalização compartilhada ──
+
+  const autoReset = (afterReset: () => void) => {
+    setTimeout(() => {
+      setState('idle');
+      setResult(null);
+      setErrorMsg('');
+      processingRef.current = false;
+      afterReset();
+    }, 4000);
+  };
+
+  const resetAfter = (ms: number, afterReset: () => void) => {
+    setTimeout(() => {
+      setState('idle');
+      setResult(null);
+      setErrorMsg('');
+      processingRef.current = false;
+      afterReset();
+    }, ms);
+  };
+
+  const handleCheckinError = (err: any, afterReset: () => void) => {
+    const msg = err.message || 'Erro no check-in';
+    const isDuplicate = err.alreadyCheckedIn || err.status === 409
+      || msg.includes('ja') || msg.includes('already') || msg.includes('realizado');
+    if (isDuplicate) {
+      setResult({ name: err.volunteerName || result?.name || '' });
+      setState('already');
+    } else {
+      setErrorMsg(msg);
+      setState('error');
+    }
+    resetAfter(3000, afterReset);
+  };
+
+  // ── Check-in unificado (online com fallback offline) ──
+  //
+  // Tenta o servidor quando online; se a rede cair (ou já estiver offline),
+  // grava na FILA local e mostra sucesso "salvo offline". 409 = já fez.
+  const submitCheckin = async (payload: CheckinPayload, display: CheckinDisplay, afterReset: () => void) => {
+    // Duplicata local (servidor cacheado + fila) — barra re-scan offline.
+    const key = checkinKey(payload);
+    if (key && buildLocalDoneSet(payload.service_id).has(key)) {
+      setResult({ name: display.name });
+      setState('already');
+      resetAfter(3000, afterReset);
+      return;
+    }
+
+    const queueIt = () => {
+      enqueueCheckin(payload, display);
+      refreshPending();
+      refreshLocalDone();
+      setResult({ ...display, queued: true });
+      setState('success');
+      autoReset(afterReset);
+    };
+
+    if (!navigator.onLine) { queueIt(); return; }
+
+    try {
+      await voluntariado.checkIns.create(payload as any);
+      refreshLocalDone();
+      setResult(display);
+      setState('success');
+      autoReset(afterReset);
+      runSync(); // aproveita pra esvaziar backlog de uma queda anterior
+    } catch (err: any) {
+      if (isDuplicateError(err)) {
+        setResult({ name: err.volunteerName || display.name });
+        setState('already');
+        resetAfter(3000, afterReset);
+        return;
+      }
+      if (isNetworkError(err)) { queueIt(); return; }
+      setErrorMsg(err.message || 'Erro no check-in');
+      setState('error');
+      resetAfter(3000, afterReset);
+    }
   };
 
   // ── QR Scan Mode ──
@@ -156,39 +293,53 @@ export default function VolTotem() {
   const handleQrScan = useCallback(async (qrCode: string) => {
     if (processingRef.current) return;
     processingRef.current = true;
+    const afterReset = () => startQrScanning();
 
     try {
       await stopQrScanning();
+
+      // OFFLINE: resolve o QR pelo cache (vol_profiles.qr_code).
+      if (!navigator.onLine) {
+        const r = resolveQrOffline(qrCode, selectedServiceId);
+        if (!r) {
+          setErrorMsg('Sem internet · QR não reconhecido offline. Use a busca manual.');
+          setState('error');
+          resetAfter(3000, afterReset);
+          return;
+        }
+        await submitCheckin(r.payload, r.display, afterReset);
+        return;
+      }
+
+      // ONLINE: resolve no servidor (cobre QR legado e cartão de membro).
       const lookupResult = await voluntariado.qrLookup(qrCode);
 
       if (lookupResult.isUnscheduled) {
-        await voluntariado.checkIns.create({
-          volunteer_id: lookupResult.profile?.id || undefined,
-          service_id: selectedServiceId,
-          method: 'qr_code',
-          is_unscheduled: true,
-        });
-        setResult({ name: lookupResult.volunteerName, unscheduled: true });
+        await submitCheckin(
+          { volunteer_id: lookupResult.profile?.id || undefined, service_id: selectedServiceId, method: 'qr_code', is_unscheduled: true },
+          { name: lookupResult.volunteerName, unscheduled: true },
+          afterReset
+        );
       } else if (lookupResult.schedule) {
-        await voluntariado.checkIns.create({
-          schedule_id: lookupResult.schedule.id,
-          volunteer_id: lookupResult.profile?.id || undefined,
-          service_id: selectedServiceId,
-          method: 'qr_code',
-        });
-        setResult({
-          name: lookupResult.volunteerName,
-          team: lookupResult.schedule.team_name,
-          position: lookupResult.schedule.position_name,
-        });
+        await submitCheckin(
+          { schedule_id: lookupResult.schedule.id, volunteer_id: lookupResult.profile?.id || undefined, service_id: selectedServiceId, method: 'qr_code' },
+          { name: lookupResult.volunteerName, team: lookupResult.schedule.team_name, position: lookupResult.schedule.position_name },
+          afterReset
+        );
       } else {
         throw new Error('QR code não encontrado');
       }
-
-      setState('success');
-      autoReset(() => startQrScanning());
     } catch (err: any) {
-      handleCheckinError(err, () => startQrScanning());
+      // Rede caiu durante a consulta → tenta resolver pelo cache.
+      if (isNetworkError(err)) {
+        const r = resolveQrOffline(qrCode, selectedServiceId);
+        if (r) { await submitCheckin(r.payload, r.display, afterReset); return; }
+        setErrorMsg('Sem internet · QR não reconhecido offline. Use a busca manual.');
+        setState('error');
+        resetAfter(3000, afterReset);
+        return;
+      }
+      handleCheckinError(err, afterReset);
     }
   }, [selectedServiceId]);
 
@@ -220,6 +371,11 @@ export default function VolTotem() {
         setState('scanning');
 
         try {
+          // O reconhecimento facial roda no servidor (pgvector) — exige internet.
+          if (!navigator.onLine) {
+            throw new Error('Reconhecimento facial precisa de internet. Use QR ou a busca manual.');
+          }
+
           const matchResult: any = await faceMatch.mutateAsync({
             descriptor: Array.from(descriptor),
             threshold: 0.5,
@@ -232,20 +388,11 @@ export default function VolTotem() {
           const profileId = matchResult.profile_id || matchResult.volunteer_id;
           const volunteerName = matchResult.volunteer_name || matchResult.name || 'Voluntario';
 
-          // Try to check in
-          await voluntariado.checkIns.create({
-            volunteer_id: profileId,
-            service_id: selectedServiceId,
-            method: 'facial',
-            is_unscheduled: true,
-          });
-
-          setResult({ name: volunteerName, unscheduled: true });
-          setState('success');
-          autoReset(() => {
-            processingRef.current = false;
-            if (faceLoopRef.current) runFaceLoop();
-          });
+          await submitCheckin(
+            { volunteer_id: profileId, service_id: selectedServiceId, method: 'facial', is_unscheduled: true },
+            { name: volunteerName, unscheduled: true },
+            () => { processingRef.current = false; if (faceLoopRef.current) runFaceLoop(); }
+          );
         } catch (err: any) {
           handleCheckinError(err, () => {
             processingRef.current = false;
@@ -274,8 +421,6 @@ export default function VolTotem() {
     }
   };
 
-  // ── Shared helpers ──
-
   // ── Manual Mode ──
 
   const loadSchedules = async () => {
@@ -283,11 +428,17 @@ export default function VolTotem() {
     setManualLoading(true);
     try {
       const [schedData, profData] = await Promise.all([
-        voluntariado.schedules.list({ service_id: selectedServiceId }).catch(() => []),
-        voluntariado.profiles.list().catch(() => []),
+        voluntariado.schedules.list({ service_id: selectedServiceId }).catch(() => null),
+        voluntariado.profiles.list().catch(() => null),
       ]);
-      setSchedules(Array.isArray(schedData) ? schedData : []);
-      setAllProfiles(Array.isArray(profData) ? profData : []);
+      // Online: usa a rede e atualiza o cache. Offline (null): cai no cache.
+      const sched = Array.isArray(schedData) ? schedData : getServiceSchedules(selectedServiceId);
+      const profs = Array.isArray(profData) ? profData : getProfiles();
+      setSchedules(sched);
+      setAllProfiles(profs);
+      if (Array.isArray(schedData)) saveServiceSchedules(selectedServiceId, schedData);
+      if (Array.isArray(profData)) saveProfiles(profData);
+      refreshLocalDone();
     } finally {
       setManualLoading(false);
     }
@@ -296,74 +447,24 @@ export default function VolTotem() {
   const handleManualCheckin = async (sch: VolSchedule) => {
     if (processingRef.current) return;
     processingRef.current = true;
-    try {
-      await voluntariado.checkIns.create({
-        schedule_id: sch.id,
-        volunteer_id: sch.volunteer_id || undefined,
-        service_id: selectedServiceId,
-        method: 'manual',
-      });
-      setResult({
-        name: sch.volunteer_name,
-        team: sch.team_name,
-        position: sch.position_name,
-      });
-      setState('success');
-      autoReset(() => loadSchedules());
-    } catch (err: any) {
-      handleCheckinError(err, () => loadSchedules());
-    }
+    await submitCheckin(
+      { schedule_id: sch.id, volunteer_id: sch.volunteer_id || undefined, service_id: selectedServiceId, method: 'manual' },
+      { name: sch.volunteer_name, team: sch.team_name, position: sch.position_name },
+      () => loadSchedules()
+    );
   };
 
   const handleUnscheduledCheckin = async (profile: any) => {
     if (processingRef.current) return;
     processingRef.current = true;
-    try {
-      await voluntariado.checkIns.create({
-        volunteer_id: profile.id,
-        service_id: selectedServiceId,
-        method: 'manual',
-        is_unscheduled: true,
-      });
-      setResult({ name: profile.full_name, unscheduled: true });
-      setState('success');
-      autoReset(() => loadSchedules());
-    } catch (err: any) {
-      handleCheckinError(err, () => loadSchedules());
-    }
+    await submitCheckin(
+      { volunteer_id: profile.id, service_id: selectedServiceId, method: 'manual', is_unscheduled: true },
+      { name: profile.full_name, unscheduled: true },
+      () => loadSchedules()
+    );
   };
 
   // ── Shared helpers ──
-
-  const autoReset = (afterReset: () => void) => {
-    setTimeout(() => {
-      setState('idle');
-      setResult(null);
-      setErrorMsg('');
-      processingRef.current = false;
-      afterReset();
-    }, 4000);
-  };
-
-  const handleCheckinError = (err: any, afterReset: () => void) => {
-    const msg = err.message || 'Erro no check-in';
-    const isDuplicate = err.alreadyCheckedIn || err.status === 409
-      || msg.includes('ja') || msg.includes('already') || msg.includes('realizado');
-    if (isDuplicate) {
-      setResult({ name: err.volunteerName || result?.name || '' });
-      setState('already');
-    } else {
-      setErrorMsg(msg);
-      setState('error');
-    }
-    setTimeout(() => {
-      setState('idle');
-      setResult(null);
-      setErrorMsg('');
-      processingRef.current = false;
-      afterReset();
-    }, 3000);
-  };
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -383,7 +484,7 @@ export default function VolTotem() {
   ];
 
   const normalize = (s: string) =>
-    s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
   const filteredSchedules = schedules.filter(s => {
     if (!manualSearch.trim()) return true;
@@ -408,8 +509,11 @@ export default function VolTotem() {
         .slice(0, 20)
     : [];
 
+  // "Presente" = check-in no servidor OU já registrado localmente (fila offline)
+  const isDone = (sch: VolSchedule) => !!(sch as any).check_in || localDone.has(`sch:${sch.id}`);
+
   const statusBadge = (s: VolSchedule) => {
-    if (s.check_in) return { label: 'Presente', cls: 'bg-green-500/20 text-green-300 border-green-500/30' };
+    if (isDone(s)) return { label: 'Presente', cls: 'bg-green-500/20 text-green-300 border-green-500/30' };
     if (s.confirmation_status === 'declined') return { label: 'Recusou', cls: 'bg-red-500/20 text-red-300 border-red-500/30' };
     if (s.confirmation_status === 'pending') return { label: 'Pendente', cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' };
     return { label: 'Escalado', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/30' };
@@ -433,6 +537,30 @@ export default function VolTotem() {
           <span className="text-base md:text-lg font-semibold opacity-70">Check-in</span>
         </div>
         <div className="flex items-center gap-2 md:gap-4">
+          {/* Status de rede + fila offline */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
+                isOnline
+                  ? 'bg-green-500/15 text-green-300 border-green-500/30'
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              }`}
+              title={isOnline ? 'Conectado' : 'Sem internet · check-ins ficam salvos e sincronizam quando a rede voltar'}
+            >
+              {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+            </span>
+            {pending > 0 && (
+              <span
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-blue-500/15 text-blue-300 border-blue-500/30"
+                title="Check-ins aguardando sincronização"
+              >
+                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CloudUpload className="h-3.5 w-3.5" />}
+                <span>{pending}</span>
+                <span className="hidden md:inline">{pending === 1 ? 'pendente' : 'pendentes'}</span>
+              </span>
+            )}
+          </div>
           <span className="text-xs md:text-sm opacity-60 hidden sm:inline">
             {format(clock, "EEEE, dd 'de' MMMM", { locale: ptBR })}
           </span>
@@ -501,6 +629,11 @@ export default function VolTotem() {
               {selectedService.service_type_name && ` — ${selectedService.service_type_name}`}
             </p>
           )}
+          {!isOnline && (checkinMode === 'facial' || checkinMode === 'qr_fixo') && (
+            <p className="text-center text-sm text-amber-300/80 mt-2">
+              Sem internet · {checkinMode === 'facial' ? 'o reconhecimento facial' : 'o QR fixo'} precisa de conexão. Use QR Code ou Manual.
+            </p>
+          )}
         </div>
       )}
 
@@ -526,6 +659,9 @@ export default function VolTotem() {
           <div className="text-center space-y-2">
             <p className="text-lg md:text-xl font-medium">Aproxime seu QR Code</p>
             <p className="text-sm text-white/40">Posicione o QR code do cracha em frente a camera</p>
+            {!isOnline && (
+              <p className="text-sm text-amber-300/80">Offline · resolvendo crachás pelo cache local</p>
+            )}
           </div>
           <Button
             variant="ghost"
@@ -669,7 +805,7 @@ export default function VolTotem() {
                     )}
                     {filteredSchedules.map((sch) => {
                       const badge = statusBadge(sch);
-                      const done = !!sch.check_in;
+                      const done = isDone(sch);
                       return (
                         <div
                           key={sch.id}
@@ -767,6 +903,12 @@ export default function VolTotem() {
               <span className="inline-block px-4 py-2 bg-yellow-500/20 text-yellow-300 rounded-full text-base md:text-lg">
                 Sem escala
               </span>
+            )}
+            {result.queued && (
+              <div className="flex items-center justify-center gap-2 text-amber-300">
+                <CloudUpload className="h-5 w-5" />
+                <span className="text-base md:text-lg">Salvo offline · sincroniza quando a internet voltar</span>
+              </div>
             )}
           </div>
         </div>
