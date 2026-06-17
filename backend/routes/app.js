@@ -1175,6 +1175,39 @@ router.get('/meu-grupo', authApp, async (req, res) => {
   }
 });
 
+// GET /api/app/videos — pregações recentes + séries (YouTube) + link ao vivo.
+router.get('/videos', authApp, async (req, res) => {
+  try {
+    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
+    const { data: videos } = await supabase
+      .from('online_videos')
+      .select('video_id, titulo, thumbnail_url, publicado_em, duration_seconds, serie:online_series(titulo)')
+      .order('publicado_em', { ascending: false })
+      .limit(30);
+    const { data: series } = await supabase
+      .from('online_series')
+      .select('playlist_id, titulo, thumbnail_url, total_videos')
+      .order('publicada_em', { ascending: false, nullsFirst: false })
+      .limit(20);
+
+    res.json({
+      canal_live: `https://www.youtube.com/channel/${channelId}/live`,
+      videos: (videos || []).map((v) => ({
+        video_id: v.video_id,
+        titulo: v.titulo,
+        thumbnail_url: v.thumbnail_url,
+        publicado_em: v.publicado_em,
+        duration_seconds: v.duration_seconds,
+        serie: Array.isArray(v.serie) ? v.serie[0]?.titulo : v.serie?.titulo || null,
+      })),
+      series: series || [],
+    });
+  } catch (e) {
+    console.error('[APP] videos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar vídeos' });
+  }
+});
+
 // GET /api/app/comunicados — mural do membro (publicados, segmentados).
 router.get('/comunicados', authApp, async (req, res) => {
   try {
