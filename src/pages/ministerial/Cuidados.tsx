@@ -274,6 +274,19 @@ const ENCONTRO_STATUS: Record<string, { label: string; color: string }> = {
   cancelado: { label: 'Cancelado', color: '#6b7280' },
 };
 
+// Status do PRIMEIRO CONTATO (ex-planilha do Marcelo). Primeiro contato feito =
+// respondeu/atendido/atendido_respondido. "numero_errado" sai do denominador do tático.
+const PCONTATO_STATUS: { v: string; label: string; positivo?: boolean }[] = [
+  { v: 'respondeu',           label: 'Respondeu',                  positivo: true },
+  { v: 'atendido',            label: 'Atendido',                   positivo: true },
+  { v: 'atendido_respondido', label: 'Atendido e respondido',      positivo: true },
+  { v: 'nao_respondeu',       label: 'Não respondeu' },
+  { v: 'nao_compareceu',      label: 'Não compareceu' },
+  { v: 'nao_atendido',        label: 'Não atendido' },
+  { v: 'sem_retorno',         label: 'Sem retorno do responsável' },
+  { v: 'numero_errado',       label: 'Número errado' },
+];
+
 // Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
 const JORNADA_ST: Record<string, { label: string; color: string }> = {
   feito:          { label: 'Feito',        color: '#10b981' },
@@ -1020,6 +1033,22 @@ export default function Cuidados() {
     } catch (e: any) { toast.error(e.message); }
   }
 
+  // Status do primeiro contato (otimista). "Atendido"/"Atendido e respondido"
+  // também marcam atendido_apos_culto (mantém o flag legado coerente).
+  async function setPcStatus(id: string, value: string) {
+    const v = value || null;
+    const anterior = convertidos;
+    const patch: any = { primeiro_contato_status: v };
+    if (v === 'atendido' || v === 'atendido_respondido') patch.atendido_apos_culto = true;
+    setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, ...patch } : x));
+    try {
+      await cuidadosApi.convertidos.update(id, patch);
+    } catch (e: any) {
+      setConvertidos(anterior);
+      toast.error(`Não foi possível salvar o status: ${e.message}`);
+    }
+  }
+
   const convertidosFiltrados = useMemo(() => {
     const q = convertSearch.trim().toLowerCase();
     return convertidos.filter((c: any) => {
@@ -1402,6 +1431,7 @@ export default function Cuidados() {
                 <TableRow>
                   <TableHead>Nome</TableHead>
                   <TableHead>Data culto</TableHead>
+                  <TableHead>1º contato</TableHead>
                   <TableHead>Encontro</TableHead>
                   <TableHead>Jornada</TableHead>
                   <TableHead>Tags</TableHead>
@@ -1410,7 +1440,7 @@ export default function Cuidados() {
               </TableHeader>
               <TableBody>
                 {convertidosFiltrados.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
                   </TableCell></TableRow>
                 ) : convertidosFiltrados.map(c => {
@@ -1428,6 +1458,26 @@ export default function Cuidados() {
                         </button>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
+                      <TableCell>
+                        {podeEditarCuidados ? (
+                          <select
+                            value={c.primeiro_contato_status || ''}
+                            onChange={e => setPcStatus(c.id, e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[160px]"
+                            title="Status do primeiro contato"
+                          >
+                            <option value="">—</option>
+                            {PCONTATO_STATUS.map(s => (
+                              <option key={s.v} value={s.v}>{s.label}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {PCONTATO_STATUS.find(s => s.v === c.primeiro_contato_status)?.label || '—'}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         {c.encontro_marcado ? (
                           <div className="flex items-center gap-1.5 text-primary text-xs">
