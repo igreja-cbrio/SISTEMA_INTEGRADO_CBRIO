@@ -81,6 +81,14 @@ export const users = {
   me: () => get('/auth/me'),
 };
 
+// Progresso de tutoriais (onboarding) · backend com service role · 1x por
+// usuário+tour, confiável (não depende de RLS/anon key no frontend).
+export const tutorial = {
+  progress: () => get('/tutorial/progress'),
+  complete: (tour_id, status) => post('/tutorial/complete', { tour_id, status }),
+  reset: (tour_id) => del('/tutorial/progress' + (tour_id ? `?tour_id=${encodeURIComponent(tour_id)}` : '')),
+};
+
 // Onda 0 · loop de feedback do piloto
 export const feedback = {
   enviar: (data) => post('/feedback', data),
