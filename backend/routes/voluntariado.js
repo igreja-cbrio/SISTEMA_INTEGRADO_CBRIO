@@ -9,6 +9,7 @@ const { notificar } = require('../services/notificar');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { requireCron } = require('../utils/cronAuth');
 const antecedentes = require('../services/antecedentesCriminais');
+const { executarSyncCompleto } = require('../services/voluntariadoSync');
 const multer = require('multer');
 const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -22,6 +23,23 @@ router.get('/cron/antecedentes', requireCron, async (req, res) => {
   } catch (e) {
     console.error('[vol/cron/antecedentes]', e.message);
     res.status(500).json({ error: 'Erro no cron de antecedentes' });
+  }
+});
+
+// Cron diário (sem login · CRON_SECRET) · sincroniza o Planning Center 1x/dia
+// (vercel.json · 7h BRT) pra que no dia do culto as escalas/pessoas estejam
+// atualizadas na hora do check-in. Mesma lógica do botão manual /sync.
+router.get('/cron/sync', requireCron, async (req, res) => {
+  try {
+    const r = await executarSyncCompleto();
+    await supabase.from('vol_sync_logs').insert({
+      sync_type: 'automatic', services_synced: r.services, schedules_synced: r.schedules,
+      qrcodes_generated: r.qrCodesGenerated, status: 'success',
+    });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[vol/cron/sync]', e.message);
+    res.status(500).json({ error: 'Erro no cron de sync do voluntariado' });
   }
 });
 
