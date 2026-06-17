@@ -1,23 +1,25 @@
 /**
  * Script: _import_acompanhamento_jornada.js  (rodar UMA vez · não faz parte do runtime)
  *
- * Importa o status do PRIMEIRO CONTATO da planilha "Acompanhamento de Jornada" do
- * Marcelo (OneDrive · somente leitura) para `cui_convertidos`, alimentando o tático
- * "% de novos convertidos com primeiro contato feito" do Monitoramento OKR e a aba
- * "Próximos passos" do Cuidados, onde o Marcelo passa a preencher nativo daqui pra frente.
+ * Importa o acompanhamento do PRIMEIRO CONTATO da planilha "Acompanhamento de Jornada"
+ * do Marcelo para `cui_convertidos`, alimentando o tático "% de novos convertidos com
+ * primeiro contato feito" (Monitoramento OKR) e a aba "Próximos passos" do Cuidados.
  *
- * O QUE IMPORTA: Data (conversão) · Nome · Contato · Status. Faixa-etária / Responsável /
- * Next NÃO entram — a exportação da planilha duplicou o bloco de abril/2026 e desalinhou
- * essas 3 colunas (não dá pra confiar em quem é quem). Kids não são separáveis por isso,
- * então vão como estão (poucos · o Marcelo limpa no Cuidados se quiser).
+ * FONTE: o próprio Marcos colou as 7 colunas alinhadas por linha (Data · Nome · Contato ·
+ * Status · Faixa-etária · Responsável · Next) no bloco RAW abaixo. Agora dá pra usar
+ * Faixa (→ área) e Responsável também. O bloco duplicado/corrompido de abril/2026 some
+ * sozinho: a dedup por (data|nome) mantém só a 1ª ocorrência de cada pessoa.
  *
- * MATCHING (idempotente): casa cada linha com um cui_convertidos existente por
- * nome+data_culto (mesma chave do trigger) ou por telefone; se achar, ATUALIZA o status;
- * senão, INSERE um novo convertido. Rodar de novo só re-atualiza (sem duplicar).
+ * REGRAS:
+ *  - Área: Adulto→sede · Jovem→ami · Adolescente→bridge · On Line→online · Criança→KIDS.
+ *  - Crianças (Faixa = Criança) NÃO entram (mesma regra do sistema: kids fora da jornada/NSM).
+ *    Rode com IMPORTAR_KIDS=1 se quiser incluí-las assim mesmo.
+ *  - Primeiro contato feito = Respondeu + Atendido + Atendido e respondido.
+ *  - Matching idempotente: casa por nome+data ou telefone (atualiza) · senão insere.
  *
- * Uso:
- *   cd backend && node scripts/_import_acompanhamento_jornada.js          # aplica
- *   cd backend && DRY_RUN=1 node scripts/_import_acompanhamento_jornada.js # só simula/loga
+ * Uso (na pasta backend):
+ *   DRY_RUN=1 node scripts/_import_acompanhamento_jornada.js   # simula/loga
+ *   node scripts/_import_acompanhamento_jornada.js             # aplica
  *
  * Pré-requisito: migration 20260617150000 aplicada (coluna primeiro_contato_status).
  */
@@ -25,332 +27,406 @@ require('dotenv').config();
 const { supabase } = require('../utils/supabase');
 
 const DRY = !!process.env.DRY_RUN;
+const IMPORTAR_KIDS = !!process.env.IMPORTAR_KIDS;
 
-// status canônico → { atendido_apos_culto, primeiro_contato (feito) }
-const ST = {
-  respondeu:           { atendido: false, contato: true },
-  atendido:            { atendido: true,  contato: true },
-  atendido_respondido: { atendido: true,  contato: true },
-  nao_respondeu:       { atendido: false, contato: false },
-  nao_compareceu:      { atendido: false, contato: false },
-  nao_atendido:        { atendido: false, contato: false },
-  sem_retorno:         { atendido: false, contato: false },
-  numero_errado:       { atendido: false, contato: false },
+// ── Dados colados pelo Marcos (planilha read-only). NÃO editar à mão · é a fonte. ──
+const RAW = `
+26/10/2025	Gian Filipo	(21) 965324803	Não respondeu	Adulto	Sebastião	Não
+26/10/2025	Monique Cardoso	(21) 982252295	Atendido	Adulto	Lorena	Sim
+26/10/2025	Andréa Freitas	(21) 992635155	Respondeu	Adulto	Wesley	Não
+26/10/2025	Daniele Bastos	(21) 999011333	Atendido	Criança	Mari	Não
+26/10/2025	Fernanda Drummond	(21) 966524040	Não respondeu	Adulto	Nélio	Não
+26/10/2025	Maria dos Anjos	(21) 993536301	Respondeu	Adulto	Wesley	Não
+02/11/2020	Lis Queiroz	(21) 967731012	Respondeu	Adulto	Natasha	Não
+02/11/2025	Thais Nobre Barros	(21) 970355136	Não compareceu	Adulto	Wesley	Não
+02/11/2025	Zulfo Epifanio P. Filho	(21) 975922101	Atendido	Adulto	Wesley	Não
+02/11/2025	Carolina Venter	(21) 981354931	Respondeu	Adulto	Nélio	Não
+02/11/2025	Daniel	(21) 974636176	Número errado	Jovem	Carmet	Não
+02/11/2025	Leandro Silveira	(21) 997740869	Atendido	Adulto	Nélio	Sim
+02/11/2025	Luis Alexandre	(21) 964588881	Respondeu	Adulto	Sebastião	Não
+09/11/2025	Cristiana Ribeiro	(21) 982612915	Não respondeu	Adulto	Nélio	Sim
+09/11/2025	Luiza Rodrigues	(21) 975021494	Número errado	Jovem	Carmet	Não
+09/11/2025	Angela Marelli	(21) 999251351	Número errado	On Line	Renata	Não
+09/11/2025	Maria Laura F. de Mendonça	(22) 992267777	Respondeu	Adulto	Natasha	Não
+09/11/2025	Naldo Sarinho	(21) 993852270	Atendido	Adulto	Wesley	Não
+09/11/2025	Débora Sarinho	(21) 987275510	Atendido	Adulto	Wesley	Não
+09/11/2025	Danielle	(21) 974646723	Não respondeu	Adolescente	Lilian	Não
+09/11/2025	Jorge Mendes	(21) 996518006	Respondeu	Adulto	Wesley	Não
+12/11/2025	Lara Giacomazzi	(21) 990590996	Não respondeu	Jovem	Carmet	Não
+12/11/2025	Rafaela Reis	(21) 999718225	Não respondeu	Jovem	Carmet	Não
+16/11/2025	Raphaela Pereira	(21) 997164660	Respondeu	Adulto	Naná	Não
+16/11/2025	Aniele	(21) 994558977	Atendido	Criança	Mari	Não
+16/11/2025	Valdeci Barbieri	(21) 969923398	Atendido	Adulto	Wesley	Não
+16/11/2025	Sergio Lara	(21) 964321619	Atendido	Adulto	Wesley	Não
+16/11/2025	Leandro Silveira	(21) 997740869	Não respondeu	Adolescente	Lilian	Sim
+23/11/2025	Silvia Regina Cordeiro	(21) 964638534	Atendido	Adulto	Sebastião	Não
+23/11/2025	Bruno Fonseca	(21) 996022177	Respondeu	Adulto	Lorena	Não
+23/11/2025	Letícia Almeida	(21) 969615097	Atendido	Adulto	Natasha	Não
+23/11/2025	Christiane Boechat	(21) 994638170	Atendido	Adulto	Wesley	Não
+23/11/2025	Thiago Carvalho	(21) 996601112	Atendido	Adulto	Nélio	Não
+23/11/2025	Luciano Maquinavita	(21) 981089286	Respondeu	Adulto	Wesley	Não
+23/11/2025	Daniel de Oliveira Cunha	(21) 974926306	Não respondeu	Adulto	Sebastião	Não
+23/11/2025	Julio Cesar Vieira	(21) 920187053	Atendido	Adulto	Wesley	Não
+23/11/2025	Bernardo Feitosa	(21) 982403870	Respondeu	Adolescente	Lilian	Não
+23/11/2025	Marcus Vinicius Duarte	(21) 994666182	Atendido	Adulto	Wesley	Sim
+23/11/2025	Marcos	(24) 992644193	Atendido	Adulto	Renata	Não
+23/11/2025	Letícia Castro	(21) 984115631	Atendido	Adulto	Wesley	Não
+26/11/2025	Carol Capra	(21) 993224155	Atendido	Adulto	Wesley	Não
+30/11/2025	Jasilmo Paulino da Silva	(21) 959122974	Atendido	Adulto	Nélio	Não
+30/11/2025	Shirlene Souza	(21) 998732324	Atendido	Adulto	Renata	Não
+07/12/2025	Raphael Drumond Rebelo	(21) 979910022	Respondeu	Adulto	Wesley	Não
+07/12/2025	Carolina Girão	(21) 981952210	Respondeu	Adulto	Natasha	Sim
+07/12/2025	Fernanda Cruz	(21) 964130567	Respondeu	Adulto	Wesley	Não
+07/12/2025	Sandro Cruz	(21) 964130565	Respondeu	Adulto	Wesley	Não
+07/12/2025	Filipe Leão	(11) 996611276	Atendido	Adulto	Nélio	Sim
+07/12/2025	João Vitor Muniz	(21) 966855335	Não respondeu	Jovem	Carmet	Não
+07/12/2025	Charles Zucatti	(11) 988414051	Não compareceu	Adulto	Nélio	Não
+07/12/2025	Carla Fernandes	(21) 979834442	Respondeu	Adulto	Natasha	Sim
+07/12/2025	Alex Gomes	(21) 970794843	Não compareceu	Adulto	Nélio	Sim
+14/12/2025	Rosane Souza	(21) 988862798	Não respondeu	Adulto	Nélio	Não
+14/12/2025	Felipe Corrêa	(21) 982982405	Atendido	Adulto	Wesley	Não
+14/12/2025	Nicolle Gemo	(27) 997781086	Atendida	Adulto	Renata	Não
+14/12/2025	Rute Valani	(27) 996980303	Atendida	Adulto	Renata	Não
+14/12/2025	Katia Regina Ribeiro	(21) 999915151	Respondeu	Adulto	Wesley	Não
+14/12/2025	Mônica Viana de Souza	(21) 981288620	Não respondeu	Adulto	Natasha	Não
+14/12/2025	Anderson Carlos Souza	(21) 983173633	Atendido	Adulto	Renata	Não
+14/12/2025	Flavia Ferretti	(21) 982838144	Não respondeu	Adolescente	Lilian	Não
+14/12/2025	Marcela Borges	(24) 988590787	Respondeu	Adulto	Wesley	Não
+14/12/2025	Wellington Borges	(21) 991913719	Respondeu	Adulto	Wesley	Não
+21/12/2025	Marcia Pinho	(21) 981620510	Respondeu	Adulto	Nélio	Não
+21/12/2025	Márcia Amaral	(15) 991394084	Atendida	Adulto	Renata	Não
+21/12/2025	Rubem José da Silva	(21) 986248745	Não respondeu	Adulto	Wesley	Não
+21/12/2025	Juliano Safi	(24) 988328843	Não respondeu	Adulto	Nélio	Não
+21/12/2025	Rosangela R. dos Santos	(21) 970466180	Não respondeu	Adulto	Sebastião	Não
+21/12/2025	Paulo Guerra	(21) 972016948	Respondeu	Adulto	Wesley	Não
+21/12/2025	Eliana Martinho	(21) 983644285	Não respondeu	Adulto	Wesley	Não
+21/12/2025	Mateus Moraes	(21) 970293961	Respondeu	Adolescente	Lilian	Não
+21/12/2025	José Manuel	(21) 980741011	Respondeu	Adulto	Wesley	Não
+21/12/2025	Fátima Carmella	(21) 985148255	Não respondeu	Adulto	Sebastião	Não
+21/12/2025	Fabiana Rodrigues	(21) 964464267	Respondeu	Adulto	Lorena	Não
+21/12/2025	Leandro Oliveira	(21) 964248030	Não respondeu	Adulto	Nélio	Não
+21/12/2025	Raphaela Dias	(21) 964121521	Respondeu	Adulto	Lorena	Não
+21/12/2025	Viviane Bruno	(21) 994076461	Respondeu	Adulto	Lorena	Não
+21/12/2025	Alice Mello	(21) 982842212	Não respondeu	Adulto	Natasha	Não
+21/12/2025	Shirley	(21) 981233520	Respondeu	Adulto	Lorena	Não
+21/12/2025	Daniela Drago	(21) 951015090	Não respondeu	Jovem	Carmet	Não
+21/12/2025	Isis Petrungaro Pereira	(21) 997032828	Não respondeu	Adulto	Wesley	Não
+21/12/2025	Kandice Duarte Marchetti	(21) 982280079	Não respondeu	Adulto	Natasha	Não
+21/12/2025	Mariana Albano	(21) 993612965	Não respondeu	Criança	Mariane	Não
+25/12/2025	Ericson Madeira da Costa	(21) 972288001	Não respondeu	Adulto	Sebastião	Não
+25/12/2025	Davi D'Almeida	dadalmeida50	Atendido	Jovem	Carmet/Arthur	Não
+28/12/2025	Cristiano Ramos	(21) 988683912	Respondeu	Criança	Mariane	Não
+28/12/2025	Diego Moura	(21) 970390845	Não respondeu	Adulto	Wesley	Não
+28/12/2025	Ruan R. Cardoso	ruan.rocha021	Atendido	Jovem	Carmet/Arthur	Não
+28/12/2025	Antonio dos Reis Gomes	(21) 994608629	Respondeu	Adulto	Sebastião	Não
+28/12/2025	Fernanda Ramos Esteves	(21) 988965159	Não respondeu	Adulto	Wesley	Não
+28/12/2025	Georgina Scorza	(21) 982680133	Não respondeu	Adulto	Lorena	Não
+28/12/2025	Eunice Figueredo Corrêa	(21) 988892218	Não respondeu	Adulto	Wesley	Não
+28/12/2025	Fernanda Rainho	(21) 964378858	Respondeu	Adulto	Wesley	Não
+04/01/2026	Emanuelle Barbosa	(21) 988629318	Não respondeu	Adulto	Nélio	Não
+04/01/2026	Darrien Aka	(21) 988831442	Não respondeu	Adulto	Nélio	Não
+04/01/2026	Cynthia Vieira	(21) 996277223	Sem retorno do responsável	Adulto	Nélio	Não
+04/01/2026	Julia Boura	(21) 996431082	Atendido	Adulto	Renata	Não
+04/01/2026	Fernanda Monteiro	(27) 999566030	Não respondeu	Adulto	Renata	Não
+04/01/2026	Carla Guse	(21) 998007269	Respondeu	Adulto	Natasha	Sim
+04/01/2026	Danniel Maher	(21) 998511240	Atendido	Adulto	Sebastião	Sim
+04/01/2026	Eduardo Fialho	(21) 991906153	Atendido	Adulto	Nélio	Não
+04/01/2026	Yuri Carvalho	(21) 999561300	Atendido	Adulto	Nélio	Não
+04/01/2026	Manoel Máximo Filho	(21) 995986231	Atendido	Adulto	Nélio	Não
+04/01/2026	Lauro Barillari	(21) 960201415	Sem retorno do responsável	Adulto	Sebastião	Não
+04/01/2026	Ingrid Mello	(21) 969194008	Respondeu	Adulto	Natasha	Não
+04/01/2026	Renata Fraga	(21) 993836336	Não respondeu	Adulto	Lorena	Não
+04/01/2026	Luciane Gama	(21) 981628290	Sem retorno do responsável	Adulto	Carmet/Arthur	Não
+04/01/2026	Paula D. Duarte	(21) 979227979	Não respondeu	Adulto	Nélio	Não
+04/01/2026	Natasha Souza	(21) 999893700	Respondeu	Adulto	Lorena	Não
+04/01/2026	Rafael	(21) 982034573	Respondeu	Adulto	Lorena	Não
+04/01/2026	Tainá Berba	(21) 965122713	Respondeu	Adulto	Lorena	Não
+04/01/2026	Kaique Soares	(21) 998596748	Sem retorno do responsável	Jovem	Carmet/Arthur	Não
+11/01/2026	Tânia Costa	(21) 984555221	Número errado	Adulto	Nélio	Não
+11/01/2026	Miguel da Conceição	(21) 975172788	Atendido	Jovem	Carmet/Arthur	Não
+11/01/2026	Lara Silva	(21) 968551317	Sem retorno do responsável	Adulto	Lorena	Não
+11/01/2026	Maria de Lourdes	(21) 971650074	Não respondeu	Adulto	Nélio	Não
+11/01/2026	Marcus Aurelius Oliveira	(21) 999054725	Respondeu	Adulto	Nélio	Não
+11/01/2026	Sabrina Oliveira	(21) 998458594	Não respondeu	Adulto	Wesley	Não
+11/01/2026	Tatiane Macri	(21) 991220869	Respondeu	Adulto	Wesley	Não
+11/01/2026	Andrea Lima	(32) 37157985	Sem retorno do responsável	Adulto	Nelio	Não
+11/01/2026	Miriam Beltrão	(21) 971881767	Sem retorno do responsável	Adulto	Lorena	Não
+11/01/2026	José Jenzo Silva	(31) 998009292	Atendido	Adulto	Renata	Não
+11/01/2026	Roberta Brasil	(21) 983609142	Respondeu	Adulto	Wesley	Não
+11/01/2026	Luiz Vieira	(21) 997006947	Não respondeu	Adulto	Wesley	Não
+14/01/2026	Erik Zabotininsky	(21) 984457990	Respondeu	Jovem	Carmet/Arthur	Não
+14/01/2026	Yuri Belem	(21) 979806490	Respondeu	Jovem	Carmet/Arthur	Não
+18/01/2026	Sidiane Pires	(61) 91168906	Não respondeu	Adulto	Renata	Não
+18/01/2026	Wagner Saback	(61) 91168906	Não respondeu	Adulto	Renata	Não
+18/01/2026	Laryssa Mendes	(21) 960184818	Respondeu	Adulto	Wesley	Não
+18/01/2026	Maria José Cabral	(21) 971028632	Não respondeu	Adulto	Wesley	Não
+18/01/2026	Sonia Milk	(21) 984240053	Respondeu	Adulto	Wesley	Não
+18/01/2026	Cristiane Azevedo	(21) 998391969	Respondeu	Adulto	Léia	Não
+21/01/2026	Camila Freiper	(71) 993739057	Atendido	Adulto	Wesley	Não
+25/01/2026	Bruno Queiroz	(21) 997448571	Atendido	Adulto	Wesley	Não
+25/01/2026	Ana Paula C. Figueiredo	(21) 964754203	Não respondeu	Adulto	Léia	Não
+25/01/2026	Ana Maria	(21) 970063594	Não respondeu	Adulto	Wesley	Sim
+25/01/2026	Vivian Peduzzi	(21) 984442006	Sem retorno do responsável	Adulto	Lorena	Não
+25/01/2026	Luigi Favraud	(21) 981956484	Não respondeu	Jovem	Carmet/Arthur	Não
+25/01/2026	Dulce Maria	(21) 982164989	Sem retorno do responsável	Adulto	Lorena	Não
+25/01/2026	Bruno Machado	(21) 998381058	Respondeu	Adulto	Sebastião	Não
+25/01/2026	Nicole Bonder	(11) 993118008	Respondeu	Adulto	Wesley	Não
+28/01/2026	Karla	(21) 991441949	Não respondeu	Criança	Mariane	Não
+28/01/2026	Antônio José de Oliveira	(21) 997697610	Não respondeu	Adulto	Wesley	Não
+01/02/2026	Victor Nantes Baldez	(21) 971871523	Atendido	Jovem	Kevin	Não
+01/02/2026	André Teixeira	(21) 998370315	Atendido	Adulto	Wesley	Não
+01/02/2026	Omyra Gomes de Freitas	(24) 992091627	Atendido	Adulto	Renata	Não
+01/02/2026	Rosangela de Souza Coelho	(21) 993331549	Atendido	Adulto	Wesley	Não
+01/02/2026	José Jorge Silva	(31) 998009292	Atendido	Criança	Mariane	Não
+01/02/2026	Paulo César Mello	(21) 981010154	Atendido	Adulto	Wesley	Não
+01/02/2026	Giulia Rodrigues Macharett	(21) 999561002	Respondeu	Adulto	Léia	Não
+08/02/2026	Julia Vasconcellos	(21) 995255354	Atendido	Adulto	Wesley	Não
+08/02/2026	Erick Telez Gomes	(21) 972544331	Atendido	Adulto	Wesley	Não
+08/02/2026	Miguel de B. Contreiras	(21) 965591389	Atendido	Adolescente	Lilian	Não
+08/02/2026	Caio e Tainá	(21) 997702173	Atendido	Adulto	Wesley	Não
+08/02/2026	Eduardo Palhares	(21) 981641079	Atendido	Adulto	Wesley	Não
+08/02/2026	Cláudia Jeane Oliveira	(21) 975393979	Não respondeu	Adulto	Léia	Não
+18/02/2026	Celso Castro	(19) 992835192	Atendido	Adulto	Wesley	Não
+18/02/2026	Adriam Freitas Ribeiro	(41) 996697993	Atendido	Adulto	Renata	Não
+18/02/2026	Ana Clara Cardoso	(21) 979137739	Atendido	Adulto	Renata	Não
+18/02/2026	Anirya Mello	(21) 998284241	Atendido	Adulto	Wesley	Não
+18/02/2026	Eliane S. Fonseca	(21) 981690741	Respondeu	Adulto	Wesley	Não
+18/02/2026	Gustavo Arruda	(21) 971276828	Respondeu	Adulto	Wesley	Não
+18/02/2026	Thiago Ribeiro Lucas	(21) 999350237	Sem retorno do responsável	Jovem	Kevin/Arthur	Não
+18/02/2026	Enzo B. Langa	(31) 971483226	Atendido	Jovem	Renata	Não
+22/02/2026	Henrique Ariodante	(21) 969046593	Não respondeu	Adulto	Wesley	Não
+22/02/2026	Michele Ariodante	(21) 997992395	Não respondeu	Adulto	Wesley	Não
+22/02/2026	Franciane da Silva Alves	(21) 991746982	Atendido	Adulto	Wesley	Não
+22/02/2026	Robson Mendonça	(21) 968440231	Atendido	Adulto	Wesley	Não
+22/02/2026	Carlos Magno Coelho	(21) 999758719	Atendido	Adulto	Wesley	Não
+22/02/2026	Marta	(21) 991604841	Não respondeu	Criança	Mariane	Não
+22/02/2026	Carla Faedo	(21) 986959586	Não respondeu	Adulto	Wesley	Não
+22/02/2026	Lara Roberta de Sá Rego	(21) 982790746	Atendido	Adulto	Wesley	Não
+22/02/2026	Natália Furlanetto	(19) 971080083	Atendido	Adulto	Renata	Não
+01/03/2026	Fabio Barcellos	(21) 991788689	Respondeu	Adulto	Wesley	Não
+01/03/2026	Vítor Medeiros	(11) 963502303	Atendido	Adulto	Wesley	Não
+01/03/2026	Marina Contin	(19) 999576615	Atendido	Adulto	Wesley	Não
+01/03/2026	Marcelo Ottoni de Carvalho	(21) 964827434	Não respondeu	Adulto	Wesley	Não
+01/03/2026	Maria Vitória Borges	(21) 966777862	Sem retorno do responsável	Adolescente	Lilian	Não
+01/03/2026	Caroline Duarte	(21) 988478578	Atendido	Adulto	Wesley	Não
+01/03/2026	Gabriel Queiroz Vaga	(21) 993506543	Não respondeu	Adulto	Wesley	Não
+01/03/2026	Alessandro Peloso	(21) 990926565	Atendido	Adulto	Wesley	Não
+01/03/2026	Maria Islem	(21) 977219009	Atendido	Adulto	Wesley	Não
+01/03/2026	Tito Faedo Miranda	(21) 986959586	Atendido	Adulto	Wesley	Não
+01/03/2026	Felipe Medeiros	(21) 970141470	Atendido	Adulto	Wesley	Não
+01/03/2026	Pietro dos Santos Barbosa	(21) 993710460	Sem retorno do responsável	Jovem	Kevin/Arthur	Não
+01/03/2026	Maria Luiza	(21) 979216462	Sem retorno do responsável	Adolescente	Lilian	Não
+08/03/2026	Elton Araujo C. Regis	(21) 959335666	Atendido	Adulto	Wesley	Não
+15/03/2026	Glacy Kelly Bisaggio	(21) 988879186	Atendido	Adulto	Wesley	Não
+15/03/2026	Bráulio Fagundes	(21) 996172130	Respondeu	Adulto	Wesley	Não
+15/03/2026	João Ulter	(21) 979776644	Não respondeu	Adulto	Wesley	Não
+15/03/2026	Priscila Montello	(21) 966737244	Não respondeu	Adulto	Wesley	Não
+15/03/2026	Fernando Montalvão	(21) 969903313	Atendido	Adulto	Wesley	Não
+15/03/2026	Fernanda	(21) 981672332	Não respondeu	Criança	Mariane	Não
+15/03/2026	Danielle Contrucci	(21) 999934793	Atendido	Adulto	Wesley	Sim
+15/03/2026	Gisele Ozom	(21) 982934286	Atendido	Adulto	Wesley	Sim
+15/03/2026	Amanda Gouvêa	(21) 965650634	Respondeu	Adulto	Wesley	Não
+15/03/2026	Kátia Dantas	(21) 990696871	Atendido	Adulto	Wesley	Não
+15/03/2026	Elizabeth Rosa	(21) 997711643	Não respondeu	Adulto	Wesley	Não
+15/03/2026	Pedro Moreira Gonçalez	(21) 970079969	Respondeu	Adulto	Wesley	SIm
+23/03/2026	Enio Gouveia Saback	(21) 997908168	Respondeu	Adulto	Wesley	Não
+23/03/2026	Gabriel Torres	(21) 967415406	Não respondeu	Adulto	Wesley	Não
+23/03/2026	Julia Loja	(21) 981099992	Atendido	Adulto	Wesley	Não
+23/03/2026	Helio Muniz Cardoso	(21) 988491193	Respondeu	Adulto	Wesley	Não
+23/03/2026	Jaqueline Farias	(21) 986932054	Não respondeu	Adulto	Wesley	Não
+23/03/2026	Rodrigo Miranda	(21) 972349320	Não respondeu	Adulto	Wesley	Não
+23/03/2026	Bianca Guimarães	(21) 983233797	Respondeu	Adulto	Wesley	Não
+23/03/2026	Anderson Luciano	(21) 968986183	Respondeu	Adulto	Wesley	Não
+23/03/2026	Marcia Siller	(21) 997603076	Não respondeu	Adulto	Wesley	Não
+29/03/2026	Carolina Marie Vieira	(21) 982615418	Respondeu	Adulto	Wesley	Não
+29/03/2026	Ricardo Barreira	(21) 975557287	Respondeu	Adulto	Wesley	Sim
+29/03/2026	Gonzalo Caldas	(21) 997470707	Respondeu	Jovem	Arthur/Kevin	Não
+29/03/2026	Mauro Cesar Ramos Nunes	(21) 964783044	Respondeu	Adulto	Wesley	Não
+29/03/2026	Célia Maria de Assis	(31) 999531655	Sem retorno do responsável	Adulto	Renata	Não
+29/03/2026	Alberto de Souza Magalhães	(21) 987672877	Atendido	Adulto	Wesley	Não
+29/03/2026	Rafael Calderaro	(21) 972281710	Atendido	Adulto	Wesley	Não
+29/03/2026	Suely Calderaro	(21) 999811956	Atendido	Adulto	Wesley	Não
+29/03/2026	Calebe Mota de Araujo Lopes	(21) 993224581	Sem retorno do responsável	Adolescente	Lilian	Não
+29/03/2026	Juliana Alzuguir	(21) 996413833	Não respondeu	Adulto	Wesley	Não
+29/03/2026	Luciana Carvalho	(21) 996620605	Atendido	Criança	Mariane	Não
+29/03/2026	Maria Paula Neves	(21) 975634114	Sem retorno do responsável	Jovem	Arthur/Kevin	Não
+05/04/2026	Elaine Lucena	(21) 972910522	Não atendido	Adulto	Nélio	Não
+05/04/2026	Vanusa Medeiros	(21) 979624776	Atendido e respondido	Criança	Mariane	Não
+05/04/2026	Eleonora Lyra Gonçalves	(21) 972934550	Atendido e respondido	Adulto	Wesley	Não
+05/04/2026	Maria Luiza de Freitas	(21) 982222832	Atendido e respondido	Adulto	Wesley	Não
+05/04/2026	Andre Monteiro	(32) 988102024	Atendido e respondido	Adulto	Renata	Não
+05/04/2026	Juliana Torres Moreira	(21) 997401817	Atendido e respondido	Adolescente	Lilian	Não
+05/04/2026	Matheus Vicente	(21) 994720820	Atendido e respondido	Adolescente	Lilian	Não
+05/04/2026	Ana Paula H. de Araujo	(21) 991378891	Atendido e respondido	Adulto	Wesley	Não
+05/04/2026	Djalma Mello	(21) 974145376	Atendido e respondido	Adulto	Wesley	Não
+05/04/2026	Lucas Saddy	(21) 995640677	Atendido e respondido	Jovem	Arthur	Não
+05/04/2026	Gardênia	(21) 967096580	Não atendido	Adulto	Wesley	Não
+05/04/2026	Solano Castro C. Pinto	(21) 996557316	Atendido e respondido	Adulto	Wesley	Sim
+05/04/2026	Flávia Mesquita	(21) 984615678	Atendido e respondido	Criança	Mariane	Não
+05/04/2026	Jane Carvalho	(21) 986195017	Não atendido	Adulto	Wesley	Não
+12/04/2026	Patrick Machado	(21) 970117254	Atendido e respondido	Adulto	Wesley	Sim
+12/04/2026	Roberta Grassano	(21) 996197744	Não atendido	Adulto	Nélio	Não
+12/04/2026	Alexandre Lemos	(21) 993809226	Atendido e respondido	Adulto	Wesley	Não
+12/04/2026	Caio Penoni	(21) 988983615	Atendido e respondido	Adulto	Wesley	Não
+12/04/2026	Jeremias Voazem	(21) 987828851	Atendido e respondido	Criança	Mariane	Sim
+12/04/2026	Carlos Cleber A. Barbosa	(61) 986192881	Não respondeu	Adulto	Nélio	Não
+12/04/2026	Júlia Sarruf	(21) 975516005	Não respondeu	Adulto	Wesley	Não
+12/04/2026	Patrícia Costa	(21) 968753064	Não respondeu	Adulto	Wesley	Não
+05/04/2026+D239A221:D2A221:D249	Elaine Lucena	(21) 972910522	Não atendido	Adulto	Lorena	Não
+05/04/2026	Vanusa Medeiros	(21) 979624776	Atendido e respondido	Jovem	Arthur	Não
+05/04/2026	Eleonora Lyra Gonçalves	(21) 972934550	Atendido e respondido	Adulto	Nélio	Sim
+05/04/2026	Maria Luiza de Freitas	(21) 982222832	Atendido e respondido	Jovem	Arthur	Não
+05/04/2026	Andre Monteiro	(32) 988102025	Atendido e respondido	Adulto	Wesley	Não
+05/04/2026	Juliana Torres Moreira	(21) 997401817	Atendido e respondido	Adulto	Wesley	Não
+05/04/2026	Matheus Vicente	(21) 994720820	Atendido e respondido	Adolescente	Lilian	Não
+05/04/2026	Ana Paula H. de Araujo	(21) 991378891	Atendido e respondido	Adulto	Wesley	Sim
+05/04/2026	Djalma Mello	(21) 974145376	Atendido e respondido	Adulto	Nélio	Não
+05/04/2026	Lucas Saddy	(21) 995640677	Atendido e respondido	Jovem	Arthur	Não
+05/04/2026	Gardênia	(21) 967096580	Não atendido	Adulto	Wesley	Não
+05/04/2026	Solano Castro C. Pinto	(21) 996557316	Atendido e respondido	Adulto	Wesley	Não
+05/04/2026	Flávia Mesquita	(21) 984615678	Atendido e respondido	Adulto	Wesley	Sim
+05/04/2026	Jane Carvalho	(21) 986195017	Não atendido	Adulto	Wesley	Não
+12/04/2026	Patrick Machado	(21) 970117254	Atendido e respondido	Criança	Mariane	Sim
+12/04/2026	Roberta Grassano	(21) 996197744	Não atendido	Adolescente	Lilian	Não
+12/04/2026	Alexandre Lemos	(21) 993809226	Atendido e respondido	Adulto	Nélio	Sim
+12/04/2026	Caio Penoni	(21) 988983615	Atendido e respondido	Adulto	Wesley	Sim
+12/04/2026	Jeremias Voazem	(21) 987828851	Atendido e respondido	Jovem	Arthur	Não
+12/04/2026	Carlos Cleber A. Barbosa	(61) 986192882	Não respondeu	Jovem	Arthur	Não
+12/04/2026	Júlia Sarruf	(21) 961990123	Não respondeu	Adulto	Wesley	Sim
+12/04/2026	Patrícia Costa	(21) 955227182	Não respondeu	Adulto	Nélio	Não
+05/04/2026+D239A221:D2A221:D250	Elaine Lucena	(21) 972910522	Não atendido	Adulto	Wesley	Não
+03/05/2026	Gilberto Carvalho Pereira	(21) 999887411	Atendido e respondido	Adulto	Wesley	Não
+03/05/2026	Renato	(21) 988148910	Atendido e respondido	Adulto	Nélio	Não
+03/05/2026	Ana Beatriz Martins	(21) 979929369	Atendido e respondido	Adolescente	Lilian	Não
+03/05/2026	Luana Martins	(21) 976104192	Atendido e respondido	Adulto	Wesley	Sim
+03/05/2026	Matheus Costa	(21) 986335733	Atendido e respondido	Jovem	Arthur Seconi	Não
+03/05/2026	Luiz Carlos	(11) 971265050	Não atendido	Adulto	Renata	Não
+03/05/2026	Jecia Fidelis	(21) 986454276	Atendido e respondido	Adulto	Wesley	Não
+03/05/2026	Lucas Marçal	(21) 973639040	Atendido e respondido	Jovem	Arthur Seconi	Não
+03/05/2026	Helio Souza	(19) 992395670	Atendido e respondido	Adulto	Wesley	Sim
+03/05/2026	Alessandra	(21) 997631894	Não atendido	Adulto	Nélio
+03/05/2026	Marcelo Dias	(21) 996740024	Atendido e respondido	Adulto	Wesley
+03/05/2026	Maria Cristina da Silva	(21) 996099376	Atendido e respondido	Adulto	Wesley
+10/05/2026	Lucas Abreu	(21) 971149723	Atendido e respondido	Jovem	Arthur Seconi	Sim
+10/05/2026	Orestes Junior	(21) 966876687	Atendido e respondido	Adulto	Nélio	Não
+10/05/2026	Junior José	(21) 966467534	Não respondeu	Adulto	Wesley	Não
+10/05/2026	Maria Júlia Gomes	(21) 992491435	Não respondeu	Adulto	Wesley	Não
+10/05/2026	Ana Carolina Pires	(21) 975730353	Não atendido	Adulto	Nélio	Não
+10/05/2026	Nielson Abreu	(21) 984501015	Atendido e respondido	Adulto	Nélio	Não
+10/05/2026	Ricardo Marconi Ferreira	(21) 964131266	Atendido e respondido	Adulto	Wesley	Não
+10/05/2026	Felipe	(21) 987782793	Atendido e respondido	Adulto	Wesley	Não
+10/05/2026	Valdnei Ferreira	(21) 965631601	Número errado	Adulto	Nélio	Não
+17/05/2026	Bruno Rollin	(21) 997978023	Atendido e respondido	Adulto	Wesley	Não
+17/05/2026	Thaisse Mendes	(21) 979303333	Atendido e respondido	Adulto	Wesley	Não
+17/05/2026	Denise Neves	(21) 981559190	Não respondeu	Adulto	Wesley	Não
+17/05/2026	Renata Ribeiro	(21) 965803200	Não respondeu	Adulto	Wesley	Não
+17/05/2026	Guilherme Curi	(21) 976072237	Atendido e respondido	Jovem	Arthur Seconi	Não
+17/05/2026	Marcelo Brandão	(21) 966022211	Atendido e respondido	Adulto	Wesley	Não
+17/05/2026	Danniele Lima	(21) 971127228	Não respondeu	Adulto	Nélio	Não
+17/05/2026	Luana Roizewblit	(21) 996843010	Atendido e respondido	Jovem	Arthur Seconi	Não
+17/05/2026	Rebeca Castelo	(21) 998348236	Não respondeu	Adulto	Wesley	Não
+20/05/2026	Alessandra Totti	(21) 988981654	Não respondeu	Adulto	Wesley	Não
+20/05/2026	Rafael Escobar	(21) 969147309	Atendido e respondido	Adulto	Wesley	Não
+20/05/2026	Alessandra	(21) 998011065	Atendido e respondido	Criança	Mariane	Não
+20/05/2026	Joana Aguiar	(21) 983502790	Não atendido	Adulto	Nélio	Não
+24/05/2026	Rosa Lisboa Carreira	(21) 999820001	Atendido e respondido	Adulto	Wesley	Não
+24/05/2026	Jaqueline Brito	(21) 991039126	Atendido e respondido	Adulto	Wesley	Não
+24/05/2026	Guilherme Alcoforado	(21) 982685366	Não atendido	Adulto	Nélio	Não
+24/05/2026	Juliana Villa	(21) 981217111	Atendido e respondido	Adulto	Wesley	Não
+24/05/2026	João Luis	(22) 999467247	Atendido e respondido	Jovem	Arthur Cecconi	Não
+24/05/2026	Madalena Santos	(21) 972610021	Atendido e respondido	Adulto	Wesley	Não
+24/05/2026	Joaquim Souza	(21) 965908228	Atendido e respondido	Adulto	Wesley	Não
+24/05/2026	Roberta Gonçalves	(21) 986722009	Atendido e respondido	Adulto	Wesley	Não
+24/05/2026	Carlos Eduardo França	(21) 993335000	Não atendido	Adulto	Nélio	Não
+24/05/2026	Carlos Bezerra	(21) 979804025	Não respondeu	Adulto	Wesley	Não
+31/05/2026	João Ricardo Pereira	(21) 980278000	Atendido e respondido	Adulto	Wesley
+31/05/2026	Nicole Veronezi	(21) 980175258	Atendido e respondido	Adulto	Wesley
+31/05/2026	Cristina Pimentel	(21) 982400313	Atendido e respondido	Adulto	Wesley
+31/05/2026	Bruno Rosario Ramos	(21) 984692833	Atendido e respondido	Adulto	Wesley
+31/05/2026	Joelma de Oliveira	(21) 991657511	Atendido e respondido	Adulto	Wesley
+31/05/2026	Roberta Cavalliere	(21) 965325091	Atendido e respondido	Adulto	Wesley
+31/05/2026	Fernanda Fragoso	(21) 964222237	Atendido e respondido	Jovem	Arthur Cecconi
+31/05/2026	Athirson Mazoli	(21) 981419129	Atendido e respondido	Adulto	Wesley
+31/05/2026	Mirian Dantas	(21) 998022081	Atendido e respondido	Adulto	Wesley
+10/06/2026	Pedro Pontes	(21) 967799930	Atendido e respondido	Adulto	Wesley
+07/06/2026	Paula Freitas	(21) 995484001	Atendido e respondido	Adulto	Wesley
+07/06/2026	Guilherme Pereira	(21) 995001415	Atendido e respondido	Adulto	Wesley
+07/06/2026	Tânia Cristina Gonçalves	(21) 979120515	Atendido é respondido	Adulto	Nélio
+07/06/2026	Ana Luiza Vieira	(21) 997006926	Atendido e respondido	Jovem	Arthur Cecconi
+07/06/2026	Suelen Duarte	(21) 991622913	Atendido e respondido	Adulto	Wesley
+07/06/2026	Beatriz Elias	(21) 974396095	Adulto	Renata
+07/06/2026	Flávio Cerus	(21) 964802987	Não respondeu	Adulto	Wesley
+07/06/2026	Rafael de Souza Oliveira	(21) 983283516	Atendido e respondido	Jovem	Arthur Cecconi
+14/06/2026	Luana Soares	(21) 999544403	Atendido e respondido	Adulto	Wesley
+14/06/2026	Bruno Fernandes	(21) 999008844	Atendido e respondido	Adulto	Wesley
+14/06/2026	Julia Fernandes	(21) 999916476	Atendido e respondido	Adulto	Wesley	Sim
+`;
+
+const FAIXAS = { 'adulto': 'sede', 'jovem': 'ami', 'adolescente': 'bridge', 'on line': 'online', 'criança': 'kids', 'crianca': 'kids' };
+const FAIXA_SET = new Set(Object.keys(FAIXAS));
+
+// label de status (PT) → slug. Remove acentos pra casar "Atendido e/é respondido".
+function statusSlug(s) {
+  const t = String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!t) return null;
+  if (t.startsWith('atendido e respondido') || t.startsWith('atendido respondido')) return 'atendido_respondido';
+  if (t.startsWith('atendid')) return 'atendido';            // Atendido / Atendida
+  if (t.startsWith('respondeu')) return 'respondeu';
+  if (t.startsWith('nao respondeu')) return 'nao_respondeu';
+  if (t.startsWith('nao compareceu')) return 'nao_compareceu';
+  if (t.startsWith('nao atendido')) return 'nao_atendido';
+  if (t.startsWith('sem retorno')) return 'sem_retorno';
+  if (t.startsWith('numero errado')) return 'numero_errado';
+  return null;
+}
+
+const ST_META = {
+  respondeu: { atendido: false, contato: true },
+  atendido: { atendido: true, contato: true },
+  atendido_respondido: { atendido: true, contato: true },
+  nao_respondeu: { atendido: false, contato: false },
+  nao_compareceu: { atendido: false, contato: false },
+  nao_atendido: { atendido: false, contato: false },
+  sem_retorno: { atendido: false, contato: false },
+  numero_errado: { atendido: false, contato: false },
 };
-
-// [data ISO, nome, contato, status]. Transcrito da planilha (read-only). Datas
-// vieram em M/D/YYYY → ISO. "Lis Queiroz" estava como 2020 (erro óbvio) → 2025-11-02.
-const DADOS = [
-  ['2025-10-26', 'Gian Filipo', '21965324803', 'nao_respondeu'],
-  ['2025-10-26', 'Monique Cardoso', '21982252295', 'atendido'],
-  ['2025-10-26', 'Andréa Freitas', '21992635155', 'respondeu'],
-  ['2025-10-26', 'Daniele Bastos', '21999011333', 'atendido'],
-  ['2025-10-26', 'Fernanda Drummond', '21966524040', 'nao_respondeu'],
-  ['2025-10-26', 'Maria dos Anjos', '21993536301', 'respondeu'],
-  ['2025-11-02', 'Lis Queiroz', '21967731012', 'respondeu'],
-  ['2025-11-02', 'Thais Nobre Barros', '21970355136', 'nao_compareceu'],
-  ['2025-11-02', 'Zulfo Epifanio P. Filho', '21975922101', 'atendido'],
-  ['2025-11-02', 'Carolina Venter', '21981354931', 'respondeu'],
-  ['2025-11-02', 'Daniel', '21974636176', 'numero_errado'],
-  ['2025-11-02', 'Leandro Silveira', '21997740869', 'atendido'],
-  ['2025-11-02', 'Luis Alexandre', '21964588881', 'respondeu'],
-  ['2025-11-09', 'Cristiana Ribeiro', '21982612915', 'nao_respondeu'],
-  ['2025-11-09', 'Luiza Rodrigues', '21975021494', 'numero_errado'],
-  ['2025-11-09', 'Angela Marelli', '21999251351', 'numero_errado'],
-  ['2025-11-09', 'Maria Laura F. de Mendonça', '22992267777', 'respondeu'],
-  ['2025-11-09', 'Naldo Sarinho', '21993852270', 'atendido'],
-  ['2025-11-09', 'Débora Sarinho', '21987275510', 'atendido'],
-  ['2025-11-09', 'Danielle', '21974646723', 'nao_respondeu'],
-  ['2025-11-09', 'Jorge Mendes', '21996518006', 'respondeu'],
-  ['2025-11-12', 'Lara Giacomazzi', '21990590996', 'nao_respondeu'],
-  ['2025-11-12', 'Rafaela Reis', '21999718225', 'nao_respondeu'],
-  ['2025-11-16', 'Raphaela Pereira', '21997164660', 'respondeu'],
-  ['2025-11-16', 'Aniele', '21994558977', 'atendido'],
-  ['2025-11-16', 'Valdeci Barbieri', '21969923398', 'atendido'],
-  ['2025-11-16', 'Sergio Lara', '21964321619', 'atendido'],
-  ['2025-11-16', 'Leandro Silveira', '21997740869', 'nao_respondeu'],
-  ['2025-11-23', 'Silvia Regina Cordeiro', '21964638534', 'atendido'],
-  ['2025-11-23', 'Bruno Fonseca', '21996022177', 'respondeu'],
-  ['2025-11-23', 'Letícia Almeida', '21969615097', 'atendido'],
-  ['2025-11-23', 'Christiane Boechat', '21994638170', 'atendido'],
-  ['2025-11-23', 'Thiago Carvalho', '21996601112', 'atendido'],
-  ['2025-11-23', 'Luciano Maquinavita', '21981089286', 'respondeu'],
-  ['2025-11-23', 'Daniel de Oliveira Cunha', '21974926306', 'nao_respondeu'],
-  ['2025-11-23', 'Julio Cesar Vieira', '21920187053', 'atendido'],
-  ['2025-11-23', 'Bernardo Feitosa', '21982403870', 'respondeu'],
-  ['2025-11-23', 'Marcus Vinicius Duarte', '21994666182', 'atendido'],
-  ['2025-11-23', 'Marcos', '24992644193', 'atendido'],
-  ['2025-11-23', 'Letícia Castro', '21984115631', 'atendido'],
-  ['2025-11-26', 'Carol Capra', '21993224155', 'atendido'],
-  ['2025-11-30', 'Jasilmo Paulino da Silva', '21959122974', 'atendido'],
-  ['2025-11-30', 'Shirlene Souza', '21998732324', 'atendido'],
-  ['2025-12-07', 'Raphael Drumond Rebelo', '21979910022', 'respondeu'],
-  ['2025-12-07', 'Carolina Girão', '21981952210', 'respondeu'],
-  ['2025-12-07', 'Fernanda Cruz', '21964130567', 'respondeu'],
-  ['2025-12-07', 'Sandro Cruz', '21964130565', 'respondeu'],
-  ['2025-12-07', 'Filipe Leão', '11996611276', 'atendido'],
-  ['2025-12-07', 'João Vitor Muniz', '21966855335', 'nao_respondeu'],
-  ['2025-12-07', 'Charles Zucatti', '11988414051', 'nao_compareceu'],
-  ['2025-12-07', 'Carla Fernandes', '21979834442', 'respondeu'],
-  ['2025-12-07', 'Alex Gomes', '21970794843', 'nao_compareceu'],
-  ['2025-12-14', 'Rosane Souza', '21988862798', 'nao_respondeu'],
-  ['2025-12-14', 'Felipe Corrêa', '21982982405', 'atendido'],
-  ['2025-12-14', 'Nicolle Gemo', '27997781086', 'atendido'],
-  ['2025-12-14', 'Rute Valani', '27996980303', 'atendido'],
-  ['2025-12-14', 'Katia Regina Ribeiro', '21999915151', 'respondeu'],
-  ['2025-12-14', 'Mônica Viana de Souza', '21981288620', 'nao_respondeu'],
-  ['2025-12-14', 'Anderson Carlos Souza', '21983173633', 'atendido'],
-  ['2025-12-14', 'Flavia Ferretti', '21982838144', 'nao_respondeu'],
-  ['2025-12-14', 'Marcela Borges', '24988590787', 'respondeu'],
-  ['2025-12-14', 'Wellington Borges', '21991913719', 'respondeu'],
-  ['2025-12-21', 'Marcia Pinho', '21981620510', 'respondeu'],
-  ['2025-12-21', 'Márcia Amaral', '15991394084', 'atendido'],
-  ['2025-12-21', 'Rubem José da Silva', '21986248745', 'nao_respondeu'],
-  ['2025-12-21', 'Juliano Safi', '24988328843', 'nao_respondeu'],
-  ['2025-12-21', 'Rosangela R. dos Santos', '21970466180', 'nao_respondeu'],
-  ['2025-12-21', 'Paulo Guerra', '21972016948', 'respondeu'],
-  ['2025-12-21', 'Eliana Martinho', '21983644285', 'nao_respondeu'],
-  ['2025-12-21', 'Mateus Moraes', '21970293961', 'respondeu'],
-  ['2025-12-21', 'José Manuel', '21980741011', 'respondeu'],
-  ['2025-12-21', 'Fátima Carmella', '21985148255', 'nao_respondeu'],
-  ['2025-12-21', 'Fabiana Rodrigues', '21964464267', 'respondeu'],
-  ['2025-12-21', 'Leandro Oliveira', '21964248030', 'nao_respondeu'],
-  ['2025-12-21', 'Raphaela Dias', '21964121521', 'respondeu'],
-  ['2025-12-21', 'Viviane Bruno', '21994076461', 'respondeu'],
-  ['2025-12-21', 'Alice Mello', '21982842212', 'nao_respondeu'],
-  ['2025-12-21', 'Shirley', '21981233520', 'respondeu'],
-  ['2025-12-21', 'Daniela Drago', '21951015090', 'nao_respondeu'],
-  ['2025-12-21', 'Isis Petrungaro Pereira', '21997032828', 'nao_respondeu'],
-  ['2025-12-21', 'Kandice Duarte Marchetti', '21982280079', 'nao_respondeu'],
-  ['2025-12-21', 'Mariana Albano', '21993612965', 'nao_respondeu'],
-  ['2025-12-25', 'Ericson Madeira da Costa', '21972288001', 'nao_respondeu'],
-  ['2025-12-25', "Davi D'Almeida", 'dadalmeida50', 'atendido'],
-  ['2025-12-28', 'Cristiano Ramos', '21988683912', 'respondeu'],
-  ['2025-12-28', 'Diego Moura', '21970390845', 'nao_respondeu'],
-  ['2025-12-28', 'Ruan R. Cardoso', 'ruan.rocha021', 'atendido'],
-  ['2025-12-28', 'Antonio dos Reis Gomes', '21994608629', 'respondeu'],
-  ['2025-12-28', 'Fernanda Ramos Esteves', '21988965159', 'nao_respondeu'],
-  ['2025-12-28', 'Georgina Scorza', '21982680133', 'nao_respondeu'],
-  ['2025-12-28', 'Eunice Figueredo Corrêa', '21988892218', 'nao_respondeu'],
-  ['2025-12-28', 'Fernanda Rainho', '21964378858', 'respondeu'],
-  ['2026-01-04', 'Emanuelle Barbosa', '21988629318', 'nao_respondeu'],
-  ['2026-01-04', 'Darrien Aka', '21988831442', 'nao_respondeu'],
-  ['2026-01-04', 'Cynthia Vieira', '21996277223', 'sem_retorno'],
-  ['2026-01-04', 'Julia Boura', '21996431082', 'atendido'],
-  ['2026-01-04', 'Fernanda Monteiro', '27999566030', 'nao_respondeu'],
-  ['2026-01-04', 'Carla Guse', '21998007269', 'respondeu'],
-  ['2026-01-04', 'Danniel Maher', '21998511240', 'atendido'],
-  ['2026-01-04', 'Eduardo Fialho', '21991906153', 'atendido'],
-  ['2026-01-04', 'Yuri Carvalho', '21999561300', 'atendido'],
-  ['2026-01-04', 'Manoel Máximo Filho', '21995986231', 'atendido'],
-  ['2026-01-04', 'Lauro Barillari', '21960201415', 'sem_retorno'],
-  ['2026-01-04', 'Ingrid Mello', '21969194008', 'respondeu'],
-  ['2026-01-04', 'Renata Fraga', '21993836336', 'nao_respondeu'],
-  ['2026-01-04', 'Luciane Gama', '21981628290', 'sem_retorno'],
-  ['2026-01-04', 'Paula D. Duarte', '21979227979', 'nao_respondeu'],
-  ['2026-01-04', 'Natasha Souza', '21999893700', 'respondeu'],
-  ['2026-01-04', 'Rafael', '21982034573', 'respondeu'],
-  ['2026-01-04', 'Tainá Berba', '21965122713', 'respondeu'],
-  ['2026-01-04', 'Kaique Soares', '21998596748', 'sem_retorno'],
-  ['2026-01-11', 'Tânia Costa', '21984555221', 'numero_errado'],
-  ['2026-01-11', 'Miguel da Conceição', '21975172788', 'atendido'],
-  ['2026-01-11', 'Lara Silva', '21968551317', 'sem_retorno'],
-  ['2026-01-11', 'Maria de Lourdes', '21971650074', 'nao_respondeu'],
-  ['2026-01-11', 'Marcus Aurelius Oliveira', '21999054725', 'respondeu'],
-  ['2026-01-11', 'Sabrina Oliveira', '21998458594', 'nao_respondeu'],
-  ['2026-01-11', 'Tatiane Macri', '21991220869', 'respondeu'],
-  ['2026-01-11', 'Andrea Lima', '3237157985', 'sem_retorno'],
-  ['2026-01-11', 'Miriam Beltrão', '21971881767', 'sem_retorno'],
-  ['2026-01-11', 'José Jenzo Silva', '31998009292', 'atendido'],
-  ['2026-01-11', 'Roberta Brasil', '21983609142', 'respondeu'],
-  ['2026-01-11', 'Luiz Vieira', '21997006947', 'nao_respondeu'],
-  ['2026-01-14', 'Erik Zabotininsky', '21984457990', 'respondeu'],
-  ['2026-01-14', 'Yuri Belem', '21979806490', 'respondeu'],
-  ['2026-01-18', 'Sidiane Pires', '6191168906', 'nao_respondeu'],
-  ['2026-01-18', 'Wagner Saback', '6191168906', 'nao_respondeu'],
-  ['2026-01-18', 'Laryssa Mendes', '21960184818', 'respondeu'],
-  ['2026-01-18', 'Maria José Cabral', '21971028632', 'nao_respondeu'],
-  ['2026-01-18', 'Sonia Milk', '21984240053', 'respondeu'],
-  ['2026-01-18', 'Cristiane Azevedo', '21998391969', 'respondeu'],
-  ['2026-01-21', 'Camila Freiper', '71993739057', 'atendido'],
-  ['2026-01-25', 'Bruno Queiroz', '21997448571', 'atendido'],
-  ['2026-01-25', 'Ana Paula C. Figueiredo', '21964754203', 'nao_respondeu'],
-  ['2026-01-25', 'Ana Maria', '21970063594', 'nao_respondeu'],
-  ['2026-01-25', 'Vivian Peduzzi', '21984442006', 'sem_retorno'],
-  ['2026-01-25', 'Luigi Favraud', '21981956484', 'nao_respondeu'],
-  ['2026-01-25', 'Dulce Maria', '21982164989', 'sem_retorno'],
-  ['2026-01-25', 'Bruno Machado', '21998381058', 'respondeu'],
-  ['2026-01-25', 'Nicole Bonder', '11993118008', 'respondeu'],
-  ['2026-01-28', 'Karla', '21991441949', 'nao_respondeu'],
-  ['2026-01-28', 'Antônio José de Oliveira', '21997697610', 'nao_respondeu'],
-  ['2026-02-01', 'Victor Nantes Baldez', '21971871523', 'atendido'],
-  ['2026-02-01', 'André Teixeira', '21998370315', 'atendido'],
-  ['2026-02-01', 'Omyra Gomes de Freitas', '24992091627', 'atendido'],
-  ['2026-02-01', 'Rosangela de Souza Coelho', '21993331549', 'atendido'],
-  ['2026-02-01', 'José Jorge Silva', '31998009292', 'atendido'],
-  ['2026-02-01', 'Paulo César Mello', '21981010154', 'atendido'],
-  ['2026-02-01', 'Giulia Rodrigues Macharett', '21999561002', 'respondeu'],
-  ['2026-02-08', 'Julia Vasconcellos', '21995255354', 'atendido'],
-  ['2026-02-08', 'Erick Telez Gomes', '21972544331', 'atendido'],
-  ['2026-02-08', 'Miguel de B. Contreiras', '21965591389', 'atendido'],
-  ['2026-02-08', 'Caio e Tainá', '21997702173', 'atendido'],
-  ['2026-02-08', 'Eduardo Palhares', '21981641079', 'atendido'],
-  ['2026-02-08', 'Cláudia Jeane Oliveira', '21975393979', 'nao_respondeu'],
-  ['2026-02-18', 'Celso Castro', '19992835192', 'atendido'],
-  ['2026-02-18', 'Adriam Freitas Ribeiro', '41996697993', 'atendido'],
-  ['2026-02-18', 'Ana Clara Cardoso', '21979137739', 'atendido'],
-  ['2026-02-18', 'Anirya Mello', '21998284241', 'atendido'],
-  ['2026-02-18', 'Eliane S. Fonseca', '21981690741', 'respondeu'],
-  ['2026-02-18', 'Gustavo Arruda', '21971276828', 'respondeu'],
-  ['2026-02-18', 'Thiago Ribeiro Lucas', '21999350237', 'sem_retorno'],
-  ['2026-02-18', 'Enzo B. Langa', '31971483226', 'atendido'],
-  ['2026-02-22', 'Henrique Ariodante', '21969046593', 'nao_respondeu'],
-  ['2026-02-22', 'Michele Ariodante', '21997992395', 'nao_respondeu'],
-  ['2026-02-22', 'Franciane da Silva Alves', '21991746982', 'atendido'],
-  ['2026-02-22', 'Robson Mendonça', '21968440231', 'atendido'],
-  ['2026-02-22', 'Carlos Magno Coelho', '21999758719', 'atendido'],
-  ['2026-02-22', 'Marta', '21991604841', 'nao_respondeu'],
-  ['2026-02-22', 'Carla Faedo', '21986959586', 'nao_respondeu'],
-  ['2026-02-22', 'Lara Roberta de Sá Rego', '21982790746', 'atendido'],
-  ['2026-02-22', 'Natália Furlanetto', '19971080083', 'atendido'],
-  ['2026-03-01', 'Fabio Barcellos', '21991788689', 'respondeu'],
-  ['2026-03-01', 'Vítor Medeiros', '11963502303', 'atendido'],
-  ['2026-03-01', 'Marina Contin', '19999576615', 'atendido'],
-  ['2026-03-01', 'Marcelo Ottoni de Carvalho', '21964827434', 'nao_respondeu'],
-  ['2026-03-01', 'Maria Vitória Borges', '21966777862', 'sem_retorno'],
-  ['2026-03-01', 'Caroline Duarte', '21988478578', 'atendido'],
-  ['2026-03-01', 'Gabriel Queiroz Vaga', '21993506543', 'nao_respondeu'],
-  ['2026-03-01', 'Alessandro Peloso', '21990926565', 'atendido'],
-  ['2026-03-01', 'Maria Islem', '21977219009', 'atendido'],
-  ['2026-03-01', 'Tito Faedo Miranda', '21986959586', 'atendido'],
-  ['2026-03-01', 'Felipe Medeiros', '21970141470', 'atendido'],
-  ['2026-03-01', 'Pietro dos Santos Barbosa', '21993710460', 'sem_retorno'],
-  ['2026-03-01', 'Maria Luiza', '21979216462', 'sem_retorno'],
-  ['2026-03-08', 'Elton Araujo C. Regis', '21959335666', 'atendido'],
-  ['2026-03-15', 'Glacy Kelly Bisaggio', '21988879186', 'atendido'],
-  ['2026-03-15', 'Bráulio Fagundes', '21996172130', 'respondeu'],
-  ['2026-03-15', 'João Ulter', '21979776644', 'nao_respondeu'],
-  ['2026-03-15', 'Priscila Montello', '21966737244', 'nao_respondeu'],
-  ['2026-03-15', 'Fernando Montalvão', '21969903313', 'atendido'],
-  ['2026-03-15', 'Fernanda', '21981672332', 'nao_respondeu'],
-  ['2026-03-15', 'Danielle Contrucci', '21999934793', 'atendido'],
-  ['2026-03-15', 'Gisele Ozom', '21982934286', 'atendido'],
-  ['2026-03-15', 'Amanda Gouvêa', '21965650634', 'respondeu'],
-  ['2026-03-15', 'Kátia Dantas', '21990696871', 'atendido'],
-  ['2026-03-15', 'Elizabeth Rosa', '21997711643', 'nao_respondeu'],
-  ['2026-03-15', 'Pedro Moreira Gonçalez', '21970079969', 'respondeu'],
-  ['2026-03-23', 'Enio Gouveia Saback', '21997908168', 'respondeu'],
-  ['2026-03-23', 'Gabriel Torres', '21967415406', 'nao_respondeu'],
-  ['2026-03-23', 'Julia Loja', '21981099992', 'atendido'],
-  ['2026-03-23', 'Helio Muniz Cardoso', '21988491193', 'respondeu'],
-  ['2026-03-23', 'Jaqueline Farias', '21986932054', 'nao_respondeu'],
-  ['2026-03-23', 'Rodrigo Miranda', '21972349320', 'nao_respondeu'],
-  ['2026-03-23', 'Bianca Guimarães', '21983233797', 'respondeu'],
-  ['2026-03-23', 'Anderson Luciano', '21968986183', 'respondeu'],
-  ['2026-03-23', 'Marcia Siller', '21997603076', 'nao_respondeu'],
-  ['2026-03-29', 'Carolina Marie Vieira', '21982615418', 'respondeu'],
-  ['2026-03-29', 'Ricardo Barreira', '21975557287', 'respondeu'],
-  ['2026-03-29', 'Gonzalo Caldas', '21997470707', 'respondeu'],
-  ['2026-03-29', 'Mauro Cesar Ramos Nunes', '21964783044', 'respondeu'],
-  ['2026-03-29', 'Célia Maria de Assis', '31999531655', 'sem_retorno'],
-  ['2026-03-29', 'Alberto de Souza Magalhães', '21987672877', 'atendido'],
-  ['2026-03-29', 'Rafael Calderaro', '21972281710', 'atendido'],
-  ['2026-03-29', 'Suely Calderaro', '21999811956', 'atendido'],
-  ['2026-03-29', 'Calebe Mota de Araujo Lopes', '21993224581', 'sem_retorno'],
-  ['2026-03-29', 'Juliana Alzuguir', '21996413833', 'nao_respondeu'],
-  ['2026-03-29', 'Luciana Carvalho', '21996620605', 'atendido'],
-  ['2026-03-29', 'Maria Paula Neves', '21975634114', 'sem_retorno'],
-  ['2026-04-05', 'Elaine Lucena', '21972910522', 'nao_atendido'],
-  ['2026-04-05', 'Vanusa Medeiros', '21979624776', 'atendido_respondido'],
-  ['2026-04-05', 'Eleonora Lyra Gonçalves', '21972934550', 'atendido_respondido'],
-  ['2026-04-05', 'Maria Luiza de Freitas', '21982222832', 'atendido_respondido'],
-  ['2026-04-05', 'Andre Monteiro', '32988102024', 'atendido_respondido'],
-  ['2026-04-05', 'Juliana Torres Moreira', '21997401817', 'atendido_respondido'],
-  ['2026-04-05', 'Matheus Vicente', '21994720820', 'atendido_respondido'],
-  ['2026-04-05', 'Ana Paula H. de Araujo', '21991378891', 'atendido_respondido'],
-  ['2026-04-05', 'Djalma Mello', '21974145376', 'atendido_respondido'],
-  ['2026-04-05', 'Lucas Saddy', '21995640677', 'atendido_respondido'],
-  ['2026-04-05', 'Gardênia', '21967096580', 'nao_atendido'],
-  ['2026-04-05', 'Solano Castro C. Pinto', '21996557316', 'atendido_respondido'],
-  ['2026-04-05', 'Flávia Mesquita', '21984615678', 'atendido_respondido'],
-  ['2026-04-05', 'Jane Carvalho', '21986195017', 'nao_atendido'],
-  ['2026-04-12', 'Patrick Machado', '21970117254', 'atendido_respondido'],
-  ['2026-04-12', 'Roberta Grassano', '21996197744', 'nao_atendido'],
-  ['2026-04-12', 'Alexandre Lemos', '21993809226', 'atendido_respondido'],
-  ['2026-04-12', 'Caio Penoni', '21988983615', 'atendido_respondido'],
-  ['2026-04-12', 'Jeremias Voazem', '21987828851', 'atendido_respondido'],
-  ['2026-04-12', 'Carlos Cleber A. Barbosa', '61986192881', 'nao_respondeu'],
-  ['2026-04-12', 'Júlia Sarruf', '21975516005', 'nao_respondeu'],
-  ['2026-04-12', 'Patrícia Costa', '21968753064', 'nao_respondeu'],
-  ['2026-05-03', 'Gilberto Carvalho Pereira', '21999887411', 'atendido_respondido'],
-  ['2026-05-03', 'Renato', '21988148910', 'atendido_respondido'],
-  ['2026-05-03', 'Ana Beatriz Martins', '21979929369', 'atendido_respondido'],
-  ['2026-05-03', 'Luana Martins', '21976104192', 'atendido_respondido'],
-  ['2026-05-03', 'Matheus Costa', '21986335733', 'atendido_respondido'],
-  ['2026-05-03', 'Luiz Carlos', '11971265050', 'nao_atendido'],
-  ['2026-05-03', 'Jecia Fidelis', '21986454276', 'atendido_respondido'],
-  ['2026-05-03', 'Lucas Marçal', '21973639040', 'atendido_respondido'],
-  ['2026-05-03', 'Helio Souza', '19992395670', 'atendido_respondido'],
-  ['2026-05-03', 'Alessandra', '21997631894', 'nao_atendido'],
-  ['2026-05-03', 'Marcelo Dias', '21996740024', 'atendido_respondido'],
-  ['2026-05-03', 'Maria Cristina da Silva', '21996099376', 'atendido_respondido'],
-  ['2026-05-10', 'Lucas Abreu', '21971149723', 'atendido_respondido'],
-  ['2026-05-10', 'Orestes Junior', '21966876687', 'atendido_respondido'],
-  ['2026-05-10', 'Junior José', '21966467534', 'nao_respondeu'],
-  ['2026-05-10', 'Maria Júlia Gomes', '21992491435', 'nao_respondeu'],
-  ['2026-05-10', 'Ana Carolina Pires', '21975730353', 'nao_atendido'],
-  ['2026-05-10', 'Nielson Abreu', '21984501015', 'atendido_respondido'],
-  ['2026-05-10', 'Ricardo Marconi Ferreira', '21964131266', 'atendido_respondido'],
-  ['2026-05-10', 'Felipe', '21987782793', 'atendido_respondido'],
-  ['2026-05-10', 'Valdnei Ferreira', '21965631601', 'numero_errado'],
-  ['2026-05-17', 'Bruno Rollin', '21997978023', 'atendido_respondido'],
-  ['2026-05-17', 'Thaisse Mendes', '21979303333', 'atendido_respondido'],
-  ['2026-05-17', 'Denise Neves', '21981559190', 'nao_respondeu'],
-  ['2026-05-17', 'Renata Ribeiro', '21965803200', 'nao_respondeu'],
-  ['2026-05-17', 'Guilherme Curi', '21976072237', 'atendido_respondido'],
-  ['2026-05-17', 'Marcelo Brandão', '21966022211', 'atendido_respondido'],
-  ['2026-05-17', 'Danniele Lima', '21971127228', 'nao_respondeu'],
-  ['2026-05-17', 'Luana Roizewblit', '21996843010', 'atendido_respondido'],
-  ['2026-05-17', 'Rebeca Castelo', '21998348236', 'nao_respondeu'],
-  ['2026-05-20', 'Alessandra Totti', '21988981654', 'nao_respondeu'],
-  ['2026-05-20', 'Rafael Escobar', '21969147309', 'atendido_respondido'],
-  ['2026-05-20', 'Alessandra', '21998011065', 'atendido_respondido'],
-  ['2026-05-20', 'Joana Aguiar', '21983502790', 'nao_atendido'],
-  ['2026-05-24', 'Rosa Lisboa Carreira', '21999820001', 'atendido_respondido'],
-  ['2026-05-24', 'Jaqueline Brito', '21991039126', 'atendido_respondido'],
-  ['2026-05-24', 'Guilherme Alcoforado', '21982685366', 'nao_atendido'],
-  ['2026-05-24', 'Juliana Villa', '21981217111', 'atendido_respondido'],
-  ['2026-05-24', 'João Luis', '22999467247', 'atendido_respondido'],
-  ['2026-05-24', 'Madalena Santos', '21972610021', 'atendido_respondido'],
-  ['2026-05-24', 'Joaquim Souza', '21965908228', 'atendido_respondido'],
-  ['2026-05-24', 'Roberta Gonçalves', '21986722009', 'atendido_respondido'],
-  ['2026-05-24', 'Carlos Eduardo França', '21993335000', 'nao_atendido'],
-  ['2026-05-24', 'Carlos Bezerra', '21979804025', 'nao_respondeu'],
-  ['2026-05-31', 'João Ricardo Pereira', '21980278000', 'atendido_respondido'],
-  ['2026-05-31', 'Nicole Veronezi', '21980175258', 'atendido_respondido'],
-  ['2026-05-31', 'Cristina Pimentel', '21982400313', 'atendido_respondido'],
-  ['2026-05-31', 'Bruno Rosario Ramos', '21984692833', 'atendido_respondido'],
-  ['2026-05-31', 'Joelma de Oliveira', '21991657511', 'atendido_respondido'],
-  ['2026-05-31', 'Roberta Cavalliere', '21965325091', 'atendido_respondido'],
-  ['2026-05-31', 'Fernanda Fragoso', '21964222237', 'atendido_respondido'],
-  ['2026-05-31', 'Athirson Mazoli', '21981419129', 'atendido_respondido'],
-  ['2026-05-31', 'Mirian Dantas', '21998022081', 'atendido_respondido'],
-  ['2026-06-10', 'Pedro Pontes', '21967799930', 'atendido_respondido'],
-  ['2026-06-07', 'Paula Freitas', '21995484001', 'atendido_respondido'],
-  ['2026-06-07', 'Guilherme Pereira', '21995001415', 'atendido_respondido'],
-  ['2026-06-07', 'Tânia Cristina Gonçalves', '21979120515', 'atendido_respondido'],
-  ['2026-06-07', 'Ana Luiza Vieira', '21997006926', 'atendido_respondido'],
-  ['2026-06-07', 'Suelen Duarte', '21991622913', 'atendido_respondido'],
-  ['2026-06-07', 'Beatriz Elias', '21974396095', null],
-  ['2026-06-07', 'Flávio Cerus', '21964802987', 'nao_respondeu'],
-  ['2026-06-07', 'Rafael de Souza Oliveira', '21983283516', 'atendido_respondido'],
-  ['2026-06-14', 'Luana Soares', '21999544403', 'atendido_respondido'],
-  ['2026-06-14', 'Bruno Fernandes', '21999008844', 'atendido_respondido'],
-  ['2026-06-14', 'Julia Fernandes', '21999916476', 'atendido_respondido'],
-];
 
 const norm = (s) => String(s || '').trim().toLowerCase();
 const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
+
+function parseData(campo) {
+  const m = String(campo || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return null;
+  let [, dd, mm, yyyy] = m;
+  if (yyyy === '2020') yyyy = '2025'; // erro óbvio (planilha começa em out/2025)
+  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+}
+
+function parseRaw() {
+  const linhas = RAW.split('\n').map(l => l.trim()).filter(Boolean);
+  const seen = new Set();
+  const rows = [];
+  const ignoradas = [];
+  for (const linha of linhas) {
+    const campos = linha.split(/\t|\s{2,}/).map(c => c.trim()).filter(c => c !== '');
+    if (campos.length < 4) { ignoradas.push(linha); continue; }
+    const data = parseData(campos[0]);
+    if (!data) { ignoradas.push(linha); continue; }
+    const nome = campos[1];
+    const contato = campos[2];
+    let statusRaw, faixa, responsavel;
+    if (FAIXA_SET.has(norm(campos[3]))) {   // status em branco → campos[3] já é a faixa
+      statusRaw = ''; faixa = campos[3]; responsavel = campos[4] || '';
+    } else {
+      statusRaw = campos[3]; faixa = campos[4] || ''; responsavel = campos[5] || '';
+    }
+    const chave = `${data}|${norm(nome)}`;
+    if (seen.has(chave)) continue;   // dedup → derruba o bloco duplicado de abril
+    seen.add(chave);
+    rows.push({ data, nome, contato, status: statusSlug(statusRaw), faixa: norm(faixa), responsavel });
+  }
+  return { rows, ignoradas };
+}
 
 async function fetchAllConvertidos() {
   const all = [];
@@ -359,7 +435,7 @@ async function fetchAllConvertidos() {
   for (;;) {
     const { data, error } = await supabase
       .from('cui_convertidos')
-      .select('id, nome, data_culto, telefone, primeiro_contato_status, primeiro_contato_em, atendido_apos_culto')
+      .select('id, nome, data_culto, telefone, area, primeiro_contato_status, primeiro_contato_em, atendido_apos_culto')
       .is('deleted_at', null)
       .range(offset, offset + page - 1);
     if (error) throw error;
@@ -373,67 +449,74 @@ async function fetchAllConvertidos() {
 
 async function main() {
   console.log(`\n=== Import Acompanhamento de Jornada → cui_convertidos ${DRY ? '(DRY RUN)' : ''} ===`);
-  console.log(`Linhas na planilha: ${DADOS.length}`);
+  const { rows, ignoradas } = parseRaw();
+  console.log(`Linhas parseadas (após dedup): ${rows.length} · ignoradas: ${ignoradas.length}`);
+
+  const kids = rows.filter(r => FAIXAS[r.faixa] === 'kids');
+  const semFaixa = rows.filter(r => !FAIXAS[r.faixa]);
+  const aImportar = IMPORTAR_KIDS
+    ? rows.filter(r => FAIXAS[r.faixa])
+    : rows.filter(r => FAIXAS[r.faixa] && FAIXAS[r.faixa] !== 'kids');
+
+  console.log(`Crianças (Faixa = Criança): ${kids.length} ${IMPORTAR_KIDS ? '(serão importadas · IMPORTAR_KIDS=1)' : '(EXCLUÍDAS · use IMPORTAR_KIDS=1 pra incluir)'}`);
+  if (kids.length) console.log('  ' + kids.map(k => k.nome).join(', '));
+  if (semFaixa.length) console.log(`Faixa desconhecida (não importados): ${semFaixa.length} → ${semFaixa.map(r => `${r.nome}[${r.faixa}]`).join(', ')}`);
+  console.log(`A processar: ${aImportar.length}`);
+
+  const tally = {};
+  aImportar.forEach(r => { tally[r.status || 'sem_status'] = (tally[r.status || 'sem_status'] || 0) + 1; });
+  console.log('Distribuição de status:');
+  Object.entries(tally).sort((a, b) => b[1] - a[1]).forEach(([k, v]) => console.log(`  ${k.padEnd(22)} ${v}`));
+  const pos = aImportar.filter(r => ['respondeu', 'atendido', 'atendido_respondido'].includes(r.status)).length;
+  const den = aImportar.filter(r => r.status !== 'numero_errado').length;
+  console.log(`Primeiro contato: ${pos}/${den} = ${den ? Math.round(pos / den * 1000) / 10 : 0}%`);
 
   const existentes = await fetchAllConvertidos();
-  console.log(`cui_convertidos existentes (ativos): ${existentes.length}`);
-
-  const porNomeData = new Map();   // "nome|data" -> row
-  const porTelefone = new Map();   // telefone(digits) -> row
+  console.log(`\ncui_convertidos existentes (ativos): ${existentes.length}`);
+  const porNomeData = new Map();
+  const porTelefone = new Map();
   for (const r of existentes) {
     porNomeData.set(`${norm(r.nome)}|${r.data_culto}`, r);
     const t = onlyDigits(r.telefone);
     if (t.length >= 10 && !porTelefone.has(t)) porTelefone.set(t, r);
   }
 
-  const updates = [];
-  const inserts = [];
-  const tally = {};
-
-  for (const [d, nome, contato, st] of DADOS) {
-    tally[st || 'sem_status'] = (tally[st || 'sem_status'] || 0) + 1;
-    const meta = st ? ST[st] : null;
-    const patchBase = {
-      primeiro_contato_status: st || null,
-      ...(meta && meta.atendido ? { atendido_apos_culto: true } : {}),
-      ...(meta && meta.contato ? { primeiro_contato_em: `${d}T12:00:00.000Z` } : {}),
-    };
-
-    const tel = onlyDigits(contato);
-    const existente =
-      porNomeData.get(`${norm(nome)}|${d}`) ||
-      (tel.length >= 10 ? porTelefone.get(tel) : null);
+  const updates = [], inserts = [];
+  for (const r of aImportar) {
+    const area = FAIXAS[r.faixa];
+    const meta = r.status ? ST_META[r.status] : null;
+    const tel = onlyDigits(r.contato);
+    const existente = porNomeData.get(`${norm(r.nome)}|${r.data}`) || (tel.length >= 10 ? porTelefone.get(tel) : null);
 
     if (existente) {
-      const patch = { ...patchBase };
-      // não sobrescreve primeiro_contato_em já preenchido (preserva o real do fluxo)
-      if (existente.primeiro_contato_em) delete patch.primeiro_contato_em;
-      updates.push({ id: existente.id, nome, patch });
+      const patch = { primeiro_contato_status: r.status || null };
+      if (meta && meta.atendido) patch.atendido_apos_culto = true;
+      if (meta && meta.contato && !existente.primeiro_contato_em) patch.primeiro_contato_em = `${r.data}T12:00:00.000Z`;
+      if (area && !existente.area) patch.area = area;
+      updates.push({ id: existente.id, nome: r.nome, patch });
     } else {
       inserts.push({
-        data_culto: d,
-        nome: nome.trim(),
-        telefone: contato || null,
-        area: null,                 // faixa-etária da planilha desalinhada → área desconhecida
+        data_culto: r.data,
+        nome: r.nome.trim(),
+        telefone: r.contato || null,
+        area,
         cadastrado: false,
         atendido_apos_culto: !!(meta && meta.atendido),
-        primeiro_contato_status: st || null,
-        ...(meta && meta.contato ? { primeiro_contato_em: `${d}T12:00:00.000Z` } : {}),
-        observacoes: 'Importado da planilha Acompanhamento de Jornada (Marcelo)',
+        primeiro_contato_status: r.status || null,
+        ...(meta && meta.contato ? { primeiro_contato_em: `${r.data}T12:00:00.000Z` } : {}),
+        observacoes: `Importado da planilha Acompanhamento de Jornada (Marcelo)${r.responsavel ? ` · Responsável: ${r.responsavel}` : ''}`,
       });
     }
   }
 
-  console.log(`\nDistribuição de status na planilha:`);
-  Object.entries(tally).sort((a, b) => b[1] - a[1]).forEach(([k, v]) => console.log(`  ${k.padEnd(22)} ${v}`));
   console.log(`\nVai ATUALIZAR (casou existente): ${updates.length}`);
   console.log(`Vai INSERIR (novo): ${inserts.length}`);
 
   if (DRY) {
     console.log('\n[DRY RUN] nada gravado. Exemplos de insert:');
-    inserts.slice(0, 5).forEach(i => console.log('  +', i.data_culto, i.nome, i.primeiro_contato_status));
+    inserts.slice(0, 6).forEach(i => console.log('  +', i.data_culto, i.nome, `[${i.area}]`, i.primeiro_contato_status));
     console.log('Exemplos de update:');
-    updates.slice(0, 5).forEach(u => console.log('  ~', u.nome, JSON.stringify(u.patch)));
+    updates.slice(0, 6).forEach(u => console.log('  ~', u.nome, JSON.stringify(u.patch)));
     return;
   }
 
@@ -442,7 +525,6 @@ async function main() {
     const { error } = await supabase.from('cui_convertidos').update(u.patch).eq('id', u.id);
     if (error) { errU++; console.error('  update erro', u.nome, error.message); } else okU++;
   }
-
   let okI = 0, errI = 0;
   for (let i = 0; i < inserts.length; i += 100) {
     const chunk = inserts.slice(i, i + 100);
@@ -450,10 +532,13 @@ async function main() {
     if (error) { errI += chunk.length; console.error('  insert erro no chunk', i, error.message); }
     else okI += (data ? data.length : chunk.length);
   }
-
   console.log(`\nAtualizados: ${okU} (erros: ${errU})`);
   console.log(`Inseridos:   ${okI} (erros: ${errI})`);
   console.log('=== fim ===\n');
 }
 
-main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) {
+  main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
+}
+
+module.exports = { parseRaw, FAIXAS, FAIXA_SET, statusSlug };
