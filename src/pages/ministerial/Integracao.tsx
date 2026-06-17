@@ -9,7 +9,7 @@ const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
 const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
 const HistoricoCultos        = lazy(() => import('./HistoricoCultos'));
 const ColetaPendentes        = lazy(() => import('./coleta/ColetaPendentes'));
-const JornadaConvertidos     = lazy(() => import('../../components/JornadaConvertidos'));
+const NextTurmas             = lazy(() => import('./NextTurmas'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Calendar, CheckCircle2, Heart, Smartphone, ClipboardCheck } from 'lucide-react';
@@ -144,10 +144,7 @@ export default function Integracao() {
         </TabsContent>
         <TabsContent value="next" className="mt-4">
           <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Cobertura do Next nos primeiros 90 dias da conversão — quem já fez e quem ainda falta (de todas as áreas).</p>
-              <JornadaConvertidos view="next" />
-            </div>
+            <NextTurmas />
           </Suspense>
         </TabsContent>
         <TabsContent value="historico" className="mt-4">
