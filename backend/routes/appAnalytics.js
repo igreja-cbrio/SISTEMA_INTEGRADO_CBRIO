@@ -21,4 +21,16 @@ router.get('/resumo', authorizeModule('dashboard', 1), async (req, res) => {
   }
 });
 
+// GET /api/app-analytics/ao-vivo — painel ao vivo (lançamento)
+router.get('/ao-vivo', authorizeModule('dashboard', 1), async (_req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('fn_app_telemetria_ao_vivo');
+    if (error) throw error;
+    res.json(data || {});
+  } catch (e) {
+    console.error('[app-analytics] ao-vivo:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar painel ao vivo' });
+  }
+});
+
 module.exports = router;

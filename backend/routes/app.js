@@ -1040,7 +1040,7 @@ router.post('/telemetria', tryAuth, async (req, res) => {
     if (!eventos.length) return res.json({ ok: true, gravados: 0 });
     const uid = req.user?.id || null;
     const rows = eventos.map((e) => ({
-      tipo: ['tela', 'acao', 'erro'].includes(e?.tipo) ? e.tipo : 'acao',
+      tipo: ['tela', 'acao', 'erro', 'ping'].includes(e?.tipo) ? e.tipo : 'acao',
       nome: String(e?.nome || 'desconhecido').slice(0, 120),
       props: e?.props && typeof e.props === 'object' ? e.props : null,
       plataforma: e?.plataforma ? String(e.plataforma).slice(0, 20) : null,
