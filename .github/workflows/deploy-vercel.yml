@@ -29,3 +29,84 @@ jobs:
 
       - name: Deploy to Production
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+  # Envia um e-mail automatico para o gestor sempre que um merge na main
+  # conclui o deploy de producao com sucesso. So roda se o job 'deploy'
+  # terminar OK (needs + if: success()). O corpo traz SEMPRE um resumo do
+  # que foi feito, montado a partir das mensagens dos commits do merge.
+  #
+  # Secrets necessarios no repo (Settings > Secrets and variables > Actions):
+  #   MAIL_USERNAME    · e-mail Gmail/Workspace que envia (ex.: bot@cbrio.com.br)
+  #   MAIL_PASSWORD    · "senha de app" do Google (NAO a senha normal · exige 2FA)
+  #   MERGE_NOTIFY_TO  · destinatario(s) do aviso · ex.: chefe@cbrio.com.br
+  #                      (varios separados por virgula)
+  notify-email:
+    needs: deploy
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Montar resumo do que foi feito
+        id: resumo
+        env:
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -euo pipefail
+          commit_url="$SERVER_URL/$REPO/commit/$SHA"
+          run_url="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
+          short_sha="${SHA:0:7}"
+          # Data e hora do deploy no fuso de Brasilia (o runner roda em UTC).
+          quando="$(TZ='America/Sao_Paulo' date '+%d/%m/%Y às %H:%M')"
+
+          # Lista de commits do merge (cada mensagem = "o que foi feito").
+          # Lido via jq do payload do evento -> evita injecao de shell e
+          # escapa o HTML basico das mensagens de commit (forcaram aspas/<>).
+          itens="$(jq -r '
+            def esc: gsub("&";"&amp;") | gsub("<";"&lt;") | gsub(">";"&gt;");
+            (.commits // [])[]
+            | "<li><strong>\((.message | split("\n")[0]) | esc)</strong>"
+              + " <span style=\"color:#777\">— \((.author.name) | esc)</span></li>"
+          ' "$GITHUB_EVENT_PATH")"
+          if [ -z "$itens" ]; then
+            itens="<li>(execução manual — sem commits no evento)</li>"
+          fi
+
+          # Assunto = resumo curto (titulo do 1o commit do merge).
+          assunto="$(jq -r '(.commits // [])[0].message // "" | split("\n")[0]' "$GITHUB_EVENT_PATH")"
+          if [ -z "$assunto" ]; then assunto="deploy de produção"; fi
+          echo "subject=[CBRio] Produção no ar · $assunto" >> "$GITHUB_OUTPUT"
+
+          {
+            echo 'html<<HTML_EOF'
+            echo "<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222\">"
+            echo "<h2 style=\"color:#00B39D;margin-bottom:4px\">Deploy em produção concluído</h2>"
+            echo "<p>Um merge na branch <strong>main</strong> foi publicado em produção com sucesso.</p>"
+            echo "<h3 style=\"margin-bottom:4px\">Resumo do que foi feito</h3>"
+            echo "<ul style=\"margin-top:4px\">$itens</ul>"
+            echo "<table cellpadding=\"6\" style=\"border-collapse:collapse;font-size:13px;margin-top:8px\">"
+            echo "<tr><td><strong>Repositório</strong></td><td>$REPO</td></tr>"
+            echo "<tr><td><strong>Quem publicou</strong></td><td>$ACTOR</td></tr>"
+            echo "<tr><td><strong>Quando</strong></td><td>$quando (horário de Brasília)</td></tr>"
+            echo "<tr><td><strong>Commit</strong></td><td><a href=\"$commit_url\">$short_sha</a></td></tr>"
+            echo "</table>"
+            echo "<p style=\"margin-top:16px\"><a href=\"https://cbrio.org\">Abrir o sistema em produção</a> · <a href=\"$run_url\">Ver a execução no GitHub Actions</a></p>"
+            echo "<p style=\"color:#999;font-size:12px\">E-mail automático enviado pelo GitHub Actions da CBRio a cada deploy de produção.</p>"
+            echo "</div>"
+            echo HTML_EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Enviar e-mail de notificação
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: CBRio Deploy <${{ secrets.MAIL_USERNAME }}>
+          to: ${{ secrets.MERGE_NOTIFY_TO }}
+          subject: ${{ steps.resumo.outputs.subject }}
+          html_body: ${{ steps.resumo.outputs.html }}
