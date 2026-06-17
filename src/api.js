@@ -225,6 +225,11 @@ export const integracao = {
     aprovar: (id) => post(`/integracao/coleta/${id}/aprovar`),
     rejeitar: (id, motivo) => post(`/integracao/coleta/${id}/rejeitar`, { motivo }),
   },
+  decisoesApp: {
+    list: (status = 'pendente') => get(`/integracao/decisoes-app?status=${status}`),
+    confirmar: (id, culto_id) => post(`/integracao/decisoes-app/${id}/confirmar`, { culto_id }),
+    descartar: (id) => post(`/integracao/decisoes-app/${id}/descartar`),
+  },
 };
 
 export const dashboardSemanal = {

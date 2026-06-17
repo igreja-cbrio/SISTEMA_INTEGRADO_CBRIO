@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/ta
 const Batismos = lazy(() => import('./Batismos'));
 const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
 const VisualizacaoDecisoes   = lazy(() => import('./VisualizacaoDecisoes'));
+const DecisoesApp            = lazy(() => import('./DecisoesApp'));
 const HistoricoCultos        = lazy(() => import('./HistoricoCultos'));
 const ColetaPendentes        = lazy(() => import('./coleta/ColetaPendentes'));
 const JornadaConvertidos     = lazy(() => import('../../components/JornadaConvertidos'));
@@ -134,6 +135,7 @@ export default function Integracao() {
         </TabsContent>
         <TabsContent value="vis_decisoes" className="mt-4">
           <Suspense fallback={<div className="flex items-center justify-center py-12 text-sm text-muted-foreground">Carregando…</div>}>
+            <DecisoesApp />
             <VisualizacaoDecisoes />
           </Suspense>
         </TabsContent>
