@@ -18,6 +18,22 @@ const headers = async () => {
   };
 };
 
+// Sessão morta (token inválido/expirado/de outro ambiente): limpa a sessão do
+// Supabase e manda pro login, em vez de deixar a tela travada com mensagem de
+// erro. Trava anti-loop (uma vez por carregamento) + não redireciona se já
+// estiver no /login.
+let _deadSessionHandled = false;
+async function handleDeadSession() {
+  if (_deadSessionHandled) return;
+  _deadSessionHandled = true;
+  try { await supabase?.auth.signOut(); } catch {}
+  try {
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.replace('/login');
+    }
+  } catch {}
+}
+
 async function request(path, opts = {}) {
   const h = await headers();
   const res = await fetch(`${API}${path}`, { ...opts, headers: { ...h, ...opts.headers } });
@@ -30,10 +46,16 @@ async function request(path, opts = {}) {
   if (res.status === 401) {
     const body = await res.json().catch(() => ({}));
     console.warn('[API] 401', { path, reason: body.reason, detail: body.detail });
-    // Mensagens especificas pro usuário por causa raiz
+    // invalid_token = tinha um token, mas o servidor recusou (expirado / de
+    // outro ambiente). Sessão morta → desloga e manda pro login (self-heal).
+    // no_token = simplesmente não está logado → NÃO redireciona (evita loop na
+    // própria tela de login).
+    if (body.reason === 'invalid_token') {
+      handleDeadSession();
+    }
     const reasonMsg = {
       no_token:       'Sessão expirada. Faça login novamente.',
-      invalid_token:  'Sua sessão expirou ou é de outro ambiente. Saia e entre novamente.',
+      invalid_token:  'Sua sessão expirou. Redirecionando para o login...',
     };
     throw new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
   }
