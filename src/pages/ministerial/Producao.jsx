@@ -429,6 +429,31 @@ function LinhaSoma({ label, exec, prev, corExec, bold }) {
     </div>
   );
 }
+// Barra de duração média · cor verde (dentro do alvo) / vermelha (passou) +
+// marcador vertical no alvo. Mostra na hora se o culto extrapola o tempo.
+function BarraImpacto({ label, min, alvo, max }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+      <span style={{ fontSize: 11, color: C.t2, width: 132, flexShrink: 0 }}>{label}</span>
+      {min == null ? (
+        <span style={{ fontSize: 11, color: C.t3 }}>—</span>
+      ) : (() => {
+        const cor = min > alvo ? '#EF4444' : '#10B981';
+        const w = `${Math.max(2, Math.round((min / (max || 1)) * 100))}%`;
+        const markPos = `${Math.round((alvo / (max || 1)) * 100)}%`;
+        return (
+          <>
+            <div style={{ flex: 1, position: 'relative', height: 16, background: C.inputBg, borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ width: w, height: '100%', background: cor, opacity: 0.85 }} />
+              <div style={{ position: 'absolute', left: markPos, top: 0, bottom: 0, width: 2, background: C.text, opacity: 0.5 }} title={`alvo ${alvo} min`} />
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: cor, width: 56, flexShrink: 0, textAlign: 'right' }}>{min} min</span>
+          </>
+        );
+      })()}
+    </div>
+  );
+}
 
 // ── Modal de preenchimento da Produção ───────────────────────────────────────
 function ModalProducao({ culto, onClose, onSaved }) {
@@ -725,10 +750,40 @@ function AbaDetalhado() {
                 ? `${data.especiais.cultos_com_especial} de ${data.especiais.cultos_no_periodo} cultos tiveram atividade especial · rotina (ceia/batismo/apresentação): ${data.especiais.cultos_rotina} · outros: ${data.especiais.cultos_outros}.`
                 : ''}
             </p>
+
+            {data.especiais && data.especiais.cultos_com_especial > 0 && (() => {
+              const esp = data.especiais;
+              const com = esp.duracao_media_com_min, sem = esp.duracao_media_sem_min;
+              const ALVO = 60;
+              const maxMin = Math.max(com || 0, sem || 0, ALVO, 1);
+              const diff = (com != null && sem != null) ? com - sem : null;
+              return (
+                <div style={{ marginBottom: 16, padding: 12, background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                  <div style={{ fontSize: 12, color: C.text, marginBottom: 10 }}>
+                    Impacto na duração (médias):{' '}
+                    {diff == null ? (
+                      <span style={{ color: C.t3 }}>precisa de cultos com e sem atividade especial no período pra comparar.</span>
+                    ) : diff < 0 ? (
+                      <>cultos <strong>com</strong> atividade especial duram <strong style={{ color: '#10B981' }}>{Math.abs(diff)} min a menos</strong> que os sem.</>
+                    ) : diff > 0 ? (
+                      <>cultos <strong>com</strong> atividade especial duram <strong style={{ color: '#EF4444' }}>{diff} min a mais</strong> que os sem.</>
+                    ) : (
+                      <>cultos com e sem atividade especial duram praticamente o mesmo tempo.</>
+                    )}
+                  </div>
+                  <BarraImpacto label="Culto sem especial" min={sem} alvo={ALVO} max={maxMin} />
+                  <BarraImpacto label="Culto com especial" min={com} alvo={ALVO} max={maxMin} />
+                  <div style={{ fontSize: 10, color: C.t3, marginTop: 8 }}>
+                    Verde = dentro do alvo ({ALVO} min) · vermelho = passou do alvo · a linha marca o alvo.
+                  </div>
+                </div>
+              );
+            })()}
+
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                  {['Atividade', 'Tipo', 'Ocorrências', 'Duração média'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                  {['Atividade', 'Tipo', 'Ocorrências', 'Duração', '% do culto'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -737,10 +792,20 @@ function AbaDetalhado() {
                     <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>{c.label}</td>
                     <td style={{ ...td, color: c.rotina ? C.t2 : '#B45309', fontWeight: c.rotina ? 400 : 700 }}>{c.rotina ? 'Rotina' : 'Outros'}</td>
                     <td style={td}>{c.ocorrencias}</td>
-                    <td style={td}>{fmtMMSSdash(c.duracao_media_seg)}</td>
+                    <td style={{ ...td, color: C.text, fontWeight: 600 }}>{c.duracao_media_seg == null ? '—' : fmtMMSS(c.duracao_media_seg)}</td>
+                    <td style={td}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 36, flexShrink: 0 }}>{c.impacto_pct == null ? '—' : `${c.impacto_pct}%`}</span>
+                        {c.impacto_pct != null && (
+                          <div style={{ flex: 1, minWidth: 40, height: 8, background: C.inputBg, borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ width: `${Math.min(100, c.impacto_pct)}%`, height: '100%', background: '#F59E0B' }} />
+                          </div>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
-                {(data.especiais?.por_categoria || []).length === 0 && <tr><td colSpan={4} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Nenhuma atividade especial no período.</td></tr>}
+                {(data.especiais?.por_categoria || []).length === 0 && <tr><td colSpan={5} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Nenhuma atividade especial no período.</td></tr>}
               </tbody>
             </table>
           </div>

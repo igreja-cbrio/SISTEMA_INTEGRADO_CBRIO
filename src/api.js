@@ -636,6 +636,11 @@ export const financeiroV2 = {
       if (conta_id) fd.append('conta_id', conta_id);
       return requestFile('/financeiro-v2/importar/pix-extrato', fd);
     },
+    balanco: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/financeiro-v2/importar/balanco', fd, { timeoutMs: 300_000 });
+    },
   },
   uploads: (params) => get('/financeiro-v2/uploads' + (params ? '?' + new URLSearchParams(params) : '')),
   lancamentosBrutos: (params) => get('/financeiro-v2/lancamentos-brutos' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -919,6 +924,12 @@ export const rh = {
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),
     update: (id, data) => patch(`/rh/ferias/${id}`, data),
     remove: (id) => del(`/rh/ferias/${id}`),
+  },
+  // Cobertura de férias/licença (substituto herda módulos operacionais · expira sozinho)
+  coberturas: {
+    list: (params) => get('/rh/coberturas' + (params ? '?' + new URLSearchParams(params) : '')),
+    cancelar: (id) => post(`/rh/coberturas/${id}/cancelar`, {}),
+    minhas: () => get('/coberturas/minhas'),  // qualquer usuário logado (o substituto)
   },
   extras: {
     list: (params) => get('/rh/extras' + (params ? '?' + new URLSearchParams(params) : '')),

@@ -79,6 +79,7 @@ app.use('/api/strategic', require('./routes/strategic'));
 app.use('/api/meetings', require('./routes/meetings'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/rh', require('./routes/rh'));
+app.use('/api/coberturas', require('./routes/coberturas'));
 app.use('/api/pcs', require('./routes/pcs'));
 app.use('/api/financeiro', require('./routes/financeiro'));
 app.use('/api/financeiro-v2', require('./routes/financeiroV2'));

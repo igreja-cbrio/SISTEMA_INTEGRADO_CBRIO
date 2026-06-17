@@ -459,6 +459,76 @@ router.post('/importar/pix-extrato', upload.single('arquivo'), async (req, res) 
 });
 
 // ====================================================================
+// IMPORTAR BALANÇO (planilha do sistema financeiro legado · .xlsx)
+// ====================================================================
+// Sobe a planilha exportada do sistema financeiro (formato "Balanço") direto
+// pra fin_transacoes. Idempotente (dedup por codigo_legado · só entra o novo),
+// classe_movimento e o get-or-create de plano/centro/conta/grupo são resolvidos
+// pela RPC balanco_importar_linha (respeita a regra "empréstimo não é receita").
+router.post('/importar/balanco', authorizeModule('financeiro', 4), upload.single('arquivo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Arquivo do balanço (.xlsx) obrigatório' });
+
+  const { importarBalanco } = require('../services/balancoImporter');
+  let uploadRow = null;
+  try {
+    const { data: up } = await supabase
+      .from('fin_uploads')
+      .insert({
+        tipo: 'balanco',
+        arquivo_nome: req.file.originalname,
+        arquivo_tamanho: req.file.size,
+        status: 'processando',
+        created_by: req.user.userId,
+      })
+      .select().single();
+    uploadRow = up;
+
+    const r = await importarBalanco(req.file.buffer);
+
+    if (uploadRow) {
+      await supabase.from('fin_uploads')
+        .update({
+          total_registros: r.lidas,
+          total_novos: r.inseridas,
+          total_duplicados: r.ja_existentes,
+          data_inicio: r.periodo?.inicio || null,
+          data_fim: r.periodo?.fim || null,
+          status: r.erros.length ? 'erro' : 'concluido',
+          erro_msg: r.erros.length ? r.erros.join(' | ').slice(0, 500) : null,
+          concluido_em: new Date().toISOString(),
+        })
+        .eq('id', uploadRow.id);
+    }
+
+    // Notifica o financeiro quando entra dado novo (best-effort · não quebra o fluxo)
+    if (r.inseridas > 0) {
+      try {
+        await notificar({
+          modulo: 'financeiro',
+          tipo: 'balanco_importado',
+          titulo: 'Balanço importado',
+          mensagem: `${r.inseridas} novo(s) lançamento(s) do balanço importado(s)`
+            + (r.periodo ? ` · ${r.periodo.inicio} a ${r.periodo.fim}` : ''),
+          link: '/financeiro-v2?tab=importar',
+        });
+      } catch (_) { /* notificação não é crítica */ }
+    }
+
+    res.json({ upload_id: uploadRow?.id, ...r });
+  } catch (e) {
+    console.error('[FIN-V2] Balanço:', e);
+    if (uploadRow) {
+      try {
+        await supabase.from('fin_uploads')
+          .update({ status: 'erro', erro_msg: (e.message || '').slice(0, 500), concluido_em: new Date().toISOString() })
+          .eq('id', uploadRow.id);
+      } catch (_) { /* ignore */ }
+    }
+    res.status(500).json({ error: e.message || 'Erro ao importar balanço' });
+  }
+});
+
+// ====================================================================
 // UPLOADS HISTÓRICO
 // ====================================================================
 router.get('/uploads', async (req, res) => {
