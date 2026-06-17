@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Joyride, STATUS } from 'react-joyride';
-import { supabase } from '../supabaseClient';
+import { tutorial as tutorialApi } from '../api';
 import { useAuth } from './AuthContext';
 import { findTourForRoute, getTourById, TUTORIALS } from '../data/tutorials';
 
@@ -70,30 +70,25 @@ export function TutorialProvider({ children }) {
   const [runJoyride, setRunJoyride] = useState(false);
   const startTimeoutRef = useRef(null);
 
-  // 1) Carregar progresso do usuário
+  // 1) Carregar progresso do usuário (via backend · service role + JWT)
   useEffect(() => {
-    if (!auth.user?.id || !supabase) {
+    if (!auth.user?.id) {
       setCompletedTours(null);
       return;
     }
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from('app_tutorial_progress')
-          .select('tour_id')
-          .eq('user_id', auth.user.id);
+        const data = await tutorialApi.progress();
         if (cancelled) return;
-        if (error) {
-          // Tabela pode não existir ainda (migration não aplicada) · degrada gracefully
-          console.warn('[Tutorial] Erro ao carregar progresso:', error.message);
-          setCompletedTours(new Set());
-          return;
-        }
         setCompletedTours(new Set((data || []).map((r) => r.tour_id)));
       } catch (e) {
+        if (cancelled) return;
+        // Falha ao carregar · mantém em "loading" (null) pra NÃO disparar tours
+        // por erro de leitura (evita repetir). O botão "Refazer tutorial" segue
+        // funcionando (chama o tour direto, sem depender do gatilho por rota).
         console.warn('[Tutorial] Falha ao carregar:', e?.message);
-        setCompletedTours(new Set());
+        setCompletedTours(null);
       }
     })();
     return () => { cancelled = true; };
@@ -136,25 +131,18 @@ export function TutorialProvider({ children }) {
     };
   }, [location.pathname, auth, completedTours, activeTour]);
 
-  // 3) Marcar tour como completo no banco
+  // 3) Marcar tour como completo no banco (via backend · service role + JWT)
   const markTourComplete = useCallback(async (tourId, status = 'completed') => {
-    if (!auth.user?.id || !supabase) return;
+    if (!auth.user?.id) return;
+    // Marca local PRIMEIRO · evita re-disparar o mesmo tour na sessão atual
+    // mesmo se o POST falhar (a próxima sessão recarrega do banco).
+    setCompletedTours((prev) => {
+      const next = new Set(prev || []);
+      next.add(tourId);
+      return next;
+    });
     try {
-      const { error } = await supabase
-        .from('app_tutorial_progress')
-        .upsert(
-          { user_id: auth.user.id, tour_id: tourId, status, completed_at: new Date().toISOString() },
-          { onConflict: 'user_id,tour_id' },
-        );
-      if (error) {
-        console.warn('[Tutorial] Erro ao salvar progresso:', error.message);
-        return;
-      }
-      setCompletedTours((prev) => {
-        const next = new Set(prev || []);
-        next.add(tourId);
-        return next;
-      });
+      await tutorialApi.complete(tourId, status);
     } catch (e) {
       console.warn('[Tutorial] Falha ao salvar:', e?.message);
     }
@@ -195,19 +183,13 @@ export function TutorialProvider({ children }) {
     if (!auth.user?.id) return;
     const tour = getTourById(tourId);
     if (!tour) return;
+    setCompletedTours((prev) => {
+      const next = new Set(prev || []);
+      next.delete(tourId);
+      return next;
+    });
     try {
-      if (supabase) {
-        await supabase
-          .from('app_tutorial_progress')
-          .delete()
-          .eq('user_id', auth.user.id)
-          .eq('tour_id', tourId);
-      }
-      setCompletedTours((prev) => {
-        const next = new Set(prev || []);
-        next.delete(tourId);
-        return next;
-      });
+      await tutorialApi.reset(tourId);
     } catch (e) {
       console.warn('[Tutorial] Falha ao resetar:', e?.message);
     }
@@ -221,13 +203,10 @@ export function TutorialProvider({ children }) {
   }, [auth.user?.id, location.pathname]);
 
   const resetAllTours = useCallback(async () => {
-    if (!auth.user?.id || !supabase) return;
+    if (!auth.user?.id) return;
+    setCompletedTours(new Set());
     try {
-      await supabase
-        .from('app_tutorial_progress')
-        .delete()
-        .eq('user_id', auth.user.id);
-      setCompletedTours(new Set());
+      await tutorialApi.reset();
     } catch (e) {
       console.warn('[Tutorial] Falha ao resetar tudo:', e?.message);
     }
