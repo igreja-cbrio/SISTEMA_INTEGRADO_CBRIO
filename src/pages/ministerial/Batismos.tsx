@@ -152,6 +152,9 @@ export default function Batismos() {
   const [novaOpen, setNovaOpen] = useState(false);
   const [cobertura, setCobertura] = useState<any>(null);
   const [showPendentes, setShowPendentes] = useState(false);
+  // PR1 · alterna entre ver os batismos por pessoa (lista atual) ou por turma (a data É a turma)
+  const [viewMode, setViewMode] = useState<'pessoa' | 'turma'>('pessoa');
+  const [turmaAberta, setTurmaAberta] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -191,6 +194,14 @@ export default function Batismos() {
     }
     return true;
   });
+
+  // "Por turma" = agrupado pela data do batismo (a data É a turma). Respeita os
+  // filtros ativos; inscrições sem data caem num grupo "Sem data definida".
+  const turmasMap: Record<string, BatismoInscricao[]> = {};
+  filtrada.forEach(b => { const k = b.data_batismo || 'sem-data'; (turmasMap[k] ||= []).push(b); });
+  const turmas = Object.keys(turmasMap)
+    .sort((a, b) => (a === 'sem-data' ? 1 : b === 'sem-data' ? -1 : (a < b ? 1 : -1)))
+    .map(data => ({ data, pessoas: turmasMap[data] }));
 
   // KPIs
   const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0, 0, 0, 0);
@@ -461,6 +472,17 @@ export default function Batismos() {
       </Card>
 
       <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
+          {(['pessoa', 'turma'] as const).map(v => (
+            <button
+              key={v}
+              onClick={() => setViewMode(v)}
+              className={`px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${viewMode === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {v === 'pessoa' ? 'Por pessoa' : 'Por turma'}
+            </button>
+          ))}
+        </div>
         <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 overflow-x-auto">
           {(['todos', 'pendente', 'confirmado', 'realizado', 'cancelado'] as const).map(f => {
             const count = f === 'todos' ? list.length : list.filter(b => b.status === f).length;
@@ -514,6 +536,39 @@ export default function Batismos() {
       ) : filtrada.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
           {list.length === 0 ? 'Nenhuma inscrição de batismo.' : 'Nenhum registro corresponde aos filtros.'}
+        </div>
+      ) : viewMode === 'turma' ? (
+        <div className="space-y-2">
+          {turmas.map(t => {
+            const counts = t.pessoas.reduce((acc, p) => { acc[p.status] = (acc[p.status] || 0) + 1; return acc; }, {} as Record<Status, number>);
+            return (
+              <button
+                key={t.data}
+                onClick={() => setTurmaAberta(t.data)}
+                className="w-full text-left rounded-xl border border-border bg-card hover:bg-muted/40 transition-colors p-4 flex items-center gap-4"
+              >
+                <div className="rounded-lg p-2.5 shrink-0" style={{ background: `${C.primary}18` }}>
+                  <Droplets className="h-5 w-5" style={{ color: C.primary }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-foreground">
+                    {t.data === 'sem-data' ? 'Sem data definida' : ymdLocal(t.data)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{t.pessoas.length} pessoa(s)</p>
+                </div>
+                <div className="hidden sm:flex flex-wrap items-center gap-1.5 justify-end max-w-[55%]">
+                  {(['realizado', 'confirmado', 'pendente', 'cancelado'] as Status[]).map(s => (
+                    counts[s] ? (
+                      <Badge key={s} variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[s], borderColor: STATUS_COLOR[s] + '60' }}>
+                        {counts[s]} {STATUS_LABEL[s].toLowerCase()}
+                      </Badge>
+                    ) : null
+                  ))}
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+              </button>
+            );
+          })}
         </div>
       ) : (
         <div className="rounded-2xl border border-border overflow-hidden">
@@ -606,6 +661,15 @@ export default function Batismos() {
         </div>
       )}
 
+      {turmaAberta && (
+        <ModalTurmaBatismo
+          data={turmaAberta}
+          pessoas={turmas.find(t => t.data === turmaAberta)?.pessoas || []}
+          onClose={() => setTurmaAberta(null)}
+          onSelectPessoa={(b) => { setTurmaAberta(null); setSelected(b); }}
+        />
+      )}
+
       {selected && (
         <ModalDetalheBatismo
           batismo={selected}
@@ -621,6 +685,79 @@ export default function Batismos() {
         />
       )}
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MODAL · TURMA (batismos de uma data) — lista quem batizou/vai batizar naquele dia
+// ──────────────────────────────────────────────────────────────────────────
+function ModalTurmaBatismo({
+  data, pessoas, onClose, onSelectPessoa,
+}: {
+  data: string;
+  pessoas: BatismoInscricao[];
+  onClose: () => void;
+  onSelectPessoa: (b: BatismoInscricao) => void;
+}) {
+  const titulo = data === 'sem-data' ? 'Sem data definida' : ymdLocal(data);
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Droplets className="h-5 w-5" style={{ color: C.primary }} />
+            Batismos · {titulo}
+            <span className="text-sm font-normal text-muted-foreground">({pessoas.length})</span>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="rounded-xl border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Nome</TableHead>
+                <TableHead className="text-center hidden sm:table-cell">Categoria</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+                <TableHead className="w-10"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pessoas.map(b => {
+                const Icon = STATUS_ICON[b.status];
+                const cat = categoriaDe(b);
+                return (
+                  <TableRow
+                    key={b.id}
+                    className="cursor-pointer hover:bg-muted/40 transition-colors"
+                    onClick={() => onSelectPessoa(b)}
+                  >
+                    <TableCell>
+                      <p className="font-medium">{b.nome} {b.sobrenome}</p>
+                      {b.telefone && <p className="text-xs text-muted-foreground">{b.telefone}</p>}
+                    </TableCell>
+                    <TableCell className="text-center hidden sm:table-cell">
+                      {cat ? (
+                        <Badge variant="outline" className="text-[10px]" style={{ color: CATEGORIA_COLOR[cat], borderColor: CATEGORIA_COLOR[cat] + '60' }}>
+                          {CATEGORIA_LABEL[cat]}
+                        </Badge>
+                      ) : <span className="text-xs text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className="gap-1" style={{ color: STATUS_COLOR[b.status], borderColor: STATUS_COLOR[b.status] + '60' }}>
+                        <Icon className="h-3 w-3" />
+                        {STATUS_LABEL[b.status]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      <ChevronRight className="h-4 w-4 inline-block" />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
