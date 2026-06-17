@@ -636,6 +636,11 @@ export const financeiroV2 = {
       if (conta_id) fd.append('conta_id', conta_id);
       return requestFile('/financeiro-v2/importar/pix-extrato', fd);
     },
+    balanco: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/financeiro-v2/importar/balanco', fd, { timeoutMs: 300_000 });
+    },
   },
   uploads: (params) => get('/financeiro-v2/uploads' + (params ? '?' + new URLSearchParams(params) : '')),
   lancamentosBrutos: (params) => get('/financeiro-v2/lancamentos-brutos' + (params ? '?' + new URLSearchParams(params) : '')),
