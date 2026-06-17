@@ -9,10 +9,11 @@ import { useFaceDetection, useFaceMatch } from './hooks/useVolFace';
 import {
   QrCode, Scan, CheckCircle2, XCircle, RefreshCw, Maximize, ArrowLeft,
   ScanFace, Smartphone, Camera, Loader2, Hand, Search, Check, UserPlus,
-  Wifi, WifiOff, CloudUpload,
+  Wifi, WifiOff, CloudUpload, Sun, Moon,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import type { VolSchedule } from './types';
 import {
   saveTodayServices, getTodayServices, saveProfiles, getProfiles,
@@ -24,6 +25,9 @@ import {
 
 type CheckinMode = 'qr_scan' | 'facial' | 'qr_fixo' | 'manual';
 type TotemState = 'idle' | 'scanning' | 'success' | 'error' | 'already';
+type Theme = 'dark' | 'light';
+
+const THEME_KEY = 'cbrio-totem-theme';
 
 interface CheckInResult {
   name: string;
@@ -40,6 +44,11 @@ export default function VolTotem() {
   const serviceIdParam = searchParams.get('serviceId');
   const backPath = isVoluntario ? '/voluntariado/checkin' : '/ministerial/voluntariado';
 
+  // "Adicionar à tela inicial" no tablet aponta o atalho pro TOTEM
+  // (start_url /voluntariado/totem) — antes caía no manifest de check-in e
+  // abria a tela de voluntário pedindo cadastro.
+  useHomeScreenMeta('totem');
+
   const [services, setServices] = useState<any[]>([]);
   const [selectedServiceId, setSelectedServiceId] = useState(serviceIdParam || '');
   const [checkinMode, setCheckinMode] = useState<CheckinMode>('qr_scan');
@@ -48,6 +57,9 @@ export default function VolTotem() {
   const [errorMsg, setErrorMsg] = useState('');
   const [clock, setClock] = useState(new Date());
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => {
+    try { return (localStorage.getItem(THEME_KEY) as Theme) || 'dark'; } catch { return 'dark'; }
+  });
 
   // Estado de rede / fila offline
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -75,10 +87,46 @@ export default function VolTotem() {
   const faceMatch = useFaceMatch();
   const faceLoopRef = useRef(false);
 
+  // ── Tema (claro/escuro) ──
+  const dark = theme === 'dark';
+  useEffect(() => { try { localStorage.setItem(THEME_KEY, theme); } catch {} }, [theme]);
+  const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
+
+  // Tokens de cor por tema (o acento #00B39D é o mesmo nos dois)
+  const c = {
+    page: dark ? 'from-gray-900 to-gray-950 text-white' : 'from-gray-50 to-gray-100 text-gray-900',
+    heading: dark ? 'text-white' : 'text-gray-900',
+    m70: dark ? 'text-white/70' : 'text-gray-600',
+    m60: dark ? 'text-white/60' : 'text-gray-500',
+    m50: dark ? 'text-white/50' : 'text-gray-500',
+    m40: dark ? 'text-white/40' : 'text-gray-400',
+    m30: dark ? 'text-white/30' : 'text-gray-400',
+    ghost: dark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-900',
+    ghostFaint: dark ? 'text-white/30 hover:text-white/60' : 'text-gray-400 hover:text-gray-700',
+    card: dark ? 'bg-white/5 border-white/10 hover:bg-white/10' : 'bg-white border-gray-200 hover:bg-gray-50 shadow-sm',
+    cardStatic: dark ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200',
+    scanBox: dark ? 'bg-white/5 border-white/10' : 'bg-gray-200/70 border-gray-300',
+    tabInactive: dark ? 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/70' : 'bg-gray-200/70 text-gray-600 hover:bg-gray-300 hover:text-gray-900',
+    input: dark ? 'bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:bg-white/10' : 'bg-white border-gray-200 text-gray-900 placeholder:text-gray-400 focus:bg-gray-50',
+    amber: dark ? 'text-amber-300/80' : 'text-amber-600',
+    pill: {
+      online: dark ? 'bg-green-500/15 text-green-300 border-green-500/30' : 'bg-green-100 text-green-700 border-green-300',
+      offline: dark ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-amber-100 text-amber-700 border-amber-300',
+      pending: dark ? 'bg-blue-500/15 text-blue-300 border-blue-500/30' : 'bg-blue-100 text-blue-700 border-blue-300',
+    },
+  };
+
   // Clock
   useEffect(() => {
     const interval = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Acompanha entradas/saídas de tela cheia (ex.: usuário aperta ESC)
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
   // ── Rede + sincronização da fila offline ──
@@ -127,6 +175,21 @@ export default function VolTotem() {
         if (cached.length === 1 && !selectedServiceId) setSelectedServiceId(cached[0].id);
       });
   }, []);
+
+  // Pré-carrega escalas + perfis no cache quando um culto é selecionado (e há
+  // rede). É o "modo só na sessão": baixa tudo enquanto está online pra aguentar
+  // quedas de rede com a aba aberta — QR e Manual passam a resolver pelo cache.
+  useEffect(() => {
+    if (!selectedServiceId || !navigator.onLine) return;
+    Promise.all([
+      voluntariado.schedules.list({ service_id: selectedServiceId }).catch(() => null),
+      voluntariado.profiles.list().catch(() => null),
+    ]).then(([sched, profs]: any[]) => {
+      if (Array.isArray(sched)) saveServiceSchedules(selectedServiceId, sched);
+      if (Array.isArray(profs)) saveProfiles(profs);
+      refreshLocalDone();
+    }).catch(() => {});
+  }, [selectedServiceId, refreshLocalDone]);
 
   // When service is selected, start the active mode
   useEffect(() => {
@@ -466,12 +529,25 @@ export default function VolTotem() {
 
   // ── Shared helpers ──
 
+  const enterFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {});
+    }
+  };
+
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+      document.documentElement.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {});
     } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+      document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {});
     }
+  };
+
+  // Selecionar o culto também entra em tela cheia (gesto do usuário — exigido
+  // pela Fullscreen API). Deixa o tablet em modo kiosk de uma vez.
+  const selectService = (id: string) => {
+    enterFullscreen();
+    setSelectedServiceId(id);
   };
 
   const selectedService = services.find(s => s.id === selectedServiceId);
@@ -513,38 +589,34 @@ export default function VolTotem() {
   const isDone = (sch: VolSchedule) => !!(sch as any).check_in || localDone.has(`sch:${sch.id}`);
 
   const statusBadge = (s: VolSchedule) => {
-    if (isDone(s)) return { label: 'Presente', cls: 'bg-green-500/20 text-green-300 border-green-500/30' };
-    if (s.confirmation_status === 'declined') return { label: 'Recusou', cls: 'bg-red-500/20 text-red-300 border-red-500/30' };
-    if (s.confirmation_status === 'pending') return { label: 'Pendente', cls: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' };
-    return { label: 'Escalado', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/30' };
+    if (isDone(s)) return { label: 'Presente', cls: dark ? 'bg-green-500/20 text-green-300 border-green-500/30' : 'bg-green-100 text-green-700 border-green-300' };
+    if (s.confirmation_status === 'declined') return { label: 'Recusou', cls: dark ? 'bg-red-500/20 text-red-300 border-red-500/30' : 'bg-red-100 text-red-700 border-red-300' };
+    if (s.confirmation_status === 'pending') return { label: 'Pendente', cls: dark ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' : 'bg-yellow-100 text-yellow-700 border-yellow-300' };
+    return { label: 'Escalado', cls: dark ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'bg-blue-100 text-blue-700 border-blue-300' };
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-950 text-white flex flex-col">
+    <div className={`min-h-[100dvh] bg-gradient-to-b ${c.page} flex flex-col`}>
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4">
         <div className="flex items-center gap-2 md:gap-3">
           <Button
             variant="ghost"
             size="sm"
-            className="text-white/50 hover:text-white gap-1.5"
+            className={`${c.ghost} gap-1.5`}
             onClick={() => { stopAllModes(); navigate(backPath); }}
           >
             <ArrowLeft className="h-4 w-4" />
             <span className="hidden sm:inline">Sair</span>
           </Button>
-          <img src="/logo-cbrio-text.png" alt="CBRio" className="h-6 md:h-8 object-contain brightness-0 invert" />
-          <span className="text-base md:text-lg font-semibold opacity-70">Check-in</span>
+          <img src="/logo-cbrio-text.png" alt="CBRio" className={`h-6 md:h-8 object-contain ${dark ? 'brightness-0 invert' : ''}`} />
+          <span className={`text-base md:text-lg font-semibold ${dark ? 'opacity-70' : 'text-gray-500'}`}>Check-in</span>
         </div>
         <div className="flex items-center gap-2 md:gap-4">
           {/* Status de rede + fila offline */}
           <div className="flex items-center gap-2">
             <span
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
-                isOnline
-                  ? 'bg-green-500/15 text-green-300 border-green-500/30'
-                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-              }`}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${isOnline ? c.pill.online : c.pill.offline}`}
               title={isOnline ? 'Conectado' : 'Sem internet · check-ins ficam salvos e sincronizam quando a rede voltar'}
             >
               {isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
@@ -552,7 +624,7 @@ export default function VolTotem() {
             </span>
             {pending > 0 && (
               <span
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-blue-500/15 text-blue-300 border-blue-500/30"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${c.pill.pending}`}
                 title="Check-ins aguardando sincronização"
               >
                 {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CloudUpload className="h-3.5 w-3.5" />}
@@ -561,13 +633,16 @@ export default function VolTotem() {
               </span>
             )}
           </div>
-          <span className="text-xs md:text-sm opacity-60 hidden sm:inline">
+          <span className={`text-xs md:text-sm ${c.m60} hidden sm:inline`}>
             {format(clock, "EEEE, dd 'de' MMMM", { locale: ptBR })}
           </span>
           <span className="text-xl md:text-2xl font-mono font-bold tabular-nums">
             {format(clock, 'HH:mm:ss')}
           </span>
-          <Button variant="ghost" size="icon" className="text-white/50 hover:text-white" onClick={toggleFullscreen}>
+          <Button variant="ghost" size="icon" className={c.ghost} onClick={toggleTheme} title={dark ? 'Tema claro' : 'Tema escuro'}>
+            {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
+          <Button variant="ghost" size="icon" className={c.ghost} onClick={toggleFullscreen} title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}>
             <Maximize className="h-5 w-5" />
           </Button>
         </div>
@@ -580,18 +655,18 @@ export default function VolTotem() {
             <QrCode className="h-20 w-20 mx-auto opacity-30" />
             <h2 className="text-2xl font-bold">Selecione o culto</h2>
             {services.length === 0 ? (
-              <p className="text-white/50">Nenhum culto agendado para hoje</p>
+              <p className={c.m50}>Nenhum culto agendado para hoje</p>
             ) : (
               <div className="space-y-3">
                 {services.map(svc => (
                   <button
                     key={svc.id}
-                    onClick={() => setSelectedServiceId(svc.id)}
-                    className="w-full p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left"
+                    onClick={() => selectService(svc.id)}
+                    className={`w-full p-4 rounded-xl border transition-colors text-left ${c.card}`}
                   >
                     <p className="font-semibold">{svc.name}</p>
-                    {svc.service_type_name && <p className="text-sm text-white/50">{svc.service_type_name}</p>}
-                    <p className="text-sm text-white/40">{format(new Date(svc.scheduled_at), 'HH:mm', { locale: ptBR })}</p>
+                    {svc.service_type_name && <p className={`text-sm ${c.m50}`}>{svc.service_type_name}</p>}
+                    <p className={`text-sm ${c.m40}`}>{format(new Date(svc.scheduled_at), 'HH:mm', { locale: ptBR })}</p>
                   </button>
                 ))}
               </div>
@@ -614,7 +689,7 @@ export default function VolTotem() {
                   className={`flex items-center gap-2 px-4 py-2.5 md:px-6 md:py-3 rounded-xl text-sm md:text-base font-medium transition-all ${
                     active
                       ? 'bg-[#00B39D] text-white shadow-lg shadow-[#00B39D]/20'
-                      : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/70'
+                      : c.tabInactive
                   }`}
                 >
                   <Icon className="h-4 w-4 md:h-5 md:w-5" />
@@ -624,13 +699,13 @@ export default function VolTotem() {
             })}
           </div>
           {selectedService && (
-            <p className="text-center text-sm text-white/40 mt-2">
+            <p className={`text-center text-sm ${c.m40} mt-2`}>
               {selectedService.name}
               {selectedService.service_type_name && ` — ${selectedService.service_type_name}`}
             </p>
           )}
           {!isOnline && (checkinMode === 'facial' || checkinMode === 'qr_fixo') && (
-            <p className="text-center text-sm text-amber-300/80 mt-2">
+            <p className={`text-center text-sm ${c.amber} mt-2`}>
               Sem internet · {checkinMode === 'facial' ? 'o reconhecimento facial' : 'o QR fixo'} precisa de conexão. Use QR Code ou Manual.
             </p>
           )}
@@ -643,7 +718,7 @@ export default function VolTotem() {
           <div className="relative w-64 h-64 sm:w-72 sm:h-72 md:w-80 md:h-80">
             <div
               id={containerId}
-              className="w-full h-full rounded-2xl overflow-hidden bg-white/5 border-2 border-white/10"
+              className={`w-full h-full rounded-2xl overflow-hidden border-2 ${c.scanBox}`}
             />
             {state === 'idle' && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-2xl">
@@ -658,14 +733,14 @@ export default function VolTotem() {
           </div>
           <div className="text-center space-y-2">
             <p className="text-lg md:text-xl font-medium">Aproxime seu QR Code</p>
-            <p className="text-sm text-white/40">Posicione o QR code do cracha em frente a camera</p>
+            <p className={`text-sm ${c.m40}`}>Posicione o QR code do cracha em frente a camera</p>
             {!isOnline && (
-              <p className="text-sm text-amber-300/80">Offline · resolvendo crachás pelo cache local</p>
+              <p className={`text-sm ${c.amber}`}>Offline · resolvendo crachás pelo cache local</p>
             )}
           </div>
           <Button
             variant="ghost"
-            className="text-white/30 hover:text-white/60"
+            className={c.ghostFaint}
             onClick={() => { stopAllModes(); setSelectedServiceId(''); setState('idle'); }}
           >
             <RefreshCw className="h-4 w-4 mr-2" /> Trocar culto
@@ -679,7 +754,7 @@ export default function VolTotem() {
           <div className="relative w-64 h-64 sm:w-72 sm:h-72 md:w-80 md:h-80">
             <video
               ref={face.videoRef}
-              className="w-full h-full rounded-2xl object-cover bg-white/5 border-2 border-white/10"
+              className={`w-full h-full rounded-2xl object-cover border-2 ${c.scanBox}`}
               playsInline
               muted
             />
@@ -694,21 +769,21 @@ export default function VolTotem() {
               </div>
             )}
             {state === 'scanning' && (
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-[#00B39D]/80 text-sm font-medium">
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-[#00B39D]/80 text-white text-sm font-medium">
                 Verificando...
               </div>
             )}
           </div>
           <div className="text-center space-y-2">
             <p className="text-lg md:text-xl font-medium">Olhe para a camera</p>
-            <p className="text-sm text-white/40">O reconhecimento facial acontece automaticamente</p>
+            <p className={`text-sm ${c.m40}`}>O reconhecimento facial acontece automaticamente</p>
           </div>
           {face.error && (
             <p className="text-sm text-red-400">{face.error}</p>
           )}
           <Button
             variant="ghost"
-            className="text-white/30 hover:text-white/60"
+            className={c.ghostFaint}
             onClick={() => { stopAllModes(); setSelectedServiceId(''); setState('idle'); }}
           >
             <RefreshCw className="h-4 w-4 mr-2" /> Trocar culto
@@ -722,7 +797,7 @@ export default function VolTotem() {
           {fixedQrLoading ? (
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
-              <p className="text-sm text-white/60">Gerando QR Code...</p>
+              <p className={`text-sm ${c.m60}`}>Gerando QR Code...</p>
             </div>
           ) : fixedQrUrl ? (
             <>
@@ -737,7 +812,7 @@ export default function VolTotem() {
               </div>
               <div className="text-center space-y-2">
                 <p className="text-lg md:text-xl font-medium">Escaneie com seu celular</p>
-                <p className="text-sm text-white/40 max-w-xs">
+                <p className={`text-sm ${c.m40} max-w-xs`}>
                   Abra a camera do celular e aponte para o QR code acima para fazer seu check-in
                 </p>
               </div>
@@ -745,15 +820,15 @@ export default function VolTotem() {
           ) : (
             <div className="text-center space-y-3">
               <XCircle className="h-12 w-12 mx-auto text-red-400/60" />
-              <p className="text-white/60">Erro ao gerar QR Code</p>
-              <Button onClick={loadFixedQr} className="bg-[#00B39D] hover:bg-[#00B39D]/80">
+              <p className={c.m60}>Erro ao gerar QR Code</p>
+              <Button onClick={loadFixedQr} className="bg-[#00B39D] hover:bg-[#00B39D]/80 text-white">
                 Tentar novamente
               </Button>
             </div>
           )}
           <Button
             variant="ghost"
-            className="text-white/30 hover:text-white/60"
+            className={c.ghostFaint}
             onClick={() => { stopAllModes(); setSelectedServiceId(''); setState('idle'); }}
           >
             <RefreshCw className="h-4 w-4 mr-2" /> Trocar culto
@@ -765,14 +840,14 @@ export default function VolTotem() {
       {selectedServiceId && checkinMode === 'manual' && state !== 'success' && state !== 'error' && state !== 'already' && (
         <div className="flex-1 flex flex-col gap-4 p-4 md:p-6 max-w-3xl w-full mx-auto">
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-white/40 pointer-events-none" />
+            <Search className={`absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 ${c.m40} pointer-events-none`} />
             <input
               autoFocus
               type="text"
               value={manualSearch}
               onChange={(e) => setManualSearch(e.target.value)}
               placeholder="Digite seu nome..."
-              className="w-full h-14 pl-12 pr-4 rounded-2xl bg-white/5 border-2 border-white/10 text-white text-lg placeholder:text-white/30 focus:outline-none focus:border-[#00B39D] focus:bg-white/10 transition-colors"
+              className={`w-full h-14 pl-12 pr-4 rounded-2xl border-2 text-lg focus:outline-none focus:border-[#00B39D] transition-colors ${c.input}`}
             />
           </div>
 
@@ -783,7 +858,7 @@ export default function VolTotem() {
               </div>
             ) : filteredSchedules.length === 0 && unscheduledMatches.length === 0 ? (
               <div className="text-center py-12 space-y-2">
-                <p className="text-white/60 text-lg">
+                <p className={`${c.m60} text-lg`}>
                   {schedules.length === 0 && !manualSearch.trim()
                     ? 'Nenhum voluntário escalado para este culto'
                     : manualSearch.trim()
@@ -791,7 +866,7 @@ export default function VolTotem() {
                       : 'Nenhum voluntario encontrado'}
                 </p>
                 {manualSearch && (
-                  <p className="text-sm text-white/30">Tente buscar com outro termo</p>
+                  <p className={`text-sm ${c.m30}`}>Tente buscar com outro termo</p>
                 )}
               </div>
             ) : (
@@ -799,7 +874,7 @@ export default function VolTotem() {
                 {filteredSchedules.length > 0 && (
                   <>
                     {manualSearch.trim() && (
-                      <p className="text-xs uppercase tracking-wider text-white/40 px-1 pt-1 pb-0.5">
+                      <p className={`text-xs uppercase tracking-wider ${c.m40} px-1 pt-1 pb-0.5`}>
                         Escalados
                       </p>
                     )}
@@ -809,15 +884,15 @@ export default function VolTotem() {
                       return (
                         <div
                           key={sch.id}
-                          className="min-h-[64px] flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                          className={`min-h-[64px] flex items-center gap-3 p-3 rounded-xl border transition-colors ${c.card}`}
                         >
                           <div className="w-11 h-11 rounded-full bg-[#00B39D]/20 text-[#00B39D] flex items-center justify-center font-bold text-lg shrink-0">
                             {(sch.volunteer_name || '?').trim().charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-white truncate">{sch.volunteer_name}</p>
+                            <p className="font-semibold truncate">{sch.volunteer_name}</p>
                             {(sch.team_name || sch.position_name) && (
-                              <p className="text-sm text-white/50 truncate">
+                              <p className={`text-sm ${c.m50} truncate`}>
                                 {sch.team_name}
                                 {sch.team_name && sch.position_name ? ' — ' : ''}
                                 {sch.position_name}
@@ -844,21 +919,21 @@ export default function VolTotem() {
 
                 {unscheduledMatches.length > 0 && (
                   <>
-                    <p className="text-xs uppercase tracking-wider text-white/40 px-1 pt-3 pb-0.5">
+                    <p className={`text-xs uppercase tracking-wider ${c.m40} px-1 pt-3 pb-0.5`}>
                       Nao escalado neste culto
                     </p>
                     {unscheduledMatches.map((p) => (
                       <div
                         key={p.id}
-                        className="min-h-[64px] flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                        className={`min-h-[64px] flex items-center gap-3 p-3 rounded-xl border transition-colors ${c.card}`}
                       >
-                        <div className="w-11 h-11 rounded-full bg-yellow-500/15 text-yellow-300 flex items-center justify-center font-bold text-lg shrink-0">
+                        <div className="w-11 h-11 rounded-full bg-yellow-500/15 text-yellow-600 flex items-center justify-center font-bold text-lg shrink-0">
                           {(p.full_name || '?').trim().charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-white truncate">{p.full_name}</p>
+                          <p className="font-semibold truncate">{p.full_name}</p>
                         </div>
-                        <span className="shrink-0 px-3 py-1 rounded-full text-xs font-medium border bg-yellow-500/20 text-yellow-300 border-yellow-500/30">
+                        <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border ${dark ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' : 'bg-yellow-100 text-yellow-700 border-yellow-300'}`}>
                           Sem escala
                         </span>
                         <Button
@@ -879,7 +954,7 @@ export default function VolTotem() {
           <div className="flex justify-center pt-2">
             <Button
               variant="ghost"
-              className="text-white/30 hover:text-white/60"
+              className={c.ghostFaint}
               onClick={() => { stopAllModes(); setSelectedServiceId(''); setState('idle'); }}
             >
               <RefreshCw className="h-4 w-4 mr-2" /> Trocar culto
@@ -895,17 +970,17 @@ export default function VolTotem() {
             <h2 className="text-2xl md:text-4xl font-bold">Check-in realizado!</h2>
             <p className="text-xl md:text-3xl">{result.name}</p>
             {result.team && (
-              <p className="text-base md:text-xl text-white/60">
+              <p className={`text-base md:text-xl ${c.m60}`}>
                 {result.team}{result.position ? ` — ${result.position}` : ''}
               </p>
             )}
             {result.unscheduled && (
-              <span className="inline-block px-4 py-2 bg-yellow-500/20 text-yellow-300 rounded-full text-base md:text-lg">
+              <span className={`inline-block px-4 py-2 rounded-full text-base md:text-lg ${dark ? 'bg-yellow-500/20 text-yellow-300' : 'bg-yellow-100 text-yellow-700'}`}>
                 Sem escala
               </span>
             )}
             {result.queued && (
-              <div className="flex items-center justify-center gap-2 text-amber-300">
+              <div className={`flex items-center justify-center gap-2 ${dark ? 'text-amber-300' : 'text-amber-600'}`}>
                 <CloudUpload className="h-5 w-5" />
                 <span className="text-base md:text-lg">Salvo offline · sincroniza quando a internet voltar</span>
               </div>
@@ -920,7 +995,7 @@ export default function VolTotem() {
           <div className="text-center space-y-4 md:space-y-6">
             <CheckCircle2 className="h-24 w-24 md:h-32 md:w-32 mx-auto text-yellow-400" />
             <h2 className="text-2xl md:text-3xl font-bold">Já fez check-in!</h2>
-            <p className="text-base md:text-xl text-white/60">Check-in já registrado anteriormente</p>
+            <p className={`text-base md:text-xl ${c.m60}`}>Check-in já registrado anteriormente</p>
           </div>
         </div>
       )}
@@ -931,7 +1006,7 @@ export default function VolTotem() {
           <div className="text-center space-y-4 md:space-y-6">
             <XCircle className="h-24 w-24 md:h-32 md:w-32 mx-auto text-red-400" />
             <h2 className="text-2xl md:text-3xl font-bold">Erro</h2>
-            <p className="text-base md:text-xl text-white/60">{errorMsg}</p>
+            <p className={`text-base md:text-xl ${c.m60}`}>{errorMsg}</p>
           </div>
         </div>
       )}

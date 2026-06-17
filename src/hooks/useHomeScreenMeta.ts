@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-type MetaType = 'checkin' | 'membresia';
+type MetaType = 'checkin' | 'membresia' | 'totem';
 
 const CONFIG: Record<MetaType, { icon: string; manifest: string; title: string }> = {
   checkin: {
@@ -12,6 +12,13 @@ const CONFIG: Record<MetaType, { icon: string; manifest: string; title: string }
     icon: '/icons/membresia-180.png',
     manifest: '/manifest-membresia.json',
     title: 'Membresia CBRio',
+  },
+  // Totem de voluntariado · atalho da tela inicial abre direto o totem
+  // (start_url /voluntariado/totem), nao a tela de voluntario.
+  totem: {
+    icon: '/icons/checkin-180.png',
+    manifest: '/manifest-totem.json',
+    title: 'Totem CBRio',
   },
 };
 
