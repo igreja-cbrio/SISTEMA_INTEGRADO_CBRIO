@@ -538,34 +538,35 @@ export default function Batismos() {
           {list.length === 0 ? 'Nenhuma inscrição de batismo.' : 'Nenhum registro corresponde aos filtros.'}
         </div>
       ) : viewMode === 'turma' ? (
-        <div className="space-y-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {turmas.map(t => {
             const counts = t.pessoas.reduce((acc, p) => { acc[p.status] = (acc[p.status] || 0) + 1; return acc; }, {} as Record<Status, number>);
             return (
               <button
                 key={t.data}
                 onClick={() => setTurmaAberta(t.data)}
-                className="w-full text-left rounded-xl border border-border bg-card hover:bg-muted/40 transition-colors p-4 flex items-center gap-4"
+                className="text-left rounded-xl border border-border bg-card hover:bg-muted/40 hover:shadow-sm transition-all p-3 flex flex-col gap-2 min-h-[112px]"
               >
-                <div className="rounded-lg p-2.5 shrink-0" style={{ background: `${C.primary}18` }}>
-                  <Droplets className="h-5 w-5" style={{ color: C.primary }} />
+                <div className="flex items-center gap-2">
+                  <div className="rounded-lg p-2 shrink-0" style={{ background: `${C.primary}18` }}>
+                    <Droplets className="h-4 w-4" style={{ color: C.primary }} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground text-sm leading-tight">
+                      {t.data === 'sem-data' ? 'Sem data' : ymdLocal(t.data)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{t.pessoas.length} pessoa(s)</p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-foreground">
-                    {t.data === 'sem-data' ? 'Sem data definida' : ymdLocal(t.data)}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{t.pessoas.length} pessoa(s)</p>
-                </div>
-                <div className="hidden sm:flex flex-wrap items-center gap-1.5 justify-end max-w-[55%]">
+                <div className="flex flex-wrap items-center gap-1">
                   {(['realizado', 'confirmado', 'pendente', 'cancelado'] as Status[]).map(s => (
                     counts[s] ? (
-                      <Badge key={s} variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[s], borderColor: STATUS_COLOR[s] + '60' }}>
+                      <Badge key={s} variant="outline" className="text-[10px] px-1.5" style={{ color: STATUS_COLOR[s], borderColor: STATUS_COLOR[s] + '60' }}>
                         {counts[s]} {STATUS_LABEL[s].toLowerCase()}
                       </Badge>
                     ) : null
                   ))}
                 </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
               </button>
             );
           })}
