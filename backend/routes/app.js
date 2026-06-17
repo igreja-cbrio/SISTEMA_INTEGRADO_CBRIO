@@ -1208,6 +1208,79 @@ router.get('/videos', authApp, async (req, res) => {
   }
 });
 
+// GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
+router.get('/culto/agora', authApp, async (req, res) => {
+  try {
+    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: culto } = await supabase
+      .from('cultos')
+      .select('id, nome, data, hora')
+      .eq('data', hoje).is('deleted_at', null)
+      .order('hora', { ascending: false }).limit(1).maybeSingle();
+
+    let jaRegistrou = false;
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (membro?.id) {
+      const { data: pend } = await supabase
+        .from('app_decisoes').select('id')
+        .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
+        .gte('criada_em', `${hoje}T00:00:00`).limit(1);
+      jaRegistrou = (pend || []).length > 0;
+    }
+    res.json({ culto: culto || null, canal_live: `https://www.youtube.com/channel/${channelId}/live`, jaRegistrou });
+  } catch (e) {
+    console.error('[APP] culto/agora:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o culto' });
+  }
+});
+
+// POST /api/app/culto/decisao — registra uma decisão de fé na FILA DE REVISÃO.
+// NÃO entra na NSM até a Integração confirmar (decisão da liderança).
+router.post('/culto/decisao', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro?.id) return res.status(400).json({ error: 'Complete seu cadastro de membro primeiro.' });
+
+    const ambiente = ['presencial', 'online'].includes(req.body?.ambiente) ? req.body.ambiente : 'presencial';
+    const tipo = ['aceitar', 'reconciliacao', 'rededicacao', 'batismo', 'outro'].includes(req.body?.tipo) ? req.body.tipo : null;
+    const observacao = (req.body?.observacao || '').toString().trim().slice(0, 500) || null;
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    // Dedup: 1 decisão pendente por membro por dia.
+    const { data: pend } = await supabase
+      .from('app_decisoes').select('id')
+      .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
+      .gte('criada_em', `${hoje}T00:00:00`).limit(1);
+    if ((pend || []).length) return res.json({ ok: true, jaRegistrou: true });
+
+    const { data: culto } = await supabase
+      .from('cultos').select('id').eq('data', hoje).is('deleted_at', null)
+      .order('hora', { ascending: false }).limit(1).maybeSingle();
+
+    const { error } = await supabase.from('app_decisoes').insert({
+      membro_id: membro.id, culto_id: culto?.id || null, ambiente, tipo, observacao, status: 'pendente',
+    });
+    if (error) throw error;
+
+    try {
+      await notificar({
+        modulo: 'integracao',
+        tipo: 'decisao_app',
+        titulo: 'Nova decisão de fé pelo app 🙌',
+        mensagem: `${membro.nome} registrou uma decisão pelo app. Confirme na aba Decisões.`,
+        link: '/integracao?tab=vis_decisoes',
+        chaveDedup: `decisao_app-${membro.id}-${hoje}`,
+      });
+    } catch (e) { console.warn('[APP] notificar decisao_app:', e.message); }
+
+    res.json({ ok: true, jaRegistrou: true });
+  } catch (e) {
+    console.error('[APP] culto/decisao:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar decisão' });
+  }
+});
+
 // GET /api/app/comunicados — mural do membro (publicados, segmentados).
 router.get('/comunicados', authApp, async (req, res) => {
   try {
