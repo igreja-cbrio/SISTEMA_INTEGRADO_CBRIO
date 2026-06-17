@@ -422,7 +422,7 @@ function OAuthStatusCardInner() {
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
   });
 
-  // Engajamento de conteúdo (OKR cabeça do Juninho) · backfill do ano (jan→hoje)
+  // Engajamento de conteúdo do canal · backfill do ano (jan→hoje)
   const coletarEngajamento = useMutation({
     mutationFn: () => online.coletar.engajamento(),
     onSuccess: (r: any) => {
@@ -537,7 +537,7 @@ export default function Online() {
     queryFn: () => online.dashboard(),
   });
 
-  // Engajamento de conteúdo (KPIs da cabeça do Juninho) · 0 até a API do YouTube alimentar
+  // Engajamento de conteúdo do canal · 0 até a API do YouTube alimentar
   const { data: eng } = useQuery<any>({
     queryKey: ['online', 'engajamento'],
     queryFn: () => online.engajamento(),
@@ -714,7 +714,7 @@ export default function Online() {
         </div>
       )}
 
-      {/* Engajamento de conteúdo · KPIs do Monitoramento OKR (Pr. Juninho).
+      {/* Engajamento de conteúdo do canal (YouTube Analytics).
           Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}
       <Card className="overflow-hidden">
         <div className="p-4 md:p-5 flex items-center gap-3 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
@@ -722,7 +722,7 @@ export default function Online() {
           <div className="flex-1 min-w-0">
             <h2 className="text-base font-bold leading-tight">Engajamento de conteúdo</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Indicadores do Monitoramento OKR (Pr. Juninho).{' '}
+              Retenção, compartilhamento e cliques do canal no YouTube.{' '}
               {eng?.mes_label
                 ? `Referência ${eng.mes_label}.`
                 : 'Aguardando integração com a API do YouTube — exibindo 0 até a primeira coleta.'}

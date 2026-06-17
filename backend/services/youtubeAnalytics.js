@@ -458,7 +458,7 @@ async function fetchVideoViewsBySubStatus(channelId, videoId, startDate, endDate
 }
 
 // Analytics: engajamento AGREGADO do canal numa janela (sem filtro de vídeo).
-// Alimenta o OKR "Engajamento de Conteúdo" (cabeça do Juninho).
+// Métricas de engajamento de conteúdo do canal (retenção, compartilhamento, cliques).
 // Retorna { views, shares, avg_view_percentage, card_impressions, card_clicks }.
 //
 // Faz 2 chamadas porque as metricas de CARD podem não existir / ficar indisponíveis
