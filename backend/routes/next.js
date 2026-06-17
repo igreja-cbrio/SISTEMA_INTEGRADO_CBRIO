@@ -466,8 +466,17 @@ router.get('/turmas', async (req, res) => {
   const ids = (turmas || []).map(t => t.id);
   const cont = {};
   if (ids.length) {
-    const { data: mats } = await supabase.from('next_matriculas').select('turma_id, status').is('deleted_at', null).in('turma_id', ids);
-    (mats || []).forEach(m => {
+    // pagina (evita o cap de 1000 do PostgREST quando há muito histórico)
+    const mats = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: chunk, error: e2 } = await supabase
+        .from('next_matriculas').select('turma_id, status').is('deleted_at', null)
+        .in('turma_id', ids).order('id').range(from, from + 999);
+      if (e2 || !chunk || !chunk.length) break;
+      mats.push(...chunk);
+      if (chunk.length < 1000) break;
+    }
+    mats.forEach(m => {
       const c = cont[m.turma_id] || (cont[m.turma_id] = { total: 0, formado: 0, matriculado: 0, incompleto: 0, desistiu: 0, encontros: 0 });
       c.total += 1; if (c[m.status] !== undefined) c[m.status] += 1;
     });
