@@ -6,6 +6,7 @@ const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../se
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
+const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -964,7 +965,7 @@ router.get('/ferias', async (req, res) => {
 // POST /api/rh/funcionarios/:id/ferias
 router.post('/funcionarios/:id/ferias', async (req, res) => {
   try {
-    const { tipo, data_inicio, data_fim, observacoes } = req.body;
+    const { tipo, data_inicio, data_fim, observacoes, substituto_id } = req.body;
     if (!tipo || !data_inicio || !data_fim) {
       return res.status(400).json({ error: 'Tipo, data início e data fim são obrigatórios' });
     }
@@ -975,6 +976,7 @@ router.post('/funcionarios/:id/ferias', async (req, res) => {
         funcionario_id: req.params.id,
         tipo, data_inicio, data_fim,
         observacoes: observacoes || null,
+        substituto_id: substituto_id || null,
       })
       .select()
       .single();
@@ -1008,6 +1010,45 @@ router.patch('/ferias/:id', async (req, res) => {
     if (status === 'aprovado') {
       const tipo = data.tipo === 'ferias' ? 'ferias' : 'licenca';
       await supabase.from('rh_funcionarios').update({ status: tipo }).eq('id', data.funcionario_id);
+
+      // Cobertura: o substituto herda os módulos OPERACIONAIS do titular ·
+      // overrides com expira_em = fim da licença (revert automático).
+      const hoje = new Date().toISOString().slice(0, 10);
+      if (data.substituto_id && data.data_fim >= hoje) {
+        try {
+          const { data: pessoas } = await supabase.from('rh_funcionarios')
+            .select('id, nome, email').in('id', [data.funcionario_id, data.substituto_id]);
+          const tit = (pessoas || []).find(p => p.id === data.funcionario_id);
+          const sub = (pessoas || []).find(p => p.id === data.substituto_id);
+          if (sub?.email) {
+            await aplicarCobertura({
+              feriasId: data.id,
+              titular: { funcionario_id: tit?.id, email: tit?.email, nome: tit?.nome },
+              substituto: { funcionario_id: sub.id, email: sub.email, nome: sub.nome },
+              dataInicio: data.data_inicio,
+              dataFim: data.data_fim,
+              criadoPor: req.user?.userId || req.user?.id || null,
+            });
+            // avisa o substituto (chega pelo sino · mesmo se ele não for do RH)
+            const { data: subProfile } = await supabase.from('profiles')
+              .select('id').ilike('email', sub.email).maybeSingle();
+            notificar({
+              modulo: 'rh', tipo: 'cobertura_atribuida',
+              titulo: `Você vai cobrir ${tit?.nome || 'um colega'}`,
+              mensagem: `Durante a licença de ${tit?.nome || 'um colega'} (${data.data_inicio} a ${data.data_fim}) você assume as áreas/filas dele. O acesso volta sozinho no fim.`,
+              link: '/admin/rh', severidade: 'info', chaveDedup: `cobertura_${data.id}`,
+              targetIds: subProfile?.id ? [subProfile.id] : undefined,
+            }).catch(() => {});
+          }
+        } catch (e) { console.error('[RH] aplicar cobertura:', e.message); }
+      }
+    } else if (status === 'rejeitado') {
+      // se havia cobertura ativa pra essa licença, encerra (remove os acessos)
+      try {
+        const { data: cobs } = await supabase.from('rh_cobertura')
+          .select('id').eq('ferias_id', data.id).eq('status', 'ativa');
+        for (const c of cobs || []) await encerrarCobertura(c.id, 'cancelada');
+      } catch (e) { console.error('[RH] encerrar cobertura:', e.message); }
     }
 
     // Busca nome do funcionário para notificação
@@ -1028,6 +1069,34 @@ router.patch('/ferias/:id', async (req, res) => {
   } catch (e) {
     console.error('[RH] Aprovar/rejeitar férias:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar férias/licença' });
+  }
+});
+
+// GET /api/rh/coberturas — gestão das coberturas (RH)
+router.get('/coberturas', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase.from('rh_cobertura').select('*')
+      .order('data_fim', { ascending: false }).limit(500);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[RH] Listar coberturas:', e.message);
+    res.status(500).json({ error: 'Erro ao listar coberturas' });
+  }
+});
+
+// POST /api/rh/coberturas/:id/cancelar — remove os acessos concedidos + encerra
+router.post('/coberturas/:id/cancelar', authorizeModule('rh', 3), async (req, res) => {
+  try {
+    const r = await encerrarCobertura(req.params.id, 'cancelada');
+    if (!r.ok) return res.status(404).json({ error: 'Cobertura não encontrada' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[RH] Cancelar cobertura:', e.message);
+    res.status(500).json({ error: 'Erro ao cancelar cobertura' });
   }
 });
 
