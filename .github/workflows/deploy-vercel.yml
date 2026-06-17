@@ -98,15 +98,56 @@ jobs:
             echo HTML_EOF
           } >> "$GITHUB_OUTPUT"
 
-      - name: Enviar e-mail de notificação
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          from: CBRio Deploy <${{ secrets.MAIL_USERNAME }}>
-          to: ${{ secrets.MERGE_NOTIFY_TO }}
-          subject: ${{ steps.resumo.outputs.subject }}
-          html_body: ${{ steps.resumo.outputs.html }}
+      # Confirma que os secrets do Resend existem ANTES de tentar enviar. Sem
+      # isso, o envio falha e marca o deploy (que já foi pro ar) como "failure".
+      # Aqui logamos qual secret falta (sem expor valores) e, se faltar algum,
+      # pulamos o envio com um aviso — o deploy continua verde.
+      - name: Verificar configuração de e-mail
+        id: mailcfg
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+          MERGE_NOTIFY_TO: ${{ secrets.MERGE_NOTIFY_TO }}
+        run: |
+          ok=true
+          if [ -n "$RESEND_API_KEY" ]; then echo "RESEND_API_KEY: definido"; else echo "RESEND_API_KEY: VAZIO"; ok=false; fi
+          if [ -n "$RESEND_FROM" ]; then echo "RESEND_FROM: definido"; else echo "RESEND_FROM: VAZIO"; ok=false; fi
+          if [ -n "$MERGE_NOTIFY_TO" ]; then echo "MERGE_NOTIFY_TO: definido"; else echo "MERGE_NOTIFY_TO: VAZIO"; ok=false; fi
+          if [ "$ok" != "true" ]; then
+            echo "::warning::E-mail de deploy NAO enviado: configure os secrets faltantes (acima) em Settings > Secrets and variables > Actions > aba Secrets. O deploy de producao foi concluido normalmente."
+          fi
+          echo "configured=$ok" >> "$GITHUB_OUTPUT"
+
+      # Envia via API do Resend (HTTP). RESEND_FROM precisa ser de um dominio
+      # verificado no Resend (ex.: "CBRio Deploy <deploys@cbrio.org>").
+      # MERGE_NOTIFY_TO aceita varios destinatarios separados por virgula.
+      # Falha de envio vira aviso (nao derruba o deploy, que ja foi pro ar).
+      - name: Enviar e-mail de notificação (Resend)
+        if: ${{ steps.mailcfg.outputs.configured == 'true' }}
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+          MERGE_NOTIFY_TO: ${{ secrets.MERGE_NOTIFY_TO }}
+          SUBJECT: ${{ steps.resumo.outputs.subject }}
+          HTML: ${{ steps.resumo.outputs.html }}
+        run: |
+          set -uo pipefail
+          payload=$(jq -n \
+            --arg from "$RESEND_FROM" \
+            --arg to "$MERGE_NOTIFY_TO" \
+            --arg subject "$SUBJECT" \
+            --arg html "$HTML" \
+            '{from:$from, to:($to | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))), subject:$subject, html:$html}')
+          resp=$(curl -sS -w $'\n%{http_code}' -X POST https://api.resend.com/emails \
+            -H "Authorization: Bearer $RESEND_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$payload") || true
+          code=$(printf '%s' "$resp" | tail -n1)
+          body=$(printf '%s' "$resp" | sed '$d')
+          echo "Resend HTTP: $code"
+          echo "Resposta: $body"
+          if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+            echo "E-mail enviado com sucesso."
+          else
+            echo "::warning::Falha ao enviar e-mail pelo Resend (HTTP $code). O deploy foi concluido normalmente. Verifique RESEND_API_KEY, RESEND_FROM (dominio verificado) e MERGE_NOTIFY_TO."
+          fi
