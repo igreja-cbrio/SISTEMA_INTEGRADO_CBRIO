@@ -369,8 +369,9 @@ const FAIXA_SET = new Set(Object.keys(FAIXAS));
 function statusSlug(s) {
   const t = String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (!t) return null;
-  if (t.startsWith('atendido e respondido') || t.startsWith('atendido respondido')) return 'atendido_respondido';
-  if (t.startsWith('atendid')) return 'atendido';            // Atendido / Atendida
+  // "Atendido" sozinho (legado, pré-abr/2026) = conversou com o pastor = mesmo que
+  // "Atendido e respondido" (decisão do Marcos · 2026-06-17). Ambos → atendido_respondido.
+  if (t.startsWith('atendid')) return 'atendido_respondido'; // Atendido / Atendida / Atendido e respondido
   if (t.startsWith('respondeu')) return 'respondeu';
   if (t.startsWith('nao respondeu')) return 'nao_respondeu';
   if (t.startsWith('nao compareceu')) return 'nao_compareceu';
