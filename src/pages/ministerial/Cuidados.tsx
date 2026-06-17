@@ -274,11 +274,13 @@ const ENCONTRO_STATUS: Record<string, { label: string; color: string }> = {
   cancelado: { label: 'Cancelado', color: '#6b7280' },
 };
 
-// Status do PRIMEIRO CONTATO (ex-planilha do Marcelo). Primeiro contato feito =
-// respondeu/atendido/atendido_respondido. "numero_errado" sai do denominador do tático.
+// Status do PRIMEIRO CONTATO (ex-planilha do Marcelo). Primeiro contato FEITO =
+// o contato foi realizado, independente da resposta da pessoa → respondeu,
+// atendido e respondido, não respondeu, não compareceu e não atendido. NÃO conta:
+// "sem retorno do responsável" (o responsável não retornou · fica no denominador)
+// e "número errado" (impossível contatar · sai do denominador).
 const PCONTATO_STATUS: { v: string; label: string; positivo?: boolean }[] = [
   { v: 'respondeu',           label: 'Respondeu',                  positivo: true },
-  { v: 'atendido',            label: 'Atendido',                   positivo: true },
   { v: 'atendido_respondido', label: 'Atendido e respondido',      positivo: true },
   { v: 'nao_respondeu',       label: 'Não respondeu' },
   { v: 'nao_compareceu',      label: 'Não compareceu' },
