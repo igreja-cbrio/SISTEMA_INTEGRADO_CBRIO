@@ -98,7 +98,28 @@ jobs:
             echo HTML_EOF
           } >> "$GITHUB_OUTPUT"
 
+      # Confirma que os 3 secrets existem ANTES de tentar enviar. Sem isso, o
+      # envio falha e marca o deploy (que já foi pro ar) como "failure". Aqui
+      # logamos qual secret falta (sem expor valores) e, se faltar algum,
+      # pulamos o envio com um aviso — o deploy continua verde.
+      - name: Verificar configuração de e-mail
+        id: mailcfg
+        env:
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MERGE_NOTIFY_TO: ${{ secrets.MERGE_NOTIFY_TO }}
+        run: |
+          ok=true
+          if [ -n "$MAIL_USERNAME" ]; then echo "MAIL_USERNAME: definido"; else echo "MAIL_USERNAME: VAZIO"; ok=false; fi
+          if [ -n "$MAIL_PASSWORD" ]; then echo "MAIL_PASSWORD: definido"; else echo "MAIL_PASSWORD: VAZIO"; ok=false; fi
+          if [ -n "$MERGE_NOTIFY_TO" ]; then echo "MERGE_NOTIFY_TO: definido"; else echo "MERGE_NOTIFY_TO: VAZIO"; ok=false; fi
+          if [ "$ok" != "true" ]; then
+            echo "::warning::E-mail de deploy NAO enviado: configure os secrets faltantes (acima) em Settings > Secrets and variables > Actions > aba Secrets. O deploy de producao foi concluido normalmente."
+          fi
+          echo "configured=$ok" >> "$GITHUB_OUTPUT"
+
       - name: Enviar e-mail de notificação
+        if: ${{ steps.mailcfg.outputs.configured == 'true' }}
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
