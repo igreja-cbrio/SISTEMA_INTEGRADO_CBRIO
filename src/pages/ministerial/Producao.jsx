@@ -552,7 +552,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
           </div>
 
           {/* Ocorrências */}
-          <SecaoTitulo icone={ShieldAlert} cor="#EF4444" titulo="Ocorrências · falhas técnicas e estabilidade" />
+          <SecaoTitulo icone={ShieldAlert} cor="#EF4444" titulo="Ocorrências · falhas técnicas e instabilidade" />
           <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {(det?.ocorrencias || []).length === 0 && <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic' }}>Nenhuma ocorrência registrada neste culto.</div>}
             {(det?.ocorrencias || []).map(o => (
@@ -568,7 +568,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
               <select value={novaOcorr.tipo} onChange={e => setNovaOcorr(o => ({ ...o, tipo: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
                 <option value="tecnica">Falha técnica</option>
-                <option value="estrutura">Estabilidade estrutura</option>
+                <option value="estrutura">Instabilidade estrutura</option>
               </select>
               <select value={novaOcorr.severidade} onChange={e => setNovaOcorr(o => ({ ...o, severidade: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
                 <option value="baixa">Baixa</option><option value="media">Média</option>

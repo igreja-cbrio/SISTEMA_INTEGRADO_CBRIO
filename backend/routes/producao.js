@@ -3,7 +3,7 @@
 // ============================================================================
 // (A) KPIs técnicos POR CULTO (espelha a aba de Integração):
 //     - duração do culto (pontualidade · alvo 60min ou meta do tipo)
-//     - ocorrências (falhas técnicas + estabilidade de estrutura · com rastro)
+//     - ocorrências (falhas técnicas + instabilidade de estrutura · com rastro)
 //     - checklist técnico itemizado (% executado)
 // (B) KPIs gerais que já existem (read-only · expostos aqui):
 //     - SLA das solicitações da Produção (ADM-C-G-PRODUCAO)
@@ -323,7 +323,7 @@ router.put('/culto/:id/etapas', authorizeModule('producao', 2), async (req, res)
   }
 });
 
-// ── Ocorrências (falhas técnicas / estabilidade) ─────────────────────────────
+// ── Ocorrências (falhas técnicas / instabilidade) ────────────────────────────
 router.post('/culto/:id/ocorrencias', authorizeModule('producao', 2), async (req, res) => {
   try {
     const cultoId = req.params.id;
