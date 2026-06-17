@@ -2413,6 +2413,7 @@ export const online = {
     ddus: () => post('/online/coletar/ddus', {}),
     backfillCultos: () => post('/online/coletar/backfill-cultos', {}),
     catchUp: (limit = 5) => post(`/online/coletar/catch-up?limit=${limit}`, {}),
+    engajamento: (ano) => post(`/online/coletar/engajamento${ano ? `?ano=${ano}` : ''}`, {}),
   },
   debug: {
     canaisAutorizados: () => get('/online/debug/canais-autorizados'),
