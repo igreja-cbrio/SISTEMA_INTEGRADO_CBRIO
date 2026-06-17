@@ -77,8 +77,8 @@ function LivePanel() {
       {/* Números grandes ao vivo */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <BigCard icon={Users} label="Online agora" value={d?.online_5min ?? 0} sub={`${d?.online_1min ?? 0} no último minuto`} cor="#22c55e" pulse />
-        <BigCard icon={Smartphone} label="Cadastrados (total)" value={(d?.cadastros_total ?? 0).toLocaleString('pt-BR')} cor="#00B39D" />
-        <BigCard icon={UserPlus} label="Novos hoje" value={d?.cadastros_hoje ?? 0} sub={`${d?.cadastros_app_hoje ?? 0} pelo app`} cor="#3b82f6" />
+        <BigCard icon={Smartphone} label="Cadastros no app" value={(d?.cadastros_app_total ?? 0).toLocaleString('pt-BR')} sub={`${(d?.cadastros_total ?? 0).toLocaleString('pt-BR')} na base do sistema`} cor="#00B39D" />
+        <BigCard icon={UserPlus} label="Novos hoje (app)" value={d?.cadastros_app_hoje ?? 0} sub={`${d?.cadastros_hoje ?? 0} no sistema`} cor="#3b82f6" />
         <BigCard icon={Activity} label="Eventos (5 min)" value={d?.eventos_5min ?? 0} cor="#8b5cf6" />
       </div>
 
@@ -101,16 +101,16 @@ function LivePanel() {
 
         {/* Cadastros recentes (feed) */}
         <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><UserPlus className="h-4 w-4 text-blue-500" /> Cadastros recentes</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base flex items-center gap-2"><UserPlus className="h-4 w-4 text-blue-500" /> Cadastros pelo app</CardTitle></CardHeader>
           <CardContent>
             {(d?.cadastros_recentes || []).length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-6">—</p>
+              <p className="text-sm text-muted-foreground text-center py-6">Nenhum cadastro pelo app ainda.</p>
             ) : (
               <div className="space-y-1.5">
                 {d.cadastros_recentes.map((c, i) => (
                   <div key={i} className="flex justify-between items-center text-sm gap-2">
-                    <span className="truncate font-medium">{c.nome}</span>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">{c.origem === 'app' ? '📱 ' : ''}{haQuanto(c.em)}</span>
+                    <span className="truncate font-medium">📱 {c.nome}</span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">{haQuanto(c.em)}</span>
                   </div>
                 ))}
               </div>
