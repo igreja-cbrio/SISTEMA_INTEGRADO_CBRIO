@@ -429,26 +429,25 @@ function LinhaSoma({ label, exec, prev, corExec, bold }) {
     </div>
   );
 }
-// Barra comparativa (min) · parte base (cinza) + parte da atividade especial (âmbar)
-function BarraImpacto({ label, min, extra, max }) {
-  const larg = (v) => `${Math.max(0, Math.round((v / (max || 1)) * 100))}%`;
+// Barra de duração média · cor verde (dentro do alvo) / vermelha (passou) +
+// marcador vertical no alvo. Mostra na hora se o culto extrapola o tempo.
+function BarraImpacto({ label, min, alvo, max }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
       <span style={{ fontSize: 11, color: C.t2, width: 132, flexShrink: 0 }}>{label}</span>
       {min == null ? (
         <span style={{ fontSize: 11, color: C.t3 }}>—</span>
       ) : (() => {
-        const x = Math.min(extra || 0, min);
-        const base = min - x;
+        const cor = min > alvo ? '#EF4444' : '#10B981';
+        const w = `${Math.max(2, Math.round((min / (max || 1)) * 100))}%`;
+        const markPos = `${Math.round((alvo / (max || 1)) * 100)}%`;
         return (
           <>
-            <div style={{ flex: 1, display: 'flex', height: 16, background: C.inputBg, borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ width: larg(base), background: C.t3, opacity: 0.45 }} />
-              {x > 0 && <div style={{ width: larg(x), background: '#F59E0B' }} title={`atividade especial · ${x} min`} />}
+            <div style={{ flex: 1, position: 'relative', height: 16, background: C.inputBg, borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ width: w, height: '100%', background: cor, opacity: 0.85 }} />
+              <div style={{ position: 'absolute', left: markPos, top: 0, bottom: 0, width: 2, background: C.text, opacity: 0.5 }} title={`alvo ${alvo} min`} />
             </div>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.text, width: 84, flexShrink: 0, textAlign: 'right' }}>
-              {min} min{x > 0 ? <span style={{ color: '#B45309', fontWeight: 400 }}> (+{x})</span> : ''}
-            </span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: cor, width: 56, flexShrink: 0, textAlign: 'right' }}>{min} min</span>
           </>
         );
       })()}
@@ -754,16 +753,29 @@ function AbaDetalhado() {
 
             {data.especiais && data.especiais.cultos_com_especial > 0 && (() => {
               const esp = data.especiais;
-              const impMin = esp.impacto_medio_seg != null ? Math.round(esp.impacto_medio_seg / 60) : null;
-              const maxMin = Math.max(esp.duracao_media_com_min || 0, esp.duracao_media_sem_min || 0, 1);
+              const com = esp.duracao_media_com_min, sem = esp.duracao_media_sem_min;
+              const ALVO = 60;
+              const maxMin = Math.max(com || 0, sem || 0, ALVO, 1);
+              const diff = (com != null && sem != null) ? com - sem : null;
               return (
-                <div style={{ marginBottom: 16, padding: 12, background: '#F59E0B0E', border: '1px solid #F59E0B33', borderRadius: 10 }}>
+                <div style={{ marginBottom: 16, padding: 12, background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
                   <div style={{ fontSize: 12, color: C.text, marginBottom: 10 }}>
-                    Impacto na duração: as atividades especiais adicionam em média <strong style={{ color: '#B45309' }}>+{impMin ?? '—'} min</strong>
-                    {esp.impacto_medio_pct != null && <> (~{esp.impacto_medio_pct}% do tempo)</>} aos cultos em que entram.
+                    Impacto na duração (médias):{' '}
+                    {diff == null ? (
+                      <span style={{ color: C.t3 }}>precisa de cultos com e sem atividade especial no período pra comparar.</span>
+                    ) : diff < 0 ? (
+                      <>cultos <strong>com</strong> atividade especial duram <strong style={{ color: '#10B981' }}>{Math.abs(diff)} min a menos</strong> que os sem.</>
+                    ) : diff > 0 ? (
+                      <>cultos <strong>com</strong> atividade especial duram <strong style={{ color: '#EF4444' }}>{diff} min a mais</strong> que os sem.</>
+                    ) : (
+                      <>cultos com e sem atividade especial duram praticamente o mesmo tempo.</>
+                    )}
                   </div>
-                  <BarraImpacto label="Culto sem especial" min={esp.duracao_media_sem_min} extra={0} max={maxMin} />
-                  <BarraImpacto label="Culto com especial" min={esp.duracao_media_com_min} extra={impMin} max={maxMin} />
+                  <BarraImpacto label="Culto sem especial" min={sem} alvo={ALVO} max={maxMin} />
+                  <BarraImpacto label="Culto com especial" min={com} alvo={ALVO} max={maxMin} />
+                  <div style={{ fontSize: 10, color: C.t3, marginTop: 8 }}>
+                    Verde = dentro do alvo ({ALVO} min) · vermelho = passou do alvo · a linha marca o alvo.
+                  </div>
                 </div>
               );
             })()}
@@ -771,7 +783,7 @@ function AbaDetalhado() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                  {['Atividade', 'Tipo', 'Ocorrências', 'Impacto (min)', '% do culto'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                  {['Atividade', 'Tipo', 'Ocorrências', 'Duração', '% do culto'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -780,7 +792,7 @@ function AbaDetalhado() {
                     <td style={{ padding: '8px 10px', fontWeight: 600, color: C.text }}>{c.label}</td>
                     <td style={{ ...td, color: c.rotina ? C.t2 : '#B45309', fontWeight: c.rotina ? 400 : 700 }}>{c.rotina ? 'Rotina' : 'Outros'}</td>
                     <td style={td}>{c.ocorrencias}</td>
-                    <td style={{ ...td, color: '#B45309', fontWeight: 600 }}>{c.duracao_media_seg == null ? '—' : `+${fmtMMSS(c.duracao_media_seg)}`}</td>
+                    <td style={{ ...td, color: C.text, fontWeight: 600 }}>{c.duracao_media_seg == null ? '—' : fmtMMSS(c.duracao_media_seg)}</td>
                     <td style={td}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ width: 36, flexShrink: 0 }}>{c.impacto_pct == null ? '—' : `${c.impacto_pct}%`}</span>
