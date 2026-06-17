@@ -18,8 +18,10 @@ export default function ImportarExtratos() {
   // Estados independentes · permitem importar OFX e PIX em paralelo
   const [procOfx, setProcOfx] = useState(false);
   const [procPix, setProcPix] = useState(false);
+  const [procBal, setProcBal] = useState(false);
   const [resultadoOfx, setResultadoOfx] = useState(null);
   const [resultadoPix, setResultadoPix] = useState(null);
+  const [resultadoBal, setResultadoBal] = useState(null);
 
   const loadUploads = useCallback(async () => {
     const u = await financeiroV2.uploads({ limit: 20 });
@@ -57,6 +59,20 @@ export default function ImportarExtratos() {
       setResultadoPix({ erro: e.message });
     } finally {
       setProcPix(false);
+    }
+  };
+
+  const importarBalanco = async (file) => {
+    setProcBal(true);
+    setResultadoBal(null);
+    try {
+      const r = await financeiroV2.importar.balanco(file);
+      setResultadoBal({ tipo: 'balanco', ...r });
+      loadUploads();
+    } catch (e) {
+      setResultadoBal({ erro: e.message });
+    } finally {
+      setProcBal(false);
     }
   };
 
@@ -113,10 +129,23 @@ export default function ImportarExtratos() {
             </div>
           }
         />
+
+        {/* BALANÇO · planilha do sistema legado */}
+        <UploadCard
+          title="Balanço (sistema financeiro)"
+          subtitle="Sobe a planilha de Balanço exportada do sistema financeiro (todos os lançamentos · receitas e despesas). Idempotente · pode subir o mesmo arquivo de novo que só entra o que é novo. Plano de contas, centro de custo e conta saem da própria planilha."
+          accept=".xlsx,.xls"
+          icon="📊"
+          color={C.amber}
+          colorBg={C.amberBg}
+          processando={procBal}
+          onUpload={importarBalanco}
+        />
       </div>
 
       {resultadoOfx && <ResultadoCard r={resultadoOfx} />}
       {resultadoPix && <ResultadoCard r={resultadoPix} />}
+      {resultadoBal && <ResultadoBalancoCard r={resultadoBal} />}
 
       {/* Histórico de uploads */}
       <div style={{ marginTop: 24 }}>
@@ -271,12 +300,43 @@ function ResultadoCard({ r }) {
   );
 }
 
+function ResultadoBalancoCard({ r }) {
+  if (r.erro) {
+    return (
+      <div style={{ background: C.redBg, border: `1px solid ${C.red}`, padding: 16, borderRadius: 8, marginBottom: 16 }}>
+        <strong style={{ color: C.red }}>Erro:</strong> <span style={{ color: C.text }}>{r.erro}</span>
+      </div>
+    );
+  }
+  const temErro = Array.isArray(r.erros) && r.erros.length > 0;
+  return (
+    <div style={{ background: temErro ? C.amberBg : C.greenBg, border: `1px solid ${temErro ? C.amber : C.green}`, padding: 16, borderRadius: 8, marginBottom: 16 }}>
+      <div style={{ fontSize: 13, color: C.text, marginBottom: 8 }}>
+        <strong>{temErro ? '⚠ Importação parcial do balanço' : '✓ Balanço importado'}</strong>
+        {r.periodo && <span style={{ marginLeft: 8, color: C.text2 }}>{r.periodo.inicio} a {r.periodo.fim}</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: C.text2 }}>
+        <div><strong style={{ color: C.text }}>{r.lidas}</strong> linhas lidas</div>
+        <div><strong style={{ color: C.green }}>{r.inseridas}</strong> novos lançamentos</div>
+        <div><strong style={{ color: C.text3 }}>{r.ja_existentes}</strong> já existentes</div>
+        {r.invalidas > 0 && <div><strong style={{ color: C.amber }}>{r.invalidas}</strong> ignoradas (sem data/valor)</div>}
+      </div>
+      {temErro && (
+        <div style={{ marginTop: 8, fontSize: 11, color: C.red }}>
+          {r.erros.slice(0, 3).join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TipoBadgeUpload({ tipo }) {
   const map = {
     ofx:      { c: C.blue, bg: C.blueBg, label: 'OFX' },
     pix_xlsx: { c: C.primary, bg: C.primaryBg, label: 'PIX (Excel)' },
     pix_csv:  { c: C.primary, bg: C.primaryBg, label: 'PIX (CSV)' },
     cartao_csv: { c: C.amber, bg: C.amberBg, label: 'Cartao' },
+    balanco:  { c: C.amber, bg: C.amberBg, label: 'Balanço' },
   };
   const s = map[tipo] || { c: C.text3, bg: '#73737318', label: tipo };
   return (
