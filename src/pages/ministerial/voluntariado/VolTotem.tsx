@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import type { VolSchedule } from './types';
 import {
   saveTodayServices, getTodayServices, saveProfiles, getProfiles,
@@ -42,6 +43,11 @@ export default function VolTotem() {
   const [searchParams] = useSearchParams();
   const serviceIdParam = searchParams.get('serviceId');
   const backPath = isVoluntario ? '/voluntariado/checkin' : '/ministerial/voluntariado';
+
+  // "Adicionar à tela inicial" no tablet aponta o atalho pro TOTEM
+  // (start_url /voluntariado/totem) — antes caía no manifest de check-in e
+  // abria a tela de voluntário pedindo cadastro.
+  useHomeScreenMeta('totem');
 
   const [services, setServices] = useState<any[]>([]);
   const [selectedServiceId, setSelectedServiceId] = useState(serviceIdParam || '');
