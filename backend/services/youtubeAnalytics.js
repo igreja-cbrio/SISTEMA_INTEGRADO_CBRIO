@@ -457,6 +457,72 @@ async function fetchVideoViewsBySubStatus(channelId, videoId, startDate, endDate
   return out;
 }
 
+// Analytics: engajamento AGREGADO do canal numa janela (sem filtro de vídeo).
+// Métricas de engajamento de conteúdo do canal (retenção, compartilhamento, cliques).
+// Retorna { views, shares, avg_view_percentage, card_impressions, card_clicks }.
+//
+// Faz 2 chamadas porque as metricas de CARD podem não existir / ficar indisponíveis
+// em alguns canais (quando não se usa card/tela final) · a falha dos cards NÃO
+// derruba o core (views/shares/retenção, que sempre vêm). A API do YouTube NÃO
+// expõe impressões/alcance nem CTR de miniatura (só o Studio tem) · por isso a
+// taxa de compartilhamento usa `views` como denominador e os "cliques em séries"
+// usam o CTR dos cards (cardClicks ÷ cardImpressions).
+async function fetchChannelEngagement(channelId, startDate, endDate) {
+  const { token, channel_id } = await getValidAccessToken(channelId);
+
+  // 1) Core · views, shares, retenção média (sempre disponível)
+  const coreParams = new URLSearchParams({
+    ids: `channel==${channel_id}`,
+    startDate,
+    endDate,
+    metrics: 'views,shares,averageViewPercentage',
+  });
+  const coreRes = await fetch(`${ANALYTICS}/reports?${coreParams}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!coreRes.ok) {
+    const t = await coreRes.text();
+    throw new Error(`Analytics engajamento (core) falhou: ${coreRes.status} ${t.slice(0, 200)}`);
+  }
+  const coreData = await coreRes.json();
+  const coreRow = (coreData.rows || [])[0] || [0, 0, 0];
+
+  // 2) Cards · cardImpressions, cardClicks (best-effort)
+  let card_impressions = null;
+  let card_clicks = null;
+  let card_error = null;
+  try {
+    const cardParams = new URLSearchParams({
+      ids: `channel==${channel_id}`,
+      startDate,
+      endDate,
+      metrics: 'cardImpressions,cardClicks',
+    });
+    const cardRes = await fetch(`${ANALYTICS}/reports?${cardParams}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (cardRes.ok) {
+      const cardData = await cardRes.json();
+      const cardRow = (cardData.rows || [])[0] || [0, 0];
+      card_impressions = cardRow[0] || 0;
+      card_clicks = cardRow[1] || 0;
+    } else {
+      card_error = `${cardRes.status} ${(await cardRes.text()).slice(0, 120)}`;
+    }
+  } catch (e) {
+    card_error = e.message;
+  }
+
+  return {
+    views: coreRow[0] || 0,
+    shares: coreRow[1] || 0,
+    avg_view_percentage: coreRow[2] || 0,
+    card_impressions,
+    card_clicks,
+    card_error,
+  };
+}
+
 // Lista canais que a conta OAuth atual gerencia. Útil pra diagnosticar se
 // o token autorizou a conta CERTA · `mine=true` retorna so canais que o
 // usuário do token possui/gerencia. Se vier vazio ou canal errado, o
@@ -532,6 +598,7 @@ module.exports = {
   fetchVideoTrafficSources,
   fetchVideoRetentionCurve,
   fetchVideoViewsBySubStatus,
+  fetchChannelEngagement,
   listAuthorizedChannels,
   debugAnalyticsCall,
 };

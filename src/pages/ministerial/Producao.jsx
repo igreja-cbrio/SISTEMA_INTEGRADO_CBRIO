@@ -18,7 +18,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save,
-  Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2, TrendingUp,
+  Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2,
   Inbox, Gauge, Activity,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -122,7 +122,6 @@ function serializeEtapas(etapas) {
 
 const ABAS = [
   { key: 'semana',       label: 'Preenchimento', icon: Calendar },
-  { key: 'acumulado',    label: 'Acumulado',     icon: TrendingUp },
   { key: 'detalhado',    label: 'Detalhado',     icon: Activity },
   { key: 'checklists',   label: 'Modelos',       icon: ListChecks },
   { key: 'solicitacoes', label: 'Solicitações',  icon: Inbox },
@@ -156,8 +155,7 @@ export default function Producao() {
       </nav>
 
       {aba === 'semana'       && <AbaSemana />}
-      {aba === 'acumulado'    && <AbaAcumulado modo="acumulado" />}
-      {aba === 'detalhado'    && <AbaAcumulado modo="detalhado" />}
+      {aba === 'detalhado'    && <AbaDetalhado />}
       {aba === 'checklists'   && <AbaModelos />}
       {aba === 'solicitacoes' && <AbaSolicitacoes />}
       {aba === 'desempenho'   && <AbaDesempenho />}
@@ -552,7 +550,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
           </div>
 
           {/* Ocorrências */}
-          <SecaoTitulo icone={ShieldAlert} cor="#EF4444" titulo="Ocorrências · falhas técnicas e estabilidade" />
+          <SecaoTitulo icone={ShieldAlert} cor="#EF4444" titulo="Ocorrências · falhas técnicas e instabilidade" />
           <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {(det?.ocorrencias || []).length === 0 && <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic' }}>Nenhuma ocorrência registrada neste culto.</div>}
             {(det?.ocorrencias || []).map(o => (
@@ -568,7 +566,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
               <select value={novaOcorr.tipo} onChange={e => setNovaOcorr(o => ({ ...o, tipo: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
                 <option value="tecnica">Falha técnica</option>
-                <option value="estrutura">Estabilidade estrutura</option>
+                <option value="estrutura">Instabilidade estrutura</option>
               </select>
               <select value={novaOcorr.severidade} onChange={e => setNovaOcorr(o => ({ ...o, severidade: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
                 <option value="baixa">Baixa</option><option value="media">Média</option>
@@ -620,7 +618,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
 }
 
 // ── Aba Acumulado / Detalhado ─────────────────────────────────────────────────
-function AbaAcumulado({ modo }) {
+function AbaDetalhado() {
   const [periodo, setPeriodo] = useState('90');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -649,30 +647,14 @@ function AbaAcumulado({ modo }) {
           <button key={p} onClick={() => setPeriodo(p)} style={{ ...chip, ...(periodo === p ? chipSel : {}) }}>{p}d</button>
         ))}
       </div>
-      {loading ? <div style={loadingBox}>Carregando…</div> : !data ? null : modo === 'acumulado' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-          <Kpi titulo="Cultos preenchidos" valor={`${data.totais.cultos_preenchidos}/${data.totais.cultos_no_periodo}`} />
-          <Kpi titulo="Pontualidade" valor={data.totais.pontualidade_pct == null ? '—' : `${data.totais.pontualidade_pct}%`} cor="#0EA5E9" />
-          <Kpi titulo="Duração média (executado)" valor={data.totais.duracao_media_min == null ? '—' : `${data.totais.duracao_media_min} min`} />
-          <Kpi titulo="Duração prevista média" valor={data.totais.duracao_prevista_media_min == null ? '—' : `${data.totais.duracao_prevista_media_min} min`} />
-          <Kpi titulo="Aderência ao roteiro" valor={data.totais.aderencia_pct == null ? '—' : `${data.totais.aderencia_pct}%`}
-            sub={data.totais.desvio_medio_seg == null ? null : `desvio médio ${fmtDesvio(data.totais.desvio_medio_seg)}`} cor={aderCor(data.totais.aderencia_pct)} />
-          <Kpi titulo="Checklist executado" valor={data.totais.checklist_pct == null ? '—' : `${data.totais.checklist_pct}%`} cor="#10B981" />
-          <Kpi titulo="Falhas técnicas" valor={data.totais.falhas_tecnicas} cor="#EF4444" />
-          <Kpi titulo="Ocorr. estrutura" valor={data.totais.ocorrencias_estrutura} cor="#F59E0B" />
-          {data.especiais && (
-            <Kpi titulo="Cultos c/ atividade especial" valor={`${data.especiais.cultos_com_especial}/${data.especiais.cultos_no_periodo}`}
-              sub={`rotina ${data.especiais.cultos_rotina} · outros ${data.especiais.cultos_outros}`} cor="#B45309" />
-          )}
-        </div>
-      ) : (
+      {loading ? <div style={loadingBox}>Carregando…</div> : !data ? null : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <div style={{ overflowX: 'auto' }}>
             <h3 style={subTit}>Por tipo de culto</h3>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                  {['Tipo de culto', 'Cultos', 'Preench.', 'Pontual.', 'Dur. média', 'Prev. média', 'Checklist', 'Falhas', 'Estrutura'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                  {['Tipo de culto', 'Cultos', 'Preench.', 'Pontual.', 'Aderência', 'Dur. média', 'Prev. média', 'Checklist', 'Falhas', 'Estrutura'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -682,6 +664,7 @@ function AbaAcumulado({ modo }) {
                     <td style={td}>{t.cultos}</td>
                     <td style={td}>{t.preenchidos}</td>
                     <td style={td}>{t.pontualidade_pct == null ? '—' : `${t.pontualidade_pct}%`}</td>
+                    <td style={{ ...td, color: aderCor(t.aderencia_pct) }}>{t.aderencia_pct == null ? '—' : `${t.aderencia_pct}%`}</td>
                     <td style={td}>{t.duracao_media_min == null ? '—' : `${t.duracao_media_min}min`}</td>
                     <td style={td}>{t.duracao_prevista_media_min == null ? '—' : `${t.duracao_prevista_media_min}min`}</td>
                     <td style={td}>{t.checklist_pct == null ? '—' : `${t.checklist_pct}%`}</td>
@@ -689,7 +672,21 @@ function AbaAcumulado({ modo }) {
                     <td style={{ ...td, color: t.ocorrencias_estrutura > 0 ? '#F59E0B' : C.t3 }}>{t.ocorrencias_estrutura}</td>
                   </tr>
                 ))}
-                {data.detalhado.length === 0 && <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem dados no período.</td></tr>}
+                {data.detalhado.length > 0 && (
+                  <tr style={{ borderTop: `2px solid ${C.border}`, fontWeight: 700, background: C.inputBg }}>
+                    <td style={{ padding: '8px 10px', color: C.text }}>Acumulado geral</td>
+                    <td style={td}>{data.totais.cultos_no_periodo}</td>
+                    <td style={td}>{data.totais.cultos_preenchidos}</td>
+                    <td style={td}>{data.totais.pontualidade_pct == null ? '—' : `${data.totais.pontualidade_pct}%`}</td>
+                    <td style={{ ...td, color: aderCor(data.totais.aderencia_pct) }}>{data.totais.aderencia_pct == null ? '—' : `${data.totais.aderencia_pct}%`}</td>
+                    <td style={td}>{data.totais.duracao_media_min == null ? '—' : `${data.totais.duracao_media_min}min`}</td>
+                    <td style={td}>{data.totais.duracao_prevista_media_min == null ? '—' : `${data.totais.duracao_prevista_media_min}min`}</td>
+                    <td style={td}>{data.totais.checklist_pct == null ? '—' : `${data.totais.checklist_pct}%`}</td>
+                    <td style={td}>{data.totais.falhas_tecnicas}</td>
+                    <td style={td}>{data.totais.ocorrencias_estrutura}</td>
+                  </tr>
+                )}
+                {data.detalhado.length === 0 && <tr><td colSpan={10} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem dados no período.</td></tr>}
               </tbody>
             </table>
           </div>

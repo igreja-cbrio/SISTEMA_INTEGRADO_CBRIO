@@ -822,6 +822,82 @@ async function catchUpMetricas({ limit = 5 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// engajamentoCollector · agrega o engajamento de conteúdo do CANAL por mês e
+// faz UPSERT em online_engajamento (1 linha por mês). Alimenta o card de
+// Engajamento de conteúdo em /online.
+//   - retencao_media_pct        = averageViewPercentage do mês
+//   - taxa_compartilhamento_pct = shares ÷ views × 100 (a API do YouTube não
+//                                 expõe impressões/alcance · views é o proxy)
+//   - cliques_series_pct        = cardClicks ÷ cardImpressions × 100 (CTR dos
+//                                 cards · null se o canal não usa cards)
+// opts.ano           · ano a coletar (default: ano atual · UTC)
+// opts.mesesRecentes · se setado (ex: 2), só os últimos N meses do ano (cron);
+//                      senão, jan→mês atual (backfill completo do ano · botão).
+// ---------------------------------------------------------------------------
+async function engajamentoCollector({ ano, mesesRecentes } = {}) {
+  const hoje = new Date();
+  const anoAtual = hoje.getUTCFullYear();
+  const anoAlvo = Number(ano) || anoAtual;
+  // Último mês a coletar: ano corrente → até o mês atual; ano passado → dezembro.
+  const ultimoMes = anoAlvo < anoAtual ? 11 : hoje.getUTCMonth(); // 0-11
+
+  let meses = [];
+  for (let m = 0; m <= ultimoMes; m++) meses.push(m);
+  if (mesesRecentes && mesesRecentes > 0) meses = meses.slice(-mesesRecentes);
+
+  // O Analytics tem 1-3 dias de atraso de processamento · nunca pede o futuro.
+  const ontem = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate() - 1));
+
+  const resultados = [];
+  let coletados = 0;
+  for (const m of meses) {
+    const inicio = new Date(Date.UTC(anoAlvo, m, 1));
+    const fimMes = new Date(Date.UTC(anoAlvo, m + 1, 0)); // último dia do mês
+    const fim = fimMes > ontem ? ontem : fimMes;
+    if (fim < inicio) continue; // mês ainda não começou
+    const startDate = fmtData(inicio);
+    const endDate = fmtData(fim);
+    const mesIso = `${anoAlvo}-${String(m + 1).padStart(2, '0')}-01`;
+
+    try {
+      const e = await yt.fetchChannelEngagement(null, startDate, endDate);
+      const retencao = e.views > 0 ? Number((e.avg_view_percentage || 0).toFixed(2)) : null;
+      const compart = e.views > 0 ? Number(((e.shares / e.views) * 100).toFixed(2)) : null;
+      const cliques = (e.card_impressions && e.card_impressions > 0)
+        ? Number(((e.card_clicks / e.card_impressions) * 100).toFixed(2)) : null;
+
+      const obs = `views ${e.views} · shares ${e.shares}`
+        + (e.card_impressions != null
+            ? ` · cards ${e.card_clicks}/${e.card_impressions}`
+            : ` · cards: ${e.card_error ? 'erro' : 'sem dado'}`)
+        + ` · janela ${startDate}..${endDate}`;
+
+      const { error } = await supabase.from('online_engajamento').upsert({
+        mes: mesIso,
+        retencao_media_pct: retencao,
+        taxa_compartilhamento_pct: compart,
+        cliques_series_pct: cliques,
+        fonte: 'youtube_api',
+        observacao: obs,
+        collected_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'mes' });
+      if (error) throw error;
+
+      coletados++;
+      resultados.push({
+        mes: mesIso, retencao, compartilhamento: compart, cliques_series: cliques,
+        views: e.views, shares: e.shares,
+        cards: e.card_impressions != null ? `${e.card_clicks}/${e.card_impressions}` : null,
+      });
+    } catch (err) {
+      resultados.push({ mes: mesIso, error: (err.message || String(err)).slice(0, 160) });
+    }
+  }
+  return { ok: true, ano: anoAlvo, processados: meses.length, coletados, resultados };
+}
+
+// ---------------------------------------------------------------------------
 // verificarColetaOnline · BLINDAGEM · confere se os cultos online já encerrados
 // dos últimos 2 dias receberam as metricas automáticas (video_id, pico, DS) e a
 // saúde do token OAuth. NÃO dispara notificação (quem decide alertar e o
@@ -898,5 +974,6 @@ module.exports = {
   liveMonitor, dsCollector, ddusCollector, subsCollector,
   traficoCollector, retencaoCurvaCollector, subStatusCollector,
   backfillCultoVideoIds, catchUpMetricas, backfillRange,
+  engajamentoCollector,
   verificarColetaOnline, findCultoAtual,
 };

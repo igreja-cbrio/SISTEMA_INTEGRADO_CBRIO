@@ -422,6 +422,26 @@ function OAuthStatusCardInner() {
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta'),
   });
 
+  // Engajamento de conteúdo do canal · backfill do ano (jan→hoje)
+  const coletarEngajamento = useMutation({
+    mutationFn: () => online.coletar.engajamento(),
+    onSuccess: (r: any) => {
+      const linhas = (r?.resultados || []).filter((x: any) => !x.error);
+      const ult = linhas[linhas.length - 1];
+      if (ult) {
+        const ret = ult.retencao != null ? `${ult.retencao}%` : '—';
+        const comp = ult.compartilhamento != null ? `${ult.compartilhamento}%` : '—';
+        const cli = ult.cliques_series != null ? `${ult.cliques_series}%` : '—';
+        toast.success(`Engajamento ${String(ult.mes).slice(0, 7)} · retenção ${ret} · compart. ${comp} · cliques ${cli}`);
+      } else {
+        const err = (r?.resultados || []).find((x: any) => x.error);
+        toast.message(err ? `Sem dados: ${err.error}` : `Coleta executada (${r?.coletados || 0} meses).`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['online', 'engajamento'] });
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro na coleta de engajamento'),
+  });
+
   const conectado = status?.conectado;
 
   return (
@@ -487,6 +507,10 @@ function OAuthStatusCardInner() {
                 {coletarDdus.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
                 DDUS (D+7)
               </Button>
+              <Button size="sm" variant="outline" onClick={() => coletarEngajamento.mutate()} disabled={coletarEngajamento.isPending}>
+                {coletarEngajamento.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                Engajamento (ano)
+              </Button>
               <Button size="sm" variant="ghost" onClick={() => desconectar.mutate()} disabled={desconectar.isPending}>
                 <Unlink className="h-3.5 w-3.5 mr-1.5" />
                 Desconectar
@@ -513,7 +537,7 @@ export default function Online() {
     queryFn: () => online.dashboard(),
   });
 
-  // Engajamento de conteúdo (KPIs da cabeça do Juninho) · 0 até a API do YouTube alimentar
+  // Engajamento de conteúdo do canal · 0 até a API do YouTube alimentar
   const { data: eng } = useQuery<any>({
     queryKey: ['online', 'engajamento'],
     queryFn: () => online.engajamento(),
@@ -690,7 +714,7 @@ export default function Online() {
         </div>
       )}
 
-      {/* Engajamento de conteúdo · KPIs do Monitoramento OKR (Pr. Juninho).
+      {/* Engajamento de conteúdo do canal (YouTube Analytics).
           Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}
       <Card className="overflow-hidden">
         <div className="p-4 md:p-5 flex items-center gap-3 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
@@ -698,7 +722,7 @@ export default function Online() {
           <div className="flex-1 min-w-0">
             <h2 className="text-base font-bold leading-tight">Engajamento de conteúdo</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Indicadores do Monitoramento OKR (Pr. Juninho).{' '}
+              Retenção, compartilhamento e cliques do canal no YouTube.{' '}
               {eng?.mes_label
                 ? `Referência ${eng.mes_label}.`
                 : 'Aguardando integração com a API do YouTube — exibindo 0 até a primeira coleta.'}

@@ -23,6 +23,7 @@ const { supabase } = require('../utils/supabase');
 const { safeEqual } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 
 // authenticate aplicado condicionalmente abaixo · rotas /display/* e
 // /chamadas com estacao_token bypassam pra display sem login
@@ -374,31 +375,14 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
     const tel = normalizarTelefone(responsavel.telefone);
     const cpf = normalizarCpf(responsavel.cpf);
 
-    // 1. Resolve responsável em mem_membros (cpf > telefone > cria)
-    let membro = null;
-    if (cpf) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('cpf', cpf).maybeSingle();
-      membro = data;
-    }
-    if (!membro && tel) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('telefone', tel).maybeSingle();
-      membro = data;
-    }
-    if (!membro) {
-      const { data, error } = await supabase.from('mem_membros')
-        .insert({
-          nome: responsavel.nome,
-          telefone: tel,
-          cpf,
-          email: responsavel.email || null,
-          status: 'visitante',
-          active: true,
-        })
-        .select('id, nome, familia_id')
-        .single();
-      if (error) throw error;
-      membro = data;
-    }
+    // 1. Resolve responsável · guarda na origem (CPF→e-mail→telefone+nome→cria ·
+    //    NÃO liga por telefone sozinho, que família compartilha · colisão sem
+    //    nome batendo vira stub e cai na aba Duplicados / fila do Kevyn).
+    const r = await acharOuCriarGuardado({
+      cpf, email: responsavel.email || null, telefone: tel, nome: responsavel.nome, status: 'visitante',
+    });
+    const { data: membro } = await supabase.from('mem_membros')
+      .select('id, nome, familia_id').eq('id', r.membro_id).single();
 
     // 2. Garante família (se responsável não tem, cria)
     let familiaId = membro.familia_id;
@@ -554,31 +538,15 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     if (errC) throw errC;
     if (!crianca) return res.status(404).json({ error: 'criança não encontrada' });
 
-    // 2. Match mem_membros por cpf > telefone
-    let membro = null;
-    if (cpfNorm) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('cpf', cpfNorm).maybeSingle();
-      if (data) membro = data;
-    }
-    if (!membro && tel) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('telefone', tel).maybeSingle();
-      if (data) membro = data;
-    }
-
-    // 3. Cria mem_membros se não existe
-    if (!membro) {
-      const { data, error } = await supabase.from('mem_membros').insert({
-        nome: nome.trim(),
-        telefone: tel,
-        cpf: cpfNorm,
-        status: 'visitante',
-        familia_id: crianca.familia_id,
-        active: true,
-      }).select('id, nome, familia_id').single();
-      if (error) throw error;
-      membro = data;
-    } else if (crianca.familia_id && !membro.familia_id) {
-      // Atualiza familia_id do membro existente se não tinha
+    // 2. Resolve mem_membros · guarda na origem (CPF→e-mail→telefone+nome→cria)
+    const r = await acharOuCriarGuardado({
+      cpf: cpfNorm, telefone: tel, nome: nome.trim(), status: 'visitante',
+      extra: { familia_id: crianca.familia_id || null },
+    });
+    const { data: membro } = await supabase.from('mem_membros')
+      .select('id, nome, familia_id').eq('id', r.membro_id).single();
+    // Membro já existia sem família → herda a da criança
+    if (!r.created && crianca.familia_id && !membro.familia_id) {
       await supabase.from('mem_membros').update({ familia_id: crianca.familia_id }).eq('id', membro.id);
     }
 
@@ -1346,30 +1314,14 @@ function normalizeParentesco(v) {
 
 // Resolve ou cria mem_membros do responsável
 async function resolveOrCreateMembro({ nome, telefone, cpf, parentesco }) {
-  let membro = null;
-  if (cpf) {
-    const { data } = await supabase.from('mem_membros').select('id, nome, familia_id, parentesco').eq('cpf', cpf).maybeSingle();
-    if (data) membro = data;
-  }
-  if (!membro && telefone) {
-    const { data } = await supabase.from('mem_membros').select('id, nome, familia_id, parentesco').eq('telefone', telefone).maybeSingle();
-    if (data) membro = data;
-  }
-  if (membro) return { membro, criado: false };
-
-  const { data, error } = await supabase.from('mem_membros')
-    .insert({
-      nome,
-      telefone,
-      cpf,
-      status: 'visitante',
-      active: true,
-      parentesco: parentesco === 'mae' || parentesco === 'pai' ? 'responsavel' : null,
-    })
-    .select('id, nome, familia_id')
-    .single();
-  if (error) throw error;
-  return { membro: data, criado: true };
+  // guarda na origem (CPF→e-mail→telefone+nome→cria · não liga por telefone só)
+  const r = await acharOuCriarGuardado({
+    cpf, telefone, nome, status: 'visitante',
+    extra: { parentesco: parentesco === 'mae' || parentesco === 'pai' ? 'responsavel' : null },
+  });
+  const { data: membro } = await supabase.from('mem_membros')
+    .select('id, nome, familia_id, parentesco').eq('id', r.membro_id).single();
+  return { membro, criado: !!r.created };
 }
 
 async function getOrCreateFamilia(membro) {
