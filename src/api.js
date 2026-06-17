@@ -1006,6 +1006,7 @@ export const notificacoes = {
 // Analytics do app de membros (telemetria · visto no sistema)
 export const appAnalytics = {
   resumo: (dias = 14) => get(`/app-analytics/resumo?dias=${dias}`),
+  aoVivo: () => get('/app-analytics/ao-vivo'),
 };
 
 export const painelArea = {
