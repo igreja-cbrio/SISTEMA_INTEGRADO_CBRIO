@@ -656,4 +656,6 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
   return query.eq('id', '00000000-0000-0000-0000-000000000000');
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP };
+module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
+  // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias)
+  resolveEffectivePerms, getCargoMatrix, getModulos };

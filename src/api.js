@@ -920,6 +920,12 @@ export const rh = {
     update: (id, data) => patch(`/rh/ferias/${id}`, data),
     remove: (id) => del(`/rh/ferias/${id}`),
   },
+  // Cobertura de férias/licença (substituto herda módulos operacionais · expira sozinho)
+  coberturas: {
+    list: (params) => get('/rh/coberturas' + (params ? '?' + new URLSearchParams(params) : '')),
+    cancelar: (id) => post(`/rh/coberturas/${id}/cancelar`, {}),
+    minhas: () => get('/coberturas/minhas'),  // qualquer usuário logado (o substituto)
+  },
   extras: {
     list: (params) => get('/rh/extras' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/rh/extras', data),
