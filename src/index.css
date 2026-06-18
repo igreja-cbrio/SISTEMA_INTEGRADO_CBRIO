@@ -62,7 +62,7 @@
     --cbrio-card: #161616;
     --cbrio-text: #e5e5e5;
     --cbrio-text2: #a3a3a3;
-    --cbrio-text3: #737373;
+    --cbrio-text3: #8b969d;
     --cbrio-border: #262626;
     --cbrio-sidebar: #111111;
     --cbrio-input-bg: #1e1e1e;
@@ -266,6 +266,29 @@ table tbody tr:hover {
 }
 @media (prefers-reduced-motion: reduce) {
   .cbrio-card, .cbrio-interactive, .cbrio-kpi { transition: none !important; }
+}
+
+/* Regra de ouro: DADO DENSO fica NÍTIDO. Card de vidro que contém tabela ou
+   gráfico (recharts) perde o blur e vira sólido automaticamente — sem editar
+   páginas. (:has é ignorado em navegadores antigos → degrada pro vidro.) */
+.glass-surface:has(table),
+.glass-surface:has(.recharts-wrapper),
+.glass-surface:has(.recharts-responsive-container),
+.cbrio-card:has(table),
+.cbrio-card:has(.recharts-wrapper) {
+  -webkit-backdrop-filter: none;
+          backdrop-filter: none;
+  background: var(--cbrio-card);
+}
+/* Cards ANINHADOS: o filho não repete blur (evita "borrão duplo"). */
+.glass-surface .glass-surface,
+.glass-surface .cbrio-card,
+.cbrio-card .glass-surface,
+.cbrio-card .cbrio-card {
+  -webkit-backdrop-filter: none;
+          backdrop-filter: none;
+  background: var(--cbrio-card);
+  box-shadow: none;
 }
 .cbrio-card-header { padding: 16px 20px; border-bottom: 1px solid var(--cbrio-border); display: flex; justify-content: space-between; align-items: center; }
 .cbrio-card-body { padding: 16px 20px; }
