@@ -3031,12 +3031,14 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
+  const [ordem, setOrdem] = useState('maior'); // 'maior' | 'menor' valor
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
     setBusca('');
+    setOrdem('maior');
     fetcher()
       .then(r => { if (!cancelled) setDados(r); })
       .catch(e => console.warn('[Drilldown]:', e?.message))
@@ -3047,15 +3049,19 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
 
   if (!open) return null;
 
-  const transacoes = (dados?.transacoes || []).filter(t => {
-    if (!busca) return true;
-    const q = busca.toLowerCase();
-    return (
-      String(t.referencia || '').toLowerCase().includes(q) ||
-      String(t.descricao || '').toLowerCase().includes(q) ||
-      String(t.plano_contas_nome || '').toLowerCase().includes(q)
-    );
-  });
+  const transacoes = (dados?.transacoes || [])
+    .filter(t => {
+      if (!busca) return true;
+      const q = busca.toLowerCase();
+      return (
+        String(t.referencia || '').toLowerCase().includes(q) ||
+        String(t.descricao || '').toLowerCase().includes(q) ||
+        String(t.plano_contas_nome || '').toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => ordem === 'maior'
+      ? Number(b.valor || 0) - Number(a.valor || 0)
+      : Number(a.valor || 0) - Number(b.valor || 0));
 
   const total = dados?.total || 0;
 
@@ -3115,14 +3121,32 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
               )}
             </div>
 
-            <div className="px-6 py-3 border-b border-border bg-muted/30">
+            <div className="px-6 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
               <input
                 type="text"
                 placeholder="Filtrar por nome, descrição, plano de contas..."
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className="flex-1 min-w-0 px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
+              <div className="flex rounded-md border border-border overflow-hidden shrink-0 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setOrdem('maior')}
+                  className={`px-2.5 py-2 flex items-center gap-1 transition ${ordem === 'maior' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'}`}
+                  title="Maior valor primeiro"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" /> Maior
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrdem('menor')}
+                  className={`px-2.5 py-2 flex items-center gap-1 transition border-l border-border ${ordem === 'menor' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'}`}
+                  title="Menor valor primeiro"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" /> Menor
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -3137,11 +3161,8 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
               ) : (
                 <div className="space-y-1">
                   {transacoes.slice(0, 200).map((t, i) => (
-                    <motion.div
+                    <div
                       key={t.id || i}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: Math.min(i * 0.01, 0.5) }}
                       className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-muted/50 transition border border-transparent hover:border-border"
                     >
                       <div className="min-w-0 flex-1">
@@ -3163,7 +3184,7 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
                       <div className="text-sm font-semibold tabular-nums shrink-0" style={{ color }}>
                         {fmtMoney(t.valor)}
                       </div>
-                    </motion.div>
+                    </div>
                   ))}
                   {transacoes.length > 200 && (
                     <div className="text-[10px] text-muted-foreground text-center pt-3">
