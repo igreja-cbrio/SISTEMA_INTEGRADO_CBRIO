@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { next as nextApi } from '../../api';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -8,26 +8,25 @@ import { Badge } from '../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
-  CheckCircle2, AlertTriangle, X, UserPlus,
+  CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-const JornadaConvertidos = lazy(() => import('../../components/JornadaConvertidos'));
-
 const C = { primary: '#00B39D', warn: '#f59e0b', danger: '#ef4444', info: '#3b82f6', gray: '#737373' };
+
+const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function nomeMesAtual() { const d = new Date(); return `${MESES_PT[d.getMonth()]} ${d.getFullYear()}`; }
 
 type Status = 'matriculado' | 'formado' | 'incompleto' | 'desistiu';
 type Encontro = { id: string; turma_id: string; numero: number; data?: string | null; tema?: string | null };
 type Matricula = {
   id: string; turma_id?: string | null; nome: string; sobrenome?: string | null;
-  cpf?: string | null; telefone?: string | null; email?: string | null;
-  status: Status; observacoes?: string | null;
+  cpf?: string | null; telefone?: string | null; email?: string | null; status: Status;
 };
 type Presenca = { encontro_id: string; matricula_id: string; presente: boolean };
 type Turma = {
   id: string; nome: string; status: 'aberta' | 'encerrada' | 'cancelada';
-  responsavel_id?: string | null; observacoes?: string | null;
-  contagem?: { total: number; formado?: number; matriculado?: number; incompleto?: number; encontros?: number };
+  contagem?: { total: number; formado?: number; encontros?: number };
 };
 type TurmaDetalhe = Turma & { encontros: Encontro[]; matriculas: Matricula[]; presencas: Presenca[] };
 
@@ -44,40 +43,27 @@ function ymdLocal(d?: string | null): string {
 }
 
 export default function NextTurmas() {
-  const [view, setView] = useState<'turma' | 'pessoa' | 'nsm'>('turma');
-
+  const [view, setView] = useState<'turmas' | 'pessoas'>('turmas');
   return (
     <div className="space-y-4">
       <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
-        {([['turma', 'Por turma'], ['pessoa', 'Por pessoa'], ['nsm', 'NSM']] as const).map(([v, label]) => (
+        {([['turmas', 'Turmas'], ['pessoas', 'Pessoas']] as const).map(([v, label]) => (
           <button
             key={v}
             onClick={() => setView(v)}
-            className={`px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${view === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+            className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${view === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
           >
             {label}
           </button>
         ))}
       </div>
-
-      {view === 'turma' && <TurmasView />}
-      {view === 'pessoa' && <PessoasView />}
-      {view === 'nsm' && (
-        <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            Acompanhamento dos convertidos (Data NSM) — quem fez/falta no Next nos primeiros 90 dias.
-          </p>
-          <Suspense fallback={<Loader2 className="h-5 w-5 animate-spin text-muted-foreground mx-auto my-8" />}>
-            <JornadaConvertidos view="next" />
-          </Suspense>
-        </div>
-      )}
+      {view === 'turmas' ? <TurmasView /> : <PessoasView />}
     </div>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// POR TURMA
+// TURMAS (mensais · 2 encontros · presença)
 // ──────────────────────────────────────────────────────────────────────────
 function TurmasView() {
   const [turmas, setTurmas] = useState<Turma[]>([]);
@@ -96,15 +82,14 @@ function TurmasView() {
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={() => setNovaOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
-          <Plus className="h-4 w-4" /> Nova turma
+          <Plus className="h-4 w-4" /> Nova turma do mês
         </Button>
       </div>
-
       {loading ? (
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : turmas.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Nenhuma turma ainda. Crie a primeira turma do Next (2 encontros).
+          Nenhuma turma ainda. Crie a turma do mês (2 encontros).
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -118,15 +103,11 @@ function TurmasView() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold text-foreground text-sm leading-tight">{t.nome}</span>
-                  {t.status !== 'aberta' && (
-                    <Badge variant="outline" className="text-[9px] uppercase shrink-0">{t.status}</Badge>
-                  )}
+                  {t.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase shrink-0">{t.status}</Badge>}
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground mt-auto">
                   <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{c.total || 0}</span>
-                  <span className="flex items-center gap-1" style={{ color: C.primary }}>
-                    <GraduationCap className="h-3.5 w-3.5" />{c.formado || 0}
-                  </span>
+                  <span className="flex items-center gap-1" style={{ color: C.primary }}><GraduationCap className="h-3.5 w-3.5" />{c.formado || 0}</span>
                   <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />{c.encontros || 0}</span>
                 </div>
               </button>
@@ -134,42 +115,27 @@ function TurmasView() {
           })}
         </div>
       )}
-
       {novaOpen && <NovaTurmaModal onClose={() => setNovaOpen(false)} onCreated={() => { setNovaOpen(false); load(); }} />}
-      {turmaAberta && (
-        <TurmaDetalheModal
-          turmaId={turmaAberta}
-          onClose={() => setTurmaAberta(null)}
-          onChanged={load}
-        />
-      )}
+      {turmaAberta && <TurmaDetalheModal turmaId={turmaAberta} onClose={() => setTurmaAberta(null)} onChanged={load} />}
     </div>
   );
 }
 
 function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [nome, setNome] = useState('');
+  const [nome, setNome] = useState(nomeMesAtual());
   const [data1, setData1] = useState('');
   const [data2, setData2] = useState('');
   const [saving, setSaving] = useState(false);
-
   const salvar = async () => {
     if (!nome.trim()) { toast.error('Informe o nome da turma'); return; }
     setSaving(true);
     try {
-      await nextApi.turmas.create({
-        nome: nome.trim(),
-        encontros: [
-          { numero: 1, data: data1 || null },
-          { numero: 2, data: data2 || null },
-        ],
-      });
+      await nextApi.turmas.create({ nome: nome.trim(), encontros: [{ numero: 1, data: data1 || null }, { numero: 2, data: data2 || null }] });
       toast.success('Turma criada');
       onCreated();
     } catch (e: any) { toast.error(e?.message || 'Erro ao criar turma'); }
     setSaving(false);
   };
-
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md">
@@ -177,25 +143,17 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
         <div className="space-y-3">
           <div>
             <Label>Nome *</Label>
-            <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Next · junho/2026" />
+            <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Junho 2026" />
+            <p className="text-[11px] text-muted-foreground mt-1">1 turma por mês — já vem com o mês atual.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>1º encontro</Label>
-              <Input type="date" value={data1} onChange={e => setData1(e.target.value)} />
-            </div>
-            <div>
-              <Label>2º encontro</Label>
-              <Input type="date" value={data2} onChange={e => setData2(e.target.value)} />
-            </div>
+            <div><Label>1º encontro</Label><Input type="date" value={data1} onChange={e => setData1(e.target.value)} /></div>
+            <div><Label>2º encontro</Label><Input type="date" value={data2} onChange={e => setData2(e.target.value)} /></div>
           </div>
-          <p className="text-xs text-muted-foreground">A turma nasce com 2 encontros. Quem vier aos 2 se forma.</p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={salvar} disabled={saving} className="gap-2">
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Criar
-          </Button>
+          <Button onClick={salvar} disabled={saving} className="gap-2">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Criar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -206,7 +164,6 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [det, setDet] = useState<TurmaDetalhe | null>(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
-
   const load = useCallback(async () => {
     setLoading(true);
     try { setDet(await nextApi.turmas.get(turmaId)); } catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -214,11 +171,9 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   }, [turmaId]);
   useEffect(() => { load(); }, [load]);
 
-  // present[encontroId] = Set de matricula_ids presentes
   const present: Record<string, Set<string>> = {};
   (det?.encontros || []).forEach(e => { present[e.id] = new Set(); });
   (det?.presencas || []).forEach(p => { if (p.presente && present[p.encontro_id]) present[p.encontro_id].add(p.matricula_id); });
-
   const totalEnc = det?.encontros.length || 0;
   const presCount = (matId: string) => (det?.encontros || []).reduce((n, e) => n + (present[e.id]?.has(matId) ? 1 : 0), 0);
 
@@ -226,21 +181,13 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
     if (!det) return;
     const set = new Set(present[encontro.id]);
     if (set.has(matId)) set.delete(matId); else set.add(matId);
-    try {
-      await nextApi.encontros.setPresencas(encontro.id, [...set]);
-      await load();
-      onChanged();
-    } catch (e: any) { toast.error(e?.message || 'Erro ao marcar presença'); }
+    try { await nextApi.encontros.setPresencas(encontro.id, [...set]); await load(); onChanged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao marcar presença'); }
   };
-
   const encerrar = async () => {
-    try {
-      await nextApi.turmas.update(turmaId, { status: 'encerrada' });
-      toast.success('Turma encerrada');
-      await load(); onChanged();
-    } catch (e: any) { toast.error(e?.message || 'Erro'); }
+    try { await nextApi.turmas.update(turmaId, { status: 'encerrada' }); toast.success('Turma encerrada'); await load(); onChanged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
   };
-
   const setData = async (encId: string, data: string) => {
     try { await nextApi.encontros.update(encId, { data: data || null }); await load(); } catch (e: any) { toast.error(e?.message); }
   };
@@ -258,8 +205,6 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                 {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
               </DialogTitle>
             </DialogHeader>
-
-            {/* Encontros (datas) */}
             <div className="flex flex-wrap gap-3">
               {det.encontros.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-2.5 flex items-center gap-2">
@@ -268,8 +213,6 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                 </div>
               ))}
             </div>
-
-            {/* Grade de presença */}
             <div className="rounded-xl border border-border overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -288,27 +231,20 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                     <tr><td colSpan={2 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
                   ) : det.matriculas.map(m => {
                     const n = presCount(m.id);
-                    const incompletoNaoFoi = totalEnc > 0 && n < totalEnc;
+                    const incompletoFim = totalEnc > 0 && n < totalEnc && det.status === 'encerrada';
                     return (
                       <tr key={m.id} className="border-b border-border last:border-0">
                         <td className="p-2">
-                          <span className={incompletoNaoFoi && det.status === 'encerrada' ? 'text-amber-600' : ''}>{m.nome} {m.sobrenome || ''}</span>
+                          <span className={incompletoFim ? 'text-amber-600' : ''}>{m.nome} {m.sobrenome || ''}</span>
                           {m.telefone && <span className="block text-[11px] text-muted-foreground">{m.telefone}</span>}
                         </td>
                         {det.encontros.map(e => (
                           <td key={e.id} className="text-center p-2">
-                            <input
-                              type="checkbox"
-                              checked={present[e.id]?.has(m.id) || false}
-                              onChange={() => togglePresenca(e, m.id)}
-                              className="h-4 w-4 cursor-pointer accent-[#00B39D]"
-                            />
+                            <input type="checkbox" checked={present[e.id]?.has(m.id) || false} onChange={() => togglePresenca(e, m.id)} className="h-4 w-4 cursor-pointer accent-[#00B39D]" />
                           </td>
                         ))}
                         <td className="text-center p-2">
-                          <Badge variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[m.status], borderColor: STATUS_COLOR[m.status] + '60' }}>
-                            {STATUS_LABEL[m.status]}
-                          </Badge>
+                          <Badge variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[m.status], borderColor: STATUS_COLOR[m.status] + '60' }}>{STATUS_LABEL[m.status]}</Badge>
                         </td>
                       </tr>
                     );
@@ -316,33 +252,19 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                 </tbody>
               </table>
             </div>
-
-            {/* Worklist resumo */}
             <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
               <span className="flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" style={{ color: C.primary }} /> Formados: {det.matriculas.filter(m => presCount(m.id) >= totalEnc && totalEnc > 0).length}</span>
               <span className="flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" style={{ color: C.warn }} /> Faltou 1: {det.matriculas.filter(m => presCount(m.id) === totalEnc - 1 && totalEnc > 1).length}</span>
               <span className="flex items-center gap-1"><X className="h-3.5 w-3.5" style={{ color: C.danger }} /> Não foi: {det.matriculas.filter(m => presCount(m.id) === 0).length}</span>
             </div>
-
             <DialogFooter className="flex-wrap gap-2 sm:justify-between">
-              <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2">
-                <UserPlus className="h-4 w-4" /> Matricular pessoa
-              </Button>
+              <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
               <div className="flex gap-2">
-                {det.status === 'aberta' && (
-                  <Button variant="outline" onClick={encerrar}>Encerrar turma</Button>
-                )}
+                {det.status === 'aberta' && <Button variant="outline" onClick={encerrar}>Encerrar turma</Button>}
                 <Button onClick={onClose}>Fechar</Button>
               </div>
             </DialogFooter>
-
-            {addOpen && (
-              <AddMatriculaModal
-                turmaId={turmaId}
-                onClose={() => setAddOpen(false)}
-                onAdded={() => { setAddOpen(false); load(); onChanged(); }}
-              />
-            )}
+            {addOpen && <AddMatriculaModal turmaId={turmaId} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); onChanged(); }} />}
           </>
         )}
       </DialogContent>
@@ -354,18 +276,13 @@ function AddMatriculaModal({ turmaId, onClose, onAdded }: { turmaId: string; onC
   const [f, setF] = useState({ nome: '', sobrenome: '', telefone: '', email: '', cpf: '' });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
-
   const salvar = async () => {
     if (!f.nome.trim()) { toast.error('Informe o nome'); return; }
     setSaving(true);
-    try {
-      await nextApi.matriculas.create({ ...f, turma_id: turmaId });
-      toast.success('Pessoa matriculada');
-      onAdded();
-    } catch (e: any) { toast.error(e?.message || 'Erro'); }
+    try { await nextApi.matriculas.create({ ...f, turma_id: turmaId }); toast.success('Pessoa matriculada'); onAdded(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
     setSaving(false);
   };
-
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md">
@@ -383,9 +300,7 @@ function AddMatriculaModal({ turmaId, onClose, onAdded }: { turmaId: string; onC
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={salvar} disabled={saving} className="gap-2">
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Matricular
-          </Button>
+          <Button onClick={salvar} disabled={saving} className="gap-2">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Matricular</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -393,94 +308,151 @@ function AddMatriculaModal({ turmaId, onClose, onAdded }: { turmaId: string; onC
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// POR PESSOA (lista de matrículas + fila de espera + encaixar)
+// PESSOAS · funil unificado (convertidos + matrículas · 1 linha por pessoa)
 // ──────────────────────────────────────────────────────────────────────────
+type Pessoa = {
+  tipo: 'convertido' | 'externo';
+  convertido_id: string | null; matricula_id: string | null;
+  nome: string; telefone?: string | null; membro_id?: string | null;
+  area?: string | null; data_nsm?: string | null; dias_desde_conversao?: number | null;
+  turma_id?: string | null; turma_nome?: string | null;
+  next_status: 'formado' | 'matriculado' | 'nao_inscrito' | 'resolvido';
+  bucket?: 'no_prazo' | 'vencendo' | 'fora_prazo' | null;
+  next_resolucao?: string | null;
+};
+const RESOLUCAO_LABEL: Record<string, string> = {
+  contatado: 'Contatado', sem_interesse: 'Sem interesse', ja_fez_fora: 'Já fez fora', encerrado: 'Encerrado',
+};
+const RESOLUCOES = Object.keys(RESOLUCAO_LABEL);
+
 function PessoasView() {
-  const [lista, setLista] = useState<Matricula[]>([]);
-  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [itens, setItens] = useState<Pessoa[]>([]);
+  const [resumo, setResumo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
-  const [soFila, setSoFila] = useState(false);
+  const [fStatus, setFStatus] = useState<'todos' | 'nao_inscrito' | 'matriculado' | 'formado' | 'resolvido'>('todos');
+  const [fOrigem, setFOrigem] = useState<'todos' | 'convertido' | 'externo'>('todos');
+  const [matricularPessoa, setMatricularPessoa] = useState<Pessoa | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const params: any = {};
-      if (soFila) params.fila = 'true';
-      if (busca) params.search = busca;
-      const [m, t] = await Promise.all([
-        nextApi.matriculas.list(params),
-        nextApi.turmas.list({ status: 'aberta' }),
-      ]);
-      setLista(m); setTurmas(t);
-    } catch (e: any) { toast.error(e?.message || 'Erro'); }
+    try { const r = await nextApi.pessoas(); setItens(r.itens || []); setResumo(r.resumo || null); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao carregar pessoas'); }
     setLoading(false);
-  }, [busca, soFila]);
-  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
-  const encaixar = async (matId: string, turmaId: string) => {
-    try {
-      await nextApi.matriculas.update(matId, { turma_id: turmaId });
-      toast.success('Encaixado na turma');
-      load();
-    } catch (e: any) { toast.error(e?.message || 'Erro'); }
+  const resolver = async (p: Pessoa, motivo: string) => {
+    if (!p.convertido_id) return;
+    try { await nextApi.convertidos.resolver(p.convertido_id, motivo); toast.success('Resolvido'); load(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
+  };
+  const reabrir = async (p: Pessoa) => {
+    if (!p.convertido_id) return;
+    try { await nextApi.convertidos.desresolver(p.convertido_id); toast.success('Reaberto'); load(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
   };
 
-  const nomeTurma = (id?: string | null) => turmas.find(t => t.id === id)?.nome;
+  const filtrada = itens.filter(p => {
+    if (fStatus !== 'todos' && p.next_status !== fStatus) return false;
+    if (fOrigem !== 'todos' && p.tipo !== fOrigem) return false;
+    if (busca) {
+      const q = busca.toLowerCase();
+      if (!`${p.nome} ${p.telefone || ''}`.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-3">
+      {resumo && (
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Pill label="Total" v={resumo.total} />
+          <Pill label="Formados" v={resumo.formados} color={C.primary} />
+          <Pill label="Não inscritos" v={resumo.nao_inscritos} color={C.warn} />
+          <Pill label="Fora do prazo" v={resumo.fora_prazo} color={C.gray} />
+          <Pill label="Resolvidos" v={resumo.resolvidos} color={C.gray} />
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 overflow-x-auto">
+          {(['todos', 'nao_inscrito', 'matriculado', 'formado', 'resolvido'] as const).map(s => (
+            <button key={s} onClick={() => setFStatus(s)}
+              className={`px-3 py-1.5 text-xs rounded-lg whitespace-nowrap ${fStatus === s ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+              {s === 'todos' ? 'Todos' : s === 'nao_inscrito' ? 'Não inscritos' : s === 'matriculado' ? 'Matriculados' : s === 'formado' ? 'Formados' : 'Resolvidos'}
+            </button>
+          ))}
+        </div>
         <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
-          <button onClick={() => setSoFila(false)} className={`px-3 py-1.5 text-xs rounded-lg ${!soFila ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Todas</button>
-          <button onClick={() => setSoFila(true)} className={`px-3 py-1.5 text-xs rounded-lg ${soFila ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Fila (sem turma)</button>
+          {(['todos', 'convertido', 'externo'] as const).map(o => (
+            <button key={o} onClick={() => setFOrigem(o)}
+              className={`px-3 py-1.5 text-xs rounded-lg whitespace-nowrap ${fOrigem === o ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+              {o === 'todos' ? 'Todas origens' : o === 'convertido' ? 'Convertidos' : 'Externos'}
+            </button>
+          ))}
         </div>
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar nome, telefone ou e-mail" className="pl-9" />
+          <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar nome ou telefone" className="pl-9" />
         </div>
       </div>
 
       {loading ? (
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
-      ) : lista.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          {soFila ? 'Ninguém na fila de espera.' : 'Nenhuma matrícula ainda.'}
-        </div>
+      ) : filtrada.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">Nenhuma pessoa nesse filtro.</div>
       ) : (
-        <div className="rounded-2xl border border-border overflow-hidden">
+        <div className="rounded-2xl border border-border overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/30">
                 <th className="text-left p-2.5 font-medium">Nome</th>
-                <th className="text-left p-2.5 font-medium hidden sm:table-cell">Turma</th>
-                <th className="text-center p-2.5 font-medium">Status</th>
-                <th className="text-right p-2.5 font-medium">{soFila ? 'Encaixar' : ''}</th>
+                <th className="text-left p-2.5 font-medium">Origem</th>
+                <th className="text-left p-2.5 font-medium">Next</th>
+                <th className="text-right p-2.5 font-medium">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {lista.map(m => (
-                <tr key={m.id} className="border-b border-border last:border-0">
+              {filtrada.map((p, i) => (
+                <tr key={(p.convertido_id || p.matricula_id || i) + ''} className="border-b border-border last:border-0">
                   <td className="p-2.5">
-                    <span className="font-medium">{m.nome} {m.sobrenome || ''}</span>
-                    {m.telefone && <span className="block text-[11px] text-muted-foreground">{m.telefone}</span>}
+                    <span className="font-medium">{p.nome}</span>
+                    {p.telefone && <span className="block text-[11px] text-muted-foreground">{p.telefone}</span>}
                   </td>
-                  <td className="p-2.5 hidden sm:table-cell text-muted-foreground">
-                    {m.turma_id ? (nomeTurma(m.turma_id) || '—') : <Badge variant="outline" className="text-[10px]" style={{ color: C.warn, borderColor: C.warn + '60' }}>fila</Badge>}
+                  <td className="p-2.5">
+                    {p.tipo === 'convertido' ? (
+                      <div className="flex flex-col">
+                        <Badge variant="outline" className="text-[10px] w-fit gap-1" style={{ color: C.primary, borderColor: C.primary + '60' }}>
+                          <UserCheck className="h-3 w-3" /> Convertido
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground mt-0.5">
+                          {p.area || '—'}{p.dias_desde_conversao != null ? ` · há ${p.dias_desde_conversao}d` : ''}
+                        </span>
+                      </div>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px]" style={{ color: C.gray, borderColor: C.gray + '60' }}>Externo</Badge>
+                    )}
                   </td>
-                  <td className="text-center p-2.5">
-                    <Badge variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[m.status], borderColor: STATUS_COLOR[m.status] + '60' }}>
-                      {STATUS_LABEL[m.status]}
-                    </Badge>
-                  </td>
-                  <td className="text-right p-2.5">
-                    {!m.turma_id && turmas.length > 0 && (
-                      <Select onValueChange={(v) => encaixar(m.id, v)}>
-                        <SelectTrigger className="h-8 w-[150px] ml-auto"><SelectValue placeholder="Encaixar em…" /></SelectTrigger>
-                        <SelectContent>
-                          {turmas.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                  <td className="p-2.5"><NextStatusCell p={p} /></td>
+                  <td className="p-2.5 text-right">
+                    {p.next_status === 'nao_inscrito' && (
+                      <div className="inline-flex items-center gap-1.5">
+                        <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => setMatricularPessoa(p)}>
+                          <Sparkles className="h-3.5 w-3.5" /> Matricular
+                        </Button>
+                        {p.convertido_id && (
+                          <Select onValueChange={(v) => resolver(p, v)}>
+                            <SelectTrigger className="h-7 w-[110px] text-xs"><SelectValue placeholder="Resolver" /></SelectTrigger>
+                            <SelectContent>{RESOLUCOES.map(r => <SelectItem key={r} value={r}>{RESOLUCAO_LABEL[r]}</SelectItem>)}</SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                    )}
+                    {p.next_status === 'resolvido' && (
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 text-muted-foreground" onClick={() => reabrir(p)}>
+                        <RotateCcw className="h-3.5 w-3.5" /> Reabrir
+                      </Button>
                     )}
                   </td>
                 </tr>
@@ -489,6 +461,76 @@ function PessoasView() {
           </table>
         </div>
       )}
+
+      {matricularPessoa && (
+        <MatricularModal pessoa={matricularPessoa} onClose={() => setMatricularPessoa(null)} onDone={() => { setMatricularPessoa(null); load(); }} />
+      )}
     </div>
+  );
+}
+
+function NextStatusCell({ p }: { p: Pessoa }) {
+  if (p.next_status === 'formado')
+    return <Badge variant="outline" className="text-[10px] gap-1" style={{ color: C.primary, borderColor: C.primary + '60' }}><GraduationCap className="h-3 w-3" /> Formado{p.turma_nome ? ` · ${p.turma_nome}` : ''}</Badge>;
+  if (p.next_status === 'matriculado')
+    return <Badge variant="outline" className="text-[10px]" style={{ color: C.info, borderColor: C.info + '60' }}>Matriculado{p.turma_nome ? ` · ${p.turma_nome}` : ''}</Badge>;
+  if (p.next_status === 'resolvido')
+    return <Badge variant="outline" className="text-[10px]" style={{ color: C.gray, borderColor: C.gray + '60' }}>Resolvido{p.next_resolucao ? ` · ${RESOLUCAO_LABEL[p.next_resolucao] || p.next_resolucao}` : ''}</Badge>;
+  // nao_inscrito
+  const fora = p.bucket === 'fora_prazo';
+  return (
+    <Badge variant="outline" className="text-[10px]" style={{ color: fora ? C.gray : C.warn, borderColor: (fora ? C.gray : C.warn) + '60' }}>
+      {fora ? 'Fora do prazo' : 'Sem Next'}{p.dias_desde_conversao != null ? ` · ${p.dias_desde_conversao}d` : ''}
+    </Badge>
+  );
+}
+
+function MatricularModal({ pessoa, onClose, onDone }: { pessoa: Pessoa; onClose: () => void; onDone: () => void }) {
+  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [turmaId, setTurmaId] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    nextApi.turmas.list({ status: 'aberta' }).then(setTurmas).catch(() => {});
+  }, []);
+  const salvar = async () => {
+    if (!turmaId) { toast.error('Escolha a turma'); return; }
+    setSaving(true);
+    try {
+      await nextApi.matriculas.create({ turma_id: turmaId, nome: pessoa.nome, telefone: pessoa.telefone || null, membro_id: pessoa.membro_id || null });
+      toast.success('Matriculado na turma');
+      onDone();
+    } catch (e: any) { toast.error(e?.message || 'Erro'); }
+    setSaving(false);
+  };
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Matricular {pessoa.nome}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <Label>Turma</Label>
+          {turmas.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Nenhuma turma aberta. Crie uma turma do mês na aba Turmas.</p>
+          ) : (
+            <Select value={turmaId} onValueChange={setTurmaId}>
+              <SelectTrigger><SelectValue placeholder="Escolha a turma" /></SelectTrigger>
+              <SelectContent>{turmas.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}</SelectContent>
+            </Select>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={saving || !turmaId} className="gap-2">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Matricular</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Pill({ label, v, color }: { label: string; v: number; color?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1">
+      <span className="font-semibold" style={color ? { color } : undefined}>{v ?? 0}</span>
+      <span className="text-muted-foreground">{label}</span>
+    </span>
   );
 }
