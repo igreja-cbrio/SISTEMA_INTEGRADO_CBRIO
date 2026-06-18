@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
 import { subDays, subMonths, startOfWeek, endOfWeek, format } from 'date-fns';
 import type { VolSchedule, VolCheckIn, VolService } from '../types';
+import { normName } from '../volMatch';
 
 type Period = 'week' | 'month' | '3months' | 'custom';
 
@@ -199,29 +200,31 @@ export function useVolunteerThermometer(period: Period = 'month', teamName?: str
         volStats.get(sch.planning_center_person_id)!.scheduled++;
       }
 
-      // Build volunteer_id → planning_center_person_id map for fallback matching
+      // Mapas de fallback: volunteer_id → PCID e nome normalizado → PCID.
+      // Necessário porque escalas do Planning Center costumam ter volunteer_id
+      // nulo — a ponte real é o planning_center_id do perfil do check-in.
       const volIdToPcId = new Map<string, string>();
+      const nameToPcId = new Map<string, string>();
       for (const sch of periodSchedules) {
         if (sch.volunteer_id) volIdToPcId.set(sch.volunteer_id, sch.planning_center_person_id);
+        const n = normName(sch.volunteer_name);
+        if (n) nameToPcId.set(n, sch.planning_center_person_id);
       }
 
-      const countedScheduleIds = new Set<string>();
       for (const ci of periodCheckIns) {
         let matchedPcId: string | null = null;
 
         // 1. Match by schedule_id
         if (ci.schedule_id) {
           const sch = periodSchedules.find(s => s.id === ci.schedule_id);
-          if (sch) {
-            matchedPcId = sch.planning_center_person_id;
-            countedScheduleIds.add(ci.schedule_id);
-          }
+          if (sch) matchedPcId = sch.planning_center_person_id;
         }
-
-        // 2. Fallback: match by volunteer_id
-        if (!matchedPcId && ci.volunteer_id) {
-          matchedPcId = volIdToPcId.get(ci.volunteer_id) || null;
-        }
+        // 2. Fallback: volunteer_id ↔ escala.volunteer_id
+        if (!matchedPcId && ci.volunteer_id) matchedPcId = volIdToPcId.get(ci.volunteer_id) || null;
+        // 3. Ponte que faltava: planning_center_id do perfil do check-in
+        if (!matchedPcId && ci.volunteer?.planning_center_id) matchedPcId = ci.volunteer.planning_center_id;
+        // 4. Último recurso: nome normalizado
+        if (!matchedPcId) matchedPcId = nameToPcId.get(normName(ci.volunteer?.full_name)) || null;
 
         if (matchedPcId) {
           const stat = volStats.get(matchedPcId);
