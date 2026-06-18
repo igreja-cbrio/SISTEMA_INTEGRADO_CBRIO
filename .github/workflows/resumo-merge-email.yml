@@ -37,9 +37,9 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID }}
-          MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
-          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET }}
-          MERGE_MAIL_SENDER: ${{ secrets.MERGE_MAIL_SENDER }}
+          MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET || secrets.AZURE_CLIENT_SECRET }}
+          MERGE_MAIL_SENDER: ${{ secrets.MERGE_MAIL_SENDER || secrets.GRAPH_MAIL_SENDER || vars.MERGE_MAIL_SENDER }}
           MERGE_MAIL_TO: ${{ vars.MERGE_MAIL_TO }}
         run: node scripts/resumo-merge-email.mjs
