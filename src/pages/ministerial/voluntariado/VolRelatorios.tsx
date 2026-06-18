@@ -4,11 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PeriodFilter from './components/reports/PeriodFilter';
 import VolunteerThermometer from './components/reports/VolunteerThermometer';
 import { useVolReportData, useVolunteerThermometer, useInactiveVolunteers } from './hooks';
 import { useVolTeams } from './hooks';
-import { UserX, Flame, BarChart3, Calendar, CheckCircle2, TrendingUp, Users, Printer, AlertTriangle, Filter, Clock } from 'lucide-react';
+import { UserX, Flame, BarChart3, Calendar, CheckCircle2, TrendingUp, Users, Printer, AlertTriangle, Filter, Clock, ChevronRight, XCircle, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -23,6 +24,7 @@ export default function VolRelatorios() {
   const [period, setPeriod] = useState('week');
   const [teamFilter, setTeamFilter] = useState('__all__');
   const [inactiveMode, setInactiveMode] = useState<'checkin' | 'schedule'>('checkin');
+  const [openServiceId, setOpenServiceId] = useState<string | null>(null);
   const teamFilterValue = teamFilter === '__all__' ? undefined : teamFilter;
   const { data: reportData } = useVolReportData(period as any);
   const { data: thermometerData = [] } = useVolunteerThermometer(period as any, teamFilterValue);
@@ -78,6 +80,37 @@ export default function VolRelatorios() {
         return { ...svc, total, present, rate };
       });
   }, [reportData]);
+
+  // Detalhe de UM culto: quem dos escalados fez check-in (presente), quem não
+  // fez (faltou) e quem fez check-in sem estar escalado (sem escala). Tudo
+  // derivado do que o relatório já carregou — sem ida ao servidor.
+  const serviceDetail = useMemo(() => {
+    if (!openServiceId || !reportData) return null;
+    const svc = reportData.services.find(s => s.id === openServiceId) || null;
+    const scheds = reportData.schedules.filter(s => s.service_id === openServiceId);
+    const checks = reportData.checkIns.filter(c => c.service_id === openServiceId);
+
+    const checkedScheduleIds = new Set(checks.map(c => c.schedule_id).filter(Boolean) as string[]);
+    const checkedVolIds = new Set(checks.map(c => c.volunteer_id).filter(Boolean) as string[]);
+
+    const present: typeof scheds = [];
+    const absent: typeof scheds = [];
+    for (const s of scheds) {
+      const did = (s.id && checkedScheduleIds.has(s.id)) || (s.volunteer_id && checkedVolIds.has(s.volunteer_id));
+      (did ? present : absent).push(s);
+    }
+
+    // Check-ins que não casam com nenhuma escala do culto = serviram sem escala
+    const schedIds = new Set(scheds.map(s => s.id));
+    const schedVolIds = new Set(scheds.map(s => s.volunteer_id).filter(Boolean) as string[]);
+    const extras = checks.filter(c => {
+      if (c.schedule_id && schedIds.has(c.schedule_id)) return false;
+      if (c.volunteer_id && schedVolIds.has(c.volunteer_id)) return false;
+      return true;
+    });
+
+    return { svc, present, absent, extras };
+  }, [openServiceId, reportData]);
 
   return (
     <div className="space-y-6">
@@ -152,9 +185,15 @@ export default function VolRelatorios() {
               {serviceBreakdown.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">Nenhum culto no período</p>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-1">
                   {serviceBreakdown.map(svc => (
-                    <div key={svc.id} className="flex items-center gap-4">
+                    <button
+                      key={svc.id}
+                      type="button"
+                      onClick={() => setOpenServiceId(svc.id)}
+                      className="w-full flex items-center gap-4 text-left rounded-lg px-2 py-2 -mx-2 hover:bg-accent transition-colors"
+                      title="Ver quem fez e quem faltou"
+                    >
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm">{svc.name}</p>
                         <p className="text-xs text-muted-foreground">
@@ -172,8 +211,9 @@ export default function VolRelatorios() {
                         <Badge variant={svc.rate >= 80 ? 'default' : 'outline'} className={svc.rate >= 80 ? 'bg-green-600 text-white' : ''}>
                           {svc.rate}%
                         </Badge>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -313,6 +353,105 @@ export default function VolRelatorios() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Detalhe do culto · quem fez check-in e quem faltou */}
+      <Dialog open={!!openServiceId} onOpenChange={(o) => !o && setOpenServiceId(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{serviceDetail?.svc?.name || 'Culto'}</DialogTitle>
+            {serviceDetail?.svc && (
+              <p className="text-sm text-muted-foreground">
+                {format(new Date(serviceDetail.svc.scheduled_at), "EEEE, dd/MM 'as' HH:mm", { locale: ptBR })}
+              </p>
+            )}
+          </DialogHeader>
+
+          {serviceDetail && (
+            <div className="space-y-5">
+              {/* Resumo */}
+              <div className="flex gap-2 text-xs">
+                <Badge className="bg-green-600 text-white hover:bg-green-600">{serviceDetail.present.length} presente(s)</Badge>
+                <Badge variant="outline" className="border-red-300 text-red-600">{serviceDetail.absent.length} faltou(aram)</Badge>
+                {serviceDetail.extras.length > 0 && (
+                  <Badge variant="outline" className="border-yellow-300 text-yellow-700">{serviceDetail.extras.length} sem escala</Badge>
+                )}
+              </div>
+
+              {/* Presentes */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  <h4 className="text-sm font-semibold">Fizeram check-in</h4>
+                </div>
+                {serviceDetail.present.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Ninguém escalado fez check-in.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {serviceDetail.present.map(s => (
+                      <div key={s.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{s.volunteer_name}</p>
+                          {(s.team_name || s.position_name) && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {s.team_name}{s.team_name && s.position_name ? ' — ' : ''}{s.position_name}
+                            </p>
+                          )}
+                        </div>
+                        <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Faltaram */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <XCircle className="h-4 w-4 text-red-500" />
+                  <h4 className="text-sm font-semibold">Não fizeram check-in</h4>
+                </div>
+                {serviceDetail.absent.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Todos os escalados fizeram check-in. 🎉</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {serviceDetail.absent.map(s => (
+                      <div key={s.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{s.volunteer_name}</p>
+                          {(s.team_name || s.position_name) && (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {s.team_name}{s.team_name && s.position_name ? ' — ' : ''}{s.position_name}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-xs text-red-500 shrink-0">faltou</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Sem escala */}
+              {serviceDetail.extras.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <UserPlus className="h-4 w-4 text-yellow-600" />
+                    <h4 className="text-sm font-semibold">Fizeram check-in sem escala</h4>
+                  </div>
+                  <div className="space-y-1.5">
+                    {serviceDetail.extras.map(c => (
+                      <div key={c.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
+                        <p className="text-sm font-medium truncate">{c.volunteer?.full_name || 'Voluntário'}</p>
+                        <Badge variant="outline" className="border-yellow-300 text-yellow-700 text-xs shrink-0">sem escala</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

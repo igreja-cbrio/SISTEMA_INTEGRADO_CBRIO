@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
@@ -18,6 +18,10 @@ function authorizeIntegracao(req, res, next) {
   if (['admin', 'diretor'].includes(u.role)) return next();
   const areas = (u.kpi_areas || []).map(a => String(a).toLowerCase());
   if (areas.includes('integracao')) return next();
+  // Honra a matriz granular (cargo × módulo): nível >=2 em integracao = lançar
+  // dado bruto. Ex.: supervisor-jornada (Marcelo) tem nível 3 pela matriz sem
+  // estar em kpi_areas — sem isto, o guard legado o bloqueava (403).
+  if ((getEffectiveLevel(req, 'integracao') || 0) >= 2) return next();
   return res.status(403).json({
     error: 'Sem permissão · necessário ser admin, diretor ou líder de Integração',
   });
@@ -380,6 +384,34 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     console.error('[kpis/decisoes-pessoas POST]', error.message);
     return res.status(500).json({ error: error.message });
   }
+
+  // Avisa o time de Cuidados (Marcelo + Wesley) pra entrar em contato com quem
+  // tomou a decisão. Fire-and-forget · não bloqueia a resposta. Kids fica fora
+  // (criança não entra na jornada/NSM). Dedup por decisão (não duplica em edição).
+  if (tipo !== 'kids') {
+    (async () => {
+      try {
+        const { data: equipe } = await supabase.from('profiles')
+          .select('id').in('email', ['marcelo.soares@cbrio.org', 'wesley.ramos@cbrio.org']);
+        const ids = (equipe || []).map(p => p.id).filter(Boolean);
+        if (!ids.length) return;
+        const nomePessoa = String(nome).trim();
+        await notificar({
+          modulo: 'cuidados',
+          tipo: 'nova_aceitacao',
+          titulo: `🙌 Nova decisão: ${nomePessoa}`,
+          mensagem: `${nomePessoa} tomou uma decisão${telLimpo ? ` · ${telLimpo}` : ''}${tipo === 'online' ? ' (online)' : ''}. Entre em contato pra acompanhar nos próximos passos.`,
+          link: '/ministerial/cuidados?tab=convertidos',
+          severidade: 'info',
+          chaveDedup: `nova_aceitacao_${data.id}`,
+          targetIds: ids,
+        });
+      } catch (e) {
+        console.error('[kpis/decisoes-pessoas] notif cuidados:', e.message);
+      }
+    })();
+  }
+
   res.status(201).json(data);
 });
 

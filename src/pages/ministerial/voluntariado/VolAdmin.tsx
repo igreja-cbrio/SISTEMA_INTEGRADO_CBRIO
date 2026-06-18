@@ -47,7 +47,8 @@ export default function VolAdmin() {
     if (!startDate || !endDate) { toast.error('Selecione datas de início e fim'); return; }
     try {
       const result = await syncHistorical.mutateAsync({ startDate, endDate });
-      toast.success(`Sincronizado: ${result.services} cultos, ${result.newSchedules} escalas`);
+      const escalas = (result as any).schedules ?? (result as any).newSchedules ?? 0;
+      toast.success(`Sincronizado: ${result.services} cultos, ${escalas} escalas`);
     } catch (err: any) {
       toast.error(err.message);
     }

@@ -21,6 +21,9 @@ const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { safeEqual } = require('../utils/cronAuth');
+const { notificar } = require('../services/notificar');
+const wpp = require('../services/whatsappService');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 
 // authenticate aplicado condicionalmente abaixo · rotas /display/* e
 // /chamadas com estacao_token bypassam pra display sem login
@@ -55,6 +58,19 @@ router.use((req, res, next) => {
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// Resolve a foto exibível da criança. Foto enviada pelo APP fica em bucket
+// privado (foto_storage_path) e SÓ aparece com consentimento (ECA/LGPD) →
+// signed URL temporária. Foto legada (foto_url) segue como antes.
+async function fotoVisivelCrianca(c) {
+  if (!c) return null;
+  if (c.foto_storage_path) {
+    if (!c.foto_consentimento_em) return null;
+    const { data } = await supabase.storage.from('kids-documentos').createSignedUrl(c.foto_storage_path, 60 * 30);
+    return data?.signedUrl || null;
+  }
+  return c.foto_url || null;
+}
 
 function calcIdadeMeses(dataNascimento) {
   if (!dataNascimento) return null;
@@ -264,7 +280,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     const { data: criancas } = await supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         visitante, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
@@ -297,7 +313,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
           const { data: extras2 } = await supabase
             .from('kids_criancas')
             .select(`
-              id, nome, data_nascimento, sexo, foto_url, observacoes_medicas,
+              id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
               visitante, familia_id,
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
@@ -315,11 +331,12 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     // Une por id
     const map = new Map();
     [...(criancas || []), ...extras].forEach(c => map.set(c.id, c));
-    const lista = [...map.values()].map(c => ({
+    const lista = await Promise.all([...map.values()].map(async c => ({
       ...c,
+      foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    }));
+    })));
 
     res.json(lista);
   } catch (e) {
@@ -336,7 +353,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         *, familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
-          id, parentesco, autorizado_buscar, contato_emergencia, observacao,
+          id, membro_id, parentesco, autorizado_buscar, contato_emergencia, observacao,
           membro:mem_membros(id, nome, telefone, cpf, foto_url, email)
         )
       `)
@@ -347,6 +364,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 
     res.json({
       ...data,
+      foto_url: await fotoVisivelCrianca(data),
       idade_meses: calcIdadeMeses(data.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(data.data_nascimento)),
       sala_sugerida: await sugerirSala(calcIdadeMeses(data.data_nascimento)),
@@ -372,31 +390,14 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
     const tel = normalizarTelefone(responsavel.telefone);
     const cpf = normalizarCpf(responsavel.cpf);
 
-    // 1. Resolve responsável em mem_membros (cpf > telefone > cria)
-    let membro = null;
-    if (cpf) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('cpf', cpf).maybeSingle();
-      membro = data;
-    }
-    if (!membro && tel) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('telefone', tel).maybeSingle();
-      membro = data;
-    }
-    if (!membro) {
-      const { data, error } = await supabase.from('mem_membros')
-        .insert({
-          nome: responsavel.nome,
-          telefone: tel,
-          cpf,
-          email: responsavel.email || null,
-          status: 'visitante',
-          active: true,
-        })
-        .select('id, nome, familia_id')
-        .single();
-      if (error) throw error;
-      membro = data;
-    }
+    // 1. Resolve responsável · guarda na origem (CPF→e-mail→telefone+nome→cria ·
+    //    NÃO liga por telefone sozinho, que família compartilha · colisão sem
+    //    nome batendo vira stub e cai na aba Duplicados / fila do Kevyn).
+    const r = await acharOuCriarGuardado({
+      cpf, email: responsavel.email || null, telefone: tel, nome: responsavel.nome, status: 'visitante',
+    });
+    const { data: membro } = await supabase.from('mem_membros')
+      .select('id, nome, familia_id').eq('id', r.membro_id).single();
 
     // 2. Garante família (se responsável não tem, cria)
     let familiaId = membro.familia_id;
@@ -478,7 +479,7 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
     const { data, error } = await supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         visitante, ativo, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
@@ -487,11 +488,12 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
       .order('nome')
       .limit(500);
     if (error) throw error;
-    res.json((data || []).map(c => ({
+    res.json(await Promise.all((data || []).map(async c => ({
       ...c,
+      foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    })));
+    }))));
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
   }
@@ -552,31 +554,15 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
     if (errC) throw errC;
     if (!crianca) return res.status(404).json({ error: 'criança não encontrada' });
 
-    // 2. Match mem_membros por cpf > telefone
-    let membro = null;
-    if (cpfNorm) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('cpf', cpfNorm).maybeSingle();
-      if (data) membro = data;
-    }
-    if (!membro && tel) {
-      const { data } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('telefone', tel).maybeSingle();
-      if (data) membro = data;
-    }
-
-    // 3. Cria mem_membros se não existe
-    if (!membro) {
-      const { data, error } = await supabase.from('mem_membros').insert({
-        nome: nome.trim(),
-        telefone: tel,
-        cpf: cpfNorm,
-        status: 'visitante',
-        familia_id: crianca.familia_id,
-        active: true,
-      }).select('id, nome, familia_id').single();
-      if (error) throw error;
-      membro = data;
-    } else if (crianca.familia_id && !membro.familia_id) {
-      // Atualiza familia_id do membro existente se não tinha
+    // 2. Resolve mem_membros · guarda na origem (CPF→e-mail→telefone+nome→cria)
+    const r = await acharOuCriarGuardado({
+      cpf: cpfNorm, telefone: tel, nome: nome.trim(), status: 'visitante',
+      extra: { familia_id: crianca.familia_id || null },
+    });
+    const { data: membro } = await supabase.from('mem_membros')
+      .select('id, nome, familia_id').eq('id', r.membro_id).single();
+    // Membro já existia sem família → herda a da criança
+    if (!r.created && crianca.familia_id && !membro.familia_id) {
       await supabase.from('mem_membros').update({ familia_id: crianca.familia_id }).eq('id', membro.id);
     }
 
@@ -1344,30 +1330,14 @@ function normalizeParentesco(v) {
 
 // Resolve ou cria mem_membros do responsável
 async function resolveOrCreateMembro({ nome, telefone, cpf, parentesco }) {
-  let membro = null;
-  if (cpf) {
-    const { data } = await supabase.from('mem_membros').select('id, nome, familia_id, parentesco').eq('cpf', cpf).maybeSingle();
-    if (data) membro = data;
-  }
-  if (!membro && telefone) {
-    const { data } = await supabase.from('mem_membros').select('id, nome, familia_id, parentesco').eq('telefone', telefone).maybeSingle();
-    if (data) membro = data;
-  }
-  if (membro) return { membro, criado: false };
-
-  const { data, error } = await supabase.from('mem_membros')
-    .insert({
-      nome,
-      telefone,
-      cpf,
-      status: 'visitante',
-      active: true,
-      parentesco: parentesco === 'mae' || parentesco === 'pai' ? 'responsavel' : null,
-    })
-    .select('id, nome, familia_id')
-    .single();
-  if (error) throw error;
-  return { membro: data, criado: true };
+  // guarda na origem (CPF→e-mail→telefone+nome→cria · não liga por telefone só)
+  const r = await acharOuCriarGuardado({
+    cpf, telefone, nome, status: 'visitante',
+    extra: { parentesco: parentesco === 'mae' || parentesco === 'pai' ? 'responsavel' : null },
+  });
+  const { data: membro } = await supabase.from('mem_membros')
+    .select('id, nome, familia_id, parentesco').eq('id', r.membro_id).single();
+  return { membro, criado: !!r.created };
 }
 
 async function getOrCreateFamilia(membro) {
@@ -2068,6 +2038,249 @@ router.post('/pager/bridge/envios/:id/resultado', async (req, res) => {
   } catch (e) {
     console.error('[totemKids/pager/bridge/resultado]', e.message);
     res.status(500).json({ error: 'Erro ao registrar resultado' });
+  }
+});
+
+// ── Pré-check-in (vindo do app de membros) ─────────────────────────────────
+// GET /pre-checkin/codigo/:codigo — o voluntário escaneia/digita o código do
+// app e recebe responsável + filhos (com sala sugerida) pra confirmar e
+// imprimir. Só pré-popula; o check-in real continua sendo o POST /checkin.
+router.get('/pre-checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const codigo = String(req.params.codigo || '').trim().toUpperCase();
+    if (!codigo) return res.status(400).json({ error: 'Código vazio' });
+
+    const { data: pre } = await supabase
+      .from('kids_pre_checkins')
+      .select('*')
+      .eq('codigo', codigo)
+      .eq('status', 'pendente')
+      .maybeSingle();
+    if (!pre) return res.status(404).json({ error: 'Pré-check-in não encontrado ou já usado' });
+    if (new Date(pre.expira_em) < new Date()) {
+      return res.status(410).json({ error: 'Pré-check-in expirado. Peça pro responsável gerar de novo.' });
+    }
+
+    const { data: criancas } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, necessidades_especiais')
+      .in('id', pre.crianca_ids)
+      .eq('ativo', true);
+
+    const enriquecidas = await Promise.all((criancas || []).map(async (c) => {
+      let idadeMeses = null;
+      if (c.data_nascimento) {
+        const nasc = new Date(c.data_nascimento);
+        idadeMeses = Math.floor((Date.now() - nasc.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+      }
+      const sala = await sugerirSala(idadeMeses);
+      return { ...c, foto_url: await fotoVisivelCrianca(c), idade_meses: idadeMeses, sala_sugerida: sala };
+    }));
+
+    res.json({
+      pre_checkin_id: pre.id,
+      responsavel: {
+        membro_id: pre.responsavel_membro_id,
+        nome: pre.responsavel_nome,
+        telefone: pre.responsavel_telefone,
+      },
+      criancas: enriquecidas,
+    });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] pre-checkin/codigo:', e.message);
+    res.status(500).json({ error: 'Erro ao ler pré-check-in' });
+  }
+});
+
+// POST /pre-checkin/:id/consumir { checkin_ids } — marca como usado após o
+// voluntário confirmar os check-ins reais (auditoria: quem e quais).
+router.post('/pre-checkin/:id/consumir', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { checkin_ids } = req.body || {};
+    const { error } = await supabase
+      .from('kids_pre_checkins')
+      .update({
+        status: 'usado',
+        usado_em: new Date().toISOString(),
+        usado_por: req.user?.id || null,
+        checkin_ids: Array.isArray(checkin_ids) ? checkin_ids : null,
+      })
+      .eq('id', req.params.id)
+      .eq('status', 'pendente');
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] pre-checkin/consumir:', e.message);
+    res.status(500).json({ error: 'Erro ao consumir pré-check-in' });
+  }
+});
+
+// ============================================================
+// Solicitações de vínculo (criança↔responsável) feitas pelo app
+// A equipe Kids confere os documentos e aprova/rejeita. Aprovar cria a
+// criança (se nova) + o vínculo kids_responsaveis (autorizado_buscar).
+// ============================================================
+
+// GET /pre-checkin é separado · aqui /vinculo-solicitacoes
+// GET /vinculo-solicitacoes?status=pendente — lista pra triagem
+router.get('/vinculo-solicitacoes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pendente');
+    let q = supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('id, solicitante_nome, solicitante_telefone, solicitante_parentesco, crianca_nome, crianca_data_nascimento, status, motivo_rejeicao, observacao, created_at, decidido_em, decidido_por_nome')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (status && status !== 'todos') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar solicitações' });
+  }
+});
+
+// GET /vinculo-solicitacoes/:id — detalhe + signed URLs dos documentos (15 min)
+router.get('/vinculo-solicitacoes/:id', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { data: s, error } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!s) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    const signed = async (path) => {
+      if (!path) return null;
+      const { data } = await supabase.storage.from('kids-documentos').createSignedUrl(path, 900);
+      return data?.signedUrl || null;
+    };
+    const [crianca_doc_url, doc_pai_url, doc_mae_url] = await Promise.all([
+      signed(s.crianca_doc_path), signed(s.doc_pai_path), signed(s.doc_mae_path),
+    ]);
+
+    res.json({ ...s, crianca_doc_url, doc_pai_url, doc_mae_url });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes detalhe:', e.message);
+    res.status(500).json({ error: 'Erro ao abrir solicitação' });
+  }
+});
+
+// POST /vinculo-solicitacoes/:id/aprovar — cria criança (se nova) + vínculo
+router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: s } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!s) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (s.status !== 'pendente') return res.status(409).json({ error: 'Solicitação já decidida' });
+
+    // 1. Resolve a criança: usa a apontada, ou cria nova na família do solicitante.
+    let criancaId = s.crianca_id;
+    if (!criancaId) {
+      // garante família do solicitante
+      const { data: membro } = await supabase
+        .from('mem_membros').select('id, nome, familia_id').eq('id', s.solicitante_membro_id).maybeSingle();
+      if (!membro) return res.status(400).json({ error: 'Membro solicitante não encontrado' });
+      let familiaId = membro.familia_id;
+      if (!familiaId) {
+        const { data: f, error: fe } = await supabase
+          .from('mem_familias').insert({ nome: `Familia ${membro.nome.split(' ')[0]}` }).select('id').single();
+        if (fe) throw fe;
+        familiaId = f.id;
+        await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', membro.id);
+      }
+      const { data: criada, error: ce } = await supabase
+        .from('kids_criancas')
+        .insert({
+          nome: s.crianca_nome,
+          data_nascimento: s.crianca_data_nascimento || null,
+          familia_id: familiaId,
+          visitante: true,
+          created_by: req.user?.id || null,
+        })
+        .select('id')
+        .single();
+      if (ce) throw ce;
+      criancaId = criada.id;
+    }
+
+    // 2. Cria/garante o vínculo do solicitante como responsável autorizado.
+    const { error: ve } = await supabase
+      .from('kids_responsaveis')
+      .upsert({
+        crianca_id: criancaId,
+        membro_id: s.solicitante_membro_id,
+        parentesco: s.solicitante_parentesco || 'outro',
+        autorizado_buscar: true,
+      }, { onConflict: 'crianca_id,membro_id' });
+    if (ve) throw ve;
+
+    // 3. Marca a solicitação como aprovada.
+    const { error: ue } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .update({
+        status: 'aprovado',
+        crianca_criada_id: criancaId,
+        decidido_por: req.user?.id || null,
+        decidido_por_nome: req.user?.name || req.user?.email || null,
+        decidido_em: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', s.id);
+    if (ue) throw ue;
+
+    // Avisa o responsável no WhatsApp (no-op até template aprovado/configurado).
+    wpp.notificarMembro(s.solicitante_membro_id, 'kids_vinculo', [s.crianca_nome, 'aprovado'])
+      .catch((e) => console.warn('[TOTEM-KIDS] vinculo wpp:', e.message));
+
+    res.json({ ok: true, crianca_id: criancaId });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes aprovar:', e.message);
+    res.status(500).json({ error: 'Erro ao aprovar solicitação' });
+  }
+});
+
+// POST /vinculo-solicitacoes/:id/rejeitar { motivo } — não cria vínculo
+router.post('/vinculo-solicitacoes/:id/rejeitar', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const motivo = req.body?.motivo ? String(req.body.motivo).trim() : null;
+    const { data: s } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('id, status, solicitante_membro_id, crianca_nome')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!s) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (s.status !== 'pendente') return res.status(409).json({ error: 'Solicitação já decidida' });
+
+    const { error } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .update({
+        status: 'rejeitado',
+        motivo_rejeicao: motivo,
+        decidido_por: req.user?.id || null,
+        decidido_por_nome: req.user?.name || req.user?.email || null,
+        decidido_em: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', s.id);
+    if (error) throw error;
+
+    wpp.notificarMembro(s.solicitante_membro_id, 'kids_vinculo', [s.crianca_nome, 'recusado'])
+      .catch((e) => console.warn('[TOTEM-KIDS] vinculo wpp:', e.message));
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] vinculo-solicitacoes rejeitar:', e.message);
+    res.status(500).json({ error: 'Erro ao rejeitar solicitação' });
   }
 });
 

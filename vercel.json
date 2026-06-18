@@ -74,6 +74,10 @@
       "schedule": "0 13 * * *"
     },
     {
+      "path": "/api/online/cron/engajamento-collect",
+      "schedule": "45 12 * * *"
+    },
+    {
       "path": "/api/online/cron/verificar",
       "schedule": "0 14 * * *"
     },
@@ -100,6 +104,18 @@
     {
       "path": "/api/whatsapp-grupos/cron/diario",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/voluntariado/cron/antecedentes",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/voluntariado/cron/sync",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/notificacoes/cron/alerta-culto-dados",
+      "schedule": "0 13 * * 1"
     }
   ],
   "rewrites": [

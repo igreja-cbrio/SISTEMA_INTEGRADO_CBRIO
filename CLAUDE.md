@@ -1632,6 +1632,54 @@ via `window.print` na Brother QL-820NWB default do Windows).
   bearer `PAGER_BRIDGE_TOKEN` · `DRY_RUN=1` testa sem hardware) consome a fila
   `kids_pager_envios`; catálogo `kids_pagers`; `kids_checkins.pager_id`. Aba
   Pagers no admin.
+- **Pré-check-in pelo app (2026-06-14)**: o responsável prepara o check-in dos
+  filhos no app de membros e gera um código/QR de 6 chars; no totem o voluntário
+  digita/escaneia, confere e imprime. **NÃO substitui a mediação presencial** —
+  entrada/retirada continuam com o voluntário; o app NÃO faz checkout remoto
+  (decisão de segurança). Tabela `kids_pre_checkins` (código único, crianca_ids,
+  status pendente/usado/expirado/cancelado, expira em 12h · RLS: responsável vê/
+  cria só os próprios via `current_user_membro_id()`, equipe kids ≥1 lê) +
+  `fn_kids_pre_checkin_codigo()` (migration `20260614120000` · aplicada em prod).
+  App: `GET/POST /api/app/kids/{meus-filhos,pre-checkin}` (valida que todas as
+  crianças são filhos `autorizado_buscar` do membro · 403 senão · cancela
+  pendente anterior). Totem: `GET /totem-kids/pre-checkin/codigo/:codigo`
+  (responsável + filhos com sala sugerida · 404/410) e `POST /pre-checkin/:id/
+  consumir` (auditoria). `TotemKidsCheckin` ganhou o card "Chegou pelo app?" que
+  enfileira os filhos e reusa o fluxo de check-in 1 a 1 (confere+imprime). PR #1017.
+- **Vínculo criança↔responsável pelo app + aprovação (2026-06-14)**: o vínculo
+  NUNCA é automático (segurança de menor). O responsável pede pelo app e envia
+  **documentos de identidade** (criança obrigatório + pai e/ou mãe, ao menos um);
+  a equipe Kids confere e aprova/rejeita. Tabela `kids_vinculo_solicitacoes`
+  (PII de menor · `deleted_at` + whitelist + RLS contextual + audit trigger ·
+  migration `20260614160000` · aplicada em prod). Documentos num bucket
+  **privado** `kids-documentos`: o app sobe direto pra `{auth.uid}/...` (storage
+  policy só de INSERT no próprio prefixo · sem leitura via client) e manda só os
+  PATHS; a equipe vê via **signed URL** (15 min) gerada pelo backend (service
+  role). App: `POST /app/kids/solicitar-vinculo` (valida prefixo do path = uid) +
+  `GET /app/kids/minhas-solicitacoes`. Totem: `GET/POST
+  /totem-kids/vinculo-solicitacoes[...]` (list · detalhe com signed URLs ·
+  aprovar = cria criança se nova + upsert `kids_responsaveis` autorizado_buscar ·
+  rejeitar com motivo). Tela `TotemKidsVinculos` (rota
+  `/ministerial/totem-kids/vinculos` · botão "Vínculos" no check-in).
+- **Modo totem na tela de check-in (2026-06-14)**: botão "Modo totem" em
+  `TotemKidsCheckin` entra em fullscreen (Fullscreen API) + overlay
+  `fixed inset-0 z-[60]` cobrindo o AppShell; esconde a navegação e deixa só o
+  check-in. Sair exige **PIN** (criado na 1ª vez · localStorage
+  `cbrio-totem-kids-pin`), igual ao totem de membros (`TotemMembro.tsx`).
+- **Foto da criança pelo app + consentimento ECA/LGPD (2026-06-17)**: o
+  responsável autorizado pode adicionar (opcional) a foto da criança na tela do
+  filho no app, com **consentimento explícito** (ECA Lei 8.069/90 arts. 17/18 ·
+  LGPD Lei 13.709/18 art. 14 · texto + checkbox · versão em
+  `kids_criancas.foto_consentimento_versao`). Migration `20260617200000`
+  (aplicada): `foto_storage_path` (bucket **privado** `kids-documentos`,
+  prefixo `foto-crianca/`), `foto_consentimento_por/_versao` (foto_url +
+  foto_consentimento_em já existiam). App: `POST /app/kids/filho/:id/foto`
+  (exige `consentimento:true`) e `/foto/remover` (revoga + apaga). **Exibição
+  só com consentimento, via signed URL** — helper `fotoVisivelCrianca()` em
+  `totemKids.js` resolve a foto do app na busca, detalhe, listagem e
+  pré-check-in por código (foto_url legada do sistema segue inalterada).
+  ⚠️ As views de checkout-por-código e roster de sala ainda leem foto_url
+  legado (não mostram foto do app · não é o ponto de identificação na entrada).
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
@@ -2462,3 +2510,116 @@ Marcos vai definir os KPIs especificos de cada reuniao. Estrutura
 pronta para receber — por enquanto os dados automaticos puxam
 resumos dos modulos (projetos, financeiro, cultos, pendencias).
 
+
+## Membresia · faixa etária + ministério (AMI/Bridge) auto-declarado (2026-06-16)
+
+Pedido do Matheus: o cadastro do app pergunta (escolha única) se a pessoa
+frequenta **AMI / Bridge / nenhum**; e a pessoa entra na Membresia já **tageada
+por faixa etária** pela data de nascimento. Líderes de AMI/Bridge passam a ver
+suas pessoas numa aba, com detalhe **sem contribuições**.
+
+- **Migration `20260616120000`**: `mem_membros.frequenta_area` (CHECK ami/bridge,
+  nullable · índice parcial) + `fn_faixa_etaria(date)` (criança <13, adolescente
+  13–17, jovem 18–30, adulto 31+). Aplicada em prod.
+- **App**: cadastro grava `frequenta_area` via metadata → trigger
+  `handle_new_user` (em `supabase/handle_new_user_membro.sql`, aplicado em prod;
+  valida ami/bridge, e se o membro já existir preenche se estiver vazio).
+- **Membresia** (`Membresia.jsx`): badge de faixa etária + badge AMI/BRIDGE no
+  cabeçalho do detalhe (detalhe usa `select *` → já traz `frequenta_area`). A
+  faixa é derivada no front (helper inline); não é coluna.
+- **AMI/Bridge** (`PainelArea.jsx` + novo `PainelAreaPessoas.jsx`): aba
+  **"Pessoas"** (só `area in (ami,bridge)`) lista `mem_membros` com
+  `frequenta_area = área`, filtros por faixa + busca; clicar abre detalhe.
+  Backend `routes/painelArea.js`: `GET /:area/pessoas` e `GET /:area/pessoas/:id`
+  (este NÃO retorna contribuições — regra "líder de área não vê doação" também no
+  servidor, não só na UI; valida que a pessoa é da área). Guard
+  `authorizeModule('painel-area', 1)` (boost de área cobre os líderes).
+- ⚠️ Editar `frequenta_area` na Membresia (UI) ficou de fora (só leitura por ora);
+  o vínculo vem do cadastro do app. Pessoas já existentes não têm `frequenta_area`
+  até se cadastrarem/escolherem (forward-looking).
+
+## WhatsApp · disparos pra eventos do app (2026-06-16)
+
+Camada `notificarMembro(membroId, chave, params)` em `services/whatsappService.js`
+dispara templates da Cloud API pros membros, a partir de eventos do app —
+**plug-and-play**: enquanto o env do nome do template estiver vazio, é **no-op
+gracioso** (não quebra o fluxo). Respeita **opt-in** (`mem_membros.whatsapp_optin`,
+migration `20260616160000`): obrigatório pra Marketing; pra Utility só se
+`WHATSAPP_OPTIN_OBRIGATORIO=1`. Token = `WHATSAPP_ACCESS_TOKEN` (o mesmo do bot) +
+`WHATSAPP_PHONE_NUMBER_ID`.
+
+- **Chaves → env do template:** inscricao_confirmada=`WHATSAPP_TEMPLATE_INSCRICAO` ·
+  doacao_recebida=`WHATSAPP_TEMPLATE_DOACAO` · kids_vinculo=`WHATSAPP_TEMPLATE_KIDS_VINCULO` ·
+  kids_precheckin=`WHATSAPP_TEMPLATE_KIDS_PRECHECKIN` · batismo_lembrete=`WHATSAPP_TEMPLATE_BATISMO` ·
+  escala_voluntario=`WHATSAPP_TEMPLATE_ESCALA` · aniversario=`WHATSAPP_TEMPLATE_ANIVERSARIO` (Marketing).
+- **Já ligados:** confirmação de inscrição (`app.js` POST /app/inscricoes ·
+  grupos/batismo/next/voluntariado/retiro/cursos/eventos · {{1}} nome {{2}} tipo) e
+  vínculo Kids aprovado/recusado (`totemKids.js` · {{1}} criança {{2}} aprovado/recusado).
+- **A ligar quando útil:** doação (vem do webhook Stripe / Edge Function — fora do
+  Express), batismo lembrete (cron), escala, aniversário. O helper já está pronto.
+- **Pra ativar um template:** aprovar na Meta → setar o env com o nome exato → começa
+  a enviar (respeitando opt-in). Opt-in marcado no app (Configurações → Notificações).
+
+## App · Telemetria (analytics de uso + erros · 2026-06-16)
+
+Fase 1 do programa de features do app. O app de membros loga **telas, ações e
+erros (crash JS)** em `app_eventos` (migration `20260616180000` · append-only ·
+RLS service_role · sem PII), via `POST /api/app/telemetria` (`tryAuth` · batch ≤50 ·
+nunca 500 pro app). Dashboard no sistema: `GET /api/app-analytics/resumo?dias=` →
+RPC `fn_app_telemetria_resumo` (1 query JSONB · evita o cap de 1000) →
+tela **`/admin/app-analytics`** (`AppAnalytics.jsx` · guard `dashboard`≥1):
+eventos/usuários por dia, telas mais vistas, ações, erros recentes, plataformas/versões.
+App: `lib/telemetria.ts` (`trackTela`/`trackEvento`/`trackErro` + handler global de
+erro + flush por tamanho/timer/background) ligado no `app/_layout.tsx` (init + cada
+tela via `usePathname`). Próximas features chamam `trackEvento` pra medir adoção.
+
+## Comunicados / Mural (2026-06-16 · Fase 2 do app)
+
+Conteúdo criado no **Marketing** → **mural do app** + **push segmentado**.
+Tabela `comunicados` (migration `20260616210000` · bucket público `comunicados`
+pra foto · RLS marketing≥1 lê / ≥3 escreve · service role). Backend
+`routes/comunicados.js` (`/api/comunicados` · CRUD + `/upload-foto` multer +
+`/:id/publicar` → fan-out push) e `GET /api/app/comunicados` (mural do membro:
+status publicado, segmento 'todos' OU `frequenta_area` do membro). Push: Edge
+Function **`notify-comunicado`** (app repo · `--no-verify-jwt`) — alvos =
+`app_push_tokens` (filtra por `frequenta_area` se segmento ≠ todos) → `notificar`
+(app_notificacoes + Expo). Front sistema: aba **Comunicados** no Marketing
+(`MarketingComunicados.jsx` · `/marketing/comunicados`). App: `mural.tsx`
+(`/mural`, item "Avisos" no Menu) + tap da push tipo `comunicado` → /mural.
+Segmentos: todos/ami/bridge/online/sede/kids.
+
+## App · Meu Grupo de Conexão (2026-06-16 · Fase 3)
+
+`GET /api/app/meu-grupo` (app.js): grupos ativos do membro (`mem_grupo_membros`
+saiu_em null) com info (dia/horário/local/foto), **líder** (nome+telefone p/
+"falar com o líder" via wa.me), **próximo encontro** (calculado de dia_semana+
+horário) e **materiais** (`mem_grupo_documentos` por grupo_ids → URL pública do
+bucket eventos-anexos). App: tela `meu-grupo.tsx` (`/meu-grupo`, item "Meu grupo"
+no Menu). Sem RSVP/presença por ora (follow-up · não há infra de confirmação).
+
+## App · Modo Culto · decisão de fé pelo app (2026-06-17)
+
+"Segunda tela" do culto no app + **decisão de fé** que entra por **fila de
+revisão** (decisão da liderança: NADA do app entra direto na NSM). Migration
+`20260617180000` (aplicada em prod): tabela `app_decisoes` (PII · membro_id +
+culto_id + ambiente presencial/online + tipo aceitar/reconciliacao/rededicacao/
+batismo/outro + status pendente/confirmada/descartada + decisao_id · deleted_at +
+whitelist + RLS contextual) e libera `fonte='app'` em `cultos_decisoes_pessoas`.
+- **App**: `GET /app/culto/agora` (culto de hoje + link ao vivo + jaRegistrou),
+  `POST /app/culto/decisao` (insere pendente · dedup 1/dia · notifica Integração).
+- **Integração**: `GET /integracao/decisoes-app` + `/:id/confirmar` (cria a
+  decisão oficial em `cultos_decisoes_pessoas` com `fonte='app'` → entra na NSM
+  via trigger) + `/:id/descartar`. UI: `DecisoesApp.tsx` no topo da aba Decisões
+  (`vis_decisoes`) do `/integracao`. Notificação `decisao_app` → módulo integracao.
+- App (tela `modo-culto.tsx` · `/modo-culto`, "No culto" no Menu + atalho Home):
+  ao vivo + cartão de decisão + anotações da pregação (locais no aparelho).
+
+## App · Pregações / Transmissão (2026-06-17 · Fase 5)
+
+Expõe ao app os vídeos do canal YouTube (módulo Online). `GET /api/app/videos`
+(app.js · authApp): 30 vídeos mais recentes (`online_videos` · titulo, video_id,
+thumbnail_url, publicado_em, duration_seconds, serie), 20 séries
+(`online_series`) e `canal_live` (`youtube.com/channel/<YOUTUBE_CHANNEL_ID ou
+default CBRio>/live`). **Somente leitura** (a coleta do YouTube continua no cron
+do `/online`); sem migration, sem env nova. App: tela `videos.tsx` (`/videos` ·
+atalho na Home + "Pregações" no Menu) abre os vídeos no YouTube via Linking.

@@ -142,14 +142,25 @@ router.get('/', async (req, res) => {
     const role = req.user.role;
     const granular = req.user.granular;
 
-    const { categoria, status, mine, aba } = req.query;
+    const { categoria, status, mine, aba, periodo } = req.query;
     let q = supabase
       .from('solicitacoes')
       .select('*')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
     if (categoria) q = q.eq('categoria', categoria);
     if (status) q = q.eq('status', status);
+
+    // Período padrão (Fase 2) · bound por updated_at pra não estourar o cap de
+    // 1000 linhas do PostgREST conforme o volume cresce. Filtra por updated_at
+    // (não created_at) pra manter visível o que teve atividade recente, mesmo
+    // criado há tempos. 'tudo' remove o limite. aba=aprovar não filtra (a fila
+    // de decisão é pequena e recente por natureza).
+    if (aba !== 'aprovar') {
+      const dias = periodo === 'tudo' ? 0 : (parseInt(periodo, 10) || 365);
+      if (dias > 0) q = q.gte('updated_at', new Date(Date.now() - dias * 86400000).toISOString());
+    }
 
     if (aba === 'aprovar') {
       // Aba do diretor de origem · so o que o user precisa aprovar.
@@ -618,15 +629,24 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
     }
 
     const novoResponsavelId = atual.responsavel_id;
+    // Próximo portao após o diretor de origem:
+    //   compras/servico  -> EM_COTACAO · a logistica levanta valor+fornecedor ANTES
+    //                       do financeiro (o Yago aprova sobre o valor real cotado).
+    //   reembolso/pagamento (e demais c/ alcada) -> aprovação financeira direta.
+    //   resto -> fila da área alvo (pendente).
+    const ehCotacao = ['compras', 'servico'].includes(atual.categoria);
+    let proximoStatus;
+    if (ehCotacao) {
+      proximoStatus = 'em_cotacao';
+    } else if (atual.precisa_aprovacao_financeira && !atual.aprovado_financeiro_em) {
+      proximoStatus = 'aguardando_aprovacao_financeira';
+    } else {
+      proximoStatus = 'pendente';
+    }
     const update = {
       aprovacao_origem_status: 'aprovada',
       aprovacao_origem_em: new Date().toISOString(),
-      // Após a aprovação de origem, segue pro próximo portao: aprovação financeira
-      // (se exigida e ainda não feita · ex: compras/reembolso/alcada) ou direto pra
-      // fila da área alvo (pendente). Sem isso, compras roteadas pulavam o financeiro.
-      status: (atual.precisa_aprovacao_financeira && !atual.aprovado_financeiro_em)
-        ? 'aguardando_aprovacao_financeira'
-        : 'pendente',
+      status: proximoStatus,
     };
     // Se super-admin esta aprovando como fallback, registra quem foi
     if (!isDiretorAlvo && isSuperAdmin) {
@@ -648,7 +668,9 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
       modulo,
       tipo: 'solicitacao_status',
       titulo: `Aprovada: ${data.titulo}`,
-      mensagem: `${userName || 'Diretor'} aprovou sua solicitação. Foi para a fila ${data.area_responsavel || 'da area alvo'}.`,
+      mensagem: ehCotacao
+        ? `${userName || 'Diretor'} aprovou sua solicitação. Foi pra cotação na logística (valor e fornecedor) antes do financeiro.`
+        : `${userName || 'Diretor'} aprovou sua solicitação. Foi para a fila ${data.area_responsavel || 'da area alvo'}.`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_origem_${data.id}`,
@@ -662,8 +684,10 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
           notificar({
             modulo,
             tipo: 'solicitacao',
-            titulo: `Nova na fila: ${data.titulo}`,
-            mensagem: `Solicitação aprovada pelo diretor · pronta para atendimento.`,
+            titulo: ehCotacao ? `Cotar: ${data.titulo}` : `Nova na fila: ${data.titulo}`,
+            mensagem: ehCotacao
+              ? `Solicitação aprovada pelo diretor · registre a cotação (valor + fornecedor) pra seguir pro financeiro.`
+              : `Solicitação aprovada pelo diretor · pronta para atendimento.`,
             link: '/solicitacoes',
             severidade: 'info',
             chaveDedup: `solicitacao_pos_aprovacao_${data.id}`,
@@ -677,6 +701,82 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
   } catch (e) {
     console.error('[SOLICITACOES] aprovar-origem:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao aprovar solicitação' });
+  }
+});
+
+// ── COTACAO (compras/servico) · a logistica levanta valor+fornecedor ANTES do ──
+// financeiro. Marcos (2026-06-16): "primeiro vem a cotacao, depois a aprovacao do
+// financeiro" · o Yago decide sobre o valor real, nao sobre uma estimativa cega.
+async function podeCotar(req, sol) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  const mp = req.user.granular?.modulePerms || {};
+  const log = mp.logistica || mp.Logistica;
+  if (log && (log.leitura >= 3 || log.escrita >= 3)) return true;
+  if (!sol?.area_responsavel) return false;
+  const { data } = await supabase
+    .from('area_solicitacoes_responsaveis')
+    .select('profile_id')
+    .eq('area', sol.area_responsavel)
+    .eq('profile_id', req.user.userId)
+    .maybeSingle();
+  return !!data;
+}
+
+router.post('/:id/registrar-cotacao', async (req, res) => {
+  try {
+    const { valor_cotado, fornecedor, observacao } = req.body || {};
+    const valor = Number(valor_cotado);
+    if (valor_cotado == null || valor_cotado === '' || Number.isNaN(valor) || valor < 0) {
+      return res.status(400).json({ error: 'Informe o valor cotado (número ≥ 0).' });
+    }
+    const { data: atual, error: getErr } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (getErr) throw getErr;
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.status !== 'em_cotacao') {
+      return res.status(400).json({ error: 'Esta solicitação não está em cotação.' });
+    }
+    if (!(await podeCotar(req, atual))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar a cotação.' });
+    }
+
+    // Grava a cotacao e manda pro financeiro · o Yago aprova sobre o valor cotado.
+    // valor_estimado passa a refletir o cotado (alcada/relatorios usam o valor real).
+    const updates = {
+      valor_cotado: valor,
+      cotacao_fornecedor: fornecedor || null,
+      cotacao_observacao: observacao || null,
+      cotacao_em: new Date().toISOString(),
+      cotacao_por: req.user.userId,
+      valor_estimado: valor,
+      precisa_aprovacao_financeira: true,
+      status: 'aguardando_aprovacao_financeira',
+    };
+    const { data, error } = await supabase
+      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+
+    // Notifica o financeiro (Yago) que ha cotacao pra aprovar
+    resolverDestinatarios('financeiro').then(managers => {
+      const alvo = [...new Set((managers || []).filter(Boolean))];
+      if (alvo.length) {
+        notificar({
+          modulo: 'financeiro',
+          tipo: 'solicitacao_status',
+          titulo: `Cotação pronta: ${data.titulo}`,
+          mensagem: `A logística cotou R$ ${valor.toFixed(2)}${fornecedor ? ` (${fornecedor})` : ''} · aguarda sua aprovação financeira.`,
+          link: '/solicitacoes',
+          severidade: 'info',
+          chaveDedup: `solicitacao_cotacao_${data.id}`,
+          targetIds: alvo,
+        }).catch(err => console.error('[SOLICITACOES] notify cotacao:', err.message));
+      }
+    }).catch(err => console.error('[SOLICITACOES] resolve financeiro:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] registrar-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao registrar cotação' });
   }
 });
 
@@ -858,6 +958,199 @@ router.patch('/:id', async (req, res) => {
   } catch (e) {
     console.error('[SOLICITACOES] update error:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar solicitação' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FASE 1 · Linha do tempo + "Relatar Problema" (alteração/devolução) + reenvio
+// ══════════════════════════════════════════════════════════════════════════
+
+// GET /:id/timeline · fases (solicitacoes_eventos) + ajustes (solicitacao_ajustes)
+// mesclados em ordem · visível pro solicitante E pro responsável.
+router.get('/:id/timeline', async (req, res) => {
+  try {
+    const [{ data: eventos }, { data: ajustes }] = await Promise.all([
+      supabase.from('solicitacoes_eventos').select('*').eq('solicitacao_id', req.params.id).order('created_at', { ascending: true }),
+      supabase.from('solicitacao_ajustes').select('*').eq('solicitacao_id', req.params.id).order('created_at', { ascending: true }),
+    ]);
+    const ids = [...new Set([
+      ...(eventos || []).map(e => e.ator_id),
+      ...(ajustes || []).map(a => a.autor_id),
+    ].filter(Boolean))];
+    let nomes = {};
+    if (ids.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+      nomes = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+    }
+    const linha = [
+      ...(eventos || []).map(e => ({ tipo: 'evento', em: e.created_at, status_anterior: e.status_anterior, status_novo: e.status_novo, ator: nomes[e.ator_id] || null, observacao: e.observacao })),
+      ...(ajustes || []).map(a => ({ tipo: 'ajuste', em: a.created_at, lado: a.lado, motivo: a.motivo, comentario: a.comentario, ator: nomes[a.autor_id] || null })),
+    ].sort((x, y) => new Date(x.em).getTime() - new Date(y.em).getTime());
+    res.json(linha);
+  } catch (e) {
+    console.error('[SOLICITACOES] timeline:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /:id/relatar-problema · body { motivo, comentario }
+// motivo ∈ descricao|escopo|data → 'aguardando_ajuste' (volta editável pro
+// solicitante · pausa o SLA · vezes_refeita++). motivo='cancelamento' → 'cancelado'.
+// O `lado` (solicitante/responsável) sai de quem aciona (KPI diagnóstico).
+router.post('/:id/relatar-problema', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const { motivo, comentario } = req.body || {};
+    if (!['descricao', 'escopo', 'data', 'cancelamento'].includes(motivo)) {
+      return res.status(400).json({ error: 'Motivo inválido.' });
+    }
+
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, categoria, titulo, status, vezes_refeita')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const isSolic = sol.solicitante_id === userId;
+    const isResp = sol.responsavel_id === userId;
+    let isAreaResp = false;
+    if (!isAdmin && !isResp && sol.area_responsavel) {
+      const { data: rr } = await supabase.from('area_solicitacoes_responsaveis')
+        .select('profile_id').eq('area', sol.area_responsavel).eq('profile_id', userId).maybeSingle();
+      isAreaResp = !!rr;
+    }
+    const podeGerir = isAdmin || isResp || isAreaResp;
+    if (!isSolic && !podeGerir) return res.status(403).json({ error: 'Sem permissão.' });
+    if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Solicitação já encerrada · não é possível relatar problema.' });
+    }
+    // Já em ajuste: não re-pausa (preservaria status_antes_ajuste/sla_pausado_em
+    // originais) · o solicitante deve editar e reenviar. Cancelar ainda é possível.
+    if (sol.status === 'aguardando_ajuste' && motivo !== 'cancelamento') {
+      return res.status(400).json({ error: 'Já está aguardando ajuste · edite e reenvie (ou cancele).' });
+    }
+
+    const lado = isSolic ? 'solicitante' : 'responsavel';
+    await supabase.from('solicitacao_ajustes').insert({
+      solicitacao_id: sol.id, autor_id: userId, lado, motivo, comentario: comentario || null,
+    });
+
+    const modulo = CATEGORIA_MODULO[sol.categoria] || 'administrativo';
+
+    if (motivo === 'cancelamento') {
+      const { data, error } = await supabase.from('solicitacoes')
+        .update({ status: 'cancelado' }).eq('id', sol.id).select('*').single();
+      if (error) throw error;
+      notificar({
+        modulo, tipo: 'solicitacao_status',
+        titulo: `Cancelada: ${sol.titulo}`,
+        mensagem: `${userName || 'Usuário'} cancelou a solicitação${comentario ? ` · ${comentario}` : ''}.`,
+        link: '/solicitacoes', severidade: 'info',
+        chaveDedup: `solicitacao_cancelada_${sol.id}`,
+        ...(lado === 'responsavel' ? { targetIds: [sol.solicitante_id].filter(Boolean) } : {}),
+      }).catch(err => console.error('[SOLICITACOES] notify cancelar:', err.message));
+      return res.json(data);
+    }
+
+    const update = {
+      status: 'aguardando_ajuste',
+      status_antes_ajuste: sol.status,
+      sla_pausado_em: new Date().toISOString(),
+      vezes_refeita: (sol.vezes_refeita || 0) + 1,
+    };
+    const { data, error } = await supabase.from('solicitacoes')
+      .update(update).eq('id', sol.id).select('*').single();
+    if (error) throw error;
+
+    const MOTIVO_LABEL = { descricao: 'descrição', escopo: 'escopo', data: 'data' };
+    if (lado === 'responsavel') {
+      notificar({
+        modulo, tipo: 'solicitacao_status',
+        titulo: `Sua solicitação voltou para ajuste: ${sol.titulo}`,
+        mensagem: `${userName || 'A área'} pediu ajuste em ${MOTIVO_LABEL[motivo]}${comentario ? `: ${comentario}` : ''}. Edite e reenvie.`,
+        link: '/solicitacoes', severidade: 'alta',
+        chaveDedup: `solicitacao_devolvida_${sol.id}_${new Date(update.sla_pausado_em).getTime()}`,
+        targetIds: [sol.solicitante_id].filter(Boolean),
+      }).catch(err => console.error('[SOLICITACOES] notify devolucao:', err.message));
+    } else {
+      notificar({
+        modulo, tipo: 'solicitacao_status',
+        titulo: `Solicitante vai ajustar: ${sol.titulo}`,
+        mensagem: `${userName || 'O solicitante'} sinalizou ajuste em ${MOTIVO_LABEL[motivo]}${comentario ? `: ${comentario}` : ''}. O SLA fica pausado até o reenvio.`,
+        link: '/solicitacoes', severidade: 'info',
+        chaveDedup: `solicitacao_ajuste_solic_${sol.id}_${new Date(update.sla_pausado_em).getTime()}`,
+      }).catch(err => console.error('[SOLICITACOES] notify ajuste:', err.message));
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] relatar-problema:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /:id/reenviar · solicitante edita (opcional) e reenvia uma solicitação
+// que estava em aguardando_ajuste. Restaura o status anterior e RETOMA o SLA
+// (empurra os deadlines pelo tempo parado · a área não é penalizada).
+router.post('/:id/reenviar', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { titulo, descricao, justificativa, data_necessaria } = req.body || {};
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, status, status_antes_ajuste, sla_pausado_em, sla_resposta_deadline, sla_resolucao_deadline, categoria, titulo, area_responsavel')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    if (sol.solicitante_id !== userId && !isAdmin) {
+      return res.status(403).json({ error: 'Só o solicitante pode reenviar.' });
+    }
+    if (sol.status !== 'aguardando_ajuste') {
+      return res.status(400).json({ error: 'Solicitação não está aguardando ajuste.' });
+    }
+
+    const update = {
+      status: sol.status_antes_ajuste || 'pendente',
+      status_antes_ajuste: null,
+      sla_pausado_em: null,
+    };
+    if (titulo !== undefined) update.titulo = titulo;
+    if (descricao !== undefined) update.descricao = descricao;
+    if (justificativa !== undefined) update.justificativa = justificativa;
+    if (data_necessaria !== undefined) update.data_necessaria = data_necessaria || null;
+
+    // Retoma o SLA · empurra os prazos pelo tempo pausado
+    if (sol.sla_pausado_em) {
+      const pausaMs = Date.now() - new Date(sol.sla_pausado_em).getTime();
+      if (pausaMs > 0) {
+        if (sol.sla_resposta_deadline) update.sla_resposta_deadline = new Date(new Date(sol.sla_resposta_deadline).getTime() + pausaMs).toISOString();
+        if (sol.sla_resolucao_deadline) update.sla_resolucao_deadline = new Date(new Date(sol.sla_resolucao_deadline).getTime() + pausaMs).toISOString();
+      }
+    }
+
+    const { data, error } = await supabase.from('solicitacoes')
+      .update(update).eq('id', sol.id).select('*').single();
+    if (error) throw error;
+
+    const modulo = CATEGORIA_MODULO[sol.categoria] || 'administrativo';
+    resolverDestinatarios(modulo).then(managers => {
+      if (managers.length) {
+        notificar({
+          modulo, tipo: 'solicitacao_status',
+          titulo: `Reenviada: ${data.titulo}`,
+          mensagem: `O solicitante ajustou e reenviou · voltou pra fila ${data.area_responsavel || ''}.`,
+          link: '/solicitacoes', severidade: 'info',
+          chaveDedup: `solicitacao_reenviada_${sol.id}_${Date.now()}`,
+          targetIds: managers,
+        }).catch(err => console.error('[SOLICITACOES] notify reenviar:', err.message));
+      }
+    }).catch(err => console.error('[SOLICITACOES] resolve managers reenviar:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] reenviar:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1155,6 +1448,8 @@ router.get('/pendentes-financeiro', async (req, res) => {
       .neq('status', 'rejeitado')
       // Ainda aguardando o diretor de origem · so cai no financeiro depois (Spec 001)
       .neq('status', 'aguardando_aprovacao_origem')
+      // Compras/servico em cotacao · o Yago so ve depois que a logistica cotar (valor real)
+      .neq('status', 'em_cotacao')
       .is('deleted_at', null)
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });
@@ -1341,6 +1636,133 @@ router.get('/dashboard/urgencia-frequente', async (req, res) => {
     console.error('[SOLICITACOES] urgencia-frequente:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /dashboard/refeitas?dias=90 · termômetro "pedimos bem?" (NÃO punitivo · Fase 1)
+// % das solicitações do período que precisaram de ajuste (refação pelo solicitante)
+// + nº de devoluções (a área pediu clareza). Gestão (admin/diretor) ou responsável.
+router.get('/dashboard/refeitas', async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (!['admin', 'diretor'].includes(role)) {
+      const { data: rr } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('area').eq('profile_id', req.user.userId).limit(1);
+      if (!rr || !rr.length) return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 7), 365);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+
+    const [{ count: totalPeriodo }, { data: ajustes }] = await Promise.all([
+      supabase.from('solicitacoes').select('id', { count: 'exact', head: true })
+        .gte('created_at', desde).is('deleted_at', null),
+      supabase.from('solicitacao_ajustes').select('solicitacao_id, lado, motivo')
+        .gte('created_at', desde),
+    ]);
+
+    const refeitasSet = new Set();
+    const devolucoesSet = new Set();
+    const porMotivo = { descricao: 0, escopo: 0, data: 0, cancelamento: 0 };
+    (ajustes || []).forEach(a => {
+      porMotivo[a.motivo] = (porMotivo[a.motivo] || 0) + 1;
+      if (a.motivo === 'cancelamento') return;
+      if (a.lado === 'solicitante') refeitasSet.add(a.solicitacao_id);
+      else if (a.lado === 'responsavel') devolucoesSet.add(a.solicitacao_id);
+    });
+
+    const total = totalPeriodo || 0;
+    const refeitas = refeitasSet.size;
+    res.json({
+      dias,
+      total_periodo: total,
+      refeitas,
+      devolucoes: devolucoesSet.size,
+      pct_refeitas: total > 0 ? Math.round((refeitas / total) * 1000) / 10 : 0,
+      por_motivo: porMotivo,
+    });
+  } catch (e) {
+    console.error('[SOLICITACOES] dashboard-refeitas:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── PONTE ESTOQUE (Fase 3a-2) · atender uma solicitação dando baixa no estoque ──
+// O Amaury (responsável da logística) vê o pedido na fila e, se já temos o item
+// aqui, "atende pela estoque": baixa o(s) produto(s) + resolve a solicitação.
+// (A outra saída — comprar — segue pelo fluxo de compras que já existe.)
+
+// GET /estoque/produtos · picker do catálogo (com saldo) pra montar a baixa
+router.get('/estoque/produtos', async (req, res) => {
+  try {
+    const busca = (req.query.busca || '').toString().replace(/[,()*:%]/g, ' ').trim();
+    let q = supabase.from('vw_log_estoque_saldo').select('id,nome,categoria,unidade,saldo')
+      .eq('ativo', true).order('nome').limit(1000);
+    if (busca) q = q.ilike('nome', `%${busca}%`);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /:id/atender-estoque · body { itens:[{produto_id, quantidade}], observacao? }
+router.post('/:id/atender-estoque', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const { itens, observacao } = req.body || {};
+    if (!Array.isArray(itens) || !itens.length) return res.status(400).json({ error: 'Informe ao menos um item.' });
+
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, area_cliente, categoria, titulo, status, observacoes')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    // permissão · admin/diretor, responsável direto, ou responsável da área
+    const isAdm = ['admin', 'diretor'].includes(req.user.role);
+    const isResp = sol.responsavel_id === userId;
+    let isAreaResp = false;
+    if (!isAdm && !isResp && sol.area_responsavel) {
+      const { data: rr } = await supabase.from('area_solicitacoes_responsaveis')
+        .select('profile_id').eq('area', sol.area_responsavel).eq('profile_id', userId).maybeSingle();
+      isAreaResp = !!rr;
+    }
+    if (!isAdm && !isResp && !isAreaResp) return res.status(403).json({ error: 'Sem permissão.' });
+    if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Solicitação já encerrada.' });
+    }
+
+    const rows = [];
+    for (const it of itens) {
+      const qtd = Number(it.quantidade);
+      if (!it.produto_id || !qtd || qtd <= 0) return res.status(400).json({ error: 'Item inválido (produto + quantidade > 0).' });
+      rows.push({
+        produto_id: it.produto_id, tipo: 'saida', quantidade: qtd,
+        data_movimentacao: new Date().toISOString().slice(0, 10),
+        area_destino: sol.area_cliente || null,
+        motivo: `Atende solicitação: ${sol.titulo}`,
+        origem_solicitacao_id: sol.id, feito_por: userId,
+      });
+    }
+    const { error: movErr } = await supabase.from('log_estoque_movimentacoes').insert(rows);
+    if (movErr) return res.status(400).json({ error: 'Erro ao baixar do estoque: ' + movErr.message });
+
+    const obs = `${sol.observacoes ? sol.observacoes + '\n' : ''}Atendido pela estoque por ${userName || 'logística'}${observacao ? ` · ${observacao}` : ''}.`;
+    const { data, error } = await supabase.from('solicitacoes')
+      .update({ status: 'concluido', observacoes: obs }).eq('id', sol.id).select('*').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    notificar({
+      modulo: CATEGORIA_MODULO[sol.categoria] || 'logistica',
+      tipo: 'solicitacao_status',
+      titulo: `Atendida pela estoque: ${sol.titulo}`,
+      mensagem: `${userName || 'A logística'} atendeu sua solicitação com itens que já tínhamos no estoque.`,
+      link: '/solicitacoes', severidade: 'info',
+      chaveDedup: `solicitacao_atendida_estoque_${sol.id}`,
+      targetIds: [sol.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify atender-estoque:', err.message));
+
+    res.json(data);
+  } catch (e) { console.error('[SOLICITACOES] atender-estoque:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;

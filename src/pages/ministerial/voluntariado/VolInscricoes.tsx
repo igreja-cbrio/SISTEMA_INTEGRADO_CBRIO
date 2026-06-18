@@ -124,6 +124,32 @@ interface InscricoesListResponse {
   rows: InscricaoRow[];
 }
 
+interface BgCheck {
+  id: string;
+  status: string;
+  resultado: string | null;
+  certidao_url: string | null;
+  consulta_erro: string | null;
+  consentimento: boolean;
+  consulta_em: string | null;
+  revisado_por_nome: string | null;
+  revisado_em: string | null;
+  observacoes: string | null;
+}
+
+const BG_STATUS: Record<string, { label: string; cls: string }> = {
+  pendente: { label: 'Pendente', cls: 'bg-gray-500/10 text-gray-700 border-gray-500/20' },
+  consultando: { label: 'Consultando...', cls: 'bg-blue-500/10 text-blue-700 border-blue-500/20' },
+  nada_consta: { label: 'Nada consta ✓', cls: 'bg-green-500/10 text-green-700 border-green-500/20' },
+  possivel_registro: { label: 'Possível registro — conferir', cls: 'bg-red-500/10 text-red-700 border-red-500/20' },
+  erro: { label: 'Erro na consulta', cls: 'bg-orange-500/10 text-orange-700 border-orange-500/20' },
+  aprovado_manual: { label: 'Aprovado (manual) ✓', cls: 'bg-green-500/10 text-green-700 border-green-500/20' },
+  reprovado: { label: 'Reprovado', cls: 'bg-red-600/10 text-red-700 border-red-600/30' },
+  dispensado: { label: 'Dispensado', cls: 'bg-purple-500/10 text-purple-700 border-purple-500/20' },
+};
+const BG_LIBERADO = new Set(['nada_consta', 'aprovado_manual', 'dispensado']);
+const ehKidsBridge = (area?: string | null) => ['kids', 'bridge'].includes(String(area || '').toLowerCase());
+
 export default function VolInscricoes() {
   const [ano, setAno] = useState<string>(String(ANO_ATUAL));
   const [area, setArea] = useState<string>('todas');
@@ -133,6 +159,7 @@ export default function VolInscricoes() {
   const [page, setPage] = useState(0);
   const [copied, setCopied] = useState(false);
   const [selected, setSelected] = useState<InscricaoRow | null>(null);
+  const [obs, setObs] = useState('');
   const pageSize = 50;
   const queryClient = useQueryClient();
 
@@ -145,6 +172,39 @@ export default function VolInscricoes() {
       toast.success('Status atualizado.');
     },
     onError: (e: any) => toast.error(e?.message || 'Erro ao atualizar status.'),
+  });
+
+  // Triagem de antecedentes (só Kids/Bridge)
+  const selKidsBridge = selected ? ehKidsBridge(selected.area) : false;
+  const { data: bg } = useQuery<{ check: BgCheck | null; autoConfigurado: boolean }>({
+    queryKey: ['vol', 'antecedentes', selected?.id],
+    queryFn: () => voluntariado.antecedentes(selected!.id),
+    enabled: !!selected && selKidsBridge,
+  });
+  const check = bg?.check || null;
+  const integracaoBloqueada = selKidsBridge && (!check || !BG_LIBERADO.has(check.status));
+
+  const consultarBg = useMutation({
+    mutationFn: () => voluntariado.consultarAntecedentes(selected!.id),
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey: ['vol', 'antecedentes', selected?.id] });
+      if (r?.status === 'nada_consta') toast.success('Nada consta — voluntário liberado.');
+      else if (r?.status === 'possivel_registro') toast.warning('Não emitiu certidão negativa — confira manualmente.');
+      else if (r?.erro) toast.error(r.erro);
+      else toast.success('Consulta executada.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao consultar antecedentes.'),
+  });
+
+  const revisarBg = useMutation({
+    mutationFn: ({ acao }: { acao: string }) =>
+      voluntariado.revisarAntecedentes(check!.id, { acao, observacoes: obs || undefined }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vol', 'antecedentes', selected?.id] });
+      setObs('');
+      toast.success('Triagem atualizada.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao atualizar triagem.'),
   });
 
   const { data, isLoading } = useQuery<InscricoesSummary>({
@@ -485,7 +545,7 @@ export default function VolInscricoes() {
                 {lista?.rows?.map(p => (
                   <tr
                     key={p.id}
-                    onClick={() => setSelected(p)}
+                    onClick={() => { setSelected(p); setObs(''); }}
                     className="border-b last:border-b-0 hover:bg-accent/30 cursor-pointer"
                   >
                     <td className="px-4 py-2 font-medium">
@@ -586,6 +646,75 @@ export default function VolInscricoes() {
                 )}
               </div>
 
+              {/* Triagem de antecedentes criminais · obrigatória pra Kids/Bridge */}
+              {selKidsBridge && (
+                <div className="pt-4 mt-2 border-t space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">Antecedentes criminais</span>
+                      <Badge variant="outline" className={check ? (BG_STATUS[check.status]?.cls || '') : 'bg-gray-500/10 text-gray-700'}>
+                        {check ? (BG_STATUS[check.status]?.label || check.status) : 'Sem triagem'}
+                      </Badge>
+                    </div>
+                    {bg?.autoConfigurado && (
+                      <Button size="sm" variant="outline" disabled={consultarBg.isPending}
+                        onClick={() => consultarBg.mutate()}>
+                        {consultarBg.isPending ? 'Consultando...' : (check && check.status !== 'pendente' ? 'Refazer consulta' : 'Consultar agora')}
+                      </Button>
+                    )}
+                  </div>
+
+                  {!bg?.autoConfigurado && (
+                    <p className="text-xs text-muted-foreground">
+                      Consulta automática não configurada — faça a triagem manual: confira a certidão e aprove.
+                    </p>
+                  )}
+                  {check?.consulta_erro && (
+                    <p className="text-xs text-orange-600">Erro na consulta: {check.consulta_erro}</p>
+                  )}
+                  {check?.certidao_url && (
+                    <a href={check.certidao_url} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-[#00B39D] underline inline-block">
+                      Ver certidão emitida
+                    </a>
+                  )}
+                  {check?.revisado_por_nome && (
+                    <p className="text-xs text-muted-foreground">
+                      Revisado por {check.revisado_por_nome}
+                      {check.observacoes ? ` — ${check.observacoes}` : ''}
+                    </p>
+                  )}
+
+                  {check && (
+                    <div className="space-y-2 pt-1">
+                      <textarea
+                        value={obs}
+                        onChange={(e) => setObs(e.target.value)}
+                        placeholder="Observação da conferência (opcional)"
+                        className="w-full text-sm rounded-md border bg-background p-2 min-h-[52px]"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="text-green-700 border-green-500/40 hover:bg-green-500/10"
+                          disabled={revisarBg.isPending}
+                          onClick={() => revisarBg.mutate({ acao: 'aprovar' })}>
+                          Aprovar manualmente
+                        </Button>
+                        <Button size="sm" variant="outline" className="text-purple-700 border-purple-500/40 hover:bg-purple-500/10"
+                          disabled={revisarBg.isPending}
+                          onClick={() => revisarBg.mutate({ acao: 'dispensar' })}>
+                          Dispensar triagem
+                        </Button>
+                        <Button size="sm" variant="outline" className="text-red-700 border-red-500/40 hover:bg-red-500/10"
+                          disabled={revisarBg.isPending}
+                          onClick={() => revisarBg.mutate({ acao: 'reprovar' })}>
+                          Reprovar
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
               <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
                 {selected.status === 'inscrito' && (
@@ -595,7 +724,9 @@ export default function VolInscricoes() {
                   </Button>
                 )}
                 {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
-                  <Button size="sm" variant="default" disabled={mudarStatus.isPending}
+                  <Button size="sm" variant="default"
+                    disabled={mudarStatus.isPending || integracaoBloqueada}
+                    title={integracaoBloqueada ? 'Triagem de antecedentes pendente — libere a verificação antes de integrar' : undefined}
                     onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
                     Integrar
                   </Button>

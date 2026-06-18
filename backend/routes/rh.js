@@ -6,6 +6,7 @@ const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../se
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
+const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -43,7 +44,7 @@ async function preencherFotoDoPerfil(funcs) {
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
-    let query = supabase.from('rh_funcionarios').select('id, status, tipo_contrato, area');
+    let query = supabase.from('rh_funcionarios').select('id, status, tipo_contrato, area, data_admissao, data_demissao, salario, custo_total_mensal');
     query = applyAccessFilter(query, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
     const { data: funcionarios, error } = await query;
 
@@ -54,6 +55,22 @@ router.get('/dashboard', async (req, res) => {
     const ferias = funcionarios.filter(f => f.status === 'ferias').length;
     const licenca = funcionarios.filter(f => f.status === 'licenca').length;
     const inativos = funcionarios.filter(f => f.status === 'inativo').length;
+    const emAdmissao = funcionarios.filter(f => f.status === 'em_admissao').length;
+
+    // Admissões / desligamentos nos últimos 12 meses + turnover.
+    // Turnover = desligamentos no período ÷ ativos atuais × 100 (sem histórico de
+    // headcount, usamos os ativos como denominador · rótulo deixa claro na UI).
+    const umAnoAtras = new Date(); umAnoAtras.setFullYear(umAnoAtras.getFullYear() - 1);
+    const limiteAno = umAnoAtras.toISOString().slice(0, 10);
+    const admissoesAno = funcionarios.filter(f => f.data_admissao && f.data_admissao >= limiteAno).length;
+    const desligamentosAno = funcionarios.filter(f => f.data_demissao && f.data_demissao >= limiteAno).length;
+    const turnover = ativos > 0 ? Math.round((desligamentosAno / ativos) * 1000) / 10 : 0;
+
+    // Folha / custo só pra quem pode ver remuneração (mesma regra do resto do RH).
+    const podeRemun = podeEditarRemuneracao(req);
+    const ativosList = funcionarios.filter(f => f.status === 'ativo');
+    const totalSalarios = podeRemun ? ativosList.reduce((s, f) => s + Number(f.salario || 0), 0) : null;
+    const custoMensal = podeRemun ? ativosList.reduce((s, f) => s + Number(f.custo_total_mensal || f.salario || 0), 0) : null;
 
     // Contagem por tipo de contrato
     const porContrato = {};
@@ -73,7 +90,7 @@ router.get('/dashboard', async (req, res) => {
     const em30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const { data: feriasProximas } = await supabase
       .from('rh_ferias_licencas')
-      .select('*, rh_funcionarios(nome)')
+      .select('*, rh_funcionarios!funcionario_id(nome)')
       .in('status', ['pendente', 'aprovado'])
       .gte('data_inicio', hoje)
       .lte('data_inicio', em30)
@@ -90,7 +107,10 @@ router.get('/dashboard', async (req, res) => {
       .order('data_expiracao');
 
     res.json({
-      total, ativos, ferias, licenca, inativos,
+      total, ativos, ferias, licenca, inativos, emAdmissao,
+      admissoesPendentes: emAdmissao,
+      admissoesAno, desligamentosAno, turnover,
+      totalSalarios, custoMensal,
       porContrato, porArea,
       feriasProximas: feriasProximas || [],
       docsVencendo: docsVencendo || [],
@@ -98,6 +118,56 @@ router.get('/dashboard', async (req, res) => {
   } catch (e) {
     console.error('[RH] Dashboard:', e.message);
     res.status(500).json({ error: 'Erro ao carregar dashboard RH' });
+  }
+});
+
+// GET /api/rh/dashboard/series?meses=N — séries mensais pros gráficos do dashboard.
+// quadro: entradas/saídas/headcount por mês (de data_admissao/data_demissao).
+// folha:  snapshots mensais (rh_folha_snapshots) · só pra quem vê remuneração.
+router.get('/dashboard/series', async (req, res) => {
+  try {
+    const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 36);
+    let q = supabase.from('rh_funcionarios').select('data_admissao, data_demissao').is('deleted_at', null);
+    q = applyAccessFilter(q, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: funcs, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+
+    const hoje = new Date();
+    const quadro = [];
+    for (let i = meses - 1; i >= 0; i--) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      const ini = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      const fimD = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const fim = `${fimD.getFullYear()}-${String(fimD.getMonth() + 1).padStart(2, '0')}-${String(fimD.getDate()).padStart(2, '0')}`;
+      const entradas = (funcs || []).filter(f => f.data_admissao && f.data_admissao >= ini && f.data_admissao <= fim).length;
+      const saidas = (funcs || []).filter(f => f.data_demissao && f.data_demissao >= ini && f.data_demissao <= fim).length;
+      const headcount = (funcs || []).filter(f => f.data_admissao && f.data_admissao <= fim && (!f.data_demissao || f.data_demissao > fim)).length;
+      quadro.push({ mes: ini.slice(0, 7), entradas, saidas, headcount });
+    }
+
+    // Folha (snapshots) · só remuneração — não vaza salário pra quem não pode ver.
+    const podeRemun = podeEditarRemuneracao(req);
+    let folha = [];
+    if (podeRemun) {
+      const desde = new Date(hoje.getFullYear(), hoje.getMonth() - (meses - 1), 1);
+      const desdeStr = `${desde.getFullYear()}-${String(desde.getMonth() + 1).padStart(2, '0')}-01`;
+      const { data: snaps } = await supabase
+        .from('rh_folha_snapshots')
+        .select('mes, total_salarios, total_custo, headcount')
+        .gte('mes', desdeStr)
+        .order('mes');
+      folha = (snaps || []).map(s => ({
+        mes: String(s.mes).slice(0, 7),
+        total_salarios: Number(s.total_salarios) || 0,
+        total_custo: Number(s.total_custo) || 0,
+        headcount: s.headcount,
+      }));
+    }
+
+    res.json({ quadro, folha, podeRemun });
+  } catch (e) {
+    console.error('[RH] Dashboard series:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar séries do dashboard' });
   }
 });
 
@@ -178,7 +248,7 @@ router.get('/funcionarios', async (req, res) => {
     const { status, area, busca, tipo_contrato } = req.query;
     let query = supabase
       .from('rh_funcionarios')
-      .select('*, rh_ferias_licencas(tipo, data_inicio, data_fim, status)')
+      .select('*, rh_ferias_licencas!funcionario_id(tipo, data_inicio, data_fim, status)')
       .order('nome');
 
     // Filtro de acesso por nível: área (3) ou pessoal (2)
@@ -234,10 +304,13 @@ router.get('/funcionarios/:id', async (req, res) => {
 // POST /api/rh/funcionarios
 router.post('/funcionarios', async (req, res) => {
   try {
-    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, remuneracao_bruta, grau_id, data_enquadramento, observacoes, setor_id, foto_url } = req.body;
+    const { nome, cpf, email, telefone, cargo, area, tipo_contrato, data_admissao, salario, remuneracao_bruta, grau_id, data_enquadramento, observacoes, setor_id, foto_url, status, admissao_dados } = req.body;
     if (!nome || !cargo || !data_admissao) {
       return res.status(400).json({ error: 'Nome, cargo e data de admissão são obrigatórios' });
     }
+    // Novo contratado pode entrar "em admissão" (onboarding) e só virar 'ativo' ao
+    // concluir. Qualquer outro valor no create cai no default 'ativo' (sem injeção).
+    const statusInicial = status === 'em_admissao' ? 'em_admissao' : 'ativo';
 
     // Remuneracao no cadastro inicial · so quem tem nivel alto em RH define.
     const podeRemun = ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
@@ -248,6 +321,8 @@ router.post('/funcionarios', async (req, res) => {
       setor_id: setor_id ? parseInt(setor_id, 10) : null,
       foto_url: foto_url || null,
       data_admissao,
+      status: statusInicial,
+      admissao_dados: admissao_dados || null,
       salario: podeRemun ? (salario || null) : null,
       remuneracao_bruta: podeRemun ? (remuneracao_bruta || null) : null,
       grau_id: podeRemun ? (grau_id || null) : null,
@@ -319,9 +394,11 @@ const RH_FIELD_TYPES = {
   bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
   data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date',
   grau_id: 'uuid',
+  admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
 };
 function coerceRh(val, type) {
   if (val === undefined) return undefined;       // nao veio no body → nao mexe na coluna
+  if (type === 'json') return val ?? null;       // objeto jsonb passa direto (null limpa)
   if (val === '' || val === null) return null;   // vazio → null
   if (type === 'num') { const n = Number(val); return Number.isFinite(n) ? n : null; }
   if (type === 'int') { const n = parseInt(val, 10); return Number.isFinite(n) ? n : null; }
@@ -370,6 +447,7 @@ router.put('/funcionarios/:id', async (req, res) => {
 // real do desligamento + motivo, use POST /funcionarios/:id/desligar.
 router.delete('/funcionarios/:id', async (req, res) => {
   try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para desligar colaborador (exige nível alto em RH).' });
     const { error } = await supabase
       .from('rh_funcionarios')
       .update({ status: 'inativo', data_demissao: new Date().toISOString().split('T')[0] })
@@ -387,6 +465,7 @@ router.delete('/funcionarios/:id', async (req, res) => {
 // histórico, com a data real de desligamento + motivo opcional.
 router.post('/funcionarios/:id/desligar', async (req, res) => {
   try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para desligar colaborador (exige nível alto em RH).' });
     const { data_demissao, motivo } = req.body || {};
     const payload = {
       status: 'inativo',
@@ -410,6 +489,7 @@ router.post('/funcionarios/:id/desligar', async (req, res) => {
 // POST /api/rh/funcionarios/:id/reativar — volta um ex-colaborador pra ativo.
 router.post('/funcionarios/:id/reativar', async (req, res) => {
   try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para reativar colaborador (exige nível alto em RH).' });
     const { data, error } = await supabase
       .from('rh_funcionarios')
       .update({ status: 'ativo', data_demissao: null, motivo_desligamento: null })
@@ -421,6 +501,31 @@ router.post('/funcionarios/:id/reativar', async (req, res) => {
   } catch (e) {
     console.error('[RH] Reativar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao reativar funcionário' });
+  }
+});
+
+// POST /api/rh/funcionarios/:id/concluir-admissao — encerra o onboarding:
+// o colaborador "em admissão" passa a 'ativo'. Mudança de vínculo (status) →
+// gated igual aos demais (só nível alto em RH / admin / diretor).
+router.post('/funcionarios/:id/concluir-admissao', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) {
+      return res.status(403).json({ error: 'Sem permissão para concluir admissão (exige nível alto em RH).' });
+    }
+    const { data, error } = await supabase
+      .from('rh_funcionarios')
+      .update({ status: 'ativo' })
+      .eq('id', req.params.id)
+      .eq('status', 'em_admissao') // só conclui quem está em admissão (idempotente/seguro)
+      .select()
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(409).json({ error: 'Colaborador não está em admissão.' });
+    enqueueSync('funcionario', req.params.id, 'upsert').catch(() => {});
+    res.json(data);
+  } catch (e) {
+    console.error('[RH] Concluir admissão:', e.message);
+    res.status(500).json({ error: 'Erro ao concluir admissão' });
   }
 });
 
@@ -634,15 +739,12 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
     if (!tipo || !nome) return res.status(400).json({ error: 'Tipo e nome são obrigatórios' });
 
     let finalStoragePath = storage_path || null;
-    let sharepointUrl = null;
-    let sharepointItemId = null;
+    let extArquivo = null;
 
-    // Se veio arquivo, fazer upload para Supabase + SharePoint
+    // Se veio arquivo, sobe pro Supabase (acesso rápido).
     if (req.file) {
-      const ext = (req.file.originalname || nome).split('.').pop();
-      const supaPath = `documentos/${req.params.id}/${Date.now()}_${sanitizePath(nome)}.${ext}`;
-
-      // Upload para Supabase (acesso rapido)
+      extArquivo = (req.file.originalname || nome).split('.').pop();
+      const supaPath = `documentos/${req.params.id}/${Date.now()}_${sanitizePath(nome)}.${extArquivo}`;
       const { error: upErr } = await supabase.storage
         .from('rh-fotos')
         .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
@@ -651,31 +753,12 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
         const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(supaPath);
         finalStoragePath = urlData.publicUrl;
       }
-
-      // Upload para SharePoint em background
-      if (SHAREPOINT_CONFIGURED) {
-        (async () => {
-          try {
-            const { data: func } = await supabase.from('rh_funcionarios').select('nome').eq('id', req.params.id).single();
-            const nomePasta = sanitizePath(func?.nome || req.params.id);
-            const result = await uploadModuleFile('rh', `Documentos/${nomePasta}`, `${sanitizePath(nome)}.${ext}`, req.file.buffer);
-            // Atualizar registro com dados do SharePoint
-            if (result.url) {
-              await supabase.from('rh_documentos')
-                .update({ sharepoint_url: result.url, sharepoint_item_id: result.itemId })
-                .eq('funcionario_id', req.params.id)
-                .eq('nome', nome)
-                .order('created_at', { ascending: false })
-                .limit(1);
-            }
-            console.log(`[RH] Documento sincronizado com SharePoint: ${nomePasta}/${nome}`);
-          } catch (spErr) {
-            console.error('[RH] SharePoint sync erro (nao-critico):', spErr.message);
-          }
-        })();
-      }
     }
 
+    // Insere PRIMEIRO pra ter o id do documento. A sincronização do SharePoint
+    // (background) passa a atualizar ESTE registro POR id — antes rodava antes do
+    // insert e atualizava por funcionario_id+nome+limit(1), podendo carimbar o
+    // documento errado quando havia 2 docs de mesmo nome (ou nenhum, se 1º).
     const { data, error } = await supabase
       .from('rh_documentos')
       .insert({
@@ -688,6 +771,28 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
       .single();
 
     if (error) return res.status(400).json({ error: error.message });
+
+    // SharePoint em background · atualiza o documento recém-criado (por id).
+    if (req.file && SHAREPOINT_CONFIGURED) {
+      const buffer = req.file.buffer;
+      const docId = data.id;
+      (async () => {
+        try {
+          const { data: func } = await supabase.from('rh_funcionarios').select('nome').eq('id', req.params.id).single();
+          const nomePasta = sanitizePath(func?.nome || req.params.id);
+          const result = await uploadModuleFile('rh', `Documentos/${nomePasta}`, `${sanitizePath(nome)}.${extArquivo}`, buffer);
+          if (result.url) {
+            await supabase.from('rh_documentos')
+              .update({ sharepoint_url: result.url, sharepoint_item_id: result.itemId })
+              .eq('id', docId);
+          }
+          console.log(`[RH] Documento sincronizado com SharePoint: ${nomePasta}/${nome}`);
+        } catch (spErr) {
+          console.error('[RH] SharePoint sync erro (nao-critico):', spErr.message);
+        }
+      })();
+    }
+
     res.json(data);
   } catch (e) {
     console.error('[RH] Criar documento:', e.message);
@@ -771,6 +876,7 @@ router.put('/treinamentos/:id', async (req, res) => {
 // DELETE /api/rh/treinamentos/:id
 router.delete('/treinamentos/:id', async (req, res) => {
   try {
+    if (!(['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 3)) return res.status(403).json({ error: 'Sem permissão para excluir treinamento (exige RH nível ≥ 3).' });
     const { error } = await supabase.from('rh_treinamentos').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
@@ -842,7 +948,7 @@ router.get('/ferias', async (req, res) => {
     const { status } = req.query;
     let query = supabase
       .from('rh_ferias_licencas')
-      .select('*, rh_funcionarios(nome, cargo, area)')
+      .select('*, rh_funcionarios!funcionario_id(nome, cargo, area), substituto:rh_funcionarios!substituto_id(nome)')
       .order('data_inicio', { ascending: false });
 
     if (status) query = query.eq('status', status);
@@ -859,7 +965,7 @@ router.get('/ferias', async (req, res) => {
 // POST /api/rh/funcionarios/:id/ferias
 router.post('/funcionarios/:id/ferias', async (req, res) => {
   try {
-    const { tipo, data_inicio, data_fim, observacoes } = req.body;
+    const { tipo, data_inicio, data_fim, observacoes, substituto_id } = req.body;
     if (!tipo || !data_inicio || !data_fim) {
       return res.status(400).json({ error: 'Tipo, data início e data fim são obrigatórios' });
     }
@@ -870,6 +976,7 @@ router.post('/funcionarios/:id/ferias', async (req, res) => {
         funcionario_id: req.params.id,
         tipo, data_inicio, data_fim,
         observacoes: observacoes || null,
+        substituto_id: substituto_id || null,
       })
       .select()
       .single();
@@ -903,6 +1010,45 @@ router.patch('/ferias/:id', async (req, res) => {
     if (status === 'aprovado') {
       const tipo = data.tipo === 'ferias' ? 'ferias' : 'licenca';
       await supabase.from('rh_funcionarios').update({ status: tipo }).eq('id', data.funcionario_id);
+
+      // Cobertura: o substituto herda os módulos OPERACIONAIS do titular ·
+      // overrides com expira_em = fim da licença (revert automático).
+      const hoje = new Date().toISOString().slice(0, 10);
+      if (data.substituto_id && data.data_fim >= hoje) {
+        try {
+          const { data: pessoas } = await supabase.from('rh_funcionarios')
+            .select('id, nome, email').in('id', [data.funcionario_id, data.substituto_id]);
+          const tit = (pessoas || []).find(p => p.id === data.funcionario_id);
+          const sub = (pessoas || []).find(p => p.id === data.substituto_id);
+          if (sub?.email) {
+            await aplicarCobertura({
+              feriasId: data.id,
+              titular: { funcionario_id: tit?.id, email: tit?.email, nome: tit?.nome },
+              substituto: { funcionario_id: sub.id, email: sub.email, nome: sub.nome },
+              dataInicio: data.data_inicio,
+              dataFim: data.data_fim,
+              criadoPor: req.user?.userId || req.user?.id || null,
+            });
+            // avisa o substituto (chega pelo sino · mesmo se ele não for do RH)
+            const { data: subProfile } = await supabase.from('profiles')
+              .select('id').ilike('email', sub.email).maybeSingle();
+            notificar({
+              modulo: 'rh', tipo: 'cobertura_atribuida',
+              titulo: `Você vai cobrir ${tit?.nome || 'um colega'}`,
+              mensagem: `Durante a licença de ${tit?.nome || 'um colega'} (${data.data_inicio} a ${data.data_fim}) você assume as áreas/filas dele. O acesso volta sozinho no fim.`,
+              link: '/admin/rh', severidade: 'info', chaveDedup: `cobertura_${data.id}`,
+              targetIds: subProfile?.id ? [subProfile.id] : undefined,
+            }).catch(() => {});
+          }
+        } catch (e) { console.error('[RH] aplicar cobertura:', e.message); }
+      }
+    } else if (status === 'rejeitado') {
+      // se havia cobertura ativa pra essa licença, encerra (remove os acessos)
+      try {
+        const { data: cobs } = await supabase.from('rh_cobertura')
+          .select('id').eq('ferias_id', data.id).eq('status', 'ativa');
+        for (const c of cobs || []) await encerrarCobertura(c.id, 'cancelada');
+      } catch (e) { console.error('[RH] encerrar cobertura:', e.message); }
     }
 
     // Busca nome do funcionário para notificação
@@ -926,9 +1072,38 @@ router.patch('/ferias/:id', async (req, res) => {
   }
 });
 
+// GET /api/rh/coberturas — gestão das coberturas (RH)
+router.get('/coberturas', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase.from('rh_cobertura').select('*')
+      .order('data_fim', { ascending: false }).limit(500);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[RH] Listar coberturas:', e.message);
+    res.status(500).json({ error: 'Erro ao listar coberturas' });
+  }
+});
+
+// POST /api/rh/coberturas/:id/cancelar — remove os acessos concedidos + encerra
+router.post('/coberturas/:id/cancelar', authorizeModule('rh', 3), async (req, res) => {
+  try {
+    const r = await encerrarCobertura(req.params.id, 'cancelada');
+    if (!r.ok) return res.status(404).json({ error: 'Cobertura não encontrada' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[RH] Cancelar cobertura:', e.message);
+    res.status(500).json({ error: 'Erro ao cancelar cobertura' });
+  }
+});
+
 // DELETE /api/rh/ferias/:id
 router.delete('/ferias/:id', async (req, res) => {
   try {
+    if (!(['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 3)) return res.status(403).json({ error: 'Sem permissão para excluir férias/licença (exige RH nível ≥ 3).' });
     const { error } = await supabase.from('rh_ferias_licencas').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });

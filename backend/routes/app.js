@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { dispararAuto } = require('../services/whatsappAuto');
+const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
@@ -270,9 +271,14 @@ router.get('/voluntariado/status/:userId', authApp, async (req, res) => {
 // entram na fila da aba "Acompanhamentos" do módulo Cuidados.
 const TIPOS_INSCRICAO = new Set([
   'grupos', 'batismo', 'retiro', 'cursos', 'next', 'voluntariado', 'eventos',
-  'aconselhamento', 'oracao', 'sos',
+  'aconselhamento', 'oracao', 'sos', 'contato',
 ]);
 const TIPOS_CUIDADOS = new Set(['aconselhamento', 'oracao', 'sos']);
+// Tipos que geram confirmação por WhatsApp (template cbrio_inscricao_confirmada)
+const LABEL_INSCRICAO_WPP = {
+  grupos: 'Grupos de Conexão', batismo: 'Batismo', next: 'NEXT',
+  voluntariado: 'Voluntariado', retiro: 'Retiro', cursos: 'Cursos', eventos: 'Eventos',
+};
 const LABEL_CUIDADOS = { aconselhamento: 'aconselhamento', oracao: 'oração', sos: 'SOS' };
 // Mapeia a urgência pra cor do sino (SEV_COLORS no AppShell)
 const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' };
@@ -355,6 +361,23 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       }).catch(e => console.warn('[APP] inscricoes · notificar:', e.message));
     }
 
+    // Fale Conosco: notifica a secretaria (cai no fallback admin/diretor
+    // se não houver regra de notificação configurada).
+    if (tipo === 'contato') {
+      const nome = dados.nome || req.user?.email || 'Alguém';
+      const msg = extrairMensagem(extras);
+      const assunto = dados.assunto ? ` (${String(dados.assunto).slice(0, 40)})` : '';
+      notificar({
+        modulo: 'membresia',
+        tipo: 'app_contato',
+        titulo: `Fale Conosco — ${nome}${assunto}`,
+        mensagem: `${nome} mandou uma mensagem pelo app${msg ? `: "${String(msg).slice(0, 180)}"` : '.'}`,
+        link: '/ministerial/membresia',
+        severidade: 'info',
+        chaveDedup: `app_contato_${inserted.id}`,
+      }).catch(e => console.warn('[APP] inscricoes · notificar contato:', e.message));
+    }
+
     // Mensagem automática de WhatsApp pro membro que pediu aconselhamento pastoral.
     if (tipo === 'aconselhamento') {
       try {
@@ -362,6 +385,16 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
           refId: inserted.id, telefone: dados.telefone, nome: dados.nome, origem: 'app',
         });
       } catch (e) { console.warn('[APP] aconselhamento whatsapp:', e.message); }
+    }
+
+    // Confirmação ao membro via WhatsApp · template aprovado (no-op até configurar
+    // o env do template + opt-in respeitado dentro de notificarMembro).
+    if (LABEL_INSCRICAO_WPP[tipo]) {
+      resolveMembroApp(req).then((m) => {
+        if (!m?.id) return;
+        const primeiroNome = String(m.nome || dados.nome || '').split(' ')[0] || 'Olá';
+        return wpp.notificarMembro(m.id, 'inscricao_confirmada', [primeiroNome, LABEL_INSCRICAO_WPP[tipo]]);
+      }).catch((e) => console.warn('[APP] inscricao wpp:', e.message));
     }
 
     res.status(201).json({ ok: true, id: inserted.id, message: 'Solicitação recebida! Nossa equipe entrará em contato.' });
@@ -769,6 +802,621 @@ router.post('/next/encontros/:eventoId/checkin', authApp, limiterNormal, async (
   } catch (e) {
     console.error('[APP next/checkin]', e.message);
     res.status(500).json({ error: 'Erro ao fazer check-in' });
+  }
+});
+
+// ── Kids · pré-check-in pelo app ───────────────────────────────────────────
+// O responsável prepara o check-in (escolhe os filhos), gera um código/QR,
+// e no totem o voluntário aplica. NÃO faz a entrada/retirada — só adianta.
+
+// GET /api/app/kids/meus-filhos — crianças de quem o membro é responsável
+// AUTORIZADO (autorizado_buscar=true) + pré-check-in pendente, se houver.
+router.get('/kids/meus-filhos', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ membro: null, filhos: [], preCheckin: null });
+
+    const { data: vinculos } = await supabase
+      .from('kids_responsaveis')
+      .select('crianca_id, parentesco, kids_criancas!inner(id, nome, data_nascimento, observacoes_medicas, ativo)')
+      .eq('membro_id', membro.id)
+      .eq('autorizado_buscar', true);
+
+    const filhos = (vinculos || [])
+      .map((v) => (Array.isArray(v.kids_criancas) ? v.kids_criancas[0] : v.kids_criancas))
+      .filter((c) => c && c.ativo)
+      .map((c) => ({
+        id: c.id,
+        nome: c.nome,
+        data_nascimento: c.data_nascimento,
+        observacoes_medicas: c.observacoes_medicas || null,
+      }));
+
+    // pré-check-in pendente e não expirado
+    const { data: pre } = await supabase
+      .from('kids_pre_checkins')
+      .select('id, codigo, crianca_ids, criado_em, expira_em')
+      .eq('responsavel_membro_id', membro.id)
+      .eq('status', 'pendente')
+      .gt('expira_em', new Date().toISOString())
+      .order('criado_em', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    res.json({ membro: { id: membro.id, nome: membro.nome }, filhos, preCheckin: pre || null });
+  } catch (e) {
+    console.error('[APP] kids/meus-filhos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar' });
+  }
+});
+
+// POST /api/app/kids/pre-checkin { crianca_ids: [] } — gera o código/QR.
+router.post('/kids/pre-checkin', authApp, limiterStrict, async (req, res) => {
+  try {
+    const { crianca_ids } = req.body || {};
+    if (!Array.isArray(crianca_ids) || crianca_ids.length === 0) {
+      return res.status(400).json({ error: 'Selecione ao menos uma criança' });
+    }
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro de membro não encontrado' });
+
+    // valida: TODAS as crianças são filhos AUTORIZADOS deste membro
+    const { data: vinculos } = await supabase
+      .from('kids_responsaveis')
+      .select('crianca_id')
+      .eq('membro_id', membro.id)
+      .eq('autorizado_buscar', true)
+      .in('crianca_id', crianca_ids);
+    const permitidos = new Set((vinculos || []).map((v) => v.crianca_id));
+    if (crianca_ids.some((id) => !permitidos.has(id))) {
+      return res.status(403).json({ error: 'Você só pode preparar o check-in dos seus filhos.' });
+    }
+
+    // cancela pendentes anteriores (só 1 ativo por responsável)
+    await supabase
+      .from('kids_pre_checkins')
+      .update({ status: 'cancelado' })
+      .eq('responsavel_membro_id', membro.id)
+      .eq('status', 'pendente');
+
+    const { data: codigoRow } = await supabase.rpc('fn_kids_pre_checkin_codigo');
+    const codigo = codigoRow || Math.random().toString(36).slice(2, 8).toUpperCase();
+    const expira = new Date(Date.now() + 12 * 3600 * 1000).toISOString();
+
+    const { data: criado, error } = await supabase
+      .from('kids_pre_checkins')
+      .insert({
+        codigo,
+        responsavel_membro_id: membro.id,
+        responsavel_nome: membro.nome,
+        responsavel_telefone: membro.telefone || null,
+        crianca_ids,
+        expira_em: expira,
+      })
+      .select('id, codigo, crianca_ids, expira_em')
+      .single();
+    if (error) throw error;
+
+    res.status(201).json(criado);
+  } catch (e) {
+    console.error('[APP] kids/pre-checkin:', e.message);
+    res.status(500).json({ error: 'Não foi possível gerar o check-in' });
+  }
+});
+
+// GET /api/app/kids/filho/:id — detalhe do filho (responsável autorizado):
+// info + sala sugerida + histórico de check-ins + foto (se consentida).
+router.get('/kids/filho/:id', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro não encontrado' });
+    // segurança: só responsável autorizado da criança
+    const { data: vinc } = await supabase
+      .from('kids_responsaveis')
+      .select('id, parentesco')
+      .eq('membro_id', membro.id)
+      .eq('crianca_id', req.params.id)
+      .eq('autorizado_buscar', true)
+      .maybeSingle();
+    if (!vinc) return res.status(403).json({ error: 'Você não é responsável autorizado desta criança.' });
+
+    const { data: c } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, data_nascimento, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, necessidades_especiais')
+      .eq('id', req.params.id)
+      .eq('ativo', true)
+      .maybeSingle();
+    if (!c) return res.status(404).json({ error: 'Criança não encontrada' });
+
+    // Foto só com consentimento. App = bucket privado (signed URL); legado = foto_url.
+    let fotoUrl = null;
+    if (c.foto_consentimento_em) {
+      if (c.foto_storage_path) {
+        const { data: signed } = await supabase.storage.from('kids-documentos').createSignedUrl(c.foto_storage_path, 60 * 30);
+        fotoUrl = signed?.signedUrl || null;
+      } else {
+        fotoUrl = c.foto_url;
+      }
+    }
+
+    const idadeMeses = c.data_nascimento
+      ? Math.floor((Date.now() - new Date(c.data_nascimento).getTime()) / (1000 * 60 * 60 * 24 * 30.44))
+      : null;
+
+    // sala sugerida pela faixa etária
+    let salaSugerida = null;
+    if (idadeMeses != null) {
+      const { data: salas } = await supabase
+        .from('kids_salas')
+        .select('nome, cor, faixa_etaria_min_meses, faixa_etaria_max_meses')
+        .eq('ativo', true);
+      const s = (salas || []).find((x) => x.faixa_etaria_min_meses <= idadeMeses && x.faixa_etaria_max_meses >= idadeMeses);
+      if (s) salaSugerida = { nome: s.nome, cor: s.cor };
+    }
+
+    // histórico de check-ins
+    const { data: checkins } = await supabase
+      .from('kids_checkins')
+      .select('id, checkin_at, checkout_at, fez_decisao_jesus, sala:kids_salas(nome, cor), sessao:kids_sessoes(culto:cultos(nome, data))')
+      .eq('crianca_id', req.params.id)
+      .order('checkin_at', { ascending: false })
+      .limit(20);
+
+    const historico = (checkins || []).map((k) => {
+      const sala = Array.isArray(k.sala) ? k.sala[0] : k.sala;
+      const sessao = Array.isArray(k.sessao) ? k.sessao[0] : k.sessao;
+      const culto = sessao && (Array.isArray(sessao.culto) ? sessao.culto[0] : sessao.culto);
+      return {
+        id: k.id,
+        checkin_at: k.checkin_at,
+        checkout_at: k.checkout_at,
+        decisao: !!k.fez_decisao_jesus,
+        sala: sala?.nome || null,
+        cor: sala?.cor || null,
+        culto: culto?.nome || null,
+        data: culto?.data || null,
+      };
+    });
+
+    res.json({
+      crianca: {
+        id: c.id,
+        nome: c.nome,
+        data_nascimento: c.data_nascimento,
+        idade_meses: idadeMeses,
+        observacoes_medicas: c.observacoes_medicas || null,
+        necessidades_especiais: c.necessidades_especiais || null,
+        parentesco: vinc.parentesco || null,
+        foto_url: fotoUrl, // só com consentimento (signed URL se foto do app)
+        foto_consentida: !!c.foto_consentimento_em,
+      },
+      sala_sugerida: salaSugerida,
+      total_checkins: historico.length,
+      historico,
+    });
+  } catch (e) {
+    console.error('[APP] kids/filho:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar' });
+  }
+});
+
+// Helper: confirma que o membro é responsável AUTORIZADO da criança.
+async function ehResponsavelAutorizado(membroId, criancaId) {
+  const { data } = await supabase
+    .from('kids_responsaveis').select('id')
+    .eq('membro_id', membroId).eq('crianca_id', criancaId).eq('autorizado_buscar', true)
+    .maybeSingle();
+  return !!data;
+}
+
+// POST /api/app/kids/filho/:id/foto — responsável adiciona a foto da criança.
+// ⚠️ ECA/LGPD: exige consentimento explícito (consentimento=true). A foto já
+// foi enviada pro bucket privado kids-documentos; aqui recebemos só o PATH
+// (que precisa estar na pasta do próprio usuário).
+router.post('/kids/filho/:id/foto', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro não encontrado' });
+    const { storage_path, consentimento, versao_consentimento } = req.body || {};
+    if (consentimento !== true) {
+      return res.status(400).json({ error: 'É necessário autorizar o uso da imagem da criança.' });
+    }
+    if (!storage_path || typeof storage_path !== 'string') {
+      return res.status(400).json({ error: 'Arquivo inválido' });
+    }
+    if (!storage_path.startsWith(`${req.user.id}/`)) {
+      return res.status(403).json({ error: 'Caminho inválido' });
+    }
+    if (!(await ehResponsavelAutorizado(membro.id, req.params.id))) {
+      return res.status(403).json({ error: 'Você não é responsável autorizado desta criança.' });
+    }
+
+    const { error } = await supabase.from('kids_criancas').update({
+      foto_storage_path: storage_path,
+      foto_url: null, // app usa storage privado; limpa URL legada
+      foto_consentimento_em: new Date().toISOString(),
+      foto_consentimento_por: req.user.id,
+      foto_consentimento_versao: (versao_consentimento || 'eca-lgpd-v1').toString().slice(0, 40),
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id).eq('ativo', true);
+    if (error) throw error;
+
+    const { data: signed } = await supabase.storage.from('kids-documentos').createSignedUrl(storage_path, 60 * 30);
+    res.json({ ok: true, foto_url: signed?.signedUrl || null });
+  } catch (e) {
+    console.error('[APP] kids/foto:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a foto' });
+  }
+});
+
+// POST /api/app/kids/filho/:id/foto/remover — revoga o consentimento e apaga a foto.
+router.post('/kids/filho/:id/foto/remover', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro não encontrado' });
+    if (!(await ehResponsavelAutorizado(membro.id, req.params.id))) {
+      return res.status(403).json({ error: 'Você não é responsável autorizado desta criança.' });
+    }
+    const { data: c } = await supabase.from('kids_criancas')
+      .select('foto_storage_path').eq('id', req.params.id).maybeSingle();
+    const { error } = await supabase.from('kids_criancas').update({
+      foto_storage_path: null,
+      foto_url: null,
+      foto_consentimento_em: null,
+      foto_consentimento_por: null,
+      foto_consentimento_versao: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    if (error) throw error;
+    if (c?.foto_storage_path) {
+      try { await supabase.storage.from('kids-documentos').remove([c.foto_storage_path]); } catch { /* best-effort */ }
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] kids/foto remover:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a foto' });
+  }
+});
+
+// POST /api/app/kids/solicitar-vinculo — o responsável pede pra ser vinculado a
+// uma criança e envia os documentos (criança + pai e/ou mãe). NÃO vincula
+// automaticamente: vira solicitação pendente que a equipe Kids confere e aprova.
+// Os documentos já foram enviados pelo app pro bucket privado kids-documentos;
+// aqui recebemos só os PATHS (que precisam estar na pasta do próprio usuário).
+router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) => {
+  try {
+    const {
+      crianca_nome, crianca_data_nascimento, parentesco, observacao,
+      crianca_doc_path, doc_pai_path, doc_mae_path,
+    } = req.body || {};
+
+    if (!crianca_nome || !String(crianca_nome).trim()) {
+      return res.status(400).json({ error: 'Informe o nome da criança' });
+    }
+    if (!crianca_doc_path) {
+      return res.status(400).json({ error: 'Envie o documento da criança' });
+    }
+    if (!doc_pai_path && !doc_mae_path) {
+      return res.status(400).json({ error: 'Envie o documento do pai e/ou da mãe' });
+    }
+
+    // Segurança: cada documento tem que estar na pasta do próprio usuário
+    // ({auth.uid}/...). Impede apontar arquivo de outra pessoa.
+    const prefixo = `${req.user.id}/`;
+    const paths = [crianca_doc_path, doc_pai_path, doc_mae_path].filter(Boolean);
+    if (paths.some((p) => !String(p).startsWith(prefixo))) {
+      return res.status(403).json({ error: 'Documento inválido.' });
+    }
+
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Complete seu cadastro de membro antes de solicitar.' });
+
+    const parentescosOk = ['mae', 'pai', 'avo_a', 'tio_a', 'tutor', 'outro'];
+    const parent = parentescosOk.includes(parentesco) ? parentesco : 'outro';
+
+    const { data: criado, error } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .insert({
+        solicitante_membro_id: membro.id,
+        solicitante_nome: membro.nome,
+        solicitante_telefone: membro.telefone || null,
+        solicitante_parentesco: parent,
+        crianca_nome: String(crianca_nome).trim(),
+        crianca_data_nascimento: crianca_data_nascimento || null,
+        crianca_doc_path,
+        doc_pai_path: doc_pai_path || null,
+        doc_mae_path: doc_mae_path || null,
+        observacao: observacao ? String(observacao).trim() : null,
+      })
+      .select('id, status, created_at')
+      .single();
+    if (error) throw error;
+
+    notificar({
+      modulo: 'kids',
+      tipo: 'kids_vinculo_solicitacao',
+      titulo: 'Nova solicitação de vínculo Kids',
+      mensagem: `${membro.nome} pediu vínculo com ${String(crianca_nome).trim()}. Confira os documentos e aprove.`,
+      link: '/ministerial/totem-kids/vinculos',
+      severidade: 'aviso',
+      chaveDedup: `kids_vinculo_${criado.id}`,
+    }).catch((e) => console.warn('[APP] solicitar-vinculo · notificar:', e.message));
+
+    res.status(201).json(criado);
+  } catch (e) {
+    console.error('[APP] kids/solicitar-vinculo:', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar a solicitação' });
+  }
+});
+
+// GET /api/app/whatsapp-optin — consentimento atual do membro pra WhatsApp.
+router.get('/whatsapp-optin', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ optin: false, optin_em: null });
+    const { data } = await supabase
+      .from('mem_membros')
+      .select('whatsapp_optin, whatsapp_optin_em')
+      .eq('id', membro.id)
+      .maybeSingle();
+    res.json({ optin: !!data?.whatsapp_optin, optin_em: data?.whatsapp_optin_em || null });
+  } catch (e) {
+    console.error('[APP] whatsapp-optin get:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar preferência' });
+  }
+});
+
+// POST /api/app/whatsapp-optin { optin } — grava consentimento (LGPD: + data).
+router.post('/whatsapp-optin', authApp, async (req, res) => {
+  try {
+    const optin = !!req.body?.optin;
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro de membro não encontrado' });
+    const { error } = await supabase
+      .from('mem_membros')
+      .update({ whatsapp_optin: optin, whatsapp_optin_em: new Date().toISOString() })
+      .eq('id', membro.id);
+    if (error) throw error;
+    res.json({ ok: true, optin });
+  } catch (e) {
+    console.error('[APP] whatsapp-optin post:', e.message);
+    res.status(500).json({ error: 'Não foi possível salvar' });
+  }
+});
+
+// GET /api/app/kids/minhas-solicitacoes — status das solicitações do membro.
+router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ solicitacoes: [] });
+
+    const { data } = await supabase
+      .from('kids_vinculo_solicitacoes')
+      .select('id, crianca_nome, status, motivo_rejeicao, created_at, decidido_em')
+      .eq('solicitante_membro_id', membro.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    res.json({ solicitacoes: data || [] });
+  } catch (e) {
+    console.error('[APP] kids/minhas-solicitacoes:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar solicitações' });
+  }
+});
+
+// Próximo encontro a partir do dia da semana (0=Dom..6=Sáb) + horário.
+function proximoEncontroISO(diaSemana, horario) {
+  if (diaSemana === null || diaSemana === undefined) return null;
+  const now = new Date();
+  const delta = ((Number(diaSemana) - now.getDay()) + 7) % 7;
+  const [hh, mm] = String(horario || '19:00').split(':').map((x) => parseInt(x, 10) || 0);
+  const d = new Date(now);
+  d.setDate(now.getDate() + delta);
+  d.setHours(hh, mm, 0, 0);
+  if (delta === 0 && d.getTime() < now.getTime()) d.setDate(d.getDate() + 7);
+  return d.toISOString();
+}
+
+// GET /api/app/meu-grupo — grupo(s) de conexão ativos do membro: info, líder,
+// próximo encontro e materiais. Pra experiência "já estou no grupo".
+router.get('/meu-grupo', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json({ grupos: [] });
+    const { data: vinculos } = await supabase
+      .from('mem_grupo_membros')
+      .select('grupo_id, funcao, mem_grupos(id, nome, dia_semana, horario, local, foto_url, lider_id)')
+      .eq('membro_id', membro.id)
+      .is('saiu_em', null);
+
+    const grupos = [];
+    for (const v of vinculos || []) {
+      const g = Array.isArray(v.mem_grupos) ? v.mem_grupos[0] : v.mem_grupos;
+      if (!g) continue;
+      let lider = null;
+      if (g.lider_id) {
+        const { data: l } = await supabase.from('mem_membros').select('nome, telefone').eq('id', g.lider_id).maybeSingle();
+        if (l) lider = { nome: l.nome, telefone: l.telefone };
+      }
+      const { data: docs } = await supabase
+        .from('mem_grupo_documentos')
+        .select('id, nome, comentario, storage_path, created_at')
+        .contains('grupo_ids', [g.id])
+        .order('created_at', { ascending: false })
+        .limit(15);
+      const materiais = (docs || []).map((d) => ({
+        id: d.id,
+        nome: d.nome,
+        comentario: d.comentario || null,
+        url: d.storage_path ? supabase.storage.from('eventos-anexos').getPublicUrl(d.storage_path).data.publicUrl : null,
+      }));
+      grupos.push({
+        id: g.id, nome: g.nome, dia_semana: g.dia_semana, horario: g.horario,
+        local: g.local, foto_url: g.foto_url, funcao: v.funcao, lider,
+        proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario),
+        materiais,
+      });
+    }
+    res.json({ grupos });
+  } catch (e) {
+    console.error('[APP] meu-grupo:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seu grupo' });
+  }
+});
+
+// GET /api/app/videos — pregações recentes + séries (YouTube) + link ao vivo.
+router.get('/videos', authApp, async (req, res) => {
+  try {
+    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
+    const { data: videos } = await supabase
+      .from('online_videos')
+      .select('video_id, titulo, thumbnail_url, publicado_em, duration_seconds, serie:online_series(titulo)')
+      .order('publicado_em', { ascending: false })
+      .limit(30);
+    const { data: series } = await supabase
+      .from('online_series')
+      .select('playlist_id, titulo, thumbnail_url, total_videos')
+      .order('publicada_em', { ascending: false, nullsFirst: false })
+      .limit(20);
+
+    res.json({
+      canal_live: `https://www.youtube.com/channel/${channelId}/live`,
+      videos: (videos || []).map((v) => ({
+        video_id: v.video_id,
+        titulo: v.titulo,
+        thumbnail_url: v.thumbnail_url,
+        publicado_em: v.publicado_em,
+        duration_seconds: v.duration_seconds,
+        serie: Array.isArray(v.serie) ? v.serie[0]?.titulo : v.serie?.titulo || null,
+      })),
+      series: series || [],
+    });
+  } catch (e) {
+    console.error('[APP] videos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar vídeos' });
+  }
+});
+
+// GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
+router.get('/culto/agora', authApp, async (req, res) => {
+  try {
+    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: culto } = await supabase
+      .from('cultos')
+      .select('id, nome, data, hora')
+      .eq('data', hoje).is('deleted_at', null)
+      .order('hora', { ascending: false }).limit(1).maybeSingle();
+
+    let jaRegistrou = false;
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (membro?.id) {
+      const { data: pend } = await supabase
+        .from('app_decisoes').select('id')
+        .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
+        .gte('criada_em', `${hoje}T00:00:00`).limit(1);
+      jaRegistrou = (pend || []).length > 0;
+    }
+    res.json({ culto: culto || null, canal_live: `https://www.youtube.com/channel/${channelId}/live`, jaRegistrou });
+  } catch (e) {
+    console.error('[APP] culto/agora:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o culto' });
+  }
+});
+
+// POST /api/app/culto/decisao — registra uma decisão de fé na FILA DE REVISÃO.
+// NÃO entra na NSM até a Integração confirmar (decisão da liderança).
+router.post('/culto/decisao', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro?.id) return res.status(400).json({ error: 'Complete seu cadastro de membro primeiro.' });
+
+    const ambiente = ['presencial', 'online'].includes(req.body?.ambiente) ? req.body.ambiente : 'presencial';
+    const tipo = ['aceitar', 'reconciliacao', 'rededicacao', 'batismo', 'outro'].includes(req.body?.tipo) ? req.body.tipo : null;
+    const observacao = (req.body?.observacao || '').toString().trim().slice(0, 500) || null;
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    // Dedup: 1 decisão pendente por membro por dia.
+    const { data: pend } = await supabase
+      .from('app_decisoes').select('id')
+      .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
+      .gte('criada_em', `${hoje}T00:00:00`).limit(1);
+    if ((pend || []).length) return res.json({ ok: true, jaRegistrou: true });
+
+    const { data: culto } = await supabase
+      .from('cultos').select('id').eq('data', hoje).is('deleted_at', null)
+      .order('hora', { ascending: false }).limit(1).maybeSingle();
+
+    const { error } = await supabase.from('app_decisoes').insert({
+      membro_id: membro.id, culto_id: culto?.id || null, ambiente, tipo, observacao, status: 'pendente',
+    });
+    if (error) throw error;
+
+    try {
+      await notificar({
+        modulo: 'integracao',
+        tipo: 'decisao_app',
+        titulo: 'Nova decisão de fé pelo app 🙌',
+        mensagem: `${membro.nome} registrou uma decisão pelo app. Confirme na aba Decisões.`,
+        link: '/integracao?tab=vis_decisoes',
+        chaveDedup: `decisao_app-${membro.id}-${hoje}`,
+      });
+    } catch (e) { console.warn('[APP] notificar decisao_app:', e.message); }
+
+    res.json({ ok: true, jaRegistrou: true });
+  } catch (e) {
+    console.error('[APP] culto/decisao:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar decisão' });
+  }
+});
+
+// GET /api/app/comunicados — mural do membro (publicados, segmentados).
+router.get('/comunicados', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    const segmentos = ['todos'];
+    if (membro?.id) {
+      const { data: m } = await supabase.from('mem_membros').select('frequenta_area').eq('id', membro.id).maybeSingle();
+      if (m?.frequenta_area) segmentos.push(m.frequenta_area);
+    }
+    const { data } = await supabase
+      .from('comunicados')
+      .select('id, titulo, corpo, foto_url, segmento, publicado_em')
+      .eq('status', 'publicado')
+      .is('deleted_at', null)
+      .in('segmento', segmentos)
+      .order('publicado_em', { ascending: false })
+      .limit(50);
+    res.json({ comunicados: data || [] });
+  } catch (e) {
+    console.error('[APP] comunicados:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar comunicados' });
+  }
+});
+
+// POST /api/app/telemetria { eventos: [{tipo,nome,props,plataforma,app_version}] }
+// Ingestão de telemetria do app (telas/ações/erros). Auth opcional (captura
+// também pré-login). NUNCA devolve erro pro app (telemetria não pode quebrar).
+router.post('/telemetria', tryAuth, async (req, res) => {
+  try {
+    const eventos = Array.isArray(req.body?.eventos) ? req.body.eventos.slice(0, 50) : [];
+    if (!eventos.length) return res.json({ ok: true, gravados: 0 });
+    const uid = req.user?.id || null;
+    const rows = eventos.map((e) => ({
+      tipo: ['tela', 'acao', 'erro', 'ping'].includes(e?.tipo) ? e.tipo : 'acao',
+      nome: String(e?.nome || 'desconhecido').slice(0, 120),
+      props: e?.props && typeof e.props === 'object' ? e.props : null,
+      plataforma: e?.plataforma ? String(e.plataforma).slice(0, 20) : null,
+      app_version: e?.app_version ? String(e.app_version).slice(0, 40) : null,
+      user_id: uid,
+    }));
+    const { error } = await supabase.from('app_eventos').insert(rows);
+    if (error) throw error;
+    res.json({ ok: true, gravados: rows.length });
+  } catch (e) {
+    console.warn('[APP] telemetria:', e.message);
+    res.json({ ok: false }); // nunca 500 pro app
   }
 });
 

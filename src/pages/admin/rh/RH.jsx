@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Users, Pencil, Trash2, Palmtree, X, Save, AlertTriangle, Download, UserPlus, Briefcase, Calendar, Search, Filter, Eye, Edit, MoreVertical, LayoutDashboard, Network, Receipt, Star, Clock, CalendarDays, Scale, Camera, UserMinus, RotateCcw, Sparkles, ShieldCheck } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
@@ -12,7 +12,8 @@ import { rh, permissoes } from '../../../api';
 import { exportCSV, exportPDF } from '../../../lib/export';
 import { supabase } from '../../../supabaseClient';
 import { C, fmtDate, fmtMoney, TIPO_CONTRATO, TIPO_FERIAS, FERIAS_STATUS } from '../../../lib/theme';
-import TabAdmissao from './TabAdmissao';
+import { ResponsiveContainer, ComposedChart, AreaChart, BarChart, PieChart, Pie, Cell, Bar, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { AdmissaoFormModal, ContratoEditorModal, gerarContratoAdmissao, formParaFuncionario, funcionarioParaForm } from './admissao';
 import TabFolha from './TabFolha';
 import TabAvaliacoes from './TabAvaliacoes';
 import TabExtras from './TabExtras';
@@ -90,6 +91,7 @@ function DesligarModal({ func, onClose, onConfirm }) {
 // Legacy compat maps (local uses { c, bg, label } shape)
 const STATUS_COLORS = {
   ativo: { c: C.green, bg: C.greenBg, label: 'Ativo' },
+  em_admissao: { c: '#8b5cf6', bg: '#8b5cf618', label: 'Em admissão' },
   inativo: { c: '#737373', bg: '#73737318', label: 'Inativo' },
   ferias: { c: C.blue, bg: C.blueBg, label: 'Férias' },
   licenca: { c: C.amber, bg: C.amberBg, label: 'Licença' },
@@ -158,122 +160,59 @@ function sugerirCargoPermissao(cargoRh, cargos) {
   return bestScore >= 1 ? best : null;
 }
 
-// ── TAB: ACESSOS · cargo RH × cargo de permissão (relatório read-only) ──
-function AcessosTab({ onDetail }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [erro, setErro] = useState('');
-  const [filtro, setFiltro] = useState('todos'); // todos | sem_acesso | divergente
-
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      try { const d = await rh.acessos(); if (vivo) setData(d); }
-      catch (e) { if (vivo) setErro(e.message || 'Erro ao carregar'); }
-      finally { if (vivo) setLoading(false); }
-    })();
-    return () => { vivo = false; };
-  }, []);
-
-  if (loading) return <div className="py-12 text-center text-sm text-muted-foreground">Carregando acessos…</div>;
-  if (erro) return <div className="py-12 text-center text-sm text-destructive">{erro}</div>;
-  if (!data) return null;
-
-  const cargos = data.cargos || [];
-  const itens = (data.itens || []).map(i => {
+// ── Acesso ao sistema · índice + célula (migrado da antiga aba "Acessos") ──
+// Cruza o relatório read-only de /rh/acessos (situação por colaborador ATIVO)
+// com a sugestão de cargo pelo título do RH. Alimenta a coluna "Acesso" e o
+// filtro do Diretório de Colaboradores. A configuração em si fica na ficha
+// (FuncionarioDetailPanel → "Permissões do Sistema").
+function buildAcessoIndex(acessos) {
+  const cargos = acessos?.cargos || [];
+  const map = {};
+  let semAcesso = 0, comAcesso = 0, divergente = 0;
+  (acessos?.itens || []).forEach(i => {
     const sug = sugerirCargoPermissao(i.cargo_rh, cargos);
-    const divergente = i.situacao === 'com_acesso' && sug && i.cargo_perm_id && sug.id !== i.cargo_perm_id;
-    return { ...i, sugestao: sug, divergente };
+    const div = i.situacao === 'com_acesso' && sug && i.cargo_perm_id && sug.id !== i.cargo_perm_id;
+    map[i.id] = { ...i, sugestao: sug, divergente: div };
+    if (i.situacao === 'sem_acesso') semAcesso += 1;
+    else { comAcesso += 1; if (div) divergente += 1; }
   });
-  const nDiverg = itens.filter(i => i.divergente).length;
-  const filtrados = itens.filter(i =>
-    filtro === 'sem_acesso' ? i.situacao === 'sem_acesso'
-      : filtro === 'divergente' ? i.divergente
-        : true
-  );
+  return { map, total: comAcesso + semAcesso, comAcesso, semAcesso, divergente, carregado: !!acessos };
+}
 
-  const cards = [
-    { title: 'Colaboradores ativos', value: data.resumo.total, color: '#3b82f6', f: 'todos' },
-    { title: 'Com acesso ao sistema', value: data.resumo.com_acesso, color: '#10b981', f: 'todos' },
-    { title: 'Sem acesso', value: data.resumo.sem_acesso, color: '#ef4444', f: 'sem_acesso' },
-    { title: 'Cargo divergente da sugestão', value: nDiverg, color: '#f59e0b', f: 'divergente' },
-  ];
-
+// Célula da coluna "Acesso" no diretório.
+function AcessoCell({ info, carregado }) {
+  // Sem entrada no relatório: inativos (o relatório só lista ativos) ou carregando.
+  if (!info) return <span className="text-sm text-muted-foreground">{carregado ? '—' : '…'}</span>;
+  if (info.situacao === 'sem_acesso') {
+    return (
+      <div>
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>
+          <ShieldCheck className="h-3 w-3" /> Sem acesso
+        </span>
+        {info.motivo && <div className="text-[11px] text-muted-foreground mt-0.5">{info.motivo}</div>}
+      </div>
+    );
+  }
+  const sugNome = info.sugestao ? (info.sugestao.nome_completo || info.sugestao.nome) : null;
   return (
-    <div className="space-y-5 pt-4 pb-8">
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-        {cards.map(c => (
-          <StatisticsCard key={c.title} title={c.title} value={c.value} icon={ShieldCheck} iconColor={c.color} onClick={() => setFiltro(c.f)} />
-        ))}
-      </div>
-
-      <p className="text-xs text-muted-foreground leading-relaxed">
-        O <b>cargo do RH</b> (título de folha) e o <b>cargo de permissão</b> (que dá acesso ao sistema) são cadastros
-        separados, ligados pelo e-mail. A <b>sugestão</b> é uma estimativa pelo título do RH — revise antes de aplicar.
-        Clique em <b>Configurar acesso</b> pra ajustar na ficha do colaborador (lá dá pra aplicar a sugestão num clique).
-      </p>
-
-      <div className="flex gap-2 flex-wrap">
-        {[['todos', 'Todos'], ['sem_acesso', 'Sem acesso'], ['divergente', 'Divergentes']].map(([k, l]) => (
-          <button key={k} onClick={() => setFiltro(k)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${filtro === k ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
-            {l}
-          </button>
-        ))}
-      </div>
-
-      <div className="overflow-x-auto rounded-md" style={{ border: `1px solid var(--cbrio-border)` }}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Colaborador</th>
-              <th style={styles.th}>Cargo (RH)</th>
-              <th style={styles.th}>Acesso (permissão)</th>
-              <th style={styles.th}>Sugestão pelo RH</th>
-              <th style={styles.th}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtrados.length === 0 && (
-              <tr><td colSpan={5}><div className="py-8 text-center text-sm text-muted-foreground">Nenhum colaborador neste filtro</div></td></tr>
-            )}
-            {filtrados.map(i => (
-              <tr key={i.id} className="cbrio-row hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => onDetail(i.id)}>
-                <td style={styles.td}>
-                  <div className="font-medium text-sm">{i.nome}</div>
-                  {i.email && <div className="text-xs text-muted-foreground truncate max-w-[220px]">{i.email}</div>}
-                </td>
-                <td style={styles.td}>
-                  <span className="text-sm">{i.cargo_rh || '—'}</span>
-                  {i.area_rh && <div className="text-xs text-muted-foreground">{i.area_rh}</div>}
-                </td>
-                <td style={styles.td}>
-                  {i.situacao === 'sem_acesso'
-                    ? <div>
-                        <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold" style={{ color: '#ef4444', background: '#ef444418' }}>Sem acesso</span>
-                        {i.motivo && <div className="text-[11px] text-muted-foreground mt-0.5">{i.motivo}</div>}
-                      </div>
-                    : <span className="text-sm">{i.cargo_perm_nome || '—'}</span>}
-                </td>
-                <td style={styles.td}>
-                  {i.sugestao
-                    ? <span className="text-sm" style={{ color: i.divergente ? '#b45309' : 'var(--cbrio-text)' }}>
-                      {i.sugestao.nome_completo || i.sugestao.nome}
-                      {i.divergente && <span className="text-[10px] ml-1 text-amber-600">≠ atual</span>}
-                    </span>
-                    : <span className="text-sm text-muted-foreground">—</span>}
-                </td>
-                <td style={styles.td}>
-                  <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); onDetail(i.id); }}>Configurar acesso</Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div>
+      <span className="text-sm">{info.cargo_perm_nome || '—'}</span>
+      {info.divergente && sugNome && (
+        <div className="text-[11px] text-amber-600 mt-0.5" title={`Sugestão pelo cargo do RH: ${sugNome}`}>
+          ≠ sugestão ({sugNome})
+        </div>
+      )}
     </div>
   );
 }
+
+// Chips de filtro de acesso no diretório (com contador) — migrados da antiga aba.
+const ACESSO_FILTROS = [
+  ['todos', 'Todos'],
+  ['com_acesso', 'Com acesso'],
+  ['sem_acesso', 'Sem acesso'],
+  ['divergente', 'Divergentes'],
+];
 
 // ── Shared inline styles (kept for backward compat, gradually migrate to Tailwind) ──
 const styles = {
@@ -347,9 +286,6 @@ const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'colaboradores', label: 'Colaboradores', icon: Users },
   { key: 'pcs', label: 'PCS', icon: Scale },
-  { key: 'admissao', label: 'Admissão', icon: UserPlus },
-  { key: 'organograma', label: 'Organograma', icon: Network },
-  { key: 'acessos', label: 'Acessos', icon: ShieldCheck },
   { key: 'folha', label: 'Folha', icon: Receipt },
   { key: 'avaliacoes', label: 'Avaliações', icon: Star },
   { key: 'treinamentos', label: 'Treinamentos', icon: Briefcase },
@@ -369,6 +305,7 @@ export default function RH() {
   const [tab, setTab] = useState('dashboard');
   const [dash, setDash] = useState(null);
   const [funcs, setFuncs] = useState([]);
+  const [acessos, setAcessos] = useState(null); // relatório de acesso ao sistema (cruza ativos × usuários × cargos)
   const [treinos, setTreinos] = useState([]);
   const [setores, setSetores] = useState([]);
   const [areas, setAreas] = useState([]);
@@ -387,6 +324,9 @@ export default function RH() {
   const [modalDetail, setModalDetail] = useState(null);
   const [modalDoc, setModalDoc] = useState(null);
   const [desligarFunc, setDesligarFunc] = useState(null); // colaborador sendo desligado
+  const [modalAdmissao, setModalAdmissao] = useState(null); // null=fechado, {}=nova, {...}=editar
+  const [modalContrato, setModalContrato] = useState(null); // editor de contrato da admissão
+  const [savingAdm, setSavingAdm] = useState(false);
 
   // Toast & confirmação
   const [toast, setToast] = useState(null); // { message, type }
@@ -412,6 +352,12 @@ export default function RH() {
     finally { setLoading(false); }
   }, [filtroStatus, filtroArea, busca]);
 
+  // Relatório de acesso: read-only, alimenta a coluna "Acesso" do diretório.
+  // Falha silenciosa — sem ele a coluna só mostra "—" (não derruba o diretório).
+  const loadAcessos = useCallback(async () => {
+    try { setAcessos(await rh.acessos()); } catch (e) { console.error('[RH] acessos:', e); }
+  }, []);
+
   const loadTreinos = useCallback(async () => {
     try { setTreinos(await rh.treinamentos.list()); } catch (e) { console.error(e); }
   }, []);
@@ -427,7 +373,7 @@ export default function RH() {
     } catch (e) { console.error(e); }
   }, []);
 
-  useEffect(() => { loadDash(); loadFuncs(); loadTreinos(); loadSetores(); }, []);
+  useEffect(() => { loadDash(); loadFuncs(); loadAcessos(); loadTreinos(); loadSetores(); }, []);
   useEffect(() => { loadFuncs(); }, [filtroStatus, filtroArea, busca]);
 
   // ── Handlers ──
@@ -440,7 +386,7 @@ export default function RH() {
       if (data.id) await rh.funcionarios.update(data.id, data);
       else await rh.funcionarios.create(data);
       setModalFunc(null);
-      loadFuncs(); loadDash();
+      loadFuncs(); loadDash(); loadAcessos();
       if (data.id && anterior) {
         // Snapshot pré-edição pra permitir desfazer (toast com ação)
         const restaura = {};
@@ -465,6 +411,51 @@ export default function RH() {
     } catch (e) { showToast(e.message); }
   }
 
+  // ── Admissão · novo contratado entra "em_admissao" e vira "ativo" ao concluir ──
+  async function saveAdmissao(form) {
+    setSavingAdm(true);
+    try {
+      const payload = formParaFuncionario(form);
+      if (form.id) await rh.funcionarios.update(form.id, payload);
+      else await rh.funcionarios.create({ ...payload, status: 'em_admissao' });
+      setModalAdmissao(null);
+      loadFuncs(); loadDash(); loadAcessos();
+      showSuccess(form.id ? 'Admissão atualizada!' : 'Admissão criada · colaborador em admissão');
+    } catch (e) { showToast(e.message); }
+    finally { setSavingAdm(false); }
+  }
+
+  function concluirAdmissao(id) {
+    askConfirm('Concluir a admissão? O colaborador passa a Ativo.', async () => {
+      try {
+        await rh.funcionarios.concluirAdmissao(id);
+        setModalDetail(null);
+        loadFuncs(); loadDash(); loadAcessos();
+        showSuccess('Admissão concluída · colaborador ativo');
+      } catch (e) { showToast(e.message); }
+    });
+  }
+
+  function abrirContratoAdmissao(func) {
+    const adm = funcionarioParaForm(func);
+    if (!adm.contrato_editado) adm.contrato_editado = gerarContratoAdmissao(adm);
+    setModalContrato(adm);
+  }
+
+  async function salvarContratoAdmissao(adm) {
+    setSavingAdm(true);
+    try {
+      // Persiste só o jsonb admissao_dados (contrato + etapa), sem mexer nas demais colunas.
+      const payload = formParaFuncionario({ ...adm, etapa: adm.etapa || 'contrato_gerado' });
+      await rh.funcionarios.update(adm.id, { admissao_dados: payload.admissao_dados });
+      setModalContrato(null);
+      if (modalDetail?.id === adm.id) { try { setModalDetail(await rh.funcionarios.get(adm.id)); } catch { /* noop */ } }
+      loadFuncs();
+      showSuccess('Contrato salvo');
+    } catch (e) { showToast(e.message); }
+    finally { setSavingAdm(false); }
+  }
+
   // Abre o diálogo de desligamento (data real + motivo) · NÃO apaga o registro
   function abrirDesligamento(id) {
     setDesligarFunc(funcs.find(x => x.id === id) || { id });
@@ -475,14 +466,14 @@ export default function RH() {
     try {
       await rh.funcionarios.desligar(desligarFunc.id, { data_demissao, motivo });
       setDesligarFunc(null); setModalDetail(null);
-      loadFuncs(); loadDash();
+      loadFuncs(); loadDash(); loadAcessos();
       showSuccess('Colaborador desligado · histórico preservado');
     } catch (e) { showToast(e.message); }
   }
 
   function reativarFuncionario(id) {
     askConfirm('Reativar este colaborador (voltar para ativo)?', async () => {
-      try { await rh.funcionarios.reativar(id); loadFuncs(); loadDash(); setModalDetail(null); showSuccess('Colaborador reativado'); }
+      try { await rh.funcionarios.reativar(id); loadFuncs(); loadDash(); loadAcessos(); setModalDetail(null); showSuccess('Colaborador reativado'); }
       catch (e) { showToast(e.message); }
     });
   }
@@ -575,23 +566,22 @@ export default function RH() {
         </ScrollArea>
 
         <TabsContent value="dashboard">
-          <DashboardTab dash={dash} onNavigate={setTab} setFiltroStatus={setFiltroStatus} />
+          <DashboardTab dash={dash} onNavigate={setTab} setFiltroStatus={setFiltroStatus} podeRemun={podeRemun} />
         </TabsContent>
         <TabsContent value="colaboradores">
           <FuncionariosTab
-            funcs={funcs} loading={loading} busca={busca} setBusca={setBusca}
+            funcs={funcs} acessos={acessos} loading={loading} busca={busca} setBusca={setBusca}
             filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
             filtroArea={filtroArea} setFiltroArea={setFiltroArea}
-            onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); }}
+            onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); loadAcessos(); }}
+            onNovaAdmissao={() => setModalAdmissao({})}
+            onVerOrganograma={() => setTab('organograma')}
             showToast={showToast}
           />
         </TabsContent>
         <TabsContent value="pcs">{podeRemun && <TabPCS />}</TabsContent>
-        <TabsContent value="admissao">
-          <TabAdmissao />
-        </TabsContent>
-        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onChanged={() => { loadFuncs(); loadDash(); }} /></TabsContent>
-        <TabsContent value="acessos"><AcessosTab onDetail={openDetail} /></TabsContent>
+        {/* Organograma · acessado pelo botão no Diretório de Colaboradores (sem aba própria) */}
+        <TabsContent value="organograma"><OrgChartTab funcs={funcs} onDetail={openDetail} onVoltar={() => setTab('colaboradores')} onChanged={() => { loadFuncs(); loadDash(); loadAcessos(); }} /></TabsContent>
         <TabsContent value="folha">{podeRemun && <TabFolha />}</TabsContent>
         <TabsContent value="avaliacoes"><TabAvaliacoes funcionarios={funcs} /></TabsContent>
         <TabsContent value="treinamentos">
@@ -621,6 +611,9 @@ export default function RH() {
         onEdit={(f) => { setModalDetail(null); setModalFunc(f); }}
         onDelete={abrirDesligamento}
         onReativar={reativarFuncionario}
+        onEditAdmissao={(func) => setModalAdmissao(funcionarioParaForm(func))}
+        onContratoAdmissao={abrirContratoAdmissao}
+        onConcluirAdmissao={concluirAdmissao}
         onNewDoc={(funcId) => setModalDoc({ funcionario_id: funcId })}
         onDeleteDoc={deleteDocumento}
         onSaveInline={async (updated) => {
@@ -628,11 +621,11 @@ export default function RH() {
           showSuccess('Colaborador atualizado!');
           const refreshed = await rh.funcionarios.get(modalDetail.id);
           setModalDetail(refreshed);
-          loadFuncs(); loadDash();
+          loadFuncs(); loadDash(); loadAcessos();
         }}
         onChanged={async () => {
           try { const r = await rh.funcionarios.get(modalDetail.id); setModalDetail(r); } catch { /* noop */ }
-          loadFuncs(); loadDash();
+          loadFuncs(); loadDash(); loadAcessos();
         }}
         onPhotoUpdated={(novoUrl) => {
           setModalDetail((prev) => prev ? { ...prev, foto_url: novoUrl } : prev);
@@ -642,6 +635,10 @@ export default function RH() {
       <DocumentoFormModal open={!!modalDoc} data={modalDoc} onClose={() => setModalDoc(null)} onSave={saveDocumento} />
 
       <DesligarModal func={desligarFunc} onClose={() => setDesligarFunc(null)} onConfirm={confirmarDesligamento} />
+
+      {/* Admissão · form (nova/editar) + editor de contrato */}
+      {modalAdmissao && <AdmissaoFormModal data={modalAdmissao} onClose={() => setModalAdmissao(null)} onSave={saveAdmissao} saving={savingAdm} />}
+      {modalContrato && <ContratoEditorModal data={modalContrato} onClose={() => setModalContrato(null)} onSave={salvarContratoAdmissao} saving={savingAdm} />}
 
       {/* Toast & Confirm */}
       <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
@@ -657,7 +654,15 @@ export default function RH() {
 // ═══════════════════════════════════════════════════════════
 // TAB: DASHBOARD
 // ═══════════════════════════════════════════════════════════
-function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
+function DashboardTab({ dash, onNavigate, setFiltroStatus, podeRemun = false }) {
+  const [meses, setMeses] = useState(12);
+  const [series, setSeries] = useState(null); // { quadro, folha, podeRemun }
+  useEffect(() => {
+    let vivo = true;
+    rh.dashboardSeries(meses).then(s => { if (vivo) setSeries(s); }).catch(() => { if (vivo) setSeries({ quadro: [], folha: [] }); });
+    return () => { vivo = false; };
+  }, [meses]);
+
   if (!dash) return (
     <div className="space-y-4 py-6">
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
@@ -675,123 +680,171 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
 
   const goTo = (tabKey, status) => { if (setFiltroStatus) setFiltroStatus(status || ''); if (onNavigate) onNavigate(tabKey); };
 
-  const fmtM = (v) => v != null ? `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}` : '—';
+  const fmtMes = (m) => {
+    const [y, mo] = String(m || '').split('-');
+    const nomes = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+    return mo ? `${nomes[+mo - 1]}/${String(y).slice(2)}` : m;
+  };
+  const tipoCores = { CLT: '#3b82f6', PJ: '#8b5cf6', 'PJ+': '#a855f7', PREBENDA: '#f59e0b' };
+  const tipoData = Object.entries(dash.porContrato || {}).map(([k, v]) => ({ name: TIPO_CONTRATO[k] || k, value: v, cor: tipoCores[k] || '#94a3b8' }));
+  const tipoTotal = tipoData.reduce((a, b) => a + b.value, 0);
+  const areaData = Object.entries(dash.porArea || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k, value: v }));
+  const quadro = (series?.quadro || []).map(q => ({ ...q, mesLabel: fmtMes(q.mes) }));
+  const folha = (series?.folha || []).map(f => ({ ...f, mesLabel: fmtMes(f.mes) }));
+  const tipTooltip = { background: 'var(--cbrio-card)', border: '1px solid var(--cbrio-border)', borderRadius: 8, fontSize: 12, color: 'var(--cbrio-text)' };
 
-  // Primary KPIs — 4 big cards
-  const primaryStats = [
-    { title: 'Total Colaboradores', value: dash.total, icon: Users, iconColor: '#3b82f6', onClick: () => goTo('colaboradores') },
+  const anchors = [
+    { title: 'Total', value: dash.total, icon: Users, iconColor: '#3b82f6', onClick: () => goTo('colaboradores') },
     { title: 'Ativos', value: dash.ativos, icon: Users, iconColor: '#10b981', onClick: () => goTo('colaboradores', 'ativo') },
+    { title: 'Em admissão', value: dash.admissoesPendentes ?? 0, icon: UserPlus, iconColor: '#8b5cf6', onClick: () => goTo('colaboradores', 'em_admissao') },
     { title: 'Em Férias / Licença', value: (dash.ferias || 0) + (dash.licenca || 0), icon: CalendarDays, iconColor: '#f59e0b', onClick: () => goTo('ferias'), subtitle: `${dash.ferias || 0} férias · ${dash.licenca || 0} licença` },
-    { title: 'Custo Mensal', value: fmtM(dash.custoMensal), icon: Briefcase, iconColor: '#ef4444' },
-  ];
-
-  // Secondary KPIs
-  const secondaryStats = [
-    { title: 'Admissões (12m)', value: dash.admissoesAno ?? 0, icon: UserPlus, iconColor: '#10b981' },
-    { title: 'Desligamentos (12m)', value: dash.desligamentosAno ?? 0, icon: Users, iconColor: '#ef4444' },
-    { title: 'Inativos', value: dash.inativos, icon: Users, iconColor: '#6b7280', onClick: () => goTo('colaboradores', 'inativo') },
-    { title: 'Turnover', value: `${dash.turnover || 0}%`, icon: Briefcase, iconColor: dash.turnover > 15 ? '#ef4444' : '#10b981' },
-    { title: 'Admissões Pend.', value: dash.admissoesPendentes ?? 0, icon: UserPlus, iconColor: '#f59e0b' },
-    { title: 'Folha Salarial', value: fmtM(dash.totalSalarios), icon: Receipt, iconColor: '#00B39D' },
   ];
 
   return (
-    <div className="space-y-8 pt-4 pb-8">
-      {/* Primary KPI Cards — 4 columns, generous size */}
+    <div className="space-y-6 pt-4 pb-8">
+      {/* Âncoras + seletor de período */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Resumo Geral</h3>
-        <div className="cbrio-stagger grid gap-5 grid-cols-2 lg:grid-cols-4">
-          {primaryStats.map((stat) => (
-            <StatisticsCard
-              key={stat.title}
-              title={stat.title}
-              value={stat.value}
-              icon={stat.icon}
-              iconColor={stat.iconColor}
-              onClick={stat.onClick}
-              subtitle={stat.subtitle}
-            />
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Resumo</h3>
+          <div className="flex gap-1">
+            {[12, 24].map(n => (
+              <button key={n} onClick={() => setMeses(n)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${meses === n ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+                {n} meses
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="cbrio-stagger grid gap-4 grid-cols-2 lg:grid-cols-4">
+          {anchors.map((stat) => (
+            <StatisticsCard key={stat.title} title={stat.title} value={stat.value} icon={stat.icon} iconColor={stat.iconColor} onClick={stat.onClick} subtitle={stat.subtitle} />
           ))}
         </div>
       </section>
 
-      {/* Secondary metrics — 3 columns on large, never smaller than comfortable */}
-      <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Métricas Detalhadas</h3>
-        <div className="cbrio-stagger grid gap-5 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-          {secondaryStats.map((stat) => (
-            <StatisticsCard
-              key={stat.title}
-              title={stat.title}
-              value={stat.value}
-              icon={stat.icon}
-              iconColor={stat.iconColor}
-              onClick={stat.onClick}
-            />
-          ))}
-        </div>
-      </section>
+      {/* Gráfico 1 · Saúde do quadro (entradas, saídas e total) */}
+      <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
+        <CardHeader className="px-5 pt-5 pb-1">
+          <CardTitle className="text-sm font-semibold text-foreground">Saúde do quadro</CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">Entradas/saídas (eixo esq.) e total no quadro (eixo dir., ampliado pra destacar a variação) · {meses} meses</p>
+        </CardHeader>
+        <CardContent className="px-2 pb-4 pt-2">
+          {!series ? <div className="h-[300px] rounded-xl bg-muted animate-pulse" /> : (
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={quadro} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" vertical={false} />
+                <XAxis dataKey="mesLabel" tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} />
+                {/* Eixo esquerdo · fluxo (entradas/saídas), começa no zero */}
+                <YAxis yAxisId="fluxo" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} width={28} />
+                {/* Eixo direito · total no quadro, AUTO-ZOOM na faixa onde varia (pra ver ±1) */}
+                <YAxis yAxisId="total" orientation="right" allowDecimals={false} width={34}
+                  domain={[(min) => Math.max(0, Math.floor(min) - 2), (max) => Math.ceil(max) + 2]}
+                  tick={{ fontSize: 11, fill: '#00B39D' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tipTooltip} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar yAxisId="fluxo" name="Entradas" dataKey="entradas" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Bar yAxisId="fluxo" name="Saídas" dataKey="saidas" fill="#ef4444" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Line yAxisId="total" name="Total no quadro" type="monotone" dataKey="headcount" stroke="#00B39D" strokeWidth={2.5} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Main content — 3 column layout using full width */}
-      <section>
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Distribuição e Alertas</h3>
-        <div className="grid gap-5 lg:grid-cols-3">
-          {/* Por tipo de contrato */}
+      {/* Gráfico 2 (folha · só remuneração) + Gráfico 3a (tipo de contrato) */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {podeRemun && (
           <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
-            <CardHeader className="px-5 pt-5 pb-3">
-              <CardTitle className="text-sm font-semibold text-foreground">Por Tipo de Contrato</CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">Distribuição por vínculo</p>
+            <CardHeader className="px-5 pt-5 pb-1">
+              <CardTitle className="text-sm font-semibold text-foreground">Folha por mês</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">Salários e custo total · foto mensal (exata daqui pra frente)</p>
             </CardHeader>
-            <CardContent className="px-5 pb-6">
-              {Object.entries(dash.porContrato || {}).length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-6">Nenhum dado</p>
+            <CardContent className="px-2 pb-3 pt-2">
+              {!series ? <div className="h-[260px] rounded-xl bg-muted animate-pulse" /> : folha.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-16">Sem snapshots ainda.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <AreaChart data={folha} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gFolha" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#00B39D" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#00B39D" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" vertical={false} />
+                    <XAxis dataKey="mesLabel" tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} width={52} tickFormatter={(v) => `R$${(v / 1000).toLocaleString('pt-BR')}k`} />
+                    <Tooltip contentStyle={tipTooltip} formatter={(v) => fmtMoney(v)} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Area name="Salários" type="monotone" dataKey="total_salarios" stroke="#00B39D" strokeWidth={2} fill="url(#gFolha)" />
+                    <Line name="Custo total" type="monotone" dataKey="total_custo" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
               )}
-              {Object.entries(dash.porContrato || {}).map(([tipo, qtd]) => {
-                const total = Object.values(dash.porContrato || {}).reduce((a, b) => a + b, 0);
-                const pct = total > 0 ? Math.round((qtd / total) * 100) : 0;
-                return (
-                  <div key={tipo} className="py-3 border-b border-border/30 last:border-0">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-sm text-foreground font-medium">{TIPO_CONTRATO[tipo] || tipo}</span>
-                      <span className="text-sm font-bold text-foreground tabular-nums">{qtd}</span>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+              {series && folha.length <= 1 && (
+                <p className="text-[11px] text-muted-foreground px-3 mt-1">A série de folha começa agora (caminho de exatidão) e ganha um ponto a cada mês.</p>
+              )}
             </CardContent>
           </Card>
+        )}
 
-          {/* Por área — taller */}
-          <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm lg:row-span-2">
-            <CardHeader className="px-5 pt-5 pb-3">
-              <CardTitle className="text-sm font-semibold text-foreground">Por Área</CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">{Object.keys(dash.porArea || {}).length} áreas com colaboradores</p>
-            </CardHeader>
-            <CardContent className="px-5 pb-6 max-h-[480px] overflow-y-auto">
-              {Object.entries(dash.porArea || {}).length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-6">Nenhum dado</p>
-              )}
-              {Object.entries(dash.porArea || {}).sort((a, b) => b[1] - a[1]).map(([area, qtd]) => {
-                const total = Object.values(dash.porArea || {}).reduce((a, b) => a + b, 0);
-                const pct = total > 0 ? Math.round((qtd / total) * 100) : 0;
-                return (
-                  <div key={area} className="flex items-center gap-3 py-2.5 border-b border-border/30 last:border-0">
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-foreground truncate block">{area}</span>
+        <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
+          <CardHeader className="px-5 pt-5 pb-1">
+            <CardTitle className="text-sm font-semibold text-foreground">Por tipo de contrato</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">Composição do vínculo</p>
+          </CardHeader>
+          <CardContent className="px-5 pb-6">
+            {tipoData.length === 0 ? <p className="text-sm text-muted-foreground text-center py-10">Nenhum dado</p> : (
+              <div className="flex items-center gap-4">
+                <ResponsiveContainer width="55%" height={180}>
+                  <PieChart>
+                    <Pie data={tipoData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                      {tipoData.map((d, i) => <Cell key={i} fill={d.cor} />)}
+                    </Pie>
+                    <Tooltip contentStyle={tipTooltip} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex-1 space-y-1.5">
+                  {tipoData.map(d => (
+                    <div key={d.name} className="flex items-center gap-2 text-sm">
+                      <span className="size-2.5 rounded-full shrink-0" style={{ background: d.cor }} />
+                      <span className="text-foreground flex-1">{d.name}</span>
+                      <span className="font-bold tabular-nums">{d.value}</span>
+                      <span className="text-xs text-muted-foreground w-9 text-right">{tipoTotal ? Math.round(d.value / tipoTotal * 100) : 0}%</span>
                     </div>
-                    <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden shrink-0">
-                      <div className="h-full rounded-full bg-primary/70 transition-all" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="text-sm font-bold text-foreground tabular-nums w-8 text-right shrink-0">{qtd}</span>
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
+      {/* Gráfico 3b · Por área */}
+      <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
+        <CardHeader className="px-5 pt-5 pb-1">
+          <CardTitle className="text-sm font-semibold text-foreground">Por área</CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">{areaData.length} áreas com colaboradores</p>
+        </CardHeader>
+        <CardContent className="px-3 pb-5 pt-2">
+          {areaData.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">Nenhum dado</p> : (
+            <ResponsiveContainer width="100%" height={Math.max(160, areaData.length * 30 + 10)}>
+              <BarChart data={areaData} layout="vertical" margin={{ top: 0, right: 24, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" horizontal={false} />
+                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--cbrio-text3)' }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11, fill: 'var(--cbrio-text2)' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tipTooltip} cursor={{ fill: 'var(--cbrio-border)', opacity: 0.3 }} />
+                <Bar dataKey="value" fill="#00B39D" radius={[0, 4, 4, 0]} maxBarSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Alertas operacionais */}
+      <section>
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Alertas operacionais</h3>
+        <div className="grid gap-5 lg:grid-cols-2">
           {/* Férias próximas */}
           <Card className="py-0 gap-0 overflow-hidden border-border/50 shadow-sm">
             <CardHeader className="px-5 pt-5 pb-3">
@@ -866,11 +919,26 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, showToast }) {
+function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, onNovaAdmissao, onVerOrganograma, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
+  const [filtroAcesso, setFiltroAcesso] = useState('todos'); // todos | com_acesso | sem_acesso | divergente
   const setError = (msg) => { setLocalError(msg); if (showToast) showToast(msg, msg.includes('concluída') ? 'success' : 'warning'); };
+
+  // Índice de acesso (situação por colaborador ativo) + filtro client-side.
+  const acessoIdx = useMemo(() => buildAcessoIndex(acessos), [acessos]);
+  const funcsVisiveis = useMemo(() => {
+    if (filtroAcesso === 'todos') return funcs;
+    return funcs.filter(f => {
+      const info = acessoIdx.map[f.id];
+      if (!info) return false; // inativos / fora do relatório não casam num filtro de acesso
+      if (filtroAcesso === 'divergente') return info.divergente;
+      return info.situacao === filtroAcesso;
+    });
+  }, [funcs, filtroAcesso, acessoIdx]);
+  const acessoContagem = { todos: funcsVisiveis.length, com_acesso: acessoIdx.comAcesso, sem_acesso: acessoIdx.semAcesso, divergente: acessoIdx.divergente };
+  const acessoLabel = (info) => !info ? '—' : info.situacao === 'sem_acesso' ? 'Sem acesso' : (info.cargo_perm_nome || '—');
 
   async function handleCSVImport(e) {
     const file = e.target.files?.[0];
@@ -910,7 +978,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <CardTitle style={{ color: 'var(--cbrio-text)' }}>Diretório de Colaboradores</CardTitle>
-            <CardDescription style={{ color: 'var(--cbrio-text3)' }}>{funcs.length} colaboradores encontrados</CardDescription>
+            <CardDescription style={{ color: 'var(--cbrio-text3)' }}>{funcsVisiveis.length} colaboradores encontrados</CardDescription>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative">
@@ -941,16 +1009,38 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
             </ShadSelect>
           </div>
         </div>
-        <div className="flex gap-2 mt-2 justify-end">
-          <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCSVImport} />
-          <Button variant="outline" size="sm" onClick={() => csvRef.current?.click()}>Importar CSV</Button>
-          <Button variant="outline" size="sm" onClick={() => {
-            const headers = ['Nome', 'Cargo', 'Área', 'Contrato', 'Admissão', 'Status', 'Email'];
-            const rows = funcs.map(f => [f.nome, f.cargo, f.area || '', f.tipo_contrato, f.data_admissao || '', f.status, f.email || '']);
-            exportPDF('Colaboradores', headers, rows, { subtitle: `${funcs.length} colaboradores` });
-          }}>
-            <Download className="h-3.5 w-3.5" /> Exportar
-          </Button>
+        <div className="flex flex-col gap-2 mt-2 sm:flex-row sm:items-center sm:justify-between">
+          {/* Filtro de acesso ao sistema (migrado da antiga aba "Acessos") */}
+          <div className="flex gap-2 flex-wrap items-center">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Acesso:</span>
+            {ACESSO_FILTROS.map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setFiltroAcesso(k)} disabled={!acessoIdx.carregado}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${filtroAcesso === k ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+                {l}{k !== 'todos' && acessoIdx.carregado ? ` (${acessoContagem[k]})` : ''}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 justify-end">
+            {onNovaAdmissao && (
+              <Button size="sm" onClick={onNovaAdmissao}>
+                <UserPlus className="h-3.5 w-3.5" /> Nova admissão
+              </Button>
+            )}
+            {onVerOrganograma && (
+              <Button variant="outline" size="sm" onClick={onVerOrganograma}>
+                <Network className="h-3.5 w-3.5" /> Organograma
+              </Button>
+            )}
+            <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCSVImport} />
+            <Button variant="outline" size="sm" onClick={() => csvRef.current?.click()}>Importar CSV</Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              const headers = ['Nome', 'Cargo', 'Área', 'Contrato', 'Admissão', 'Status', 'Acesso', 'Email'];
+              const rows = funcsVisiveis.map(f => [f.nome, f.cargo, f.area || '', f.tipo_contrato, f.data_admissao || '', f.status, acessoLabel(acessoIdx.map[f.id]), f.email || '']);
+              exportPDF('Colaboradores', headers, rows, { subtitle: `${funcsVisiveis.length} colaboradores` });
+            }}>
+              <Download className="h-3.5 w-3.5" /> Exportar
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="px-5 pb-5">
@@ -960,6 +1050,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
               <tr>
                 <th style={styles.th}>Nome</th>
                 <th style={styles.th}>Cargo</th>
+                <th style={styles.th}>Acesso</th>
                 <th style={styles.th}>Área</th>
                 <th style={styles.th}>Contrato</th>
                 <th style={styles.th}>Admissão</th>
@@ -968,9 +1059,9 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
-              {!loading && funcs.length === 0 && <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><Users className="h-5 w-5 text-muted-foreground" /></div><span className="text-sm font-medium text-foreground">Nenhum colaborador encontrado</span><span className="text-xs text-muted-foreground">Tente ajustar os filtros</span></div></td></tr>}
-              {funcs.map(f => (
+              {loading && <tr><td colSpan={8}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
+              {!loading && funcsVisiveis.length === 0 && <tr><td colSpan={8}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><Users className="h-5 w-5 text-muted-foreground" /></div><span className="text-sm font-medium text-foreground">Nenhum colaborador encontrado</span><span className="text-xs text-muted-foreground">Tente ajustar os filtros</span></div></td></tr>}
+              {funcsVisiveis.map(f => (
                 <tr key={f.id} className="cbrio-row hover:bg-muted/50 transition-colors"
                   onClick={() => onDetail(f.id)}>
                   <td style={{ ...styles.td, fontWeight: 600 }}>
@@ -989,6 +1080,7 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
                     </div>
                   </td>
                   <td style={styles.td}><span className="text-sm">{f.cargo}</span></td>
+                  <td style={styles.td}><AcessoCell info={acessoIdx.map[f.id]} carregado={acessoIdx.carregado} /></td>
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{f.area || '—'}</span></td>
                   <td style={styles.td}><span className="text-sm">{TIPO_CONTRATO[f.tipo_contrato] || f.tipo_contrato}</span></td>
                   <td style={styles.td}><span className="text-sm text-muted-foreground">{fmtDate(f.data_admissao)}</span></td>
@@ -1022,107 +1114,9 @@ function FuncionariosTab({ funcs, loading, busca, setBusca, filtroStatus, setFil
 // ═══════════════════════════════════════════════════════════
 // TAB: TREINAMENTOS
 // ═══════════════════════════════════════════════════════════
-// ── Helpers de materiais ──
-const TIPO_MATERIAL = {
-  material: 'Material', questionario: 'Questionário', video: 'Vídeo',
-  apresentacao: 'Apresentação', documento: 'Documento',
-};
-const MATERIAL_STATUS = {
-  pendente: { c: C.amber, bg: C.amberBg, label: 'Pendente' },
-  visualizado: { c: C.blue, bg: C.blueBg, label: 'Visualizado' },
-  concluido: { c: C.green, bg: C.greenBg, label: 'Concluído' },
-};
-const FILE_ICONS = { 'application/pdf': '📄', 'application/vnd.ms-powerpoint': '📊', 'application/vnd.openxmlformats-officedocument.presentationml.presentation': '📊' };
-const getFileIcon = (mime) => FILE_ICONS[mime] || '📎';
-
-function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever, onReload, showToast }) {
+function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever, showToast }) {
   const [inscrevendo, setInscrevendo] = useState(null);
   const [funcSel, setFuncSel] = useState('');
-  // Materiais
-  const [materiaisPorTreino, setMateriaisPorTreino] = useState({});
-  const [expandido, setExpandido] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [showAddMaterial, setShowAddMaterial] = useState(null);
-  const [matForm, setMatForm] = useState({ titulo: '', tipo: 'material', descricao: '', obrigatorio: false });
-  const [matFile, setMatFile] = useState(null);
-  const [showEnviar, setShowEnviar] = useState(null); // material_id
-  const [enviarSel, setEnviarSel] = useState([]);
-  const fileRef = useRef(null);
-
-  async function loadMateriais(treinamentoId) {
-    try {
-      const data = await rh.materiais.list({ treinamento_id: treinamentoId });
-      setMateriaisPorTreino(prev => ({ ...prev, [treinamentoId]: data }));
-    } catch (e) { console.error(e); }
-  }
-
-  async function toggleExpand(treinoId) {
-    if (expandido === treinoId) { setExpandido(null); return; }
-    setExpandido(treinoId);
-    await loadMateriais(treinoId);
-  }
-
-  async function handleUploadMaterial(treinoId) {
-    if (!matForm.titulo) { showToast?.('Título é obrigatório'); return; }
-    setUploading(true);
-    try {
-      let arquivo_url = null, arquivo_nome = null, arquivo_tipo = null;
-      if (matFile) {
-        const ext = matFile.name.split('.').pop();
-        const filePath = `treinamentos/${treinoId}/${crypto.randomUUID()}.${ext}`;
-        const { error } = await supabase.storage.from('rh-materiais').upload(filePath, matFile, { upsert: true });
-        if (error) throw error;
-        const { data: { publicUrl } } = supabase.storage.from('rh-materiais').getPublicUrl(filePath);
-        arquivo_url = publicUrl;
-        arquivo_nome = matFile.name;
-        arquivo_tipo = matFile.type;
-      }
-      await rh.materiais.create({
-        treinamento_id: treinoId, titulo: matForm.titulo, descricao: matForm.descricao,
-        tipo: matForm.tipo, obrigatorio: matForm.obrigatorio,
-        arquivo_url, arquivo_nome, arquivo_tipo,
-      });
-      setShowAddMaterial(null);
-      setMatForm({ titulo: '', tipo: 'material', descricao: '', obrigatorio: false });
-      setMatFile(null);
-      await loadMateriais(treinoId);
-    } catch (err) {
-      console.error(err);
-      showToast?.('Erro ao adicionar material: ' + err.message);
-    } finally { setUploading(false); }
-  }
-
-  async function handleEnviar(materialId, treinoId) {
-    if (!enviarSel.length) return;
-    try {
-      await rh.materiais.enviar(materialId, { funcionario_ids: enviarSel });
-      setShowEnviar(null);
-      setEnviarSel([]);
-      await loadMateriais(treinoId);
-    } catch (e) { showToast?.(e.message); }
-  }
-
-  async function handleStatusUpdate(mfId, status, treinoId) {
-    try {
-      await rh.materiais.atualizarStatus(mfId, { status });
-      await loadMateriais(treinoId);
-    } catch (e) { showToast?.(e.message); }
-  }
-
-  async function handleDeleteMaterial(matId, treinoId) {
-    try { await rh.materiais.remove(matId); await loadMateriais(treinoId); }
-    catch (e) { showToast?.(e.message); }
-  }
-
-  function handleFileDrop(e) {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) setMatFile(file);
-  }
-
-  const toggleFuncSel = (id) => {
-    setEnviarSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
 
   function gerarCertificado(treino, func) {
     if (!func) return;
@@ -1175,9 +1169,6 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
 
       <div style={{ display: 'grid', gap: 16 }}>
         {treinos.map(t => {
-          const materiais = materiaisPorTreino[t.id] || [];
-          const isExpanded = expandido === t.id;
-
           return (
             <div key={t.id} style={styles.card}>
               <div style={styles.cardHeader}>
@@ -1265,226 +1256,6 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                   </div>
                 ) : (
                   <Button variant="ghost" className="mt-1.5 text-xs" onClick={() => setInscrevendo(t.id)}>+ Inscrever colaborador</Button>
-                )}
-              </div>
-
-              {/* Materiais — expandível */}
-              <div style={{ borderTop: `1px solid ${C.border}` }}>
-                <Button
-                  variant="ghost"
-                  onClick={() => toggleExpand(t.id)}
-                  className="w-full justify-between rounded-none h-auto py-3 px-5"
-                >
-                  <span style={{ fontSize: 11, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    📁 Materiais{materiais.length > 0 ? ` (${materiais.length})` : ''}
-                  </span>
-                  <span style={{ fontSize: 14, color: C.text3, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)', display: 'inline-block' }}>▼</span>
-                </Button>
-
-                {isExpanded && (
-                  <div style={{ padding: '0 20px 16px' }}>
-                    {materiais.length === 0 && <div style={{ fontSize: 13, color: C.text3, padding: '8px 0' }}>Nenhum material adicionado</div>}
-
-                    {materiais.map(mat => {
-                      const destinatarios = mat.rh_materiais_funcionarios || [];
-                      const pendentes = destinatarios.filter(d => d.status === 'pendente');
-                      const visualizados = destinatarios.filter(d => d.status === 'visualizado');
-                      const concluidos = destinatarios.filter(d => d.status === 'concluido');
-
-                      return (
-                        <div key={mat.id} style={{ background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16, marginBottom: 12, border: `1px solid ${C.border}` }}>
-                          {/* Header do material */}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <span style={{ fontSize: 16 }}>{mat.arquivo_tipo ? getFileIcon(mat.arquivo_tipo) : '📁'}</span>
-                                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{mat.titulo}</span>
-                                <span style={styles.badge(C.blue, C.blueBg)}>{TIPO_MATERIAL[mat.tipo] || mat.tipo}</span>
-                                {mat.obrigatorio && <span style={styles.badge(C.red, C.redBg)}>Obrigatório</span>}
-                              </div>
-                              {mat.descricao && <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>{mat.descricao}</div>}
-                              {mat.arquivo_nome && (
-                                <a href={mat.arquivo_url} target="_blank" rel="noopener noreferrer"
-                                  style={{ fontSize: 12, color: C.primary, textDecoration: 'none', marginTop: 4, display: 'inline-block' }}>
-                                  {mat.arquivo_nome} ↗
-                                </a>
-                              )}
-                            </div>
-                            <Button variant="ghost" size="sm" style={{ color: C.red }} onClick={() => handleDeleteMaterial(mat.id, t.id)}>
-                              <Trash2 style={{ width: 13, height: 13 }} />
-                            </Button>
-                          </div>
-
-                          {/* Resumo de status */}
-                          {destinatarios.length > 0 && (
-                            <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: C.amber }}>⏳ {pendentes.length} pendente{pendentes.length !== 1 ? 's' : ''}</span>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: C.blue }}>👁 {visualizados.length} visualizado{visualizados.length !== 1 ? 's' : ''}</span>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: C.green }}>✓ {concluidos.length} concluído{concluidos.length !== 1 ? 's' : ''}</span>
-                            </div>
-                          )}
-
-                          {/* Lista de destinatários */}
-                          {destinatarios.length > 0 && (
-                            <div style={{ marginBottom: 8 }}>
-                              {destinatarios.map(d => (
-                                <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${C.border}` }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    {d.funcionario?.foto_url ? (
-                                      <img data-foto-avatar="" src={d.funcionario.foto_url} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
-                                    ) : (
-                                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>
-                                        {(d.funcionario?.nome || '?')[0].toUpperCase()}
-                                      </div>
-                                    )}
-                                    <div>
-                                      <div style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{d.funcionario?.nome}</div>
-                                      <div style={{ fontSize: 11, color: C.text3 }}>{d.funcionario?.cargo}</div>
-                                    </div>
-                                  </div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <Badge status={d.status} map={MATERIAL_STATUS} />
-                                    {d.status === 'pendente' && (
-                                      <Button variant="ghost" size="sm" className="text-[10px]"
-                                        onClick={() => handleStatusUpdate(d.id, 'concluido', t.id)}>Marcar concluído</Button>
-                                    )}
-                                    {d.status === 'visualizado' && (
-                                      <Button variant="ghost" size="sm" className="text-[10px]"
-                                        onClick={() => handleStatusUpdate(d.id, 'concluido', t.id)}>Marcar concluído</Button>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Enviar para colaboradores */}
-                          {showEnviar === mat.id ? (
-                            <div style={{ background: C.card, borderRadius: 8, padding: 12, border: `1px solid ${C.border}`, marginTop: 8 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: C.text2, marginBottom: 8, textTransform: 'uppercase' }}>Enviar para colaboradores</div>
-                              <div style={{ maxHeight: 180, overflowY: 'auto', marginBottom: 8 }}>
-                                {funcs.filter(f => f.status === 'ativo').map(f => {
-                                  const jaEnviado = destinatarios.some(d => d.funcionario?.id === f.id);
-                                  return (
-                                    <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: jaEnviado ? 'default' : 'pointer', opacity: jaEnviado ? 0.5 : 1 }}>
-                                      <input type="checkbox" disabled={jaEnviado} checked={jaEnviado || enviarSel.includes(f.id)} onChange={() => toggleFuncSel(f.id)} />
-                                      {f.foto_url ? (
-                                        <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
-                                      ) : (
-                                        <div style={{ width: 24, height: 24, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
-                                          {(f.nome || '?')[0].toUpperCase()}
-                                        </div>
-                                      )}
-                                      <span style={{ fontSize: 13 }}>{f.nome} <span style={{ color: C.text3, fontSize: 11 }}>— {f.cargo}</span></span>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                              <div style={{ display: 'flex', gap: 8 }}>
-                                <Button size="sm"
-                                  onClick={() => handleEnviar(mat.id, t.id)} disabled={!enviarSel.length}>
-                                  Enviar ({enviarSel.length})
-                                </Button>
-                                <Button variant="ghost" size="sm"
-                                  onClick={() => { setShowEnviar(null); setEnviarSel([]); }}>Cancelar</Button>
-                                <Button variant="ghost" size="sm" style={{ marginLeft: 'auto' }}
-                                  onClick={() => {
-                                    const todos = funcs.filter(f => f.status === 'ativo' && !destinatarios.some(d => d.funcionario?.id === f.id)).map(f => f.id);
-                                    setEnviarSel(todos);
-                                  }}>Selecionar todos</Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <Button variant="ghost" className="text-xs mt-1"
-                              onClick={() => { setShowEnviar(mat.id); setEnviarSel([]); }}>
-                              + Enviar para colaboradores
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Adicionar Material */}
-                    {showAddMaterial === t.id ? (
-                      <div style={{ background: C.card, borderRadius: 10, padding: 16, border: `1px dashed ${C.primary}` }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Novo Material</div>
-                        <div style={styles.formRow}>
-                          <Input label="Título *" value={matForm.titulo} onChange={e => setMatForm(f => ({ ...f, titulo: e.target.value }))} />
-                          <div style={styles.formGroup}>
-                            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Tipo</label>
-                            <ShadSelect value={matForm.tipo} onValueChange={v => setMatForm(f => ({ ...f, tipo: v }))}>
-                              <SelectTrigger className="w-full">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {Object.entries(TIPO_MATERIAL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-                              </SelectContent>
-                            </ShadSelect>
-                          </div>
-                        </div>
-                        <div style={styles.formGroup}>
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Descrição</label>
-                          <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 50, resize: 'vertical' }} value={matForm.descricao} onChange={e => setMatForm(f => ({ ...f, descricao: e.target.value }))} />
-                        </div>
-                        <div style={styles.formGroup}>
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
-                            <input type="checkbox" checked={matForm.obrigatorio} onChange={e => setMatForm(f => ({ ...f, obrigatorio: e.target.checked }))} />
-                            Obrigatório
-                          </label>
-                        </div>
-
-                        {/* Upload de arquivo — drag & drop */}
-                        <div style={styles.formGroup}>
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Arquivo (PDF, PPT, etc.)</label>
-                          <div
-                            onDragOver={e => e.preventDefault()}
-                            onDrop={handleFileDrop}
-                            onClick={() => fileRef.current?.click()}
-                            style={{
-                              border: `2px dashed ${C.border}`, borderRadius: 10, padding: 16, textAlign: 'center',
-                              cursor: 'pointer', transition: 'border-color 0.2s',
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.borderColor = C.primary}
-                            onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
-                          >
-                            <input ref={fileRef} type="file" accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.mp4" style={{ display: 'none' }}
-                              onChange={e => { setMatFile(e.target.files?.[0] || null); }} />
-                            {matFile ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }}>
-                                <span style={{ fontSize: 22 }}>{getFileIcon(matFile.type)}</span>
-                                <div style={{ textAlign: 'left' }}>
-                                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{matFile.name}</div>
-                                  <div style={{ fontSize: 11, color: C.text3 }}>{(matFile.size / 1024 / 1024).toFixed(1)} MB</div>
-                                </div>
-                                <Button variant="ghost" type="button" onClick={e => { e.stopPropagation(); setMatFile(null); if (fileRef.current) fileRef.current.value = ''; }}
-                                  style={{ color: C.red }} className="text-sm">✕</Button>
-                              </div>
-                            ) : (
-                              <>
-                                <div style={{ fontSize: 24, marginBottom: 4 }}>📁</div>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Arraste um arquivo aqui</div>
-                                <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>ou clique para selecionar — PDF, PPT, DOC, XLS, imagens</div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                          <Button onClick={() => handleUploadMaterial(t.id)} disabled={uploading}>
-                            {uploading ? 'Enviando...' : 'Adicionar Material'}
-                          </Button>
-                          <Button variant="ghost" onClick={() => { setShowAddMaterial(null); setMatFile(null); setMatForm({ titulo: '', tipo: 'material', descricao: '', obrigatorio: false }); }}>
-                            Cancelar
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button variant="outline" className="text-xs mt-1"
-                        onClick={() => setShowAddMaterial(t.id)}>
-                        + Adicionar Material
-                      </Button>
-                    )}
-                  </div>
                 )}
               </div>
             </div>
@@ -1624,7 +1395,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
   );
 }
 
-function OrgChartTab({ funcs, onDetail, onChanged }) {
+function OrgChartTab({ funcs, onDetail, onChanged, onVoltar }) {
   const ativos = funcs.filter(f => f.status === 'ativo');
   const containerRef = useRef(null);
   const contentRef = useRef(null);
@@ -1868,7 +1639,20 @@ function OrgChartTab({ funcs, onDetail, onChanged }) {
     );
   }
 
-  const roots = getChildren(null);
+  // Raízes = sem gestor OU gestor fora do conjunto visível (órfão · gestor inativo,
+  // ou viewer escopado por área cujo gestor está fora do escopo). Antes só
+  // `gestor_id === null` virava raiz → quem é escopado podia ver o chart VAZIO.
+  const idsVisiveis = new Set(ativos.map(f => f.id));
+  const passaFiltroRaiz = (f) => {
+    if (filterArea !== 'all' && f.area !== filterArea) return false;
+    if (searchTerm && !f.nome.toLowerCase().includes(searchTerm.toLowerCase()) && !(f.cargo || '').toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    return true;
+  };
+  let roots = ativos.filter(f => !f.gestor_id || !idsVisiveis.has(f.gestor_id)).filter(passaFiltroRaiz).sort((a, b) => a.nome.localeCompare(b.nome));
+  // Rede de segurança: nunca renderiza vazio quando há gente e nenhum filtro ativo.
+  if (roots.length === 0 && ativos.length > 0 && filterArea === 'all' && !searchTerm) {
+    roots = [...ativos].sort((a, b) => a.nome.localeCompare(b.nome));
+  }
   const comGestor = ativos.filter(f => f.gestor_id).length;
 
   // Centraliza o conteúdo na área visível (o organograma nasce alinhado à
@@ -1891,6 +1675,14 @@ function OrgChartTab({ funcs, onDetail, onChanged }) {
 
   return (
     <>
+      {/* Voltar pro Diretório — o organograma é acessado por botão em Colaboradores */}
+      {onVoltar && (
+        <div className="mb-3">
+          <Button variant="ghost" size="sm" onClick={onVoltar} className="gap-1.5 -ml-2 text-muted-foreground">
+            <span aria-hidden>←</span> Colaboradores
+          </Button>
+        </div>
+      )}
       {/* Assistente de IA · organize por descrição */}
       <div className="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
         <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-foreground">
@@ -2293,7 +2085,9 @@ function BeneficiosSection({ data, onSave }) {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const activeBenefits = BENEFICIOS_FIELDS.filter(b => Number(data[b.key]) > 0);
-  const isPJ = data.tipo_contrato === 'pj';
+  // tipo_contrato é gravado em MAIÚSCULAS (CLT/PJ/PJ+/PREBENDA) — comparar com
+  // 'pj' minúsculo nunca casava, tratando PJ como CLT na remuneração/descontos.
+  const isPJ = String(data.tipo_contrato || '').toUpperCase().startsWith('PJ');
   const remLiquida = isPJ ? data.salario : data.remuneracao_liquida;
 
   function startEdit() {
@@ -2453,31 +2247,25 @@ function BeneficiosSection({ data, onSave }) {
   );
 }
 
+// Chaves em MAIÚSCULAS pra casar com tipo_contrato do banco (CLT/PJ/PJ+/PREBENDA).
+// PJ/PJ+ usam o conjunto PJ; CLT/PREBENDA usam o conjunto CLT (ver docKeyDe()).
 const DOCS_OBRIGATORIOS = {
-  clt: [
+  CLT: [
     { tipo: 'contrato', label: 'Contrato de Trabalho' },
     { tipo: 'rg', label: 'RG' },
     { tipo: 'cpf', label: 'CPF' },
     { tipo: 'ctps', label: 'CTPS' },
     { tipo: 'comprovante_residencia', label: 'Comprovante de Residência' },
   ],
-  pj: [
+  PJ: [
     { tipo: 'contrato', label: 'Contrato de Prestação de Serviços' },
     { tipo: 'cnpj', label: 'Cartão CNPJ' },
     { tipo: 'cpf', label: 'CPF do Representante' },
     { tipo: 'rg', label: 'RG do Representante' },
   ],
-  voluntario: [
-    { tipo: 'contrato', label: 'Termo de Voluntariado' },
-    { tipo: 'rg', label: 'RG' },
-  ],
-  estagiario: [
-    { tipo: 'contrato', label: 'Contrato de Estágio' },
-    { tipo: 'rg', label: 'RG' },
-    { tipo: 'cpf', label: 'CPF' },
-    { tipo: 'comprovante_matricula', label: 'Comprovante de Matrícula' },
-  ],
 };
+// PJ e PJ+ → conjunto PJ; o resto (CLT/PREBENDA) → conjunto CLT.
+const docKeyDe = (t) => String(t || '').toUpperCase().startsWith('PJ') ? 'PJ' : 'CLT';
 
 function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
   const [uploading, setUploading] = useState(false);
@@ -2485,7 +2273,7 @@ function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
   const fileRef = useRef(null);
 
   // Verificar docs obrigatórios faltando
-  const obrigatorios = DOCS_OBRIGATORIOS[data.tipo_contrato] || [];
+  const obrigatorios = DOCS_OBRIGATORIOS[docKeyDe(data.tipo_contrato)] || [];
   const docsExistentes = (data.documentos || []).map(d => d.tipo?.toLowerCase());
   const docsFaltando = obrigatorios.filter(req => !docsExistentes.some(t => t === req.tipo || t?.includes(req.tipo)));
   const today = new Date().toISOString().slice(0, 10);
@@ -2716,7 +2504,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
   );
 }
 
-function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
+function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onEditAdmissao, onContratoAdmissao, onConcluirAdmissao, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
   const [estrutura, setEstrutura] = useState(null);
@@ -2882,6 +2670,26 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         </div>
         <div style={{ padding: '24px 28px' }}>
+      {/* Admissão · onboarding em andamento (tudo que tinha no módulo de admissão) */}
+      {data.status === 'em_admissao' && !editMode && (
+        <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1px solid #8b5cf640', background: '#8b5cf60d' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: 0.5 }}>📋 Em admissão</div>
+          <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>Onboarding em andamento · conclua o processo para ativar o colaborador.</div>
+          {data.admissao_dados && (data.admissao_dados.rg || data.admissao_dados.pj_cnpj || data.admissao_dados.pj_razao_social || data.admissao_dados.endereco) && (
+            <div style={{ fontSize: 12, color: C.text2, marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              {data.admissao_dados.rg && <div>RG: <b style={{ color: C.text }}>{data.admissao_dados.rg}</b></div>}
+              {data.admissao_dados.pj_cnpj && <div>CNPJ: <b style={{ color: C.text }}>{data.admissao_dados.pj_cnpj}</b></div>}
+              {data.admissao_dados.pj_razao_social && <div style={{ gridColumn: '1 / -1' }}>Razão social: <b style={{ color: C.text }}>{data.admissao_dados.pj_razao_social}</b></div>}
+              {data.admissao_dados.endereco && <div style={{ gridColumn: '1 / -1' }}>Endereço: <b style={{ color: C.text }}>{data.admissao_dados.endereco}</b></div>}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            {onEditAdmissao && <Button variant="outline" size="sm" onClick={() => onEditAdmissao(data)}><Pencil className="h-3.5 w-3.5" /> Editar dados</Button>}
+            {onContratoAdmissao && <Button variant="outline" size="sm" onClick={() => onContratoAdmissao(data)}>{data.admissao_dados?.contrato_editado ? 'Ver/editar contrato' : 'Gerar contrato'}</Button>}
+            {podeRemun && onConcluirAdmissao && <Button size="sm" onClick={() => onConcluirAdmissao(data.id)}>✓ Concluir admissão</Button>}
+          </div>
+        </div>
+      )}
       {/* Avatar + Info principal */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
         <div style={{ position: 'relative', flexShrink: 0 }}>

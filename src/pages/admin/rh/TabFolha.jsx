@@ -26,18 +26,126 @@ const s = {
   kpi: (color) => ({ padding: '14px 16px', borderRadius: 10, border: `1px solid ${C.border}`, borderLeft: `3px solid ${color}` }),
 };
 
-const TIPO_LABEL = { clt: 'CLT', pj: 'PJ', voluntario: 'Voluntário', estagiario: 'Estagiário' };
+// tipo_contrato é gravado em MAIÚSCULAS no banco (CHECK: CLT/PJ/PJ+/PREBENDA).
+// As chaves precisam casar com isso — senão o filtro e os rótulos não resolvem.
+const TIPO_LABEL = { CLT: 'CLT', PJ: 'PJ', 'PJ+': 'PJ+', PREBENDA: 'Prebenda' };
+const ehPJ = (t) => String(t || '').toUpperCase().startsWith('PJ'); // cobre PJ e PJ+
+
+const fmtData = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
+
+// Campos de benefício/adicional na ficha do colaborador (mostrados se > 0).
+const BENEFICIOS = [
+  { key: 'alimentacao', label: 'Alimentação' },
+  { key: 'transporte', label: 'Transporte' },
+  { key: 'saude', label: 'Saúde' },
+  { key: 'plano_saude', label: 'Plano de Saúde' },
+  { key: 'seguro_vida', label: 'Seguro de Vida' },
+  { key: 'educacao', label: 'Educação' },
+  { key: 'gratificacao', label: 'Gratificação' },
+  { key: 'complemento_salario', label: 'Complemento' },
+  { key: 'saldo_livre', label: 'Saldo livre' },
+  { key: 'adicional_nivel', label: 'Adicional de nível' },
+  { key: 'participacao_comite', label: 'Participação em comitê' },
+  { key: 'veiculo', label: 'Veículo' },
+  { key: 'adicional_pastores', label: 'Adicional pastoral' },
+  { key: 'adicional_lideranca', label: 'Adicional de liderança' },
+  { key: 'adicional_pulpito', label: 'Adicional de púlpito' },
+];
+const STATUS_EXTRA = { agendado: 'Agendado', pendente: 'Pendente', realizado: 'Realizado', cancelado: 'Cancelado' };
+
+// ── Modal leve: salário + benefícios + extras do colaborador ──
+function FolhaDetalheModal({ func, extras, onClose }) {
+  if (!func) return null;
+  const beneficios = BENEFICIOS
+    .map(b => ({ ...b, valor: Number(func[b.key] || 0) }))
+    .filter(b => b.valor > 0);
+  const totalBenef = beneficios.reduce((acc, b) => acc + b.valor, 0);
+  const meusExtras = (extras || []).filter(e => e.funcionario_id === func.id);
+  const totalExtras = meusExtras
+    .filter(e => e.status !== 'cancelado')
+    .reduce((acc, e) => acc + Number(e.valor || 0), 0);
+  const salario = Number(func.salario || 0);
+  const total = salario + totalBenef + totalExtras;
+
+  const Linha = ({ label, valor, bold }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
+      <span style={{ fontSize: 13, color: bold ? C.text : C.text2, fontWeight: bold ? 700 : 400 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: bold ? 800 : 600, color: bold ? C.primary : C.text, fontFamily: 'monospace' }}>{fmtMoney(valor)}</span>
+    </div>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, width: '100%', maxWidth: 440, maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', animation: 'cbrio-modal-center-in 0.18s ease-out' }}>
+        {/* Header */}
+        <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: C.text }}>{func.nome}</div>
+            <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>
+              {func.cargo || '—'}
+              <span style={{ marginLeft: 8, fontSize: 11, padding: '1px 8px', borderRadius: 4, background: ehPJ(func.tipo_contrato) ? '#8b5cf618' : '#3b82f618', color: ehPJ(func.tipo_contrato) ? '#8b5cf6' : '#3b82f6', fontWeight: 600 }}>{TIPO_LABEL[func.tipo_contrato] || func.tipo_contrato}</span>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
+        </div>
+
+        <div style={{ padding: '14px 22px 20px' }}>
+          {/* Salário */}
+          <Linha label="Salário base" valor={salario} />
+
+          {/* Benefícios (se houver) */}
+          {beneficios.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Benefícios</div>
+              {beneficios.map(b => <Linha key={b.key} label={b.label} valor={b.valor} />)}
+            </div>
+          )}
+
+          {/* Extras (se houver · puxa da aba Extras) */}
+          {meusExtras.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Extras</div>
+              {meusExtras.map(e => (
+                <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: `1px solid ${C.border}`, opacity: e.status === 'cancelado' ? 0.5 : 1 }}>
+                  <span style={{ fontSize: 13, color: C.text2 }}>
+                    {e.titulo || 'Extra'} <span style={{ fontSize: 11, color: C.text3 }}>· {fmtData(e.data)}{e.status && e.status !== 'realizado' ? ` · ${STATUS_EXTRA[e.status] || e.status}` : ''}</span>
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: 'monospace', textDecoration: e.status === 'cancelado' ? 'line-through' : 'none' }}>{fmtMoney(e.valor)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {beneficios.length === 0 && meusExtras.length === 0 && (
+            <div style={{ fontSize: 12, color: C.text3, marginTop: 12 }}>Sem benefícios ou extras lançados.</div>
+          )}
+
+          {/* Total */}
+          <div style={{ marginTop: 16, paddingTop: 4 }}>
+            <Linha label="Total" valor={total} bold />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function TabFolha() {
   const [funcs, setFuncs] = useState([]);
+  const [extras, setExtras] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtroTipo, setFiltroTipo] = useState('');
+  const [detalhe, setDetalhe] = useState(null); // colaborador clicado (modal leve)
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await rh.funcionarios.list({ status: 'ativo' });
+      const [data, ex] = await Promise.all([
+        rh.funcionarios.list({ status: 'ativo' }),
+        rh.extras.list().catch(() => []), // extras alimenta o modal · falha silenciosa
+      ]);
       setFuncs(data || []);
+      setExtras(ex || []);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, []);
@@ -49,7 +157,7 @@ export default function TabFolha() {
   function exportCSV(data) {
     const headers = ['Nome','Cargo','Área','Tipo','Salário','Alimentação','Transporte','Saúde','Plano Saúde','INSS','IR','FGTS','Rem. Bruta','Rem. Líquida','Custo Total'];
     const rows = data.map(f => {
-      const isPJ = f.tipo_contrato === 'pj';
+      const isPJ = ehPJ(f.tipo_contrato);
       const benef = Number(f.alimentacao||0)+Number(f.transporte||0)+Number(f.saude||0)+Number(f.plano_saude||0);
       return [
         f.nome, f.cargo, f.area||'', TIPO_LABEL[f.tipo_contrato]||f.tipo_contrato,
@@ -84,7 +192,7 @@ export default function TabFolha() {
   const totIR = filtered.reduce((s, f) => s + Number(f.ir || 0), 0);
   const totDescontos = totFGTS + totINSS + totIR;
   const totCusto = filtered.reduce((s, f) => {
-    if (f.tipo_contrato === 'pj') {
+    if (ehPJ(f.tipo_contrato)) {
       const benPJ = Number(f.alimentacao || 0) + Number(f.transporte || 0) + Number(f.saude || 0) + Number(f.plano_saude || 0) + Number(f.seguro_vida || 0) + Number(f.educacao || 0) + Number(f.gratificacao || 0) + Number(f.complemento_salario || 0);
       return s + Number(f.salario || 0) + benPJ;
     }
@@ -102,7 +210,7 @@ export default function TabFolha() {
     const totalBenef = beneficios.reduce((s, b) => s + Number(b.v), 0);
     const bruto = Number(func.remuneracao_bruta || func.salario || 0) + totalBenef;
     const mes = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-    const isPJ = func.tipo_contrato === 'pj';
+    const isPJ = ehPJ(func.tipo_contrato);
 
     const w = window.open('', '_blank');
     w.document.write(`<html><head><title>Holerite — ${func.nome}</title>
@@ -204,9 +312,9 @@ export default function TabFolha() {
             : filtered.length === 0 ? <tr><td style={s.td} colSpan={9}><div style={s.empty}>Nenhum colaborador ativo</div></td></tr>
             : filtered.sort((a, b) => a.nome.localeCompare(b.nome)).map(f => {
               const benef = Number(f.alimentacao || 0) + Number(f.transporte || 0) + Number(f.saude || 0) + Number(f.plano_saude || 0) + Number(f.seguro_vida || 0) + Number(f.educacao || 0) + Number(f.gratificacao || 0) + Number(f.complemento_salario || 0);
-              const isPJ = f.tipo_contrato === 'pj';
+              const isPJ = ehPJ(f.tipo_contrato);
               return (
-                <tr key={f.id}>
+                <tr key={f.id} className="cbrio-row hover:bg-muted/50" style={{ cursor: 'pointer' }} onClick={() => setDetalhe(f)} title="Ver salário, benefícios e extras">
                   <td style={s.td}>
                     <div style={{ fontWeight: 600 }}>{f.nome}</div>
                     <div style={{ fontSize: 11, color: C.text3 }}>{f.cargo}</div>
@@ -218,7 +326,7 @@ export default function TabFolha() {
                   <td style={{ ...s.tdR, color: isPJ ? C.text3 : C.red }}>{isPJ ? '—' : fmtMoney(f.ir)}</td>
                   <td style={{ ...s.tdR, color: isPJ ? C.text3 : C.amber }}>{isPJ ? '—' : fmtMoney(f.fgts)}</td>
                   <td style={{ ...s.tdR, fontWeight: 700, color: C.green }}>{fmtMoney(isPJ ? Number(f.salario || 0) + benef : f.remuneracao_liquida)}</td>
-                  <td style={s.td}><Button variant="ghost" size="xs" onClick={() => printHolerite(f)}>Imprimir</Button></td>
+                  <td style={s.td}><Button variant="ghost" size="xs" onClick={(e) => { e.stopPropagation(); printHolerite(f); }}>Imprimir</Button></td>
                 </tr>
               );
             })}
@@ -239,5 +347,7 @@ export default function TabFolha() {
         </table>
       </div>
     </div>
+
+    {detalhe && <FolhaDetalheModal func={detalhe} extras={extras} onClose={() => setDetalhe(null)} />}
   </>);
 }

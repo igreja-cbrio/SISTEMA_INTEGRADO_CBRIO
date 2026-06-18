@@ -18,6 +18,22 @@ const headers = async () => {
   };
 };
 
+// Sessão morta (token inválido/expirado/de outro ambiente): limpa a sessão do
+// Supabase e manda pro login, em vez de deixar a tela travada com mensagem de
+// erro. Trava anti-loop (uma vez por carregamento) + não redireciona se já
+// estiver no /login.
+let _deadSessionHandled = false;
+async function handleDeadSession() {
+  if (_deadSessionHandled) return;
+  _deadSessionHandled = true;
+  try { await supabase?.auth.signOut(); } catch {}
+  try {
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.replace('/login');
+    }
+  } catch {}
+}
+
 async function request(path, opts = {}) {
   const h = await headers();
   const res = await fetch(`${API}${path}`, { ...opts, headers: { ...h, ...opts.headers } });
@@ -30,10 +46,16 @@ async function request(path, opts = {}) {
   if (res.status === 401) {
     const body = await res.json().catch(() => ({}));
     console.warn('[API] 401', { path, reason: body.reason, detail: body.detail });
-    // Mensagens especificas pro usuário por causa raiz
+    // invalid_token = tinha um token, mas o servidor recusou (expirado / de
+    // outro ambiente). Sessão morta → desloga e manda pro login (self-heal).
+    // no_token = simplesmente não está logado → NÃO redireciona (evita loop na
+    // própria tela de login).
+    if (body.reason === 'invalid_token') {
+      handleDeadSession();
+    }
     const reasonMsg = {
       no_token:       'Sessão expirada. Faça login novamente.',
-      invalid_token:  'Sua sessão expirou ou é de outro ambiente. Saia e entre novamente.',
+      invalid_token:  'Sua sessão expirou. Redirecionando para o login...',
     };
     throw new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
   }
@@ -57,6 +79,14 @@ const del = (path) => request(path, { method: 'DELETE' });
 export const users = {
   list: () => get('/auth/users'),
   me: () => get('/auth/me'),
+};
+
+// Progresso de tutoriais (onboarding) · backend com service role · 1x por
+// usuário+tour, confiável (não depende de RLS/anon key no frontend).
+export const tutorial = {
+  progress: () => get('/tutorial/progress'),
+  complete: (tour_id, status) => post('/tutorial/complete', { tour_id, status }),
+  reset: (tour_id) => del('/tutorial/progress' + (tour_id ? `?tour_id=${encodeURIComponent(tour_id)}` : '')),
 };
 
 // Onda 0 · loop de feedback do piloto
@@ -198,6 +228,24 @@ export const next = {
     list: (params) => get('/next/indicacoes' + (params ? '?' + new URLSearchParams(params) : '')),
     update: (id, data) => put(`/next/indicacoes/${id}`, data),
   },
+  // Turmas — Next como coorte de 2 encontros + presença
+  turmas: {
+    list: (params) => get('/next/turmas' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/next/turmas/${id}`),
+    create: (data) => post('/next/turmas', data),
+    update: (id, data) => patch(`/next/turmas/${id}`, data),
+    remove: (id) => del(`/next/turmas/${id}`),
+  },
+  encontros: {
+    update: (id, data) => patch(`/next/encontros/${id}`, data),
+    setPresencas: (id, matriculaIds) => put(`/next/encontros/${id}/presencas`, { matricula_ids: matriculaIds }),
+  },
+  matriculas: {
+    list: (params) => get('/next/matriculas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/next/matriculas', data),
+    update: (id, data) => patch(`/next/matriculas/${id}`, data),
+    remove: (id) => del(`/next/matriculas/${id}`),
+  },
 };
 
 export const integracao = {
@@ -224,6 +272,11 @@ export const integracao = {
     pendentes: () => get('/integracao/coleta/pendentes'),
     aprovar: (id) => post(`/integracao/coleta/${id}/aprovar`),
     rejeitar: (id, motivo) => post(`/integracao/coleta/${id}/rejeitar`, { motivo }),
+  },
+  decisoesApp: {
+    list: (status = 'pendente') => get(`/integracao/decisoes-app?status=${status}`),
+    confirmar: (id, culto_id) => post(`/integracao/decisoes-app/${id}/confirmar`, { culto_id }),
+    descartar: (id) => post(`/integracao/decisoes-app/${id}/descartar`),
   },
 };
 
@@ -268,6 +321,8 @@ export const grupos = {
   registrarPresenca: (participacaoId) => patch(`/grupos/participacao/${participacaoId}/presenca`, {}),
   materiais: (params) => get('/grupos/materiais' + (params ? '?' + new URLSearchParams(params) : '')),
   uploadMaterial: (formData) => requestFile('/grupos/materiais', formData),
+  importarLideresAnalisar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/grupos/importar-lideres/analisar', fd, { timeoutMs: 120_000 }); },
+  importarLideresAplicar: (vinculos) => post('/grupos/importar-lideres/aplicar', { vinculos }),
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
   encontro: (encontroId) => get(`/grupos/encontros/${encontroId}`),
@@ -634,6 +689,11 @@ export const financeiroV2 = {
       if (conta_id) fd.append('conta_id', conta_id);
       return requestFile('/financeiro-v2/importar/pix-extrato', fd);
     },
+    balanco: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/financeiro-v2/importar/balanco', fd, { timeoutMs: 300_000 });
+    },
   },
   uploads: (params) => get('/financeiro-v2/uploads' + (params ? '?' + new URLSearchParams(params) : '')),
   lancamentosBrutos: (params) => get('/financeiro-v2/lancamentos-brutos' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -675,6 +735,11 @@ export const financeiroV2 = {
     financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
     saidasDetalhadas: (mes) => get('/financeiro-v2/dashboard/saidas-detalhadas' + (mes ? `?mes=${mes}` : '')),
     melhorSemana: () => get('/financeiro-v2/dashboard/melhor-semana'),
+    assistente: (aba, semana) => {
+      const qs = new URLSearchParams({ aba: aba || 'resumo' });
+      if (semana) qs.set('semana', semana);
+      return get(`/financeiro-v2/dashboard/assistente?${qs}`);
+    },
   },
   metas: {
     list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -831,6 +896,19 @@ export const logistica = {
     create: (data) => post('/logistica/movimentacoes', data),
     historico: (codigo) => get(`/logistica/movimentacoes/historico/${encodeURIComponent(codigo)}`),
   },
+  // Estoque (Fase 3a) · catálogo + razão (saldo derivado) + validade/FEFO + consumo
+  estoque: {
+    produtos: (params) => get('/logistica/estoque/produtos' + (params ? '?' + new URLSearchParams(params) : '')),
+    criarProduto: (data) => post('/logistica/estoque/produtos', data),
+    atualizarProduto: (id, data) => patch(`/logistica/estoque/produtos/${id}`, data),
+    removerProduto: (id) => del(`/logistica/estoque/produtos/${id}`),
+    movimentacoes: (params) => get('/logistica/estoque/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    lancar: (movimentos) => post('/logistica/estoque/movimentacoes', Array.isArray(movimentos) ? { movimentos } : movimentos),
+    lotes: (dias) => get('/logistica/estoque/lotes' + (dias ? `?dias=${dias}` : '')),
+    consumo: (dias = 90) => get(`/logistica/estoque/consumo?dias=${dias}`),
+    gerarCompra: (produto_ids) => post('/logistica/estoque/gerar-compra', { produto_ids }),
+    relatorio: (dias = 90) => get(`/logistica/estoque/relatorio?dias=${dias}`),
+  },
 };
 
 export const patrimonio = {
@@ -863,6 +941,7 @@ export const patrimonio = {
 
 export const rh = {
   dashboard: () => get('/rh/dashboard'),
+  dashboardSeries: (meses = 12) => get(`/rh/dashboard/series?meses=${meses}`),
   acessos: () => get('/rh/acessos'),
   organograma: {
     ia: (instrucao) => post('/rh/organograma/ia', { instrucao }),
@@ -876,6 +955,7 @@ export const rh = {
     remove: (id) => del(`/rh/funcionarios/${id}`),
     desligar: (id, data) => post(`/rh/funcionarios/${id}/desligar`, data),
     reativar: (id) => post(`/rh/funcionarios/${id}/reativar`),
+    concluirAdmissao: (id) => post(`/rh/funcionarios/${id}/concluir-admissao`),
     setGestor: (id, gestorId) => put(`/rh/funcionarios/${id}/gestor`, { gestor_id: gestorId || null }),
     uploadFoto: (id, file) => {
       const fd = new FormData();
@@ -896,18 +976,18 @@ export const rh = {
     inscrever: (id, data) => post(`/rh/treinamentos/${id}/inscrever`, data),
     atualizarInscricao: (id, data) => patch(`/rh/treinamentos-funcionarios/${id}`, data),
   },
-  materiais: {
-    list: (params) => get('/rh/materiais' + (params ? '?' + new URLSearchParams(params) : '')),
-    create: (data) => post('/rh/materiais', data),
-    remove: (id) => del(`/rh/materiais/${id}`),
-    enviar: (id, data) => post(`/rh/materiais/${id}/enviar`, data),
-    atualizarStatus: (id, data) => patch(`/rh/materiais-funcionarios/${id}`, data),
-  },
+  // (Materiais de treinamento removido por ora — não havia backend `/rh/materiais`.)
   ferias: {
     list: (params) => get('/rh/ferias' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),
     update: (id, data) => patch(`/rh/ferias/${id}`, data),
     remove: (id) => del(`/rh/ferias/${id}`),
+  },
+  // Cobertura de férias/licença (substituto herda módulos operacionais · expira sozinho)
+  coberturas: {
+    list: (params) => get('/rh/coberturas' + (params ? '?' + new URLSearchParams(params) : '')),
+    cancelar: (id) => post(`/rh/coberturas/${id}/cancelar`, {}),
+    minhas: () => get('/coberturas/minhas'),  // qualquer usuário logado (o substituto)
   },
   extras: {
     list: (params) => get('/rh/extras' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -928,14 +1008,8 @@ export const rh = {
     concluir: (id) => post(`/rh/avaliacoes/${id}/concluir`),
     iniciarCiclo: (data) => post('/rh/avaliacoes/iniciar-ciclo', data),
   },
-  admissoes: {
-    list: (params) => get('/rh/admissoes' + (params ? '?' + new URLSearchParams(params) : '')),
-    get: (id) => get(`/rh/admissoes/${id}`),
-    create: (data) => post('/rh/admissoes', data),
-    update: (id, data) => patch(`/rh/admissoes/${id}`, data),
-    remove: (id) => del(`/rh/admissoes/${id}`),
-    concluir: (id) => post(`/rh/admissoes/${id}/concluir`),
-  },
+  // Admissão agora é um status do colaborador (em_admissao) — ver rh.funcionarios
+  // (create com status 'em_admissao', update de admissao_dados, concluirAdmissao).
 };
 
 export const pcs = {
@@ -998,6 +1072,27 @@ export const notificacoes = {
   },
 };
 
+// Analytics do app de membros (telemetria · visto no sistema)
+export const appAnalytics = {
+  resumo: (dias = 14) => get(`/app-analytics/resumo?dias=${dias}`),
+  aoVivo: () => get('/app-analytics/ao-vivo'),
+};
+
+// Comunicados / Mural (criados no Marketing → app)
+export const comunicados = {
+  list: () => get('/comunicados'),
+  create: (data) => post('/comunicados', data),
+  update: (id, data) => put(`/comunicados/${id}`, data),
+  publicar: (id) => post(`/comunicados/${id}/publicar`, {}),
+  arquivar: (id) => post(`/comunicados/${id}/arquivar`, {}),
+  remove: (id) => del(`/comunicados/${id}`),
+  uploadFoto: (file) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    return requestFile('/comunicados/upload-foto', fd);
+  },
+};
+
 export const painelArea = {
   // params: { período?: '30d'|'90d'|'180d'|'365d', desde?: 'YYYY-MM-DD', até?: 'YYYY-MM-DD' }
   get: (area, params = {}) => {
@@ -1013,6 +1108,10 @@ export const painelArea = {
   // Registra NPS mensal · body: { nota: 0-10, mês?: 'YYYY-MM', qtd_respostas?, observação? }
   // Requer nível >= 3 no módulo da área (coord da área)
   registrarNps: (area, body) => post(`/painel-area/${encodeURIComponent(area)}/nps`, body),
+  // Aba Pessoas (AMI/Bridge) · quem declarou frequentar a área, com faixa etária
+  pessoas: (area) => get(`/painel-area/${encodeURIComponent(area)}/pessoas`),
+  // Detalhe da pessoa (sem contribuições)
+  pessoa: (area, id) => get(`/painel-area/${encodeURIComponent(area)}/pessoas/${id}`),
 };
 
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
@@ -1053,6 +1152,18 @@ export const totemKids = {
     criar: (data) => post('/totem-kids/checkin', data),
     porCodigo: (codigo) => get(`/totem-kids/checkin/codigo/${encodeURIComponent(codigo)}`),
     atualizar: (id, data) => patch(`/totem-kids/checkin/${id}`, data),
+  },
+  // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
+  preCheckin: {
+    buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
+    consumir: (id, data) => post(`/totem-kids/pre-checkin/${id}/consumir`, data),
+  },
+  // Solicitações de vínculo (criança↔responsável) feitas pelo app · equipe aprova
+  vinculos: {
+    list: (status = 'pendente') => get(`/totem-kids/vinculo-solicitacoes?status=${encodeURIComponent(status)}`),
+    get: (id) => get(`/totem-kids/vinculo-solicitacoes/${id}`),
+    aprovar: (id) => post(`/totem-kids/vinculo-solicitacoes/${id}/aprovar`, {}),
+    rejeitar: (id, motivo) => post(`/totem-kids/vinculo-solicitacoes/${id}/rejeitar`, { motivo }),
   },
   checkout: {
     realizar: (data) => post('/totem-kids/checkout', data),
@@ -1260,6 +1371,8 @@ export const solicitacoes = {
   alcadas:        () => get('/solicitacoes/alcadas'),
   aprovarOrigem:  (id) => patch(`/solicitacoes/${id}/aprovar-origem`, {}),
   rejeitarOrigem: (id, motivo) => patch(`/solicitacoes/${id}/rejeitar-origem`, { motivo }),
+  // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
+  registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
   areaResponsaveis: {
     list:    () => get('/solicitacoes/area-responsaveis'),
     save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
@@ -1269,6 +1382,14 @@ export const solicitacoes = {
   desvincularML: (id) => del(`/solicitacoes/${id}/vincular-ml`),
   atualizarML:  (id) => post(`/solicitacoes/${id}/atualizar-ml`, {}),
   mlTimeline:   (id) => get(`/solicitacoes/${id}/ml-timeline`),
+  // Fase 1 · linha do tempo + Relatar Problema (alteração/devolução) + reenvio
+  timeline:        (id) => get(`/solicitacoes/${id}/timeline`),
+  relatarProblema: (id, motivo, comentario) => post(`/solicitacoes/${id}/relatar-problema`, { motivo, comentario }),
+  reenviar:        (id, campos) => post(`/solicitacoes/${id}/reenviar`, campos || {}),
+  diagnosticoRefeitas: (dias = 90) => get(`/solicitacoes/dashboard/refeitas?dias=${dias}`),
+  // Ponte estoque (Fase 3a-2) · atender pela estoque dá baixa + resolve
+  estoqueProdutos: (busca) => get('/solicitacoes/estoque/produtos' + (busca ? '?busca=' + encodeURIComponent(busca) : '')),
+  atenderEstoque: (id, itens, observacao) => post(`/solicitacoes/${id}/atender-estoque`, { itens, observacao }),
 };
 
 export const producao = {
@@ -1277,6 +1398,7 @@ export const producao = {
   semana:       (inicio, fim) => get(`/producao/semana?inicio=${inicio}&fim=${fim}`),
   culto:        (id) => get(`/producao/culto/${id}`),
   salvarCulto:  (id, data) => put(`/producao/culto/${id}`, data),
+  salvarEtapas: (cultoId, etapas) => put(`/producao/culto/${cultoId}/etapas`, { etapas }),
   addOcorrencia:(id, data) => post(`/producao/culto/${id}/ocorrencias`, data),
   removerOcorrencia: (id) => del(`/producao/ocorrencias/${id}`),
   salvarChecklist: (cultoId, marks) => put(`/producao/culto/${cultoId}/checklist`, { marks }),
@@ -1289,6 +1411,30 @@ export const producao = {
     update: (id, data) => patch(`/producao/checklist-itens/${id}`, data),
     remove: (id) => del(`/producao/checklist-itens/${id}`),
   },
+  // Roteiro padrão (cronograma) por tipo de culto · aba admin
+  roteiroEtapas: {
+    list:   () => get('/producao/roteiro-etapas'),
+    create: (data) => post('/producao/roteiro-etapas', data),
+    update: (id, data) => patch(`/producao/roteiro-etapas/${id}`, data),
+    remove: (id) => del(`/producao/roteiro-etapas/${id}`),
+  },
+};
+
+// "Check de pessoas" do funil Next/Batismo/convertido (resolução de identidade)
+export const nextBatismo = {
+  resumo: () => get('/next-batismo/resumo'),
+  duplicados: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/next-batismo/duplicados' + (qs ? '?' + qs : ''));
+  },
+  semVinculo: () => get('/next-batismo/sem-vinculo'),
+  candidatos: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/next-batismo/candidatos' + (qs ? '?' + qs : ''));
+  },
+  ligar: (data) => post('/next-batismo/ligar', data),
+  ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
+  fundir: (data) => post('/next-batismo/fundir', data),
 };
 
 export const membresia = {
@@ -1667,6 +1813,17 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Controle de frequência (histórico da planilha + check-ins) · ativos/inativos
+  frequencia: {
+    list: (params) => get('/voluntariado/frequencia' + (params ? '?' + new URLSearchParams(params) : '')),
+    detalhe: (params) => get('/voluntariado/frequencia/detalhe?' + new URLSearchParams(params)),
+    perfis: (q) => get('/voluntariado/frequencia/perfis' + (q ? '?q=' + encodeURIComponent(q) : '')),
+    vincular: (nome_norm, vol_profile_id) => post('/voluntariado/frequencia/vincular', { nome_norm, vol_profile_id }),
+    revincular: () => post('/voluntariado/frequencia/revincular', {}),
+    sugerirVinculos: () => post('/voluntariado/frequencia/sugerir-vinculos', {}),
+    vincularLote: (vinculos) => post('/voluntariado/frequencia/vincular-lote', { vinculos }),
+    importar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/frequencia/importar', fd); },
+  },
   // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)
   whatsappAuto: {
     config: () => get('/voluntariado/whatsapp-auto/config'),
@@ -1703,6 +1860,11 @@ export const voluntariado = {
   },
   // Triagem: muda o status da inscrição (inscrito → enviado_ministerio → integrado)
   atualizarInscricao: (id, status) => patch(`/voluntariado/inscricoes/${id}`, { status }),
+  // Triagem de antecedentes criminais (Kids/Bridge)
+  antecedentes: (inscricaoId) => get(`/voluntariado/inscricoes/${inscricaoId}/antecedentes`),
+  consultarAntecedentes: (inscricaoId) => post(`/voluntariado/inscricoes/${inscricaoId}/antecedentes/consultar`, {}),
+  revisarAntecedentes: (checkId, data) => patch(`/voluntariado/antecedentes/${checkId}`, data),
+  antecedentesPendentes: () => get('/voluntariado/antecedentes/pendentes'),
   // Encontros 1x1 mensais (líder <-> voluntário)
   teamMembers: (teamId, yearMonth) =>
     get(`/voluntariado/team/${teamId}/members${yearMonth ? `?year_month=${yearMonth}` : ''}`),
@@ -2320,6 +2482,7 @@ export const online = {
     ddus: () => post('/online/coletar/ddus', {}),
     backfillCultos: () => post('/online/coletar/backfill-cultos', {}),
     catchUp: (limit = 5) => post(`/online/coletar/catch-up?limit=${limit}`, {}),
+    engajamento: (ano) => post(`/online/coletar/engajamento${ano ? `?ano=${ano}` : ''}`, {}),
   },
   debug: {
     canaisAutorizados: () => get('/online/debug/canais-autorizados'),

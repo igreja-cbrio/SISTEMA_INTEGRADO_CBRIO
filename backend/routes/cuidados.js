@@ -7,6 +7,12 @@ const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 
 router.use(authenticate);
 
+// Contato FEITO = o contato foi realizado, independente da resposta da pessoa
+// (regra do Marcos · 2026-06-17). Vale pelo status do dropdown OU pelo
+// primeiro_contato_em legado. "sem_retorno"/"numero_errado"/vazio NÃO contam.
+const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
+
 // Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
 // (config/edição em /whatsapp-auto/* · gerencia a chave 'cuidados_aconselhamento')
 mountWhatsappAuto(router, { chave: 'cuidados_aconselhamento', modulo: 'cuidados', authorizeModule });
@@ -156,7 +162,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     // ── Convertidos na janela (bucket pela data do culto) ──
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, data_culto, primeiro_contato_em, area, telefone',
+      'id, data_culto, primeiro_contato_em, primeiro_contato_status, area, telefone',
       (q) => q.is('deleted_at', null).gte('data_culto', inicio),
     );
 
@@ -182,7 +188,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       if (!b) continue;
       const o = funilMap.get(b) || { convertidos: 0, contato: 0, engajados: 0 };
       o.convertidos++;
-      if (c.primeiro_contato_em) o.contato++;
+      if (contatoFoiFeito(c)) o.contato++;
       if (engajadosSet.has(c.id)) o.engajados++;
       funilMap.set(b, o);
     }
@@ -433,6 +439,17 @@ router.patch('/pedidos-app/:id', authorizeModule('cuidados', 3), async (req, res
       .select('id, tratamento_status, tratado_em')
       .single();
     if (error) throw error;
+
+    // Fecha o ciclo com o membro: push avisando que está sendo cuidado /
+    // foi atendido (a Edge Function ignora 'pendente'). Em background.
+    if (process.env.SUPABASE_URL && tratamento_status !== 'pendente') {
+      fetch(`${process.env.SUPABASE_URL}/functions/v1/notify-cuidado-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inscricao_id: req.params.id, status: tratamento_status }),
+      }).catch((e) => console.error('[CUIDADOS] notify-status falhou:', e.message));
+    }
+
     res.json(data);
   } catch (e) {
     console.error('[CUIDADOS] pedidos-app patch:', e.message);
@@ -1178,7 +1195,7 @@ router.get('/jornada-convertidos', async (req, res) => {
 
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, nome, telefone, cpf, membro_id, data_culto, area, primeiro_contato_em, encontro_status, encontro_responsavel_nome',
+      'id, nome, telefone, cpf, membro_id, data_culto, area, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
     );
     const batismos = await fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome', (q) => q.is('deleted_at', null));
@@ -1211,11 +1228,13 @@ router.get('/jornada-convertidos', async (req, res) => {
 
     const itens = convertidos.map((c) => {
       const ddesde = Math.floor((agora - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
-      // contato ≤ 3d
+      // contato FEITO (independe da resposta): por data legada OU pelo status do dropdown
       let contato;
       if (c.primeiro_contato_em) {
         const d = Math.floor((new Date(c.primeiro_contato_em).getTime() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
         contato = { feito: true, status: d <= 3 ? 'feito_no_prazo' : 'feito_atrasado', dias: d };
+      } else if (CONTATO_FEITO_STATUS.has(c.primeiro_contato_status)) {
+        contato = { feito: true, status: 'feito', dias: ddesde };
       } else {
         contato = { feito: false, status: ddesde > 3 ? 'atrasado' : (ddesde >= 2 ? 'vencendo' : 'no_prazo'), dias: ddesde };
       }
@@ -1234,14 +1253,18 @@ router.get('/jornada-convertidos', async (req, res) => {
 
     const total = itens.length;
     const pct = (n) => total ? Math.round((n / total) * 100) : 0;
-    const contatoOk = itens.filter(i => i.contato.feito && i.contato.status === 'feito_no_prazo').length;
+    // Contato = FEITO (independe da resposta). "no prazo" (≤3d) vira sub-recorte.
+    const contatoFeitos = itens.filter(i => i.contato.feito).length;
+    const contatoNoPrazo = itens.filter(i => i.contato.status === 'feito_no_prazo').length;
     const batOk = itens.filter(i => i.batismo.feito).length;
     const nextOk = itens.filter(i => i.next.feito).length;
     res.json({
       resumo: {
         total,
-        contato_no_prazo: contatoOk, contato_pct: pct(contatoOk),
-        contato_atrasados: itens.filter(i => i.contato.status === 'atrasado').length,
+        contato_feitos: contatoFeitos, contato_pct: pct(contatoFeitos),
+        contato_pendentes: total - contatoFeitos,
+        contato_no_prazo: contatoNoPrazo, // sub-recorte: feitos em ≤3 dias
+        contato_atrasados: total - contatoFeitos, // compat: agora = pendentes
         batismo_feitos: batOk, batismo_pct: pct(batOk),
         next_feitos: nextOk, next_pct: pct(nextOk),
       },

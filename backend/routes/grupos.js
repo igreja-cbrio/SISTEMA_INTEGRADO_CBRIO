@@ -4,6 +4,7 @@ const router = require('express').Router();
 // 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -1080,16 +1081,19 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
       const { data: cad } = await supabase.from('mem_cadastros_pendentes')
         .select('*').eq('id', pedido.cadastro_pendente_id).single();
       if (cad) {
-        const { data: novoMembro, error: eMembro } = await supabase.from('mem_membros').insert({
-          nome: cad.nome,
-          email: cad.email,
-          telefone: cad.telefone,
-          data_nascimento: cad.data_nascimento || null,
-          status: 'visitante',
-          active: true,
-        }).select().single();
-        if (eMembro) throw eMembro;
-        membroId = novoMembro.id;
+        // Guarda na origem: o cadastro público já detecta duplicata
+        // (duplicado_de_id) · se detectou, LIGA ao membro existente em vez de
+        // criar de novo. Senão, passa pelo matcher compartilhado (CPF/e-mail/
+        // telefone+nome) · não faz mais INSERT cru.
+        if (cad.duplicado_de_id) {
+          membroId = cad.duplicado_de_id;
+        } else {
+          const r = await acharOuCriarGuardado({
+            cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
+            extra: { data_nascimento: cad.data_nascimento || null },
+          });
+          membroId = r.membro_id;
+        }
         // Marca cadastro como aprovado
         await supabase.from('mem_cadastros_pendentes')
           .update({ status: 'aprovado' }).eq('id', pedido.cadastro_pendente_id);
@@ -2173,6 +2177,122 @@ router.put('/membros/:membroRowId/funcao', async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Import de LÍDERES dos grupos (planilha) · casa o líder de cada grupo com o
+// cadastro de membros (IA · review-before-apply) e grava mem_grupos.lider_id.
+function _normTxt(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Lê .xlsx/.csv e devolve [{ grupo, lider }] detectando as colunas pelo cabeçalho.
+function _parseGrupoLideres(buffer) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(buffer, { type: 'buffer', raw: false });
+  const linhas = [];
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    let cg = -1, cl = -1, hdr = -1;
+    for (let i = 0; i < Math.min(aoa.length, 12); i++) {
+      const cells = (aoa[i] || []).map(c => _normTxt(c));
+      const gi = cells.findIndex(c => /(nome do grupo|grupo|celula|conex)/.test(c) && !/(lider|responsav)/.test(c));
+      const li = cells.findIndex(c => /(lider|responsav|anfitri)/.test(c));
+      if (gi >= 0 && li >= 0) { hdr = i; cg = gi; cl = li; break; }
+    }
+    if (hdr < 0) continue;
+    for (let i = hdr + 1; i < aoa.length; i++) {
+      const r = aoa[i] || [];
+      const grupo = String(r[cg] ?? '').trim();
+      const lider = String(r[cl] ?? '').trim();
+      if (grupo && lider) linhas.push({ grupo, lider });
+    }
+  }
+  return linhas;
+}
+
+// POST /api/grupos/importar-lideres/analisar (multipart 'arquivo') · NÃO grava.
+router.post('/importar-lideres/analisar', authorizeModule('grupos', 3), uploadMw.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie o arquivo em "arquivo".' });
+    let linhas;
+    try { linhas = _parseGrupoLideres(req.file.buffer); }
+    catch (e) { return res.status(400).json({ error: 'Não consegui ler o arquivo (.xlsx ou .csv).' }); }
+    if (!linhas.length) return res.status(400).json({ error: 'Não achei as colunas. A planilha precisa de um cabeçalho com colunas tipo "Grupo" e "Líder".' });
+
+    // grupos ativos · map por nome normalizado
+    const { data: grupos } = await supabase.from('mem_grupos').select('id, nome, lider_id').eq('ativo', true);
+    const gmap = new Map();
+    for (const g of grupos || []) gmap.set(_normTxt(g.nome), g);
+
+    // nomes dos líderes atuais (pra mostrar o que já está lá)
+    const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
+    const liderNomes = new Map();
+    for (let i = 0; i < liderIds.length; i += 400) {
+      const { data } = await supabase.from('mem_membros').select('id, nome').in('id', liderIds.slice(i, i + 400));
+      for (const m of data || []) liderNomes.set(m.id, m.nome);
+    }
+
+    // membros (paginado) → perfis pra IA
+    const membros = [];
+    let from = 0;
+    while (true) {
+      const { data } = await supabase.from('mem_membros').select('id, nome').is('deleted_at', null).range(from, from + 999);
+      if (!data || !data.length) break;
+      membros.push(...data);
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+    const perfis = membros.map(m => ({ id: m.id, full_name: m.nome }));
+
+    // casa os nomes de líder com os membros (IA)
+    const nomesLider = [...new Set(linhas.map(l => l.lider))].map(n => ({ nome_norm: _normTxt(n), nome: n }));
+    const { sugerirVinculos } = require('../services/volVinculoIA');
+    const sug = await sugerirVinculos(nomesLider, perfis);
+    const sugPorNome = new Map(sug.map(s => [s.nome_norm, s]));
+
+    const vistos = new Set();
+    const itens = [];
+    for (const l of linhas) {
+      const chave = _normTxt(l.grupo) + '|' + _normTxt(l.lider);
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+      const g = gmap.get(_normTxt(l.grupo));
+      const s = sugPorNome.get(_normTxt(l.lider));
+      itens.push({
+        grupo_planilha: l.grupo,
+        grupo_id: g?.id || null,
+        grupo_nome: g?.nome || null,
+        lider_planilha: l.lider,
+        sugestao: g && s?.sugestao ? { membro_id: s.sugestao.profile_id, nome: s.sugestao.full_name } : null,
+        confianca: !g ? 'grupo_nao_encontrado' : (s?.confianca || 'nenhuma'),
+        lider_atual_nome: g?.lider_id ? (liderNomes.get(g.lider_id) || null) : null,
+      });
+    }
+    res.json({ itens });
+  } catch (e) {
+    console.error('[grupos] importar-lideres analisar', e.message);
+    res.status(500).json({ error: 'Erro ao analisar a planilha' });
+  }
+});
+
+// POST /api/grupos/importar-lideres/aplicar { vinculos: [{ grupo_id, membro_id }] }
+router.post('/importar-lideres/aplicar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const vinculos = Array.isArray(req.body?.vinculos) ? req.body.vinculos : [];
+    let aplicados = 0;
+    for (const v of vinculos) {
+      if (!v?.grupo_id || !v?.membro_id) continue;
+      const { error } = await supabase.from('mem_grupos').update({ lider_id: v.membro_id }).eq('id', v.grupo_id);
+      if (!error) aplicados += 1;
+    }
+    res.json({ aplicados });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao aplicar os líderes' });
+  }
 });
 
 module.exports = router;

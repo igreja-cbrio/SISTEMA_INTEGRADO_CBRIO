@@ -526,4 +526,267 @@ router.get('/movimentacoes/historico/:codigo', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar histórico' }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// ESTOQUE (Fase 3a) · catálogo + razão (saldo DERIVADO) + validade/FEFO + consumo
+// Substitui o Power App + listas SharePoint (site GestaodeEstoque).
+// ══════════════════════════════════════════════════════════════════════════
+
+// GET /estoque/produtos · catálogo com saldo derivado (vw_log_estoque_saldo)
+router.get('/estoque/produtos', async (req, res) => {
+  try {
+    const { categoria, busca, repor, inativos } = req.query;
+    let q = supabase.from('vw_log_estoque_saldo').select('*').order('nome');
+    if (inativos !== 'true') q = q.eq('ativo', true);
+    if (categoria) q = q.eq('categoria', categoria);
+    if (repor === 'true') q = q.eq('precisa_repor', true);
+    if (busca) { const t = String(busca).replace(/[,()*:%]/g, ' ').trim(); if (t) q = q.ilike('nome', `%${t}%`); }
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar produtos' }); }
+});
+
+// POST /estoque/produtos
+router.post('/estoque/produtos', async (req, res) => {
+  try {
+    const { nome, categoria, subtipo_infra, unidade, valor_unitario, quantidade_minima, controla_validade, observacoes } = req.body || {};
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório.' });
+    const { data, error } = await supabase.from('log_estoque_produtos').insert({
+      nome: nome.trim(), categoria: categoria || null, subtipo_infra: subtipo_infra || null,
+      unidade: unidade || null, valor_unitario: Number(valor_unitario) || 0,
+      quantidade_minima: Number(quantidade_minima) || 0, controla_validade: !!controla_validade,
+      observacoes: observacoes || null,
+    }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar produto' }); }
+});
+
+// PATCH /estoque/produtos/:id
+router.patch('/estoque/produtos/:id', async (req, res) => {
+  try {
+    const up = {};
+    for (const k of ['nome', 'categoria', 'subtipo_infra', 'unidade', 'observacoes']) if (k in (req.body || {})) up[k] = req.body[k];
+    for (const k of ['valor_unitario', 'quantidade_minima']) if (k in (req.body || {})) up[k] = Number(req.body[k]) || 0;
+    if ('controla_validade' in (req.body || {})) up.controla_validade = !!req.body.controla_validade;
+    if ('ativo' in (req.body || {})) up.ativo = !!req.body.ativo;
+    if (up.nome != null) up.nome = String(up.nome).trim();
+    const { data, error } = await supabase.from('log_estoque_produtos').update(up).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar produto' }); }
+});
+
+// DELETE /estoque/produtos/:id · desativa (ledger preservado · ativo=false)
+router.delete('/estoque/produtos/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('log_estoque_produtos').update({ ativo: false }).eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover produto' }); }
+});
+
+// GET /estoque/movimentacoes · razão (filtros: produto_id, tipo, dias)
+router.get('/estoque/movimentacoes', async (req, res) => {
+  try {
+    const { produto_id, tipo, dias } = req.query;
+    let q = supabase.from('log_estoque_movimentacoes')
+      .select('*, produto:log_estoque_produtos(nome,categoria,unidade), autor:profiles!feito_por(name)')
+      .order('data_movimentacao', { ascending: false }).order('created_at', { ascending: false })
+      .limit(500);
+    if (produto_id) q = q.eq('produto_id', produto_id);
+    if (tipo) q = q.eq('tipo', tipo);
+    if (dias) { const d = parseInt(dias, 10); if (d > 0) q = q.gte('data_movimentacao', new Date(Date.now() - d * 86400000).toISOString().slice(0, 10)); }
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar movimentações' }); }
+});
+
+// POST /estoque/movimentacoes · 1 ou vários (inventário/recebimento)
+// body: { movimentos: [{produto_id, tipo, quantidade, validade?, area_destino?, evento_id?, motivo?}] } OU objeto único.
+// entrada/saída = magnitude (>0) · ajuste = delta com sinal (corrige contagem).
+router.post('/estoque/movimentacoes', async (req, res) => {
+  try {
+    const lista = Array.isArray(req.body?.movimentos) ? req.body.movimentos : [req.body];
+    if (!lista.length) return res.status(400).json({ error: 'Nenhum movimento informado.' });
+    const rows = [];
+    for (const m of lista) {
+      if (!['entrada', 'saida', 'ajuste'].includes(m.tipo)) return res.status(400).json({ error: 'Tipo inválido.' });
+      if (!m.produto_id) return res.status(400).json({ error: 'Produto é obrigatório.' });
+      let quantidade = Number(m.quantidade);
+      if (!quantidade || isNaN(quantidade)) return res.status(400).json({ error: 'Quantidade inválida.' });
+      if (m.tipo !== 'ajuste') quantidade = Math.abs(quantidade);
+      rows.push({
+        produto_id: m.produto_id, tipo: m.tipo, quantidade,
+        validade: m.validade || null,
+        data_movimentacao: m.data_movimentacao || new Date().toISOString().slice(0, 10),
+        area_destino: m.tipo === 'saida' ? (m.area_destino || null) : null,
+        evento_id: m.tipo === 'saida' ? (m.evento_id || null) : null,
+        motivo: m.motivo || null,
+        origem_solicitacao_id: m.origem_solicitacao_id || null,
+        feito_por: req.user.userId,
+      });
+    }
+    const { data, error } = await supabase.from('log_estoque_movimentacoes').insert(rows).select();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao registrar movimentação' }); }
+});
+
+// GET /estoque/lotes · lotes de perecíveis com saldo restante (FEFO) · ?dias= filtra os que vencem em N dias
+router.get('/estoque/lotes', async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias, 10) || 0;
+    const { data: prods } = await supabase.from('log_estoque_produtos')
+      .select('id,nome,unidade').eq('controla_validade', true).eq('ativo', true);
+    const ids = (prods || []).map(p => p.id);
+    if (!ids.length) return res.json([]);
+    const { data: movs } = await supabase.from('log_estoque_movimentacoes')
+      .select('produto_id,tipo,quantidade,validade').in('produto_id', ids);
+    const byProd = {};
+    (movs || []).forEach(m => { (byProd[m.produto_id] = byProd[m.produto_id] || []).push(m); });
+    const prodMap = Object.fromEntries((prods || []).map(p => [p.id, p]));
+    const limite = dias > 0 ? new Date(Date.now() + dias * 86400000) : null;
+    const out = [];
+    for (const pid of Object.keys(byProd)) {
+      // lotes = entradas/ajuste+ com validade · FEFO (validade asc, null por último)
+      const supply = byProd[pid]
+        .filter(m => m.tipo === 'entrada' || (m.tipo === 'ajuste' && m.quantidade > 0))
+        .map(m => ({ validade: m.validade, qtd: Math.abs(m.quantidade) }))
+        .sort((a, b) => (a.validade ? new Date(a.validade).getTime() : Infinity) - (b.validade ? new Date(b.validade).getTime() : Infinity));
+      let consumido = byProd[pid].reduce((s, m) => s + (m.tipo === 'saida' ? m.quantidade : (m.tipo === 'ajuste' && m.quantidade < 0 ? -m.quantidade : 0)), 0);
+      for (const lot of supply) { const tira = Math.min(lot.qtd, consumido); consumido -= tira; lot.restante = lot.qtd - tira; }
+      for (const lot of supply) {
+        if (lot.restante <= 0 || !lot.validade) continue;
+        if (limite && new Date(lot.validade) > limite) continue;
+        out.push({ produto_id: pid, produto: prodMap[pid]?.nome, unidade: prodMap[pid]?.unidade, validade: lot.validade, restante: lot.restante });
+      }
+    }
+    out.sort((a, b) => new Date(a.validade) - new Date(b.validade));
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar lotes' }); }
+});
+
+// GET /estoque/consumo · saídas agrupadas por área, com custo (?dias=90)
+router.get('/estoque/consumo', async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias, 10) || 90;
+    const desde = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+    const { data: movs } = await supabase.from('log_estoque_movimentacoes')
+      .select('quantidade,area_destino,produto_id').eq('tipo', 'saida').gte('data_movimentacao', desde);
+    const pids = [...new Set((movs || []).map(m => m.produto_id))];
+    let valor = {};
+    if (pids.length) {
+      const { data: ps } = await supabase.from('log_estoque_produtos').select('id,valor_unitario').in('id', pids);
+      valor = Object.fromEntries((ps || []).map(p => [p.id, Number(p.valor_unitario) || 0]));
+    }
+    const agg = {};
+    (movs || []).forEach(m => {
+      const k = m.area_destino || '(sem área)';
+      if (!agg[k]) agg[k] = { area: k, saidas: 0, qtd: 0, custo: 0 };
+      agg[k].saidas++; agg[k].qtd += m.quantidade; agg[k].custo += m.quantidade * (valor[m.produto_id] || 0);
+    });
+    const itens = Object.values(agg).map(a => ({ ...a, custo: Math.round(a.custo * 100) / 100 })).sort((a, b) => b.custo - a.custo);
+    res.json({ dias, itens });
+  } catch (e) { res.status(500).json({ error: 'Erro ao calcular consumo' }); }
+});
+
+// POST /estoque/gerar-compra · cria UMA solicitação de compra a partir dos produtos
+// a repor selecionados (ponte estoque → compras · entra na fila do Amaury, fluxo ML).
+router.post('/estoque/gerar-compra', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.produto_ids) ? req.body.produto_ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um produto.' });
+    const { data: prods } = await supabase.from('vw_log_estoque_saldo')
+      .select('nome,saldo,quantidade_minima,unidade').in('id', ids);
+    if (!prods || !prods.length) return res.status(400).json({ error: 'Produtos não encontrados.' });
+    const linhas = prods.map(p => {
+      const sug = Math.max((Number(p.quantidade_minima) || 0) - (Number(p.saldo) || 0), 0);
+      const un = p.unidade ? ` ${p.unidade}` : '';
+      return `• ${p.nome} — repor ${sug || '?'}${un} (saldo ${p.saldo} / mín ${p.quantidade_minima})`;
+    });
+    const titulo = prods.length === 1 ? `Repor estoque: ${prods[0].nome}` : `Repor estoque (${prods.length} itens)`;
+    const descricao = 'Reposição de estoque (gerado pela aba Estoque da Logística):\n' + linhas.join('\n');
+    const { data, error } = await supabase.from('solicitacoes').insert({
+      titulo, categoria: 'compras', area_responsavel: 'logistica_compras', subcategoria: 'default',
+      urgencia: 'normal', eh_urgente: false, descricao, itens: linhas.join('\n'),
+      status: 'pendente', solicitante_id: req.user.userId, area_cliente: 'logistica',
+      aprovacao_origem_status: 'dispensada', aprovacao_origem_motivo: 'Reposição interna de estoque (logística)',
+      aprovacao_origem_em: new Date().toISOString(),
+    }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao gerar solicitação de compra' }); }
+});
+
+// GET /estoque/relatorio?dias=90 · consolidado pro painel de relatórios do estoque
+router.get('/estoque/relatorio', async (req, res) => {
+  try {
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 7), 730);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+
+    const { data: prods } = await supabase.from('vw_log_estoque_saldo')
+      .select('id,nome,categoria,saldo,valor_unitario,valor_total,precisa_repor').eq('ativo', true);
+    const pmap = Object.fromEntries((prods || []).map(p => [p.id, p]));
+
+    // movimentações do período (paginado · evita o cap de 1000 do PostgREST)
+    let movs = [], from = 0;
+    while (true) {
+      const { data, error } = await supabase.from('log_estoque_movimentacoes')
+        .select('produto_id,tipo,quantidade,data_movimentacao,area_destino')
+        .gte('data_movimentacao', desde).order('data_movimentacao').range(from, from + 999);
+      if (error) break;
+      movs = movs.concat(data || []);
+      if (!data || data.length < 1000) break;
+      from += 1000;
+    }
+    const valorUn = id => Number(pmap[id]?.valor_unitario) || 0;
+
+    const meses = {}, consumo = {}, recebido = {}, porArea = {}, comGiro = new Set();
+    let entradasQ = 0, saidasQ = 0, entradasV = 0, saidasV = 0;
+    for (const m of movs) {
+      const mes = String(m.data_movimentacao).slice(0, 7);
+      meses[mes] = meses[mes] || { mes, entradas: 0, saidas: 0 };
+      const q = Math.abs(m.quantidade), v = q * valorUn(m.produto_id);
+      if (m.tipo === 'saida') {
+        meses[mes].saidas += v; saidasQ += q; saidasV += v;
+        const c = (consumo[m.produto_id] = consumo[m.produto_id] || { qtd: 0, valor: 0 }); c.qtd += q; c.valor += v;
+        comGiro.add(m.produto_id);
+        const k = m.area_destino || '(sem área)'; porArea[k] = (porArea[k] || 0) + v;
+      } else if (m.tipo === 'entrada') {
+        meses[mes].entradas += v; entradasQ += q; entradasV += v;
+        const re = (recebido[m.produto_id] = recebido[m.produto_id] || { qtd: 0, valor: 0 }); re.qtd += q; re.valor += v;
+      } else { // ajuste · sinal define entrada/saída
+        if (m.quantidade >= 0) { meses[mes].entradas += v; } else { meses[mes].saidas += v; }
+      }
+    }
+
+    const cat = {};
+    (prods || []).forEach(p => {
+      const k = p.categoria || '(sem categoria)';
+      cat[k] = cat[k] || { categoria: k, produtos: 0, valor: 0 };
+      cat[k].produtos++; cat[k].valor += Number(p.valor_total) || 0;
+    });
+    const r2 = n => Math.round(n * 100) / 100;
+
+    res.json({
+      dias,
+      resumo: {
+        produtos: (prods || []).length,
+        valor_total: r2((prods || []).reduce((s, p) => s + (Number(p.valor_total) || 0), 0)),
+        a_repor: (prods || []).filter(p => p.precisa_repor).length,
+        entradas_valor: r2(entradasV), saidas_valor: r2(saidasV),
+        entradas_qtd: entradasQ, saidas_qtd: saidasQ,
+      },
+      por_categoria: Object.values(cat).map(c => ({ ...c, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor),
+      serie_mensal: Object.values(meses).sort((a, b) => a.mes.localeCompare(b.mes)).map(x => ({ mes: x.mes, entradas: r2(x.entradas), saidas: r2(x.saidas) })),
+      top_consumo: Object.entries(consumo).map(([id, c]) => ({ nome: pmap[id]?.nome || '?', qtd: c.qtd, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor).slice(0, 10),
+      top_entradas: Object.entries(recebido).map(([id, c]) => ({ nome: pmap[id]?.nome || '?', qtd: c.qtd, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor).slice(0, 10),
+      parados: (prods || []).filter(p => p.saldo > 0 && !comGiro.has(p.id)).map(p => ({ nome: p.nome, saldo: p.saldo, valor: Number(p.valor_total) || 0 })).sort((a, b) => b.valor - a.valor).slice(0, 12),
+      consumo_area: Object.entries(porArea).map(([area, valor]) => ({ area, valor: r2(valor) })).sort((a, b) => b.valor - a.valor),
+    });
+  } catch (e) { res.status(500).json({ error: 'Erro ao gerar relatório' }); }
+});
+
 module.exports = router;

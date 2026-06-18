@@ -24,6 +24,11 @@ const STATUS: Record<string, { label: string; color: string }> = {
   engajou:       { label: 'Engajou',       color: '#10b981' },
   sem_interesse: { label: 'Sem interesse', color: '#ef4444' },
 };
+// De onde veio o encaminhamento (desfecho pastoral vs indicação no Next)
+const ORIGEM: Record<string, { label: string; color: string }> = {
+  next:     { label: 'Next',     color: '#0ea5e9' },
+  cuidados: { label: 'Pastoral', color: '#8b5cf6' },
+};
 const CANAIS = [
   { v: 'ligacao', l: 'Ligação', icon: Phone },
   { v: 'whatsapp', l: 'WhatsApp', icon: MessageCircle },
@@ -296,9 +301,17 @@ export default function EncaminhamentosInbox({ destino, canWrite = true }: { des
             ) : filtrados.map(i => (
               <TableRow key={i.id}>
                 <TableCell className="font-medium">
-                  <button type="button" onClick={() => setAberto(i)} className="text-left hover:text-primary transition-colors underline-offset-2 hover:underline">
-                    {i.nome}
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button type="button" onClick={() => setAberto(i)} className="text-left hover:text-primary transition-colors underline-offset-2 hover:underline">
+                      {i.nome}
+                    </button>
+                    {i.origem && ORIGEM[i.origem] && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
+                        style={{ background: ORIGEM[i.origem].color + '22', color: ORIGEM[i.origem].color, border: `1px solid ${ORIGEM[i.origem].color}40` }}>
+                        {ORIGEM[i.origem].label}
+                      </span>
+                    )}
+                  </div>
                   {i.telefone && <div className="text-xs text-muted-foreground">{i.telefone}</div>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">{fmtData(i.encaminhado_em)}</TableCell>

@@ -96,6 +96,17 @@ router.post('/:data/fotos', validarData, uploadMw.array('fotos', 40), async (req
       if (error) throw error;
       enviadas.push(nome);
     }
+
+    // Avisa os batizados do dia que o álbum chegou (só na 1ª vez por data —
+    // a Edge Function deduplica). Em background: não bloqueia a resposta.
+    if (process.env.SUPABASE_URL) {
+      fetch(`${process.env.SUPABASE_URL}/functions/v1/notify-batismo-fotos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data }),
+      }).catch((e) => console.error('[BATISMO-FOTOS] notify falhou:', e.message));
+    }
+
     res.status(201).json({ ok: true, enviadas: enviadas.length });
   } catch (e) {
     console.error('[BATISMO-FOTOS] upload error:', e.message);

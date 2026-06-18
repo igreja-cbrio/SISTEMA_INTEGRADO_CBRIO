@@ -8,6 +8,8 @@ import type { ReactNode, ComponentType } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
+import DemoAutoLogin from './pages/DemoAutoLogin';
+import { DEMO_MODE } from './lib/demo';
 import RedefinirSenha from './pages/RedefinirSenha';
 import { CbrioLoader } from './components/ui/cbrio-loader';
 
@@ -170,6 +172,7 @@ const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/Solic
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const WhatsappAdmin = lazyWithRetry(() => import('./pages/admin/Whatsapp'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
+const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
 const Apresentacoes = lazyWithRetry(() => import('./pages/apresentacoes/Apresentacoes'));
 const ApresentacaoDetalhe = lazyWithRetry(() => import('./pages/apresentacoes/ApresentacaoDetalhe'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
@@ -194,6 +197,7 @@ const TotemKidsCheckout = lazyWithRetry(() => import('./pages/ministerial/totemK
 const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPainel'));
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
 const TotemKidsDecisoes = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDecisoes'));
+const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsVinculos'));
 const TotemKidsParear = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsParear'));
 const TotemKidsDisplaySala = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplaySala'));
 const TotemKidsDisplayFoyer = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplayFoyer'));
@@ -201,6 +205,7 @@ const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingK
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
 const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
+const MarketingComunicados = lazyWithRetry(() => import('./pages/marketing/MarketingComunicados'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
@@ -247,6 +252,7 @@ const WifiModulo = lazyWithRetry(() => import('./pages/ministerial/Wifi'));
 const Producao = lazyWithRetry(() => import('./pages/ministerial/Producao'));
 const ColetaCulto = lazyWithRetry(() => import('./pages/ministerial/coleta/ColetaCulto'));
 const Next = lazyWithRetry(() => import('./pages/ministerial/Next'));
+const NextBatismo = lazyWithRetry(() => import('./pages/ministerial/NextBatismo'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
@@ -371,23 +377,41 @@ function VolunteerShell() {
   );
 }
 
+// Home pós-login. Quem tem acesso a um ÚNICO módulo abre direto nele
+// (ex.: colaborador só de Produção → /producao) em vez do dashboard.
+function homeRoute(auth: Record<string, unknown>): string {
+  if (auth.isMembroOnly) return '/devocional/hoje';
+  if (auth.isVoluntario) return '/voluntariado/checkin';
+  const modulePerms = auth.modulePerms as Record<string, { leitura?: number }> | null | undefined;
+  if (!auth.isAdmin && modulePerms) {
+    const distintos = new Set<object>();
+    for (const v of Object.values(modulePerms)) if (v && (v.leitura || 0) > 0) distintos.add(v);
+    if (distintos.size === 1 && (modulePerms.producao?.leitura || 0) > 0) return '/producao';
+  }
+  return '/dashboard';
+}
+
 function DefaultRedirect() {
-  const { user, loading, isVoluntario, isMembroOnly } = useAuth();
+  const auth = useAuth();
+  const { user, loading } = auth;
   if (loading) return <Loading />;
+  // No ambiente demo, o link publico e a raiz · manda pro auto-login.
+  if (!user && DEMO_MODE) return <Navigate to="/demo" replace />;
   if (!user) return <Navigate to={loginRedirectTarget()} replace />;
-  if (isMembroOnly) return <Navigate to="/devocional/hoje" replace />;
-  if (isVoluntario) return <Navigate to="/voluntariado/checkin" replace />;
-  return <Navigate to="/dashboard" replace />;
+  return <Navigate to={homeRoute(auth as Record<string, unknown>)} replace />;
 }
 
 function AppRoutes() {
-  const { user, loading, isVoluntario, isMembroOnly } = useAuth();
+  const { user, loading } = useAuth();
   if (loading) return <Loading />;
 
   return (
     <Routes>
-      <Route path="/login" element={user ? (isMembroOnly ? <Navigate to="/devocional/hoje" replace /> : isVoluntario ? <Navigate to="/voluntariado/checkin" replace /> : <Navigate to="/dashboard" replace />) : <Login />} />
+      <Route path="/login" element={user ? <DefaultRedirect /> : <Login />} />
       <Route path="/redefinir-senha" element={<RedefinirSenha />} />
+
+      {/* Demonstracao · login automatico com usuario demo (so com VITE_DEMO_MODE) */}
+      <Route path="/demo" element={<DemoAutoLogin />} />
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
@@ -473,6 +497,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/decisoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsDecisoes /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/vinculos" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsVinculos /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/configuracoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsAdmin /></Suspense></ModuleGuard>} />
         {/* Redirects das URLs antigas (admin separado) · 2026-05-21 */}
         <Route path="/admin/totem-kids" element={<Navigate to="/ministerial/totem-kids/configuracoes" replace />} />
@@ -488,6 +513,7 @@ function AppRoutes() {
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
+        <Route path="/next-batismo" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}
         <Route path="/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><PainelKids /></Suspense></ModuleGuard>} />
@@ -499,6 +525,7 @@ function AppRoutes() {
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
         <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/comunicados" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingComunicados /></Suspense></ModuleGuard>} />
         <Route path="/marketing/fila" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/ciclo-criativo" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/triagem" element={<Navigate to="/marketing" replace />} />
@@ -527,6 +554,7 @@ function AppRoutes() {
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
         <Route path="/admin/feedback" element={<Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense>} />
+        <Route path="/admin/app-analytics" element={<ModuleGuard moduleSlug="dashboard" nivelMinimo={1}><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></ModuleGuard>} />
         <Route path="/admin/whatsapp" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={3}><Suspense fallback={<Loading />}><WhatsappAdmin /></Suspense></ModuleGuard>} />
         <Route path="/admin/apresentacoes" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><Apresentacoes /></Suspense></ModuleGuard>} />
         <Route path="/admin/apresentacoes/:id" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><ApresentacaoDetalhe /></Suspense></ModuleGuard>} />

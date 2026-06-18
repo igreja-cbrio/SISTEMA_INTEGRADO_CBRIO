@@ -274,6 +274,25 @@ const ENCONTRO_STATUS: Record<string, { label: string; color: string }> = {
   cancelado: { label: 'Cancelado', color: '#6b7280' },
 };
 
+// Status do PRIMEIRO CONTATO (ex-planilha do Marcelo). Primeiro contato FEITO =
+// o contato foi realizado, independente da resposta da pessoa → respondeu,
+// atendido e respondido, não respondeu, não compareceu e não atendido. NÃO conta:
+// "sem retorno do responsável" (o responsável não retornou · fica no denominador)
+// e "número errado" (impossível contatar · sai do denominador).
+const PCONTATO_STATUS: { v: string; label: string; positivo?: boolean }[] = [
+  { v: 'respondeu',           label: 'Respondeu',                  positivo: true },
+  { v: 'atendido_respondido', label: 'Atendido e respondido',      positivo: true },
+  { v: 'nao_respondeu',       label: 'Não respondeu' },
+  { v: 'nao_compareceu',      label: 'Não compareceu' },
+  { v: 'nao_atendido',        label: 'Não atendido' },
+  { v: 'sem_retorno',         label: 'Sem retorno do responsável' },
+  { v: 'numero_errado',       label: 'Número errado' },
+];
+// Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
+// independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
+// (e vazio) NÃO contam como contato feito.
+const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+
 // Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
 const JORNADA_ST: Record<string, { label: string; color: string }> = {
   feito:          { label: 'Feito',        color: '#10b981' },
@@ -394,7 +413,6 @@ function ConvertidoModal({
           <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
           <div><Label>Data do culto</Label><Input type="date" value={form.data_culto} onChange={e => setForm({ ...form, data_culto: e.target.value })} /></div>
           <div className="flex items-center gap-4 flex-wrap">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.atendido_apos_culto} onChange={e => setForm({ ...form, atendido_apos_culto: e.target.checked })} />Atendido após culto</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.cadastrado} onChange={e => setForm({ ...form, cadastrado: e.target.checked })} />Cadastrado</label>
           </div>
           <p className="text-xs text-muted-foreground rounded-md border border-border p-2.5" style={{ background: 'var(--cbrio-input-bg)' }}>
@@ -1013,12 +1031,29 @@ export default function Cuidados() {
     return m;
   }, [jornadaData]);
 
-  async function marcarContato(id: string) {
+
+  // Status do primeiro contato (otimista). O 1º contato NÃO se marca à mão — se FAZ:
+  // ao selecionar uma opção de contato feito, carimba primeiro_contato_em (balão verde
+  // em todas as telas + KPI). "Sem retorno"/"Número errado"/vazio limpam (não-feito).
+  // O atendimento é registrado à parte (Agendar encontro → visitas agendadas).
+  async function setPcStatus(id: string, value: string) {
+    const v = value || null;
+    const anterior = convertidos;
+    const cur: any = convertidos.find((x: any) => x.id === id);
+    const patch: any = { primeiro_contato_status: v };
+    if (v === 'atendido_respondido') patch.atendido_apos_culto = true;
+    if (v && CONTATO_FEITO.has(v)) {
+      if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString();
+    } else {
+      patch.primeiro_contato_em = null;
+    }
+    setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, ...patch } : x));
     try {
-      await cuidadosApi.convertidos.registrarContato(id);
-      toast.success('Contato registrado');
-      loadAll();
-    } catch (e: any) { toast.error(e.message); }
+      await cuidadosApi.convertidos.update(id, patch);
+    } catch (e: any) {
+      setConvertidos(anterior);
+      toast.error(`Não foi possível salvar o status: ${e.message}`);
+    }
   }
 
   const convertidosFiltrados = useMemo(() => {
@@ -1348,7 +1383,7 @@ export default function Cuidados() {
           )}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted-foreground">
-              <strong className="text-foreground">{convertidos.length}</strong> convertidos · {convertPendentes > 0 ? <span className="text-warning">{convertPendentes} ainda nao atendidos</span> : <span className="text-primary">todos atendidos</span>}
+              <strong className="text-foreground">{convertidos.length}</strong> convertidos
             </div>
             {podeEditarCuidados && (
               <Button onClick={() => { setEditConvert(null); setModalConvert(true); }}>
@@ -1370,8 +1405,6 @@ export default function Cuidados() {
               <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
-                <SelectItem value="pendentes">Pendentes de atendimento</SelectItem>
-                <SelectItem value="atendidos">Já atendidas</SelectItem>
                 <SelectItem value="encontro_marcado">Com encontro marcado</SelectItem>
                 <SelectItem value="sem_encontro">Sem encontro marcado</SelectItem>
                 <SelectItem value="aguardando_desfecho">Aguardando desfecho</SelectItem>
@@ -1405,7 +1438,7 @@ export default function Cuidados() {
                 <TableRow>
                   <TableHead>Nome</TableHead>
                   <TableHead>Data culto</TableHead>
-                  <TableHead>Atendido</TableHead>
+                  <TableHead>1º contato</TableHead>
                   <TableHead>Encontro</TableHead>
                   <TableHead>Jornada</TableHead>
                   <TableHead>Tags</TableHead>
@@ -1420,7 +1453,7 @@ export default function Cuidados() {
                 ) : convertidosFiltrados.map(c => {
                   const tags: string[] = Array.isArray(c.tags) ? c.tags : [];
                   return (
-                    <TableRow key={c.id} className={!c.atendido_apos_culto ? 'border-l-2 border-l-warning' : undefined}>
+                    <TableRow key={c.id}>
                       <TableCell className="font-medium">
                         <button
                           type="button"
@@ -1433,7 +1466,24 @@ export default function Cuidados() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{new Date(c.data_culto + 'T12:00:00').toLocaleDateString('pt-BR')}</TableCell>
                       <TableCell>
-                        <input type="checkbox" checked={!!c.atendido_apos_culto} disabled={!podeEditarCuidados} onChange={e => marcarAtendido(c.id, e.target.checked)} />
+                        {podeEditarCuidados ? (
+                          <select
+                            value={c.primeiro_contato_status || ''}
+                            onChange={e => setPcStatus(c.id, e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[160px]"
+                            title="Status do primeiro contato"
+                          >
+                            <option value="">—</option>
+                            {PCONTATO_STATUS.map(s => (
+                              <option key={s.v} value={s.v}>{s.label}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {PCONTATO_STATUS.find(s => s.v === c.primeiro_contato_status)?.label || '—'}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         {c.encontro_marcado ? (
@@ -1450,17 +1500,14 @@ export default function Cuidados() {
                       <TableCell>
                         {(() => {
                           const j = jMap.get(c.id);
-                          if (!j) return <span className="text-xs text-muted-foreground">—</span>;
+                          // Contato se FAZ pelo status do dropdown → verde automático.
+                          const contatoOk = CONTATO_FEITO.has(c.primeiro_contato_status) || !!j?.contato?.feito;
+                          const contatoM = contatoOk ? { feito: true, status: 'feito' } : (j?.contato || { feito: false, status: 'no_prazo' });
                           return (
-                            <div className="flex flex-col gap-1 items-start">
-                              <div className="flex gap-1">
-                                <JornadaPill label="Contato" m={j.contato} />
-                                <JornadaPill label="Batismo" m={j.batismo} />
-                                <JornadaPill label="Next" m={j.next} />
-                              </div>
-                              {podeEditarCuidados && !j.contato?.feito && (
-                                <button onClick={() => marcarContato(c.id)} className="text-[10px] text-primary hover:underline">marcar contato</button>
-                              )}
+                            <div className="flex gap-1">
+                              <JornadaPill label="Contato" m={contatoM} />
+                              {j && <JornadaPill label="Batismo" m={j.batismo} />}
+                              {j && <JornadaPill label="Next" m={j.next} />}
                             </div>
                           );
                         })()}
@@ -1481,6 +1528,22 @@ export default function Cuidados() {
                         )}
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
+                        {(() => {
+                          const tel = String(c.telefone || '').replace(/\D/g, '');
+                          if (!tel) return null;
+                          const primeiro = String(c.nome || '').trim().split(/\s+/)[0] || '';
+                          const msg = `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
+                          return (
+                            <a
+                              href={`https://wa.me/55${tel}?text=${encodeURIComponent(msg)}`}
+                              target="_blank" rel="noopener noreferrer" title="Enviar WhatsApp"
+                              onClick={e => e.stopPropagation()}
+                              className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent align-middle"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                            </a>
+                          );
+                        })()}
                         {podeEditarCuidados && (
                           <>
                             {!c.encontro_marcado && (

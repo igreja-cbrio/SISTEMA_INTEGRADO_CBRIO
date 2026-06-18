@@ -328,7 +328,7 @@ router.get('/cpf-lookup/:cpf', async (req, res) => {
 //                      contribuinte|inscrito_next|sem_papel
 router.get('/membros', async (req, res) => {
   try {
-    const { status, busca, papel } = req.query;
+    const { status, busca, papel, faixa } = req.query;
     let query = supabase
       .from('mem_membros')
       .select('*, familia:mem_familias(id, nome)')
@@ -336,6 +336,16 @@ router.get('/membros', async (req, res) => {
       .order('nome');
 
     if (status) query = query.eq('status', status);
+    // Filtro por faixa etária (janela de data de nascimento ·
+    // criança <13, adolescente 13-17, jovem 18-30, adulto 31+).
+    if (faixa) {
+      const h = new Date();
+      const f = (anos) => `${h.getFullYear() - anos}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;
+      if (faixa === 'crianca') query = query.gt('data_nascimento', f(13));
+      else if (faixa === 'adolescente') query = query.gt('data_nascimento', f(18)).lte('data_nascimento', f(13));
+      else if (faixa === 'jovem') query = query.gt('data_nascimento', f(31)).lte('data_nascimento', f(18));
+      else if (faixa === 'adulto') query = query.lte('data_nascimento', f(31));
+    }
     // Busca por tokens: "matheus toscano" casa "Matheus Ribeiro Toscano".
     // Cada palavra vira um ILIKE (AND), case-insensitive, em qualquer ordem.
     if (busca) {

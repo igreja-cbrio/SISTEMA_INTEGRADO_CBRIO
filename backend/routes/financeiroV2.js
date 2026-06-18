@@ -459,6 +459,76 @@ router.post('/importar/pix-extrato', upload.single('arquivo'), async (req, res) 
 });
 
 // ====================================================================
+// IMPORTAR BALANÇO (planilha do sistema financeiro legado · .xlsx)
+// ====================================================================
+// Sobe a planilha exportada do sistema financeiro (formato "Balanço") direto
+// pra fin_transacoes. Idempotente (dedup por codigo_legado · só entra o novo),
+// classe_movimento e o get-or-create de plano/centro/conta/grupo são resolvidos
+// pela RPC balanco_importar_linha (respeita a regra "empréstimo não é receita").
+router.post('/importar/balanco', authorizeModule('financeiro', 4), upload.single('arquivo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Arquivo do balanço (.xlsx) obrigatório' });
+
+  const { importarBalanco } = require('../services/balancoImporter');
+  let uploadRow = null;
+  try {
+    const { data: up } = await supabase
+      .from('fin_uploads')
+      .insert({
+        tipo: 'balanco',
+        arquivo_nome: req.file.originalname,
+        arquivo_tamanho: req.file.size,
+        status: 'processando',
+        created_by: req.user.userId,
+      })
+      .select().single();
+    uploadRow = up;
+
+    const r = await importarBalanco(req.file.buffer);
+
+    if (uploadRow) {
+      await supabase.from('fin_uploads')
+        .update({
+          total_registros: r.lidas,
+          total_novos: r.inseridas,
+          total_duplicados: r.ja_existentes,
+          data_inicio: r.periodo?.inicio || null,
+          data_fim: r.periodo?.fim || null,
+          status: r.erros.length ? 'erro' : 'concluido',
+          erro_msg: r.erros.length ? r.erros.join(' | ').slice(0, 500) : null,
+          concluido_em: new Date().toISOString(),
+        })
+        .eq('id', uploadRow.id);
+    }
+
+    // Notifica o financeiro quando entra dado novo (best-effort · não quebra o fluxo)
+    if (r.inseridas > 0) {
+      try {
+        await notificar({
+          modulo: 'financeiro',
+          tipo: 'balanco_importado',
+          titulo: 'Balanço importado',
+          mensagem: `${r.inseridas} novo(s) lançamento(s) do balanço importado(s)`
+            + (r.periodo ? ` · ${r.periodo.inicio} a ${r.periodo.fim}` : ''),
+          link: '/financeiro-v2?tab=importar',
+        });
+      } catch (_) { /* notificação não é crítica */ }
+    }
+
+    res.json({ upload_id: uploadRow?.id, ...r });
+  } catch (e) {
+    console.error('[FIN-V2] Balanço:', e);
+    if (uploadRow) {
+      try {
+        await supabase.from('fin_uploads')
+          .update({ status: 'erro', erro_msg: (e.message || '').slice(0, 500), concluido_em: new Date().toISOString() })
+          .eq('id', uploadRow.id);
+      } catch (_) { /* ignore */ }
+    }
+    res.status(500).json({ error: e.message || 'Erro ao importar balanço' });
+  }
+});
+
+// ====================================================================
 // UPLOADS HISTÓRICO
 // ====================================================================
 router.get('/uploads', async (req, res) => {
@@ -1869,6 +1939,206 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
   } catch (e) {
     console.error('[FIN-V2] financeiro-completo:', e);
     res.status(500).json({ error: e.message || 'Erro ao montar dashboard' });
+  }
+});
+
+// ====================================================================
+// ASSISTENTE FINANCEIRO · leitura por aba (Haiku · cache · fallback auto)
+//   Cada aba do Dashboard Financeiro tem um card de IA que fala
+//   especificamente sobre aquela aba, usando os números já calculados.
+//   Numeros sao computados no servidor (corretos) e a IA so escreve a prosa
+//   (instruida a NAO inventar valores). Cache em memoria por (aba, semana)
+//   pra nao chamar o Haiku a cada troca de aba. Sem a chave → fallback auto.
+// ====================================================================
+const _assistenteCache = new Map(); // `${aba}:${inicio}` -> { texto, fatos, fonte, ts }
+const ASSISTENTE_TTL_MS = 30 * 60 * 1000;
+
+const ASSISTENTE_ABAS = {
+  resumo:        { label: 'Resumo',          foco: 'foto da semana: receita, presença, ticket médio e variação vs. a semana anterior' },
+  por_culto:     { label: 'Por Culto',       foco: 'como a arrecadação se distribuiu entre Quarta com Deus, Final de Semana e Durante a Semana, e dízimos vs. ofertas' },
+  performance:   { label: 'Performance',     foco: 'a relação entre frequência presencial e arrecadação (ticket médio) na semana' },
+  tendencias:    { label: 'Tendências',      foco: 'a tendência da arrecadação no ano (acumulado) vs. o ano anterior' },
+  saude:         { label: 'Saúde',           foco: 'saúde financeira: resultado do mês, comprometimento com a folha e concentração dos doadores (risco)' },
+  comparativos:  { label: 'Comparativos',    foco: 'receita, despesa e resultado acumulados no ano (YTD) vs. o ano anterior' },
+  dizimo_oferta: { label: 'Dízimo × Oferta', foco: 'a proporção entre dízimos e ofertas na semana' },
+  controle:      { label: 'Saídas',          foco: 'as despesas/saídas e o resultado do período' },
+  metas:         { label: 'Metas',           foco: 'a receita do período como base pro acompanhamento das metas financeiras' },
+};
+
+router.get('/dashboard/assistente', async (req, res) => {
+  const fmt = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const fmtN = (v) => Number(v || 0).toLocaleString('pt-BR');
+  const pct = (v) => v == null ? null : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`;
+  const delta = (a, b) => Number(b) > 0 ? ((Number(a) - Number(b)) / Number(b)) * 100 : null;
+  try {
+    const aba = ASSISTENTE_ABAS[req.query.aba] ? req.query.aba : 'resumo';
+    const meta = ASSISTENTE_ABAS[aba];
+    const dataRef = req.query.semana || new Date().toISOString().slice(0, 10);
+    const { data: rangeRow } = await supabase.rpc('fin_semana_qua_ter', { p_data: dataRef });
+    const range = (rangeRow || [])[0];
+    if (!range) return res.json({ aba, label: meta.label, texto: 'Sem dados para a semana selecionada.', fonte: 'auto' });
+
+    const cacheKey = `${aba}:${range.inicio}`;
+    const hit = _assistenteCache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < ASSISTENTE_TTL_MS) {
+      return res.json({ aba, label: meta.label, texto: hit.texto, fatos: hit.fatos, fonte: hit.fonte, cached: true });
+    }
+
+    const ano = Number(range.inicio.slice(0, 4));
+    const anteriorIni = new Date(range.inicio); anteriorIni.setDate(anteriorIni.getDate() - 7);
+
+    const [resumoAtual, resumoAnt, ytdRes, saudeRes, catRes] = await Promise.all([
+      supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', range.inicio).maybeSingle(),
+      supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', anteriorIni.toISOString().slice(0, 10)).maybeSingle(),
+      supabase.from('vw_fin_ano_acumulado').select('*').in('ano', [ano, ano - 1]),
+      supabase.rpc('fin_saude_financeira', { p_ano: ano }),
+      supabase.from('vw_fin_transacoes_completa')
+        .select('plano_contas_codigo, plano_contas_natureza, valor, data_competencia, classe_movimento')
+        .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
+        .eq('tipo', 'receita').neq('status', 'cancelado'),
+    ]);
+
+    const r = resumoAtual.data || {};
+    const ra = resumoAnt.data || {};
+    const receita = Number(r.receita_total || 0);
+    const presencial = Number(r.total_presencial || 0);
+    const ticket = Number(r.ticket_medio_presencial || 0);
+    const receitaWow = delta(receita, ra.receita_total);
+    const presWow = delta(presencial, ra.total_presencial);
+    const ticketWow = delta(ticket, ra.ticket_medio_presencial);
+
+    const ytdMap = new Map((ytdRes.data || []).map(x => [x.ano, x]));
+    const yA = ytdMap.get(ano) || {};
+    const yB = ytdMap.get(ano - 1) || {};
+    const receitaYtd = Number(yA.receita_ytd || 0);
+    const despesaYtd = Number(yA.despesa_ytd || 0);
+    const resultadoYtd = Number(yA.resultado_ytd || 0);
+    const receitaYtdYoy = delta(receitaYtd, yB.receita_ytd);
+
+    const saude = saudeRes.data || {};
+    const top20 = Number(saude.concentracao_top20pct_pct || 0);
+    const pctFolha = Number(saude.pct_folha || 0);
+    const resultadoMes = Number(saude.resultado_mes || 0);
+    const concLabel = top20 < 60 ? 'base diluída' : top20 < 80 ? 'concentração média' : 'concentração alta';
+    const folhaLabel = pctFolha <= 45 ? 'saudável' : pctFolha <= 55 ? 'atenção' : 'crítico';
+
+    // buckets por dia da semana + dízimo/oferta da semana (empréstimos fora)
+    const isOferta = (cod) => cod?.startsWith('3.01.02') || cod?.startsWith('3.02.03');
+    const isDizimo = (cod) => cod?.startsWith('3.01.01');
+    const bkt = { quarta: 0, fds: 0, durante: 0 };
+    const oferta = { quarta: 0, fds: 0, durante: 0 };
+    let dizimoTot = 0, ofertaTot = 0;
+    for (const t of catRes.data || []) {
+      if (['emprestimo', 'transferencia', 'estorno'].includes(t.classe_movimento)) continue;
+      const v = Number(t.valor || 0);
+      const dow = t.data_competencia ? new Date(t.data_competencia + 'T12:00:00Z').getUTCDay() : -1;
+      const k = dow === 3 ? 'quarta' : (dow === 0 || dow === 6) ? 'fds' : 'durante';
+      bkt[k] += v;
+      if (isDizimo(t.plano_contas_codigo)) dizimoTot += v;
+      if (isOferta(t.plano_contas_codigo)) { ofertaTot += v; oferta[k] += v; }
+    }
+    const bucketNome = { quarta: 'Quarta com Deus', fds: 'Final de Semana', durante: 'Durante a Semana' };
+    const ofertaPuxou = ['quarta', 'fds', 'durante'].reduce((best, k) => oferta[k] > oferta[best] ? k : best, 'quarta');
+    const recBase = dizimoTot + ofertaTot;
+    const dizimoPctV = recBase > 0 ? (dizimoTot / recBase) * 100 : null;
+    const ofertaPctV = recBase > 0 ? (ofertaTot / recBase) * 100 : null;
+
+    // Fatos por aba (já formatados · a IA usa exatamente esses valores)
+    const semanaTxt = `${range.inicio} a ${range.fim}`;
+    let fatos;
+    switch (aba) {
+      case 'por_culto':
+        fatos = { semana: semanaTxt, total: fmt(receita), quarta_com_deus: fmt(bkt.quarta), final_de_semana: fmt(bkt.fds),
+          durante_a_semana: fmt(bkt.durante), dizimos: fmt(dizimoTot), ofertas: fmt(ofertaTot), culto_que_puxou_ofertas: bucketNome[ofertaPuxou] };
+        break;
+      case 'performance':
+        fatos = { semana: semanaTxt, presenca: fmtN(presencial), presenca_variacao: pct(presWow),
+          arrecadacao: fmt(receita), arrecadacao_variacao: pct(receitaWow), ticket_medio: fmt(ticket), ticket_variacao: pct(ticketWow) };
+        break;
+      case 'tendencias':
+        fatos = { ano, receita_acumulada_ano: fmt(receitaYtd), variacao_vs_ano_anterior: pct(receitaYtdYoy), arrecadacao_da_semana: fmt(receita) };
+        break;
+      case 'saude':
+        fatos = { resultado_do_mes: fmt(resultadoMes), folha_pct: `${pctFolha.toFixed(1)}%`, folha_situacao: folhaLabel,
+          concentracao_top20pct: `${top20.toFixed(1)}%`, concentracao_situacao: concLabel };
+        break;
+      case 'comparativos':
+        fatos = { ano, receita_ytd: fmt(receitaYtd), despesa_ytd: fmt(despesaYtd), resultado_ytd: fmt(resultadoYtd), receita_vs_ano_anterior: pct(receitaYtdYoy) };
+        break;
+      case 'dizimo_oferta':
+        fatos = { semana: semanaTxt, dizimos: fmt(dizimoTot), dizimos_pct: dizimoPctV == null ? null : `${dizimoPctV.toFixed(1)}%`,
+          ofertas: fmt(ofertaTot), ofertas_pct: ofertaPctV == null ? null : `${ofertaPctV.toFixed(1)}%` };
+        break;
+      case 'controle':
+        fatos = { ano, despesa_ytd: fmt(despesaYtd), resultado_ytd: fmt(resultadoYtd), resultado_do_mes: fmt(resultadoMes) };
+        break;
+      case 'metas':
+        fatos = { semana: semanaTxt, arrecadacao_da_semana: fmt(receita), receita_ytd: fmt(receitaYtd), resultado_ytd: fmt(resultadoYtd) };
+        break;
+      default: // resumo
+        fatos = { semana: semanaTxt, arrecadacao: fmt(receita), variacao_vs_semana_anterior: pct(receitaWow),
+          presenca: fmtN(presencial), presenca_variacao: pct(presWow), ticket_medio: fmt(ticket), ticket_variacao: pct(ticketWow) };
+    }
+
+    const semDados = receita <= 0 && ['resumo', 'por_culto', 'dizimo_oferta', 'performance'].includes(aba);
+
+    // Texto determinístico (base + fallback se a IA não estiver disponível)
+    const auto = (() => {
+      if (semDados) return 'Ainda não há lançamentos de arrecadação nesta semana. Assim que os cultos forem lançados, a leitura aparece aqui.';
+      switch (aba) {
+        case 'por_culto':
+          return `Dos ${fmt(receita)} arrecadados na semana, a ${bucketNome[ofertaPuxou]} puxou as ofertas. Dízimos somaram ${fmt(dizimoTot)} e ofertas ${fmt(ofertaTot)}.`;
+        case 'performance':
+          return `${fmtN(presencial)} presentes${presWow != null ? ` (${pct(presWow)})` : ''} geraram ${fmt(receita)} de arrecadação${receitaWow != null ? ` (${pct(receitaWow)})` : ''} — ticket médio de ${fmt(ticket)}.`;
+        case 'tendencias':
+          return `Receita acumulada de ${fmt(receitaYtd)} no ano${receitaYtdYoy != null ? `, ${pct(receitaYtdYoy)} vs. o ano anterior` : ''}.`;
+        case 'saude':
+          return `Resultado do mês de ${fmt(resultadoMes)}; folha em ${pctFolha.toFixed(1)}% (${folhaLabel}) e ${top20.toFixed(1)}% da arrecadação vem dos top 20% doadores (${concLabel}).`;
+        case 'comparativos':
+          return `No ano: receita ${fmt(receitaYtd)}${receitaYtdYoy != null ? ` (${pct(receitaYtdYoy)} vs. ${ano - 1})` : ''}, despesa ${fmt(despesaYtd)} e resultado ${fmt(resultadoYtd)}.`;
+        case 'dizimo_oferta':
+          return `Na semana, dízimos foram ${dizimoPctV != null ? `${dizimoPctV.toFixed(1)}%` : '—'} (${fmt(dizimoTot)}) e ofertas ${ofertaPctV != null ? `${ofertaPctV.toFixed(1)}%` : '—'} (${fmt(ofertaTot)}) da arrecadação.`;
+        case 'controle':
+          return `Despesa acumulada de ${fmt(despesaYtd)} no ano, com resultado de ${fmt(resultadoYtd)} (YTD) e ${fmt(resultadoMes)} no mês.`;
+        case 'metas':
+          return `Receita de ${fmt(receita)} na semana e ${fmt(receitaYtd)} acumulados no ano — base pro acompanhamento das metas abaixo.`;
+        default: // resumo
+          return `Arrecadação de ${fmt(receita)}${receitaWow != null ? ` (${pct(receitaWow)} vs. a semana anterior)` : ''}, com ${fmtN(presencial)} presentes e ticket médio de ${fmt(ticket)}.`;
+      }
+    })();
+
+    let texto = auto;
+    let fonte = 'auto';
+    if (!semDados && process.env.ANTHROPIC_API_KEY) {
+      try {
+        const Anthropic = require('@anthropic-ai/sdk');
+        const client = new Anthropic();
+        const system = `Você é o assistente financeiro do dashboard da igreja CBRio.
+Dada uma aba do painel e os números JÁ CALCULADOS, escreva uma leitura curta e específica sobre essa aba.
+Regras:
+- 1 a 2 frases, no máximo ~45 palavras, em português do Brasil com acentuação correta.
+- Use SOMENTE os números fornecidos. NUNCA invente, recalcule nem arredonde valores.
+- Tom de analista: direto e útil, destacando o ponto mais relevante e qualquer alerta.
+- Sem saudação, sem markdown, sem listas, sem emojis. Responda apenas com o texto.`;
+        const user = `Aba: "${meta.label}" — foco: ${meta.foco}.\nNúmeros (use exatamente assim):\n${JSON.stringify(fatos, null, 2)}`;
+        const resp = await client.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 220,
+          system,
+          messages: [{ role: 'user', content: user }],
+        });
+        const out = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+        if (out) { texto = out; fonte = 'ia'; }
+      } catch (e) {
+        console.warn('[FIN-V2] assistente IA:', e?.message);
+      }
+    }
+
+    _assistenteCache.set(cacheKey, { texto, fatos, fonte, ts: Date.now() });
+    res.json({ aba, label: meta.label, texto, fatos, fonte });
+  } catch (e) {
+    console.error('[FIN-V2] assistente:', e);
+    res.status(500).json({ error: e.message || 'Erro no assistente financeiro' });
   }
 });
 

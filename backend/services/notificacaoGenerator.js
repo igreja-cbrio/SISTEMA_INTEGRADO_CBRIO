@@ -10,6 +10,7 @@ async function gerarTodasNotificacoes() {
   let total = 0;
   try {
     total += await gerarNotificacoesRH();
+    await snapshotFolhaMensal(); // foto mensal da folha (não gera notificação)
     total += await gerarNotificacoesFinanceiro();
     total += await rodarAnaliseFinanceiraDiaria();
     total += await gerarNotificacoesLogistica();
@@ -44,7 +45,7 @@ async function gerarNotificacoesRH() {
   // 1. Férias vencendo em 7 dias (data_fim próxima)
   const { data: feriasVencendo } = await supabase
     .from('rh_ferias_licencas')
-    .select('id, funcionario_id, tipo, data_inicio, data_fim, rh_funcionarios(nome)')
+    .select('id, funcionario_id, tipo, data_inicio, data_fim, rh_funcionarios!funcionario_id(nome)')
     .eq('status', 'aprovado')
     .gte('data_fim', today)
     .lte('data_fim', in7d);
@@ -66,7 +67,7 @@ async function gerarNotificacoesRH() {
   // 2. Férias começando em 3 dias
   const { data: feriasInicio } = await supabase
     .from('rh_ferias_licencas')
-    .select('id, funcionario_id, tipo, data_inicio, rh_funcionarios(nome)')
+    .select('id, funcionario_id, tipo, data_inicio, rh_funcionarios!funcionario_id(nome)')
     .eq('status', 'aprovado')
     .gte('data_inicio', today)
     .lte('data_inicio', in3d);
@@ -88,7 +89,7 @@ async function gerarNotificacoesRH() {
   // 3. Férias pendentes de aprovação há muito tempo
   const { data: feriasPendentes } = await supabase
     .from('rh_ferias_licencas')
-    .select('id, funcionario_id, created_at, rh_funcionarios(nome)')
+    .select('id, funcionario_id, created_at, rh_funcionarios!funcionario_id(nome)')
     .eq('status', 'pendente');
 
   for (const f of feriasPendentes || []) {
@@ -178,7 +179,7 @@ async function gerarNotificacoesRH() {
   // aprovação) e NUNCA toca 'inativo' (desligados). Corrige o status que ficava preso.
   const { data: emAfastamento } = await supabase
     .from('rh_funcionarios')
-    .select('id')
+    .select('id, nome, status')
     .in('status', ['ferias', 'licenca']);
   if (emAfastamento && emAfastamento.length) {
     const { data: ativasHoje } = await supabase
@@ -188,13 +189,49 @@ async function gerarNotificacoesRH() {
       .lte('data_inicio', today)
       .gte('data_fim', today);
     const comPeriodoAtivo = new Set((ativasHoje || []).map(f => f.funcionario_id));
-    const voltaram = emAfastamento.filter(f => !comPeriodoAtivo.has(f.id)).map(f => f.id);
+    const voltaram = emAfastamento.filter(f => !comPeriodoAtivo.has(f.id));
     if (voltaram.length) {
-      await supabase.from('rh_funcionarios').update({ status: 'ativo' }).in('id', voltaram);
+      await supabase.from('rh_funcionarios').update({ status: 'ativo' }).in('id', voltaram.map(f => f.id));
+      // Avisa o RH (líder/coordenação) que o afastamento terminou e o status voltou
+      // automaticamente para Ativo — pra conferir retorno efetivo do colaborador.
+      for (const f of voltaram) {
+        const oQue = f.status === 'licenca' ? 'licença' : 'férias';
+        count += await notificar({
+          modulo: 'rh',
+          tipo: 'afastamento_encerrado',
+          titulo: `Retorno de ${oQue} — ${f.nome}`,
+          mensagem: `O período de ${oQue} de ${f.nome} terminou. O status foi atualizado automaticamente para Ativo.`,
+          link: '/admin/rh',
+          severidade: 'info',
+          chaveDedup: `afastamento_encerrado_${f.id}_${today}`,
+        });
+      }
     }
   }
 
   return count;
+}
+
+// Foto mensal da folha (caminho B · exatidão daqui pra frente). UPSERT do mês
+// corrente todo dia → o mês atual reflete "agora"; meses passados ficam
+// congelados no último valor do mês. Alimenta o gráfico de folha do dashboard.
+async function snapshotFolhaMensal() {
+  try {
+    const mes = new Date().toISOString().slice(0, 8) + '01'; // YYYY-MM-01
+    const { data: ativos } = await supabase
+      .from('rh_funcionarios')
+      .select('salario, custo_total_mensal')
+      .eq('status', 'ativo')
+      .is('deleted_at', null);
+    const totalSalarios = (ativos || []).reduce((s, f) => s + Number(f.salario || 0), 0);
+    const totalCusto = (ativos || []).reduce((s, f) => s + Number(f.custo_total_mensal || f.salario || 0), 0);
+    await supabase.from('rh_folha_snapshots').upsert(
+      { mes, total_salarios: totalSalarios, total_custo: totalCusto, headcount: (ativos || []).length, atualizado_em: new Date().toISOString() },
+      { onConflict: 'mes' }
+    );
+  } catch (e) {
+    console.error('[RH] snapshot folha:', e.message);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════

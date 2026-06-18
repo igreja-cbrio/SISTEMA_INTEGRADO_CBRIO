@@ -14,9 +14,16 @@ function isConfigured() {
 }
 
 // Normaliza telefone pra E.164 sem '+' (ex: 5521999998888).
-// Aceita o que vier (com +, espacos, parenteses) e devolve so digitos.
+// Aceita o que vier (com +, espacos, parenteses) e prefixa o DDI 55 quando o
+// numero vem so com DDD + numero (10 ou 11 digitos). Idempotente pra numeros
+// que ja vem com 55. Sem o 55 a Meta nao entrega e o filtro de destinatarios
+// (>=12 digitos) barra a pessoa.
 function normalizarTelefone(raw) {
-  return (raw || '').toString().replace(/\D+/g, '');
+  const d = (raw || '').toString().replace(/\D+/g, '');
+  if (!d) return '';
+  if (d.startsWith('55') && (d.length === 12 || d.length === 13)) return d; // ja tem DDI
+  if (d.length === 10 || d.length === 11) return '55' + d;                  // DDD + numero
+  return d;
 }
 
 // Envia texto simples. Retorna { ok, message_id?, error? }.

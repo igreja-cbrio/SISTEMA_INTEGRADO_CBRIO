@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
@@ -48,6 +48,12 @@ const STATUS_MAP = {
   membro_ativo: { c: C.primary, bg: C.primaryBg, label: 'Membro Ativo' },
   inativo: { c: C.red, bg: C.redBg, label: 'Inativo' },
   transferido: { c: C.amber, bg: C.amberBg, label: 'Transferido' },
+};
+
+const FAIXA_LABEL = { crianca: 'Crianças', adolescente: 'Adolescentes', jovem: 'Jovens', adulto: 'Adultos' };
+const PAPEL_LABEL = {
+  voluntario: 'Voluntários', visitante: 'Visitantes', grupo_ativo: 'Em grupo ativo',
+  contribuinte: 'Contribuintes', inscrito_next: 'Inscritos no NEXT', sem_papel: 'Sem papel ativo',
 };
 
 const TRILHA_ETAPAS = [
@@ -622,6 +628,7 @@ export default function Membresia() {
   const [busca, setBusca] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
+  const [filterFaixa, setFilterFaixa] = useState('');
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -675,6 +682,7 @@ export default function Membresia() {
       if (busca) params.busca = busca;
       if (filterStatus) params.status = filterStatus;
       if (filterPapel) params.papel = filterPapel;
+      if (filterFaixa) params.faixa = filterFaixa;
       const m = await membresia.membros.list(Object.keys(params).length ? params : null);
       setMembros(m);
     } catch (e) {
@@ -683,7 +691,17 @@ export default function Membresia() {
       setLoading(false);
       setSearching(false);
     }
-  }, [busca, filterStatus, filterPapel]);
+  }, [busca, filterStatus, filterPapel, filterFaixa]);
+
+  // Card inteligente · título muda conforme o filtro ativo
+  const filtroResumo = useMemo(() => {
+    const partes = [];
+    if (filterFaixa) partes.push(FAIXA_LABEL[filterFaixa] || filterFaixa);
+    if (filterStatus) partes.push(STATUS_MAP[filterStatus]?.label || filterStatus);
+    if (filterPapel) partes.push(PAPEL_LABEL[filterPapel] || filterPapel);
+    if (busca) partes.push(`"${busca.trim()}"`);
+    return { ativo: partes.length > 0, titulo: partes.join(' · ') };
+  }, [filterFaixa, filterStatus, filterPapel, busca]);
 
   // Dados auxiliares · carregam uma vez (não mudam com a busca)
   const fetchAux = useCallback(async () => {
@@ -1129,6 +1147,25 @@ export default function Membresia() {
         <StatisticsCard title="Contribuintes Ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e" />
       </div>
 
+      {/* Card inteligente do filtro · título muda conforme o que foi filtrado */}
+      {filtroResumo.ativo && (
+        <div style={{ marginBottom: 28, padding: '16px 20px', borderRadius: 14, background: C.primaryBg, border: `1.5px solid ${C.primary}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.primary, textTransform: 'uppercase', letterSpacing: 0.6 }}>Filtrando · {filtroResumo.titulo}</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: C.text, lineHeight: 1.1, marginTop: 2 }}>
+              {searching ? '…' : membros.length}
+              <span style={{ fontSize: 15, fontWeight: 600, color: C.text2, marginLeft: 8 }}>{membros.length === 1 ? 'pessoa' : 'pessoas'}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => { setFilterStatus(''); setFilterPapel(''); setFilterFaixa(''); setBusca(''); }}
+            style={{ fontSize: 13, fontWeight: 600, color: C.primary, background: 'transparent', border: `1px solid ${C.primary}`, borderRadius: 999, padding: '7px 16px', cursor: 'pointer' }}
+          >
+            Limpar filtros
+          </button>
+        </div>
+      )}
+
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
@@ -1173,6 +1210,18 @@ export default function Membresia() {
               <SelectItem value="contribuinte">Contribuintes (90d)</SelectItem>
               <SelectItem value="inscrito_next">Inscritos no NEXT</SelectItem>
               <SelectItem value="sem_papel">Sem papel ativo</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div style={{ minWidth: 180 }}>
+          <Select value={filterFaixa || '__all__'} onValueChange={v => setFilterFaixa(v === '__all__' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="Todas as idades" /></SelectTrigger>
+            <SelectContent className="z-[1001]">
+              <SelectItem value="__all__">Todas as idades</SelectItem>
+              <SelectItem value="crianca">Crianças (até 12)</SelectItem>
+              <SelectItem value="adolescente">Adolescentes (13–17)</SelectItem>
+              <SelectItem value="jovem">Jovens (18–30)</SelectItem>
+              <SelectItem value="adulto">Adultos (31+)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -1282,6 +1331,16 @@ export default function Membresia() {
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{selectedMembro.nome}</h2>
                   <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     <Badge status={selectedMembro.status} />
+                    {(() => {
+                      const dn = selectedMembro.data_nascimento;
+                      if (!dn) return null;
+                      const n = new Date(dn); if (isNaN(n.getTime())) return null;
+                      const h = new Date(); let i = h.getFullYear() - n.getFullYear();
+                      const mo = h.getMonth() - n.getMonth(); if (mo < 0 || (mo === 0 && h.getDate() < n.getDate())) i--;
+                      const fa = i < 13 ? ['Criança', '#fce7f3', '#831843'] : i <= 17 ? ['Adolescente', '#fef3c7', '#92400e'] : i <= 30 ? ['Jovem', '#e0f2fe', '#075985'] : ['Adulto', '#f1f5f9', '#334155'];
+                      return <span title={`${i} anos`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: fa[1], color: fa[2], fontWeight: 700 }}>{fa[0].toUpperCase()}</span>;
+                    })()}
+                    {selectedMembro.frequenta_area && <span title="Ministério que declarou frequentar (cadastro do app)" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#cffafe', color: '#155e75', fontWeight: 700 }}>{String(selectedMembro.frequenta_area).toUpperCase()}</span>}
                     {selectedMembro.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
                     {selectedMembro.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
                     {selectedMembro.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}

@@ -19,6 +19,7 @@ import { painelArea as api } from '../../api';
 import { Card } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+import PainelAreaPessoas from './PainelAreaPessoas';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '../../components/ui/dialog';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -211,6 +212,7 @@ export default function PainelArea({ area }) {
   const totaisCultos = data.totais_cultos;
   const serieCultos = data.serie_cultos || [];
   const temCultos = cultos.length > 0;
+  const mostrarPessoas = ['ami', 'bridge'].includes(area);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -324,12 +326,13 @@ export default function PainelArea({ area }) {
 
       {/* ─────────────────────── TABS PRINCIPAIS ─────────────────────── */}
       <Tabs defaultValue={temCultos ? 'cultos' : 'indicadores'}>
-        <TabsList className={`grid w-full max-w-4xl ${temCultos ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5'}`}>
+        <TabsList className={`grid w-full max-w-5xl ${mostrarPessoas ? (temCultos ? 'grid-cols-3 sm:grid-cols-7' : 'grid-cols-3 sm:grid-cols-6') : (temCultos ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5')}`}>
           {temCultos && (
             <TabsTrigger value="cultos">
               Cultos <span className="ml-1 opacity-60">({cultos.length})</span>
             </TabsTrigger>
           )}
+          {mostrarPessoas && <TabsTrigger value="pessoas">Pessoas</TabsTrigger>}
           <TabsTrigger value="tendencias">Tendências</TabsTrigger>
           <TabsTrigger value="indicadores">
             Indicadores {kpisRegulares.length > 0 && <span className="ml-1 opacity-60">({kpisRegulares.length})</span>}
@@ -340,6 +343,13 @@ export default function PainelArea({ area }) {
           <TabsTrigger value="saude">Saúde</TabsTrigger>
           <TabsTrigger value="novos-convertidos">Novos convertidos</TabsTrigger>
         </TabsList>
+
+        {/* ──────── ABA PESSOAS (AMI/Bridge) ──────── */}
+        {mostrarPessoas && (
+          <TabsContent value="pessoas" className="mt-6">
+            <PainelAreaPessoas area={area} accent={meta.accent} />
+          </TabsContent>
+        )}
 
         {/* ──────── ABA NOVOS CONVERTIDOS ──────── */}
         <TabsContent value="novos-convertidos" className="mt-6 space-y-4">

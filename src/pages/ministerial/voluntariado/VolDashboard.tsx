@@ -94,7 +94,8 @@ export default function VolDashboard() {
           ) : (
             <div className="space-y-2">
               {upcomingServices.slice(0, 5).map(svc => (
-                <div key={svc.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                <div key={svc.id} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 cursor-pointer active:scale-[0.98] transition-transform"
+                  onClick={() => navigate(`/ministerial/voluntariado/escalas?serviceId=${svc.id}`)}>
                   <div>
                     <p className="font-medium">{svc.name}</p>
                     {svc.service_type_name && <p className="text-sm text-muted-foreground">{svc.service_type_name}</p>}

@@ -143,8 +143,11 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
   }
 
   async function handleSave() {
+    // rh.ferias.create espera (funcionario_id, dados) — passar só `form` mandava o
+    // objeto como id na URL (/funcionarios/[object Object]/ferias) e falhava em silêncio.
+    if (!form.funcionario_id) return;
     try {
-      await rh.ferias.create(form);
+      await rh.ferias.create(form.funcionario_id, form);
       setIsNewOpen(false);
       setForm({ tipo: 'ferias' });
       loadFerias();
@@ -475,7 +478,12 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
           <div className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Colaborador *</label>
-              <ShadSelect value={form.funcionario_id || '__none__'} onValueChange={v => upd('funcionario_id', v === '__none__' ? '' : v)}>
+              <ShadSelect value={form.funcionario_id || '__none__'} onValueChange={v => {
+                const fid = v === '__none__' ? '' : v;
+                // sugere o gestor (organograma) como substituto · RH troca se quiser
+                const gestor = (funcs || []).find(f => f.id === fid)?.gestor_id || '';
+                setForm(f => ({ ...f, funcionario_id: fid, substituto_id: gestor }));
+              }}>
                 <SelectTrigger className="h-9 w-full text-sm"><SelectValue placeholder="Selecionar" /></SelectTrigger>
                 <SelectContent className="z-[1001]">
                   <SelectItem value="__none__">Selecionar</SelectItem>
@@ -495,6 +503,19 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
                   ))}
                 </SelectContent>
               </ShadSelect>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Substituto (cobre as áreas)</label>
+              <ShadSelect value={form.substituto_id || '__none__'} onValueChange={v => upd('substituto_id', v === '__none__' ? '' : v)}>
+                <SelectTrigger className="h-9 w-full text-sm"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                <SelectContent className="z-[1001]">
+                  <SelectItem value="__none__">Sem substituto</SelectItem>
+                  {(funcs || []).filter(f => f.status === 'ativo' && f.id !== form.funcionario_id).map(f => (
+                    <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </ShadSelect>
+              <p className="text-[11px] text-muted-foreground mt-1">Ao aprovar, herda só os módulos operacionais (áreas/filas) do colaborador durante a licença · volta sozinho no fim.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -517,7 +538,7 @@ export default function TabFeriasCalendar({ funcs, onAprovar }) {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsNewOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSave}>Solicitar</Button>
+            <Button onClick={handleSave} disabled={!form.funcionario_id || !form.data_inicio || !form.data_fim}>Solicitar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

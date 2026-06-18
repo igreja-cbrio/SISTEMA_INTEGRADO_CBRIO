@@ -13,13 +13,14 @@ import { playNotificationSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
+import { navItemAllowed } from '../../lib/menuAccess';
 import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -27,7 +28,6 @@ import {
 } from '../ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
@@ -62,6 +62,7 @@ const NAV_ITEMS = [
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
           { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao', moduleMin: 3 },
           { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
+          { label: 'Analytics do App', description: 'Painel ao vivo (online agora, cadastros) + uso e erros do app', icon: MonitorSmartphone, path: '/admin/app-analytics', module: 'dashboard', moduleMin: 1 },
         ],
       },
     ],
@@ -83,7 +84,7 @@ const NAV_ITEMS = [
         title: 'Análise',
         items: [
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
-          { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', module: 'gestao' },
+          { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', perm: 'isAdmin' },
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
           { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
           { label: 'Apresentações', description: 'Gera slides HTML premium via Claude Opus · upload opcional', icon: Sparkles, path: '/admin/apresentacoes', module: 'apresentacoes' },
@@ -112,12 +113,13 @@ const NAV_ITEMS = [
       {
         title: 'Áreas ministeriais',
         items: [
-          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
+          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao', perm: 'canMembresia' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
-          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos' },
+          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
           { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
+          { label: 'Next - Batismo', description: 'Check de pessoas · liga inscrição ao membro certo e funde cadastros duplicados', icon: UserSearch, path: '/next-batismo', module: 'next-batismo' },
         ],
       },
       {
@@ -162,27 +164,13 @@ const NAV_ITEMS = [
 ];
 
 export default function AppShell() {
-  const { profile, role, signOut, isAdmin, isVoluntario, isColaborador, modulePerms, modulosBloqueados, canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, canProcessos } = useAuth();
-  const permMap = { canRH, canFinanceiro, canLogistica, canPatrimonio, canMembresia, canProjetos, canExpansao, canAgenda, canIA, canCuidados, canProcessos, isColaborador, isAdmin };
+  const auth = useAuth();
+  const { profile, role, signOut, isAdmin, isVoluntario } = auth;
 
-  // If permissions haven't loaded yet (modulePerms is null), show all items
-  const permsLoaded = modulePerms !== null || isAdmin;
-
-  // Item passa se: sem perm + sem module · OU perm explicita true · OU
-  // module com nível leitura >= moduleMin (default 1 · admin sempre passa)
-  function itemAllowed(item) {
-    if (!permsLoaded) return true;
-    // Deny explícito de módulo (override nível 0) vence até o bypass de admin
-    if (item.perm && permMap[item.perm] === false) return false;
-    if (item.module && (modulosBloqueados || []).includes(item.module)) return false;
-    if (isAdmin) return true;
-    if (item.module && modulePerms) {
-      const m = modulePerms[item.module];
-      const leitura = m?.leitura ?? 0;
-      if (leitura < (item.moduleMin ?? 1)) return false;
-    }
-    return true;
-  }
+  // Visibilidade de item de menu · navItemAllowed (src/lib/menuAccess) espelha
+  // o ModuleGuard das rotas (src/App.tsx) e é compartilhado com a busca ⌘K
+  // (CommandSearch), pra que um módulo inacessível nunca apareça em nenhum dos dois.
+  const itemAllowed = (item) => navItemAllowed(item, auth);
 
   function sectionAllowed(section) {
     if (!section.roles) return true;
@@ -361,7 +349,7 @@ export default function AppShell() {
       <CommandSearch />
 
       {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-border/50 bg-card/60 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-card/55">
         <div className="flex items-center justify-between h-14 px-4 md:px-6 max-w-[1800px] mx-auto gap-2">
           {/* Left: Menu mobile + Logo */}
           <div className="flex items-center gap-2">
@@ -444,7 +432,7 @@ export default function AppShell() {
                     </button>
                   </div>
                 </div>
-                <ScrollArea className="max-h-[400px]">
+                <div className="max-h-[400px] overflow-y-auto overscroll-contain">
                   {notifsLoading ? (
                     <div className="flex items-center justify-center py-8">
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
@@ -485,7 +473,7 @@ export default function AppShell() {
                       })}
                     </div>
                   )}
-                </ScrollArea>
+                </div>
               </DropdownMenuContent>
             </DropdownMenu>
 

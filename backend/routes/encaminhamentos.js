@@ -182,6 +182,21 @@ async function materializarEngajamento(enc, body) {
   return { vinculo: null };
 }
 
+// Fase 2 · encaminhamento de origem Next que fecha (engajou/sem_interesse)
+// reflete a devolutiva no next_indicacoes correspondente · senão o /next mostra
+// "pendente" pra sempre. grupos→grupo · voluntarios→servir.
+const DESTINO_TIPO_NEXT = { grupos: 'grupo', voluntarios: 'servir' };
+async function syncNextIndicacao(enc, statusTerminal) {
+  if (enc?.origem !== 'next' || !enc?.next_inscricao_id) return;
+  const tipo = DESTINO_TIPO_NEXT[enc.destino];
+  const novo = statusTerminal === 'engajou' ? 'concluido'
+    : statusTerminal === 'sem_interesse' ? 'cancelado' : null;
+  if (!tipo || !novo) return;
+  await supabase.from('next_indicacoes')
+    .update({ status: novo, atendido_em: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('inscricao_id', enc.next_inscricao_id).eq('tipo', tipo);
+}
+
 // POST /api/encaminhamentos/:id/contato  → registra contato + atualiza status (devolutiva)
 router.post('/:id/contato', async (req, res) => {
   try {
@@ -223,6 +238,10 @@ router.post('/:id/contato', async (req, res) => {
     }
     await supabase.from('jornada_encaminhamentos').update(patch).eq('id', req.params.id);
 
+    if (devolutiva && ['engajou', 'sem_interesse'].includes(devolutiva)) {
+      try { await syncNextIndicacao(enc, devolutiva); } catch (e) { console.error('[enc] syncNext:', e.message); }
+    }
+
     res.status(201).json({ ...contato, vinculo, aviso });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -252,6 +271,9 @@ router.patch('/:id', async (req, res) => {
     }
     const { data, error } = await supabase.from('jornada_encaminhamentos').update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
+    if (status && ['engajou', 'sem_interesse'].includes(status)) {
+      try { await syncNextIndicacao(enc, status); } catch (e) { console.error('[enc] syncNext:', e.message); }
+    }
     res.json({ ...data, vinculo, aviso });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });

@@ -136,6 +136,7 @@ export interface VolTeam {
   name: string;
   description: string | null;
   color: string | null;
+  area: string | null;
   leader_profile_id: string | null;
   is_active: boolean;
   sort_order: number;

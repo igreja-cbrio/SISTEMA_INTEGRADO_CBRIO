@@ -1785,6 +1785,7 @@ router.get('/monitoramento-okr', async (req, res) => {
     const dizimistas = r.dizimistas || null;
     const cafeAtend = r.cafeAtend || null;
     const engajamento = r.engajamento || null;
+    const q12 = r.q12 || null;
 
     const nsm = nsmRow ? {
       percentual: num(nsmRow.percentual),
@@ -1857,6 +1858,12 @@ router.get('/monitoramento-okr', async (req, res) => {
       addM('eng_retencao', num(engajamento.retencao), '%', `retenção média em vídeos${sufEng}`);
       addM('eng_compartilhamento', num(engajamento.compartilhamento), '%', `compartilhamentos ÷ alcance${sufEng}`);
       addM('eng_cliques_series', num(engajamento.cliques_series), '%', `CTR de séries de mensagens${sufEng}`);
+    }
+    // Nota Q12 (Gallup) · clima organizacional do staff (RH). Mostra "—" até o
+    // RH lançar a 1ª nota; o detalhe traz o mês do lançamento.
+    if (q12 && q12.nota != null) {
+      addM('q12', num(q12.nota), '',
+        `pesquisa Q12 do Gallup${q12.label ? ` · ${q12.label}` : ''}`);
     }
 
     const resp = { geradoEm: new Date().toISOString(), nsm, metricas };

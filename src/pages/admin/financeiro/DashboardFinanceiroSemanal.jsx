@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, useSpring, useTransform, animate } from 'framer-motion';
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Users, Banknote,
@@ -282,6 +283,17 @@ export default function DashboardSemanal() {
         <FiltrosFinanceiroBar />
       </div>
 
+      {/* Assistente financeiro · leitura automática por aba */}
+      <AssistenteFinanceiroCard
+        aba={SLIDES[slide].key}
+        abaLabel={SLIDES[slide].label}
+        semana={refData}
+        kpis={kpis}
+        buckets={buckets}
+        onVerDetalhe={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'resumo')))}
+        onComparar={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'performance')))}
+      />
+
       {/* CONTENT · slides animados com AnimatePresence */}
       <AnimatePresence mode="wait">
         <motion.div
@@ -349,6 +361,94 @@ export default function DashboardSemanal() {
         <span>Use ← → no teclado · {slide + 1} de {SLIDES.length}</span>
       </div>
     </div>
+  );
+}
+
+// ============================================================
+// ASSISTENTE FINANCEIRO · leitura automática (determinística) da semana
+// ============================================================
+// Fallback determinístico no cliente (caso o endpoint falhe de vez) · cobre as
+// abas pra quais a UI já tem os dados em mãos (resumo / por_culto).
+function leituraClienteFallback(aba, kpis, buckets) {
+  const receita = Number(kpis?.receita || 0);
+  if (receita <= 0) return 'Ainda não há lançamentos de arrecadação nesta semana.';
+  const delta = kpis?.receita_delta_wow;
+  const wow = (delta === null || delta === undefined) ? '' : ` (${fmtPct(delta)} vs. a semana anterior)`;
+  if (aba === 'por_culto' && buckets) {
+    const ofertas = (b) => (b?.categorias || []).filter(c => /oferta/i.test(c.categoria)).reduce((s, c) => s + Number(c.valor || 0), 0);
+    let nome = null, mx = 0;
+    for (const k of ['quarta', 'domingo', 'outros']) { const o = ofertas(buckets[k]); if (o > mx) { mx = o; nome = buckets[k]?.nome; } }
+    return `Arrecadação de ${fmtMoney(receita)}${wow}${nome ? `; a ${nome} puxou as ofertas` : ''}.`;
+  }
+  return `Arrecadação de ${fmtMoney(receita)}${wow} nesta semana.`;
+}
+
+function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerDetalhe, onComparar }) {
+  const [texto, setTexto] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    financeiroV2.dashboard.assistente?.(aba, semana)
+      .then(r => { if (!cancelled) setTexto(r?.texto || leituraClienteFallback(aba, kpis, buckets)); })
+      .catch(() => { if (!cancelled) setTexto(leituraClienteFallback(aba, kpis, buckets)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aba, semana]);
+
+  return (
+    <Card className="relative overflow-hidden border-primary/30">
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'linear-gradient(135deg, rgba(0,179,157,0.10), transparent 55%)' }}
+      />
+      <CardContent className="pt-5 pb-5 relative">
+        <div className="flex items-center gap-3 mb-3">
+          <div
+            className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: C.primarySoft, color: C.primary }}
+          >
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold leading-tight">Assistente financeiro</h3>
+            <p className="text-xs text-muted-foreground">Leitura automática · {abaLabel || 'semana'}</p>
+          </div>
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary ml-auto shrink-0" />}
+        </div>
+
+        <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: C.primary }}>
+          Destaque · {abaLabel || 'Resumo'}
+        </div>
+
+        {!texto && loading ? (
+          <div className="space-y-2">
+            <div className="h-3.5 rounded bg-muted animate-pulse w-[92%]" />
+            <div className="h-3.5 rounded bg-muted animate-pulse w-[70%]" />
+          </div>
+        ) : (
+          <p className={`text-sm text-foreground/90 leading-relaxed transition-opacity ${loading ? 'opacity-50' : 'opacity-100'}`}>
+            {texto}
+          </p>
+        )}
+
+        <div className="flex items-center gap-2 mt-4">
+          <Button
+            size="sm"
+            onClick={onVerDetalhe}
+            className="text-white hover:opacity-90"
+            style={{ background: C.primary }}
+          >
+            Ver detalhe
+          </Button>
+          <Button size="sm" variant="outline" onClick={onComparar}>
+            Comparar semanas
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -3031,12 +3131,18 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
+  const [ordem, setOrdem] = useState('maior'); // 'maior' | 'menor' valor
+  // Alvo do portal · escapa de qualquer ancestral com transform (slides do framer-motion)
+  // ou do modo tela cheia — senão o `position: fixed` se posiciona relativo ao
+  // ancestral transformado e o modal aparece deslocado/piscando.
+  const [portalEl, setPortalEl] = useState(null);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
     setBusca('');
+    setOrdem('maior');
     fetcher()
       .then(r => { if (!cancelled) setDados(r); })
       .catch(e => console.warn('[Drilldown]:', e?.message))
@@ -3045,39 +3151,60 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  if (!open) return null;
+  useEffect(() => {
+    if (!open) return;
+    const sync = () => setPortalEl(document.fullscreenElement || document.body);
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, [open]);
 
-  const transacoes = (dados?.transacoes || []).filter(t => {
-    if (!busca) return true;
-    const q = busca.toLowerCase();
-    return (
-      String(t.referencia || '').toLowerCase().includes(q) ||
-      String(t.descricao || '').toLowerCase().includes(q) ||
-      String(t.plano_contas_nome || '').toLowerCase().includes(q)
-    );
-  });
+  // bloqueia o scroll do fundo enquanto o modal está aberto
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  if (!open || !portalEl) return null;
+
+  const transacoes = (dados?.transacoes || [])
+    .filter(t => {
+      if (!busca) return true;
+      const q = busca.toLowerCase();
+      return (
+        String(t.referencia || '').toLowerCase().includes(q) ||
+        String(t.descricao || '').toLowerCase().includes(q) ||
+        String(t.plano_contas_nome || '').toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => ordem === 'maior'
+      ? Number(b.valor || 0) - Number(a.valor || 0)
+      : Number(a.valor || 0) - Number(b.valor || 0));
 
   const total = dados?.total || 0;
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
           className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={onClose}
         >
           <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
+            initial={{ scale: 0.97, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
+            exit={{ scale: 0.97, opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-4xl max-h-[88vh] bg-card rounded-2xl shadow-2xl overflow-hidden border border-border flex flex-col"
+            className="w-full max-w-4xl h-[85vh] max-h-[85vh] bg-card rounded-2xl shadow-2xl overflow-hidden border border-border flex flex-col"
           >
-            <div className="relative px-6 py-4 border-b border-border" style={{ background: `linear-gradient(135deg, ${color}15, transparent)` }}>
+            <div className="relative px-6 py-4 border-b border-border shrink-0" style={{ background: `linear-gradient(135deg, ${color}15, transparent)` }}>
               <div className="absolute top-0 left-0 right-0 h-1" style={{ background: color }} />
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -3115,17 +3242,35 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
               )}
             </div>
 
-            <div className="px-6 py-3 border-b border-border bg-muted/30">
+            <div className="px-6 py-3 border-b border-border bg-muted/30 flex items-center gap-2 shrink-0">
               <input
                 type="text"
                 placeholder="Filtrar por nome, descrição, plano de contas..."
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className="flex-1 min-w-0 px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
+              <div className="flex rounded-md border border-border overflow-hidden shrink-0 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setOrdem('maior')}
+                  className={`px-2.5 py-2 flex items-center gap-1 transition ${ordem === 'maior' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'}`}
+                  title="Maior valor primeiro"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" /> Maior
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrdem('menor')}
+                  className={`px-2.5 py-2 flex items-center gap-1 transition border-l border-border ${ordem === 'menor' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'}`}
+                  title="Menor valor primeiro"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" /> Menor
+                </button>
+              </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4">
               {loading ? (
                 <div className="py-20 flex justify-center">
                   <Loader2 className="h-7 w-7 animate-spin text-primary" />
@@ -3137,11 +3282,8 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
               ) : (
                 <div className="space-y-1">
                   {transacoes.slice(0, 200).map((t, i) => (
-                    <motion.div
+                    <div
                       key={t.id || i}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: Math.min(i * 0.01, 0.5) }}
                       className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-muted/50 transition border border-transparent hover:border-border"
                     >
                       <div className="min-w-0 flex-1">
@@ -3163,7 +3305,7 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
                       <div className="text-sm font-semibold tabular-nums shrink-0" style={{ color }}>
                         {fmtMoney(t.valor)}
                       </div>
-                    </motion.div>
+                    </div>
                   ))}
                   {transacoes.length > 200 && (
                     <div className="text-[10px] text-muted-foreground text-center pt-3">
@@ -3176,7 +3318,8 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    portalEl
   );
 }
 

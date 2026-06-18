@@ -1,14 +1,18 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
-  getPCCredentials, fetchWithRetry, fetchAllPlans,
+  getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
   processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
   fetchAllServiceTypes, backfillVolProfilesCpf,
 } = require('../services/planningCenter');
+const { executarSyncCompleto } = require('../services/voluntariadoSync');
 
-// Sync do Planning Center e operações administrativas pesadas — apenas admin/diretor.
-router.use(authenticate, authorize('admin', 'diretor'));
+// Sync do Planning Center e operações administrativas do voluntariado.
+// Acessível a quem tem o módulo voluntariado em nível >= 3 (líder/assistente
+// do voluntariado via boost de área) · admin/diretor passam automaticamente.
+// Antes era restrito a role admin/diretor, o que bloqueava os donos do módulo.
+router.use(authenticate, authorizeModule('voluntariado', 3));
 
 // ══════════════════════════════════════════════════════════════
 // SYNC — MANUAL
@@ -18,53 +22,19 @@ router.use(authenticate, authorize('admin', 'diretor'));
 // ══════════════════════════════════════════════════════════════
 router.post('/sync', async (req, res) => {
   try {
-    const { basic: credentials } = getPCCredentials();
-
-    const serviceTypes = await fetchAllServiceTypes(credentials);
-    if (!serviceTypes.length) return res.status(400).json({ error: 'Falha ao conectar ao Planning Center ou nenhum tipo encontrado' });
-    console.log(`[VOL SYNC] Found ${serviceTypes.length} service types`);
-
-    let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
-    const allVolunteers = new Map();
-
-    // All service types in parallel
-    const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
-      const [plans, teamPersons] = await Promise.all([
-        fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
-        fetchAllTeamPersons(st.id, credentials),
-      ]);
-      const result = await processServiceType(supabase, st, plans, credentials);
-      return { result, teamPersons };
-    }));
-
-    for (const item of settled) {
-      if (item.status === 'rejected') {
-        console.error('[VOL SYNC] Service type error:', item.reason?.message || item.reason);
-        continue;
-      }
-      const { result, teamPersons } = item.value;
-      totalServices += result.services;
-      totalSchedules += result.schedules;
-      totalMembersFound += result.membersFound;
-      totalMembersProcessed += result.membersProcessed;
-      for (const [k, v] of result.volunteers) allVolunteers.set(k, v);
-      // teamPersons complementa com quem não aparece nos planos recentes
-      for (const [k, v] of teamPersons) {
-        if (!allVolunteers.has(k)) allVolunteers.set(k, v);
-      }
-    }
-
-    const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
-    const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
-    const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
-
+    const r = await executarSyncCompleto();
     await supabase.from('vol_sync_logs').insert({
-      sync_type: 'manual', services_synced: totalServices, schedules_synced: totalSchedules,
-      qrcodes_generated: qrCount, status: 'success', triggered_by: req.user.userId,
+      sync_type: 'manual', services_synced: r.services, schedules_synced: r.schedules,
+      qrcodes_generated: r.qrCodesGenerated, status: 'success', triggered_by: req.user.userId,
     });
-
-    res.json({ success: true, services: totalServices, newSchedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, ...(dbError ? { dbError } : {}) });
+    res.json({
+      success: true, services: r.services, newSchedules: r.schedules,
+      qrCodesGenerated: r.qrCodesGenerated, volunteersSynced: r.volunteersSynced,
+      avatarsImported: r.avatarsImported, totalMembersFound: r.totalMembersFound,
+      totalMembersProcessed: r.totalMembersProcessed, ...(r.dbError ? { dbError: r.dbError } : {}),
+    });
   } catch (e) {
+    if (e.code === 'NO_SERVICE_TYPES') return res.status(400).json({ error: e.message });
     console.error('[VOL SYNC] Error:', e.message);
     res.status(500).json({ error: 'Erro durante sincronizacao' });
   }

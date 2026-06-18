@@ -83,13 +83,9 @@ function formataDataCurta(dataStr) {
 
 export default function CalendarioCultos() {
   const hoje = new Date();
-  // Abre na SEMANA ANTERIOR por padrão · o fluxo eh preencher o que já passou
-  // (a semana corrente ainda tem cultos que não aconteceram). Setas navegam.
-  const [semanaInicio, setSemanaInicio] = useState(() => {
-    const ini = inicioSemana(hoje);
-    ini.setDate(ini.getDate() - 7);
-    return ini;
-  });
+  // Abre na SEMANA ATUAL por padrão (pedido do Marcos · 2026-06-16). As setas
+  // navegam pra semanas anteriores quando precisar preencher o que já passou.
+  const [semanaInicio, setSemanaInicio] = useState(() => inicioSemana(hoje));
   const [cultos, setCultos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);

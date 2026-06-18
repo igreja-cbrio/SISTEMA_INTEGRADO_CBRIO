@@ -387,6 +387,7 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
     const {
       nome, sobrenome, email, telefone, cpf, data_nascimento, nome_mae,
       area, participou_next, dom_predominante, ministerios_interesse,
+      consentimento_antecedentes, // Kids/Bridge · autoriza consulta de antecedentes
       website, // honeypot
     } = req.body || {};
 
@@ -421,6 +422,10 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
     }
     if (exigeDadosMenor && (!nome_mae || String(nome_mae).trim().length < 2)) {
       return res.status(400).json({ error: 'Nome da mae obrigatório para Kids/Bridge' });
+    }
+    // Kids/Bridge exigem consentimento explícito pra consulta de antecedentes (LGPD · dado sensível).
+    if (exigeDadosMenor && !consentimento_antecedentes) {
+      return res.status(400).json({ error: 'É necessário autorizar a consulta de antecedentes para servir no Kids/Bridge' });
     }
 
     const nomeCompleto = [cleanNome, cleanSobrenome].filter(Boolean).join(' ');
@@ -474,6 +479,26 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
     if (insErr) {
       console.error('[PublicVol/inscrever-form] insert:', insErr.message);
       return res.status(500).json({ error: 'Erro ao registrar inscrição' });
+    }
+
+    // Kids/Bridge · abre a triagem de antecedentes (pendente). A consulta
+    // automática roda no cron / botão da coordenação. Sem o token Infosimples,
+    // a triagem fica pra conferência manual — a trava de integração já vale.
+    if (exigeDadosMenor) {
+      try {
+        const { criarCheckParaInscricao } = require('../services/antecedentesCriminais');
+        await criarCheckParaInscricao({
+          id: insc.id,
+          area: areaLower,
+          membro_id: membroId,
+          nome_completo: nomeCompleto,
+          cpf: cleanCpf,
+          nome_mae: nome_mae ? String(nome_mae).trim() : null,
+          data_nascimento: data_nascimento || null,
+        }, { consentimento: true, origem: 'formulario_publico' });
+      } catch (e) {
+        console.error('[PublicVol/inscrever-form] antecedentes:', e.message);
+      }
     }
 
     try {

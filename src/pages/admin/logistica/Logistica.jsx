@@ -3,6 +3,8 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { logistica, ml, arquivei } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
+import LogisticaEstoque from './LogisticaEstoque';
+import LogisticaSolicitacoes from './LogisticaSolicitacoes';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -116,7 +118,7 @@ function Badge({ status, map }) {
 // Quem precisa abrir solicitação de compras hoje vai em /solicitacoes,
 // escolhe categoria=compras e o fluxo segue com SLA/NPS/notificacao do
 // solicitante automática.
-const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio'];
+const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio', 'Estoque', 'Solicitações'];
 
 // ═══════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -346,6 +348,8 @@ export default function Logistica() {
 
       {tab === 4 && <ComprasMLTab />}
       {tab === 5 && <RastreioMLTab />}
+      {tab === 6 && <LogisticaEstoque />}
+      {tab === 7 && <LogisticaSolicitacoes />}
 
       {/* ── MODAIS ─────────────────────────────────────────── */}
 
@@ -620,6 +624,7 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
   const [configuring, setConfiguring] = useState(false);
   const [localError, setLocalError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [nfEstoque, setNfEstoque] = useState(null); // NF sendo lançada no estoque
 
   useEffect(() => { checkArquivei(); }, []);
 
@@ -756,6 +761,9 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
               {['registrada', 'rejeitada'].includes(n.status) && (
                 <Button variant="outline" size="sm" onClick={() => onEnviar(n.id)}>Enviar pro financeiro</Button>
               )}
+              {n.itens?.length > 0 && (
+                <Button variant="ghost" size="sm" title="Lançar itens no estoque" onClick={() => setNfEstoque(n)}>📦 Estoque</Button>
+              )}
               {n.status !== 'lancada' && <Button variant="ghost" size="sm" onClick={() => onEdit(n)}>✏️</Button>}
               {n.status !== 'lancada' && <Button variant="ghost" size="sm" onClick={() => onDelete(n.id)}>🗑</Button>}
             </div>
@@ -763,7 +771,96 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
         </tr>
       ))}
     </tbody></table></div>
+
+    {nfEstoque && (
+      <NfEstoqueModal
+        nota={nfEstoque}
+        onClose={() => setNfEstoque(null)}
+        onDone={(count) => { setNfEstoque(null); setSuccessMsg(`${count} item(ns) lançado(s) no estoque a partir da NF.`); }}
+      />
+    )}
   </>);
+}
+
+// ═══════════════════════════════════════════════════════════
+// MODAL: Lançar itens de uma NF no estoque (entrada · com pré-match por nome)
+// ═══════════════════════════════════════════════════════════
+function NfEstoqueModal({ nota, onClose, onDone }) {
+  const [produtos, setProdutos] = useState([]);
+  const [linhas, setLinhas] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    logistica.estoque.produtos().then(prods => {
+      const ps = Array.isArray(prods) ? prods : [];
+      setProdutos(ps);
+      const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      const match = (desc) => {
+        const toks = norm(desc).split(/\s+/).filter(w => w.length > 2);
+        let best = null, bs = 0;
+        for (const p of ps) { const pn = norm(p.nome); let s = 0; for (const w of toks) if (pn.includes(w)) s++; if (s > bs) { bs = s; best = p; } }
+        return bs >= 1 ? best : null;
+      };
+      setLinhas((nota.itens || []).map(it => {
+        const m = match(it.descricao);
+        return { desc: it.descricao, produto_id: m?.id || '', quantidade: it.quantidade || 1, validade: '', incluir: !!m };
+      }));
+    }).catch(e => setErr(e.message));
+  }, [nota]);
+
+  const prodMap = useMemo(() => Object.fromEntries(produtos.map(p => [p.id, p])), [produtos]);
+  const upd = (i, k, v) => setLinhas(L => L.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+
+  async function lancar() {
+    const movs = linhas
+      .filter(l => l.incluir && l.produto_id && Number(l.quantidade) > 0)
+      .map(l => ({ produto_id: l.produto_id, tipo: 'entrada', quantidade: Number(l.quantidade), validade: l.validade || null, motivo: `Entrada da NF ${nota.numero || ''}`.trim() }));
+    if (!movs.length) { setErr('Marque ao menos um item com produto e quantidade.'); return; }
+    setSaving(true); setErr('');
+    try { await logistica.estoque.lancar(movs); onDone(movs.length); }
+    catch (e) { setErr(e.message); } finally { setSaving(false); }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 50, zIndex: 1100 }} onClick={onClose}>
+      <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: '95%', maxWidth: 760, maxHeight: '85vh', overflowY: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 6 }}>Lançar NF no estoque</div>
+        <div style={{ fontSize: 13, color: C.text2, marginBottom: 16 }}>Confirme o produto de cada item da nota {nota.numero ? `nº ${nota.numero}` : ''} e a quantidade. Itens sem produto ficam de fora (cadastre na aba Produtos antes).</div>
+        {err && <div style={{ background: C.redBg, color: C.red, padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>{err}</div>}
+        <table style={styles.table}>
+          <thead><tr>
+            <th style={styles.th}></th><th style={styles.th}>Item da nota</th><th style={styles.th}>Produto no estoque</th>
+            <th style={{ ...styles.th, width: 80, textAlign: 'right' }}>Qtd</th><th style={styles.th}>Validade</th>
+          </tr></thead>
+          <tbody>
+            {linhas.length === 0 ? <tr><td colSpan={5} style={styles.empty}>Esta nota não tem itens detalhados.</td></tr>
+              : linhas.map((l, i) => {
+                const p = prodMap[l.produto_id];
+                return (
+                  <tr key={i}>
+                    <td style={styles.td}><input type="checkbox" checked={l.incluir} onChange={e => upd(i, 'incluir', e.target.checked)} /></td>
+                    <td style={{ ...styles.td, fontSize: 12, maxWidth: 220 }}>{l.desc}</td>
+                    <td style={styles.td}>
+                      <select style={{ ...styles.select, width: '100%' }} value={l.produto_id} onChange={e => upd(i, 'produto_id', e.target.value)}>
+                        <option value="">— escolher —</option>
+                        {produtos.map(pp => <option key={pp.id} value={pp.id}>{pp.nome}</option>)}
+                      </select>
+                    </td>
+                    <td style={styles.td}><input type="number" min="0" step="any" style={{ ...styles.input, width: 70 }} value={l.quantidade} onChange={e => upd(i, 'quantidade', e.target.value)} /></td>
+                    <td style={styles.td}>{p?.controla_validade ? <input type="date" style={styles.input} value={l.validade} onChange={e => upd(i, 'validade', e.target.value)} /> : <span style={{ color: C.text3, fontSize: 12 }}>—</span>}</td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button onClick={lancar} disabled={saving}>{saving ? 'Lançando...' : 'Lançar entradas'}</Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ═══════════════════════════════════════════════════════════

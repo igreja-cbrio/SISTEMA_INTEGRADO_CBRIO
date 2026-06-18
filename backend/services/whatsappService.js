@@ -115,10 +115,89 @@ async function sendDevocionalDiario(telefone, vars) {
   return sendTemplate(telefone, TEMPLATE_DEVOCIONAL, TEMPLATE_LANG, params);
 }
 
+// ============================================================
+// Camada de envio pra MEMBRO (eventos do app) · plug-and-play
+// ------------------------------------------------------------
+// Lê o NOME do template aprovado por env (quando vazio = no-op gracioso),
+// resolve telefone + opt-in do membro, e respeita o consentimento
+// (obrigatório p/ Marketing · opcional p/ Utility via WHATSAPP_OPTIN_OBRIGATORIO).
+// Token: usa WHATSAPP_ACCESS_TOKEN (o mesmo do bot, já em prod) ou WHATSAPP_TOKEN.
+// ============================================================
+const { supabase } = require('../utils/supabase');
+
+const TEMPLATES_APP = {
+  inscricao_confirmada: process.env.WHATSAPP_TEMPLATE_INSCRICAO,      // {{1}} nome · {{2}} tipo
+  doacao_recebida:      process.env.WHATSAPP_TEMPLATE_DOACAO,         // {{1}} valor · {{2}} tipo
+  kids_vinculo:         process.env.WHATSAPP_TEMPLATE_KIDS_VINCULO,   // {{1}} criança · {{2}} aprovado/recusado
+  kids_precheckin:      process.env.WHATSAPP_TEMPLATE_KIDS_PRECHECKIN,// {{1}} responsável (ou código)
+  batismo_lembrete:     process.env.WHATSAPP_TEMPLATE_BATISMO,        // {{1}} data · {{2}} hora
+  escala_voluntario:    process.env.WHATSAPP_TEMPLATE_ESCALA,         // {{1}} ministério · {{2}} evento · {{3}} quando
+  aniversario:          process.env.WHATSAPP_TEMPLATE_ANIVERSARIO,    // {{1}} nome (Marketing)
+};
+const TEMPLATES_MARKETING = new Set(['aniversario']);
+const OPTIN_SEMPRE = process.env.WHATSAPP_OPTIN_OBRIGATORIO === '1';
+const ENVIO_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || TOKEN;
+
+// Dispara um template pra um membro. NUNCA quebra o fluxo chamador (fire-and-forget).
+// Retorna {skipped:'...'} quando não há o que fazer (template não configurado,
+// sem telefone, sem opt-in em Marketing, etc.).
+async function notificarMembro(membroId, chave, params = [], { idioma = TEMPLATE_LANG } = {}) {
+  try {
+    const templateName = TEMPLATES_APP[chave];
+    if (!templateName) return { skipped: 'template_nao_configurado' }; // no-op até aprovar + setar env
+    if (!ENVIO_TOKEN || !PHONE_NUMBER_ID) return { skipped: 'wpp_nao_configurado' };
+    if (!membroId) return { skipped: 'sem_membro' };
+
+    const { data: m } = await supabase
+      .from('mem_membros')
+      .select('telefone, whatsapp_optin')
+      .eq('id', membroId)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!m?.telefone) return { skipped: 'sem_telefone' };
+
+    const exigeOptin = TEMPLATES_MARKETING.has(chave) || OPTIN_SEMPRE;
+    if (exigeOptin && !m.whatsapp_optin) return { skipped: 'sem_optin' };
+
+    const to = normalizarTelefone(m.telefone);
+    if (!to) return { skipped: 'telefone_invalido' };
+
+    const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
+    const body = {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: idioma },
+        components: params.length
+          ? [{ type: 'body', parameters: params.map((tx) => ({ type: 'text', text: String(tx).slice(0, 1024) })) }]
+          : undefined,
+      },
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ENVIO_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn('[WPP] notificarMembro %s erro %d: %j', chave, res.status, json);
+      return { sent: false, status: res.status };
+    }
+    return { sent: true, messageId: json.messages?.[0]?.id };
+  } catch (e) {
+    console.warn('[WPP] notificarMembro %s exception:', chave, e.message);
+    return { error: e.message };
+  }
+}
+
 module.exports = {
   configurado,
   normalizarTelefone,
   sendTemplate,
   sendPedidoAtualizado,
   sendDevocionalDiario,
+  notificarMembro,
+  TEMPLATES_APP,
 };

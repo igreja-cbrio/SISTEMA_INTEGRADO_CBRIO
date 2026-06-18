@@ -607,4 +607,154 @@ router.post('/:area/nps', authorizeModule('painel-area', 3), async (req, res) =>
   }
 });
 
+// ============================================================
+// Aba "Pessoas" do AMI / Bridge · lista quem declarou frequentar a área
+// (mem_membros.frequenta_area) com faixa etária. Detalhe SEM contribuições.
+// ============================================================
+
+// Faixa etária pela data de nascimento (espelha fn_faixa_etaria do banco).
+function faixaEtaria(dataNasc) {
+  if (!dataNasc) return null;
+  const n = new Date(dataNasc);
+  if (isNaN(n.getTime())) return null;
+  const h = new Date();
+  let idade = h.getFullYear() - n.getFullYear();
+  const m = h.getMonth() - n.getMonth();
+  if (m < 0 || (m === 0 && h.getDate() < n.getDate())) idade--;
+  if (idade < 13) return 'crianca';
+  if (idade <= 17) return 'adolescente';
+  if (idade <= 30) return 'jovem';
+  return 'adulto';
+}
+
+// Faixa 13–30 (adolescente+jovem) → janela de data de nascimento.
+function janelaJovemAdolescente() {
+  const h = new Date();
+  const fmt = (y) => `${y}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;
+  return { minBirth: fmt(h.getFullYear() - 31), maxBirth: fmt(h.getFullYear() - 13) };
+}
+
+// GET /:area/pessoas — quem DECLAROU frequentar o ministério + todos os
+// jovens/adolescentes (potenciais). Cada pessoa tem `frequenta_declarado`.
+router.get('/:area/pessoas', authorizeModule('painel-area', 1), async (req, res) => {
+  try {
+    const area = String(req.params.area).toLowerCase();
+    if (!['ami', 'bridge'].includes(area)) {
+      return res.status(400).json({ error: 'Aba Pessoas só existe para AMI e Bridge' });
+    }
+    const { minBirth, maxBirth } = janelaJovemAdolescente();
+    const orFilter = `frequenta_area.eq.${area},and(data_nascimento.gt.${minBirth},data_nascimento.lte.${maxBirth})`;
+
+    // paginado (pode passar de 1000 jovens/adolescentes)
+    let all = [];
+    let from = 0;
+    const page = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .select('id, nome, foto_url, telefone, data_nascimento, status, frequenta_area')
+        .is('deleted_at', null)
+        .or(orFilter)
+        .order('nome')
+        .range(from, from + page - 1);
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    const pessoas = all.map((m) => ({
+      ...m,
+      faixa_etaria: faixaEtaria(m.data_nascimento),
+      frequenta_declarado: m.frequenta_area === area,
+    }));
+    const por_faixa = pessoas.reduce((acc, p) => {
+      const f = p.faixa_etaria || 'sem_data';
+      acc[f] = (acc[f] || 0) + 1;
+      return acc;
+    }, {});
+    const confirmados = pessoas.filter((p) => p.frequenta_declarado).length;
+    res.json({
+      pessoas,
+      total: pessoas.length,
+      confirmados,
+      potenciais: pessoas.length - confirmados,
+      por_faixa,
+    });
+  } catch (e) {
+    console.error('painel-area/pessoas:', e.message);
+    res.status(500).json({ error: 'Erro ao listar pessoas' });
+  }
+});
+
+// GET /:area/pessoas/:id — detalhe da pessoa (SEM contribuições/financeiro)
+router.get('/:area/pessoas/:id', authorizeModule('painel-area', 1), async (req, res) => {
+  try {
+    const area = String(req.params.area).toLowerCase();
+    if (!['ami', 'bridge'].includes(area)) {
+      return res.status(400).json({ error: 'Area invalida' });
+    }
+    const { id } = req.params;
+
+    const { data: m, error } = await supabase
+      .from('mem_membros')
+      .select('id, nome, foto_url, telefone, email, data_nascimento, status, frequenta_area, familia_id, created_at')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ error: 'Pessoa não encontrada' });
+    // escopo: quem declarou esta área OU é jovem/adolescente (potencial).
+    // Defesa no servidor: líder de área não abre ficha de adulto de fora.
+    const faixa = faixaEtaria(m.data_nascimento);
+    const ehPotencial = faixa === 'jovem' || faixa === 'adolescente';
+    if (m.frequenta_area !== area && !ehPotencial) {
+      return res.status(403).json({ error: 'Pessoa fora do escopo deste ministério.' });
+    }
+
+    // família (nome)
+    let familia = null;
+    if (m.familia_id) {
+      const { data: f } = await supabase.from('mem_familias').select('id, nome').eq('id', m.familia_id).maybeSingle();
+      familia = f || null;
+    }
+    // grupo de conexão atual
+    let grupo = null;
+    const { data: gm } = await supabase
+      .from('mem_grupo_membros')
+      .select('grupo_id, funcao, mem_grupos(id, nome)')
+      .eq('membro_id', id)
+      .is('saiu_em', null)
+      .limit(1)
+      .maybeSingle();
+    if (gm) {
+      const g = Array.isArray(gm.mem_grupos) ? gm.mem_grupos[0] : gm.mem_grupos;
+      grupo = g ? { id: g.id, nome: g.nome, funcao: gm.funcao || null } : null;
+    }
+    // ministérios em que serve (voluntariado ativo)
+    const { data: vols } = await supabase
+      .from('mem_voluntarios')
+      .select('ministerio, area, desde')
+      .eq('membro_id', id)
+      .is('ate', null);
+    // trilha (marcos concluídos)
+    const { data: trilha } = await supabase
+      .from('mem_trilha_valores')
+      .select('etapa, concluida, concluida_em')
+      .eq('membro_id', id);
+
+    res.json({
+      membro: { ...m, faixa_etaria: faixaEtaria(m.data_nascimento) },
+      familia,
+      grupo,
+      ministerios: vols || [],
+      trilha: trilha || [],
+      // contribuições NÃO são retornadas aqui (regra: líder de área não vê doação)
+    });
+  } catch (e) {
+    console.error('painel-area/pessoas/:id:', e.message);
+    res.status(500).json({ error: 'Erro ao abrir pessoa' });
+  }
+});
+
 module.exports = router;
