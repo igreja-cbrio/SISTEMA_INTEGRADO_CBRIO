@@ -279,14 +279,15 @@ const ENCONTRO_STATUS: Record<string, { label: string; color: string }> = {
 // atendido e respondido, não respondeu, não compareceu e não atendido. NÃO conta:
 // "sem retorno do responsável" (o responsável não retornou · fica no denominador)
 // e "número errado" (impossível contatar · sai do denominador).
+// Ordem = fluxo que o acompanhamento segue (do pior desfecho ao melhor).
 const PCONTATO_STATUS: { v: string; label: string; positivo?: boolean }[] = [
-  { v: 'respondeu',           label: 'Respondeu',                  positivo: true },
-  { v: 'atendido_respondido', label: 'Atendido e respondido',      positivo: true },
+  { v: 'numero_errado',       label: 'Número errado' },
   { v: 'nao_respondeu',       label: 'Não respondeu' },
+  { v: 'respondeu',           label: 'Respondeu',                  positivo: true },
+  { v: 'sem_retorno',         label: 'Sem retorno do responsável' },
   { v: 'nao_compareceu',      label: 'Não compareceu' },
   { v: 'nao_atendido',        label: 'Não atendido' },
-  { v: 'sem_retorno',         label: 'Sem retorno do responsável' },
-  { v: 'numero_errado',       label: 'Número errado' },
+  { v: 'atendido_respondido', label: 'Atendido e respondido',      positivo: true },
 ];
 // Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
 // independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
@@ -946,9 +947,8 @@ export default function Cuidados() {
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
   const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'atendidos' | 'encontro_marcado' | 'sem_encontro' | 'aguardando_desfecho' | 'atrasados'>('todos');
-  const [convertFilterTag, setConvertFilterTag] = useState<string>('');
-  const [convertFilterFrom, setConvertFilterFrom] = useState<string>('');
-  const [convertFilterTo, setConvertFilterTo] = useState<string>('');
+  const [convertFilterStatus, setConvertFilterStatus] = useState<string>(''); // primeiro_contato_status ('' = todos · 'sem' = sem status)
+  const [convertPeriodo, setConvertPeriodo] = useState<string>('tudo'); // 30/60/90/180/365/tudo (por data_culto)
   const [search, setSearch] = useState('');
 
   async function loadAll() {
@@ -1056,6 +1056,14 @@ export default function Cuidados() {
     }
   }
 
+  // Corte por período (data_culto >= hoje - N dias) · 'tudo' = sem corte
+  const convertPeriodoCorte = useMemo(() => {
+    if (convertPeriodo === 'tudo') return null;
+    const dias = Number(convertPeriodo);
+    if (!dias) return null;
+    return new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+  }, [convertPeriodo]);
+
   const convertidosFiltrados = useMemo(() => {
     const q = convertSearch.trim().toLowerCase();
     return convertidos.filter((c: any) => {
@@ -1068,24 +1076,32 @@ export default function Cuidados() {
         const j = jMap.get(c.id);
         if (!(j && [j.contato, j.batismo, j.next].some((m: any) => m?.status === 'atrasado'))) return false;
       }
-      if (convertFilterTag && !(Array.isArray(c.tags) && c.tags.includes(convertFilterTag))) return false;
-      if (convertFilterFrom && c.data_culto < convertFilterFrom) return false;
-      if (convertFilterTo && c.data_culto > convertFilterTo) return false;
+      if (convertFilterStatus) {
+        if (convertFilterStatus === 'sem') { if (c.primeiro_contato_status) return false; }
+        else if (c.primeiro_contato_status !== convertFilterStatus) return false;
+      }
+      if (convertPeriodoCorte && (c.data_culto || '') < convertPeriodoCorte) return false;
       if (q) {
         const hay = `${c.nome || ''} ${c.telefone || ''} ${c.cpf || ''} ${c.observacoes || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [convertidos, convertSearch, convertFilter, convertFilterTag, convertFilterFrom, convertFilterTo, jMap]);
+  }, [convertidos, convertSearch, convertFilter, convertFilterStatus, convertPeriodoCorte, jMap]);
 
-  const filtersActive = convertSearch || convertFilter !== 'todos' || convertFilterTag || convertFilterFrom || convertFilterTo;
+  // Resumo de Contato calculado AO VIVO do estado (atualiza ao mexer no dropdown).
+  const contatoResumoLive = useMemo(() => {
+    const total = convertidos.length;
+    const feitos = convertidos.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
+    return { total, feitos, pendentes: total - feitos, pct: total ? Math.round((feitos / total) * 100) : 0 };
+  }, [convertidos]);
+
+  const filtersActive = convertSearch || convertFilter !== 'todos' || convertFilterStatus || convertPeriodo !== 'tudo';
   function limparFiltrosConvertidos() {
     setConvertSearch('');
     setConvertFilter('todos');
-    setConvertFilterTag('');
-    setConvertFilterFrom('');
-    setConvertFilterTo('');
+    setConvertFilterStatus('');
+    setConvertPeriodo('tudo');
   }
 
   const convertPendentes = useMemo(
@@ -1358,9 +1374,9 @@ export default function Cuidados() {
               <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
                 <div className="rounded-lg p-2 shrink-0" style={{ background: C.primary + '18' }}><Phone className="h-5 w-5" style={{ color: C.primary }} /></div>
                 <div>
-                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Contato ≤ 3 dias</p>
-                  <span className="text-2xl font-bold text-foreground">{jornadaData.resumo.contato_pct}%</span>
-                  <p className="text-[11px] text-muted-foreground">{jornadaData.resumo.contato_no_prazo}/{jornadaData.resumo.total} no prazo · {jornadaData.resumo.contato_atrasados} atrasados</p>
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Contato feito</p>
+                  <span className="text-2xl font-bold text-foreground">{contatoResumoLive.pct}%</span>
+                  <p className="text-[11px] text-muted-foreground">{contatoResumoLive.feitos}/{contatoResumoLive.total} feitos · {contatoResumoLive.pendentes} pendentes</p>
                 </div>
               </div>
               <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
@@ -1411,21 +1427,27 @@ export default function Cuidados() {
                 <SelectItem value="atrasados">Atrasados na jornada</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={convertFilterTag || '__all'} onValueChange={(v: any) => setConvertFilterTag(v === '__all' ? '' : v)}>
-              <SelectTrigger className="w-44"><SelectValue placeholder="Filtrar por tag" /></SelectTrigger>
+            <Select value={convertFilterStatus || '__all'} onValueChange={(v: any) => setConvertFilterStatus(v === '__all' ? '' : v)}>
+              <SelectTrigger className="w-52"><SelectValue placeholder="Filtrar por status" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all">Todas as tags</SelectItem>
-                {convertTags.map(t => (
-                  <SelectItem key={t} value={t}>{TAG_LABELS[t] || t}</SelectItem>
+                <SelectItem value="__all">Todos os status</SelectItem>
+                {PCONTATO_STATUS.map(s => (
+                  <SelectItem key={s.v} value={s.v}>{s.label}</SelectItem>
                 ))}
+                <SelectItem value="sem">Sem status</SelectItem>
               </SelectContent>
             </Select>
-            <div className="flex items-center gap-1 text-xs">
-              <Label className="text-xs text-muted-foreground">De</Label>
-              <Input type="date" value={convertFilterFrom} onChange={e => setConvertFilterFrom(e.target.value)} className="w-36 h-9" />
-              <Label className="text-xs text-muted-foreground">até</Label>
-              <Input type="date" value={convertFilterTo} onChange={e => setConvertFilterTo(e.target.value)} className="w-36 h-9" />
-            </div>
+            <Select value={convertPeriodo} onValueChange={(v: any) => setConvertPeriodo(v)}>
+              <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="30">Últimos 30 dias</SelectItem>
+                <SelectItem value="60">Últimos 60 dias</SelectItem>
+                <SelectItem value="90">Últimos 90 dias</SelectItem>
+                <SelectItem value="180">Últimos 180 dias</SelectItem>
+                <SelectItem value="365">Último 1 ano</SelectItem>
+                <SelectItem value="tudo">Tudo</SelectItem>
+              </SelectContent>
+            </Select>
             {filtersActive && (
               <Button variant="ghost" size="sm" onClick={limparFiltrosConvertidos} className="text-xs">
                 Limpar filtros
