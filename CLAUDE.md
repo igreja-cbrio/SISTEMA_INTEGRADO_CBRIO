@@ -1666,6 +1666,20 @@ via `window.print` na Brother QL-820NWB default do Windows).
   `fixed inset-0 z-[60]` cobrindo o AppShell; esconde a navegação e deixa só o
   check-in. Sair exige **PIN** (criado na 1ª vez · localStorage
   `cbrio-totem-kids-pin`), igual ao totem de membros (`TotemMembro.tsx`).
+- **Foto da criança pelo app + consentimento ECA/LGPD (2026-06-17)**: o
+  responsável autorizado pode adicionar (opcional) a foto da criança na tela do
+  filho no app, com **consentimento explícito** (ECA Lei 8.069/90 arts. 17/18 ·
+  LGPD Lei 13.709/18 art. 14 · texto + checkbox · versão em
+  `kids_criancas.foto_consentimento_versao`). Migration `20260617200000`
+  (aplicada): `foto_storage_path` (bucket **privado** `kids-documentos`,
+  prefixo `foto-crianca/`), `foto_consentimento_por/_versao` (foto_url +
+  foto_consentimento_em já existiam). App: `POST /app/kids/filho/:id/foto`
+  (exige `consentimento:true`) e `/foto/remover` (revoga + apaga). **Exibição
+  só com consentimento, via signed URL** — helper `fotoVisivelCrianca()` em
+  `totemKids.js` resolve a foto do app na busca, detalhe, listagem e
+  pré-check-in por código (foto_url legada do sistema segue inalterada).
+  ⚠️ As views de checkout-por-código e roster de sala ainda leem foto_url
+  legado (não mostram foto do app · não é o ponto de identificação na entrada).
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
