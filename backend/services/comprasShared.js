@@ -2,6 +2,7 @@
 // fluxo de nota fiscal via WhatsApp).
 
 const { supabase } = require('../utils/supabase');
+const { sugerirCategoria } = require('./nfScanner');
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 
@@ -60,6 +61,11 @@ async function criarCompraPendenteDeNota({ extraido, storagePath, telefone, orig
     ? await resolverFornecedor({ nome: extraido?.emitente_nome, cnpj: extraido?.emitente_cnpj })
     : null;
   const comprador = telefone ? await matchCompradorPorTelefone(telefone) : null;
+  let sugestao = null;
+  if (extraido?.valor_total) {
+    try { sugestao = await sugerirCategoria({ cnpj: extraido?.emitente_cnpj, nome: extraido?.emitente_nome, valor: extraido?.valor_total, descricao: extraido?.descricao_resumo }); }
+    catch (e) { /* best-effort */ }
+  }
 
   const { data, error } = await supabase.from('log_compras')
     .insert({
@@ -72,6 +78,8 @@ async function criarCompraPendenteDeNota({ extraido, storagePath, telefone, orig
       materiais: extraido?.descricao_resumo || null,
       valor: extraido?.valor_total || null,
       forma_pgto: FORMA_PGTO_IA[extraido?.forma_pagamento] || null,
+      plano_contas_id: sugestao?.plano_contas_id || null,
+      centro_custo_id: sugestao?.centro_custo_id || null,
       comprador: comprador?.nome || null,
       comprador_id: comprador?.id || null,
       origem_registro: origem,

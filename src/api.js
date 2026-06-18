@@ -904,6 +904,7 @@ export const logistica = {
     list: (params) => get('/logistica/compras' + (params ? '?' + new URLSearchParams(params) : '')),
     kpis: () => get('/logistica/compras/kpis'),
     centrosCusto: () => get('/logistica/compras/aux/centros-custo'),
+    planoContas: () => get('/logistica/compras/aux/plano-contas'),
     compradores: () => get('/logistica/compras/aux/compradores'),
     create: (data) => post('/logistica/compras', data),
     update: (id, data) => put(`/logistica/compras/${id}`, data),
