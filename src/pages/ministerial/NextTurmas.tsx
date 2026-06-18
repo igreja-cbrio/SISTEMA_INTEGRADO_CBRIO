@@ -321,7 +321,7 @@ type Pessoa = {
   next_resolucao?: string | null;
 };
 const RESOLUCAO_LABEL: Record<string, string> = {
-  contatado: 'Contatado', sem_interesse: 'Sem interesse', ja_fez_fora: 'Já fez fora', encerrado: 'Encerrado',
+  contatado: 'Contatado', sem_interesse: 'Sem interesse', encerrado: 'Encerrado',
 };
 const RESOLUCOES = Object.keys(RESOLUCAO_LABEL);
 
@@ -332,6 +332,7 @@ function PessoasView() {
   const [busca, setBusca] = useState('');
   const [fStatus, setFStatus] = useState<'todos' | 'nao_inscrito' | 'matriculado' | 'formado' | 'resolvido'>('todos');
   const [fOrigem, setFOrigem] = useState<'todos' | 'convertido' | 'externo'>('todos');
+  const [fData, setFData] = useState<'tudo' | '30' | '60' | '90' | '180' | '365'>('tudo');
   const [matricularPessoa, setMatricularPessoa] = useState<Pessoa | null>(null);
 
   const load = useCallback(async () => {
@@ -356,6 +357,10 @@ function PessoasView() {
   const filtrada = itens.filter(p => {
     if (fStatus !== 'todos' && p.next_status !== fStatus) return false;
     if (fOrigem !== 'todos' && p.tipo !== fOrigem) return false;
+    if (fData !== 'tudo') {
+      const lim = Number(fData);
+      if (p.dias_desde_conversao == null || p.dias_desde_conversao > lim) return false; // por data de conversão
+    }
     if (busca) {
       const q = busca.toLowerCase();
       if (!`${p.nome} ${p.telefone || ''}`.toLowerCase().includes(q)) return false;
@@ -371,7 +376,7 @@ function PessoasView() {
           <Pill label="Formados" v={resumo.formados} color={C.primary} />
           <Pill label="Não inscritos" v={resumo.nao_inscritos} color={C.warn} />
           <Pill label="Fora do prazo" v={resumo.fora_prazo} color={C.gray} />
-          <Pill label="Resolvidos" v={resumo.resolvidos} color={C.gray} />
+          <Pill label="Observados" v={resumo.resolvidos} color={C.gray} />
         </div>
       )}
 
@@ -380,7 +385,7 @@ function PessoasView() {
           {(['todos', 'nao_inscrito', 'matriculado', 'formado', 'resolvido'] as const).map(s => (
             <button key={s} onClick={() => setFStatus(s)}
               className={`px-3 py-1.5 text-xs rounded-lg whitespace-nowrap ${fStatus === s ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
-              {s === 'todos' ? 'Todos' : s === 'nao_inscrito' ? 'Não inscritos' : s === 'matriculado' ? 'Matriculados' : s === 'formado' ? 'Formados' : 'Resolvidos'}
+              {s === 'todos' ? 'Todos' : s === 'nao_inscrito' ? 'Não inscritos' : s === 'matriculado' ? 'Matriculados' : s === 'formado' ? 'Formados' : 'Observados'}
             </button>
           ))}
         </div>
@@ -389,6 +394,14 @@ function PessoasView() {
             <button key={o} onClick={() => setFOrigem(o)}
               className={`px-3 py-1.5 text-xs rounded-lg whitespace-nowrap ${fOrigem === o ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
               {o === 'todos' ? 'Todas origens' : o === 'convertido' ? 'Convertidos' : 'Externos'}
+            </button>
+          ))}
+        </div>
+        <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 overflow-x-auto" title="Por data de conversão">
+          {([['tudo', 'Tudo'], ['30', '30d'], ['60', '60d'], ['90', '90d'], ['180', '180d'], ['365', '1 ano']] as const).map(([v, label]) => (
+            <button key={v} onClick={() => setFData(v)}
+              className={`px-2.5 py-1.5 text-xs rounded-lg whitespace-nowrap ${fData === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+              {label}
             </button>
           ))}
         </div>
@@ -443,7 +456,7 @@ function PessoasView() {
                         </Button>
                         {p.convertido_id && (
                           <Select onValueChange={(v) => resolver(p, v)}>
-                            <SelectTrigger className="h-7 w-[110px] text-xs"><SelectValue placeholder="Resolver" /></SelectTrigger>
+                            <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue placeholder="Observações" /></SelectTrigger>
                             <SelectContent>{RESOLUCOES.map(r => <SelectItem key={r} value={r}>{RESOLUCAO_LABEL[r]}</SelectItem>)}</SelectContent>
                           </Select>
                         )}
@@ -475,7 +488,7 @@ function NextStatusCell({ p }: { p: Pessoa }) {
   if (p.next_status === 'matriculado')
     return <Badge variant="outline" className="text-[10px]" style={{ color: C.info, borderColor: C.info + '60' }}>Matriculado{p.turma_nome ? ` · ${p.turma_nome}` : ''}</Badge>;
   if (p.next_status === 'resolvido')
-    return <Badge variant="outline" className="text-[10px]" style={{ color: C.gray, borderColor: C.gray + '60' }}>Resolvido{p.next_resolucao ? ` · ${RESOLUCAO_LABEL[p.next_resolucao] || p.next_resolucao}` : ''}</Badge>;
+    return <Badge variant="outline" className="text-[10px]" style={{ color: C.gray, borderColor: C.gray + '60' }}>Obs{p.next_resolucao ? ` · ${RESOLUCAO_LABEL[p.next_resolucao] || p.next_resolucao}` : ''}</Badge>;
   // nao_inscrito
   const fora = p.bucket === 'fora_prazo';
   return (

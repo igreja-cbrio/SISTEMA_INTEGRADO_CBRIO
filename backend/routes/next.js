@@ -483,7 +483,14 @@ router.get('/turmas', async (req, res) => {
     const { data: encs } = await supabase.from('next_encontros').select('turma_id').in('turma_id', ids);
     (encs || []).forEach(e => { const c = cont[e.turma_id] || (cont[e.turma_id] = { total: 0, encontros: 0 }); c.encontros = (c.encontros || 0) + 1; });
   }
-  res.json((turmas || []).map(t => ({ ...t, contagem: cont[t.id] || { total: 0, encontros: 0 } })));
+  const lista = (turmas || []).map(t => ({ ...t, contagem: cont[t.id] || { total: 0, encontros: 0 } }));
+  // ordem por data (mês mais recente primeiro); manuais sem origem_mes caem por created_at
+  lista.sort((a, b) => {
+    const ka = a.origem_mes || String(a.created_at || '').slice(0, 7);
+    const kb = b.origem_mes || String(b.created_at || '').slice(0, 7);
+    return kb < ka ? -1 : kb > ka ? 1 : 0;
+  });
+  res.json(lista);
 });
 
 // POST /turmas — cria turma (+ os encontros · default 2)
@@ -718,6 +725,13 @@ router.get('/pessoas', async (req, res) => {
       });
     }
 
+    // prioridade na NSM: convertidos por data de conversão (recente primeiro), externos por último
+    itens.sort((a, b) => {
+      if (a.tipo !== b.tipo) return a.tipo === 'convertido' ? -1 : 1;
+      const da = a.data_nsm || ''; const db = b.data_nsm || '';
+      return db < da ? -1 : db > da ? 1 : 0;
+    });
+
     const resumo = {
       total: itens.length,
       convertidos: itens.filter(i => i.tipo === 'convertido').length,
@@ -739,7 +753,7 @@ router.get('/pessoas', async (req, res) => {
 // (acaba o "vermelho pra sempre"). Body: { resolucao }.
 router.post('/convertidos/:id/resolver', async (req, res) => {
   const { resolucao } = req.body || {};
-  const VALID = ['contatado', 'sem_interesse', 'ja_fez_fora', 'encerrado'];
+  const VALID = ['contatado', 'sem_interesse', 'encerrado'];
   if (!VALID.includes(resolucao)) return res.status(400).json({ error: 'resolucao inválida' });
   const { data, error } = await supabase.from('cui_convertidos')
     .update({ next_resolucao: resolucao, next_resolucao_em: new Date().toISOString(), next_resolucao_por: req.user?.id ?? null })
