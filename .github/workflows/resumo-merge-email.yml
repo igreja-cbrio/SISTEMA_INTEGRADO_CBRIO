@@ -1,0 +1,45 @@
+name: Resumo do merge por e-mail (Eduardo)
+
+# Em todo merge na main, gera um resumo em linguagem de leigo (Claude Haiku)
+# do que a PR fez e envia por e-mail (Microsoft Graph) para o Eduardo.
+# Roda 100% no CI — nao toca no app nem no banco em producao.
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Numero da PR para (re)enviar o resumo"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  resumo:
+    # so quando a PR foi realmente mergeada na main (ou disparo manual)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Gerar resumo e enviar e-mail
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET || secrets.AZURE_CLIENT_SECRET }}
+          MERGE_MAIL_SENDER: ${{ secrets.MERGE_MAIL_SENDER || secrets.GRAPH_MAIL_SENDER || vars.MERGE_MAIL_SENDER || 'noreply@cbrio.org' }}
+          MERGE_MAIL_TO: ${{ vars.MERGE_MAIL_TO }}
+        run: node scripts/resumo-merge-email.mjs
