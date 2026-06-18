@@ -280,6 +280,25 @@ table tbody tr:hover {
           backdrop-filter: none;
   background: var(--cbrio-card);
 }
+/* ── Recharts · tema "vidro" global (afeta todos os gráficos) ── */
+.recharts-cartesian-grid line { stroke: var(--hairline); }
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line { stroke: var(--hairline); }
+.recharts-cartesian-axis-tick-value tspan,
+.recharts-cartesian-axis-tick-value { fill: var(--cbrio-text3); }
+.recharts-label, .recharts-text.recharts-label { fill: var(--cbrio-text2); }
+.recharts-legend-item-text { color: var(--cbrio-text2) !important; }
+.recharts-tooltip-cursor { fill: color-mix(in srgb, var(--teal) 9%, transparent) !important; }
+/* tooltip padrão (quando não há contentStyle inline) = vidro nítido */
+.recharts-default-tooltip {
+  background: var(--cbrio-card) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--shadow) !important;
+  padding: 8px 12px !important;
+}
+.recharts-default-tooltip .recharts-tooltip-label { color: var(--cbrio-text2) !important; }
+
 /* Cards ANINHADOS: o filho não repete blur (evita "borrão duplo"). */
 .glass-surface .glass-surface,
 .glass-surface .cbrio-card,
