@@ -349,7 +349,7 @@ export default function AppShell() {
       <CommandSearch />
 
       {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-border/50 bg-card/60 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-card/55">
         <div className="flex items-center justify-between h-14 px-4 md:px-6 max-w-[1800px] mx-auto gap-2">
           {/* Left: Menu mobile + Logo */}
           <div className="flex items-center gap-2">
