@@ -282,6 +282,14 @@ export default function DashboardSemanal() {
         <FiltrosFinanceiroBar />
       </div>
 
+      {/* Assistente financeiro · leitura automática da semana */}
+      <AssistenteFinanceiroCard
+        kpis={kpis}
+        buckets={buckets}
+        onVerDetalhe={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'resumo')))}
+        onComparar={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'comparativos')))}
+      />
+
       {/* CONTENT · slides animados com AnimatePresence */}
       <AnimatePresence mode="wait">
         <motion.div
@@ -349,6 +357,115 @@ export default function DashboardSemanal() {
         <span>Use ← → no teclado · {slide + 1} de {SLIDES.length}</span>
       </div>
     </div>
+  );
+}
+
+// ============================================================
+// ASSISTENTE FINANCEIRO · leitura automática (determinística) da semana
+// ============================================================
+function AssistenteFinanceiroCard({ kpis, buckets, onVerDetalhe, onComparar }) {
+  const [saude, setSaude] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    financeiroV2.saudeFinanceira?.(new Date().getFullYear())
+      .then(r => { if (!cancelled) setSaude(r); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const receita = Number(kpis?.receita || 0);
+  const delta = kpis?.receita_delta_wow;
+
+  // Culto/bloco que mais puxou as ofertas na semana (Quarta · Final de Semana · Durante a Semana)
+  const ofertasDoBucket = (b) => (b?.categorias || [])
+    .filter(c => /oferta/i.test(c.categoria))
+    .reduce((s, c) => s + Number(c.valor || 0), 0);
+  let cultoDestaque = null, maxOfertas = 0;
+  for (const key of ['quarta', 'domingo', 'outros']) {
+    const of = ofertasDoBucket(buckets?.[key]);
+    if (of > maxOfertas) { maxOfertas = of; cultoDestaque = buckets?.[key]?.nome; }
+  }
+
+  // Concentração de doadores (card Saúde · top 20% dos doadores)
+  const top20 = saude ? Number(saude.concentracao_top20pct_pct || 0) : null;
+  const conc = top20 == null ? null
+    : top20 >= 80 ? { txt: 'concentração de doadores segue alta', alerta: true }
+    : top20 >= 60 ? { txt: 'concentração de doadores em nível médio', alerta: false }
+    : { txt: 'base de doadores bem diluída', alerta: false };
+
+  const semDados = receita <= 0 && !cultoDestaque;
+
+  return (
+    <Card className="relative overflow-hidden border-primary/30">
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'linear-gradient(135deg, rgba(0,179,157,0.10), transparent 55%)' }}
+      />
+      <CardContent className="pt-5 pb-5 relative">
+        <div className="flex items-center gap-3 mb-3">
+          <div
+            className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: C.primarySoft, color: C.primary }}
+          >
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold leading-tight">Assistente financeiro</h3>
+            <p className="text-xs text-muted-foreground">Leitura automática da semana</p>
+          </div>
+        </div>
+
+        <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: C.primary }}>
+          Destaque da semana
+        </div>
+
+        {semDados ? (
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Ainda não há lançamentos de arrecadação nesta semana. Assim que os cultos
+            forem lançados, o resumo aparece aqui automaticamente.
+          </p>
+        ) : (
+          <p className="text-sm text-foreground/90 leading-relaxed">
+            Arrecadação acumulada de{' '}
+            <strong style={{ color: C.primary }}>{fmtMoney(receita)}</strong>
+            {delta !== null && delta !== undefined && (
+              <>
+                {' '}— {delta >= 0 ? 'alta' : 'queda'} de{' '}
+                <strong style={{ color: delta >= 0 ? C.green : C.red }}>{fmtPct(delta)}</strong>
+                {' '}vs. a semana anterior
+              </>
+            )}.
+            {cultoDestaque && (
+              <> A <strong style={{ color: C.primary }}>{cultoDestaque}</strong> puxou as ofertas;</>
+            )}
+            {conc && (
+              <>
+                {cultoDestaque ? ' ' : ' '}
+                {cultoDestaque ? conc.txt : conc.txt.charAt(0).toUpperCase() + conc.txt.slice(1)}
+                {conc.alerta && (
+                  <span className="text-amber-600 dark:text-amber-400"> (atenção no card Saúde)</span>
+                )}.
+              </>
+            )}
+          </p>
+        )}
+
+        <div className="flex items-center gap-2 mt-4">
+          <Button
+            size="sm"
+            onClick={onVerDetalhe}
+            className="text-white hover:opacity-90"
+            style={{ background: C.primary }}
+          >
+            Ver detalhe
+          </Button>
+          <Button size="sm" variant="outline" onClick={onComparar}>
+            Comparar semanas
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
