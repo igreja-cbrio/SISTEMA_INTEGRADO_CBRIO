@@ -345,7 +345,7 @@ export default function AppShell() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--cbrio-bg)' }}>
+    <div className="min-h-screen" style={{ background: 'transparent' }}>
       <CommandSearch />
 
       {/* Header */}
