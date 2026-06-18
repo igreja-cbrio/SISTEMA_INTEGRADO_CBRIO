@@ -212,8 +212,11 @@ function AlertaItem({ alerta, ordem, onClick }) {
 }
 
 const cardStyle = {
-  background: C.card,
+  background: 'var(--panel)',
+  WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+  backdropFilter: 'blur(14px) saturate(140%)',
   borderRadius: 16,
-  border: `1px solid ${C.border}`,
+  border: '1px solid var(--hairline)',
+  boxShadow: 'var(--shadow), var(--hi)',
   padding: '20px 24px',
 };
