@@ -1334,7 +1334,7 @@ router.get('/check-ins', async (req, res) => {
 
 router.post('/check-ins', async (req, res) => {
   try {
-    const { schedule_id, volunteer_id, service_id, method, is_unscheduled, checked_in_at } = req.body;
+    const { schedule_id, volunteer_id, service_id, method, is_unscheduled, checked_in_at, novo_cadastro } = req.body;
     if (!method) return res.status(400).json({ error: 'method obrigatorio' });
 
     // Hora real do check-in (preserva o horário de check-ins feitos OFFLINE no
@@ -1427,6 +1427,7 @@ router.post('/check-ins', async (req, res) => {
     // Sinaliza ao operador se o voluntário ainda não tem CPF cadastrado, pra
     // oferecer a captura logo após o check-in (frente 2 da unificacao).
     let needsCpf = false;
+    let volProfileName = null;
     let resolvedVolunteerId = volunteer_id || null;
     if (!resolvedVolunteerId && schedule_id) {
       const { data: sch } = await supabase.from('vol_schedules')
@@ -1435,8 +1436,22 @@ router.post('/check-ins', async (req, res) => {
     }
     if (resolvedVolunteerId) {
       const { data: vp } = await supabase.from('vol_profiles')
-        .select('cpf').eq('id', resolvedVolunteerId).maybeSingle();
+        .select('cpf, full_name').eq('id', resolvedVolunteerId).maybeSingle();
       needsCpf = !!vp && !vp.cpf;
+      volProfileName = vp?.full_name || null;
+    }
+
+    // Sinaliza pra coordenação quando o totem cadastra um voluntário NOVO na
+    // hora e marca presença sem escala — precisa de revisão (pessoa real?
+    // duplicado? completar cadastro). Fire-and-forget · não quebra o check-in.
+    if (novo_cadastro && resolvedVolunteerId) {
+      notificar({
+        modulo: 'voluntariado', tipo: 'vol_checkin_novo_sem_escala',
+        titulo: 'Novo voluntário cadastrado no totem',
+        mensagem: `${volProfileName || 'Voluntário'} foi cadastrado no totem e marcado presente sem escala. Revise o cadastro (dados, possível duplicado).`,
+        link: '/voluntariado', severidade: 'aviso',
+        chaveDedup: `vol_novo_totem_${resolvedVolunteerId}_${service_id || ''}`,
+      }).catch((e) => console.warn('[checkin novo notify]', e.message));
     }
 
     res.json({ ...data, isUnscheduled: !!resolvedUnscheduled, volunteer_id: resolvedVolunteerId, needs_cpf: needsCpf });

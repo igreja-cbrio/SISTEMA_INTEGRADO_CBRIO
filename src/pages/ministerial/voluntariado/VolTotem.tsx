@@ -81,6 +81,9 @@ export default function VolTotem() {
   const [manualSearch, setManualSearch] = useState('');
   const [manualLoading, setManualLoading] = useState(false);
   const [registering, setRegistering] = useState(false);
+  // Altura coberta pelo teclado virtual (tablet) · reservada no modo Manual pra
+  // a lista de nomes não ficar escondida atrás do teclado.
+  const [kbInset, setKbInset] = useState(0);
   const [localDone, setLocalDone] = useState<Set<string>>(new Set());
 
   // Facial recognition
@@ -128,6 +131,27 @@ export default function VolTotem() {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', onFs);
     return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+
+  // Teclado virtual (tablet): quando o campo de busca abre o teclado, o layout
+  // viewport não encolhe e o teclado cobre o fim da lista. A VisualViewport API
+  // diz quanto da tela está coberto · reservamos esse espaço (paddingBottom no
+  // modo Manual) pra lista sempre ficar acima do teclado e rolável.
+  useEffect(() => {
+    const vv = (window as any).visualViewport;
+    if (!vv) return;
+    const update = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      // ignora variações mínimas (barra de URL etc.) · só trata teclado real
+      setKbInset(inset > 120 ? Math.round(inset) : 0);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
   }, []);
 
   // ── Rede + sincronização da fila offline ──
@@ -550,7 +574,7 @@ export default function VolTotem() {
       processingRef.current = true;
       setManualSearch('');
       await submitCheckin(
-        { volunteer_id: profile.id, service_id: selectedServiceId, method: 'manual', is_unscheduled: true },
+        { volunteer_id: profile.id, service_id: selectedServiceId, method: 'manual', is_unscheduled: true, novo_cadastro: true },
         { name: profile.full_name, unscheduled: true },
         () => loadSchedules(),
       );
@@ -632,7 +656,7 @@ export default function VolTotem() {
   };
 
   return (
-    <div className={`min-h-[100dvh] bg-gradient-to-b ${c.page} flex flex-col`}>
+    <div className={`h-[100dvh] overflow-hidden bg-gradient-to-b ${c.page} flex flex-col`}>
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4">
         <div className="flex items-center gap-2 md:gap-3">
@@ -874,7 +898,10 @@ export default function VolTotem() {
 
       {/* ═══ Manual Mode ═══ */}
       {selectedServiceId && checkinMode === 'manual' && state !== 'success' && state !== 'error' && state !== 'already' && (
-        <div className="flex-1 flex flex-col gap-4 p-4 md:p-6 max-w-3xl w-full mx-auto">
+        <div
+          className="flex-1 flex flex-col gap-4 p-4 md:p-6 max-w-3xl w-full mx-auto min-h-0"
+          style={kbInset ? { paddingBottom: kbInset } : undefined}
+        >
           <div className="relative">
             <Search className={`absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 ${c.m40} pointer-events-none`} />
             <input
@@ -887,7 +914,7 @@ export default function VolTotem() {
             />
           </div>
 
-          <div className="flex-1 max-h-[60vh] overflow-y-auto space-y-2 pr-1">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
             {manualLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" />
