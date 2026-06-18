@@ -1090,11 +1090,26 @@ export default function Cuidados() {
   }, [convertidos, convertSearch, convertFilter, convertFilterStatus, convertPeriodoCorte, jMap]);
 
   // Resumo de Contato calculado AO VIVO do estado (atualiza ao mexer no dropdown).
-  const contatoResumoLive = useMemo(() => {
-    const total = convertidos.length;
-    const feitos = convertidos.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
-    return { total, feitos, pendentes: total - feitos, pct: total ? Math.round((feitos / total) * 100) : 0 };
-  }, [convertidos]);
+  // Resumo dos 4 cards · AO VIVO do estado (atualiza ao mexer no dropdown) e respeitando
+  // o PERÍODO selecionado. Denominador = contatáveis (exclui "número errado"). Pendentes =
+  // só os "—" (sem status e sem contato). Batismo/Next vêm do jornadaData por id.
+  const cardsResumo = useMemo(() => {
+    const corte = convertPeriodoCorte;
+    const jById = new Map<string, any>((jornadaData?.itens || []).map((i: any) => [i.id, i]));
+    const periodo = convertidos.filter((c: any) => !corte || (c.data_culto || '') >= corte);
+    const contataveis = periodo.filter((c: any) => c.primeiro_contato_status !== 'numero_errado');
+    const total = contataveis.length;
+    const feitos = contataveis.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
+    const pendentes = periodo.filter((c: any) => !c.primeiro_contato_status && !c.primeiro_contato_em).length; // só "—"
+    const atendidos = periodo.filter((c: any) => c.primeiro_contato_status === 'atendido_respondido').length;
+    const batismos = contataveis.filter((c: any) => jById.get(c.id)?.batismo?.feito).length;
+    const nexts = contataveis.filter((c: any) => jById.get(c.id)?.next?.feito).length;
+    const pct = (n: number) => total ? Math.round((n / total) * 100) : 0;
+    return {
+      total, feitos, pendentes, atendidos, batismos, nexts,
+      contato_pct: pct(feitos), atendido_pct: pct(atendidos), batismo_pct: pct(batismos), next_pct: pct(nexts),
+    };
+  }, [convertidos, jornadaData, convertPeriodoCorte]);
 
   const filtersActive = convertSearch || convertFilter !== 'todos' || convertFilterStatus || convertPeriodo !== 'tudo';
   function limparFiltrosConvertidos() {
@@ -1369,34 +1384,40 @@ export default function Cuidados() {
             <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Acompanhamento dos novos convertidos</h3>
             <p className="text-xs text-muted-foreground">Quem a Integração registrou neste período inicial · marque o atendimento, agende a visita e acompanhe a jornada (contato em 3d · batismo e Next em 90d · atrasados em vermelho).</p>
           </div>
-          {jornadaData?.resumo && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
-                <div className="rounded-lg p-2 shrink-0" style={{ background: C.primary + '18' }}><Phone className="h-5 w-5" style={{ color: C.primary }} /></div>
-                <div>
-                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Contato feito</p>
-                  <span className="text-2xl font-bold text-foreground">{contatoResumoLive.pct}%</span>
-                  <p className="text-[11px] text-muted-foreground">{contatoResumoLive.feitos}/{contatoResumoLive.total} feitos · {contatoResumoLive.pendentes} pendentes</p>
-                </div>
-              </div>
-              <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
-                <div className="rounded-lg p-2 shrink-0" style={{ background: '#0ea5e918' }}><CheckCircle2 className="h-5 w-5" style={{ color: '#0ea5e9' }} /></div>
-                <div>
-                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Batismo ≤ 90 dias</p>
-                  <span className="text-2xl font-bold text-foreground">{jornadaData.resumo.batismo_pct}%</span>
-                  <p className="text-[11px] text-muted-foreground">{jornadaData.resumo.batismo_feitos}/{jornadaData.resumo.total} batizados</p>
-                </div>
-              </div>
-              <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
-                <div className="rounded-lg p-2 shrink-0" style={{ background: C.purple + '18' }}><Sparkles className="h-5 w-5" style={{ color: C.purple }} /></div>
-                <div>
-                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Next ≤ 90 dias</p>
-                  <span className="text-2xl font-bold text-foreground">{jornadaData.resumo.next_pct}%</span>
-                  <p className="text-[11px] text-muted-foreground">{jornadaData.resumo.next_feitos}/{jornadaData.resumo.total} fizeram o Next</p>
-                </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
+              <div className="rounded-lg p-2 shrink-0" style={{ background: C.primary + '18' }}><Phone className="h-5 w-5" style={{ color: C.primary }} /></div>
+              <div>
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Contato feito</p>
+                <span className="text-2xl font-bold text-foreground">{cardsResumo.contato_pct}%</span>
+                <p className="text-[11px] text-muted-foreground">{cardsResumo.feitos}/{cardsResumo.total} feitos · {cardsResumo.pendentes} pendentes</p>
               </div>
             </div>
-          )}
+            <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
+              <div className="rounded-lg p-2 shrink-0" style={{ background: '#10b98118' }}><HeartHandshake className="h-5 w-5" style={{ color: '#10b981' }} /></div>
+              <div>
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Atendido e respondido</p>
+                <span className="text-2xl font-bold text-foreground">{cardsResumo.atendido_pct}%</span>
+                <p className="text-[11px] text-muted-foreground">{cardsResumo.atendidos}/{cardsResumo.total} atendidos</p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
+              <div className="rounded-lg p-2 shrink-0" style={{ background: '#0ea5e918' }}><CheckCircle2 className="h-5 w-5" style={{ color: '#0ea5e9' }} /></div>
+              <div>
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Batismo ≤ 90 dias</p>
+                <span className="text-2xl font-bold text-foreground">{cardsResumo.batismo_pct}%</span>
+                <p className="text-[11px] text-muted-foreground">{cardsResumo.batismos}/{cardsResumo.total} batizados</p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
+              <div className="rounded-lg p-2 shrink-0" style={{ background: C.purple + '18' }}><Sparkles className="h-5 w-5" style={{ color: C.purple }} /></div>
+              <div>
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Next ≤ 90 dias</p>
+                <span className="text-2xl font-bold text-foreground">{cardsResumo.next_pct}%</span>
+                <p className="text-[11px] text-muted-foreground">{cardsResumo.nexts}/{cardsResumo.total} fizeram o Next</p>
+              </div>
+            </div>
+          </div>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted-foreground">
               <strong className="text-foreground">{convertidos.length}</strong> convertidos
