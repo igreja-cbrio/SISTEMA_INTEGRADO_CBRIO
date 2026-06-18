@@ -796,7 +796,7 @@ function MetaProgresso({ atual, meta }) {
       </div>
       <div className="h-3 rounded-full bg-muted overflow-hidden">
         <motion.div
-          className="h-full rounded-full"
+          className="h-full rounded-full cbrio-bar"
           style={{ background: cor }}
           initial={{ width: 0 }}
           animate={{ width: `${Math.min(100, pct)}%` }}

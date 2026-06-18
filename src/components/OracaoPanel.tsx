@@ -109,7 +109,7 @@ export default function OracaoPanel({ canWrite }: { canWrite: boolean }) {
               <div key={t.slug} className="flex items-center gap-2">
                 <span className="text-xs w-44 shrink-0 truncate">{t.label}</span>
                 <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full bg-primary rounded-full" style={{ width: `${t.pct}%` }} />
+                  <div className="h-full bg-primary rounded-full cbrio-bar" style={{ width: `${t.pct}%` }} />
                 </div>
                 <span className="text-xs text-muted-foreground w-16 text-right">{t.count} · {t.pct}%</span>
               </div>

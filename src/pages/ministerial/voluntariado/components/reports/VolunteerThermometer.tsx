@@ -88,7 +88,7 @@ export default function VolunteerThermometer({ data }: { data: ThermometerEntry[
                 <div className="flex items-center gap-2 shrink-0">
                   <div className="w-16 md:w-24 h-2 bg-muted rounded-full overflow-hidden hidden sm:block">
                     <div
-                      className="h-full rounded-full transition-all"
+                      className="h-full rounded-full transition-all cbrio-bar"
                       style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: cfg.color }}
                     />
                   </div>
