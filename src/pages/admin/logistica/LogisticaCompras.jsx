@@ -67,8 +67,22 @@ function Field({ label, children }) {
   return <div style={S.formGroup}><label style={S.label}>{label}</label>{children}</div>;
 }
 
+// detecta tela de celular (web app responsivo)
+function useIsMobile() {
+  const [m, setM] = useState(typeof window !== 'undefined' && window.innerWidth < 760);
+  useEffect(() => {
+    const on = () => setM(window.innerWidth < 760);
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  return m;
+}
+
+const PAGE_SIZE = 20;
+
 // ── Componente principal ────────────────────────────────────
 export default function LogisticaCompras() {
+  const isMobile = useIsMobile();
   const [kpis, setKpis] = useState(null);
   const [compras, setCompras] = useState([]);
   const [pendentes, setPendentes] = useState([]);
@@ -77,14 +91,16 @@ export default function LogisticaCompras() {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const [filtros, setFiltros] = useState({ busca: '', comprador: '', centro_custo: '', forma_pgto: '', status_aprovacao: '', vinculo_status: '', mes: '' });
+  const [filtros, setFiltros] = useState({ busca: '', comprador_id: '', centro_custo_id: '', forma_pgto: '', status_aprovacao: '', vinculo_status: '', mes: '' });
   const [modal, setModal] = useState(null);        // { compra, review } edição/revisão/nova
   const [vinculoModal, setVinculoModal] = useState(null); // { compra, candidatos, loading }
   const [centrosFin, setCentrosFin] = useState([]);       // fin_centros_custo (financeiro)
   const [colaboradores, setColaboradores] = useState([]); // rh_funcionarios ativos
-  const [camera, setCamera] = useState(false);      // modal de câmera
+  const [sheet, setSheet] = useState(false);        // action sheet de escanear/enviar
+  const [pagina, setPagina] = useState(1);
 
-  const scanRef = useRef(null);
+  const scanRef = useRef(null);   // enviar foto/PDF (galeria/arquivo)
+  const cameraRef = useRef(null); // tirar foto (câmera do aparelho)
   const importRef = useRef(null);
 
   useEffect(() => {
@@ -117,14 +133,16 @@ export default function LogisticaCompras() {
   const recarregar = () => { fetchKpis(); fetchCompras(); };
   const flash = (t) => { setMsg(t); setTimeout(() => setMsg(''), 4000); };
 
-  // opções de filtro derivadas
-  const compradores = useMemo(() => [...new Set(compras.map((c) => c.comprador).filter(Boolean))].sort(), [compras]);
-  const centros = useMemo(() => [...new Set(compras.map((c) => c.centro_custo).filter(Boolean))].sort(), [compras]);
+  // paginação (evita scroll gigante)
+  useEffect(() => { setPagina(1); }, [filtros, compras.length]);
+  const totalPaginas = Math.max(1, Math.ceil(compras.length / PAGE_SIZE));
+  const paginaAtual = Math.min(pagina, totalPaginas);
+  const visiveis = compras.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
   // ── Ações ──
   const scanFile = async (file) => {
     if (!file) return;
-    setCamera(false);
+    setSheet(false);
     setBusy(true); setError('');
     try {
       const { compra, extracao_ok } = await logistica.compras.escanear(file);
@@ -207,7 +225,8 @@ export default function LogisticaCompras() {
 
   return (
     <div>
-      <input ref={scanRef} type="file" accept="image/*,application/pdf" capture="environment" style={{ display: 'none' }} onChange={onScanFile} />
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={onScanFile} />
+      <input ref={scanRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={onScanFile} />
       <input ref={importRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={onImportFile} />
 
       {/* KPIs */}
@@ -242,15 +261,15 @@ export default function LogisticaCompras() {
       )}
 
       {/* Toolbar */}
-      <div style={S.toolbar}>
-        <button style={{ ...btn(C.primary), opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={() => setCamera(true)}>
+      <div style={{ ...S.toolbar, ...(isMobile ? { flexDirection: 'column', alignItems: 'stretch' } : {}) }}>
+        <button style={{ ...btn(C.primary), opacity: busy ? 0.6 : 1, ...(isMobile ? { padding: '14px', fontSize: 16 } : {}) }} disabled={busy} onClick={() => setSheet(true)}>
           📷 Escanear nota
         </button>
-        <button style={btnOutline()} disabled={busy} onClick={() => importRef.current?.click()}>
+        <button style={{ ...btnOutline(), ...(isMobile ? { padding: '12px' } : {}) }} disabled={busy} onClick={() => importRef.current?.click()}>
           ⬆️ Importar planilha
         </button>
-        <button style={btnOutline()} disabled={busy} onClick={novaCompra}>+ Nova compra</button>
-        <div style={{ flex: 1 }} />
+        <button style={{ ...btnOutline(), ...(isMobile ? { padding: '12px' } : {}) }} disabled={busy} onClick={novaCompra}>+ Nova compra</button>
+        {!isMobile && <div style={{ flex: 1 }} />}
         <Button variant="ghost" size="sm" onClick={recarregar}>🔄 Atualizar</Button>
       </div>
 
@@ -279,11 +298,11 @@ export default function LogisticaCompras() {
       <div style={S.filterRow}>
         <input style={{ ...S.input, minWidth: 200, flex: 1 }} placeholder="Buscar fornecedor, material ou pedido…"
           value={filtros.busca} onChange={(e) => setFiltros((f) => ({ ...f, busca: e.target.value }))} />
-        <select style={S.select} value={filtros.comprador} onChange={(e) => setFiltros((f) => ({ ...f, comprador: e.target.value }))}>
-          <option value="">Comprador</option>{compradores.map((x) => <option key={x} value={x}>{x}</option>)}
+        <select style={S.select} value={filtros.comprador_id} onChange={(e) => setFiltros((f) => ({ ...f, comprador_id: e.target.value }))}>
+          <option value="">Comprador</option>{colaboradores.map((x) => <option key={x.id} value={x.id}>{x.nome}</option>)}
         </select>
-        <select style={S.select} value={filtros.centro_custo} onChange={(e) => setFiltros((f) => ({ ...f, centro_custo: e.target.value }))}>
-          <option value="">Centro de custo</option>{centros.map((x) => <option key={x} value={x}>{x}</option>)}
+        <select style={S.select} value={filtros.centro_custo_id} onChange={(e) => setFiltros((f) => ({ ...f, centro_custo_id: e.target.value }))}>
+          <option value="">Centro de custo</option>{centrosFin.map((x) => <option key={x.id} value={x.id}>{x.nome}</option>)}
         </select>
         <select style={S.select} value={filtros.forma_pgto} onChange={(e) => setFiltros((f) => ({ ...f, forma_pgto: e.target.value }))}>
           <option value="">Pagamento</option>{FORMAS.map((x) => <option key={x} value={x}>{x}</option>)}
@@ -297,13 +316,45 @@ export default function LogisticaCompras() {
         <input type="month" style={S.select} value={filtros.mes} onChange={(e) => setFiltros((f) => ({ ...f, mes: e.target.value }))} />
       </div>
 
-      {/* Tabela */}
-      <div style={S.tableCard}>
-        {loading ? (
-          <div style={S.empty}>Carregando…</div>
-        ) : compras.length === 0 ? (
-          <div style={S.empty}>Nenhuma compra encontrada. Importe a planilha ou escaneie uma nota pra começar.</div>
-        ) : (
+      {/* Lista (tabela no desktop · cards no celular) + paginação */}
+      {loading ? (
+        <div style={{ ...S.tableCard, ...S.empty }}>Carregando…</div>
+      ) : compras.length === 0 ? (
+        <div style={{ ...S.tableCard, ...S.empty }}>Nenhuma compra encontrada. Importe a planilha ou escaneie uma nota pra começar.</div>
+      ) : isMobile ? (
+        <div>
+          {visiveis.map((c) => (
+            <div key={c.id} style={{ ...S.card, padding: 14, marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>{c.fornecedor || 'Fornecedor a confirmar'}</div>
+                <div style={{ fontWeight: 800, color: C.text, whiteSpace: 'nowrap' }}>{fmtMoney(c.valor)}</div>
+              </div>
+              <div style={{ fontSize: 12.5, color: C.text2, marginTop: 2 }}>{c.materiais || ''}{c.origem_registro === 'scan' ? ' · 📷' : c.origem_registro === 'whatsapp' ? ' · 📱' : ''}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, fontSize: 12, color: C.text2, marginTop: 8 }}>
+                <span>📅 {fmtDate(c.data_compra)}</span>
+                <span>👤 {c.comprador_fn?.nome || c.comprador || '—'}</span>
+                <span>🏷️ {c.centro_fin?.nome || c.centro_custo || '—'}</span>
+                <span>💳 {c.forma_pgto || '—'}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <Badge status={c.status_aprovacao} map={APROVACAO} />
+                <Badge status={c.vinculo_status} map={VINCULO} />
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                {c.status_aprovacao === 'pendente'
+                  ? <button style={{ ...btn(C.green), flex: 1, padding: '10px' }} onClick={() => setModal({ compra: c, review: true })}>Conferir e aprovar</button>
+                  : c.vinculo_status === 'confirmada'
+                    ? <button style={{ ...btnOutline(), flex: 1, padding: '10px' }} onClick={() => desvincular(c)}>Desvincular</button>
+                    : <button style={{ ...btn(C.primary), flex: 1, padding: '10px' }} onClick={() => abrirVinculo(c)}>Vincular saída</button>}
+                <button style={{ ...btnOutline(), padding: '10px 14px' }} onClick={() => setModal({ compra: c, review: false })}>Editar</button>
+                <button style={{ ...btnOutline(), padding: '10px 12px', color: C.red }} onClick={() => excluir(c)}>✕</button>
+              </div>
+            </div>
+          ))}
+          <Paginacao pagina={paginaAtual} total={totalPaginas} n={compras.length} onPrev={() => setPagina((p) => Math.max(1, p - 1))} onNext={() => setPagina((p) => Math.min(totalPaginas, p + 1))} />
+        </div>
+      ) : (
+        <div style={S.tableCard}>
           <div style={{ overflowX: 'auto' }}>
             <table style={S.table}>
               <thead>
@@ -320,7 +371,7 @@ export default function LogisticaCompras() {
                 </tr>
               </thead>
               <tbody>
-                {compras.map((c) => (
+                {visiveis.map((c) => (
                   <tr key={c.id}>
                     <td style={S.td}>{fmtDate(c.data_compra)}</td>
                     <td style={S.td}>
@@ -336,9 +387,7 @@ export default function LogisticaCompras() {
                     <td style={S.td}>{c.forma_pgto || '—'}</td>
                     <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{fmtMoney(c.valor)}</td>
                     <td style={S.td}><Badge status={c.status_aprovacao} map={APROVACAO} /></td>
-                    <td style={S.td}>
-                      <Badge status={c.vinculo_status} map={VINCULO} />
-                    </td>
+                    <td style={S.td}><Badge status={c.vinculo_status} map={VINCULO} /></td>
                     <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {c.status_aprovacao === 'pendente'
                         ? <button style={btnSm(C.green)} onClick={() => setModal({ compra: c, review: true })}>Conferir</button>
@@ -353,8 +402,9 @@ export default function LogisticaCompras() {
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+          <Paginacao pagina={paginaAtual} total={totalPaginas} n={compras.length} onPrev={() => setPagina((p) => Math.max(1, p - 1))} onNext={() => setPagina((p) => Math.min(totalPaginas, p + 1))} />
+        </div>
+      )}
 
       {modal && (
         <CompraModal entry={modal} onClose={() => setModal(null)} onSalvar={salvar} onAprovar={aprovar} onRejeitar={rejeitar} busy={busy} centros={centrosFin} colaboradores={colaboradores} />
@@ -362,8 +412,10 @@ export default function LogisticaCompras() {
       {vinculoModal && (
         <VinculoModal data={vinculoModal} onClose={() => setVinculoModal(null)} onConfirmar={confirmarVinculo} busy={busy} />
       )}
-      {camera && (
-        <CameraModal onClose={() => setCamera(false)} onCapture={scanFile} onPickFile={() => scanRef.current?.click()} busy={busy} />
+      {sheet && (
+        <ActionSheet isMobile={isMobile} onClose={() => setSheet(false)}
+          onCamera={() => { setSheet(false); cameraRef.current?.click(); }}
+          onFile={() => { setSheet(false); scanRef.current?.click(); }} />
       )}
     </div>
   );
@@ -490,65 +542,32 @@ function VinculoModal({ data, onClose, onConfirmar, busy }) {
   );
 }
 
-// ── Modal de câmera (captura a foto da nota direto do dispositivo) ──
-function CameraModal({ onClose, onCapture, onPickFile, busy }) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const [erro, setErro] = useState('');
-  const [pronto, setPronto] = useState(false);
-
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) throw new Error('sem suporte');
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-        if (cancel) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
-        setPronto(true);
-      } catch (e) {
-        setErro('Não consegui abrir a câmera (permissão negada ou indisponível). Você pode enviar uma foto/arquivo abaixo.');
-      }
-    })();
-    return () => { cancel = true; if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); };
-  }, []);
-
-  const capturar = () => {
-    const v = videoRef.current; if (!v) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = v.videoWidth || 1280; canvas.height = v.videoHeight || 720;
-    canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      onCapture(new File([blob], `nota-${Date.now()}.jpg`, { type: 'image/jpeg' }));
-    }, 'image/jpeg', 0.92);
-  };
-
+// ── Controles de paginação ──
+function Paginacao({ pagina, total, n, onPrev, onNext }) {
+  if (total <= 1) return null;
   return (
-    <div style={S.overlay} onClick={onClose}>
-      <div style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
-        <div style={S.modalHeader}>
-          <div style={S.modalTitle}>📷 Escanear nota</div>
-          <Button variant="ghost" className="text-lg" onClick={onClose}>&#x2715;</Button>
-        </div>
-        <div style={S.modalBody}>
-          {erro ? (
-            <div style={{ ...S.empty, color: C.amber }}>{erro}</div>
-          ) : (
-            <div style={{ position: 'relative', background: '#000', borderRadius: 12, overflow: 'hidden', maxHeight: 420, minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <video ref={videoRef} playsInline muted style={{ width: '100%', maxHeight: 420, objectFit: 'cover' }} />
-              {!pronto && <div style={{ position: 'absolute', color: '#fff', fontSize: 13 }}>abrindo câmera…</div>}
-            </div>
-          )}
-          <div style={{ fontSize: 12, color: C.text2, marginTop: 10 }}>
-            Aponte pra nota fiscal e capture — a IA extrai os dados e a compra fica aguardando aprovação. Também dá pra enviar uma foto da galeria ou um PDF.
-          </div>
-        </div>
-        <div style={S.modalFooter}>
-          <button style={btnOutline()} disabled={busy} onClick={onPickFile}>Enviar foto/arquivo</button>
-          {!erro && <button style={btn(C.primary)} disabled={busy || !pronto} onClick={capturar}>{busy ? 'Enviando…' : 'Capturar'}</button>}
-        </div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 12, flexWrap: 'wrap' }}>
+      <button style={{ ...btnOutline(), opacity: pagina <= 1 ? 0.5 : 1 }} disabled={pagina <= 1} onClick={onPrev}>‹ Anterior</button>
+      <span style={{ fontSize: 13, color: C.text2 }}>Página {pagina} de {total} · {n} compras</span>
+      <button style={{ ...btnOutline(), opacity: pagina >= total ? 0.5 : 1 }} disabled={pagina >= total} onClick={onNext}>Próxima ›</button>
+    </div>
+  );
+}
+
+// ── Action sheet: tirar foto (câmera do aparelho) ou enviar foto/PDF ──
+function ActionSheet({ isMobile, onClose, onCamera, onFile }) {
+  const box = isMobile
+    ? { ...glass, width: '100%', borderRadius: '18px 18px 0 0', padding: '8px 16px 24px' }
+    : { ...glass, width: '95%', maxWidth: 420, padding: 20 };
+  const opt = { display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '16px', borderRadius: 14, border: '1px solid var(--hairline)', background: 'var(--surface)', color: C.text, fontSize: 16, fontWeight: 600, cursor: 'pointer', marginTop: 10, textAlign: 'left' };
+  return (
+    <div style={{ ...S.overlay, alignItems: isMobile ? 'flex-end' : 'center', paddingTop: 0 }} onClick={onClose}>
+      <div style={box} onClick={(e) => e.stopPropagation()}>
+        {isMobile && <div style={{ width: 40, height: 4, borderRadius: 4, background: 'var(--hairline)', margin: '8px auto 6px' }} />}
+        <div style={{ fontSize: 17, fontWeight: 700, color: C.text, padding: '4px 0 2px' }}>Adicionar nota fiscal</div>
+        <div style={{ fontSize: 12.5, color: C.text2 }}>A IA lê a nota e a compra fica aguardando aprovação.</div>
+        <button style={opt} onClick={onCamera}><span style={{ fontSize: 24 }}>📷</span><div><div>Tirar foto</div><div style={{ fontSize: 12, fontWeight: 400, color: C.text2 }}>Abre a câmera do aparelho</div></div></button>
+        <button style={opt} onClick={onFile}><span style={{ fontSize: 24 }}>🖼️</span><div><div>Enviar foto ou PDF</div><div style={{ fontSize: 12, fontWeight: 400, color: C.text2 }}>Da galeria ou arquivos</div></div></button>
       </div>
     </div>
   );

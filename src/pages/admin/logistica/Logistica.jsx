@@ -511,12 +511,22 @@ function DashboardTab({ dash, onRefresh, onNavigate }) {
 // ═══════════════════════════════════════════════════════════
 function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo, onNew, onEdit, onDelete, onToggle }) {
   const [soIncompletos, setSoIncompletos] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [pagina, setPagina] = useState(1);
+  const PAGE = 20;
   const incompleto = (f) => !f.cnpj || !f.endereco || !f.telefone;
   const nIncompletos = data.filter(incompleto).length;
-  const rows = soIncompletos ? data.filter(incompleto) : data;
+  const filtrados = data
+    .filter(f => !soIncompletos || incompleto(f))
+    .filter(f => !busca || `${f.razao_social || ''} ${f.nome_fantasia || ''} ${f.cnpj || ''}`.toLowerCase().includes(busca.toLowerCase()));
+  useEffect(() => { setPagina(1); }, [soIncompletos, busca, filtroAtivo, data.length]);
+  const totalPag = Math.max(1, Math.ceil(filtrados.length / PAGE));
+  const pagAtual = Math.min(pagina, totalPag);
+  const rows = filtrados.slice((pagAtual - 1) * PAGE, pagAtual * PAGE);
   return (<>
     <div style={styles.filterRow}>
-      <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value)}>
+      <input style={{ ...styles.input, minWidth: 200, flex: 1 }} placeholder="Buscar fornecedor ou CNPJ…" value={busca} onChange={e => setBusca(e.target.value)} />
+      <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value)}>
         <option value="">Todos</option><option value="true">Ativos</option><option value="false">Inativos</option>
       </select>
       {nIncompletos > 0 && (
@@ -534,7 +544,7 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
       {loading ? <tr><td colSpan={6}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
       : rows.length === 0 ? <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum fornecedor</span></div></td></tr>
       : rows.map(f => (
-        <tr key={f.id}>
+        <tr key={f.id} style={{ cursor: 'pointer' }} onClick={() => onEdit(f)} className="hover:bg-muted/40">
           <td style={styles.td}><div style={{ fontWeight: 600 }}>{f.nome_fantasia || f.razao_social}</div>{f.nome_fantasia && <div style={{ fontSize: 11, color: C.text3 }}>{f.razao_social}</div>}</td>
           <td style={styles.td}>{f.cnpj || '—'}</td>
           <td style={styles.td}>{f.categoria || '—'}</td>
@@ -543,14 +553,22 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
             <span style={styles.badge(f.ativo ? C.green : C.text3, f.ativo ? C.greenBg : '#73737318')}>{f.ativo ? 'Ativo' : 'Inativo'}</span>
             {incompleto(f) && <span style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }} title={`Faltando: ${[!f.cnpj && 'CNPJ', !f.endereco && 'endereço', !f.telefone && 'telefone'].filter(Boolean).join(', ')}`}>Incompleto</span>}
           </td>
-          {isDiretor && <td style={styles.td}><div style={{ display: 'flex', gap: 4 }}>
+          {isDiretor && <td style={styles.td} onClick={e => e.stopPropagation()}><div style={{ display: 'flex', gap: 4 }}>
             <Button variant="ghost" size="sm" onClick={() => onToggle(f)}>{f.ativo ? '⏸' : '▶'}</Button>
             <Button variant="ghost" size="sm" onClick={() => onEdit(f)}>✏️</Button>
             <Button variant="ghost" size="sm" onClick={() => onDelete(f.id)}>🗑</Button>
           </div></td>}
         </tr>
       ))}
-    </tbody></table></div>
+    </tbody></table>
+      {totalPag > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 12, flexWrap: 'wrap', borderTop: `1px solid ${C.border}` }}>
+          <Button variant="outline" size="sm" disabled={pagAtual <= 1} onClick={() => setPagina(p => Math.max(1, p - 1))}>‹ Anterior</Button>
+          <span style={{ fontSize: 13, color: C.text2 }}>Página {pagAtual} de {totalPag} · {filtrados.length} fornecedores</span>
+          <Button variant="outline" size="sm" disabled={pagAtual >= totalPag} onClick={() => setPagina(p => Math.min(totalPag, p + 1))}>Próxima ›</Button>
+        </div>
+      )}
+    </div>
   </>);
 }
 
