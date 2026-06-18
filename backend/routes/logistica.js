@@ -499,13 +499,15 @@ const COMPRA_SELECT = '*, log_fornecedores(razao_social, nome_fantasia, cnpj, en
 // Listagem com filtros
 router.get('/compras', async (req, res) => {
   try {
-    const { status_aprovacao, vinculo_status, comprador, centro_custo, forma_pgto, tipo, mes, busca } = req.query;
+    const { status_aprovacao, vinculo_status, comprador, comprador_id, centro_custo, centro_custo_id, forma_pgto, tipo, mes, busca } = req.query;
     let q = supabase.from('log_compras')
       .select(COMPRA_SELECT)
       .is('deleted_at', null);
     if (status_aprovacao) q = q.eq('status_aprovacao', status_aprovacao);
     if (vinculo_status) q = q.eq('vinculo_status', vinculo_status);
+    if (comprador_id) q = q.eq('comprador_id', comprador_id);
     if (comprador) q = q.eq('comprador', comprador);
+    if (centro_custo_id) q = q.eq('centro_custo_id', centro_custo_id);
     if (centro_custo) q = q.eq('centro_custo', centro_custo);
     if (forma_pgto) q = q.eq('forma_pgto', forma_pgto);
     if (tipo) q = q.eq('tipo', tipo);
