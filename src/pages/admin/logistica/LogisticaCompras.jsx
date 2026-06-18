@@ -325,7 +325,7 @@ export default function LogisticaCompras() {
                     <td style={S.td}>{fmtDate(c.data_compra)}</td>
                     <td style={S.td}>
                       <div style={{ fontWeight: 600 }}>{c.fornecedor || '—'}</div>
-                      <div style={{ fontSize: 12, color: C.text2 }}>{c.materiais || ''}{c.origem_registro === 'scan' ? ' · 📷 escaneada' : ''}</div>
+                      <div style={{ fontSize: 12, color: C.text2 }}>{c.materiais || ''}{c.origem_registro === 'scan' ? ' · 📷 escaneada' : c.origem_registro === 'whatsapp' ? ' · 📱 WhatsApp' : ''}</div>
                     </td>
                     <td style={S.td}>
                       {c.centro_fin?.nome

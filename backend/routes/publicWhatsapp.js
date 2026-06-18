@@ -17,6 +17,7 @@ const { parseConversa, responderInstitucional } = require('../services/whatsappP
 const { safeEqual } = require('../utils/cronAuth');
 const flowColeta = require('../services/whatsappFlowColeta');
 const whatsappGrupos = require('../services/whatsappGrupos');
+const whatsappNota = require('../services/whatsappNota');
 
 // Janela da "sessao" de coleta: enquanto houver uma coleta em aberto
 // (status='aguardando_info') do lider, a proxima mensagem CONTINUA ela e
@@ -110,6 +111,15 @@ async function processarMensagem(m, cfg) {
   const { data: jaVisto } = await supabase
     .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
   if (jaVisto) return;
+
+  // ── NOTA FISCAL · qualquer número envia foto(s) → fila de aprovação da aba
+  // Compras. Intercepta ANTES da checagem de líder (não restringe remetente) e
+  // só assume quando há sessão de nota aberta ou gatilho explícito ("nota
+  // fiscal"); senão devolve false e o fluxo normal segue.
+  const tratadoNota = await whatsappNota
+    .tratarNotaFiscal({ m, telefone, texto, messageId })
+    .catch(err => { console.error('[whatsapp webhook] nota:', err.message); return false; });
+  if (tratadoNota) return;
 
   // Identifica lider/assistente cadastrado
   const { data: lider } = await supabase
