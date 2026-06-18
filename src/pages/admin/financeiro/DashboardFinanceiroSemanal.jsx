@@ -238,7 +238,7 @@ export default function DashboardSemanal() {
   const { semana, kpis, cultos, buckets, historico, top_contribuintes } = data;
 
   return (
-    <div className={`space-y-4 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}>
+    <div className={`cbrio-glass-scope space-y-4 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}>
       {/* HEADER · navegação semana (sticky · sempre visível) */}
       <div className="sticky top-0 z-20 pb-2 -mx-1 px-1 bg-gradient-to-b from-background via-background to-transparent backdrop-blur-sm">
         <Card className="overflow-hidden border-primary/30">
