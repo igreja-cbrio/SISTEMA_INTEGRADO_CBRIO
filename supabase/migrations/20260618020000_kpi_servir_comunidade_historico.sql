@@ -1,15 +1,13 @@
--- "Servir em Comunidade" (mandala Cultura · /dashboard) passou a refletir quem
--- REALMENTE serviu nos últimos 90 dias, não só quem fez check-in pelo totem.
+-- "Servir em Comunidade" (mandala Cultura · /dashboard) = pessoas distintas que
+-- serviram nos últimos 90 dias, unindo DUAS fontes (sem contar a mesma 2x):
+--   1. vol_servicos_historico (planilha + Planning Center) · por nome_norm
+--   2. vol_check_ins (check-in pelo totem · começou em 17/06) · nome do perfil
 --
--- Contexto: o fix anterior (20260618010000) ligou a métrica a vol_check_ins →
--- dava 21, porque o check-in pelo totem mal começou a ser usado. Mas a aba
--- Frequência do módulo mostra 668 (pessoas que serviram em 90d, do histórico
--- de serviços). A métrica certa pra "Servir em comunidade · voluntários (90d)"
--- é o histórico de serviços (planilha + Planning Center), não o check-in.
---
--- Fonte: vol_servicos_historico · count distinct nome_norm na janela (mesma
--- régua da aba Frequência). Fallback defensivo pra vol_check_ins se o histórico
--- não existir. APLICADA EM PROD em 2026-06-18 via Supabase MCP.
+-- Contexto: o fix 20260618010000 ligou só a vol_check_ins → dava 21 (o totem
+-- mal começou). Mas a aba Frequência do módulo mostra 668 (quem serviu em 90d,
+-- do histórico). A métrica certa é "quem serviu" = histórico + check-in. Dedup
+-- por nome normalizado (lower + unaccent + trim · mesma régua do nome_norm).
+-- APLICADA EM PROD em 2026-06-18 via Supabase MCP (retornando 669).
 create or replace function public.kpi_servir_comunidade(_since timestamptz)
 returns int
 language plpgsql
@@ -20,22 +18,22 @@ as $$
 declare
   result int := 0;
 begin
-  if to_regclass('public.vol_servicos_historico') is not null then
-    select count(distinct nome_norm)::int
-      into result
+  with serviu as (
+    select nome_norm as chave
       from public.vol_servicos_historico
      where deleted_at is null
-       and data >= _since::date;
-    return coalesce(result, 0);
-  end if;
-  -- Fallback: check-ins do totem
-  if to_regclass('public.vol_check_ins') is not null then
-    select count(distinct volunteer_id)::int
-      into result
-      from public.vol_check_ins
-     where checked_in_at >= _since
-       and volunteer_id is not null;
-  end if;
+       and data >= _since::date
+    union
+    select lower(public.unaccent(trim(vp.full_name))) as chave
+      from public.vol_check_ins ci
+      join public.vol_profiles vp on vp.id = ci.volunteer_id
+     where ci.checked_in_at >= _since
+       and ci.volunteer_id is not null
+  )
+  select count(distinct chave)::int
+    into result
+    from serviu
+   where chave is not null and chave <> '';
   return coalesce(result, 0);
 end;
 $$;
