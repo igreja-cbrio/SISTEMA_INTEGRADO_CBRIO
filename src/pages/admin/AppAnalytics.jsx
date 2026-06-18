@@ -272,7 +272,7 @@ function ListaTop({ titulo, itens, vazio }) {
             {itens.map((i, idx) => (
               <div key={idx} className="text-sm">
                 <div className="flex justify-between"><span className="truncate">{i.nome}</span><span className="text-muted-foreground">{i.n}</span></div>
-                <div className="h-1.5 bg-muted rounded-full mt-0.5"><div className="h-1.5 rounded-full bg-[#00B39D]" style={{ width: `${(i.n / max) * 100}%` }} /></div>
+                <div className="h-1.5 bg-muted rounded-full mt-0.5"><div className="h-1.5 rounded-full bg-[#00B39D] cbrio-bar" style={{ width: `${(i.n / max) * 100}%` }} /></div>
               </div>
             ))}
           </div>

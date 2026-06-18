@@ -184,6 +184,44 @@ código tolera ausência da coluna.
 - Páginas públicas (sem login) renderizam **fora** do `AppShell` e
   **fora** do `ProtectedRoute` em `src/App.tsx`.
 
+#### Tema "Vidro" (glass) · 2026-06-18 — base do visual do sistema
+
+Visual atual = "vidro/command center" (spec original em `~/Downloads/cbriodesignvidro.md`).
+Implementado **por tokens** (não reescreve páginas). NÃO regredir:
+- **Tokens glass** em `src/index.css` (`:root` escuro + `[data-theme="light"]`):
+  `--panel` (fundo translúcido do card), `--hairline`, `--hi` (brilho topo),
+  `--shadow`/`--shadow-hover`, `--surface`, `--track`, `--teal`/`--mint`, `--app-bg`
+  (fundo ambiente · glows radiais no `body`, `background-attachment: fixed`).
+- **`.glass-surface`** (em `@layer components` p/ ser sobrescritível por utilitário):
+  `var(--panel)` + `backdrop-filter: blur(14px) saturate(140%)` + borda `--hairline`
+  + `box-shadow: var(--shadow), var(--hi)`. É a base do **`<Card>` shadcn**
+  (`card.tsx` = `"glass-surface rounded-[16px] text-card-foreground"`) e da `.cbrio-card`.
+- **`.glass-solid`** = variante NÍTIDA (sem blur, fundo `--cbrio-card`, `!important`) p/
+  dado denso. **Regra de ouro:** dado denso (tabela/form/gráfico) fica nítido.
+  Aplicado **automaticamente** por CSS `:has()`: `.glass-surface:has(table|.recharts-wrapper)`
+  vira sólido. Cards aninhados não repetem blur (`.glass-surface .glass-surface` → sem blur).
+- **Acessibilidade:** `prefers-reduced-transparency` → sólido; `prefers-reduced-motion` → sem hover.
+- **AppShell** wrapper = `background: transparent` (deixa o fundo ambiente aparecer);
+  header = `bg-card/40 backdrop-blur-xl`. Painel: `CarrosselMandalas`+`AlertasCriticos`
+  usam vidro (`var(--panel)` inline); **matrizes/gráficos seguem sólidos** (dado denso).
+- **NÃO aplicar vidro** (telas intencionais sólidas/brand): totem (`TotemMembro`,
+  totemKids display), `GruposMapView`, `MemberWalletPass/Dialog`, `Login`, QR de
+  impressão (`#fff`), scanner/câmera (`#000`), vídeo (`bg-black`). Popovers/dropdowns/
+  selects/dialogs seguem **sólidos** de propósito (legibilidade) — não glassificar.
+- Acento da marca segue `#00B39D` (`C.primary`).
+- **Gráficos (recharts) no tema vidro:** tema global no `index.css` (grade
+  `--hairline`, texto `--cbrio-text3`, tooltip de vidro). Gradientes via
+  `src/components/charts/ChartGradients.tsx` (`<ChartGradients colors={[...]}/>`
+  como 1º filho do chart + `fill={gradFill(cor)}` nas barras/áreas; cor sólida na
+  legenda). Linhas, pizza/donut e charts com gradiente próprio ficam como estão.
+  ⚠️ Toda cor passada a `gradFill()` PRECISA estar no array `colors` do mesmo
+  chart, senão a barra renderiza vazia (build não pega — validar no preview).
+- **Dashboard Semanal · resumo (regra de negócio):** card **Presenças** = templo
+  + kids (`vw_dashboard_semanal.total_presencial`); **Decisões** = presenciais +
+  online + **kids** (`aceitacoes_kids` = `cultos.decisoes_kids`); card **Kids**
+  segue como recorte separado. Não reverter pra só-templo (resumo-semana/mês em
+  `backend/routes/dashboardSemanal.js`).
+
 ### Backend
 
 - Cada arquivo em `backend/routes/` aplica `router.use(authenticate)`

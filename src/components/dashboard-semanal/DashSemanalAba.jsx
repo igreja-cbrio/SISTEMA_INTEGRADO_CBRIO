@@ -12,6 +12,7 @@ import {
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import KpiCard from './KpiCard';
 import OcupacaoGauge from './OcupacaoGauge';
+import { ChartGradients, gradFill } from '../charts/ChartGradients';
 import { ResumoSemanaCard } from './ResumoCards';
 
 const C = { primary: '#00B39D', media: '#7BAEC2', taxa: '#E97A3F' };
@@ -562,6 +563,7 @@ export default function DashSemanalAba() {
                       if (payload) onClickBarra(payload);
                     }}
                   >
+                    <ChartGradients colors={[C.primary, C.media, C.taxa]} />
                     <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                     <XAxis dataKey="nome" tick={{ fontSize: 12 }} />
                     <YAxis yAxisId="left" tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -600,7 +602,7 @@ export default function DashSemanalAba() {
                           {chartData.map((e, i) => (
                             <Cell
                               key={`va-${i}`}
-                              fill={C.primary}
+                              fill={gradFill(C.primary)}
                               opacity={culto === 'todos' || culto === e.service_type_id ? 1 : 0.35}
                             />
                           ))}
@@ -618,7 +620,7 @@ export default function DashSemanalAba() {
                           {chartData.map((e, i) => (
                             <Cell
                               key={`md-${i}`}
-                              fill={C.media}
+                              fill={gradFill(C.media)}
                               opacity={culto === 'todos' || culto === e.service_type_id ? 1 : 0.35}
                             />
                           ))}
@@ -638,7 +640,7 @@ export default function DashSemanalAba() {
                             {chartData.map((e, i) => (
                               <Cell
                                 key={`tx-${i}`}
-                                fill={C.taxa}
+                                fill={gradFill(C.taxa)}
                                 opacity={culto === 'todos' || culto === e.service_type_id ? 1 : 0.35}
                               />
                             ))}
@@ -794,7 +796,7 @@ function MetaProgresso({ atual, meta }) {
       </div>
       <div className="h-3 rounded-full bg-muted overflow-hidden">
         <motion.div
-          className="h-full rounded-full"
+          className="h-full rounded-full cbrio-bar"
           style={{ background: cor }}
           initial={{ width: 0 }}
           animate={{ width: `${Math.min(100, pct)}%` }}

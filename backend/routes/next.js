@@ -483,7 +483,14 @@ router.get('/turmas', async (req, res) => {
     const { data: encs } = await supabase.from('next_encontros').select('turma_id').in('turma_id', ids);
     (encs || []).forEach(e => { const c = cont[e.turma_id] || (cont[e.turma_id] = { total: 0, encontros: 0 }); c.encontros = (c.encontros || 0) + 1; });
   }
-  res.json((turmas || []).map(t => ({ ...t, contagem: cont[t.id] || { total: 0, encontros: 0 } })));
+  const lista = (turmas || []).map(t => ({ ...t, contagem: cont[t.id] || { total: 0, encontros: 0 } }));
+  // ordem por data (mês mais recente primeiro); manuais sem origem_mes caem por created_at
+  lista.sort((a, b) => {
+    const ka = a.origem_mes || String(a.created_at || '').slice(0, 7);
+    const kb = b.origem_mes || String(b.created_at || '').slice(0, 7);
+    return kb < ka ? -1 : kb > ka ? 1 : 0;
+  });
+  res.json(lista);
 });
 
 // POST /turmas — cria turma (+ os encontros · default 2)
@@ -629,6 +636,139 @@ router.delete('/matriculas/:id', async (req, res) => {
   const { error } = await supabase.rpc('app_soft_delete', { p_table_name: 'next_matriculas', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null });
   if (error) return res.status(500).json({ error: error.message });
   recalcularKpisNext();
+  res.json({ ok: true });
+});
+
+// ----------------------------------------------------------------------------
+// PESSOAS · visão unificada (convertidos + matrículas, 1 linha por pessoa)
+//   Substitui as listas separadas "Por pessoa" + "NSM" (que duplicavam quem é
+//   convertido E matriculado). Cada pessoa traz: origem (convertido/externo),
+//   status no Next, turma, e — pra convertido — Data NSM + bucket de prazo +
+//   resolução (acaba com o "vermelho pra sempre").
+// ----------------------------------------------------------------------------
+const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function nomeMesAtual() { const d = new Date(); return `${MESES_PT[d.getMonth()]} ${d.getFullYear()}`; }
+
+async function fetchAllNext(table, columns, applyFilter) {
+  const out = []; let from = 0; const page = 1000;
+  while (true) {
+    let q = supabase.from(table).select(columns).range(from, from + page - 1);
+    if (applyFilter) q = applyFilter(q);
+    const { data, error } = await q;
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
+router.get('/pessoas', async (req, res) => {
+  try {
+    const { area } = req.query;
+    const DIA = 86400000; const agora = Date.now();
+    const digits = (v) => String(v || '').replace(/\D/g, '');
+    const nomeKey = (s) => String(s || '').trim().toLowerCase() || null;
+
+    const convertidos = await fetchAllNext('cui_convertidos',
+      'id, nome, telefone, cpf, membro_id, data_culto, area, next_resolucao, next_resolucao_em',
+      (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; });
+    const matriculas = await fetchAllNext('next_matriculas',
+      'id, turma_id, nome, sobrenome, cpf, telefone, email, membro_id, status',
+      (q) => q.is('deleted_at', null));
+    const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null));
+    const turmaNome = new Map(turmas.map(t => [t.id, t.nome]));
+
+    // índice de matrículas por identidade (membro_id > cpf > nome completo)
+    const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map();
+    for (const m of matriculas) {
+      if (m.membro_id && !mByMembro.has(m.membro_id)) mByMembro.set(m.membro_id, m);
+      const c = digits(m.cpf); if (c.length === 11 && !mByCpf.has(c)) mByCpf.set(c, m);
+      const nk = nomeKey(`${m.nome || ''} ${m.sobrenome || ''}`); if (nk && !mByNome.has(nk)) mByNome.set(nk, m);
+    }
+    const matchMatricula = (cv) => {
+      if (cv.membro_id && mByMembro.has(cv.membro_id)) return mByMembro.get(cv.membro_id);
+      const c = digits(cv.cpf); if (c.length === 11 && mByCpf.has(c)) return mByCpf.get(c);
+      const nk = nomeKey(cv.nome); if (nk && mByNome.has(nk)) return mByNome.get(nk);
+      return null;
+    };
+
+    const usados = new Set();
+    const itens = [];
+    // 1. convertidos (com ou sem matrícula)
+    for (const cv of convertidos) {
+      const m = matchMatricula(cv);
+      if (m) usados.add(m.id);
+      const dias = cv.data_culto ? Math.floor((agora - new Date(cv.data_culto + 'T12:00:00').getTime()) / DIA) : null;
+      let next_status; let bucket = null;
+      if (cv.next_resolucao) next_status = 'resolvido';
+      else if (m && m.status === 'formado') next_status = 'formado';
+      else if (m) next_status = 'matriculado';
+      else { next_status = 'nao_inscrito'; bucket = dias == null ? 'no_prazo' : dias > 90 ? 'fora_prazo' : dias > 75 ? 'vencendo' : 'no_prazo'; }
+      itens.push({
+        tipo: 'convertido', convertido_id: cv.id, matricula_id: m ? m.id : null,
+        nome: cv.nome, telefone: cv.telefone, email: null, membro_id: cv.membro_id,
+        area: cv.area, data_nsm: cv.data_culto, dias_desde_conversao: dias,
+        turma_id: m ? m.turma_id : null, turma_nome: m && m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
+        next_status, bucket, next_resolucao: cv.next_resolucao || null, next_resolucao_em: cv.next_resolucao_em || null,
+      });
+    }
+    // 2. matrículas externas (sem convertido correspondente)
+    for (const m of matriculas) {
+      if (usados.has(m.id)) continue;
+      itens.push({
+        tipo: 'externo', convertido_id: null, matricula_id: m.id,
+        nome: `${m.nome || ''}${m.sobrenome ? ' ' + m.sobrenome : ''}`.trim(), telefone: m.telefone, email: m.email, membro_id: m.membro_id,
+        area: null, data_nsm: null, dias_desde_conversao: null,
+        turma_id: m.turma_id, turma_nome: m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
+        next_status: m.status === 'formado' ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
+      });
+    }
+
+    // prioridade na NSM: convertidos por data de conversão (recente primeiro), externos por último
+    itens.sort((a, b) => {
+      if (a.tipo !== b.tipo) return a.tipo === 'convertido' ? -1 : 1;
+      const da = a.data_nsm || ''; const db = b.data_nsm || '';
+      return db < da ? -1 : db > da ? 1 : 0;
+    });
+
+    const resumo = {
+      total: itens.length,
+      convertidos: itens.filter(i => i.tipo === 'convertido').length,
+      externos: itens.filter(i => i.tipo === 'externo').length,
+      formados: itens.filter(i => i.next_status === 'formado').length,
+      nao_inscritos: itens.filter(i => i.next_status === 'nao_inscrito').length,
+      no_prazo: itens.filter(i => i.bucket === 'no_prazo' || i.bucket === 'vencendo').length,
+      fora_prazo: itens.filter(i => i.bucket === 'fora_prazo').length,
+      resolvidos: itens.filter(i => i.next_status === 'resolvido').length,
+    };
+    res.json({ itens, resumo });
+  } catch (e) {
+    console.error('[next/pessoas]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /convertidos/:id/resolver — fecha o pendente de Next do convertido
+// (acaba o "vermelho pra sempre"). Body: { resolucao }.
+router.post('/convertidos/:id/resolver', async (req, res) => {
+  const { resolucao } = req.body || {};
+  const VALID = ['contatado', 'sem_interesse', 'encerrado'];
+  if (!VALID.includes(resolucao)) return res.status(400).json({ error: 'resolucao inválida' });
+  const { data, error } = await supabase.from('cui_convertidos')
+    .update({ next_resolucao: resolucao, next_resolucao_em: new Date().toISOString(), next_resolucao_por: req.user?.id ?? null })
+    .eq('id', req.params.id).is('deleted_at', null).select('id').maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Convertido não encontrado' });
+  res.json({ ok: true });
+});
+
+// DELETE /convertidos/:id/resolver — desfaz a resolução (volta ao funil)
+router.delete('/convertidos/:id/resolver', async (req, res) => {
+  const { error } = await supabase.from('cui_convertidos')
+    .update({ next_resolucao: null, next_resolucao_em: null, next_resolucao_por: null })
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
 

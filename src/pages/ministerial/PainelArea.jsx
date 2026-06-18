@@ -31,6 +31,7 @@ import {
   Tooltip as RTooltip, CartesianGrid, Legend,
 } from 'recharts';
 import JornadaConvertidos from '../../components/JornadaConvertidos';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const AREA_META = {
   kids: {
@@ -832,6 +833,7 @@ function GraficoCultos({ serie, area, accent }) {
       </div>
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart data={dataChart} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+          <ChartGradients colors={[accent]} />
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--cbrio-border, #e2e8f0)" />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
           <YAxis yAxisId="freq" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
@@ -846,7 +848,7 @@ function GraficoCultos({ serie, area, accent }) {
             }}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Bar yAxisId="freq" dataKey="media" name={labelFreq} fill={accent} radius={[4, 4, 0, 0]} maxBarSize={48} fillOpacity={0.85} />
+          <Bar yAxisId="freq" dataKey="media" name={labelFreq} fill={gradFill(accent)} radius={[4, 4, 0, 0]} maxBarSize={48} />
           <Line yAxisId="dec" dataKey="decisoes" name="Decisões" stroke="#F59E0B" strokeWidth={2.5} dot={{ r: 3 }} />
         </ComposedChart>
       </ResponsiveContainer>
@@ -905,7 +907,7 @@ function CultosTabela({ cultos, area, accent }) {
                   <>
                     <div className="flex-1 h-5 bg-muted/60 rounded overflow-hidden">
                       <div
-                        className="h-full rounded transition-all"
+                        className="h-full rounded transition-all cbrio-bar"
                         style={{
                           width: `${Math.max(pct, 2)}%`,
                           background: accent,
@@ -986,7 +988,7 @@ function NpsDestaque({ kpis, meta, area, podePreencher, onSaved, onOpenKpi }) {
               {/* Escala 0-10 com marcador de meta */}
               <div className="relative mt-3 h-2 bg-muted rounded-full overflow-visible">
                 <div
-                  className="absolute inset-y-0 left-0 rounded-full"
+                  className="absolute inset-y-0 left-0 rounded-full cbrio-bar"
                   style={{ width: `${Math.max(0, Math.min(100, (Number(valor) || 0) * 10))}%`, background: corNota }}
                 />
                 {metaNps != null && (
@@ -1216,7 +1218,7 @@ function KpiCard({ kpi, onClick }) {
       {valor != null && metaV != null && pct != null && (
         <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
           <div
-            className="h-full rounded-full"
+            className="h-full rounded-full cbrio-bar"
             style={{
               width: `${Math.max(2, Math.min(100, pct))}%`,
               background: pct >= 100 ? '#10b981' : pct >= 70 ? '#f59e0b' : '#ef4444',
@@ -1271,7 +1273,7 @@ function Progress({ pct, color }) {
   return (
     <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
       <div
-        className="h-full transition-all"
+        className="h-full transition-all cbrio-bar"
         style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: color }}
       />
     </div>

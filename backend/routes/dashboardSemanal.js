@@ -499,25 +499,27 @@ router.get('/resumo-semana', async (req, res) => {
     const ano = parseInt(req.query.ano, 10) || hojeIso.ano;
     const semana = parseInt(req.query.semana, 10) || hojeIso.semana;
 
-    const cols = 'service_type_name, recurrence_day, recurrence_time, frequencia, frequencia_kids, aceitacoes, aceitacoes_online, ao_vivo, total_cultos';
+    const cols = 'service_type_name, recurrence_day, recurrence_time, frequencia, frequencia_kids, aceitacoes, aceitacoes_online, aceitacoes_kids, ao_vivo, total_cultos, total_presencial';
     const semAnt = semana - 1 > 0 ? semana - 1 : 52;
     const anoAnt = semana - 1 > 0 ? ano : ano - 1;
 
     const [atualRes, antRes] = await Promise.all([
       supabase.from('vw_dashboard_semanal').select(cols).eq('ano_iso', ano).eq('semana_iso', semana),
-      supabase.from('vw_dashboard_semanal').select('frequencia').eq('ano_iso', anoAnt).eq('semana_iso', semAnt),
+      supabase.from('vw_dashboard_semanal').select('total_presencial').eq('ano_iso', anoAnt).eq('semana_iso', semAnt),
     ]);
     if (atualRes.error) throw atualRes.error;
 
     const linhas = atualRes.data || [];
     const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
-    const presencas = sum(linhas, 'frequencia');
+    // Presenças = templo + kids (total_presencial). Kids segue como card separado.
+    const presencas = sum(linhas, 'total_presencial');
     const kids = sum(linhas, 'frequencia_kids');
     const online = sum(linhas, 'ao_vivo');
-    const decisoes = sum(linhas, 'aceitacoes') + sum(linhas, 'aceitacoes_online');
+    // Decisões = presenciais + online + kids.
+    const decisoes = sum(linhas, 'aceitacoes') + sum(linhas, 'aceitacoes_online') + sum(linhas, 'aceitacoes_kids');
     const cultosLancados = sum(linhas, 'total_cultos');
 
-    const presencasAnt = sum(antRes.data || [], 'frequencia');
+    const presencasAnt = sum(antRes.data || [], 'total_presencial');
     const presencasDelta = presencasAnt > 0 ? ((presencas - presencasAnt) / presencasAnt) * 100 : null;
 
     let maior = null;
@@ -565,10 +567,10 @@ router.get('/resumo-mes', async (req, res) => {
     const iniAnt = `${anoAnt}-${pad(mesAnt)}-01`;
     const fimAnt = new Date(Date.UTC(anoAnt, mesAnt, 0)).toISOString().slice(0, 10);
 
-    const cultoCols = 'data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online';
+    const cultoCols = 'data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, decisoes_kids';
     const [cultosMes, cultosAnt, batismos, novosMembros] = await Promise.all([
       supabase.from('cultos').select(cultoCols).gte('data', ini).lte('data', fim),
-      supabase.from('cultos').select('presencial_adulto, decisoes_presenciais, decisoes_online').gte('data', iniAnt).lte('data', fimAnt),
+      supabase.from('cultos').select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, decisoes_kids').gte('data', iniAnt).lte('data', fimAnt),
       supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true })
         .eq('status', 'realizado').gte('data_batismo', ini).lte('data_batismo', fim),
       // "Novos membros" = cadastros reais no mês · EXCLUI 'wifi' (captura do
@@ -581,13 +583,14 @@ router.get('/resumo-mes', async (req, res) => {
 
     const lc = cultosMes.data || [];
     const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
-    const presencas = sum(lc, 'presencial_adulto');
+    // Presenças = templo + kids; Decisões = presenciais + online + kids.
+    const presencas = sum(lc, 'presencial_adulto') + sum(lc, 'presencial_kids');
     const kids = sum(lc, 'presencial_kids');
-    const decisoes = sum(lc, 'decisoes_presenciais') + sum(lc, 'decisoes_online');
+    const decisoes = sum(lc, 'decisoes_presenciais') + sum(lc, 'decisoes_online') + sum(lc, 'decisoes_kids');
 
     const la = cultosAnt.data || [];
-    const presencasAnt = sum(la, 'presencial_adulto');
-    const decisoesAnt = sum(la, 'decisoes_presenciais') + sum(la, 'decisoes_online');
+    const presencasAnt = sum(la, 'presencial_adulto') + sum(la, 'presencial_kids');
+    const decisoesAnt = sum(la, 'decisoes_presenciais') + sum(la, 'decisoes_online') + sum(la, 'decisoes_kids');
     const delta = (a, b) => b > 0 ? ((a - b) / b) * 100 : null;
 
     let maior = 0;

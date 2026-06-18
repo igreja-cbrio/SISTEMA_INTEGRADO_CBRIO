@@ -16,6 +16,7 @@ import {
   ComposedChart, Line, Bar, Area, AreaChart, BarChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell,
 } from 'recharts';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const C = {
   primary: '#00B39D',
@@ -957,6 +958,7 @@ function SazonalidadeSemanalChart() {
             <div style={{ width: '100%', height: 280 }}>
               <ResponsiveContainer>
                 <BarChart data={semanas} onClick={onClickBar} barGap={1} barCategoryGap="16%">
+                  <ChartGradients colors={[COL.primary, COL.purple, COL.amber, COL.blue, COL.red, COL.green]} />
                   <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                   <XAxis
                     dataKey="num_semana"
@@ -989,7 +991,7 @@ function SazonalidadeSemanalChart() {
                         return (
                           <Cell
                             key={`c-${ano}-${i}`}
-                            fill={corPorAno(ano, idx)}
+                            fill={gradFill(corPorAno(ano, idx))}
                             fillOpacity={dim ? 0.18 : 1}
                             stroke={ehSel ? COL.amber : 'transparent'}
                             strokeWidth={ehSel ? 2 : 0}
@@ -1124,7 +1126,7 @@ function DecendioCard({ dados, mes }) {
                 </div>
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
                   <motion.div
-                    className="h-full rounded-full"
+                    className="h-full rounded-full cbrio-bar"
                     style={{ background: COL.green }}
                     initial={{ width: 0 }}
                     animate={{ width: `${pct}%` }}
@@ -1163,12 +1165,13 @@ function YoYSemanalChart({ dados, anoAtual, anoAnterior }) {
         <div style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
             <ComposedChart data={formatado}>
+              <ChartGradients colors={[COL.primary]} />
               <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
               <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.floor(formatado.length / 12)} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
               <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey={`${anoAtual}`} fill={COL.primary} radius={[3, 3, 0, 0]} animationDuration={1000} />
+              <Bar dataKey={`${anoAtual}`} fill={gradFill(COL.primary)} radius={[3, 3, 0, 0]} animationDuration={1000} />
               <Line type="monotone" dataKey={`${anoAnterior}`} stroke={COL.amber} strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} animationDuration={1400} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -1366,7 +1369,7 @@ function BucketCard({ custom, bucket, color, isAcumulado, semana }) {
                   </div>
                   <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                     <motion.div
-                      className="h-full rounded-full"
+                      className="h-full rounded-full cbrio-bar"
                       style={{ background: color }}
                       initial={{ width: 0 }}
                       animate={{ width: `${Math.min(100, c.pct)}%` }}
@@ -1674,7 +1677,7 @@ function SaidasListModerna({ linhas, labelKey, extraKey, colors, onClick }) {
             </div>
             <div className="h-1.5 bg-muted rounded-full overflow-hidden">
               <motion.div
-                className="h-full rounded-full"
+                className="h-full rounded-full cbrio-bar"
                 style={{ background: cor }}
                 initial={{ width: 0 }}
                 animate={{ width: `${barPct}%` }}
@@ -1734,7 +1737,7 @@ function SaidasList({ linhas, labelKey, extraKey }) {
           </div>
           <div className="h-1.5 bg-muted rounded-full overflow-hidden">
             <motion.div
-              className="h-full rounded-full"
+              className="h-full rounded-full cbrio-bar"
               style={{ background: COL.red }}
               initial={{ width: 0 }}
               animate={{ width: `${(Number(l.total) / max) * 100}%` }}
@@ -1929,7 +1932,7 @@ function MetaCardFin({ meta, idx, ctx, onEdit, onDelete }) {
               <div className="h-3 rounded-full bg-muted overflow-hidden">
                 <motion.div
                   key={`bar-${meta.id}-${pct}`}
-                  className="h-full rounded-full"
+                  className="h-full rounded-full cbrio-bar"
                   style={{ background: cor }}
                   initial={{ width: 0 }}
                   animate={{ width: `${Math.min(100, pct)}%` }}
@@ -2802,7 +2805,7 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, semanasOpcoes, anoA
               <div className="h-3 rounded-full bg-muted overflow-hidden">
                 <motion.div
                   key={`bar-${meta.id}-${pct}`}
-                  className="h-full rounded-full"
+                  className="h-full rounded-full cbrio-bar"
                   style={{ background: cor }}
                   initial={{ width: 0 }}
                   animate={{ width: `${Math.min(100, pct)}%` }}
@@ -3567,7 +3570,7 @@ function SlideSaudeFinanceira() {
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: `${folhaCor}1f`, color: folhaCor }}>{folhaLabel}</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
-                <motion.div className="h-full rounded-full" style={{ background: folhaCor }}
+                <motion.div className="h-full rounded-full cbrio-bar" style={{ background: folhaCor }}
                   initial={{ width: 0 }} animate={{ width: `${Math.min(100, pctFolha)}%` }} transition={{ duration: 1 }} />
               </div>
               <div className="text-[11px] text-muted-foreground mt-2 tabular-nums">
@@ -3591,7 +3594,7 @@ function SlideSaudeFinanceira() {
                 <span className="text-xs text-muted-foreground">da arrecadação vem dos top 20% doadores</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
-                <motion.div className="h-full rounded-full" style={{ background: concCor }}
+                <motion.div className="h-full rounded-full cbrio-bar" style={{ background: concCor }}
                   initial={{ width: 0 }} animate={{ width: `${Math.min(100, top20)}%` }} transition={{ duration: 1 }} />
               </div>
               <div className="text-[11px] text-muted-foreground mt-2 tabular-nums flex items-center justify-between gap-2">

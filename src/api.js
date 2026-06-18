@@ -246,6 +246,12 @@ export const next = {
     update: (id, data) => patch(`/next/matriculas/${id}`, data),
     remove: (id) => del(`/next/matriculas/${id}`),
   },
+  // Pessoas — funil unificado (convertidos + matrículas, 1 linha/pessoa)
+  pessoas: (params) => get('/next/pessoas' + (params ? '?' + new URLSearchParams(params) : '')),
+  convertidos: {
+    resolver: (id, resolucao) => post(`/next/convertidos/${id}/resolver`, { resolucao }),
+    desresolver: (id) => del(`/next/convertidos/${id}/resolver`),
+  },
 };
 
 export const integracao = {

@@ -197,6 +197,24 @@ router.get('/candidatos', authorizeModule('next-batismo', 1), async (req, res) =
   }
 });
 
+// Item 4 (Marcos · "só vincular"): ao resolver uma pessoa do Next, vincula a
+// matrícula dela ao membro resolvido — a aba Pessoas consolida (1 linha) e,
+// sendo convertida, ela já aparece no primeiro contato do Cuidados. Não cria
+// convertido pra externo (decisão do Marcos) nem mexe em formado/desistiu.
+// (O /fundir já vincula via merge_membros, que repointa next_matriculas.membro_id.)
+async function vincularMatriculaNext(membroId, row) {
+  if (!membroId || !row) return;
+  try {
+    let q = supabase.from('next_matriculas')
+      .update({ membro_id: membroId, updated_at: new Date().toISOString() })
+      .is('membro_id', null).is('deleted_at', null);
+    if (row.cpf) q = q.eq('cpf', row.cpf);
+    else if (row.email) q = q.eq('email', row.email);
+    else return; // sem chave forte (cpf/email), não arrisca match por nome
+    await q;
+  } catch (e) { console.error('[next-batismo] vincular matrícula Next:', e.message); }
+}
+
 // ── POST /ligar · carimba membro_id na linha do funil (ligar OU criar) ────────
 router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
   try {
@@ -231,6 +249,7 @@ router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
       }
       throw upErr;
     }
+    if (tipo === 'next') await vincularMatriculaNext(alvoMembroId, row);
     res.json({ ok: true, membro_id: alvoMembroId, criado });
   } catch (e) {
     console.error('[next-batismo/ligar]', e.message);

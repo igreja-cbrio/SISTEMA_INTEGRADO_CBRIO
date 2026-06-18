@@ -217,7 +217,7 @@ export default function VolRelatorios() {
                       <div className="flex items-center gap-3 shrink-0">
                         <div className="w-32 h-2 bg-muted rounded-full overflow-hidden hidden sm:block">
                           <div
-                            className={`h-full rounded-full ${svc.rate >= 80 ? 'bg-green-500' : svc.rate >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                            className={`h-full rounded-full cbrio-bar ${svc.rate >= 80 ? 'bg-green-500' : svc.rate >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
                             style={{ width: `${Math.min(svc.rate, 100)}%` }}
                           />
                         </div>

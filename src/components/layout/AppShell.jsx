@@ -29,6 +29,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
+import { GlobalChartGradients } from '../charts/ChartGradients';
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
 const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
@@ -118,7 +119,6 @@ const NAV_ITEMS = [
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
-          { label: 'NEXT', description: 'Porta de entrada — inscrições, check-in e indicações', icon: ArrowRight, path: '/ministerial/next', perm: 'canMembresia' },
           { label: 'Next - Batismo', description: 'Check de pessoas · liga inscrição ao membro certo e funde cadastros duplicados', icon: UserSearch, path: '/next-batismo', module: 'next-batismo' },
         ],
       },
@@ -345,11 +345,12 @@ export default function AppShell() {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--cbrio-bg)' }}>
+    <div className="min-h-screen" style={{ background: 'transparent' }}>
+      <GlobalChartGradients />
       <CommandSearch />
 
       {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-border/50 bg-card/60 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-card/55">
+      <header className="sticky top-0 z-30 border-b border-border/40 bg-card/40 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-card/30">
         <div className="flex items-center justify-between h-14 px-4 md:px-6 max-w-[1800px] mx-auto gap-2">
           {/* Left: Menu mobile + Logo */}
           <div className="flex items-center gap-2">
