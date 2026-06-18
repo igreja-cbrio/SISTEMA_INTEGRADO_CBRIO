@@ -39,8 +39,8 @@ export default function EmptyState({
       padding: compacto ? '20px 16px' : '32px 20px',
       textAlign: 'center',
       borderRadius: 8,
-      background: 'var(--cbrio-input-bg)',
-      border: '1px dashed var(--cbrio-border)',
+      background: 'var(--surface)',
+      border: '1px dashed var(--hairline)',
     }}>
       {Icone && (
         <div style={{

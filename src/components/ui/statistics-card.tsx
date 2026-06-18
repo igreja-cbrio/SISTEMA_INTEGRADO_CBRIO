@@ -28,7 +28,7 @@ function StatisticsCard({
     <div
       onClick={onClick}
       className={cn(
-        "cbrio-kpi relative rounded-xl border border-border bg-card p-4 transition-all",
+        "cbrio-kpi glass-surface relative rounded-[16px] p-4 transition-all",
         onClick && "cursor-pointer hover:shadow-lg",
         className
       )}

@@ -62,13 +62,30 @@
     --cbrio-card: #161616;
     --cbrio-text: #e5e5e5;
     --cbrio-text2: #a3a3a3;
-    --cbrio-text3: #737373;
+    --cbrio-text3: #8b969d;
     --cbrio-border: #262626;
     --cbrio-sidebar: #111111;
     --cbrio-input-bg: #1e1e1e;
     --cbrio-table-header: #1e1e1e;
     --cbrio-modal-bg: #1a1a1a;
     --cbrio-overlay: rgba(0,0,0,0.7);
+
+    /* ── Design "Vidro" · tokens glass (tema escuro / padrão) ── */
+    --teal: #00B39D;
+    --mint: #3fe3c6;
+    --panel: rgba(22, 30, 36, .72);          /* card de vidro (opaco o bastante p/ dado legível) */
+    --surface: rgba(255, 255, 255, .05);     /* inputs/chips/hovers */
+    --track: rgba(255, 255, 255, .08);       /* trilho de barra/progresso */
+    --hairline: rgba(255, 255, 255, .10);    /* borda fina */
+    --hi: inset 0 1px 0 rgba(255, 255, 255, .06); /* brilho fino no topo */
+    --shadow: 0 14px 40px rgba(0, 0, 0, .42);
+    --shadow-hover: 0 20px 52px rgba(0, 0, 0, .52);
+    --glow-op: .10;
+    --app-bg:
+      radial-gradient(1100px 600px at 8% -10%, rgba(0,179,157,.14), transparent 60%),
+      radial-gradient(900px 520px at 108% 8%, rgba(40,90,120,.18), transparent 58%),
+      radial-gradient(700px 700px at 50% 120%, rgba(0,120,150,.10), transparent 60%),
+      linear-gradient(180deg, #0b1217 0%, #080d11 100%);
   }
 
   [data-theme="light"] {
@@ -104,6 +121,22 @@
     --cbrio-table-header: #f5f5f5;
     --cbrio-modal-bg: #ffffff;
     --cbrio-overlay: rgba(0,0,0,0.4);
+
+    /* ── Design "Vidro" · tokens glass (tema claro) ── */
+    --teal: #009d8a;
+    --mint: #0bbfa3;
+    --panel: rgba(255, 255, 255, .82);
+    --surface: rgba(15, 40, 45, .04);
+    --track: rgba(15, 40, 45, .08);
+    --hairline: rgba(15, 40, 45, .10);
+    --hi: inset 0 1px 0 rgba(255, 255, 255, .6);
+    --shadow: 0 12px 30px rgba(20, 45, 55, .10);
+    --shadow-hover: 0 18px 40px rgba(20, 45, 55, .16);
+    --glow-op: .07;
+    --app-bg:
+      radial-gradient(1100px 600px at 8% -10%, rgba(0,179,157,.08), transparent 60%),
+      radial-gradient(900px 520px at 108% 8%, rgba(70,120,150,.07), transparent 58%),
+      linear-gradient(180deg, #eef3f4 0%, #e4ebec 100%);
   }
 }
 
@@ -128,6 +161,9 @@
     font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     transition: background 0.3s ease, color 0.3s ease;
+    /* Fundo ambiente "vidro": glows radiais sutis (sem grade técnica). */
+    background-image: var(--app-bg);
+    background-attachment: fixed;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
@@ -191,7 +227,69 @@ table tbody tr:hover {
 
 /* ── Spacing tokens ── */
 .cbrio-page { padding: 0 24px; }
-.cbrio-card { background: var(--cbrio-card); border-radius: 12px; border: 1px solid var(--cbrio-border); box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; }
+/* ── Superfície de vidro (fórmula do card) ──
+   .glass-surface = base usada pelo <Card> shadcn (sem overflow, p/ não cortar menus/sticky).
+   .cbrio-card    = card custom legado, mantém overflow:hidden + raio próprio. */
+@layer components {
+  /* Em @layer components p/ que utilitários Tailwind no className (bg-*, border-*)
+     ainda sobrescrevam — telas que cravam cor de propósito continuam funcionando. */
+  .glass-surface {
+    background: var(--panel);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+            backdrop-filter: blur(14px) saturate(140%);
+    border: 1px solid var(--hairline);
+    box-shadow: var(--shadow), var(--hi);
+  }
+}
+.cbrio-card {
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+          backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  box-shadow: var(--shadow), var(--hi);
+  overflow: hidden;
+}
+/* Variante NÍTIDA p/ dado denso (tabelas/forms): sem blur, fundo sólido. */
+.glass-solid,
+.cbrio-card--solid {
+  background: var(--cbrio-card) !important;
+  -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+}
+/* Acessibilidade: respeita preferências do sistema (não regredir). */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-surface, .cbrio-card {
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    background: var(--cbrio-card);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cbrio-card, .cbrio-interactive, .cbrio-kpi { transition: none !important; }
+}
+
+/* Regra de ouro: DADO DENSO fica NÍTIDO. Card de vidro que contém tabela ou
+   gráfico (recharts) perde o blur e vira sólido automaticamente — sem editar
+   páginas. (:has é ignorado em navegadores antigos → degrada pro vidro.) */
+.glass-surface:has(table),
+.glass-surface:has(.recharts-wrapper),
+.glass-surface:has(.recharts-responsive-container),
+.cbrio-card:has(table),
+.cbrio-card:has(.recharts-wrapper) {
+  -webkit-backdrop-filter: none;
+          backdrop-filter: none;
+  background: var(--cbrio-card);
+}
+/* Cards ANINHADOS: o filho não repete blur (evita "borrão duplo"). */
+.glass-surface .glass-surface,
+.glass-surface .cbrio-card,
+.cbrio-card .glass-surface,
+.cbrio-card .cbrio-card {
+  -webkit-backdrop-filter: none;
+          backdrop-filter: none;
+  background: var(--cbrio-card);
+  box-shadow: none;
+}
 .cbrio-card-header { padding: 16px 20px; border-bottom: 1px solid var(--cbrio-border); display: flex; justify-content: space-between; align-items: center; }
 .cbrio-card-body { padding: 16px 20px; }
 
