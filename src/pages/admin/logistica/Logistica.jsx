@@ -323,7 +323,7 @@ export default function Logistica() {
       {tab === 1 && (
         <FornecedoresTab data={fornecedores} loading={loading} isDiretor={isDiretor}
           filtroAtivo={filtroFornAtivo} setFiltroAtivo={setFiltroFornAtivo}
-          onNew={() => setModalForn({ razao_social: '', nome_fantasia: '', cnpj: '', email: '', telefone: '', contato: '', categoria: '', ativo: true, observacoes: '' })}
+          onNew={() => setModalForn({ razao_social: '', nome_fantasia: '', cnpj: '', email: '', telefone: '', contato: '', categoria: '', endereco: '', ativo: true, observacoes: '' })}
           onEdit={(f) => setModalForn({ ...f })} onDelete={deleteFornecedor} onToggle={toggleFornecedorAtivo}
         />
       )}
@@ -370,6 +370,7 @@ export default function Logistica() {
             <Input label="E-mail" value={modalForn.email || ''} onChange={e => upForn('email', e.target.value)} />
             <Input label="Contato" value={modalForn.contato || ''} onChange={e => upForn('contato', e.target.value)} />
           </div>
+          <Input label="Endereço" value={modalForn.endereco || ''} onChange={e => upForn('endereco', e.target.value)} />
           <Select label="Categoria" value={modalForn.categoria || ''} onChange={e => upForn('categoria', e.target.value)}>
             <option value="">Selecione...</option>
             {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
@@ -509,11 +510,21 @@ function DashboardTab({ dash, onRefresh, onNavigate }) {
 // TAB: Fornecedores
 // ═══════════════════════════════════════════════════════════
 function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo, onNew, onEdit, onDelete, onToggle }) {
+  const [soIncompletos, setSoIncompletos] = useState(false);
+  const incompleto = (f) => !f.cnpj || !f.endereco || !f.telefone;
+  const nIncompletos = data.filter(incompleto).length;
+  const rows = soIncompletos ? data.filter(incompleto) : data;
   return (<>
     <div style={styles.filterRow}>
       <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value)}>
         <option value="">Todos</option><option value="true">Ativos</option><option value="false">Inativos</option>
       </select>
+      {nIncompletos > 0 && (
+        <button onClick={() => setSoIncompletos(v => !v)}
+          style={{ ...styles.badge(C.amber, C.amberBg), cursor: 'pointer', padding: '6px 12px', border: soIncompletos ? `1px solid ${C.amber}` : '1px solid transparent' }}>
+          ⚠️ Dados incompletos ({nIncompletos})
+        </button>
+      )}
       {isDiretor && <Button onClick={onNew}>+ Novo Fornecedor</Button>}
     </div>
     <div style={styles.card}><table style={styles.table}><thead><tr>
@@ -521,14 +532,17 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
       {isDiretor && <th style={styles.th}>Ações</th>}
     </tr></thead><tbody>
       {loading ? <tr><td colSpan={6}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
-      : data.length === 0 ? <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum fornecedor</span></div></td></tr>
-      : data.map(f => (
+      : rows.length === 0 ? <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum fornecedor</span></div></td></tr>
+      : rows.map(f => (
         <tr key={f.id}>
           <td style={styles.td}><div style={{ fontWeight: 600 }}>{f.nome_fantasia || f.razao_social}</div>{f.nome_fantasia && <div style={{ fontSize: 11, color: C.text3 }}>{f.razao_social}</div>}</td>
           <td style={styles.td}>{f.cnpj || '—'}</td>
           <td style={styles.td}>{f.categoria || '—'}</td>
           <td style={styles.td}><div>{f.contato || '—'}</div>{f.email && <div style={{ fontSize: 11, color: C.text3 }}>{f.email}</div>}{f.telefone && <div style={{ fontSize: 11, color: C.text3 }}>{f.telefone}</div>}</td>
-          <td style={styles.td}><span style={styles.badge(f.ativo ? C.green : C.text3, f.ativo ? C.greenBg : '#73737318')}>{f.ativo ? 'Ativo' : 'Inativo'}</span></td>
+          <td style={styles.td}>
+            <span style={styles.badge(f.ativo ? C.green : C.text3, f.ativo ? C.greenBg : '#73737318')}>{f.ativo ? 'Ativo' : 'Inativo'}</span>
+            {incompleto(f) && <span style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }} title={`Faltando: ${[!f.cnpj && 'CNPJ', !f.endereco && 'endereço', !f.telefone && 'telefone'].filter(Boolean).join(', ')}`}>Incompleto</span>}
+          </td>
           {isDiretor && <td style={styles.td}><div style={{ display: 'flex', gap: 4 }}>
             <Button variant="ghost" size="sm" onClick={() => onToggle(f)}>{f.ativo ? '⏸' : '▶'}</Button>
             <Button variant="ghost" size="sm" onClick={() => onEdit(f)}>✏️</Button>

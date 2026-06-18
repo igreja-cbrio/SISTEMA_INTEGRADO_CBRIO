@@ -162,10 +162,10 @@ router.get('/fornecedores', async (req, res) => {
 
 router.post('/fornecedores', async (req, res) => {
   try {
-    const { razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, observacoes } = req.body;
+    const { razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, endereco, observacoes } = req.body;
     if (!razao_social) return res.status(400).json({ error: 'Razão social é obrigatória' });
     const { data, error } = await supabase.from('log_fornecedores')
-      .insert({ razao_social, nome_fantasia: nome_fantasia || null, cnpj: cnpj || null, email: email || null, telefone: telefone || null, contato: contato || null, categoria: categoria || null, observacoes: observacoes || null })
+      .insert({ razao_social, nome_fantasia: nome_fantasia || null, cnpj: cnpj || null, email: email || null, telefone: telefone || null, contato: contato || null, categoria: categoria || null, endereco: endereco || null, observacoes: observacoes || null })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -174,9 +174,9 @@ router.post('/fornecedores', async (req, res) => {
 
 router.put('/fornecedores/:id', async (req, res) => {
   try {
-    const { razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, ativo, observacoes } = req.body;
+    const { razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, endereco, ativo, observacoes } = req.body;
     const { data, error } = await supabase.from('log_fornecedores')
-      .update({ razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, ativo, observacoes })
+      .update({ razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, endereco, ativo, observacoes })
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -481,7 +481,7 @@ router.delete('/notas/:id', async (req, res) => {
 // ══════════════ COMPRAS (aba Compras · ledger do Pery) ══════════════
 // Campos editáveis de uma compra
 const COMPRA_CAMPOS = [
-  'tipo', 'data_compra', 'n_pedido', 'comprador', 'fornecedor', 'fornecedor_id',
+  'tipo', 'data_compra', 'n_pedido', 'comprador', 'comprador_id', 'fornecedor', 'fornecedor_id',
   'materiais', 'origem', 'centro_custo', 'centro_custo_id', 'valor', 'data_entrega',
   'status_entrega', 'forma_pgto', 'parcelas', 'observacoes',
 ];
@@ -491,12 +491,41 @@ function pickCompra(body) {
   return out;
 }
 
+// SELECT padrão das compras (com fornecedor, centro de custo do financeiro e comprador colaborador)
+const COMPRA_SELECT = '*, log_fornecedores(razao_social, nome_fantasia, cnpj, endereco, telefone, email), centro_fin:fin_centros_custo(codigo, nome), comprador_fn:rh_funcionarios(nome, cargo)';
+
+// Find-or-create do fornecedor: garante que toda compra tenha fornecedor cadastrado
+// na aba Fornecedores. Cadastro automático fica com observação (a UI sinaliza
+// "incompleto" quando falta CNPJ/endereço/telefone).
+async function resolverFornecedor({ nome, cnpj, telefone, endereco }) {
+  const nomeT = (nome || '').trim();
+  const cnpjT = (cnpj || '').replace(/\D/g, '') || null;
+  if (!nomeT && !cnpjT) return null;
+  if (cnpjT) {
+    const { data } = await supabase.from('log_fornecedores').select('id').eq('cnpj', cnpjT).maybeSingle();
+    if (data) return data.id;
+  }
+  if (nomeT) {
+    const { data } = await supabase.from('log_fornecedores').select('id').ilike('razao_social', nomeT).limit(1);
+    if (data && data.length) return data[0].id;
+  }
+  const { data: novo, error } = await supabase.from('log_fornecedores')
+    .insert({
+      razao_social: nomeT || 'Fornecedor sem nome', cnpj: cnpjT,
+      telefone: telefone || null, endereco: endereco || null, ativo: true,
+      observacoes: 'Cadastrado automaticamente pela aba Compras · completar dados',
+    })
+    .select('id').single();
+  if (error) { console.error('[COMPRAS] resolverFornecedor:', error.message); return null; }
+  return novo.id;
+}
+
 // Listagem com filtros
 router.get('/compras', async (req, res) => {
   try {
     const { status_aprovacao, vinculo_status, comprador, centro_custo, forma_pgto, tipo, mes, busca } = req.query;
     let q = supabase.from('log_compras')
-      .select('*, log_fornecedores(razao_social, nome_fantasia)')
+      .select(COMPRA_SELECT)
       .is('deleted_at', null);
     if (status_aprovacao) q = q.eq('status_aprovacao', status_aprovacao);
     if (vinculo_status) q = q.eq('vinculo_status', vinculo_status);
@@ -544,6 +573,28 @@ router.get('/compras/kpis', async (req, res) => {
   } catch (e) { console.error('[LOG] kpis compras:', e); res.status(500).json({ error: 'Erro ao carregar KPIs de compras' }); }
 });
 
+// Centros de custo canônicos do financeiro (pra consolidar tudo no mesmo eixo)
+router.get('/compras/aux/centros-custo', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('fin_centros_custo')
+      .select('id, codigo, nome, area_slug')
+      .eq('ativo', true).eq('aceita_lancamento', true).order('codigo');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar centros de custo' }); }
+});
+
+// Colaboradores (rh_funcionarios) pra vincular o comprador
+router.get('/compras/aux/compradores', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('rh_funcionarios')
+      .select('id, nome, cargo')
+      .is('deleted_at', null).eq('status', 'ativo').order('nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar colaboradores' }); }
+});
+
 // Importar a planilha de compras (.xlsx)
 router.post('/compras/importar', uploadPlanilha.single('arquivo'), async (req, res) => {
   try {
@@ -568,11 +619,10 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
     try { ({ extraido, raw } = await extrairNotaFiscal(req.file.buffer, req.file.mimetype)); }
     catch (e) { console.error('[LOG] compra extração falhou:', e.message); }
 
-    let fornecedorId = null;
-    if (extraido?.emitente_cnpj) {
-      const { data: forn } = await supabase.from('log_fornecedores').select('id').eq('cnpj', extraido.emitente_cnpj).maybeSingle();
-      fornecedorId = forn?.id || null;
-    }
+    // Find-or-create do fornecedor (fica registrado na aba Fornecedores)
+    const fornecedorId = (extraido?.emitente_nome || extraido?.emitente_cnpj)
+      ? await resolverFornecedor({ nome: extraido?.emitente_nome, cnpj: extraido?.emitente_cnpj })
+      : null;
 
     const { data: compra, error } = await supabase.from('log_compras')
       .insert({
@@ -592,7 +642,7 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
         status_aprovacao: 'pendente',
         created_by: req.user.userId,
       })
-      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+      .select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
 
     // Notifica a equipe de logística que há compra escaneada pra conferir
@@ -629,16 +679,19 @@ router.post('/compras/:id/vincular', async (req, res) => {
   try {
     const { fin_transacao_id, score } = req.body;
     if (!fin_transacao_id) return res.status(400).json({ error: 'Informe a saída a vincular' });
-    const { data: trn } = await supabase.from('fin_transacoes').select('id, tipo').eq('id', fin_transacao_id).maybeSingle();
+    const { data: trn } = await supabase.from('fin_transacoes').select('id, tipo, centro_custo_id').eq('id', fin_transacao_id).maybeSingle();
     if (!trn) return res.status(404).json({ error: 'Saída do balanço não encontrada' });
     if (trn.tipo !== 'despesa') return res.status(400).json({ error: 'Só é possível vincular a uma saída (despesa)' });
+    const upd = {
+      fin_transacao_id, vinculo_status: 'confirmada', vinculo_score: score ?? null,
+      vinculo_em: new Date().toISOString(), vinculo_por: req.user.userId,
+    };
+    // Consolida: a compra herda o centro de custo do financeiro (da saída vinculada)
+    if (trn.centro_custo_id) upd.centro_custo_id = trn.centro_custo_id;
     const { data, error } = await supabase.from('log_compras')
-      .update({
-        fin_transacao_id, vinculo_status: 'confirmada', vinculo_score: score ?? null,
-        vinculo_em: new Date().toISOString(), vinculo_por: req.user.userId,
-      })
+      .update(upd)
       .eq('id', req.params.id).is('deleted_at', null)
-      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+      .select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { console.error('[LOG] vincular compra:', e); res.status(500).json({ error: 'Erro ao vincular compra' }); }
@@ -649,7 +702,7 @@ router.post('/compras/:id/desvincular', async (req, res) => {
     const { data, error } = await supabase.from('log_compras')
       .update({ fin_transacao_id: null, vinculo_status: 'nao_vinculada', vinculo_score: null, vinculo_em: null, vinculo_por: null })
       .eq('id', req.params.id).is('deleted_at', null)
-      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+      .select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao desvincular compra' }); }
@@ -659,9 +712,10 @@ router.post('/compras/:id/desvincular', async (req, res) => {
 router.post('/compras/:id/aprovar', async (req, res) => {
   try {
     const update = { ...pickCompra(req.body || {}), status_aprovacao: 'aprovada', aprovada_em: new Date().toISOString(), aprovada_por: req.user.userId, rejeitada_motivo: null };
+    if (!update.fornecedor_id && update.fornecedor) update.fornecedor_id = await resolverFornecedor({ nome: update.fornecedor });
     const { data, error } = await supabase.from('log_compras')
       .update(update).eq('id', req.params.id).is('deleted_at', null)
-      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+      .select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { console.error('[LOG] aprovar compra:', e); res.status(500).json({ error: 'Erro ao aprovar compra' }); }
@@ -673,7 +727,7 @@ router.post('/compras/:id/rejeitar', async (req, res) => {
     const { data, error } = await supabase.from('log_compras')
       .update({ status_aprovacao: 'rejeitada', rejeitada_motivo: motivo || null, aprovada_em: new Date().toISOString(), aprovada_por: req.user.userId })
       .eq('id', req.params.id).is('deleted_at', null)
-      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+      .select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao rejeitar compra' }); }
@@ -684,11 +738,12 @@ router.post('/compras', async (req, res) => {
   try {
     const payload = pickCompra(req.body || {});
     if (!payload.fornecedor && payload.valor == null) return res.status(400).json({ error: 'Informe ao menos fornecedor ou valor' });
+    if (!payload.fornecedor_id && payload.fornecedor) payload.fornecedor_id = await resolverFornecedor({ nome: payload.fornecedor });
     payload.origem_registro = payload.origem_registro || 'manual';
     payload.status_aprovacao = req.body?.status_aprovacao === 'pendente' ? 'pendente' : 'aprovada';
     payload.created_by = req.user.userId;
     const { data, error } = await supabase.from('log_compras')
-      .insert(payload).select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+      .insert(payload).select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { console.error('[LOG] criar compra:', e); res.status(500).json({ error: 'Erro ao criar compra' }); }
@@ -699,9 +754,10 @@ router.put('/compras/:id', async (req, res) => {
   try {
     const payload = pickCompra(req.body || {});
     if (!Object.keys(payload).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    if (!payload.fornecedor_id && payload.fornecedor) payload.fornecedor_id = await resolverFornecedor({ nome: payload.fornecedor });
     const { data, error } = await supabase.from('log_compras')
       .update(payload).eq('id', req.params.id).is('deleted_at', null)
-      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+      .select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar compra' }); }
