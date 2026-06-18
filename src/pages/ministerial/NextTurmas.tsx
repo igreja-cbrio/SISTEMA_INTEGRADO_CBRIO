@@ -9,8 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
   CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
+  Share2, Copy, MessageCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import QRCode from 'qrcode';
 
 const C = { primary: '#00B39D', warn: '#f59e0b', danger: '#ef4444', info: '#3b82f6', gray: '#737373' };
 
@@ -44,20 +46,27 @@ function ymdLocal(d?: string | null): string {
 
 export default function NextTurmas() {
   const [view, setView] = useState<'turmas' | 'pessoas'>('turmas');
+  const [shareOpen, setShareOpen] = useState(false);
   return (
     <div className="space-y-4">
-      <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
-        {([['turmas', 'Turmas'], ['pessoas', 'Pessoas']] as const).map(([v, label]) => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${view === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
+          {([['turmas', 'Turmas'], ['pessoas', 'Pessoas']] as const).map(([v, label]) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${view === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setShareOpen(true)} className="gap-2">
+          <Share2 className="h-4 w-4" /> Compartilhar link
+        </Button>
       </div>
       {view === 'turmas' ? <TurmasView /> : <PessoasView />}
+      {shareOpen && <ModalCompartilhar onClose={() => setShareOpen(false)} />}
     </div>
   );
 }
@@ -545,5 +554,53 @@ function Pill({ label, v, color }: { label: string; v: number; color?: string })
       <span className="font-semibold" style={color ? { color } : undefined}>{v ?? 0}</span>
       <span className="text-muted-foreground">{label}</span>
     </span>
+  );
+}
+
+// Compartilhar a inscrição pública do Next — MESMO link e QR que o módulo antigo usava.
+function ModalCompartilhar({ onClose }: { onClose: () => void }) {
+  const url = `${window.location.origin}/next/inscrever`;
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const mensagem = `Você está convidado(a) para o NEXT da CBRio — a porta de entrada da igreja!\n\nInscreva-se: ${url}`;
+  useEffect(() => {
+    QRCode.toDataURL(url, { width: 320, margin: 2, color: { dark: '#000000', light: '#ffffff' } }).then(setQrDataUrl).catch(() => {});
+  }, [url]);
+  const copy = (text: string) => { navigator.clipboard.writeText(text); toast.success('Copiado!'); };
+  const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(mensagem)}`;
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Share2 className="h-5 w-5" /> Compartilhar inscrição no Next</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label className="text-xs">Link público</Label>
+            <div className="flex gap-2 mt-1">
+              <Input value={url} readOnly className="font-mono text-xs" />
+              <Button size="sm" variant="outline" onClick={() => copy(url)} className="shrink-0 gap-1.5"><Copy className="h-3.5 w-3.5" /></Button>
+            </div>
+          </div>
+          {qrDataUrl && (
+            <div className="text-center">
+              <Label className="text-xs block mb-2">QR code</Label>
+              <img src={qrDataUrl} alt="QR Code" className="mx-auto rounded-lg border border-border" style={{ width: 220, height: 220 }} />
+              <p className="text-[10px] text-muted-foreground mt-2">Escaneie com a câmera do celular para abrir o formulário</p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <a href={whatsappUrl} target="_blank" rel="noreferrer"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white" style={{ background: '#25D366' }}>
+              <MessageCircle className="h-4 w-4" /> WhatsApp
+            </a>
+            <Button variant="outline" onClick={() => copy(mensagem)} className="gap-2"><Copy className="h-4 w-4" /> Copiar mensagem</Button>
+          </div>
+          <div className="rounded-xl bg-muted/30 border border-border p-3">
+            <p className="text-[11px] text-muted-foreground whitespace-pre-line">{mensagem}</p>
+          </div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
