@@ -80,9 +80,17 @@ export default function LogisticaCompras() {
   const [filtros, setFiltros] = useState({ busca: '', comprador: '', centro_custo: '', forma_pgto: '', status_aprovacao: '', vinculo_status: '', mes: '' });
   const [modal, setModal] = useState(null);        // { compra, review } edição/revisão/nova
   const [vinculoModal, setVinculoModal] = useState(null); // { compra, candidatos, loading }
+  const [centrosFin, setCentrosFin] = useState([]);       // fin_centros_custo (financeiro)
+  const [colaboradores, setColaboradores] = useState([]); // rh_funcionarios ativos
+  const [camera, setCamera] = useState(false);      // modal de câmera
 
   const scanRef = useRef(null);
   const importRef = useRef(null);
+
+  useEffect(() => {
+    logistica.compras.centrosCusto().then(setCentrosFin).catch(() => {});
+    logistica.compras.compradores().then(setColaboradores).catch(() => {});
+  }, []);
 
   const fetchKpis = useCallback(async () => {
     try { setKpis(await logistica.compras.kpis()); } catch (e) { /* silencioso */ }
@@ -114,10 +122,9 @@ export default function LogisticaCompras() {
   const centros = useMemo(() => [...new Set(compras.map((c) => c.centro_custo).filter(Boolean))].sort(), [compras]);
 
   // ── Ações ──
-  const onScanFile = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  const scanFile = async (file) => {
     if (!file) return;
+    setCamera(false);
     setBusy(true); setError('');
     try {
       const { compra, extracao_ok } = await logistica.compras.escanear(file);
@@ -127,6 +134,7 @@ export default function LogisticaCompras() {
     } catch (e) { setError(e.message); }
     setBusy(false);
   };
+  const onScanFile = (e) => { const f = e.target.files?.[0]; e.target.value = ''; scanFile(f); };
 
   const onImportFile = async (e) => {
     const file = e.target.files?.[0];
@@ -235,7 +243,7 @@ export default function LogisticaCompras() {
 
       {/* Toolbar */}
       <div style={S.toolbar}>
-        <button style={{ ...btn(C.primary), opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={() => scanRef.current?.click()}>
+        <button style={{ ...btn(C.primary), opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={() => setCamera(true)}>
           📷 Escanear nota
         </button>
         <button style={btnOutline()} disabled={busy} onClick={() => importRef.current?.click()}>
@@ -319,8 +327,12 @@ export default function LogisticaCompras() {
                       <div style={{ fontWeight: 600 }}>{c.fornecedor || '—'}</div>
                       <div style={{ fontSize: 12, color: C.text2 }}>{c.materiais || ''}{c.origem_registro === 'scan' ? ' · 📷 escaneada' : ''}</div>
                     </td>
-                    <td style={S.td}>{c.centro_custo || '—'}</td>
-                    <td style={S.td}>{c.comprador || '—'}</td>
+                    <td style={S.td}>
+                      {c.centro_fin?.nome
+                        ? <span title={`${c.centro_fin.codigo} · financeiro`}>{c.centro_fin.nome}</span>
+                        : <span style={{ color: C.text2 }}>{c.centro_custo || '—'}</span>}
+                    </td>
+                    <td style={S.td}>{c.comprador_fn?.nome || c.comprador || '—'}</td>
                     <td style={S.td}>{c.forma_pgto || '—'}</td>
                     <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{fmtMoney(c.valor)}</td>
                     <td style={S.td}><Badge status={c.status_aprovacao} map={APROVACAO} /></td>
@@ -345,10 +357,13 @@ export default function LogisticaCompras() {
       </div>
 
       {modal && (
-        <CompraModal entry={modal} onClose={() => setModal(null)} onSalvar={salvar} onAprovar={aprovar} onRejeitar={rejeitar} busy={busy} />
+        <CompraModal entry={modal} onClose={() => setModal(null)} onSalvar={salvar} onAprovar={aprovar} onRejeitar={rejeitar} busy={busy} centros={centrosFin} colaboradores={colaboradores} />
       )}
       {vinculoModal && (
         <VinculoModal data={vinculoModal} onClose={() => setVinculoModal(null)} onConfirmar={confirmarVinculo} busy={busy} />
+      )}
+      {camera && (
+        <CameraModal onClose={() => setCamera(false)} onCapture={scanFile} onPickFile={() => scanRef.current?.click()} busy={busy} />
       )}
     </div>
   );
@@ -360,7 +375,7 @@ function btnOutline() { return { padding: '8px 14px', borderRadius: 10, fontSize
 function btnSm(color) { return { padding: '4px 9px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none', background: 'transparent', color, marginLeft: 4 }; }
 
 // ── Modal de compra (nova / editar / revisar scan) ──
-function CompraModal({ entry, onClose, onSalvar, onAprovar, onRejeitar, busy }) {
+function CompraModal({ entry, onClose, onSalvar, onAprovar, onRejeitar, busy, centros = [], colaboradores = [] }) {
   const [c, setC] = useState(entry.compra);
   useEffect(() => { setC(entry.compra); }, [entry]);
   const review = entry.review;
@@ -389,8 +404,20 @@ function CompraModal({ entry, onClose, onSalvar, onAprovar, onRejeitar, busy }) 
           <Field label="Fornecedor"><input style={S.input} value={c.fornecedor || ''} onChange={(e) => set('fornecedor', e.target.value)} /></Field>
           <Field label="Materiais / descrição"><input style={S.input} value={c.materiais || ''} onChange={(e) => set('materiais', e.target.value)} /></Field>
           <div style={S.formRow}>
-            <Field label="Centro de custo (torre)"><input style={S.input} value={c.centro_custo || ''} onChange={(e) => set('centro_custo', e.target.value)} placeholder="ADM, MINISTERIAL…" /></Field>
-            <Field label="Comprador"><input style={S.input} value={c.comprador || ''} onChange={(e) => set('comprador', e.target.value)} /></Field>
+            <Field label="Centro de custo (financeiro)">
+              <select style={S.select} value={c.centro_custo_id || ''} onChange={(e) => set('centro_custo_id', e.target.value || null)}>
+                <option value="">— escolher do financeiro —</option>
+                {centros.map((x) => <option key={x.id} value={x.id}>{x.nome}</option>)}
+              </select>
+              {c.centro_custo && !c.centro_custo_id && <div style={{ fontSize: 11, color: C.amber, marginTop: 3 }}>planilha: “{c.centro_custo}” — escolha o centro do financeiro</div>}
+            </Field>
+            <Field label="Comprador (colaborador)">
+              <select style={S.select} value={c.comprador_id || ''} onChange={(e) => set('comprador_id', e.target.value || null)}>
+                <option value="">— escolher colaborador —</option>
+                {colaboradores.map((x) => <option key={x.id} value={x.id}>{x.nome}</option>)}
+              </select>
+              {c.comprador && !c.comprador_id && <div style={{ fontSize: 11, color: C.amber, marginTop: 3 }}>planilha: “{c.comprador}”</div>}
+            </Field>
           </div>
           <div style={S.formRow}>
             <Field label="Forma de pagamento">
@@ -457,6 +484,70 @@ function VinculoModal({ data, onClose, onConfirmar, busy }) {
                 ))}
               </div>
             )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal de câmera (captura a foto da nota direto do dispositivo) ──
+function CameraModal({ onClose, onCapture, onPickFile, busy }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [erro, setErro] = useState('');
+  const [pronto, setPronto] = useState(false);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('sem suporte');
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        if (cancel) { stream.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
+        setPronto(true);
+      } catch (e) {
+        setErro('Não consegui abrir a câmera (permissão negada ou indisponível). Você pode enviar uma foto/arquivo abaixo.');
+      }
+    })();
+    return () => { cancel = true; if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); };
+  }, []);
+
+  const capturar = () => {
+    const v = videoRef.current; if (!v) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = v.videoWidth || 1280; canvas.height = v.videoHeight || 720;
+    canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      onCapture(new File([blob], `nota-${Date.now()}.jpg`, { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.92);
+  };
+
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+        <div style={S.modalHeader}>
+          <div style={S.modalTitle}>📷 Escanear nota</div>
+          <Button variant="ghost" className="text-lg" onClick={onClose}>&#x2715;</Button>
+        </div>
+        <div style={S.modalBody}>
+          {erro ? (
+            <div style={{ ...S.empty, color: C.amber }}>{erro}</div>
+          ) : (
+            <div style={{ position: 'relative', background: '#000', borderRadius: 12, overflow: 'hidden', maxHeight: 420, minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <video ref={videoRef} playsInline muted style={{ width: '100%', maxHeight: 420, objectFit: 'cover' }} />
+              {!pronto && <div style={{ position: 'absolute', color: '#fff', fontSize: 13 }}>abrindo câmera…</div>}
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: C.text2, marginTop: 10 }}>
+            Aponte pra nota fiscal e capture — a IA extrai os dados e a compra fica aguardando aprovação. Também dá pra enviar uma foto da galeria ou um PDF.
+          </div>
+        </div>
+        <div style={S.modalFooter}>
+          <button style={btnOutline()} disabled={busy} onClick={onPickFile}>Enviar foto/arquivo</button>
+          {!erro && <button style={btn(C.primary)} disabled={busy || !pronto} onClick={capturar}>{busy ? 'Enviando…' : 'Capturar'}</button>}
         </div>
       </div>
     </div>

@@ -1138,6 +1138,31 @@ balanço (sentido inverso).
 - Sem env nova (`ANTHROPIC_API_KEY` já existe). ⚠️ Aplicar a migration
   `20260618160000` antes do merge; depois importar a planilha pela própria aba.
 
+### Consolidação com financeiro/RH + câmera (2026-06-18 · 2ª leva)
+
+Migration `20260618210000` (aplicada): `log_compras.comprador_id` (FK
+`rh_funcionarios`) + `log_fornecedores.endereco`.
+
+- **Centro de custo = do financeiro**: o campo deixou de ser texto livre e passou
+  a referenciar `fin_centros_custo` (`centro_custo_id`). **Vincular a saída do
+  balanço consolida**: a compra herda o `centro_custo_id` da `fin_transacoes`
+  vinculada. Endpoint `GET /logistica/compras/aux/centros-custo` (ativo +
+  aceita_lancamento). O texto `centro_custo` (TORRE) vira fallback histórico.
+- **Comprador = colaborador real** (`rh_funcionarios`): `comprador_id` + select no
+  modal (`GET /compras/aux/compradores` = ativos). Backfill por mapeamento
+  confirmado pelo Matheus (Erivelton/Pery/Amaury de Araújo Junior/Yago Coelho
+  Torres/Juliana/Marcos Paulo/Juninho=Pedro Luis Barreto Litwinczuk Júnior) ·
+  495/502 (os 7 restantes = "Cartão"/vazio).
+- **Fornecedor find-or-create**: ao lançar/escanear/aprovar, `resolverFornecedor`
+  acha por CNPJ/nome ou **cria** em `log_fornecedores`. A aba Fornecedores
+  **sinaliza "Incompleto"** (badge âmbar + filtro) quando falta CNPJ/endereço/
+  telefone. Backfill criou os fornecedores das 502 compras.
+- **Escanear nota = câmera**: o botão abre `CameraModal` (getUserMedia
+  facingMode environment) com captura + fallback "Enviar foto/arquivo".
+- `COMPRA_SELECT` (logistica.js) embute fornecedor + `centro_fin:fin_centros_custo`
+  + `comprador_fn:rh_funcionarios`. ⚠️ Aplicar `20260618210000` + `NOTIFY pgrst`
+  (os embeds precisam do schema recarregado).
+
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 
 Sintoma recorrente: **"Erro ao atualizar/excluir evento"** mas a mudança
