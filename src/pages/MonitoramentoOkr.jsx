@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { painel as painelApi } from '../api';
 import { Compass, Target, ListChecks, RefreshCw, Info, ChevronDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
 
@@ -444,6 +445,7 @@ function MiniBars({ serie, unidade, alvoNum, cor }) {
     <div style={{ height: 150 }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={dados} margin={{ top: 10, right: 8, bottom: 0, left: -18 }}>
+          <ChartGradients colors={[cor]} />
           <XAxis dataKey="mes" tick={{ fontSize: 10, fill: C.t3 }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fontSize: 10, fill: C.t3 }} axisLine={false} tickLine={false} width={32} allowDecimals={false} />
           <Tooltip
@@ -453,7 +455,7 @@ function MiniBars({ serie, unidade, alvoNum, cor }) {
             formatter={(v) => [`${fmt(v)}${unidade || ''}`, 'valor']}
           />
           {alvoNum != null && <ReferenceLine y={alvoNum} stroke={C.t3} strokeDasharray="4 3" />}
-          <Bar dataKey="valor" fill={cor} radius={[3, 3, 0, 0]} maxBarSize={46} />
+          <Bar dataKey="valor" fill={gradFill(cor)} radius={[3, 3, 0, 0]} maxBarSize={46} />
         </BarChart>
       </ResponsiveContainer>
     </div>

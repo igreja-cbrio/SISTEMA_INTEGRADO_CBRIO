@@ -31,6 +31,7 @@ import {
   Tooltip as RTooltip, CartesianGrid, Legend,
 } from 'recharts';
 import JornadaConvertidos from '../../components/JornadaConvertidos';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const AREA_META = {
   kids: {
@@ -832,6 +833,7 @@ function GraficoCultos({ serie, area, accent }) {
       </div>
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart data={dataChart} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+          <ChartGradients colors={[accent]} />
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--cbrio-border, #e2e8f0)" />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
           <YAxis yAxisId="freq" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
@@ -846,7 +848,7 @@ function GraficoCultos({ serie, area, accent }) {
             }}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Bar yAxisId="freq" dataKey="media" name={labelFreq} fill={accent} radius={[4, 4, 0, 0]} maxBarSize={48} fillOpacity={0.85} />
+          <Bar yAxisId="freq" dataKey="media" name={labelFreq} fill={gradFill(accent)} radius={[4, 4, 0, 0]} maxBarSize={48} />
           <Line yAxisId="dec" dataKey="decisoes" name="Decisões" stroke="#F59E0B" strokeWidth={2.5} dot={{ r: 3 }} />
         </ComposedChart>
       </ResponsiveContainer>
