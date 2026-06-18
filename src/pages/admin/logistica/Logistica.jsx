@@ -212,6 +212,33 @@ export default function Logistica() {
     try { await logistica.fornecedores.remove(id); fetchFornecedores(); } catch (e) { setError(e.message); }
   };
 
+  const [enriquecendo, setEnriquecendo] = useState(false);
+  const enriquecerForn = async () => {
+    if (!modalForn?.id) { setError('Salve o fornecedor antes de buscar os dados.'); return; }
+    setEnriquecendo(true); setError('');
+    try {
+      const r = await logistica.fornecedores.enriquecer(modalForn.id);
+      if (r.ok) {
+        setModalForn(prev => ({ ...prev, ...(r.fornecedor || {}) }));
+        fetchFornecedores();
+        if (!r.preenchidos?.length) setError('Já estava completo (nada novo a preencher).');
+      } else {
+        setError(r.mensagem || 'Não encontrei dados oficiais pra este fornecedor.');
+      }
+    } catch (e) { setError(e.message); }
+    setEnriquecendo(false);
+  };
+  const enriquecerLote = async () => {
+    if (!confirm('Buscar dados oficiais (Receita) dos fornecedores incompletos? Processa um lote por vez.')) return;
+    setEnriquecendo(true); setError('');
+    try {
+      const r = await logistica.fornecedores.enriquecerIncompletos();
+      fetchFornecedores();
+      setError(`✓ ${r.enriquecidos} de ${r.processados} preenchidos${r.restam ? ` · ainda faltam ${r.restam} (rode de novo)` : ''}.`);
+    } catch (e) { setError(e.message); }
+    setEnriquecendo(false);
+  };
+
   const toggleFornecedorAtivo = async (forn) => {
     try { await logistica.fornecedores.update(forn.id, { ativo: !forn.ativo }); fetchFornecedores(); } catch (e) { setError(e.message); }
   };
@@ -325,6 +352,7 @@ export default function Logistica() {
           filtroAtivo={filtroFornAtivo} setFiltroAtivo={setFiltroFornAtivo}
           onNew={() => setModalForn({ razao_social: '', nome_fantasia: '', cnpj: '', email: '', telefone: '', contato: '', categoria: '', endereco: '', ativo: true, observacoes: '' })}
           onEdit={(f) => setModalForn({ ...f })} onDelete={deleteFornecedor} onToggle={toggleFornecedorAtivo}
+          onEnriquecerLote={enriquecerLote} enriquecendo={enriquecendo}
         />
       )}
       {tab === 2 && (
@@ -358,7 +386,7 @@ export default function Logistica() {
 
       {/* Fornecedor */}
       <Modal open={modalForn !== null} onClose={() => setModalForn(null)} title={modalForn?.id ? 'Editar Fornecedor' : 'Novo Fornecedor'}
-        footer={<><Button variant="outline" onClick={() => setModalForn(null)}>Cancelar</Button><Button onClick={saveFornecedor} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></>}>
+        footer={<>{modalForn?.id && <Button variant="outline" onClick={enriquecerForn} disabled={enriquecendo} title="Busca CNPJ, endereço e telefone na Receita (e IA na web)">{enriquecendo ? 'Buscando…' : '🔍 Buscar dados'}</Button>}<div style={{ flex: 1 }} /><Button variant="outline" onClick={() => setModalForn(null)}>Cancelar</Button><Button onClick={saveFornecedor} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></>}>
         {modalForn && (<>
           <Input label="Razão Social *" value={modalForn.razao_social || ''} onChange={e => upForn('razao_social', e.target.value)} />
           <Input label="Nome Fantasia" value={modalForn.nome_fantasia || ''} onChange={e => upForn('nome_fantasia', e.target.value)} />
@@ -509,7 +537,7 @@ function DashboardTab({ dash, onRefresh, onNavigate }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: Fornecedores
 // ═══════════════════════════════════════════════════════════
-function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo, onNew, onEdit, onDelete, onToggle }) {
+function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo, onNew, onEdit, onDelete, onToggle, onEnriquecerLote, enriquecendo }) {
   const [soIncompletos, setSoIncompletos] = useState(false);
   const [busca, setBusca] = useState('');
   const [pagina, setPagina] = useState(1);
@@ -534,6 +562,11 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
           style={{ ...styles.badge(C.amber, C.amberBg), cursor: 'pointer', padding: '6px 12px', border: soIncompletos ? `1px solid ${C.amber}` : '1px solid transparent' }}>
           ⚠️ Dados incompletos ({nIncompletos})
         </button>
+      )}
+      {isDiretor && nIncompletos > 0 && onEnriquecerLote && (
+        <Button variant="outline" onClick={onEnriquecerLote} disabled={enriquecendo} title="Busca CNPJ/endereço/telefone na Receita pros incompletos">
+          {enriquecendo ? 'Buscando…' : '🔍 Buscar dados (Receita)'}
+        </Button>
       )}
       {isDiretor && <Button onClick={onNew}>+ Novo Fornecedor</Button>}
     </div>
