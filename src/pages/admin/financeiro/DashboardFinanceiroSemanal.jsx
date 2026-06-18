@@ -1126,7 +1126,7 @@ function DecendioCard({ dados, mes }) {
                 </div>
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
                   <motion.div
-                    className="h-full rounded-full"
+                    className="h-full rounded-full cbrio-bar"
                     style={{ background: COL.green }}
                     initial={{ width: 0 }}
                     animate={{ width: `${pct}%` }}
@@ -1369,7 +1369,7 @@ function BucketCard({ custom, bucket, color, isAcumulado, semana }) {
                   </div>
                   <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                     <motion.div
-                      className="h-full rounded-full"
+                      className="h-full rounded-full cbrio-bar"
                       style={{ background: color }}
                       initial={{ width: 0 }}
                       animate={{ width: `${Math.min(100, c.pct)}%` }}
@@ -1677,7 +1677,7 @@ function SaidasListModerna({ linhas, labelKey, extraKey, colors, onClick }) {
             </div>
             <div className="h-1.5 bg-muted rounded-full overflow-hidden">
               <motion.div
-                className="h-full rounded-full"
+                className="h-full rounded-full cbrio-bar"
                 style={{ background: cor }}
                 initial={{ width: 0 }}
                 animate={{ width: `${barPct}%` }}
@@ -1737,7 +1737,7 @@ function SaidasList({ linhas, labelKey, extraKey }) {
           </div>
           <div className="h-1.5 bg-muted rounded-full overflow-hidden">
             <motion.div
-              className="h-full rounded-full"
+              className="h-full rounded-full cbrio-bar"
               style={{ background: COL.red }}
               initial={{ width: 0 }}
               animate={{ width: `${(Number(l.total) / max) * 100}%` }}
@@ -1932,7 +1932,7 @@ function MetaCardFin({ meta, idx, ctx, onEdit, onDelete }) {
               <div className="h-3 rounded-full bg-muted overflow-hidden">
                 <motion.div
                   key={`bar-${meta.id}-${pct}`}
-                  className="h-full rounded-full"
+                  className="h-full rounded-full cbrio-bar"
                   style={{ background: cor }}
                   initial={{ width: 0 }}
                   animate={{ width: `${Math.min(100, pct)}%` }}
@@ -2805,7 +2805,7 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, semanasOpcoes, anoA
               <div className="h-3 rounded-full bg-muted overflow-hidden">
                 <motion.div
                   key={`bar-${meta.id}-${pct}`}
-                  className="h-full rounded-full"
+                  className="h-full rounded-full cbrio-bar"
                   style={{ background: cor }}
                   initial={{ width: 0 }}
                   animate={{ width: `${Math.min(100, pct)}%` }}
@@ -3570,7 +3570,7 @@ function SlideSaudeFinanceira() {
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: `${folhaCor}1f`, color: folhaCor }}>{folhaLabel}</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
-                <motion.div className="h-full rounded-full" style={{ background: folhaCor }}
+                <motion.div className="h-full rounded-full cbrio-bar" style={{ background: folhaCor }}
                   initial={{ width: 0 }} animate={{ width: `${Math.min(100, pctFolha)}%` }} transition={{ duration: 1 }} />
               </div>
               <div className="text-[11px] text-muted-foreground mt-2 tabular-nums">
@@ -3594,7 +3594,7 @@ function SlideSaudeFinanceira() {
                 <span className="text-xs text-muted-foreground">da arrecadação vem dos top 20% doadores</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden mt-3">
-                <motion.div className="h-full rounded-full" style={{ background: concCor }}
+                <motion.div className="h-full rounded-full cbrio-bar" style={{ background: concCor }}
                   initial={{ width: 0 }} animate={{ width: `${Math.min(100, top20)}%` }} transition={{ duration: 1 }} />
               </div>
               <div className="text-[11px] text-muted-foreground mt-2 tabular-nums flex items-center justify-between gap-2">

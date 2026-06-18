@@ -254,7 +254,7 @@ function KpiCard({ kpi }: { kpi: MatrizCell }) {
         {pctClamped !== null && (
           <div className="h-1.5 bg-muted rounded-full overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all ${info.corBg}`}
+              className={`h-full rounded-full transition-all ${info.corBg} cbrio-bar`}
               style={{ width: `${pctClamped}%` }}
             />
           </div>

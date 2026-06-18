@@ -280,6 +280,20 @@ table tbody tr:hover {
           backdrop-filter: none;
   background: var(--cbrio-card);
 }
+/* ── Barras de progresso (div) · brilho de vidro ──
+   Realce no topo via overlay ::after — funciona sobre QUALQUER fundo (classe
+   bg-*, backgroundColor OU background shorthand inline), pois não depende de
+   background-image. Aplicar no div de PREENCHIMENTO (o colorido). */
+.cbrio-bar { position: relative; }
+.cbrio-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,.30), rgba(255,255,255,0) 72%);
+  pointer-events: none;
+}
+
 /* ── Recharts · tema "vidro" global (afeta todos os gráficos) ── */
 .recharts-cartesian-grid line { stroke: var(--hairline); }
 .recharts-cartesian-axis-line,

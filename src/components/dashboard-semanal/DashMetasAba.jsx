@@ -439,7 +439,7 @@ function MetaCard({ meta, mountKey, onEdit, onDelete }) {
             <div className="h-3 rounded-full bg-muted overflow-hidden">
               <motion.div
                 key={`bar-${mountKey}-${pct}`}
-                className="h-full rounded-full"
+                className="h-full rounded-full cbrio-bar"
                 style={{ background: cor }}
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.min(100, pct)}%` }}
