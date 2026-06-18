@@ -735,6 +735,11 @@ export const financeiroV2 = {
     financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
     saidasDetalhadas: (mes) => get('/financeiro-v2/dashboard/saidas-detalhadas' + (mes ? `?mes=${mes}` : '')),
     melhorSemana: () => get('/financeiro-v2/dashboard/melhor-semana'),
+    assistente: (aba, semana) => {
+      const qs = new URLSearchParams({ aba: aba || 'resumo' });
+      if (semana) qs.set('semana', semana);
+      return get(`/financeiro-v2/dashboard/assistente?${qs}`);
+    },
   },
   metas: {
     list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
