@@ -209,6 +209,18 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   impressão (`#fff`), scanner/câmera (`#000`), vídeo (`bg-black`). Popovers/dropdowns/
   selects/dialogs seguem **sólidos** de propósito (legibilidade) — não glassificar.
 - Acento da marca segue `#00B39D` (`C.primary`).
+- **Gráficos (recharts) no tema vidro:** tema global no `index.css` (grade
+  `--hairline`, texto `--cbrio-text3`, tooltip de vidro). Gradientes via
+  `src/components/charts/ChartGradients.tsx` (`<ChartGradients colors={[...]}/>`
+  como 1º filho do chart + `fill={gradFill(cor)}` nas barras/áreas; cor sólida na
+  legenda). Linhas, pizza/donut e charts com gradiente próprio ficam como estão.
+  ⚠️ Toda cor passada a `gradFill()` PRECISA estar no array `colors` do mesmo
+  chart, senão a barra renderiza vazia (build não pega — validar no preview).
+- **Dashboard Semanal · resumo (regra de negócio):** card **Presenças** = templo
+  + kids (`vw_dashboard_semanal.total_presencial`); **Decisões** = presenciais +
+  online + **kids** (`aceitacoes_kids` = `cultos.decisoes_kids`); card **Kids**
+  segue como recorte separado. Não reverter pra só-templo (resumo-semana/mês em
+  `backend/routes/dashboardSemanal.js`).
 
 ### Backend
 
