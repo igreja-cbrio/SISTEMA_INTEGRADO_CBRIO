@@ -27,6 +27,9 @@ export interface CheckinPayload {
   service_id: string;
   method: CheckinMethod;
   is_unscheduled?: boolean;
+  // Voluntário cadastrado na hora pelo totem (não estava no sistema) · o backend
+  // sinaliza pra coordenação revisar o cadastro.
+  novo_cadastro?: boolean;
 }
 
 export interface CheckinDisplay {

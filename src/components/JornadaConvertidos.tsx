@@ -96,8 +96,8 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
       {r && (
         <div className={`grid gap-3 ${view === 'next' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
           {view !== 'next' && (
-            <ResumoCard icon={Phone} color="#00B39D" titulo="Contato ≤ 3 dias"
-              pct={r.contato_pct} sub={`${r.contato_no_prazo}/${r.total} no prazo · ${r.contato_atrasados} atrasados`} />
+            <ResumoCard icon={Phone} color="#00B39D" titulo="Contato feito"
+              pct={r.contato_pct} sub={`${r.contato_feitos ?? r.contato_no_prazo}/${r.total} feitos · ${r.contato_pendentes ?? r.contato_atrasados} pendentes`} />
           )}
           {view !== 'next' && (
             <ResumoCard icon={Droplets} color="#0ea5e9" titulo="Batismo ≤ 90 dias"
@@ -141,7 +141,7 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
               <TableHead>Nome</TableHead>
               {!area && <TableHead>Área</TableHead>}
               <TableHead className="whitespace-nowrap">Dias</TableHead>
-              {view !== 'next' && <TableHead>Contato 3d</TableHead>}
+              {view !== 'next' && <TableHead>Contato</TableHead>}
               {view !== 'next' && <TableHead>Batismo 90d</TableHead>}
               <TableHead>Next 90d</TableHead>
             </TableRow>

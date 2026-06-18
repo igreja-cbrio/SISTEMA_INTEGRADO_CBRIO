@@ -589,4 +589,90 @@ router.post('/coleta/:id/rejeitar', async (req, res) => {
   }
 });
 
+// ── Decisões de fé pelo APP (fila de revisão · Modo Culto) ──────────────────
+// Decisão da liderança: nada do app entra direto na NSM — a Integração confirma.
+
+// GET /decisoes-app?status=pendente|confirmada|descartada
+router.get('/decisoes-app', authorizeModule('integracao', 1), async (req, res) => {
+  try {
+    const status = ['pendente', 'confirmada', 'descartada'].includes(req.query.status) ? req.query.status : 'pendente';
+    const { data, error } = await supabase
+      .from('app_decisoes')
+      .select('id, ambiente, tipo, observacao, status, criada_em, culto_id, membro:mem_membros(id, nome, telefone, email), culto:cultos(nome, data)')
+      .eq('status', status).is('deleted_at', null)
+      .order('criada_em', { ascending: false }).limit(100);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[INTEGRACAO] decisoes-app list', e.message);
+    res.status(500).json({ error: 'Erro ao listar decisões do app' });
+  }
+});
+
+// POST /decisoes-app/:id/confirmar · vira decisão oficial (entra na NSM via trigger)
+router.post('/decisoes-app/:id/confirmar', authorizeModule('integracao', 3), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: sub } = await supabase
+      .from('app_decisoes')
+      .select('id, status, ambiente, tipo, observacao, culto_id, membro:mem_membros(id, nome, telefone, email, cpf)')
+      .eq('id', id).is('deleted_at', null).maybeSingle();
+    if (!sub) return res.status(404).json({ error: 'Decisão não encontrada' });
+    if (sub.status !== 'pendente') return res.status(409).json({ error: `Decisão já está ${sub.status}` });
+    const m = sub.membro;
+    if (!m?.nome) return res.status(400).json({ error: 'Membro sem nome — não dá pra confirmar' });
+
+    const cultoId = req.body?.culto_id || sub.culto_id || null;
+    const tipoLabel = { aceitar: 'Aceitou a Jesus', reconciliacao: 'Reconciliação', rededicacao: 'Rededicação', batismo: 'Decisão pelo batismo', outro: 'Decisão' };
+    const obs = ['Decisão registrada pelo app.', sub.tipo ? tipoLabel[sub.tipo] : null, sub.observacao].filter(Boolean).join(' · ');
+
+    const { data: dec, error: errDec } = await supabase
+      .from('cultos_decisoes_pessoas')
+      .insert({
+        culto_id: cultoId,
+        membro_id: m.id,
+        nome: m.nome,
+        telefone: m.telefone || null,
+        email: m.email || null,
+        cpf: m.cpf || null,
+        tipo_decisao: sub.ambiente === 'online' ? 'online' : 'presencial',
+        fonte: 'app',
+        observacoes: obs,
+        registrado_por: req.user?.id || null,
+        registrado_em: new Date().toISOString(),
+      })
+      .select('id').single();
+    if (errDec) return res.status(400).json({ error: 'Erro ao criar decisão: ' + errDec.message });
+
+    const { error: errUpd } = await supabase
+      .from('app_decisoes')
+      .update({ status: 'confirmada', decisao_id: dec.id, revisada_em: new Date().toISOString(), revisada_por: req.user?.id || null })
+      .eq('id', id);
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json({ ok: true, decisao_id: dec.id });
+  } catch (e) {
+    console.error('[INTEGRACAO] decisoes-app confirmar', e.message);
+    res.status(500).json({ error: 'Erro ao confirmar decisão' });
+  }
+});
+
+// POST /decisoes-app/:id/descartar
+router.post('/decisoes-app/:id/descartar', authorizeModule('integracao', 3), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('app_decisoes')
+      .update({ status: 'descartada', revisada_em: new Date().toISOString(), revisada_por: req.user?.id || null })
+      .eq('id', id).eq('status', 'pendente').is('deleted_at', null)
+      .select('id').maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Decisão não encontrada ou já decidida' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[INTEGRACAO] decisoes-app descartar', e.message);
+    res.status(500).json({ error: 'Erro ao descartar decisão' });
+  }
+});
+
 module.exports = router;

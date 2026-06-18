@@ -18,6 +18,22 @@ const headers = async () => {
   };
 };
 
+// Sessão morta (token inválido/expirado/de outro ambiente): limpa a sessão do
+// Supabase e manda pro login, em vez de deixar a tela travada com mensagem de
+// erro. Trava anti-loop (uma vez por carregamento) + não redireciona se já
+// estiver no /login.
+let _deadSessionHandled = false;
+async function handleDeadSession() {
+  if (_deadSessionHandled) return;
+  _deadSessionHandled = true;
+  try { await supabase?.auth.signOut(); } catch {}
+  try {
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.replace('/login');
+    }
+  } catch {}
+}
+
 async function request(path, opts = {}) {
   const h = await headers();
   const res = await fetch(`${API}${path}`, { ...opts, headers: { ...h, ...opts.headers } });
@@ -30,10 +46,16 @@ async function request(path, opts = {}) {
   if (res.status === 401) {
     const body = await res.json().catch(() => ({}));
     console.warn('[API] 401', { path, reason: body.reason, detail: body.detail });
-    // Mensagens especificas pro usuário por causa raiz
+    // invalid_token = tinha um token, mas o servidor recusou (expirado / de
+    // outro ambiente). Sessão morta → desloga e manda pro login (self-heal).
+    // no_token = simplesmente não está logado → NÃO redireciona (evita loop na
+    // própria tela de login).
+    if (body.reason === 'invalid_token') {
+      handleDeadSession();
+    }
     const reasonMsg = {
       no_token:       'Sessão expirada. Faça login novamente.',
-      invalid_token:  'Sua sessão expirou ou é de outro ambiente. Saia e entre novamente.',
+      invalid_token:  'Sua sessão expirou. Redirecionando para o login...',
     };
     throw new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
   }
@@ -57,6 +79,14 @@ const del = (path) => request(path, { method: 'DELETE' });
 export const users = {
   list: () => get('/auth/users'),
   me: () => get('/auth/me'),
+};
+
+// Progresso de tutoriais (onboarding) · backend com service role · 1x por
+// usuário+tour, confiável (não depende de RLS/anon key no frontend).
+export const tutorial = {
+  progress: () => get('/tutorial/progress'),
+  complete: (tour_id, status) => post('/tutorial/complete', { tour_id, status }),
+  reset: (tour_id) => del('/tutorial/progress' + (tour_id ? `?tour_id=${encodeURIComponent(tour_id)}` : '')),
 };
 
 // Onda 0 · loop de feedback do piloto
@@ -198,6 +228,24 @@ export const next = {
     list: (params) => get('/next/indicacoes' + (params ? '?' + new URLSearchParams(params) : '')),
     update: (id, data) => put(`/next/indicacoes/${id}`, data),
   },
+  // Turmas — Next como coorte de 2 encontros + presença
+  turmas: {
+    list: (params) => get('/next/turmas' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/next/turmas/${id}`),
+    create: (data) => post('/next/turmas', data),
+    update: (id, data) => patch(`/next/turmas/${id}`, data),
+    remove: (id) => del(`/next/turmas/${id}`),
+  },
+  encontros: {
+    update: (id, data) => patch(`/next/encontros/${id}`, data),
+    setPresencas: (id, matriculaIds) => put(`/next/encontros/${id}/presencas`, { matricula_ids: matriculaIds }),
+  },
+  matriculas: {
+    list: (params) => get('/next/matriculas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/next/matriculas', data),
+    update: (id, data) => patch(`/next/matriculas/${id}`, data),
+    remove: (id) => del(`/next/matriculas/${id}`),
+  },
 };
 
 export const integracao = {
@@ -224,6 +272,11 @@ export const integracao = {
     pendentes: () => get('/integracao/coleta/pendentes'),
     aprovar: (id) => post(`/integracao/coleta/${id}/aprovar`),
     rejeitar: (id, motivo) => post(`/integracao/coleta/${id}/rejeitar`, { motivo }),
+  },
+  decisoesApp: {
+    list: (status = 'pendente') => get(`/integracao/decisoes-app?status=${status}`),
+    confirmar: (id, culto_id) => post(`/integracao/decisoes-app/${id}/confirmar`, { culto_id }),
+    descartar: (id) => post(`/integracao/decisoes-app/${id}/descartar`),
   },
 };
 
@@ -924,6 +977,12 @@ export const rh = {
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),
     update: (id, data) => patch(`/rh/ferias/${id}`, data),
     remove: (id) => del(`/rh/ferias/${id}`),
+  },
+  // Cobertura de férias/licença (substituto herda módulos operacionais · expira sozinho)
+  coberturas: {
+    list: (params) => get('/rh/coberturas' + (params ? '?' + new URLSearchParams(params) : '')),
+    cancelar: (id) => post(`/rh/coberturas/${id}/cancelar`, {}),
+    minhas: () => get('/coberturas/minhas'),  // qualquer usuário logado (o substituto)
   },
   extras: {
     list: (params) => get('/rh/extras' + (params ? '?' + new URLSearchParams(params) : '')),

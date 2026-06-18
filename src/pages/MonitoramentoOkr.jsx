@@ -74,7 +74,7 @@ const BLOCOS = [
         envolvida: 'Cuidados',
         taticos: [
           { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', memoria: 'Planilha comparando o número de convertidos com o número de atendidos — semanal', precisa: 'registrar a data do 1º contato pastoral de cada convertido (hoje só temos a data da decisão)' },
-          { ind: '% convertidos presentes no Acompanhamento "1º Encontro" com pastores', alvo: '70%', live: 'cafe_atendidos', alvoNum: 70, cmp: 'gte' },
+          { ind: '% de novos convertidos com primeiro contato feito', alvo: '70%', memoria: 'Contato feito (independe da resposta): respondeu + atendido e respondido + não respondeu + não compareceu + não atendido ÷ total. Exclui número errado (impossível) e não conta "sem retorno do responsável". Acompanhamento do Cuidados · 90 dias', live: 'cafe_atendidos', alvoNum: 70, cmp: 'gte' },
           { ind: '% de pessoas do Acompanhamento "1º Encontro" que concluíram o Next', alvo: '50%', memoria: 'Planilha comparando convertidos com participantes no Next — mensal', precisa: 'marcar quem veio do Acompanhamento e concluiu o Next (as inscrições do Next já existem; falta ligar a origem)' },
         ],
       },
@@ -162,7 +162,7 @@ const BLOCOS = [
         objetivo: 'Melhorar o clima organizacional do staff CBRio com ações baseadas na cultura',
         envolvida: 'RH',
         taticos: [
-          { ind: 'Nota Q12', alvo: '100% da nova nota desejada alcançada', memoria: 'Avaliação pela plataforma do Gallup', precisa: 'a nota do Gallup Q12 (exportação) — lanço por período' },
+          { ind: 'Nota Q12', alvo: '≥ 4,3 no Q12', memoria: 'Avaliação pela plataforma do Gallup', live: 'q12', alvoNum: 4.3, cmp: 'gte', casas: 2 },
           { ind: 'Engajamento nos treinamentos propostos', alvo: '80%', memoria: 'Criação de planilha de presença', precisa: 'a presença nos treinamentos (o RH já tem rh_treinamentos — confirmo se está sendo preenchido e puxo)' },
           { ind: 'Rotatividade do Staff', alvo: '< 10%', memoria: 'Acompanhamento por meio da planilha de pessoal', live: 'rotatividade', alvoNum: 10, cmp: 'lte' },
         ],
@@ -407,7 +407,7 @@ function TaticoRow({ tatico, metricas }) {
         </div>
         <div style={{ flexShrink: 0, textAlign: 'right', minWidth: 60 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: corNum, lineHeight: 1 }}>
-            {m ? `${fmt(m.valor)}${m.unidade}` : '—'}
+            {m ? `${fmt(m.valor, tatico.casas)}${m.unidade}` : '—'}
           </div>
         </div>
       </button>
