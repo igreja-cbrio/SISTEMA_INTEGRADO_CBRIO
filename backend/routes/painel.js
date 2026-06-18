@@ -1148,8 +1148,9 @@ async function nsmAtividades(ids, inicio, fim) {
 //   ?segmento=central|online       (legado · segmento=online equivale a tipo=online)
 //   ?limit=300                     max de pessoas retornadas
 //
-// Fonte = cultos_decisoes_pessoas (substitui a antiga int_visitantes). A janela
-// vale pra tudo: define quem decidiu no recorte E o horizonte de engajamento
+// Fonte = cui_convertidos (fonte canônica do convertido · por membro_id · data
+// = data_culto da conversão). Bate com o numerador do card NSM (recalcular_nsm).
+// A janela vale pra tudo: define quem decidiu no recorte E o horizonte de engajamento
 // (30->30d após a decisão · acumulado->até o fim do período). Filtro = E entre
 // valores, OU entre atividades do mesmo valor. Exceção: "seguir" marcado SEM
 // atividade não exclui ninguém — a própria conversão já cumpre Seguir a Jesus
@@ -1179,40 +1180,43 @@ router.get('/nsm/pessoas', async (req, res) => {
 
     const periodo = nsmPeriodo(req.query.ano, janela);
 
-    // 1. Decisões no recorte · cultos_decisoes_pessoas join cultos pela data do culto.
-    //    Página de 1000 (PostgREST capa em 1000 por SELECT).
-    let decisoes = [];
+    // 1. Convertidos no recorte · FONTE CANÔNICA cui_convertidos (por membro_id,
+    //    data = data_culto da conversão). Página de 1000 (PostgREST capa em 1000).
+    //    Online → area='online' (cui_convertidos não tem tipo_decisao · usa area).
+    let convs = [];
     let from = 0;
     const page = 1000;
     for (;;) {
       let q = supabase
-        .from('cultos_decisoes_pessoas')
-        .select('membro_id, nome, telefone, email, tipo_decisao, cultos!inner(data)')
+        .from('cui_convertidos')
+        .select('membro_id, nome, telefone, area, data_culto')
+        .is('deleted_at', null)
         .not('membro_id', 'is', null)
-        .gte('cultos.data', periodo.inicio)
-        .lte('cultos.data', periodo.fim)
+        .gte('data_culto', periodo.inicio)
+        .lte('data_culto', periodo.fim)
         .range(from, from + page - 1);
-      if (tipoDecisao !== 'todos') q = q.eq('tipo_decisao', tipoDecisao);
+      if (tipoDecisao === 'online') q = q.eq('area', 'online');
+      else if (tipoDecisao === 'presencial') q = q.neq('area', 'online');
       const { data, error } = await q;
       if (error) throw error;
-      decisoes = decisoes.concat(data || []);
+      convs = convs.concat(data || []);
       if (!data || data.length < page) break;
       from += page;
     }
 
-    // dedup por membro · mantem a decisão mais recente no período
+    // dedup por membro · mantém a conversão mais recente no período
     const pessoaPorMembro = new Map();
-    for (const d of decisoes) {
-      const dataDec = d.cultos?.data;
+    for (const c of convs) {
+      const dataDec = c.data_culto;
       if (!dataDec) continue;
-      const cur = pessoaPorMembro.get(d.membro_id);
+      const cur = pessoaPorMembro.get(c.membro_id);
       if (!cur || dataDec > cur.data_decisao) {
-        pessoaPorMembro.set(d.membro_id, {
-          id: d.membro_id,
-          nome: d.nome,
-          telefone: d.telefone,
-          email: d.email,
-          tipo_decisao: d.tipo_decisao,
+        pessoaPorMembro.set(c.membro_id, {
+          id: c.membro_id,
+          nome: c.nome,
+          telefone: c.telefone,
+          email: null,
+          tipo_decisao: c.area === 'online' ? 'online' : 'presencial',
           data_decisao: dataDec,
         });
       }
