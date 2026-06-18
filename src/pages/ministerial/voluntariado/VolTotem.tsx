@@ -80,6 +80,7 @@ export default function VolTotem() {
   const [allProfiles, setAllProfiles] = useState<any[]>([]);
   const [manualSearch, setManualSearch] = useState('');
   const [manualLoading, setManualLoading] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const [localDone, setLocalDone] = useState<Set<string>>(new Set());
 
   // Facial recognition
@@ -527,6 +528,41 @@ export default function VolTotem() {
     );
   };
 
+  // Voluntário que não está na lista (ex.: voluntário antigo que não foi
+  // sincronizado do Planning Center · time/escala desatualizada). Cadastra na
+  // hora e já faz o check-in sem escala — assim ninguém é barrado no totem.
+  // Exige internet (criar perfil é online); a lista de perfis carregada já é
+  // completa (< cap de 1000), então "não achou" = realmente não existe.
+  const handleRegisterAndCheckin = async () => {
+    const name = manualSearch.trim();
+    if (name.length < 2 || registering || processingRef.current) return;
+    if (!navigator.onLine) {
+      setErrorMsg('Sem internet · para cadastrar um voluntário novo é preciso conexão. Tente pelo QR ou aguarde a rede.');
+      setState('error');
+      resetAfter(3500, () => loadSchedules());
+      return;
+    }
+    setRegistering(true);
+    try {
+      const profile: any = await voluntariado.profiles.create({ full_name: name });
+      setAllProfiles((prev) => [...prev, profile]);
+      saveProfiles([...allProfiles, profile]);
+      processingRef.current = true;
+      setManualSearch('');
+      await submitCheckin(
+        { volunteer_id: profile.id, service_id: selectedServiceId, method: 'manual', is_unscheduled: true },
+        { name: profile.full_name, unscheduled: true },
+        () => loadSchedules(),
+      );
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Erro ao cadastrar voluntário');
+      setState('error');
+      resetAfter(3500, () => loadSchedules());
+    } finally {
+      setRegistering(false);
+    }
+  };
+
   // ── Shared helpers ──
 
   const enterFullscreen = () => {
@@ -862,11 +898,11 @@ export default function VolTotem() {
                   {schedules.length === 0 && !manualSearch.trim()
                     ? 'Nenhum voluntário escalado para este culto'
                     : manualSearch.trim()
-                      ? 'Voluntário não encontrado. Procure um líder.'
+                      ? 'Voluntário não encontrado na lista'
                       : 'Nenhum voluntario encontrado'}
                 </p>
                 {manualSearch && (
-                  <p className={`text-sm ${c.m30}`}>Tente buscar com outro termo</p>
+                  <p className={`text-sm ${c.m30}`}>Confira o nome ou use o botão abaixo para cadastrar e fazer o check-in</p>
                 )}
               </div>
             ) : (
@@ -950,6 +986,23 @@ export default function VolTotem() {
               </>
             )}
           </div>
+
+          {/* Não está na lista? Cadastra na hora e faz o check-in sem escala.
+              Cobre voluntário antigo que não veio do Planning Center. */}
+          {manualSearch.trim().length >= 2 && !manualLoading && (
+            <button
+              onClick={handleRegisterAndCheckin}
+              disabled={registering}
+              className={`min-h-[60px] flex items-center justify-center gap-2.5 p-3 rounded-xl border-2 border-dashed transition-colors ${c.cardStatic} ${registering ? 'opacity-60 cursor-wait' : 'hover:border-[#00B39D]'}`}
+            >
+              {registering
+                ? <Loader2 className="h-5 w-5 animate-spin text-[#00B39D]" />
+                : <UserPlus className="h-5 w-5 text-[#00B39D] shrink-0" />}
+              <span className="font-medium text-center">
+                Não está na lista? Cadastrar e fazer check-in de <span className="text-[#00B39D]">“{manualSearch.trim()}”</span>
+              </span>
+            </button>
+          )}
 
           <div className="flex justify-center pt-2">
             <Button
