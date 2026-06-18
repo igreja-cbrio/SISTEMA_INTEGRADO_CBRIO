@@ -5,6 +5,8 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
+const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
+const { sugerirSaidas } = require('../services/comprasMatch');
 const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('logistica'));
@@ -19,6 +21,25 @@ const uploadNf = multer({
     else cb(new Error('Formato não suportado. Envie JPG, PNG, WebP ou PDF.'));
   },
 });
+
+// Upload da planilha de compras (.xlsx) pra importação em massa
+const XLSX_MIMES = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+];
+const uploadPlanilha = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (XLSX_MIMES.includes(file.mimetype) || /\.xlsx?$/i.test(file.originalname || '')) cb(null, true);
+    else cb(new Error('Envie a planilha em formato .xlsx.'));
+  },
+});
+
+// mapeia forma de pagamento extraída pela IA → rótulo padrão das compras
+const FORMA_PGTO_IA = {
+  dinheiro: 'Dinheiro', pix: 'Pix', credito: 'Cartão', debito: 'Cartão', boleto: 'Boleto',
+};
 
 // ── Cache em memória do dashboard (30s TTL) ───────────────
 const DASHBOARD_CACHE_TTL = 30 * 1000;
@@ -455,6 +476,246 @@ router.delete('/notas/:id', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao remover nota fiscal' }); }
+});
+
+// ══════════════ COMPRAS (aba Compras · ledger do Pery) ══════════════
+// Campos editáveis de uma compra
+const COMPRA_CAMPOS = [
+  'tipo', 'data_compra', 'n_pedido', 'comprador', 'fornecedor', 'fornecedor_id',
+  'materiais', 'origem', 'centro_custo', 'centro_custo_id', 'valor', 'data_entrega',
+  'status_entrega', 'forma_pgto', 'parcelas', 'observacoes',
+];
+function pickCompra(body) {
+  const out = {};
+  for (const k of COMPRA_CAMPOS) if (body[k] !== undefined) out[k] = body[k] === '' ? null : body[k];
+  return out;
+}
+
+// Listagem com filtros
+router.get('/compras', async (req, res) => {
+  try {
+    const { status_aprovacao, vinculo_status, comprador, centro_custo, forma_pgto, tipo, mes, busca } = req.query;
+    let q = supabase.from('log_compras')
+      .select('*, log_fornecedores(razao_social, nome_fantasia)')
+      .is('deleted_at', null);
+    if (status_aprovacao) q = q.eq('status_aprovacao', status_aprovacao);
+    if (vinculo_status) q = q.eq('vinculo_status', vinculo_status);
+    if (comprador) q = q.eq('comprador', comprador);
+    if (centro_custo) q = q.eq('centro_custo', centro_custo);
+    if (forma_pgto) q = q.eq('forma_pgto', forma_pgto);
+    if (tipo) q = q.eq('tipo', tipo);
+    if (mes && /^\d{4}-\d{2}$/.test(mes)) {
+      const ini = `${mes}-01`;
+      const d = new Date(`${ini}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 1);
+      q = q.gte('data_compra', ini).lt('data_compra', d.toISOString().slice(0, 10));
+    }
+    if (busca) q = q.or(`fornecedor.ilike.%${busca}%,materiais.ilike.%${busca}%,n_pedido.ilike.%${busca}%`);
+    const { data, error } = await q.order('data_compra', { ascending: false, nullsFirst: false }).limit(1000);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { console.error('[LOG] listar compras:', e); res.status(500).json({ error: 'Erro ao listar compras' }); }
+});
+
+// KPIs do topo da aba
+router.get('/compras/kpis', async (req, res) => {
+  try {
+    const cont = async (filtros) => {
+      let q = supabase.from('log_compras').select('id', { count: 'exact', head: true }).is('deleted_at', null);
+      for (const [k, v] of Object.entries(filtros)) q = q.eq(k, v);
+      const { count } = await q;
+      return count || 0;
+    };
+    const hoje = new Date();
+    const mesIni = `${hoje.getUTCFullYear()}-${String(hoje.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const prox = new Date(`${mesIni}T00:00:00Z`); prox.setUTCMonth(prox.getUTCMonth() + 1);
+    const { data: doMes } = await supabase.from('log_compras')
+      .select('valor').is('deleted_at', null).eq('status_aprovacao', 'aprovada')
+      .gte('data_compra', mesIni).lt('data_compra', prox.toISOString().slice(0, 10)).limit(1000);
+    const valorMes = (doMes || []).reduce((s, c) => s + (Number(c.valor) || 0), 0);
+    const [total, pendentes, aprovadas, naoVinculadas, vinculadas] = await Promise.all([
+      cont({}), cont({ status_aprovacao: 'pendente' }), cont({ status_aprovacao: 'aprovada' }),
+      cont({ status_aprovacao: 'aprovada', vinculo_status: 'nao_vinculada' }),
+      cont({ vinculo_status: 'confirmada' }),
+    ]);
+    res.json({
+      total, pendentes, aprovadas, nao_vinculadas: naoVinculadas, vinculadas,
+      valor_mes: valorMes, compras_mes: (doMes || []).length,
+    });
+  } catch (e) { console.error('[LOG] kpis compras:', e); res.status(500).json({ error: 'Erro ao carregar KPIs de compras' }); }
+});
+
+// Importar a planilha de compras (.xlsx)
+router.post('/compras/importar', uploadPlanilha.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nenhuma planilha enviada' });
+    const resumo = await importarComprasPlanilha(req.file.buffer, req.user.userId);
+    res.json(resumo);
+  } catch (e) { console.error('[LOG] importar compras:', e); res.status(500).json({ error: `Erro ao importar planilha: ${e.message}` }); }
+});
+
+// Escanear nota da compra (foto/PDF) → IA extrai → fila de aprovação do Pery
+router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[req.file.mimetype] || 'bin';
+    const path = `compras/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('log-arquivos')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
+    const storagePath = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+
+    let extraido = null; let raw = null;
+    try { ({ extraido, raw } = await extrairNotaFiscal(req.file.buffer, req.file.mimetype)); }
+    catch (e) { console.error('[LOG] compra extração falhou:', e.message); }
+
+    let fornecedorId = null;
+    if (extraido?.emitente_cnpj) {
+      const { data: forn } = await supabase.from('log_fornecedores').select('id').eq('cnpj', extraido.emitente_cnpj).maybeSingle();
+      fornecedorId = forn?.id || null;
+    }
+
+    const { data: compra, error } = await supabase.from('log_compras')
+      .insert({
+        tipo: 'variavel',
+        data_compra: extraido?.data_emissao || hoje(),
+        fornecedor: extraido?.emitente_nome || null,
+        fornecedor_id: fornecedorId,
+        emitente_cnpj: extraido?.emitente_cnpj || null,
+        numero_nota: extraido?.numero || null,
+        materiais: extraido?.descricao_resumo || null,
+        valor: extraido?.valor_total || null,
+        forma_pgto: FORMA_PGTO_IA[extraido?.forma_pagamento] || null,
+        origem_registro: 'scan',
+        storage_path: storagePath,
+        extracao_raw: raw,
+        extracao_confianca: extraido?.confianca ?? null,
+        status_aprovacao: 'pendente',
+        created_by: req.user.userId,
+      })
+      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Notifica a equipe de logística que há compra escaneada pra conferir
+    try {
+      await notificar({
+        modulo: 'logistica',
+        tipo: 'compra_escaneada',
+        titulo: 'Compra escaneada pra aprovar',
+        mensagem: `${extraido?.emitente_nome || 'Nota'} · ${extraido?.valor_total ? Number(extraido.valor_total).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'valor a conferir'} — confira e aprove.`,
+        link: '/admin/logistica',
+        severidade: 'info',
+        chaveDedup: `compra_scan_${compra.id}`,
+      });
+    } catch (e) { console.error('[LOG] notificar compra:', e.message); }
+
+    res.json({ compra, extracao_ok: !!extraido });
+  } catch (e) { console.error('[LOG] escanear compra:', e); res.status(500).json({ error: 'Erro ao escanear a nota da compra' }); }
+});
+
+// Sugestões de vínculo (saídas do balanço que casam com a compra)
+router.get('/compras/:id/sugestoes-vinculo', async (req, res) => {
+  try {
+    const { data: compra, error } = await supabase.from('log_compras')
+      .select('id, valor, data_compra, fornecedor, materiais').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!compra) return res.status(404).json({ error: 'Compra não encontrada' });
+    const candidatos = await sugerirSaidas(compra);
+    res.json(candidatos);
+  } catch (e) { console.error('[LOG] sugestoes vinculo:', e); res.status(500).json({ error: 'Erro ao buscar saídas correspondentes' }); }
+});
+
+// Vincular a compra a uma saída do balanço (confirmação manual)
+router.post('/compras/:id/vincular', async (req, res) => {
+  try {
+    const { fin_transacao_id, score } = req.body;
+    if (!fin_transacao_id) return res.status(400).json({ error: 'Informe a saída a vincular' });
+    const { data: trn } = await supabase.from('fin_transacoes').select('id, tipo').eq('id', fin_transacao_id).maybeSingle();
+    if (!trn) return res.status(404).json({ error: 'Saída do balanço não encontrada' });
+    if (trn.tipo !== 'despesa') return res.status(400).json({ error: 'Só é possível vincular a uma saída (despesa)' });
+    const { data, error } = await supabase.from('log_compras')
+      .update({
+        fin_transacao_id, vinculo_status: 'confirmada', vinculo_score: score ?? null,
+        vinculo_em: new Date().toISOString(), vinculo_por: req.user.userId,
+      })
+      .eq('id', req.params.id).is('deleted_at', null)
+      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { console.error('[LOG] vincular compra:', e); res.status(500).json({ error: 'Erro ao vincular compra' }); }
+});
+
+router.post('/compras/:id/desvincular', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_compras')
+      .update({ fin_transacao_id: null, vinculo_status: 'nao_vinculada', vinculo_score: null, vinculo_em: null, vinculo_por: null })
+      .eq('id', req.params.id).is('deleted_at', null)
+      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao desvincular compra' }); }
+});
+
+// Aprovar (Pery confere o scan e libera) · aceita correções no body
+router.post('/compras/:id/aprovar', async (req, res) => {
+  try {
+    const update = { ...pickCompra(req.body || {}), status_aprovacao: 'aprovada', aprovada_em: new Date().toISOString(), aprovada_por: req.user.userId, rejeitada_motivo: null };
+    const { data, error } = await supabase.from('log_compras')
+      .update(update).eq('id', req.params.id).is('deleted_at', null)
+      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { console.error('[LOG] aprovar compra:', e); res.status(500).json({ error: 'Erro ao aprovar compra' }); }
+});
+
+router.post('/compras/:id/rejeitar', async (req, res) => {
+  try {
+    const { motivo } = req.body || {};
+    const { data, error } = await supabase.from('log_compras')
+      .update({ status_aprovacao: 'rejeitada', rejeitada_motivo: motivo || null, aprovada_em: new Date().toISOString(), aprovada_por: req.user.userId })
+      .eq('id', req.params.id).is('deleted_at', null)
+      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao rejeitar compra' }); }
+});
+
+// Criar compra manual
+router.post('/compras', async (req, res) => {
+  try {
+    const payload = pickCompra(req.body || {});
+    if (!payload.fornecedor && payload.valor == null) return res.status(400).json({ error: 'Informe ao menos fornecedor ou valor' });
+    payload.origem_registro = payload.origem_registro || 'manual';
+    payload.status_aprovacao = req.body?.status_aprovacao === 'pendente' ? 'pendente' : 'aprovada';
+    payload.created_by = req.user.userId;
+    const { data, error } = await supabase.from('log_compras')
+      .insert(payload).select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { console.error('[LOG] criar compra:', e); res.status(500).json({ error: 'Erro ao criar compra' }); }
+});
+
+// Editar compra
+router.put('/compras/:id', async (req, res) => {
+  try {
+    const payload = pickCompra(req.body || {});
+    if (!Object.keys(payload).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('log_compras')
+      .update(payload).eq('id', req.params.id).is('deleted_at', null)
+      .select('*, log_fornecedores(razao_social, nome_fantasia)').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar compra' }); }
+});
+
+// Excluir (soft-delete)
+router.delete('/compras/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'log_compras', p_row_id: req.params.id, p_deleted_by: req.user.userId ?? null,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover compra' }); }
 });
 
 // ── ITENS DE PEDIDO ───────────────────────────────────────
