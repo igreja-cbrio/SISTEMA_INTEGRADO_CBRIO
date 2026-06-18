@@ -489,6 +489,130 @@ router.get('/mensal', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /resumo-semana?ano=&semana= · números consolidados da semana (1 card)
+//   { presencas, presencas_delta_pct, kids, online, decisoes, cultos_lancados,
+//     maior_culto: { nome, valor }, semana, inicio, fim }
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/resumo-semana', async (req, res) => {
+  try {
+    const hojeIso = isoWeekOf(new Date());
+    const ano = parseInt(req.query.ano, 10) || hojeIso.ano;
+    const semana = parseInt(req.query.semana, 10) || hojeIso.semana;
+
+    const cols = 'service_type_name, recurrence_day, recurrence_time, frequencia, frequencia_kids, aceitacoes, aceitacoes_online, ao_vivo, total_cultos';
+    const semAnt = semana - 1 > 0 ? semana - 1 : 52;
+    const anoAnt = semana - 1 > 0 ? ano : ano - 1;
+
+    const [atualRes, antRes] = await Promise.all([
+      supabase.from('vw_dashboard_semanal').select(cols).eq('ano_iso', ano).eq('semana_iso', semana),
+      supabase.from('vw_dashboard_semanal').select('frequencia').eq('ano_iso', anoAnt).eq('semana_iso', semAnt),
+    ]);
+    if (atualRes.error) throw atualRes.error;
+
+    const linhas = atualRes.data || [];
+    const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+    const presencas = sum(linhas, 'frequencia');
+    const kids = sum(linhas, 'frequencia_kids');
+    const online = sum(linhas, 'ao_vivo');
+    const decisoes = sum(linhas, 'aceitacoes') + sum(linhas, 'aceitacoes_online');
+    const cultosLancados = sum(linhas, 'total_cultos');
+
+    const presencasAnt = sum(antRes.data || [], 'frequencia');
+    const presencasDelta = presencasAnt > 0 ? ((presencas - presencasAnt) / presencasAnt) * 100 : null;
+
+    let maior = null;
+    for (const r of linhas) {
+      const v = Number(r.frequencia) || 0;
+      if (!maior || v > maior.valor) maior = { nome: r.service_type_name, valor: v };
+    }
+
+    const { inicio, fim } = isoWeekRange(ano, semana);
+    res.json({
+      ano, semana,
+      inicio: inicio.toISOString().slice(0, 10),
+      fim: fim.toISOString().slice(0, 10),
+      label: `Semana ${semana} · ${fmtDateBr(inicio)} a ${fmtDateBr(fim)}`,
+      presencas, kids, online, decisoes,
+      cultos_lancados: cultosLancados,
+      presencas_delta_pct: presencasDelta,
+      maior_culto: maior && maior.valor > 0 ? maior : null,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] resumo-semana', e.message);
+    res.status(500).json({ error: 'Erro ao montar resumo da semana' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /resumo-mes?ano=&mes= · números consolidados do mês (1 card)
+//   { presencas, presencas_delta_pct, decisoes, decisoes_delta_pct, kids,
+//     batismos, novos_membros, maior_culto: { valor }, mes, ano, mes_nome }
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/resumo-mes', async (req, res) => {
+  try {
+    const hoje = new Date();
+    const ano = parseInt(req.query.ano, 10) || hoje.getUTCFullYear();
+    const mes = parseInt(req.query.mes, 10) || (hoje.getUTCMonth() + 1);
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const ini = `${ano}-${pad(mes)}-01`;
+    const fimDate = new Date(Date.UTC(ano, mes, 0)); // último dia do mês
+    const fim = fimDate.toISOString().slice(0, 10);
+    // mês anterior
+    const mesAntDate = new Date(Date.UTC(ano, mes - 2, 1));
+    const anoAnt = mesAntDate.getUTCFullYear();
+    const mesAnt = mesAntDate.getUTCMonth() + 1;
+    const iniAnt = `${anoAnt}-${pad(mesAnt)}-01`;
+    const fimAnt = new Date(Date.UTC(anoAnt, mesAnt, 0)).toISOString().slice(0, 10);
+
+    const cultoCols = 'data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online';
+    const [cultosMes, cultosAnt, batismos, novosMembros] = await Promise.all([
+      supabase.from('cultos').select(cultoCols).gte('data', ini).lte('data', fim),
+      supabase.from('cultos').select('presencial_adulto, decisoes_presenciais, decisoes_online').gte('data', iniAnt).lte('data', fimAnt),
+      supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true })
+        .eq('status', 'realizado').gte('data_batismo', ini).lte('data_batismo', fim),
+      // "Novos membros" = cadastros reais no mês · EXCLUI 'wifi' (captura do
+      // portal wifi gera mem_membros pra todo mundo que conecta · não é membro).
+      supabase.from('mem_membros').select('id', { count: 'exact', head: true })
+        .is('deleted_at', null).gte('created_at', `${ini}T00:00:00`).lte('created_at', `${fim}T23:59:59`)
+        .or('origem_cadastro.is.null,origem_cadastro.neq.wifi'),
+    ]);
+    if (cultosMes.error) throw cultosMes.error;
+
+    const lc = cultosMes.data || [];
+    const sum = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+    const presencas = sum(lc, 'presencial_adulto');
+    const kids = sum(lc, 'presencial_kids');
+    const decisoes = sum(lc, 'decisoes_presenciais') + sum(lc, 'decisoes_online');
+
+    const la = cultosAnt.data || [];
+    const presencasAnt = sum(la, 'presencial_adulto');
+    const decisoesAnt = sum(la, 'decisoes_presenciais') + sum(la, 'decisoes_online');
+    const delta = (a, b) => b > 0 ? ((a - b) / b) * 100 : null;
+
+    let maior = 0;
+    for (const r of lc) maior = Math.max(maior, Number(r.presencial_adulto) || 0);
+
+    const MESES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    res.json({
+      ano, mes,
+      mes_nome: MESES_NOME[mes - 1] || '',
+      presencas,
+      presencas_delta_pct: delta(presencas, presencasAnt),
+      decisoes,
+      decisoes_delta_pct: delta(decisoes, decisoesAnt),
+      kids,
+      batismos: batismos.count || 0,
+      novos_membros: novosMembros.count || 0,
+      maior_culto: maior > 0 ? { valor: maior } : null,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] resumo-mes', e.message);
+    res.status(500).json({ error: 'Erro ao montar resumo do mês' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /media-movel · média móvel da frequência presencial · comparação ano-a-ano
 //   query:
 //     granularidade · 'semana' | 'mês' (default semana)
