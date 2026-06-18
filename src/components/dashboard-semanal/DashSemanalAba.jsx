@@ -12,6 +12,7 @@ import {
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import KpiCard from './KpiCard';
 import OcupacaoGauge from './OcupacaoGauge';
+import { ResumoSemanaCard } from './ResumoCards';
 
 const C = { primary: '#00B39D', media: '#7BAEC2', taxa: '#E97A3F' };
 
@@ -311,6 +312,9 @@ export default function DashSemanalAba() {
 
       {/* Main */}
       <div className="col-span-12 lg:col-span-10 space-y-4">
+        {/* Resumo da semana · números consolidados */}
+        <ResumoSemanaCard ano={ano} semana={semana} />
+
         {/* Filtros topo */}
         <div className="flex flex-wrap items-end gap-3">
           <div>

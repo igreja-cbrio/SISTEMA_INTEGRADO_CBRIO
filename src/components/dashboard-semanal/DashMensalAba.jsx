@@ -10,6 +10,7 @@ import {
   LineChart, Line, AreaChart, Area, ReferenceLine,
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
+import { ResumoMesCard } from './ResumoCards';
 
 const CORES_ANO = ['#1E3A8A', '#E97A3F', '#7C3AED', '#10b981', '#ef4444', '#f59e0b', '#3b82f6'];
 
@@ -105,8 +106,13 @@ export default function DashMensalAba() {
     return arr;
   }, [anoAtual]);
 
+  const mesCorrente = new Date().getMonth() + 1;
+
   return (
     <div className="space-y-4">
+      {/* Resumo do mês corrente · presenças, decisões, batismos, novos membros */}
+      <ResumoMesCard ano={anoAtual} mes={mesCorrente} />
+
       {/* Filtros */}
       <Card>
         <CardContent className="p-4">
