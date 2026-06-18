@@ -7,6 +7,7 @@ const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../service
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
 const { sugerirSaidas } = require('../services/comprasMatch');
+const { resolverFornecedor } = require('../services/comprasShared');
 const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('logistica'));
@@ -494,31 +495,6 @@ function pickCompra(body) {
 // SELECT padrão das compras (com fornecedor, centro de custo do financeiro e comprador colaborador)
 const COMPRA_SELECT = '*, log_fornecedores(razao_social, nome_fantasia, cnpj, endereco, telefone, email), centro_fin:fin_centros_custo(codigo, nome), comprador_fn:rh_funcionarios(nome, cargo)';
 
-// Find-or-create do fornecedor: garante que toda compra tenha fornecedor cadastrado
-// na aba Fornecedores. Cadastro automático fica com observação (a UI sinaliza
-// "incompleto" quando falta CNPJ/endereço/telefone).
-async function resolverFornecedor({ nome, cnpj, telefone, endereco }) {
-  const nomeT = (nome || '').trim();
-  const cnpjT = (cnpj || '').replace(/\D/g, '') || null;
-  if (!nomeT && !cnpjT) return null;
-  if (cnpjT) {
-    const { data } = await supabase.from('log_fornecedores').select('id').eq('cnpj', cnpjT).maybeSingle();
-    if (data) return data.id;
-  }
-  if (nomeT) {
-    const { data } = await supabase.from('log_fornecedores').select('id').ilike('razao_social', nomeT).limit(1);
-    if (data && data.length) return data[0].id;
-  }
-  const { data: novo, error } = await supabase.from('log_fornecedores')
-    .insert({
-      razao_social: nomeT || 'Fornecedor sem nome', cnpj: cnpjT,
-      telefone: telefone || null, endereco: endereco || null, ativo: true,
-      observacoes: 'Cadastrado automaticamente pela aba Compras · completar dados',
-    })
-    .select('id').single();
-  if (error) { console.error('[COMPRAS] resolverFornecedor:', error.message); return null; }
-  return novo.id;
-}
 
 // Listagem com filtros
 router.get('/compras', async (req, res) => {

@@ -1163,6 +1163,33 @@ Migration `20260618210000` (aplicada): `log_compras.comprador_id` (FK
   + `comprador_fn:rh_funcionarios`. ⚠️ Aplicar `20260618210000` + `NOTIFY pgrst`
   (os embeds precisam do schema recarregado).
 
+### Nota fiscal por foto no WhatsApp (2026-06-18 · 3ª leva)
+
+Qualquer número manda **"nota fiscal"** pro bot → ele pede a(s) foto(s), aceita
+**várias** (uma de cada vez, perguntando "tem mais?"), e ao finalizar extrai
+TODAS com **Opus 4.8** (`claude-opus-4-8` · melhor visão) e cria uma **compra
+pendente por nota** na aba Compras (aguardando aprovação · nada entra direto).
+
+- **`services/whatsappNota.js`** · `tratarNotaFiscal({m,telefone,texto,messageId})`:
+  intercepta no `publicWhatsapp.js` **ANTES da checagem de líder** (logo após o
+  dedup) — qualquer número usa. Só assume quando há **sessão de nota aberta** ou
+  **gatilho** (`ehGatilho`: "nota fiscal"/"nf"/"enviar nota", ou "nota" sozinha
+  curta sem números — não dispara em relato de culto/grupo); senão devolve
+  `false` e o fluxo normal segue. Sessão = `whatsapp_coletas` (status
+  `aguardando_info`, `parsed.fonte='nota_fiscal'`, `fotos[]`, `msg_ids[]` dedup),
+  janela 60 min. Foto → `baixarMedia` (Meta) → bucket `log-arquivos`
+  (`compras/whatsapp/...`). "não/acabou/só essa" finaliza · "sim/mais" pede a
+  próxima · "cancelar" descarta.
+- **`services/comprasShared.js`** (novo · extraído de logistica.js):
+  `resolverFornecedor` (find-or-create), `matchCompradorPorTelefone` (casa o
+  telefone do remetente com `rh_funcionarios` ativo → sugere comprador) e
+  `criarCompraPendenteDeNota` (cria `log_compras` pendente · `origem_registro='whatsapp'`).
+  `nfScanner.extrairNotaFiscal(buffer, mime, model)` ganhou o param de modelo
+  (default Haiku; WhatsApp passa Opus).
+- **Sem migration, sem env nova** (reusa `whatsapp_coletas` + `log_compras` +
+  `WHATSAPP_ACCESS_TOKEN`/`ANTHROPIC_API_KEY`). Notifica `logistica` ao criar.
+  ⚠️ Custo: Opus por nota é mais caro — decisão do Matheus ("melhor modelo").
+
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 
 Sintoma recorrente: **"Erro ao atualizar/excluir evento"** mas a mudança
