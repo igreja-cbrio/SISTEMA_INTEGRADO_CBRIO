@@ -33,7 +33,7 @@ const REGISTERED_IDS = new Set(GRADIENT_PALETTE.map(gradId));
 /** Quando true, usa os gradientes globais; senão devolve cor sólida (fallback
  *  seguro). Ativado só depois que <GlobalChartGradients/> está montado e o
  *  preview confirma que as barras renderizam (recharts não pega defs locais). */
-const GRADIENTS_ATIVOS = false;
+const GRADIENTS_ATIVOS = true;
 
 /** Referência de fill p/ uma cor: usa o gradiente global se registrado e ativo,
  *  senão devolve a cor sólida (fallback seguro — nunca renderiza vazio). */
