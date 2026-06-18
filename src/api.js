@@ -228,6 +228,24 @@ export const next = {
     list: (params) => get('/next/indicacoes' + (params ? '?' + new URLSearchParams(params) : '')),
     update: (id, data) => put(`/next/indicacoes/${id}`, data),
   },
+  // Turmas — Next como coorte de 2 encontros + presença
+  turmas: {
+    list: (params) => get('/next/turmas' + (params ? '?' + new URLSearchParams(params) : '')),
+    get: (id) => get(`/next/turmas/${id}`),
+    create: (data) => post('/next/turmas', data),
+    update: (id, data) => patch(`/next/turmas/${id}`, data),
+    remove: (id) => del(`/next/turmas/${id}`),
+  },
+  encontros: {
+    update: (id, data) => patch(`/next/encontros/${id}`, data),
+    setPresencas: (id, matriculaIds) => put(`/next/encontros/${id}/presencas`, { matricula_ids: matriculaIds }),
+  },
+  matriculas: {
+    list: (params) => get('/next/matriculas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/next/matriculas', data),
+    update: (id, data) => patch(`/next/matriculas/${id}`, data),
+    remove: (id) => del(`/next/matriculas/${id}`),
+  },
 };
 
 export const integracao = {
@@ -254,6 +272,11 @@ export const integracao = {
     pendentes: () => get('/integracao/coleta/pendentes'),
     aprovar: (id) => post(`/integracao/coleta/${id}/aprovar`),
     rejeitar: (id, motivo) => post(`/integracao/coleta/${id}/rejeitar`, { motivo }),
+  },
+  decisoesApp: {
+    list: (status = 'pendente') => get(`/integracao/decisoes-app?status=${status}`),
+    confirmar: (id, culto_id) => post(`/integracao/decisoes-app/${id}/confirmar`, { culto_id }),
+    descartar: (id) => post(`/integracao/decisoes-app/${id}/descartar`),
   },
 };
 

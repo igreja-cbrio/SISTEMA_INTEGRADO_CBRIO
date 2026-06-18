@@ -1666,6 +1666,20 @@ via `window.print` na Brother QL-820NWB default do Windows).
   `fixed inset-0 z-[60]` cobrindo o AppShell; esconde a navegação e deixa só o
   check-in. Sair exige **PIN** (criado na 1ª vez · localStorage
   `cbrio-totem-kids-pin`), igual ao totem de membros (`TotemMembro.tsx`).
+- **Foto da criança pelo app + consentimento ECA/LGPD (2026-06-17)**: o
+  responsável autorizado pode adicionar (opcional) a foto da criança na tela do
+  filho no app, com **consentimento explícito** (ECA Lei 8.069/90 arts. 17/18 ·
+  LGPD Lei 13.709/18 art. 14 · texto + checkbox · versão em
+  `kids_criancas.foto_consentimento_versao`). Migration `20260617200000`
+  (aplicada): `foto_storage_path` (bucket **privado** `kids-documentos`,
+  prefixo `foto-crianca/`), `foto_consentimento_por/_versao` (foto_url +
+  foto_consentimento_em já existiam). App: `POST /app/kids/filho/:id/foto`
+  (exige `consentimento:true`) e `/foto/remover` (revoga + apaga). **Exibição
+  só com consentimento, via signed URL** — helper `fotoVisivelCrianca()` em
+  `totemKids.js` resolve a foto do app na busca, detalhe, listagem e
+  pré-check-in por código (foto_url legada do sistema segue inalterada).
+  ⚠️ As views de checkout-por-código e roster de sala ainda leem foto_url
+  legado (não mostram foto do app · não é o ponto de identificação na entrada).
 - **Pendências operacionais**: aplicar migration
   `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
   (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
@@ -2582,6 +2596,23 @@ saiu_em null) com info (dia/horário/local/foto), **líder** (nome+telefone p/
 horário) e **materiais** (`mem_grupo_documentos` por grupo_ids → URL pública do
 bucket eventos-anexos). App: tela `meu-grupo.tsx` (`/meu-grupo`, item "Meu grupo"
 no Menu). Sem RSVP/presença por ora (follow-up · não há infra de confirmação).
+
+## App · Modo Culto · decisão de fé pelo app (2026-06-17)
+
+"Segunda tela" do culto no app + **decisão de fé** que entra por **fila de
+revisão** (decisão da liderança: NADA do app entra direto na NSM). Migration
+`20260617180000` (aplicada em prod): tabela `app_decisoes` (PII · membro_id +
+culto_id + ambiente presencial/online + tipo aceitar/reconciliacao/rededicacao/
+batismo/outro + status pendente/confirmada/descartada + decisao_id · deleted_at +
+whitelist + RLS contextual) e libera `fonte='app'` em `cultos_decisoes_pessoas`.
+- **App**: `GET /app/culto/agora` (culto de hoje + link ao vivo + jaRegistrou),
+  `POST /app/culto/decisao` (insere pendente · dedup 1/dia · notifica Integração).
+- **Integração**: `GET /integracao/decisoes-app` + `/:id/confirmar` (cria a
+  decisão oficial em `cultos_decisoes_pessoas` com `fonte='app'` → entra na NSM
+  via trigger) + `/:id/descartar`. UI: `DecisoesApp.tsx` no topo da aba Decisões
+  (`vis_decisoes`) do `/integracao`. Notificação `decisao_app` → módulo integracao.
+- App (tela `modo-culto.tsx` · `/modo-culto`, "No culto" no Menu + atalho Home):
+  ao vivo + cartão de decisão + anotações da pregação (locais no aparelho).
 
 ## App · Pregações / Transmissão (2026-06-17 · Fase 5)
 

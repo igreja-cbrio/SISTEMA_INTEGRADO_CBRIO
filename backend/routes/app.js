@@ -922,11 +922,22 @@ router.get('/kids/filho/:id', authApp, async (req, res) => {
 
     const { data: c } = await supabase
       .from('kids_criancas')
-      .select('id, nome, data_nascimento, foto_url, foto_consentimento_em, observacoes_medicas, necessidades_especiais')
+      .select('id, nome, data_nascimento, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, necessidades_especiais')
       .eq('id', req.params.id)
       .eq('ativo', true)
       .maybeSingle();
     if (!c) return res.status(404).json({ error: 'Criança não encontrada' });
+
+    // Foto só com consentimento. App = bucket privado (signed URL); legado = foto_url.
+    let fotoUrl = null;
+    if (c.foto_consentimento_em) {
+      if (c.foto_storage_path) {
+        const { data: signed } = await supabase.storage.from('kids-documentos').createSignedUrl(c.foto_storage_path, 60 * 30);
+        fotoUrl = signed?.signedUrl || null;
+      } else {
+        fotoUrl = c.foto_url;
+      }
+    }
 
     const idadeMeses = c.data_nascimento
       ? Math.floor((Date.now() - new Date(c.data_nascimento).getTime()) / (1000 * 60 * 60 * 24 * 30.44))
@@ -976,7 +987,8 @@ router.get('/kids/filho/:id', authApp, async (req, res) => {
         observacoes_medicas: c.observacoes_medicas || null,
         necessidades_especiais: c.necessidades_especiais || null,
         parentesco: vinc.parentesco || null,
-        foto_url: c.foto_consentimento_em ? c.foto_url : null, // só com consentimento
+        foto_url: fotoUrl, // só com consentimento (signed URL se foto do app)
+        foto_consentida: !!c.foto_consentimento_em,
       },
       sala_sugerida: salaSugerida,
       total_checkins: historico.length,
@@ -985,6 +997,84 @@ router.get('/kids/filho/:id', authApp, async (req, res) => {
   } catch (e) {
     console.error('[APP] kids/filho:', e.message);
     res.status(500).json({ error: 'Erro ao carregar' });
+  }
+});
+
+// Helper: confirma que o membro é responsável AUTORIZADO da criança.
+async function ehResponsavelAutorizado(membroId, criancaId) {
+  const { data } = await supabase
+    .from('kids_responsaveis').select('id')
+    .eq('membro_id', membroId).eq('crianca_id', criancaId).eq('autorizado_buscar', true)
+    .maybeSingle();
+  return !!data;
+}
+
+// POST /api/app/kids/filho/:id/foto — responsável adiciona a foto da criança.
+// ⚠️ ECA/LGPD: exige consentimento explícito (consentimento=true). A foto já
+// foi enviada pro bucket privado kids-documentos; aqui recebemos só o PATH
+// (que precisa estar na pasta do próprio usuário).
+router.post('/kids/filho/:id/foto', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro não encontrado' });
+    const { storage_path, consentimento, versao_consentimento } = req.body || {};
+    if (consentimento !== true) {
+      return res.status(400).json({ error: 'É necessário autorizar o uso da imagem da criança.' });
+    }
+    if (!storage_path || typeof storage_path !== 'string') {
+      return res.status(400).json({ error: 'Arquivo inválido' });
+    }
+    if (!storage_path.startsWith(`${req.user.id}/`)) {
+      return res.status(403).json({ error: 'Caminho inválido' });
+    }
+    if (!(await ehResponsavelAutorizado(membro.id, req.params.id))) {
+      return res.status(403).json({ error: 'Você não é responsável autorizado desta criança.' });
+    }
+
+    const { error } = await supabase.from('kids_criancas').update({
+      foto_storage_path: storage_path,
+      foto_url: null, // app usa storage privado; limpa URL legada
+      foto_consentimento_em: new Date().toISOString(),
+      foto_consentimento_por: req.user.id,
+      foto_consentimento_versao: (versao_consentimento || 'eca-lgpd-v1').toString().slice(0, 40),
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id).eq('ativo', true);
+    if (error) throw error;
+
+    const { data: signed } = await supabase.storage.from('kids-documentos').createSignedUrl(storage_path, 60 * 30);
+    res.json({ ok: true, foto_url: signed?.signedUrl || null });
+  } catch (e) {
+    console.error('[APP] kids/foto:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a foto' });
+  }
+});
+
+// POST /api/app/kids/filho/:id/foto/remover — revoga o consentimento e apaga a foto.
+router.post('/kids/filho/:id/foto/remover', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro não encontrado' });
+    if (!(await ehResponsavelAutorizado(membro.id, req.params.id))) {
+      return res.status(403).json({ error: 'Você não é responsável autorizado desta criança.' });
+    }
+    const { data: c } = await supabase.from('kids_criancas')
+      .select('foto_storage_path').eq('id', req.params.id).maybeSingle();
+    const { error } = await supabase.from('kids_criancas').update({
+      foto_storage_path: null,
+      foto_url: null,
+      foto_consentimento_em: null,
+      foto_consentimento_por: null,
+      foto_consentimento_versao: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    if (error) throw error;
+    if (c?.foto_storage_path) {
+      try { await supabase.storage.from('kids-documentos').remove([c.foto_storage_path]); } catch { /* best-effort */ }
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] kids/foto remover:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a foto' });
   }
 });
 
@@ -1205,6 +1295,79 @@ router.get('/videos', authApp, async (req, res) => {
   } catch (e) {
     console.error('[APP] videos:', e.message);
     res.status(500).json({ error: 'Erro ao carregar vídeos' });
+  }
+});
+
+// GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
+router.get('/culto/agora', authApp, async (req, res) => {
+  try {
+    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: culto } = await supabase
+      .from('cultos')
+      .select('id, nome, data, hora')
+      .eq('data', hoje).is('deleted_at', null)
+      .order('hora', { ascending: false }).limit(1).maybeSingle();
+
+    let jaRegistrou = false;
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (membro?.id) {
+      const { data: pend } = await supabase
+        .from('app_decisoes').select('id')
+        .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
+        .gte('criada_em', `${hoje}T00:00:00`).limit(1);
+      jaRegistrou = (pend || []).length > 0;
+    }
+    res.json({ culto: culto || null, canal_live: `https://www.youtube.com/channel/${channelId}/live`, jaRegistrou });
+  } catch (e) {
+    console.error('[APP] culto/agora:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o culto' });
+  }
+});
+
+// POST /api/app/culto/decisao — registra uma decisão de fé na FILA DE REVISÃO.
+// NÃO entra na NSM até a Integração confirmar (decisão da liderança).
+router.post('/culto/decisao', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro?.id) return res.status(400).json({ error: 'Complete seu cadastro de membro primeiro.' });
+
+    const ambiente = ['presencial', 'online'].includes(req.body?.ambiente) ? req.body.ambiente : 'presencial';
+    const tipo = ['aceitar', 'reconciliacao', 'rededicacao', 'batismo', 'outro'].includes(req.body?.tipo) ? req.body.tipo : null;
+    const observacao = (req.body?.observacao || '').toString().trim().slice(0, 500) || null;
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    // Dedup: 1 decisão pendente por membro por dia.
+    const { data: pend } = await supabase
+      .from('app_decisoes').select('id')
+      .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
+      .gte('criada_em', `${hoje}T00:00:00`).limit(1);
+    if ((pend || []).length) return res.json({ ok: true, jaRegistrou: true });
+
+    const { data: culto } = await supabase
+      .from('cultos').select('id').eq('data', hoje).is('deleted_at', null)
+      .order('hora', { ascending: false }).limit(1).maybeSingle();
+
+    const { error } = await supabase.from('app_decisoes').insert({
+      membro_id: membro.id, culto_id: culto?.id || null, ambiente, tipo, observacao, status: 'pendente',
+    });
+    if (error) throw error;
+
+    try {
+      await notificar({
+        modulo: 'integracao',
+        tipo: 'decisao_app',
+        titulo: 'Nova decisão de fé pelo app 🙌',
+        mensagem: `${membro.nome} registrou uma decisão pelo app. Confirme na aba Decisões.`,
+        link: '/integracao?tab=vis_decisoes',
+        chaveDedup: `decisao_app-${membro.id}-${hoje}`,
+      });
+    } catch (e) { console.warn('[APP] notificar decisao_app:', e.message); }
+
+    res.json({ ok: true, jaRegistrou: true });
+  } catch (e) {
+    console.error('[APP] culto/decisao:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar decisão' });
   }
 });
 
