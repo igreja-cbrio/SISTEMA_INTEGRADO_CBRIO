@@ -95,6 +95,7 @@ export default function LogisticaCompras() {
   const [modal, setModal] = useState(null);        // { compra, review } edição/revisão/nova
   const [vinculoModal, setVinculoModal] = useState(null); // { compra, candidatos, loading }
   const [centrosFin, setCentrosFin] = useState([]);       // fin_centros_custo (financeiro)
+  const [planos, setPlanos] = useState([]);               // fin_plano_contas (despesa)
   const [colaboradores, setColaboradores] = useState([]); // rh_funcionarios ativos
   const [sheet, setSheet] = useState(false);        // action sheet de escanear/enviar
   const [pagina, setPagina] = useState(1);
@@ -105,6 +106,7 @@ export default function LogisticaCompras() {
 
   useEffect(() => {
     logistica.compras.centrosCusto().then(setCentrosFin).catch(() => {});
+    logistica.compras.planoContas().then(setPlanos).catch(() => {});
     logistica.compras.compradores().then(setColaboradores).catch(() => {});
   }, []);
 
@@ -407,7 +409,7 @@ export default function LogisticaCompras() {
       )}
 
       {modal && (
-        <CompraModal entry={modal} onClose={() => setModal(null)} onSalvar={salvar} onAprovar={aprovar} onRejeitar={rejeitar} busy={busy} centros={centrosFin} colaboradores={colaboradores} />
+        <CompraModal entry={modal} onClose={() => setModal(null)} onSalvar={salvar} onAprovar={aprovar} onRejeitar={rejeitar} busy={busy} centros={centrosFin} planos={planos} colaboradores={colaboradores} />
       )}
       {vinculoModal && (
         <VinculoModal data={vinculoModal} onClose={() => setVinculoModal(null)} onConfirmar={confirmarVinculo} busy={busy} />
@@ -427,7 +429,7 @@ function btnOutline() { return { padding: '8px 14px', borderRadius: 10, fontSize
 function btnSm(color) { return { padding: '4px 9px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none', background: 'transparent', color, marginLeft: 4 }; }
 
 // ── Modal de compra (nova / editar / revisar scan) ──
-function CompraModal({ entry, onClose, onSalvar, onAprovar, onRejeitar, busy, centros = [], colaboradores = [] }) {
+function CompraModal({ entry, onClose, onSalvar, onAprovar, onRejeitar, busy, centros = [], planos = [], colaboradores = [] }) {
   const [c, setC] = useState(entry.compra);
   useEffect(() => { setC(entry.compra); }, [entry]);
   const review = entry.review;
@@ -471,6 +473,12 @@ function CompraModal({ entry, onClose, onSalvar, onAprovar, onRejeitar, busy, ce
               {c.comprador && !c.comprador_id && <div style={{ fontSize: 11, color: C.amber, marginTop: 3 }}>planilha: “{c.comprador}”</div>}
             </Field>
           </div>
+          <Field label="Plano de contas (financeiro)">
+            <select style={S.select} value={c.plano_contas_id || ''} onChange={(e) => set('plano_contas_id', e.target.value || null)}>
+              <option value="">— escolher do financeiro —</option>
+              {planos.map((x) => <option key={x.id} value={x.id}>{x.codigo} · {x.nome}</option>)}
+            </select>
+          </Field>
           <div style={S.formRow}>
             <Field label="Forma de pagamento">
               <select style={S.select} value={c.forma_pgto || ''} onChange={(e) => set('forma_pgto', e.target.value)}>

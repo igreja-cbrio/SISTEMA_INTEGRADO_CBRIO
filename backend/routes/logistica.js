@@ -483,7 +483,7 @@ router.delete('/notas/:id', async (req, res) => {
 // Campos editáveis de uma compra
 const COMPRA_CAMPOS = [
   'tipo', 'data_compra', 'n_pedido', 'comprador', 'comprador_id', 'fornecedor', 'fornecedor_id',
-  'materiais', 'origem', 'centro_custo', 'centro_custo_id', 'valor', 'data_entrega',
+  'materiais', 'origem', 'centro_custo', 'centro_custo_id', 'plano_contas_id', 'valor', 'data_entrega',
   'status_entrega', 'forma_pgto', 'parcelas', 'observacoes',
 ];
 function pickCompra(body) {
@@ -493,7 +493,7 @@ function pickCompra(body) {
 }
 
 // SELECT padrão das compras (com fornecedor, centro de custo do financeiro e comprador colaborador)
-const COMPRA_SELECT = '*, log_fornecedores(razao_social, nome_fantasia, cnpj, endereco, telefone, email), centro_fin:fin_centros_custo(codigo, nome), comprador_fn:rh_funcionarios(nome, cargo)';
+const COMPRA_SELECT = '*, log_fornecedores(razao_social, nome_fantasia, cnpj, endereco, telefone, email), centro_fin:fin_centros_custo(codigo, nome), plano_fin:fin_plano_contas(codigo, nome), comprador_fn:rh_funcionarios(nome, cargo)';
 
 
 // Listagem com filtros
@@ -562,6 +562,17 @@ router.get('/compras/aux/centros-custo', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar centros de custo' }); }
 });
 
+// Plano de contas (despesa) do financeiro
+router.get('/compras/aux/plano-contas', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('fin_plano_contas')
+      .select('id, codigo, nome')
+      .eq('tipo', 'despesa').eq('ativo', true).eq('aceita_lancamento', true).order('codigo');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar plano de contas' }); }
+});
+
 // Colaboradores (rh_funcionarios) pra vincular o comprador
 router.get('/compras/aux/compradores', async (req, res) => {
   try {
@@ -601,6 +612,11 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
     const fornecedorId = (extraido?.emitente_nome || extraido?.emitente_cnpj)
       ? await resolverFornecedor({ nome: extraido?.emitente_nome, cnpj: extraido?.emitente_cnpj })
       : null;
+    // Sugestão de categoria (plano de contas + centro de custo) pra pré-preencher
+    let sugestao = null;
+    if (extraido?.valor_total) {
+      sugestao = await sugerirCategoria({ cnpj: extraido?.emitente_cnpj, nome: extraido?.emitente_nome, valor: extraido?.valor_total, descricao: extraido?.descricao_resumo });
+    }
 
     const { data: compra, error } = await supabase.from('log_compras')
       .insert({
@@ -613,6 +629,8 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
         materiais: extraido?.descricao_resumo || null,
         valor: extraido?.valor_total || null,
         forma_pgto: FORMA_PGTO_IA[extraido?.forma_pagamento] || null,
+        plano_contas_id: sugestao?.plano_contas_id || null,
+        centro_custo_id: sugestao?.centro_custo_id || null,
         origem_registro: 'scan',
         storage_path: storagePath,
         extracao_raw: raw,
@@ -657,15 +675,16 @@ router.post('/compras/:id/vincular', async (req, res) => {
   try {
     const { fin_transacao_id, score } = req.body;
     if (!fin_transacao_id) return res.status(400).json({ error: 'Informe a saída a vincular' });
-    const { data: trn } = await supabase.from('fin_transacoes').select('id, tipo, centro_custo_id').eq('id', fin_transacao_id).maybeSingle();
+    const { data: trn } = await supabase.from('fin_transacoes').select('id, tipo, centro_custo_id, plano_contas_id').eq('id', fin_transacao_id).maybeSingle();
     if (!trn) return res.status(404).json({ error: 'Saída do balanço não encontrada' });
     if (trn.tipo !== 'despesa') return res.status(400).json({ error: 'Só é possível vincular a uma saída (despesa)' });
     const upd = {
       fin_transacao_id, vinculo_status: 'confirmada', vinculo_score: score ?? null,
       vinculo_em: new Date().toISOString(), vinculo_por: req.user.userId,
     };
-    // Consolida: a compra herda o centro de custo do financeiro (da saída vinculada)
+    // Consolida: a compra herda centro de custo e plano de contas do financeiro (da saída)
     if (trn.centro_custo_id) upd.centro_custo_id = trn.centro_custo_id;
+    if (trn.plano_contas_id) upd.plano_contas_id = trn.plano_contas_id;
     const { data, error } = await supabase.from('log_compras')
       .update(upd)
       .eq('id', req.params.id).is('deleted_at', null)
