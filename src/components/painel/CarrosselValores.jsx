@@ -181,7 +181,11 @@ export default function CarrosselValores() {
     <section
       ref={containerRef}
       style={{
-        background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: '20px 24px',
+        background: 'var(--panel)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+        backdropFilter: 'blur(14px) saturate(140%)',
+        borderRadius: 16, border: '1px solid var(--hairline)',
+        boxShadow: 'var(--shadow), var(--hi)', padding: '20px 24px',
       }}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
