@@ -1321,7 +1321,7 @@ router.get('/schedules', async (req, res) => {
 router.get('/check-ins', async (req, res) => {
   try {
     const { service_id, volunteer_id, is_unscheduled } = req.query;
-    let q = supabase.from('vol_check_ins').select('*, volunteer:vol_profiles(id, full_name), service:vol_services(id, name, scheduled_at)')
+    let q = supabase.from('vol_check_ins').select('*, volunteer:vol_profiles(id, full_name, planning_center_id), service:vol_services(id, name, scheduled_at)')
       .order('checked_in_at', { ascending: false });
     if (service_id) q = q.eq('service_id', service_id);
     if (volunteer_id) q = q.eq('volunteer_id', volunteer_id);

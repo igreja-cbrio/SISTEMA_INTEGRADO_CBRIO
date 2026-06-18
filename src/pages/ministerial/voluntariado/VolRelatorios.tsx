@@ -12,6 +12,7 @@ import { useVolTeams } from './hooks';
 import { UserX, Flame, BarChart3, Calendar, CheckCircle2, TrendingUp, Users, Printer, AlertTriangle, Filter, Clock, ChevronRight, XCircle, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { ciMatchesSched, dateOfSP } from './volMatch';
 
 const METHOD_LABELS: Record<string, string> = {
   qr_code: 'QR',
@@ -33,6 +34,24 @@ export default function VolRelatorios() {
   const { data: teams = [] } = useVolTeams();
   const inactiveData = inactiveMode === 'checkin' ? inactiveByCheckin : inactiveBySchedule;
 
+  // Data (SP) por service_id · usada pra casar check-in × escala mesmo quando o
+  // serviço duplicou no sync (mesma data, service_id diferente).
+  const svcDateById = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const s of reportData?.services || []) m.set(s.id, dateOfSP(s.scheduled_at));
+    return m;
+  }, [reportData]);
+
+  // Um check-in só é "sem escala" se NÃO existe escala da mesma pessoa na mesma
+  // data (não confia no flag is_unscheduled, que não enxerga a ponte de PCID).
+  const isRealmenteSemEscala = useMemo(() => {
+    const schedules = reportData?.schedules || [];
+    return (ci: import('./types').VolCheckIn) => {
+      const ciDate = (ci.service_id ? svcDateById.get(ci.service_id) : null) ?? dateOfSP(ci.service?.scheduled_at);
+      return !schedules.some(sch => ciMatchesSched(ci, sch) && svcDateById.get(sch.service_id) === ciDate);
+    };
+  }, [reportData, svcDateById]);
+
   // ── Overview stats (Visão Geral) ──
   const overviewStats = useMemo(() => {
     if (!reportData) return { rate: 0, uniqueVol: 0, totalServices: 0, unscheduledCount: 0 };
@@ -40,21 +59,21 @@ export default function VolRelatorios() {
     const checkedIn = reportData.checkIns.length;
     const rate = scheduled > 0 ? Math.round((checkedIn / scheduled) * 100) : 0;
     const uniqueVol = new Set(reportData.schedules.map(s => s.planning_center_person_id)).size;
-    const unscheduledCount = reportData.checkIns.filter(c => c.is_unscheduled).length;
+    const unscheduledCount = reportData.checkIns.filter(isRealmenteSemEscala).length;
     return { rate, uniqueVol, totalServices: reportData.services.length, unscheduledCount };
-  }, [reportData]);
+  }, [reportData, isRealmenteSemEscala]);
 
   // Unscheduled check-ins list
   const unscheduledCheckIns = useMemo(() => {
     if (!reportData) return [];
     return reportData.checkIns
-      .filter(c => c.is_unscheduled)
+      .filter(isRealmenteSemEscala)
       .sort((a, b) => new Date(b.checked_in_at).getTime() - new Date(a.checked_in_at).getTime())
       .map(ci => {
         const svc = reportData.services.find(s => s.id === ci.service_id);
         return { ...ci, serviceName: svc?.name || 'Desconhecido' };
       });
-  }, [reportData]);
+  }, [reportData, isRealmenteSemEscala]);
 
   // ── Weekly/Report stats (Relatório Semanal + Por Culto) ──
   const weeklyStats = useMemo(() => {
@@ -90,27 +109,22 @@ export default function VolRelatorios() {
     const scheds = reportData.schedules.filter(s => s.service_id === openServiceId);
     const checks = reportData.checkIns.filter(c => c.service_id === openServiceId);
 
-    const checkedScheduleIds = new Set(checks.map(c => c.schedule_id).filter(Boolean) as string[]);
-    const checkedVolIds = new Set(checks.map(c => c.volunteer_id).filter(Boolean) as string[]);
-
+    // Presente = escalado que tem check-in casado (por id/volunteer_id/PCID/nome);
+    // faltou = escalado sem check-in casado.
     const present: typeof scheds = [];
     const absent: typeof scheds = [];
     for (const s of scheds) {
-      const did = (s.id && checkedScheduleIds.has(s.id)) || (s.volunteer_id && checkedVolIds.has(s.volunteer_id));
+      const did = checks.some(c => ciMatchesSched(c, s));
       (did ? present : absent).push(s);
     }
 
-    // Check-ins que não casam com nenhuma escala do culto = serviram sem escala
-    const schedIds = new Set(scheds.map(s => s.id));
-    const schedVolIds = new Set(scheds.map(s => s.volunteer_id).filter(Boolean) as string[]);
-    const extras = checks.filter(c => {
-      if (c.schedule_id && schedIds.has(c.schedule_id)) return false;
-      if (c.volunteer_id && schedVolIds.has(c.volunteer_id)) return false;
-      return true;
-    });
+    // "Sem escala" = check-in que não casa com nenhuma escala DESTE culto E que
+    // também não tem escala da mesma pessoa na mesma data (evita falso positivo
+    // quando o serviço duplicou no sync).
+    const extras = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
 
     return { svc, present, absent, extras };
-  }, [openServiceId, reportData]);
+  }, [openServiceId, reportData, isRealmenteSemEscala]);
 
   return (
     <div className="space-y-6">
