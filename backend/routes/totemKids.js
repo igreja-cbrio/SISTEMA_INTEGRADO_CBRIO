@@ -59,6 +59,19 @@ router.use((req, res, next) => {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+// Resolve a foto exibível da criança. Foto enviada pelo APP fica em bucket
+// privado (foto_storage_path) e SÓ aparece com consentimento (ECA/LGPD) →
+// signed URL temporária. Foto legada (foto_url) segue como antes.
+async function fotoVisivelCrianca(c) {
+  if (!c) return null;
+  if (c.foto_storage_path) {
+    if (!c.foto_consentimento_em) return null;
+    const { data } = await supabase.storage.from('kids-documentos').createSignedUrl(c.foto_storage_path, 60 * 30);
+    return data?.signedUrl || null;
+  }
+  return c.foto_url || null;
+}
+
 function calcIdadeMeses(dataNascimento) {
   if (!dataNascimento) return null;
   const nasc = new Date(dataNascimento);
@@ -267,7 +280,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     const { data: criancas } = await supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         visitante, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
@@ -300,7 +313,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
           const { data: extras2 } = await supabase
             .from('kids_criancas')
             .select(`
-              id, nome, data_nascimento, sexo, foto_url, observacoes_medicas,
+              id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
               visitante, familia_id,
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
@@ -318,11 +331,12 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     // Une por id
     const map = new Map();
     [...(criancas || []), ...extras].forEach(c => map.set(c.id, c));
-    const lista = [...map.values()].map(c => ({
+    const lista = await Promise.all([...map.values()].map(async c => ({
       ...c,
+      foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    }));
+    })));
 
     res.json(lista);
   } catch (e) {
@@ -350,6 +364,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 
     res.json({
       ...data,
+      foto_url: await fotoVisivelCrianca(data),
       idade_meses: calcIdadeMeses(data.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(data.data_nascimento)),
       sala_sugerida: await sugerirSala(calcIdadeMeses(data.data_nascimento)),
@@ -464,7 +479,7 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
     const { data, error } = await supabase
       .from('kids_criancas')
       .select(`
-        id, nome, data_nascimento, sexo, foto_url, observacoes_medicas,
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         visitante, ativo, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
@@ -473,11 +488,12 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
       .order('nome')
       .limit(500);
     if (error) throw error;
-    res.json((data || []).map(c => ({
+    res.json(await Promise.all((data || []).map(async c => ({
       ...c,
+      foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    })));
+    }))));
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
   }
@@ -2047,7 +2063,7 @@ router.get('/pre-checkin/codigo/:codigo', authorizeModule('kids', 2), async (req
 
     const { data: criancas } = await supabase
       .from('kids_criancas')
-      .select('id, nome, data_nascimento, sexo, foto_url, observacoes_medicas, necessidades_especiais')
+      .select('id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, necessidades_especiais')
       .in('id', pre.crianca_ids)
       .eq('ativo', true);
 
@@ -2058,7 +2074,7 @@ router.get('/pre-checkin/codigo/:codigo', authorizeModule('kids', 2), async (req
         idadeMeses = Math.floor((Date.now() - nasc.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
       }
       const sala = await sugerirSala(idadeMeses);
-      return { ...c, idade_meses: idadeMeses, sala_sugerida: sala };
+      return { ...c, foto_url: await fotoVisivelCrianca(c), idade_meses: idadeMeses, sala_sugerida: sala };
     }));
 
     res.json({
