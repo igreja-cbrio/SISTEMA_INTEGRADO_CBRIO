@@ -8,6 +8,7 @@ import { Users, Tv, Loader2, BarChart3, Calendar, Armchair } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ec4899' };
 
@@ -312,6 +313,7 @@ export default function VisualizacaoFrequencia() {
           <div className="h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={porMes} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <ChartGradients colors={[C.info, C.pink, C.warn]} />
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                 <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -321,9 +323,9 @@ export default function VisualizacaoFrequencia() {
                   formatter={(v: any, name: any) => [`${Number(v).toLocaleString('pt-BR')}`, name]}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
-                <Bar dataKey="presencial" name="Presencial" stackId="pres" fill={C.info} radius={[0, 0, 0, 0]} />
-                <Bar dataKey="kids"       name="Kids"       stackId="pres" fill={C.pink} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="online"     name="Pico online" fill={C.warn} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="presencial" name="Presencial" stackId="pres" fill={gradFill(C.info)} radius={[0, 0, 0, 0]} />
+                <Bar dataKey="kids"       name="Kids"       stackId="pres" fill={gradFill(C.pink)} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="online"     name="Pico online" fill={gradFill(C.warn)} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

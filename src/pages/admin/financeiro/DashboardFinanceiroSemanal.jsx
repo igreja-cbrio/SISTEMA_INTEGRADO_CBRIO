@@ -16,6 +16,7 @@ import {
   ComposedChart, Line, Bar, Area, AreaChart, BarChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell,
 } from 'recharts';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const C = {
   primary: '#00B39D',
@@ -957,6 +958,7 @@ function SazonalidadeSemanalChart() {
             <div style={{ width: '100%', height: 280 }}>
               <ResponsiveContainer>
                 <BarChart data={semanas} onClick={onClickBar} barGap={1} barCategoryGap="16%">
+                  <ChartGradients colors={[COL.primary, COL.purple, COL.amber, COL.blue, COL.red, COL.green]} />
                   <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                   <XAxis
                     dataKey="num_semana"
@@ -989,7 +991,7 @@ function SazonalidadeSemanalChart() {
                         return (
                           <Cell
                             key={`c-${ano}-${i}`}
-                            fill={corPorAno(ano, idx)}
+                            fill={gradFill(corPorAno(ano, idx))}
                             fillOpacity={dim ? 0.18 : 1}
                             stroke={ehSel ? COL.amber : 'transparent'}
                             strokeWidth={ehSel ? 2 : 0}
@@ -1163,12 +1165,13 @@ function YoYSemanalChart({ dados, anoAtual, anoAnterior }) {
         <div style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
             <ComposedChart data={formatado}>
+              <ChartGradients colors={[COL.primary]} />
               <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
               <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.floor(formatado.length / 12)} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtKbrl(v)} />
               <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey={`${anoAtual}`} fill={COL.primary} radius={[3, 3, 0, 0]} animationDuration={1000} />
+              <Bar dataKey={`${anoAtual}`} fill={gradFill(COL.primary)} radius={[3, 3, 0, 0]} animationDuration={1000} />
               <Line type="monotone" dataKey={`${anoAnterior}`} stroke={COL.amber} strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} animationDuration={1400} />
             </ComposedChart>
           </ResponsiveContainer>

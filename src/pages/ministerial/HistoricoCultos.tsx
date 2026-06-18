@@ -8,6 +8,7 @@ import { Calendar, Users, Heart, Tv, Loader2, BarChart3, Archive, Droplets } fro
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ec4899' };
 
@@ -208,6 +209,7 @@ export default function HistoricoCultos() {
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={porAno} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <ChartGradients colors={[C.info, C.pink, C.purple, C.primary, C.warn]} />
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                 <XAxis dataKey="ano" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -219,24 +221,24 @@ export default function HistoricoCultos() {
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
                 {metrica === 'todos' && (
                   <>
-                    <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={C.info} />
-                    <Bar dataKey="kids"       name="Kids"       stackId="freq" fill={C.pink} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="decisoes"   name="Aceitações" fill={C.purple} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="batismos"   name="Batismos"   fill={C.primary} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="online"     name="Pico online" fill={C.warn} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={gradFill(C.info)} />
+                    <Bar dataKey="kids"       name="Kids"       stackId="freq" fill={gradFill(C.pink)} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="decisoes"   name="Aceitações" fill={gradFill(C.purple)} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="batismos"   name="Batismos"   fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="online"     name="Pico online" fill={gradFill(C.warn)} radius={[4, 4, 0, 0]} />
                   </>
                 )}
                 {metrica === 'frequencia' && (
                   <>
-                    <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={C.info} />
-                    <Bar dataKey="kids"       name="Kids"       stackId="freq" fill={C.pink} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="presencial" name="Presencial" stackId="freq" fill={gradFill(C.info)} />
+                    <Bar dataKey="kids"       name="Kids"       stackId="freq" fill={gradFill(C.pink)} radius={[4, 4, 0, 0]} />
                   </>
                 )}
                 {metrica === 'aceitacoes' && (
-                  <Bar dataKey="decisoes" name="Aceitações" fill={C.purple} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="decisoes" name="Aceitações" fill={gradFill(C.purple)} radius={[4, 4, 0, 0]} />
                 )}
                 {metrica === 'batismos' && (
-                  <Bar dataKey="batismos" name="Batismos" fill={C.primary} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="batismos" name="Batismos" fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} />
                 )}
               </BarChart>
             </ResponsiveContainer>

@@ -8,6 +8,7 @@ import { financeiroV2 } from '../../../api';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const COLORS = {
   primary: '#00B39D',
@@ -323,16 +324,17 @@ function DreComparativo() {
           <div style={{ width: '100%', height: 320 }}>
             <ResponsiveContainer>
               <BarChart data={dadosCharts}>
+                <ChartGradients colors={[COLORS.green, COLORS.fixa, COLORS.variavel, COLORS.eventual, '#94a3b8']} />
                 <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                 <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
                 <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="Receitas" fill={COLORS.green} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Fixas" stackId="d" fill={COLORS.fixa} />
-                <Bar dataKey="Variáveis" stackId="d" fill={COLORS.variavel} />
-                <Bar dataKey="Eventuais" stackId="d" fill={COLORS.eventual} />
-                <Bar dataKey="Sem classe" stackId="d" fill="#94a3b8" />
+                <Bar dataKey="Receitas" fill={gradFill(COLORS.green)} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Fixas" stackId="d" fill={gradFill(COLORS.fixa)} />
+                <Bar dataKey="Variáveis" stackId="d" fill={gradFill(COLORS.variavel)} />
+                <Bar dataKey="Eventuais" stackId="d" fill={gradFill(COLORS.eventual)} />
+                <Bar dataKey="Sem classe" stackId="d" fill={gradFill('#94a3b8')} />
               </BarChart>
             </ResponsiveContainer>
           </div>

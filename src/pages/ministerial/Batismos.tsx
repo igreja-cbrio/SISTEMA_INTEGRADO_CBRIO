@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
+import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', danger: '#ef4444' };
 
@@ -456,6 +457,7 @@ export default function Batismos() {
           <div className="h-[220px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={realizadosPorMes} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <ChartGradients colors={[C.primary]} />
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                 <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -464,7 +466,7 @@ export default function Batismos() {
                   contentStyle={{ borderRadius: 8, fontSize: 12 }}
                   formatter={(v: any) => [`${v} batizado(s)`, '']}
                 />
-                <Bar dataKey="batizados" fill={C.primary} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="batizados" fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
