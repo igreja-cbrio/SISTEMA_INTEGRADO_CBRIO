@@ -13,6 +13,27 @@ const { supabase, query } = require('../utils/supabase');
 
 router.use(authenticate);
 
+// Lê TODAS as linhas de uma tabela contornando o cap de 1000 do PostgREST
+// (paginação por .range). Usar quando o cálculo precisa do conjunto inteiro
+// (ex.: snapshots "ativo no fim do período" sobre mem_grupo_membros/voluntarios,
+// que já passam de 1000). `buildQuery(q)` aplica select/filtros no query base.
+async function fetchAllPaginado(table, buildQuery) {
+  const page = 1000;
+  let from = 0;
+  const todas = [];
+  while (true) {
+    let q = supabase.from(table);
+    q = buildQuery(q).range(from, from + page - 1);
+    const { data, error } = await q;
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    todas.push(...data);
+    if (data.length < page) break;
+    from += page;
+  }
+  return todas;
+}
+
 // ============================================================================
 // CACHE em memória (5 min TTL)
 //
@@ -153,12 +174,11 @@ async function decisoesPorAreaMes(range) {
 // 2026-06-10). Sem área mapeada conta no TOTAL (centro) mas não nas pétalas —
 // honesto: não chutamos a área de ninguém.
 async function voluntariosPorAreaMes(range) {
-  const { data, error } = await supabase.from('mem_voluntarios')
+  const data = await fetchAllPaginado('mem_voluntarios', (q) => q
     .select('area')
     .is('deleted_at', null)
     .lte('desde', range.fim)
-    .or(`ate.is.null,ate.gt.${range.fim}`);
-  if (error) throw error;
+    .or(`ate.is.null,ate.gt.${range.fim}`));
   const porArea = { kids: 0, sede: 0, ami: 0, bridge: 0, online: 0 };
   let semArea = 0;
   (data || []).forEach((v) => {
@@ -1583,9 +1603,8 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
   // ----- CONECTAR -----
   else if (valor === 'conectar' && dado === 'grupos_ativos') {
     // Snapshot · grupos com pelo menos 1 membro ativo no fim de cada período
-    const { data, error } = await supabase.from('mem_grupo_membros')
-      .select('grupo_id, entrou_em, saiu_em');
-    if (error) throw error;
+    const data = await fetchAllPaginado('mem_grupo_membros', (q) =>
+      q.select('grupo_id, entrou_em, saiu_em'));
     const periodos = preencherLacunas([], inicio, fim, granularidade).map(p => p.periodo);
     for (const p of periodos) {
       const fimP = granularidade === 'semana'
@@ -1604,9 +1623,8 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
     // grupos no fim do mês (entrou_em <= fim_do_mes AND (saiu_em IS NULL OR
     // saiu_em > fim_do_mes)). Conta pessoas únicas (quem está em 2 grupos não
     // conta 2x) e ignora vínculos removidos.
-    const { data, error } = await supabase.from('mem_grupo_membros')
-      .select('membro_id, entrou_em, saiu_em').is('deleted_at', null);
-    if (error) throw error;
+    const data = await fetchAllPaginado('mem_grupo_membros', (q) =>
+      q.select('membro_id, entrou_em, saiu_em').is('deleted_at', null));
     const periodos = preencherLacunas([], inicio, fim, granularidade).map(p => p.periodo);
     for (const p of periodos) {
       const fimP = granularidade === 'semana'
@@ -1643,9 +1661,7 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
   // ----- SERVIR -----
   else if (valor === 'servir' && dado === 'voluntarios_ativos') {
     // Snapshot por período: voluntários com (desde <= fim_periodo AND (até IS NULL OR até > fim_periodo))
-    const { data, error } = await supabase.from('mem_voluntarios')
-      .select('desde, ate');
-    if (error) throw error;
+    const data = await fetchAllPaginado('mem_voluntarios', (q) => q.select('desde, ate'));
     const periodos = preencherLacunas([], inicio, fim, granularidade).map(p => p.periodo);
     for (const p of periodos) {
       const fimP = granularidade === 'semana'

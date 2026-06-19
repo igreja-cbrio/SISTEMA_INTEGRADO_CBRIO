@@ -422,9 +422,13 @@ async function resolveMembroApp(req) {
     }
   }
   if (email) {
-    const { data: m } = await supabase.from('mem_membros')
-      .select('id, nome, cpf, email, telefone').ilike('email', email).is('deleted_at', null).maybeSingle();
-    if (m) return m;
+    // Família compartilha e-mail → pode haver >1 mem_membros com o mesmo e-mail.
+    // maybeSingle() devolveria ERRO (não-single) e o membro perderia acesso ao
+    // próprio grupo/inscrições. Pega o mais antigo (registro principal).
+    const { data: ms } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, email, telefone').ilike('email', email).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(1);
+    if (ms && ms[0]) return ms[0];
   }
   return null;
 }
@@ -1228,7 +1232,8 @@ router.get('/meu-grupo', authApp, async (req, res) => {
       .from('mem_grupo_membros')
       .select('grupo_id, funcao, mem_grupos(id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id)')
       .eq('membro_id', membro.id)
-      .is('saiu_em', null);
+      .is('saiu_em', null)
+      .is('deleted_at', null);
 
     const grupos = [];
     for (const v of vinculos || []) {

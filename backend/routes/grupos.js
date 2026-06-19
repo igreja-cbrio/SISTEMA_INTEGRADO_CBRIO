@@ -873,7 +873,7 @@ router.get('/pedidos/list', async (req, res) => {
         .maybeSingle();
       const minhaMembresiaId = prof?.membresia_id;
       if (!minhaMembresiaId) return res.json([]);
-      const { data: meusGrupos } = await supabase.from('mem_grupos').select('id').eq('lider_id', minhaMembresiaId);
+      const { data: meusGrupos } = await supabase.from('mem_grupos').select('id').eq('lider_id', minhaMembresiaId).eq('ativo', true).is('deleted_at', null);
       const ids = (meusGrupos || []).map(g => g.id);
       if (!ids.length) return res.json([]);
       query = query.in('grupo_id', ids);
@@ -932,11 +932,14 @@ async function resolverMembroLogado(req) {
     if (m) return m;
   }
   if (u.email) {
-    const { data: m } = await supabase.from('mem_membros')
-      .select('id, nome, foto_url').ilike('email', u.email).eq('active', true).maybeSingle();
-    if (m) {
-      await supabase.from('profiles').update({ membro_id: m.id }).eq('id', u.id);
-      return m;
+    // Família compartilha e-mail → pode haver >1 membro. maybeSingle() erraria
+    // (não-single) e devolveria grupos vazios. Pega o mais antigo, não deletado.
+    const { data: ms } = await supabase.from('mem_membros')
+      .select('id, nome, foto_url').ilike('email', u.email).eq('active', true).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(1);
+    if (ms && ms[0]) {
+      await supabase.from('profiles').update({ membro_id: ms[0].id }).eq('id', u.id);
+      return ms[0];
     }
   }
   return null;
@@ -973,7 +976,7 @@ router.get('/meu', async (req, res) => {
       let lideres = {};
       if (liderIds.length) {
         const { data: ls } = await supabase.from('mem_membros')
-          .select('id, nome, telefone, foto_url').in('id', liderIds);
+          .select('id, nome, telefone, foto_url').in('id', liderIds).is('deleted_at', null);
         (ls || []).forEach(l => { lideres[l.id] = l; });
       }
 
@@ -1406,7 +1409,10 @@ router.post('/geocode-batch', authorizeModule('grupos', 3), async (req, res) => 
     // Limita o lote para não estourar timeout do Vercel (60s).
     // Cada grupo demora ~1.1s no Nominatim, então 30 grupos = ~33s.
     const LIMITE = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 50);
-    const OFFSET = Math.max(parseInt(offset, 10) || 0, 0);
+    // No modo somente_sem_coords o lote MUTA o filtro (grupos geocodados saem da
+    // query), então paginar por offset numérico PULA grupos. Nesse modo, sempre
+    // offset 0 — o conjunto encolhe sozinho a cada chamada até zerar.
+    const OFFSET = somente_sem_coords ? 0 : Math.max(parseInt(offset, 10) || 0, 0);
 
     // Conta total separadamente (sem range, sem select grande) — facilita
     // troubleshoot se a query principal falhar.

@@ -16,7 +16,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { buscarCandidatos, acharOuCriar } = require('../services/membroMatch');
+const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
 
 router.use(authenticate);
 
@@ -233,7 +233,12 @@ router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
     if (!alvoMembroId) {
       if (!criar) return res.status(400).json({ error: 'informe membro_id ou criar:true' });
       const nome = [row.nome, row.sobrenome].filter(Boolean).join(' ').trim() || row.nome || 'Sem nome';
-      const r = await acharOuCriar({ cpf: row.cpf, email: row.email, telefone: row.telefone, nome, status: 'visitante' });
+      // acharOuCriarGuardado reaproveita match por telefone+nome e nome+nascimento
+      // antes de criar stub — evita duplicar quem já existe sem CPF/e-mail batendo.
+      const r = await acharOuCriarGuardado({
+        cpf: row.cpf, email: row.email, telefone: row.telefone, nome,
+        dataNascimento: row.data_nascimento, status: 'visitante',
+      });
       alvoMembroId = r.membro_id;
       criado = !!r.created;
     }

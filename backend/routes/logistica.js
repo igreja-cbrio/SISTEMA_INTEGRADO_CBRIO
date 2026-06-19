@@ -731,9 +731,17 @@ router.post('/compras/:id/vincular', async (req, res) => {
   try {
     const { fin_transacao_id, score } = req.body;
     if (!fin_transacao_id) return res.status(400).json({ error: 'Informe a saída a vincular' });
-    const { data: trn } = await supabase.from('fin_transacoes').select('id, tipo, centro_custo_id, plano_contas_id').eq('id', fin_transacao_id).maybeSingle();
+    const { data: trn } = await supabase.from('fin_transacoes').select('id, tipo, status, centro_custo_id, plano_contas_id').eq('id', fin_transacao_id).maybeSingle();
     if (!trn) return res.status(404).json({ error: 'Saída do balanço não encontrada' });
     if (trn.tipo !== 'despesa') return res.status(400).json({ error: 'Só é possível vincular a uma saída (despesa)' });
+    if (trn.status === 'cancelado') return res.status(400).json({ error: 'Essa saída está cancelada — não pode ser vinculada' });
+    // Evita double-link: a mesma saída do balanço não pode estar vinculada a 2 compras
+    const { data: jaVinc } = await supabase.from('log_compras')
+      .select('id, n_pedido').eq('fin_transacao_id', fin_transacao_id).is('deleted_at', null)
+      .neq('id', req.params.id).limit(1);
+    if (jaVinc && jaVinc[0]) {
+      return res.status(409).json({ error: `Essa saída já está vinculada a outra compra${jaVinc[0].n_pedido ? ` (pedido ${jaVinc[0].n_pedido})` : ''}. Desvincule lá primeiro.` });
+    }
     const upd = {
       fin_transacao_id, vinculo_status: 'confirmada', vinculo_score: score ?? null,
       vinculo_em: new Date().toISOString(), vinculo_por: req.user.userId,
