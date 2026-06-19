@@ -193,18 +193,34 @@ router.delete('/fornecedores/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao remover fornecedor' }); }
 });
 
-// Enriquece os dados de um fornecedor (Receita via CNPJ + IA por nome)
+// Enriquece um LOTE de fornecedores incompletos (Receita via CNPJ). O frontend
+// chama em loop até restam=0. Marca enriquecimento_status pra não reprocessar e
+// pra sinalizar os "nao_encontrado" (ação manual). Lote pequeno + delay = gentil
+// com o rate limit da Receita; em 429 para o lote e devolve rateLimited.
 router.post('/fornecedores/enriquecer-incompletos', async (req, res) => {
   try {
+    const incompleto = (f) => !f.cnpj || !f.endereco || !f.telefone;
     const { data: forns } = await supabase.from('log_fornecedores').select('*').eq('ativo', true);
-    const incompletos = (forns || []).filter((f) => !f.cnpj || !f.endereco || !f.telefone).slice(0, 12);
-    let enriquecidos = 0;
-    for (const f of incompletos) {
-      const r = await enriquecerFornecedor(f, { usarIA: false }); // bulk: só CNPJ (sem custo de IA)
-      if (r.ok && Object.keys(r.patch).length) { await supabase.from('log_fornecedores').update(r.patch).eq('id', f.id); enriquecidos++; }
+    const pendentes = (forns || []).filter((f) => incompleto(f) && !f.enriquecimento_status);
+    const lote = pendentes.slice(0, 18);
+    const agora = new Date().toISOString();
+    let enriquecidos = 0; let naoEncontrados = 0; let rateLimited = false;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (const f of lote) {
+      let r;
+      try { r = await enriquecerFornecedor(f, { usarIA: false }); }
+      catch (e) { if (e.rateLimited) { rateLimited = true; break; } r = { ok: false }; }
+      if (r.ok) {
+        await supabase.from('log_fornecedores').update({ ...r.patch, enriquecimento_status: 'enriquecido', enriquecimento_em: agora }).eq('id', f.id);
+        enriquecidos++;
+      } else {
+        await supabase.from('log_fornecedores').update({ enriquecimento_status: 'nao_encontrado', enriquecimento_em: agora }).eq('id', f.id);
+        naoEncontrados++;
+      }
+      await sleep(350);
     }
-    const restam = (forns || []).filter((f) => !f.cnpj || !f.endereco || !f.telefone).length - enriquecidos;
-    res.json({ processados: incompletos.length, enriquecidos, restam: Math.max(0, restam) });
+    const processados = enriquecidos + naoEncontrados;
+    res.json({ processados, enriquecidos, naoEncontrados, restam: Math.max(0, pendentes.length - processados), rateLimited });
   } catch (e) { console.error('[LOG] enriquecer lote:', e); res.status(500).json({ error: 'Erro ao enriquecer fornecedores' }); }
 });
 
@@ -213,13 +229,14 @@ router.post('/fornecedores/:id/enriquecer', async (req, res) => {
     const { data: forn } = await supabase.from('log_fornecedores').select('*').eq('id', req.params.id).maybeSingle();
     if (!forn) return res.status(404).json({ error: 'Fornecedor não encontrado' });
     const r = await enriquecerFornecedor(forn);
-    if (!r.ok) return res.json({ ok: false, mensagem: 'Não encontrei dados oficiais (CNPJ não localizado ou empresa não consta na Receita).' });
-    let fornecedor = forn;
-    if (Object.keys(r.patch).length) {
-      const { data } = await supabase.from('log_fornecedores').update(r.patch).eq('id', forn.id).select().single();
-      fornecedor = data || forn;
+    const agora = new Date().toISOString();
+    if (!r.ok) {
+      await supabase.from('log_fornecedores').update({ enriquecimento_status: 'nao_encontrado', enriquecimento_em: agora }).eq('id', forn.id);
+      return res.json({ ok: false, mensagem: 'Não encontrei dados oficiais (CNPJ não localizado ou empresa não consta na Receita).' });
     }
-    res.json({ ok: true, fornecedor, dados: r.dados, preenchidos: Object.keys(r.patch) });
+    const { data } = await supabase.from('log_fornecedores')
+      .update({ ...r.patch, enriquecimento_status: 'enriquecido', enriquecimento_em: agora }).eq('id', forn.id).select().single();
+    res.json({ ok: true, fornecedor: data || forn, dados: r.dados, preenchidos: Object.keys(r.patch) });
   } catch (e) { console.error('[LOG] enriquecer fornecedor:', e); res.status(500).json({ error: 'Erro ao buscar dados do fornecedor' }); }
 });
 

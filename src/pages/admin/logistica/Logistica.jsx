@@ -229,12 +229,19 @@ export default function Logistica() {
     setEnriquecendo(false);
   };
   const enriquecerLote = async () => {
-    if (!confirm('Buscar dados oficiais (Receita) dos fornecedores incompletos? Processa um lote por vez.')) return;
+    if (!confirm('Buscar dados oficiais (Receita) de TODOS os fornecedores incompletos? Processo em lotes — pode levar alguns minutos. Pode deixar rodando.')) return;
     setEnriquecendo(true); setError('');
+    let totEnr = 0; let totNao = 0;
     try {
-      const r = await logistica.fornecedores.enriquecerIncompletos();
-      fetchFornecedores();
-      setError(`✓ ${r.enriquecidos} de ${r.processados} preenchidos${r.restam ? ` · ainda faltam ${r.restam} (rode de novo)` : ''}.`);
+      for (let i = 0; i < 80; i++) {                 // teto de segurança (~1400 fornecedores)
+        const r = await logistica.fornecedores.enriquecerIncompletos();
+        totEnr += (r.enriquecidos || 0); totNao += (r.naoEncontrados || 0);
+        fetchFornecedores();
+        setError(`🔎 Buscando na Receita… ${totEnr} preenchidos · ${totNao} sem dados · ${r.restam} restantes`);
+        if (r.rateLimited) { await new Promise(res => setTimeout(res, 4000)); continue; } // pausa e segue
+        if ((r.restam || 0) <= 0 || (r.processados || 0) === 0) break;
+      }
+      setError(`✓ Concluído: ${totEnr} preenchidos · ${totNao} sem dados na Receita (marcados pra você completar à mão).`);
     } catch (e) { setError(e.message); }
     setEnriquecendo(false);
   };
@@ -585,6 +592,7 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
           <td style={styles.td}>
             <span style={styles.badge(f.ativo ? C.green : C.text3, f.ativo ? C.greenBg : '#73737318')}>{f.ativo ? 'Ativo' : 'Inativo'}</span>
             {incompleto(f) && <span style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }} title={`Faltando: ${[!f.cnpj && 'CNPJ', !f.endereco && 'endereço', !f.telefone && 'telefone'].filter(Boolean).join(', ')}`}>Incompleto</span>}
+            {f.enriquecimento_status === 'nao_encontrado' && <span style={{ ...styles.badge(C.text3, '#73737318'), marginLeft: 6 }} title="A Receita não tinha dados desse CNPJ — complete à mão">🔍 sem dados</span>}
           </td>
           {isDiretor && <td style={styles.td} onClick={e => e.stopPropagation()}><div style={{ display: 'flex', gap: 4 }}>
             <Button variant="ghost" size="sm" onClick={() => onToggle(f)}>{f.ativo ? '⏸' : '▶'}</Button>
