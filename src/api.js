@@ -870,6 +870,8 @@ export const logistica = {
     create: (data) => post('/logistica/fornecedores', data),
     update: (id, data) => put(`/logistica/fornecedores/${id}`, data),
     remove: (id) => del(`/logistica/fornecedores/${id}`),
+    enriquecer: (id) => post(`/logistica/fornecedores/${id}/enriquecer`, {}),
+    enriquecerIncompletos: () => post('/logistica/fornecedores/enriquecer-incompletos', {}),
   },
   solicitacoes: {
     list: (params) => get('/logistica/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),

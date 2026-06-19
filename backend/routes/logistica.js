@@ -8,6 +8,7 @@ const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner')
 const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
 const { sugerirSaidas } = require('../services/comprasMatch');
 const { resolverFornecedor } = require('../services/comprasShared');
+const { enriquecerFornecedor } = require('../services/fornecedorEnriquecer');
 const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('logistica'));
@@ -190,6 +191,36 @@ router.delete('/fornecedores/:id', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao remover fornecedor' }); }
+});
+
+// Enriquece os dados de um fornecedor (Receita via CNPJ + IA por nome)
+router.post('/fornecedores/enriquecer-incompletos', async (req, res) => {
+  try {
+    const { data: forns } = await supabase.from('log_fornecedores').select('*').eq('ativo', true);
+    const incompletos = (forns || []).filter((f) => !f.cnpj || !f.endereco || !f.telefone).slice(0, 12);
+    let enriquecidos = 0;
+    for (const f of incompletos) {
+      const r = await enriquecerFornecedor(f, { usarIA: false }); // bulk: só CNPJ (sem custo de IA)
+      if (r.ok && Object.keys(r.patch).length) { await supabase.from('log_fornecedores').update(r.patch).eq('id', f.id); enriquecidos++; }
+    }
+    const restam = (forns || []).filter((f) => !f.cnpj || !f.endereco || !f.telefone).length - enriquecidos;
+    res.json({ processados: incompletos.length, enriquecidos, restam: Math.max(0, restam) });
+  } catch (e) { console.error('[LOG] enriquecer lote:', e); res.status(500).json({ error: 'Erro ao enriquecer fornecedores' }); }
+});
+
+router.post('/fornecedores/:id/enriquecer', async (req, res) => {
+  try {
+    const { data: forn } = await supabase.from('log_fornecedores').select('*').eq('id', req.params.id).maybeSingle();
+    if (!forn) return res.status(404).json({ error: 'Fornecedor não encontrado' });
+    const r = await enriquecerFornecedor(forn);
+    if (!r.ok) return res.json({ ok: false, mensagem: 'Não encontrei dados oficiais (CNPJ não localizado ou empresa não consta na Receita).' });
+    let fornecedor = forn;
+    if (Object.keys(r.patch).length) {
+      const { data } = await supabase.from('log_fornecedores').update(r.patch).eq('id', forn.id).select().single();
+      fornecedor = data || forn;
+    }
+    res.json({ ok: true, fornecedor, dados: r.dados, preenchidos: Object.keys(r.patch) });
+  } catch (e) { console.error('[LOG] enriquecer fornecedor:', e); res.status(500).json({ error: 'Erro ao buscar dados do fornecedor' }); }
 });
 
 // ── SOLICITAÇÕES DE COMPRA ─────────────────────────────────
