@@ -2093,14 +2093,24 @@ router.delete('/cadastros/:id', authorize('admin', 'diretor'), async (req, res) 
 // ── KPIs ──
 router.get('/kpis', async (req, res) => {
   try {
-    const { data: membros } = await supabase
-      .from('mem_membros')
-      .select('id, status')
-      .eq('active', true);
+    // PostgREST capa em 1000 linhas server-side → paginar pra contar de verdade
+    // (lição cargo_modulo_permissao · CLAUDE.md). O .length de um select sem
+    // paginação travava o card "Total Membros" em exatamente 1000.
+    const membros = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .select('id, status')
+        .eq('active', true)
+        .range(from, from + 999);
+      if (error) break;
+      membros.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
 
-    const total = membros?.length || 0;
+    const total = membros.length;
     const byStatus = {};
-    (membros || []).forEach(m => {
+    membros.forEach(m => {
       byStatus[m.status] = (byStatus[m.status] || 0) + 1;
     });
 
@@ -2108,23 +2118,23 @@ router.get('/kpis', async (req, res) => {
       .from('mem_familias')
       .select('id', { count: 'exact', head: true });
 
-    // Contribuintes ativos (≤30 dias) — olhando última contribuição de cada membro ativo
-    const membroIds = (membros || []).map(m => m.id);
-    let contribuintesAtivos = 0;
-    if (membroIds.length > 0) {
-      const { data: contribs } = await supabase
+    // Contribuintes ativos (≤30 dias) — membros ativos com contribuição recente.
+    // Paginado (mem_contribuicoes passou de 1000 linhas) e sem .in() gigante.
+    const limite30dStr = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const ativosSet = new Set(membros.map(m => m.id));
+    const contribRecentes = new Set();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
         .from('mem_contribuicoes')
-        .select('membro_id, data')
-        .in('membro_id', membroIds)
-        .order('data', { ascending: false });
-      const vistos = new Set();
-      const limite30d = Date.now() - 30 * 24 * 60 * 60 * 1000;
-      (contribs || []).forEach(c => {
-        if (vistos.has(c.membro_id)) return;
-        vistos.add(c.membro_id);
-        if (new Date(c.data).getTime() >= limite30d) contribuintesAtivos += 1;
-      });
+        .select('membro_id')
+        .gte('data', limite30dStr)
+        .not('membro_id', 'is', null)
+        .range(from, from + 999);
+      if (error) break;
+      (data || []).forEach(c => { if (ativosSet.has(c.membro_id)) contribRecentes.add(c.membro_id); });
+      if (!data || data.length < 1000) break;
     }
+    const contribuintesAtivos = contribRecentes.size;
 
     res.json({
       total,
