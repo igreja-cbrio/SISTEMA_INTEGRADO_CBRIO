@@ -248,17 +248,21 @@ export default function TabCadastros({ onMembrosChange }) {
               type="button"
               onClick={() => setFilterStatus(active ? '' : key)}
               style={{
+                position: 'relative', overflow: 'hidden',
                 textAlign: 'left',
-                background: C.card,
-                border: `1px solid ${active ? meta.cor : C.border}`,
-                borderRadius: 14,
+                background: 'var(--panel)',
+                WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+                border: `1px solid ${active ? meta.cor : 'var(--hairline)'}`,
+                borderRadius: 16,
                 padding: '16px 18px',
                 cursor: 'pointer',
                 transition: 'all 0.2s',
-                boxShadow: active ? `0 0 0 3px ${meta.bg}` : 'none',
+                boxShadow: active ? `var(--shadow), 0 0 0 3px ${meta.bg}` : 'var(--shadow), var(--hi)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${meta.cor}22, transparent 58%)`, pointerEvents: 'none' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: meta.cor, opacity: 0.9 }} />
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: C.text3, fontWeight: 500 }}>{meta.label}</span>
                 <div style={{
                   width: 32, height: 32, borderRadius: 8,
@@ -268,7 +272,7 @@ export default function TabCadastros({ onMembrosChange }) {
                   <Icon style={{ width: 16, height: 16 }} />
                 </div>
               </div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: C.text, marginTop: 6 }}>
+              <div style={{ position: 'relative', fontSize: 26, fontWeight: 700, color: C.text, marginTop: 6 }}>
                 {kpis[key] ?? 0}
               </div>
             </button>
@@ -301,7 +305,7 @@ export default function TabCadastros({ onMembrosChange }) {
       </div>
 
       {/* Tabela */}
-      <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
@@ -389,9 +393,12 @@ export default function TabCadastros({ onMembrosChange }) {
         >
           <div
             style={{
-              background: 'var(--cbrio-modal-bg)', borderRadius: 20,
+              background: 'var(--panel)',
+              WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+              borderRadius: 16,
               width: '100%', maxWidth: 640, maxHeight: '90vh', overflow: 'auto',
-              border: `1px solid ${C.border}`,
+              border: '1px solid var(--hairline)',
+              boxShadow: 'var(--shadow-hover), var(--hi)',
             }}
             onClick={(e) => e.stopPropagation()}
           >

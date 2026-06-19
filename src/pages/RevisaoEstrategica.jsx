@@ -73,9 +73,17 @@ export default function RevisaoEstrategica() {
           { label: 'Deps. impactadas', value: dep.impactados, color: dep.impactados > 0 ? C.amber : C.green },
           { label: 'Orcamento em risco', value: fmtMoney(diag.orcamento_risco), color: diag.orcamento_risco > 0 ? C.red : C.green, small: true },
         ].map(k => (
-          <div key={k.label} style={{ background: C.card, borderRadius: 12, padding: '14px 16px', border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: k.small ? 18 : 28, fontWeight: 800, color: k.color }}>{k.value}</div>
-            <div style={{ fontSize: 11, color: C.t3 }}>{k.label}</div>
+          <div key={k.label} style={{
+            position: 'relative', overflow: 'hidden',
+            background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+            borderRadius: 16, padding: '14px 16px', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+          }}>
+            <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${k.color}22, transparent 58%)`, pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: k.color, opacity: 0.9 }} />
+            <div style={{ position: 'relative', zIndex: 1 }}>
+              <div style={{ fontSize: k.small ? 18 : 28, fontWeight: 800, color: k.color }}>{k.value}</div>
+              <div style={{ fontSize: 11, color: C.t3 }}>{k.label}</div>
+            </div>
           </div>
         ))}
       </div>
@@ -101,7 +109,7 @@ export default function RevisaoEstrategica() {
       </div>
 
       {/* Lista — clica e abre página de detalhe */}
-      <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <div style={{ maxHeight: 600, overflowY: 'auto' }}>
           {filtered.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum item encontrado.</div>}
           {filtered.map(item => {

@@ -560,7 +560,8 @@ function AreaAdmCard({ area }) {
 
   return (
     <section style={{
-      background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
+      background: C.card, borderRadius: 16, border: '1px solid var(--hairline)',
+      boxShadow: 'var(--shadow)',
       borderTop: `4px solid ${area.cor}`,
       padding: 16,
     }}>
@@ -640,8 +641,9 @@ function AbaConfigurar() {
               key={item.titulo}
               onClick={() => navigate(item.path)}
               style={{
-                background: C.card, border: `1px solid ${C.border}`,
-                borderRadius: 12, padding: 18, cursor: 'pointer',
+                background: C.card, border: '1px solid var(--hairline)',
+                boxShadow: 'var(--shadow)',
+                borderRadius: 16, padding: 18, cursor: 'pointer',
                 textAlign: 'left',
                 display: 'flex', alignItems: 'flex-start', gap: 14,
                 transition: 'border-color 0.15s',
@@ -1240,7 +1242,8 @@ const inpStyle = {
 function Card({ title, subtitle, children, full }) {
   return (
     <section style={{
-      background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
+      background: C.card, borderRadius: 16, border: '1px solid var(--hairline)',
+      boxShadow: 'var(--shadow)',
       padding: 18, gridColumn: full ? '1/-1' : 'auto',
     }}>
       <div style={{ marginBottom: 12 }}>
@@ -1257,12 +1260,18 @@ function Stats({ stats }) {
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 18 }}>
       {stats.map((s, i) => (
         <div key={i} style={{
-          background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
+          position: 'relative', overflow: 'hidden',
+          background: 'var(--panel)',
+          WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+          border: '1px solid var(--hairline)', borderRadius: 16,
           padding: '18px 20px',
           display: 'flex', flexDirection: 'column', gap: 6,
+          boxShadow: 'var(--shadow), var(--hi)',
         }}>
-          <div style={{ fontSize: 28, fontWeight: 800, color: s.cor, lineHeight: 1, letterSpacing: -0.5 }}>{s.value}</div>
-          <div style={{ fontSize: 10, color: C.t3, letterSpacing: 0.6, textTransform: 'uppercase', fontWeight: 600 }}>{s.label}</div>
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${s.cor}22, transparent 58%)`, pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: s.cor, opacity: 0.9 }} />
+          <div style={{ position: 'relative', zIndex: 1, fontSize: 28, fontWeight: 800, color: s.cor, lineHeight: 1, letterSpacing: -0.5 }}>{s.value}</div>
+          <div style={{ position: 'relative', zIndex: 1, fontSize: 10, color: C.t3, letterSpacing: 0.6, textTransform: 'uppercase', fontWeight: 600 }}>{s.label}</div>
         </div>
       ))}
     </div>

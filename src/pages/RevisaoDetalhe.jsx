@@ -247,7 +247,7 @@ export default function RevisaoDetalhe() {
       </div>
 
       {/* ═══ GRAFO DE DEPENDENCIAS ═══ */}
-      <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, marginBottom: 24, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 24, overflow: 'hidden' }}>
         <div style={{ padding: '12px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, background: 'var(--cbrio-table-header)' }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Mapa de dependencias</span>
           {impacto?.total_impactados > 0 && (
@@ -273,7 +273,7 @@ export default function RevisaoDetalhe() {
       </div>
 
       {/* ═══ FORMULÁRIO DE EDIÇÃO ═══ */}
-      <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, padding: 24, marginBottom: 24 }}>
+      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', padding: 24, marginBottom: 24 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>Editar {tipo === 'projeto' ? 'Projeto' : 'Marco'}</div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px 18px' }}>
@@ -367,7 +367,7 @@ export default function RevisaoDetalhe() {
 
       {/* ═══ HISTÓRICO ═══ */}
       {historico.length > 0 && (
-        <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+        <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <div style={{ padding: '12px 20px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Historico de revisoes ({historico.length})</span>
           </div>
