@@ -58,13 +58,15 @@ const VALOR_LABELS = {
 
 const VALOR_ORDER = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
 
-// Catálogo de atividades por valor (espelha o backend · "1º Contato", não "Café").
+// Catálogo de atividades por valor · ESPELHA os sinais que o backend emite
+// (fn_nsm_sinais_engajados / nsmSinaisCohorte): batismo/next em Seguir, grupo,
+// investir, voluntario, dizimo. 1º contato NÃO é sinal (é a janela de conversão).
 const CATALOGO = {
-  seguir:       [{ id: 'primeiro_contato', label: '1º Contato' }, { id: 'batismo', label: 'Batismo' }, { id: 'next', label: 'Next' }],
+  seguir:       [{ id: 'batismo', label: 'Batismo' }, { id: 'next', label: 'Next' }],
   conectar:     [{ id: 'grupo', label: 'Em grupo' }],
-  investir:     [{ id: 'devocional', label: 'Devocional' }, { id: 'jornada180', label: 'Jornada 180' }, { id: 'aconselhamento', label: 'Aconselhamento' }],
+  investir:     [{ id: 'investir', label: 'Investir' }],
   servir:       [{ id: 'voluntario', label: 'Voluntário' }],
-  generosidade: [{ id: 'dizimo', label: 'Dízimo' }, { id: 'oferta', label: 'Oferta' }],
+  generosidade: [{ id: 'dizimo', label: 'Generosidade' }],
 };
 
 const labelAtividade = (valor, id) => CATALOGO[valor]?.find(a => a.id === id)?.label || id;
@@ -320,6 +322,26 @@ export default function PainelNsmPessoas() {
     return { ini, fim, dias, total, registradas, semDados: Math.max(0, total - registradas) };
   }, [nsmCentral, semDadosRaw]);
 
+  // Funil: % da coorte (conjunto filtrado atual = cumulativo) em cada valor.
+  // Seguir a Jesus = 100% (todos são convertidos); ao marcar batismo/Next/outros,
+  // a lista estreita e os %s recalculam → "dos convertidos que batizaram, quantos
+  // também fizeram Next" etc.
+  const funil = useMemo(() => {
+    const fb = lista || [];
+    const tot = fb.length || 1;
+    const valor = {}; const ativ = {};
+    for (const v of VALOR_ORDER) {
+      valor[v] = v === 'seguir'
+        ? 100
+        : Math.round(fb.filter(p => (p.valores_engajados || []).includes(v)).length / tot * 100);
+      ativ[v] = {};
+      for (const a of (CATALOGO[v] || [])) {
+        ativ[v][a.id] = Math.round(fb.filter(p => (p.atividades || []).some(x => x.atividade === a.id)).length / tot * 100);
+      }
+    }
+    return { valor, ativ, total: fb.length };
+  }, [lista]);
+
   const toggleValor = (v) => {
     setValoresSel(prev => {
       const n = new Set(prev);
@@ -420,7 +442,7 @@ export default function PainelNsmPessoas() {
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <Filter size={12} /> Filtrar por valores e atividades
+                <Filter size={12} /> Funil por valor · clique pra refinar (cumulativo)
               </span>
               {temFiltro && (
                 <button onClick={limparFiltros} style={{ ...btnVoltar, padding: '4px 10px', fontSize: 11 }}>
@@ -440,7 +462,9 @@ export default function PainelNsmPessoas() {
                   atividadesSel={atividadesSel}
                   onToggleValor={toggleValor}
                   onToggleAtividade={toggleAtividade}
-                  hint={v === 'seguir' ? 'A própria conversão já cumpre este valor — todos entram. Marque uma atividade para refinar.' : null}
+                  pct={funil.valor[v]}
+                  pctById={funil.ativ[v] || {}}
+                  hint={v === 'seguir' ? 'A própria conversão já cumpre este valor — todos entram (100%). Marque Batismo ou Next para refinar.' : null}
                 />
               ))}
             </div>
@@ -579,7 +603,7 @@ function Segmented({ value, onChange, options }) {
   );
 }
 
-function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggleValor, onToggleAtividade, hint }) {
+function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggleValor, onToggleAtividade, hint, pct = null, pctById = {} }) {
   return (
     <div style={{
       background: C.card, border: `1.5px solid ${ativo ? cor : C.border}`,
@@ -591,6 +615,7 @@ function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggl
       }}>
         <span style={{ width: 11, height: 11, borderRadius: '50%', background: cor, flexShrink: 0 }} />
         <span style={{ fontSize: 12.5, fontWeight: 700, color: C.text, flex: 1, textAlign: 'left' }}>{label}</span>
+        {pct != null && <span style={{ fontSize: 13, fontWeight: 800, color: cor, marginRight: 8 }}>{pct}%</span>}
         <span style={{
           width: 18, height: 18, borderRadius: 6, flexShrink: 0,
           border: `1.5px solid ${ativo ? cor : C.border}`, background: ativo ? cor : 'transparent',
@@ -599,6 +624,11 @@ function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggl
           {ativo && <Check size={12} color="#fff" strokeWidth={3} />}
         </span>
       </button>
+      {pct != null && (
+        <div style={{ height: 5, background: C.border, borderRadius: 3, marginTop: 9, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: cor, transition: 'width .2s' }} />
+        </div>
+      )}
       {ativo && atividades.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
           {atividades.map(a => {
@@ -608,7 +638,7 @@ function ValorCard({ vkey, label, cor, ativo, atividades, atividadesSel, onToggl
                 padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600, cursor: 'pointer',
                 border: `1px solid ${sel ? cor : C.border}`, background: sel ? cor + '20' : 'transparent', color: sel ? cor : C.t2,
               }}>
-                {a.label}
+                {a.label}{pctById[a.id] != null ? ` · ${pctById[a.id]}%` : ''}
               </button>
             );
           })}
