@@ -1353,22 +1353,38 @@ router.post('/check-ins', async (req, res) => {
       }
     }
 
-    // Auto-detectar "sem escala" se não informado explicitamente:
-    // - sem schedule_id vinculado E
-    // - existe volunteer_id + service_id E
-    // - não ha escala no vol_schedules pra esse volunteer+service
+    // Resolve a escala da pessoa neste culto e VINCULA o schedule_id — o servidor
+    // é a autoridade. Escalas do Planning Center costumam ter volunteer_id NULO,
+    // então casa também por planning_center_id e por nome (não só volunteer_id).
+    // Se achar uma escala, grava o schedule_id e marca como escalado (corrige o
+    // palpite do cliente, que erra quando o totem não encontra a escala). Só fica
+    // "sem escala" quando NÃO existe escala casável. Mantém o service_id (não
+    // cruza serviço duplicado aqui — isso é tratado como dedup à parte).
+    let resolvedScheduleId = schedule_id || null;
     let resolvedUnscheduled = is_unscheduled;
-    if (resolvedUnscheduled === undefined && !schedule_id && volunteer_id && service_id) {
-      // Pode haver múltiplas linhas (mesma pessoa em mais de uma posição) —
-      // basta saber se existe ao menos uma escala.
-      const { data: sched } = await supabase.from('vol_schedules')
-        .select('id').eq('volunteer_id', volunteer_id).eq('service_id', service_id).limit(1);
-      resolvedUnscheduled = !(sched && sched.length > 0);
+    if (!resolvedScheduleId && volunteer_id && service_id) {
+      const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      const [{ data: vp }, { data: scheds }] = await Promise.all([
+        supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', volunteer_id).maybeSingle(),
+        supabase.from('vol_schedules').select('id, volunteer_id, planning_center_person_id, volunteer_name').eq('service_id', service_id),
+      ]);
+      const vpName = norm(vp?.full_name);
+      const match = (scheds || []).find(s =>
+        (s.volunteer_id && s.volunteer_id === volunteer_id) ||
+        (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
+        (vpName && norm(s.volunteer_name) === vpName)
+      );
+      if (match) {
+        resolvedScheduleId = match.id;
+        resolvedUnscheduled = false;
+      } else if (resolvedUnscheduled === undefined) {
+        resolvedUnscheduled = true;
+      }
     }
 
     const { data, error } = await supabase.from('vol_check_ins')
       .insert({
-        schedule_id: schedule_id || null,
+        schedule_id: resolvedScheduleId,
         volunteer_id: volunteer_id || null,
         service_id: service_id || null,
         checked_in_by: req.user.userId,
@@ -1385,10 +1401,10 @@ router.post('/check-ins', async (req, res) => {
         let existingMethod = null;
         try {
           let existing = null;
-          if (schedule_id) {
+          if (resolvedScheduleId) {
             const r = await supabase.from('vol_check_ins')
               .select('checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
-              .eq('schedule_id', schedule_id).maybeSingle();
+              .eq('schedule_id', resolvedScheduleId).maybeSingle();
             existing = r.data;
             volunteerName = existing?.volunteer?.full_name || existing?.schedule?.volunteer_name || null;
           } else if (volunteer_id && service_id) {
@@ -1418,10 +1434,11 @@ router.post('/check-ins', async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
-    // Confirm schedule if pending
-    if (schedule_id) {
+    // Confirm schedule if pending (usa a escala resolvida · pode ter sido
+    // vinculada agora via planning_center_id/nome)
+    if (resolvedScheduleId) {
       await supabase.from('vol_schedules')
-        .update({ confirmation_status: 'confirmed' }).eq('id', schedule_id).eq('confirmation_status', 'pending');
+        .update({ confirmation_status: 'confirmed' }).eq('id', resolvedScheduleId).eq('confirmation_status', 'pending');
     }
 
     // Sinaliza ao operador se o voluntário ainda não tem CPF cadastrado, pra
