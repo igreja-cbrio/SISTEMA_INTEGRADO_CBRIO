@@ -1141,8 +1141,8 @@ export default function Membresia() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
-        <StatisticsCard title="Total Membros" value={kpis.total} icon={Users} iconColor="#00B39D" />
-        <StatisticsCard title="Membros Ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981" />
+        <StatisticsCard title="Total de pessoas" value={kpis.total} icon={Users} iconColor="#00B39D" />
+        <StatisticsCard title="Membros ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981" />
         <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b" />
         <StatisticsCard title="Contribuintes Ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e" />
       </div>

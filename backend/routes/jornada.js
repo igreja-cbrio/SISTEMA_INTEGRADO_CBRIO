@@ -41,57 +41,62 @@ router.use(authenticate);
 
 function daysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
+// Lê todos os valores de uma coluna contornando o cap de 1000 do PostgREST.
+async function fetchAllIds(table, buildQuery, col = 'id') {
+  const page = 1000; let from = 0; const out = [];
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await buildQuery(supabase.from(table)).range(from, from + page - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    for (const r of data) if (r[col] != null) out.push(r[col]);
+    if (data.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
+// Conjunto de membro_id distintos de uma tabela de valor (paginado, sem cap).
+async function fetchMembroSet(table, applyFilter) {
+  const ids = await fetchAllIds(table, (q) => applyFilter(q.select('membro_id').is('deleted_at', null)), 'membro_id');
+  return new Set(ids.filter(Boolean));
+}
+
 // ── GET /api/jornada/dashboard ──
 router.get('/dashboard', async (req, res) => {
   try {
-    const { count: totalMembros } = await supabase
-      .from('mem_membros').select('id', { count: 'exact', head: true })
-      .is('deleted_at', null)
-      .eq('active', true);
+    // Base = MEMBROS formais (status 'membro_ativo'). Decisão do Matheus
+    // (2026-06-19): o engajamento é "% dos membros", não da base inteira —
+    // visitantes do wifi/import do Next NÃO contam (continuam como visitante).
+    // Os numeradores também são restritos a esses membros (interseção).
+    const memberIds = await fetchAllIds('mem_membros', (q) =>
+      q.select('id').is('deleted_at', null).eq('active', true).eq('status', 'membro_ativo'), 'id');
+    const memberSet = new Set(memberIds);
+    const total = memberIds.length || 1;
+    const inter = (set) => { let n = 0; for (const id of set) if (memberSet.has(id)) n++; return n; };
 
-    // 1. Seguir a Jesus: trilha_valores com conversao/primeiro_contato concluída
-    let seguirCount = 0;
-    const { count: seguirQ } = await supabase.from('mem_trilha_valores')
-      .select('membro_id', { count: 'exact', head: true })
-      .is('deleted_at', null)
-      .in('etapa', ['conversao', 'primeiro_contato', 'batismo'])
-      .eq('concluida', true);
-    seguirCount = seguirQ || 0;
+    // membro_ids distintos com cada valor (paginado), depois ∩ membros
+    const [seguirSet, conectarSet, investirSet, servirSet, genSet] = await Promise.all([
+      fetchMembroSet('mem_trilha_valores', (q) => q.in('etapa', ['conversao', 'primeiro_contato', 'batismo']).eq('concluida', true)),
+      fetchMembroSet('mem_grupo_membros', (q) => q.is('saiu_em', null)),
+      fetchMembroSet('cui_jornada180', (q) => q.gte('data_encontro', daysAgo(90))),
+      fetchMembroSet('mem_voluntarios', (q) => q.is('ate', null)),
+      fetchMembroSet('mem_contribuicoes', (q) => q.gte('data', daysAgo(90))),
+    ]);
 
-    // 2. Conectar: em grupo ativo
-    const { count: conectar } = await supabase
-      .from('mem_grupo_membros').select('membro_id', { count: 'exact', head: true })
-      .is('deleted_at', null)
-      .is('saiu_em', null);
+    const seguirCount = inter(seguirSet);
+    const conectar = inter(conectarSet);
+    const investirCount = inter(investirSet);
+    const servir = inter(servirSet);
+    const genCount = inter(genSet);
 
-    // 3. Investir: jornada 180 com encontro nos últimos 90 dias (usa data_encontro)
-    const { data: j180Ids } = await supabase
-      .from('cui_jornada180').select('membro_id')
-      .is('deleted_at', null)
-      .gte('data_encontro', daysAgo(90));
-    const investirCount = new Set((j180Ids || []).map(r => r.membro_id).filter(Boolean)).size;
-
-    // 4. Servir: voluntário ativo (até IS NULL)
-    const { count: servir } = await supabase
-      .from('mem_voluntarios').select('membro_id', { count: 'exact', head: true })
-      .is('deleted_at', null)
-      .is('ate', null);
-
-    // 5. Generosidade: contribuição nos últimos 90 dias
-    const { data: genIds } = await supabase
-      .from('mem_contribuicoes').select('membro_id')
-      .is('deleted_at', null)
-      .gte('data', daysAgo(90));
-    const genCount = new Set((genIds || []).map(r => r.membro_id).filter(Boolean)).size;
-
-    const total = totalMembros || 1;
     res.json({
-      total_membros: totalMembros || 0,
+      total_membros: memberIds.length,
       valores: {
         seguir:       { total: seguirCount, pct: Math.round((seguirCount / total) * 100) },
-        conectar:     { total: conectar || 0, pct: Math.round(((conectar || 0) / total) * 100) },
+        conectar:     { total: conectar, pct: Math.round((conectar / total) * 100) },
         investir:     { total: investirCount, pct: Math.round((investirCount / total) * 100) },
-        servir:       { total: servir || 0, pct: Math.round(((servir || 0) / total) * 100) },
+        servir:       { total: servir, pct: Math.round((servir / total) * 100) },
         generosidade: { total: genCount, pct: Math.round((genCount / total) * 100) },
       },
     });
@@ -107,9 +112,10 @@ router.get('/membros', async (req, res) => {
     const { search, valor, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
 
+    // Base = membros formais (consistente com o dashboard 5 valores · 2026-06-19)
     let q = supabase.from('mem_membros').select('id, nome, email, telefone, status, foto_url', { count: 'exact' })
       .is('deleted_at', null)
-      .eq('active', true).order('nome').range(offset, offset + parseInt(limit) - 1);
+      .eq('active', true).eq('status', 'membro_ativo').order('nome').range(offset, offset + parseInt(limit) - 1);
     if (search) q = q.ilike('nome', `%${search}%`);
 
     const { data: membros, count: totalCount, error } = await q;

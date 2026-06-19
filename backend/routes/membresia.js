@@ -2095,12 +2095,13 @@ router.get('/kpis', async (req, res) => {
   try {
     // PostgREST capa em 1000 linhas server-side → paginar pra contar de verdade
     // (lição cargo_modulo_permissao · CLAUDE.md). O .length de um select sem
-    // paginação travava o card "Total Membros" em exatamente 1000.
+    // paginação travava o card "Total de pessoas" em exatamente 1000.
     const membros = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await supabase
         .from('mem_membros')
         .select('id, status')
+        .is('deleted_at', null)
         .eq('active', true)
         .range(from, from + 999);
       if (error) break;
@@ -2127,6 +2128,7 @@ router.get('/kpis', async (req, res) => {
       const { data, error } = await supabase
         .from('mem_contribuicoes')
         .select('membro_id')
+        .is('deleted_at', null)
         .gte('data', limite30dStr)
         .not('membro_id', 'is', null)
         .range(from, from + 999);
@@ -2137,12 +2139,13 @@ router.get('/kpis', async (req, res) => {
     const contribuintesAtivos = contribRecentes.size;
 
     res.json({
-      total,
+      total: total || 0,
       byStatus,
       familias: familias || 0,
       contribuintes_ativos: contribuintesAtivos,
     });
   } catch (e) {
+    console.error('[membresia/kpis]', e.message);
     res.status(500).json({ error: 'Erro ao buscar KPIs' });
   }
 });
