@@ -2093,46 +2093,60 @@ router.delete('/cadastros/:id', authorize('admin', 'diretor'), async (req, res) 
 // ── KPIs ──
 router.get('/kpis', async (req, res) => {
   try {
-    const { data: membros } = await supabase
-      .from('mem_membros')
-      .select('id, status')
-      .eq('active', true);
+    // Total REAL (count, sem cap). O antigo `membros.length` capava em 1000
+    // (cap do PostgREST) → "Total membros = 1000" e contagem por status errada.
+    const { count: total } = await supabase
+      .from('mem_membros').select('id', { count: 'exact', head: true })
+      .is('deleted_at', null).eq('active', true);
 
-    const total = membros?.length || 0;
+    // byStatus: pagina a lista inteira (status) pra não cair no cap de 1000.
     const byStatus = {};
-    (membros || []).forEach(m => {
-      byStatus[m.status] = (byStatus[m.status] || 0) + 1;
-    });
+    {
+      const page = 1000; let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data, error } = await supabase.from('mem_membros')
+          .select('status').is('deleted_at', null).eq('active', true)
+          .range(from, from + page - 1);
+        if (error) throw error;
+        if (!data || !data.length) break;
+        for (const m of data) byStatus[m.status] = (byStatus[m.status] || 0) + 1;
+        if (data.length < page) break;
+        from += page;
+      }
+    }
 
     const { count: familias } = await supabase
       .from('mem_familias')
       .select('id', { count: 'exact', head: true });
 
-    // Contribuintes ativos (≤30 dias) — olhando última contribuição de cada membro ativo
-    const membroIds = (membros || []).map(m => m.id);
-    let contribuintesAtivos = 0;
-    if (membroIds.length > 0) {
-      const { data: contribs } = await supabase
-        .from('mem_contribuicoes')
-        .select('membro_id, data')
-        .in('membro_id', membroIds)
-        .order('data', { ascending: false });
-      const vistos = new Set();
-      const limite30d = Date.now() - 30 * 24 * 60 * 60 * 1000;
-      (contribs || []).forEach(c => {
-        if (vistos.has(c.membro_id)) return;
-        vistos.add(c.membro_id);
-        if (new Date(c.data).getTime() >= limite30d) contribuintesAtivos += 1;
-      });
+    // Contribuintes ativos (≤30 dias) = membros distintos com contribuição
+    // recente. Pagina mem_contribuicoes (também passa de 1000) e deduplica.
+    const limite30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const distintos = new Set();
+    {
+      const page = 1000; let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data, error } = await supabase.from('mem_contribuicoes')
+          .select('membro_id').is('deleted_at', null).gte('data', limite30d)
+          .range(from, from + page - 1);
+        if (error) throw error;
+        if (!data || !data.length) break;
+        for (const c of data) if (c.membro_id) distintos.add(c.membro_id);
+        if (data.length < page) break;
+        from += page;
+      }
     }
 
     res.json({
-      total,
+      total: total || 0,
       byStatus,
       familias: familias || 0,
-      contribuintes_ativos: contribuintesAtivos,
+      contribuintes_ativos: distintos.size,
     });
   } catch (e) {
+    console.error('[membresia/kpis]', e.message);
     res.status(500).json({ error: 'Erro ao buscar KPIs' });
   }
 });
