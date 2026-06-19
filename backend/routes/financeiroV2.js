@@ -2700,4 +2700,104 @@ router.get('/metas-progresso', async (req, res) => {
   }
 });
 
+// ====================================================================
+// CONTAS A PAGAR · importação da planilha externa + lista/resumo
+// (tabela fin_contas_pagar · ver migration 20260619140000)
+// ====================================================================
+
+// Lista paginada com filtros (evita o cap de 1000 do PostgREST)
+router.get('/contas-pagar', async (req, res) => {
+  try {
+    const { status, ano, mes, fornecedor, q, plano_contas_id, centro_custo_id, vinculo_status, vencido } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 100));
+    const from = (page - 1) * pageSize;
+
+    let query = supabase
+      .from('fin_contas_pagar')
+      .select('*, plano:fin_plano_contas(codigo,nome), centro:fin_centros_custo(codigo,nome)', { count: 'exact' })
+      .is('deleted_at', null)
+      .order('data_vencimento', { ascending: true, nullsFirst: false });
+
+    if (status) query = query.eq('status', status);
+    if (plano_contas_id) query = query.eq('plano_contas_id', plano_contas_id);
+    if (centro_custo_id) query = query.eq('centro_custo_id', centro_custo_id);
+    if (vinculo_status) query = query.eq('vinculo_status', vinculo_status);
+    if (ano && mes) {
+      const a = parseInt(ano, 10); const m = parseInt(mes, 10);
+      const ini = `${a}-${String(m).padStart(2, '0')}-01`;
+      const fim = m === 12 ? `${a + 1}-01-01` : `${a}-${String(m + 1).padStart(2, '0')}-01`;
+      query = query.gte('data_vencimento', ini).lt('data_vencimento', fim);
+    } else if (ano) {
+      query = query.eq('ano', parseInt(ano, 10));
+    }
+    if (vencido === 'true') {
+      query = query.not('status', 'in', '(pago,cancelado)').lt('data_vencimento', new Date().toISOString().slice(0, 10));
+    }
+    if (fornecedor) {
+      const s = String(fornecedor).replace(/[%,()*]/g, ' ').trim();
+      if (s) query = query.ilike('fornecedor', `%${s}%`);
+    }
+    if (q) {
+      const s = String(q).replace(/[%,()*]/g, ' ').trim();
+      if (s) query = query.or(`descricao.ilike.%${s}%,historico.ilike.%${s}%,fornecedor.ilike.%${s}%`);
+    }
+
+    query = query.range(from, from + pageSize - 1);
+    const { data, error, count } = await query;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ items: data || [], total: count || 0, page, pageSize });
+  } catch (e) {
+    console.error('[FIN-V2] contas-pagar list:', e);
+    res.status(500).json({ error: 'Erro ao listar contas a pagar' });
+  }
+});
+
+// Resumo agregado (KPIs) — via RPC pra não esbarrar no cap de 1000
+router.get('/contas-pagar/resumo', async (req, res) => {
+  try {
+    const { status, ano, fornecedor, plano_contas_id, centro_custo_id, q } = req.query;
+    const { data, error } = await supabase.rpc('fn_contas_pagar_resumo', {
+      p_ano: ano ? parseInt(ano, 10) : null,
+      p_status: status || null,
+      p_fornecedor: fornecedor || null,
+      p_plano: plano_contas_id || null,
+      p_centro: centro_custo_id || null,
+      p_busca: q || null,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || {});
+  } catch (e) {
+    console.error('[FIN-V2] contas-pagar resumo:', e);
+    res.status(500).json({ error: 'Erro ao calcular resumo' });
+  }
+});
+
+// Importar planilha (xlsx) → fin_contas_pagar (idempotente por import_chave)
+router.post('/contas-pagar/importar', authorizeModule('financeiro', 4), upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não enviado' });
+    const { importar } = require('../services/contasPagarImporter');
+    const origem = (req.body?.origem ? String(req.body.origem).toLowerCase().replace(/[^a-z0-9_-]/g, '') : 'toscano') || 'toscano';
+    const userId = req.user?.userId || req.user?.id || null;
+    const r = await importar(req.file.buffer, userId, origem);
+
+    if (r.gravadas > 0) {
+      try {
+        await notificar({
+          modulo: 'financeiro',
+          tipo: 'contas_pagar_importadas',
+          titulo: 'Contas a pagar importadas',
+          mensagem: `${r.gravadas} título(s) importado(s) (${r.baixadas} baixado(s), ${r.abertas} em aberto)`,
+          link: '/financeiro-v2?tab=3',
+        });
+      } catch (_) { /* best-effort */ }
+    }
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] contas-pagar importar:', e);
+    res.status(500).json({ error: e.message || 'Erro ao importar contas a pagar' });
+  }
+});
+
 module.exports = router;

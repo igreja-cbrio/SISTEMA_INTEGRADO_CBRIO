@@ -715,6 +715,16 @@ export const financeiroV2 = {
     lancar: (id, data) => post(`/financeiro-v2/notas-compras/${id}/lancar`, data),
     rejeitar: (id, motivo) => post(`/financeiro-v2/notas-compras/${id}/rejeitar`, { motivo }),
   },
+  contasPagar: {
+    list: (params) => get('/financeiro-v2/contas-pagar' + (params ? '?' + new URLSearchParams(params) : '')),
+    resumo: (params) => get('/financeiro-v2/contas-pagar/resumo' + (params ? '?' + new URLSearchParams(params) : '')),
+    importar: (file, origem) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      if (origem) fd.append('origem', origem);
+      return requestFile('/financeiro-v2/contas-pagar/importar', fd, { timeoutMs: 300_000 });
+    },
+  },
   transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   arrecadacoes: (params) => get('/financeiro-v2/arrecadacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   despesasDetalhe: (params) => get('/financeiro-v2/despesas/detalhe' + (params ? '?' + new URLSearchParams(params) : '')),
