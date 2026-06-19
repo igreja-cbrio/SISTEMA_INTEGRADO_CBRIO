@@ -42,6 +42,7 @@ function candidatosCnpj(texto, cnpjField) {
 async function consultarReceita(cnpj14) {
   try {
     const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj14}`, { headers: { 'User-Agent': 'cbrio-erp/1.0' } });
+    if (r.status === 429 || r.status === 503) { const e = new Error('rate_limit'); e.rateLimited = true; throw e; }
     if (!r.ok) return null;
     const d = await r.json();
     if (!d || !d.razao_social) return null;
@@ -58,7 +59,10 @@ async function consultarReceita(cnpj14) {
       situacao: d.descricao_situacao_cadastral || null,
       fonte: 'receita',
     };
-  } catch (e) { console.error('[enriquecer] receita:', e.message); return null; }
+  } catch (e) {
+    if (e.rateLimited) throw e;            // propaga rate-limit (não marca "não encontrado")
+    console.error('[enriquecer] receita:', e.message); return null;
+  }
 }
 
 // IA com busca na web pra descobrir o CNPJ pelo nome (best-effort · pode não estar habilitado)
