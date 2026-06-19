@@ -199,7 +199,7 @@ function SeriesChart({ serie }) {
         <XAxis dataKey="periodo" tick={{ fontSize: 11 }} />
         <YAxis tick={{ fontSize: 11 }} />
         <Tooltip
-          contentStyle={{ backgroundColor: 'var(--cbrio-card, #111)', border: '1px solid rgba(120,120,120,0.3)', borderRadius: 6, fontSize: 12 }}
+          contentStyle={{ backgroundColor: 'var(--panel)', border: '1px solid var(--hairline)', borderRadius: 16, fontSize: 12, boxShadow: 'var(--shadow-hover), var(--hi)' }}
         />
         {Object.entries(KPI_META).map(([id, meta]) => (
           <Line

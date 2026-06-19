@@ -199,7 +199,9 @@ const overlay = {
   alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16,
 };
 const modal = {
-  background: 'var(--cbrio-card)', borderRadius: 12, padding: '24px 28px', width: '100%',
+  background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+  border: '1px solid var(--hairline)', boxShadow: 'var(--shadow-hover), var(--hi)',
+  borderRadius: 16, padding: '24px 28px', width: '100%',
   maxWidth: 560, maxHeight: '90vh', overflowY: 'auto',
 };
 const labelStyle = { fontSize: 12, fontWeight: 600, color: 'var(--cbrio-text2)', display: 'block', marginBottom: 4 };
