@@ -240,7 +240,10 @@ function StatCard({ label, value, bg, svg }) {
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Financeiro() {
-  const { isDiretor } = useAuth();
+  const { isDiretor, getAccessLevel } = useAuth();
+  const nivelFin = getAccessLevel(['financeiro']);
+  const podeEditarFin = isDiretor || nivelFin >= 3;   // editar/lançar conta a pagar (write)
+  const podeImportarFin = isDiretor || nivelFin >= 4;  // importar planilha (mesmo nível do backend)
   const [tab, setTab] = useState(0);
   const [subOp, setSubOp] = useState(0);
   const [subGestao, setSubGestao] = useState(0);
@@ -818,19 +821,21 @@ export default function Financeiro() {
           onChange={e => { setFiltroPagarBusca(e.target.value); setCpPage(1); }}
         />
         <div style={{ flex: 1 }} />
-        {isDiretor && (
+        {podeImportarFin && (
           <>
             <input type="file" accept=".xlsx,.xls" id="cp-import-file" style={{ display: 'none' }}
               onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importarPlanilhaPagar(f); }} />
             <Button variant="outline" disabled={importingCp} onClick={() => document.getElementById('cp-import-file')?.click()}>
               {importingCp ? 'Importando...' : 'Importar planilha'}
             </Button>
-            <Button onClick={() => setModalPagar({
-              descricao: '', fornecedor: '', categoria_id: '', valor: '', data_vencimento: '', data_pagamento: '', conta_id: '', status: 'pendente',
-            })}>
-              + Nova Conta a Pagar
-            </Button>
           </>
+        )}
+        {podeEditarFin && (
+          <Button onClick={() => setModalPagar({
+            descricao: '', fornecedor: '', categoria_id: '', valor: '', data_vencimento: '', data_pagamento: '', conta_id: '', status: 'pendente',
+          })}>
+            + Nova Conta a Pagar
+          </Button>
         )}
       </div>
       {cpMsg && (
@@ -855,7 +860,7 @@ export default function Financeiro() {
                 <th style={styles.th}>Vencimento</th>
                 <th style={styles.th}>Baixa</th>
                 <th style={styles.th}>Status</th>
-                {isDiretor && <th style={styles.th}>Ações</th>}
+                {podeEditarFin && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -872,7 +877,7 @@ export default function Financeiro() {
                   <td style={styles.td}>{fmtDate(cp.data_vencimento)}</td>
                   <td style={styles.td}>{fmtDate(cp.data_pagamento)}</td>
                   <td style={styles.td}><Badge status={stExib} map={STATUS_PAGAR} /></td>
-                  {isDiretor && (
+                  {podeEditarFin && (
                     <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
                       {cp.status !== 'pago' && cp.status !== 'cancelado' && (
                         <Button variant="success" size="sm" className="mr-1" onClick={() => pagarConta(cp)}>Pagar</Button>
