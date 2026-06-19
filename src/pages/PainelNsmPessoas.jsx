@@ -694,6 +694,12 @@ function PessoaCard({ pessoa }) {
               {pessoa.tipo_decisao}
             </span>
           )}
+          {pessoa.orfao && (
+            <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#f59e0b22', color: '#c9871a', fontWeight: 700, border: '1px solid #c9871a40' }}
+              title="Convertido sem cadastro de membro — não dá pra rastrear engajamento até reconciliar (Kevyn/Next-Batismo)">
+              sem cadastro completo
+            </span>
+          )}
         </div>
         <div style={{ fontSize: 11, color: C.t3, marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
