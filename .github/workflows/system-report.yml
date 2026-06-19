@@ -41,14 +41,19 @@ jobs:
         env:
           REPORT_REF: origin/main
         run: node scripts/system-report/build.mjs
-      - name: Commitar se mudou
+      # Best-effort: commitar de volta é só pra manter o arquivo versionado.
+      # Se o push falhar (ex.: main avançou, ou é um re-run de commit antigo),
+      # NÃO pode travar a publicação do Pages — por isso continue-on-error.
+      - name: Commitar se mudou (best-effort)
+        continue-on-error: true
         run: |
           if [[ -n "$(git status --porcelain docs/system-report/index.html)" ]]; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add docs/system-report/index.html docs/system-report/.nojekyll
             git commit -m 'chore(report): atualiza dashboard de custos e atividade [skip ci]'
-            git push
+            git pull --rebase --autostash origin main || true
+            git push || echo 'push falhou (main avancou) — Pages publica mesmo assim'
           else
             echo 'Sem mudanças no dashboard.'
           fi
