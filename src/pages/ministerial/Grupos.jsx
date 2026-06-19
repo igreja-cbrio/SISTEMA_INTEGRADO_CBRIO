@@ -10,7 +10,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Settings, HeartHandshake, BookOpen } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -65,6 +65,8 @@ export default function Grupos() {
   // Líder de área com nível 1 (so leitura) na matriz: ve tudo mas não edita.
   // Admin/diretor/lider com nível >=3 edita. Sincroniza com cargo_modulo_permissao.
   const podeEditarGrupos = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 3;
+  // Definir/trocar o supervisor do grupo exige nível 5 (igual ao endpoint PUT /:id/supervisor).
+  const podeGerenciarSupervisor = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 5;
   const [gruposList, setGruposList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -80,6 +82,8 @@ export default function Grupos() {
   const [qrCopied, setQrCopied] = useState(false);
   const [membrosSearch, setMembrosSearch] = useState('');
   const [allMembros, setAllMembros] = useState([]);
+  const [supPickerOpen, setSupPickerOpen] = useState(false);
+  const [supBusca, setSupBusca] = useState('');
   const [gruposForSelect, setGruposForSelect] = useState([]);
   const [filterTipo, setFilterTipo] = useState('all');
   const [filterDia, setFilterDia] = useState('all');
@@ -355,6 +359,17 @@ export default function Grupos() {
     } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
   };
 
+  // Define/troca/remove o supervisor DESTE grupo (fonte da verdade por grupo;
+  // o organograma / aba Supervisão agregam a partir daqui). membroId null = remove.
+  const handleSetSupervisor = async (membroId) => {
+    try {
+      await api.setSupervisor(selectedGrupo, membroId || null);
+      toast.success(membroId ? 'Supervisor definido' : 'Supervisor removido');
+      setSupPickerOpen(false); setSupBusca('');
+      loadDetail(selectedGrupo);
+    } catch (e) { toast.error(e?.message || 'Erro ao definir supervisor'); }
+  };
+
   // Marca/desmarca um membro como "líder" do grupo. Um grupo pode ter vários
   // líderes (o "principal" fica em mem_grupos.lider_id; os demais aqui via funcao).
   const handleToggleLider = async (participacaoId, isLider) => {
@@ -512,6 +527,39 @@ export default function Grupos() {
               </>
             )}
           </div>
+        </div>
+
+        {/* Supervisão do grupo · fonte da verdade do organograma (1 supervisor por grupo) */}
+        <div style={{ background: C.card, borderRadius: 12, padding: '12px 16px', border: `1px solid ${C.border}`, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 200 }}>
+            <Eye size={16} style={{ color: '#3b82f6', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, color: C.t2 }}>Supervisor:&nbsp;
+              <strong style={{ color: g.supervisor ? C.text : C.t3 }}>{g.supervisor?.nome || 'sem supervisor definido'}</strong>
+            </span>
+          </div>
+          {podeGerenciarSupervisor && (!supPickerOpen ? (
+            <Button size="sm" variant="outline" onClick={() => { loadMembros(); setSupPickerOpen(true); }}>
+              {g.supervisor ? 'Trocar' : 'Definir'} supervisor
+            </Button>
+          ) : (
+            <div style={{ position: 'relative', minWidth: 260 }}>
+              <Input autoFocus placeholder="Buscar pessoa pelo nome..." value={supBusca} onChange={e => setSupBusca(e.target.value)} />
+              {supBusca.length >= 2 && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, maxHeight: 220, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
+                  {allMembros.filter(m => m.nome?.toLowerCase().includes(supBusca.toLowerCase())).slice(0, 10).map(m => (
+                    <div key={m.id} onClick={() => handleSetSupervisor(m.id)} style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: `1px solid ${C.border}` }}>{m.nome}</div>
+                  ))}
+                  {allMembros.filter(m => m.nome?.toLowerCase().includes(supBusca.toLowerCase())).length === 0 && (
+                    <div style={{ padding: '8px 12px', fontSize: 12, color: C.t3 }}>Ninguém encontrado</div>
+                  )}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 12, marginTop: 6, justifyContent: 'flex-end' }}>
+                {g.supervisor && <button onClick={() => handleSetSupervisor(null)} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 12 }}>Remover supervisor</button>}
+                <button onClick={() => { setSupPickerOpen(false); setSupBusca(''); }} style={{ background: 'none', border: 'none', color: C.t3, cursor: 'pointer', fontSize: 12 }}>Cancelar</button>
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Info cards */}
