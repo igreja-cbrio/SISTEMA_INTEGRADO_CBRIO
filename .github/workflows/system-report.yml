@@ -40,6 +40,7 @@ jobs:
       - name: Gerar dashboard
         env:
           REPORT_REF: origin/main
+          GH_TOKEN: ${{ github.token }}   # autentica a Search API (PRs integrados)
         run: node scripts/system-report/build.mjs
       # Best-effort: commitar de volta é só pra manter o arquivo versionado.
       # Se o push falhar (ex.: main avançou, ou é um re-run de commit antigo),
