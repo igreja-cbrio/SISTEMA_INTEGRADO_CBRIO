@@ -1,0 +1,48 @@
+name: system-report
+
+# Mantém docs/system-report/index.html sempre atualizado: atividade (commits/
+# merges/linhas por pessoa, % assistido por IA) lida do git + custos acumulados
+# e projeção de 12 meses (config editável). Roda diariamente, a cada push na
+# main e sob demanda. Commita só se algo mudou.
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 06h BRT
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/system-report/**'   # evita loop (o próprio commit do report)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: system-report
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # histórico completo pro git log
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Gerar dashboard
+        env:
+          REPORT_REF: origin/main
+        run: node scripts/system-report/build.mjs
+      - name: Commitar se mudou
+        run: |
+          if [[ -n "$(git status --porcelain docs/system-report/index.html)" ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add docs/system-report/index.html
+            git commit -m 'chore(report): atualiza dashboard de custos e atividade [skip ci]'
+            git push
+          else
+            echo 'Sem mudanças no dashboard.'
+          fi

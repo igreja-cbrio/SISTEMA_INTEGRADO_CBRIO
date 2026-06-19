@@ -1,0 +1,19 @@
+{
+  "_nota": "Estimativas EDITÁVEIS de custo do sistema. Ajuste os valores conforme as faturas reais. O dashboard recalcula acumulado (desde project_start) e a projeção de 12 meses automaticamente. moeda por linha: 'BRL' ou 'USD' (USD é convertido por fx_usd_brl).",
+  "project_start": "2026-05-26",
+  "fx_usd_brl": 5.40,
+  "moeda_exibicao": "BRL",
+  "recorrentes_mensais": [
+    { "nome": "Supabase (Pro)",                  "valor": 25,  "moeda": "USD", "nota": "Banco PostgreSQL + Auth + Storage + pooler" },
+    { "nome": "Vercel",                          "valor": 20,  "moeda": "USD", "nota": "Frontend + serverless. No plano Hobby pode ser R$ 0 — ajuste." },
+    { "nome": "Anthropic / Claude API",          "valor": 40,  "moeda": "USD", "nota": "Cérebro, WhatsApp, classificador financeiro, NF scan, assistente IA (uso variável)" },
+    { "nome": "Railway (agente financeiro)",     "valor": 10,  "moeda": "USD", "nota": "Worker long-running do agente executor" },
+    { "nome": "OpenAI (transcrição de áudio)",   "valor": 5,   "moeda": "USD", "nota": "Whisper p/ relato de grupos por áudio (opcional)" },
+    { "nome": "WhatsApp Cloud API (Meta)",       "valor": 15,  "moeda": "USD", "nota": "Conversas/templates (uso variável)" },
+    { "nome": "Domínio (cbrio.org/.com.br)",     "valor": 1.5, "moeda": "USD", "nota": "Rateio mensal do registro anual" },
+    { "nome": "Desenvolvimento (Claude Code)",   "valor": 0,   "moeda": "USD", "nota": "Custo da ferramenta de desenvolvimento — PREENCHER se quiser contabilizar" }
+  ],
+  "custos_pontuais": [
+    { "nome": "Setup inicial / migração", "valor": 0, "moeda": "BRL", "data": "2026-05-26", "nota": "Custos únicos de implantação — preencher se houver" }
+  ]
+}
