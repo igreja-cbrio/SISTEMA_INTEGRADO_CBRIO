@@ -2456,6 +2456,9 @@ export const painel = {
     const qs = new URLSearchParams(params).toString();
     return get('/painel/nsm/pessoas' + (qs ? '?' + qs : ''));
   },
+  // Tendência mensal do NSM (coorte por mês de conversão) · gráfico no /painel
+  nsmSerie: (meses = 12, segmento = 'central') =>
+    get(`/painel/nsm/serie?meses=${meses}&segmento=${segmento}`),
   // Cultos com decisões sem pessoas registradas · alimenta filtro "sem dados"
   // no drilldown NSM. Mostra accountability da captura individual.
   nsmSemDados: (params = {}) => {
