@@ -48,7 +48,17 @@ async function coletarERecalcular() {
   } catch (e) {
     recalculo = { error: e.message };
   }
-  return { ok, total: resultados.length, recalculo, resultados };
+  // Backstop diário do NSM: o gatilho em cui_convertidos cobre mudanças de
+  // convertido, mas sinais novos (grupo/voluntário/dízimo/devocional) não
+  // disparam recalc · o cron garante que o card reflita esses até 24h.
+  let nsm = null;
+  try {
+    const { data, error } = await supabase.rpc('recalcular_nsm');
+    nsm = error ? { error: error.message } : { segmentos: (data || []).length };
+  } catch (e) {
+    nsm = { error: e.message };
+  }
+  return { ok, total: resultados.length, recalculo, nsm, resultados };
 }
 
 router.get('/cron/coletar', autorizaCron, async (_req, res) => {
