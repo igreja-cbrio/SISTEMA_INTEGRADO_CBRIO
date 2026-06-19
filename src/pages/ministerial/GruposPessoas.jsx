@@ -240,11 +240,19 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
           const ativo = filtro === k.key;
           return (
             <button key={k.key} onClick={() => setFiltro(k.key)} style={{
-              background: ativo ? `${k.cor}12` : C.card, borderRadius: 12, padding: 12, textAlign: 'left', cursor: 'pointer',
-              border: ativo ? `2px solid ${k.cor}` : `1px solid ${C.border}`, transition: 'border-color 0.12s',
+              position: 'relative', overflow: 'hidden',
+              background: 'var(--panel)',
+              WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+              borderRadius: 16, padding: 12, textAlign: 'left', cursor: 'pointer',
+              border: ativo ? `2px solid ${k.cor}` : '1px solid var(--hairline)',
+              boxShadow: 'var(--shadow), var(--hi)', transition: 'border-color 0.12s',
             }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: k.cor }}>{k.value}</div>
-              <div style={{ fontSize: 11, color: ativo ? k.cor : C.t3, fontWeight: ativo ? 600 : 400 }}>{k.label}</div>
+              <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${k.cor}22, transparent 58%)`, pointerEvents: 'none' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: k.cor, opacity: 0.9 }} />
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: k.cor }}>{k.value}</div>
+                <div style={{ fontSize: 11, color: ativo ? k.cor : C.t3, fontWeight: ativo ? 600 : 400 }}>{k.label}</div>
+              </div>
             </button>
           );
         })}
@@ -257,7 +265,7 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
       </div>
 
       {/* Lista */}
-      <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.t3 }}>
           {filtradas.length} pessoa{filtradas.length !== 1 ? 's' : ''}
         </div>

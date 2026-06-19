@@ -73,7 +73,7 @@ const styles = {
     color: a ? C.primary : C.t2, borderBottom: a ? `2px solid ${C.primary}` : '2px solid transparent',
     marginBottom: -2, transition: 'all 0.15s',
   }),
-  card: { background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, boxShadow: '0 1px 2px rgba(0,0,0,0.05)', overflow: 'hidden' },
+  card: { background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' },
   cardHeader: { padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 14, fontWeight: 700, color: C.text },
   table: { width: '100%', borderCollapse: 'collapse' },
@@ -95,7 +95,7 @@ const styles = {
   formGroup: { marginBottom: 14 },
   formRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
   overlay: { position: 'fixed', inset: 0, background: C.overlay, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 60, zIndex: 1000 },
-  modal: { background: C.modalBg, borderRadius: 12, width: '95%', maxWidth: 620, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 16px 48px rgba(0,0,0,0.12)' },
+  modal: { background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', borderRadius: 16, border: '1px solid var(--hairline)', width: '95%', maxWidth: 620, maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' },
   modalHeader: { padding: '20px 24px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   modalTitle: { fontSize: 18, fontWeight: 700, color: C.text },
   modalBody: { padding: '16px 24px 24px' },
@@ -202,9 +202,11 @@ function ProgressBar({ value, max, color }) {
 function KpiBar({ items }) {
   return (
     <div style={{
-      background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
+      background: 'var(--panel)',
+      WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+      borderRadius: 16, border: '1px solid var(--hairline)',
       padding: '14px 24px', marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflowX: 'auto',
+      boxShadow: 'var(--shadow), var(--hi)', overflowX: 'auto',
     }}>
       {items.map((item, i) => {
         if (!item) return <div key={i} style={{ width: 1, height: 24, background: C.border }} />;

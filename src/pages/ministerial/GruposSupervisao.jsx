@@ -113,7 +113,7 @@ export default function GruposSupervisao() {
       </header>
 
       {data.supervisores.length === 0 ? (
-        <div style={{ padding: 60, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 12, border: `1px dashed ${C.border}` }}>
+        <div style={{ padding: 60, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 16, border: '1px dashed var(--hairline)', boxShadow: 'var(--shadow)' }}>
           Nenhum grupo encontrado.
         </div>
       ) : (
@@ -147,7 +147,7 @@ export default function GruposSupervisao() {
 // ============================================================================
 function SupervisorBloco({ supervisor, expanded, onToggle, onAbrirGrupo }) {
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+    <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
       <button onClick={onToggle} style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 10,
         padding: '12px 16px', background: 'none', border: 'none', cursor: 'pointer',
@@ -264,8 +264,10 @@ function ModalGrupo({ grupo, papel, onClose, onChanged }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: C.modalBg, borderRadius: 16, maxWidth: 700, width: '100%',
-        maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        background: 'var(--panel)',
+        WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+        border: '1px solid var(--hairline)', borderRadius: 16, maxWidth: 700, width: '100%',
+        maxHeight: '90vh', overflow: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)',
       }}>
         <header style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', gap: 16 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
