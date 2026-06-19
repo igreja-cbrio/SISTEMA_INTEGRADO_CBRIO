@@ -242,7 +242,7 @@ export default function MonitoramentoOkr() {
         {CAMADAS.map((c) => {
           const Icon = c.Icon;
           return (
-            <div key={c.titulo} style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `4px solid ${c.cor}`, borderRadius: 10, padding: '12px 14px' }}>
+            <div key={c.titulo} style={{ background: C.card, border: '1px solid var(--hairline)', borderLeft: `4px solid ${c.cor}`, borderRadius: 16, padding: '12px 14px', boxShadow: 'var(--shadow)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Icon size={15} style={{ color: c.cor }} />
                 <strong style={{ fontSize: 12.5, color: C.text }}>{c.titulo}</strong>
@@ -283,7 +283,7 @@ function NsmHero({ nsm, loading }) {
   return (
     <section style={{
       background: `linear-gradient(135deg, ${C.primary}14, ${C.card})`,
-      border: `1px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 22,
+      border: '1px solid var(--hairline)', borderRadius: 16, padding: 20, marginBottom: 22, boxShadow: 'var(--shadow)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: C.primaryDark, background: C.primaryBg, padding: '3px 8px', borderRadius: 99 }}>
@@ -346,7 +346,7 @@ function OkrCard({ okr, metricas }) {
   const aval = m ? avaliar(m.valor, okr) : null;
 
   return (
-    <section style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+    <section style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, overflow: 'hidden', boxShadow: 'var(--shadow)' }}>
       {/* Cabeçalho do OKR */}
       <div style={{ padding: '14px 16px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>

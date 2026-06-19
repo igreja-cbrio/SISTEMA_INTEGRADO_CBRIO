@@ -5,6 +5,7 @@ import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
 import LogisticaEstoque from './LogisticaEstoque';
 import LogisticaSolicitacoes from './LogisticaSolicitacoes';
+import LogisticaCompras from './LogisticaCompras';
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -39,12 +40,13 @@ const styles = {
   }),
   kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 24 },
   kpi: (color) => ({
-    background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`,
-    borderLeft: `4px solid ${color}`, boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+    background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+    borderRadius: 16, padding: 16, border: '1px solid var(--hairline)',
+    borderLeft: `4px solid ${color}`, boxShadow: 'var(--shadow), var(--hi)',
   }),
   kpiValue: { fontSize: 20, fontWeight: 700, color: C.text, lineHeight: 1.25 },
   kpiLabel: { fontSize: 12, fontWeight: 600, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 },
-  card: { background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, boxShadow: '0 1px 2px rgba(0,0,0,0.05)', overflow: 'hidden' },
+  card: { background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' },
   cardHeader: { padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 14, fontWeight: 700, color: C.text },
   table: { width: '100%', borderCollapse: 'collapse' },
@@ -67,7 +69,7 @@ const styles = {
   formGroup: { marginBottom: 14 },
   formRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
   overlay: { position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 60, zIndex: 1000 },
-  modal: { background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: '95%', maxWidth: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 16px 48px rgba(0,0,0,0.12)' },
+  modal: { background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: '95%', maxWidth: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' },
   modalHeader: { padding: '20px 24px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   modalTitle: { fontSize: 18, fontWeight: 700, color: C.text },
   modalBody: { padding: '16px 24px 24px' },
@@ -118,7 +120,7 @@ function Badge({ status, map }) {
 // Quem precisa abrir solicitação de compras hoje vai em /solicitacoes,
 // escolhe categoria=compras e o fluxo segue com SLA/NPS/notificacao do
 // solicitante automática.
-const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras ML', 'Rastreio', 'Estoque', 'Solicitações'];
+const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras', 'Compras ML', 'Rastreio', 'Estoque', 'Solicitações'];
 
 // ═══════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -208,6 +210,40 @@ export default function Logistica() {
   const deleteFornecedor = async (id) => {
     if (!confirm('Excluir este fornecedor?')) return;
     try { await logistica.fornecedores.remove(id); fetchFornecedores(); } catch (e) { setError(e.message); }
+  };
+
+  const [enriquecendo, setEnriquecendo] = useState(false);
+  const enriquecerForn = async () => {
+    if (!modalForn?.id) { setError('Salve o fornecedor antes de buscar os dados.'); return; }
+    setEnriquecendo(true); setError('');
+    try {
+      const r = await logistica.fornecedores.enriquecer(modalForn.id);
+      if (r.ok) {
+        setModalForn(prev => ({ ...prev, ...(r.fornecedor || {}) }));
+        fetchFornecedores();
+        if (!r.preenchidos?.length) setError('Já estava completo (nada novo a preencher).');
+      } else {
+        setError(r.mensagem || 'Não encontrei dados oficiais pra este fornecedor.');
+      }
+    } catch (e) { setError(e.message); }
+    setEnriquecendo(false);
+  };
+  const enriquecerLote = async () => {
+    if (!confirm('Buscar dados oficiais (Receita) de TODOS os fornecedores incompletos? Processo em lotes — pode levar alguns minutos. Pode deixar rodando.')) return;
+    setEnriquecendo(true); setError('');
+    let totEnr = 0; let totNao = 0;
+    try {
+      for (let i = 0; i < 80; i++) {                 // teto de segurança (~1400 fornecedores)
+        const r = await logistica.fornecedores.enriquecerIncompletos();
+        totEnr += (r.enriquecidos || 0); totNao += (r.naoEncontrados || 0);
+        fetchFornecedores();
+        setError(`🔎 Buscando na Receita… ${totEnr} preenchidos · ${totNao} sem dados · ${r.restam} restantes`);
+        if (r.rateLimited) { await new Promise(res => setTimeout(res, 4000)); continue; } // pausa e segue
+        if ((r.restam || 0) <= 0 || (r.processados || 0) === 0) break;
+      }
+      setError(`✓ Concluído: ${totEnr} preenchidos · ${totNao} sem dados na Receita (marcados pra você completar à mão).`);
+    } catch (e) { setError(e.message); }
+    setEnriquecendo(false);
   };
 
   const toggleFornecedorAtivo = async (forn) => {
@@ -321,8 +357,9 @@ export default function Logistica() {
       {tab === 1 && (
         <FornecedoresTab data={fornecedores} loading={loading} isDiretor={isDiretor}
           filtroAtivo={filtroFornAtivo} setFiltroAtivo={setFiltroFornAtivo}
-          onNew={() => setModalForn({ razao_social: '', nome_fantasia: '', cnpj: '', email: '', telefone: '', contato: '', categoria: '', ativo: true, observacoes: '' })}
+          onNew={() => setModalForn({ razao_social: '', nome_fantasia: '', cnpj: '', email: '', telefone: '', contato: '', categoria: '', endereco: '', ativo: true, observacoes: '' })}
           onEdit={(f) => setModalForn({ ...f })} onDelete={deleteFornecedor} onToggle={toggleFornecedorAtivo}
+          onEnriquecerLote={enriquecerLote} enriquecendo={enriquecendo}
         />
       )}
       {tab === 2 && (
@@ -346,16 +383,17 @@ export default function Logistica() {
         />
       )}
 
-      {tab === 4 && <ComprasMLTab />}
-      {tab === 5 && <RastreioMLTab />}
-      {tab === 6 && <LogisticaEstoque />}
-      {tab === 7 && <LogisticaSolicitacoes />}
+      {tab === 4 && <LogisticaCompras />}
+      {tab === 5 && <ComprasMLTab />}
+      {tab === 6 && <RastreioMLTab />}
+      {tab === 7 && <LogisticaEstoque />}
+      {tab === 8 && <LogisticaSolicitacoes />}
 
       {/* ── MODAIS ─────────────────────────────────────────── */}
 
       {/* Fornecedor */}
       <Modal open={modalForn !== null} onClose={() => setModalForn(null)} title={modalForn?.id ? 'Editar Fornecedor' : 'Novo Fornecedor'}
-        footer={<><Button variant="outline" onClick={() => setModalForn(null)}>Cancelar</Button><Button onClick={saveFornecedor} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></>}>
+        footer={<>{modalForn?.id && <Button variant="outline" onClick={enriquecerForn} disabled={enriquecendo} title="Busca CNPJ, endereço e telefone na Receita (e IA na web)">{enriquecendo ? 'Buscando…' : '🔍 Buscar dados'}</Button>}<div style={{ flex: 1 }} /><Button variant="outline" onClick={() => setModalForn(null)}>Cancelar</Button><Button onClick={saveFornecedor} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></>}>
         {modalForn && (<>
           <Input label="Razão Social *" value={modalForn.razao_social || ''} onChange={e => upForn('razao_social', e.target.value)} />
           <Input label="Nome Fantasia" value={modalForn.nome_fantasia || ''} onChange={e => upForn('nome_fantasia', e.target.value)} />
@@ -367,6 +405,7 @@ export default function Logistica() {
             <Input label="E-mail" value={modalForn.email || ''} onChange={e => upForn('email', e.target.value)} />
             <Input label="Contato" value={modalForn.contato || ''} onChange={e => upForn('contato', e.target.value)} />
           </div>
+          <Input label="Endereço" value={modalForn.endereco || ''} onChange={e => upForn('endereco', e.target.value)} />
           <Select label="Categoria" value={modalForn.categoria || ''} onChange={e => upForn('categoria', e.target.value)}>
             <option value="">Selecione...</option>
             {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
@@ -449,19 +488,25 @@ function StatCard({ label, value, bg, svg, hint, onClick }) {
       onClick={onClick}
       title={valueStr}
       style={{
-        position: 'relative', overflow: 'hidden', background: bg, borderRadius: 12,
-        padding: '20px 24px', color: '#fff', minHeight: 100,
+        position: 'relative', overflow: 'hidden',
+        background: 'var(--panel)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+        border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+        borderRadius: 16, padding: '20px 24px', minHeight: 100,
         cursor: onClick ? 'pointer' : 'default',
         transition: 'transform 0.15s ease, box-shadow 0.15s ease',
       }}
-      onMouseEnter={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)'; } }}
-      onMouseLeave={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; } }}
+      onMouseEnter={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-hover)'; } }}
+      onMouseLeave={(e) => { if (onClick) { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow), var(--hi)'; } }}
     >
-      {svg}
+      {/* tint translúcido do acento + faixa no topo + ícone fantasma */}
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${bg}22, transparent 58%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: bg, opacity: 0.9 }} />
+      <div style={{ position: 'absolute', right: -8, top: -4, opacity: 0.07 }}>{svg}</div>
       <div style={{ position: 'relative', zIndex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>{label}</div>
-        <div style={{ fontSize, fontWeight: 700, letterSpacing: -0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
-        {hint && <div style={{ fontSize: 10, fontWeight: 400, color: 'rgba(255,255,255,0.7)', marginTop: 4, lineHeight: 1.3 }}>{hint}</div>}
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>{label}</div>
+        <div style={{ fontSize, fontWeight: 800, letterSpacing: -0.5, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+        {hint && <div style={{ fontSize: 10.5, fontWeight: 400, color: C.text3, marginTop: 4, lineHeight: 1.3 }}>{hint}</div>}
       </div>
     </div>
   );
@@ -478,7 +523,7 @@ function DashboardTab({ dash, onRefresh, onNavigate }) {
     { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 2 },
     { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 2 },
     { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 2 },
-    { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente', tab: 4 },
+    { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente', tab: 5 },
   ];
   return (
     <>
@@ -499,12 +544,37 @@ function DashboardTab({ dash, onRefresh, onNavigate }) {
 // ═══════════════════════════════════════════════════════════
 // TAB: Fornecedores
 // ═══════════════════════════════════════════════════════════
-function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo, onNew, onEdit, onDelete, onToggle }) {
+function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo, onNew, onEdit, onDelete, onToggle, onEnriquecerLote, enriquecendo }) {
+  const [soIncompletos, setSoIncompletos] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [pagina, setPagina] = useState(1);
+  const PAGE = 20;
+  const incompleto = (f) => !f.cnpj || !f.endereco || !f.telefone;
+  const nIncompletos = data.filter(incompleto).length;
+  const filtrados = data
+    .filter(f => !soIncompletos || incompleto(f))
+    .filter(f => !busca || `${f.razao_social || ''} ${f.nome_fantasia || ''} ${f.cnpj || ''}`.toLowerCase().includes(busca.toLowerCase()));
+  useEffect(() => { setPagina(1); }, [soIncompletos, busca, filtroAtivo, data.length]);
+  const totalPag = Math.max(1, Math.ceil(filtrados.length / PAGE));
+  const pagAtual = Math.min(pagina, totalPag);
+  const rows = filtrados.slice((pagAtual - 1) * PAGE, pagAtual * PAGE);
   return (<>
     <div style={styles.filterRow}>
-      <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value)}>
+      <input style={{ ...styles.input, minWidth: 200, flex: 1 }} placeholder="Buscar fornecedor ou CNPJ…" value={busca} onChange={e => setBusca(e.target.value)} />
+      <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value)}>
         <option value="">Todos</option><option value="true">Ativos</option><option value="false">Inativos</option>
       </select>
+      {nIncompletos > 0 && (
+        <button onClick={() => setSoIncompletos(v => !v)}
+          style={{ ...styles.badge(C.amber, C.amberBg), cursor: 'pointer', padding: '6px 12px', border: soIncompletos ? `1px solid ${C.amber}` : '1px solid transparent' }}>
+          ⚠️ Dados incompletos ({nIncompletos})
+        </button>
+      )}
+      {isDiretor && nIncompletos > 0 && onEnriquecerLote && (
+        <Button variant="outline" onClick={onEnriquecerLote} disabled={enriquecendo} title="Busca CNPJ/endereço/telefone na Receita pros incompletos">
+          {enriquecendo ? 'Buscando…' : '🔍 Buscar dados (Receita)'}
+        </Button>
+      )}
       {isDiretor && <Button onClick={onNew}>+ Novo Fornecedor</Button>}
     </div>
     <div style={styles.card}><table style={styles.table}><thead><tr>
@@ -512,22 +582,34 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
       {isDiretor && <th style={styles.th}>Ações</th>}
     </tr></thead><tbody>
       {loading ? <tr><td colSpan={6}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
-      : data.length === 0 ? <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum fornecedor</span></div></td></tr>
-      : data.map(f => (
-        <tr key={f.id}>
+      : rows.length === 0 ? <tr><td colSpan={6}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum fornecedor</span></div></td></tr>
+      : rows.map(f => (
+        <tr key={f.id} style={{ cursor: 'pointer' }} onClick={() => onEdit(f)} className="hover:bg-muted/40">
           <td style={styles.td}><div style={{ fontWeight: 600 }}>{f.nome_fantasia || f.razao_social}</div>{f.nome_fantasia && <div style={{ fontSize: 11, color: C.text3 }}>{f.razao_social}</div>}</td>
           <td style={styles.td}>{f.cnpj || '—'}</td>
           <td style={styles.td}>{f.categoria || '—'}</td>
           <td style={styles.td}><div>{f.contato || '—'}</div>{f.email && <div style={{ fontSize: 11, color: C.text3 }}>{f.email}</div>}{f.telefone && <div style={{ fontSize: 11, color: C.text3 }}>{f.telefone}</div>}</td>
-          <td style={styles.td}><span style={styles.badge(f.ativo ? C.green : C.text3, f.ativo ? C.greenBg : '#73737318')}>{f.ativo ? 'Ativo' : 'Inativo'}</span></td>
-          {isDiretor && <td style={styles.td}><div style={{ display: 'flex', gap: 4 }}>
+          <td style={styles.td}>
+            <span style={styles.badge(f.ativo ? C.green : C.text3, f.ativo ? C.greenBg : '#73737318')}>{f.ativo ? 'Ativo' : 'Inativo'}</span>
+            {incompleto(f) && <span style={{ ...styles.badge(C.amber, C.amberBg), marginLeft: 6 }} title={`Faltando: ${[!f.cnpj && 'CNPJ', !f.endereco && 'endereço', !f.telefone && 'telefone'].filter(Boolean).join(', ')}`}>Incompleto</span>}
+            {f.enriquecimento_status === 'nao_encontrado' && <span style={{ ...styles.badge(C.text3, '#73737318'), marginLeft: 6 }} title="A Receita não tinha dados desse CNPJ — complete à mão">🔍 sem dados</span>}
+          </td>
+          {isDiretor && <td style={styles.td} onClick={e => e.stopPropagation()}><div style={{ display: 'flex', gap: 4 }}>
             <Button variant="ghost" size="sm" onClick={() => onToggle(f)}>{f.ativo ? '⏸' : '▶'}</Button>
             <Button variant="ghost" size="sm" onClick={() => onEdit(f)}>✏️</Button>
             <Button variant="ghost" size="sm" onClick={() => onDelete(f.id)}>🗑</Button>
           </div></td>}
         </tr>
       ))}
-    </tbody></table></div>
+    </tbody></table>
+      {totalPag > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 12, flexWrap: 'wrap', borderTop: `1px solid ${C.border}` }}>
+          <Button variant="outline" size="sm" disabled={pagAtual <= 1} onClick={() => setPagina(p => Math.max(1, p - 1))}>‹ Anterior</Button>
+          <span style={{ fontSize: 13, color: C.text2 }}>Página {pagAtual} de {totalPag} · {filtrados.length} fornecedores</span>
+          <Button variant="outline" size="sm" disabled={pagAtual >= totalPag} onClick={() => setPagina(p => Math.min(totalPag, p + 1))}>Próxima ›</Button>
+        </div>
+      )}
+    </div>
   </>);
 }
 

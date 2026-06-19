@@ -74,12 +74,16 @@ function Pill({ children, cor = C.primary }) {
 
 function StatCard({ icon: Icon, label, valor, sub }) {
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16, flex: 1, minWidth: 150 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.t3, fontSize: 12, fontWeight: 600 }}>
-        <Icon size={15} /> {label}
+    <div style={{ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', borderRadius: 16, padding: 16, flex: 1, minWidth: 150 }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, #00B39D22, transparent 58%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: '#00B39D', opacity: 0.9 }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.t2, fontSize: 12, fontWeight: 600 }}>
+          <Icon size={15} /> {label}
+        </div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginTop: 6 }}>{valor}</div>
+        {sub && <div style={{ fontSize: 12, color: C.t2, marginTop: 2 }}>{sub}</div>}
       </div>
-      <div style={{ fontSize: 26, fontWeight: 800, color: C.text, marginTop: 6 }}>{valor}</div>
-      {sub && <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{sub}</div>}
     </div>
   );
 }
@@ -331,7 +335,7 @@ function AbaPessoas({ onPick }) {
       <div style={{ fontSize: 12, color: C.t3, marginBottom: 8 }}>
         {data.total} pessoa(s){algumFiltro ? ' · combinando os filtros (E)' : ''}
       </div>
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
         {loading && <div style={{ padding: 24, textAlign: 'center', color: C.t3 }}>Carregando…</div>}
         {!loading && data.pessoas.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: C.t3 }}>Nenhuma pessoa encontrada.</div>}
         {!loading && data.pessoas.map(p => <PessoaRow key={p.cpf_norm} p={p} onClick={() => onPick(p.cpf_norm)} />)}
@@ -366,7 +370,7 @@ function AbaCultos({ servicos, onPick }) {
     <div>
       <FiltroBar servicos={servicos} value={filtros} onChange={setFiltros} />
       <Legenda itens={LEGENDA_CULTO} nota="Clique num culto para ver as pessoas que se conectaram nele. A presença aparece “—” enquanto não for lançada no ministerial." />
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 100px 90px 90px', padding: '10px 16px', fontSize: 12, fontWeight: 700, color: C.t3, borderBottom: `1px solid ${C.border}`, background: C.inputBg }}>
           <span>Culto</span>
           <span style={{ textAlign: 'right' }}>Presença</span>
@@ -415,8 +419,8 @@ function PessoasDoCulto({ culto, onPick, onClose }) {
   }, [culto.id]); // eslint-disable-line
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: C.overlay, zIndex: 999, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 'min(540px,100%)', height: '100%', background: C.modalBg, overflowY: 'auto', boxShadow: '-8px 0 24px rgba(0,0,0,.2)' }}>
-        <div style={{ position: 'sticky', top: 0, background: C.modalBg, borderBottom: `1px solid ${C.border}`, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 'min(540px,100%)', height: '100%', background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', borderLeft: '1px solid var(--hairline)', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
+        <div style={{ position: 'sticky', top: 0, background: 'var(--cbrio-card)', borderBottom: `1px solid var(--hairline)`, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h2 style={{ fontSize: 17, fontWeight: 800, color: C.text }}>{culto.servico}</h2>
             <div style={{ fontSize: 12, color: C.t3 }}>{fmtData(culto.data)} · {culto.pessoas_identificadas} pessoa(s) identificada(s)</div>
@@ -454,7 +458,7 @@ function AbaSemana({ servicos }) {
     <div>
       <FiltroBar servicos={servicos} value={filtros} onChange={setFiltros} />
       <Legenda itens={LEGENDA_SEMANA} nota="Permite “bater” as semanas: comparar a presença real lançada com quantos foram captados pelo WiFi." />
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 90px 100px 90px 90px', padding: '10px 16px', fontSize: 12, fontWeight: 700, color: C.t3, borderBottom: `1px solid ${C.border}`, background: C.inputBg }}>
           <span>Semana</span>
           <span style={{ textAlign: 'right' }}>Cultos</span>
@@ -516,7 +520,7 @@ function AbaAlertas({ onPick }) {
         })}
       </div>
       {filtro !== 'todos' && <div style={{ fontSize: 13, color: C.t3, marginBottom: 10 }}>{ALERTA_META[filtro].desc}.</div>}
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
         {loading && <div style={{ padding: 24, textAlign: 'center', color: C.t3 }}>Carregando…</div>}
         {!loading && lista.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: C.t3 }}>Ninguém nesta categoria.</div>}
         {!loading && lista.map(a => {
@@ -563,8 +567,8 @@ function PerfilPessoa({ cpf, onClose }) {
   const p = d?.pessoa;
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: C.overlay, zIndex: 1000, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 'min(560px,100%)', height: '100%', background: C.modalBg, overflowY: 'auto', boxShadow: '-8px 0 24px rgba(0,0,0,.2)' }}>
-        <div style={{ position: 'sticky', top: 0, background: C.modalBg, borderBottom: `1px solid ${C.border}`, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 1 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 'min(560px,100%)', height: '100%', background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', borderLeft: '1px solid var(--hairline)', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
+        <div style={{ position: 'sticky', top: 0, background: 'var(--cbrio-card)', borderBottom: `1px solid var(--hairline)`, padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 1 }}>
           <h2 style={{ fontSize: 18, fontWeight: 800, color: C.text }}>{p?.nome || 'Perfil'}</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3 }}><X size={20} /></button>
         </div>
@@ -636,7 +640,7 @@ function Bloco({ titulo, children }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>{titulo}</div>
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '10px 14px' }}>{children}</div>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, padding: '10px 14px' }}>{children}</div>
     </div>
   );
 }

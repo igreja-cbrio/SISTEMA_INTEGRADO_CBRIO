@@ -104,9 +104,11 @@ function TabDashboard({ data, onValorClick }) {
   const { total_membros, valores } = data;
   return (
     <div>
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
-        <span style={{ fontSize: 14, color: C.t3 }}>Total de membros ativos</span>
-        <div style={{ fontSize: 28, fontWeight: 700, color: C.text }}>{total_membros}</div>
+      <div style={{ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', borderRadius: 16, padding: 16, marginBottom: 20 }}>
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, #00B39D22, transparent 58%)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: '#00B39D', opacity: 0.9 }} />
+        <span style={{ position: 'relative', fontSize: 14, color: C.t3 }}>Total de membros ativos</span>
+        <div style={{ position: 'relative', fontSize: 28, fontWeight: 700, color: C.text }}>{total_membros}</div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 16 }}>
@@ -114,9 +116,11 @@ function TabDashboard({ data, onValorClick }) {
           const d = valores[v.key] || { total: 0, pct: 0 };
           return (
             <div key={v.key} onClick={() => onValorClick(v.key)}
-              style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, borderLeft: `4px solid ${v.color}`, cursor: 'pointer', transition: 'border-color .15s' }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = v.color} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+              style={{ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', borderRadius: 16, padding: 20, cursor: 'pointer', transition: 'border-color .15s' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = v.color} onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hairline)'}>
+              <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${v.color}22, transparent 58%)`, pointerEvents: 'none' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: v.color, opacity: 0.9 }} />
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                 <div>
                   <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{v.nome}</div>
                   <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{v.desc}</div>
@@ -126,10 +130,10 @@ function TabDashboard({ data, onValorClick }) {
                   <div style={{ fontSize: 12, color: C.t3 }}>{d.total} membros</div>
                 </div>
               </div>
-              <div style={{ height: 8, background: C.bg, borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ position: 'relative', height: 8, background: C.bg, borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${Math.min(d.pct, 100)}%`, background: v.color, borderRadius: 4 }} />
               </div>
-              <div style={{ fontSize: 11, color: C.t3, marginTop: 8 }}>Clique para ver detalhes e KPIs vinculados</div>
+              <div style={{ position: 'relative', fontSize: 11, color: C.t3, marginTop: 8 }}>Clique para ver detalhes e KPIs vinculados</div>
             </div>
           );
         })}
@@ -199,7 +203,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
       <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.primary, fontSize: 14, fontWeight: 600, marginBottom: 16, padding: 0 }}>{'<- Voltar ao Dashboard'}</button>
 
       {/* Header do valor */}
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, marginBottom: 20, borderLeft: `4px solid ${valor.color}` }}>
+      <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 20, marginBottom: 20, borderLeft: `4px solid ${valor.color}` }}>
         <h2 style={{ margin: 0, fontSize: 20, color: C.text }}>{valor.nome}</h2>
         <p style={{ margin: '4px 0 0', fontSize: 14, color: C.t3 }}>{valor.desc}</p>
         <div style={{ display: 'flex', gap: 16, marginTop: 12 }}>
@@ -226,12 +230,12 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 8, marginBottom: 24 }}>
         {(kpisDoValor || []).length === 0 && (
-          <div style={{ gridColumn: '1/-1', padding: 20, textAlign: 'center', background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, color: C.t3, fontSize: 13 }}>
+          <div style={{ gridColumn: '1/-1', padding: 20, textAlign: 'center', background: 'var(--cbrio-card)', border: '1px dashed var(--hairline)', borderRadius: 8, color: C.t3, fontSize: 13 }}>
             Nenhum KPI vinculado a este valor ainda. {canEdit && 'Use "+ Promover KPI" pra adicionar.'}
           </div>
         )}
         {(kpisDoValor || []).map(kpi => (
-          <div key={kpi.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <div key={kpi.id} style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 8, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 600, color: valor.color, fontSize: 13 }}>{kpi.id}</span>
@@ -254,7 +258,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
       {/* Picker de KPIs disponíveis pra promover */}
       {pickerOpen && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--cbrio-overlay)' }} onClick={() => setPickerOpen(false)}>
-          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: 600, maxHeight: '80vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow-hover), var(--hi)', borderRadius: 16, width: 600, maxHeight: '80vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>Promover KPI ao valor: {valor.nome}</h2>
               <button onClick={() => setPickerOpen(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3 }}>×</button>
@@ -299,7 +303,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
           {/* COM o valor */}
           <div>
             <h4 style={{ fontSize: 14, fontWeight: 600, color: valor.color, marginBottom: 8 }}>Com este valor ({comValor.length})</h4>
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, maxHeight: 400, overflow: 'auto' }}>
+            <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, maxHeight: 400, overflow: 'auto' }}>
               {comValor.length === 0 ? <p style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum membro</p> :
                 comValor.map(m => (
                   <div key={m.id} onClick={() => onDetail(m.id)} style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
@@ -317,7 +321,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
           {/* SEM o valor */}
           <div>
             <h4 style={{ fontSize: 14, fontWeight: 600, color: C.red, marginBottom: 8 }}>Sem este valor ({semValor.length})</h4>
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, maxHeight: 400, overflow: 'auto' }}>
+            <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, maxHeight: 400, overflow: 'auto' }}>
               {semValor.length === 0 ? <p style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 13 }}>Todos os membros possuem</p> :
                 semValor.map(m => (
                   <div key={m.id} onClick={() => onDetail(m.id)} style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
@@ -353,7 +357,7 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
       {loading ? <p style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Carregando...</p> : membros.length === 0 ? (
         <p style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Nenhum membro encontrado</p>
       ) : (
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: C.tableHeader }}>
@@ -412,7 +416,7 @@ function TabDetalhe({ detail, loading, onBack }) {
       <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.primary, fontSize: 14, fontWeight: 600, marginBottom: 16, padding: 0 }}>{'<- Voltar'}</button>
 
       {/* Header */}
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, marginBottom: 20, display: 'flex', gap: 16, alignItems: 'center' }}>
+      <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 20, marginBottom: 20, display: 'flex', gap: 16, alignItems: 'center' }}>
         <div style={{ width: 56, height: 56, borderRadius: 12, background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 700, color: C.primary }}>
           {(m.nome || '?')[0].toUpperCase()}
         </div>
@@ -435,7 +439,7 @@ function TabDetalhe({ detail, loading, onBack }) {
           const data = valores[v.key];
           const ativo = data?.ativo;
           return (
-            <div key={v.key} style={{ background: C.card, border: `2px solid ${ativo ? v.color : C.border}`, borderRadius: 12, padding: 16 }}>
+            <div key={v.key} style={{ background: 'var(--cbrio-card)', border: `2px solid ${ativo ? v.color : 'var(--hairline)'}`, boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{v.nome}</span>
                 <span style={{ width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, background: ativo ? v.bg : C.bg, color: ativo ? v.color : C.t3 }}>
@@ -457,7 +461,7 @@ function TabDetalhe({ detail, loading, onBack }) {
       {/* Timeline */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         {trilha.length > 0 && (
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, color: C.text }}>Trilha dos Valores</h3>
             {trilha.map(t => (
               <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
@@ -469,7 +473,7 @@ function TabDetalhe({ detail, loading, onBack }) {
         )}
 
         {grupos.length > 0 && (
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, color: C.text }}>Grupos</h3>
             {grupos.map(g => (
               <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
@@ -481,7 +485,7 @@ function TabDetalhe({ detail, loading, onBack }) {
         )}
 
         {voluntariado.length > 0 && (
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, color: C.text }}>Voluntariado</h3>
             {voluntariado.map(v => (
               <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
@@ -493,7 +497,7 @@ function TabDetalhe({ detail, loading, onBack }) {
         )}
 
         {contribuicoes.length > 0 && (
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, color: C.text }}>Contribuições recentes</h3>
             {contribuicoes.map(c => (
               <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>

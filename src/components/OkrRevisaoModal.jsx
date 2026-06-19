@@ -103,7 +103,7 @@ export default function OkrRevisaoModal({ open, kpi, onClose, onSaved, defaultPe
       onClick={() => !saving && onClose?.()}
     >
       <div
-        style={{ background: C.modalBg, borderRadius: 12, width: '100%', maxWidth: 640, maxHeight: '92vh', overflow: 'auto' }}
+        style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: '100%', maxWidth: 640, maxHeight: '92vh', overflow: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <header style={{ padding: '18px 22px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>

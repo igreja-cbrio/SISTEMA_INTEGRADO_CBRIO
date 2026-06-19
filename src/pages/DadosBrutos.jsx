@@ -259,8 +259,9 @@ export default function DadosBrutos({ embedded = false }) {
                   onClick={() => quickLogClick(tipo.id)}
                   title={tipo.descricao || tipo.nome}
                   style={{
-                    textAlign: 'left', padding: 14, borderRadius: 10, cursor: 'pointer',
-                    background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${v.cor}`,
+                    textAlign: 'left', padding: 14, borderRadius: 16, cursor: 'pointer',
+                    background: C.card, border: '1px solid var(--hairline)', borderLeft: `3px solid ${v.cor}`,
+                    boxShadow: 'var(--shadow)',
                     display: 'flex', flexDirection: 'column', gap: 8, minHeight: 92,
                     transition: 'transform 0.05s, border-color 0.1s',
                   }}
@@ -305,7 +306,7 @@ export default function DadosBrutos({ embedded = false }) {
       )}
 
       {/* Filtros */}
-      <section style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+      <section style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 12, marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.t3, marginBottom: 8 }}>
           <Filter size={11} /> Filtros
         </div>
@@ -346,7 +347,7 @@ export default function DadosBrutos({ embedded = false }) {
       ) : (
         <>
           {/* Tabela: desktop (>= 768px) */}
-          <div className="dados-table-desktop" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+          <div className="dados-table-desktop" style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: C.inputBg }}>
@@ -411,8 +412,9 @@ export default function DadosBrutos({ embedded = false }) {
           <div className="dados-cards-mobile" style={{ display: 'none', flexDirection: 'column', gap: 8 }}>
             {dados.map(d => (
               <div key={d.id} style={{
-                background: C.card, border: `1px solid ${C.border}`,
-                borderRadius: 8, padding: 12,
+                background: C.card, border: '1px solid var(--hairline)',
+                boxShadow: 'var(--shadow)',
+                borderRadius: 16, padding: 12,
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
                   <div>
@@ -559,7 +561,7 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
       }}
     >
       <div onClick={e => e.stopPropagation()}
-        style={{ background: C.modalBg, borderRadius: 12, maxWidth: 520, width: '100%', maxHeight: '92vh', overflow: 'auto' }}
+        style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow-hover), var(--hi)', maxWidth: 520, width: '100%', maxHeight: '92vh', overflow: 'auto' }}
       >
         <header style={{ padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>

@@ -394,23 +394,29 @@ function StatCardClicavel({ ativo, onClick, corAtivo, label, valor, valorCor, su
       type="button"
       onClick={onClick}
       style={{
-        background: ativo ? `${corAtivo}18` : C.card,
-        border: `2px solid ${ativo ? corAtivo : C.border}`,
-        borderRadius: 10, padding: 14,
+        position: 'relative', overflow: 'hidden',
+        background: ativo ? `${corAtivo}18` : 'var(--panel)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+        border: `1px solid ${ativo ? corAtivo : 'var(--hairline)'}`,
+        borderRadius: 16, padding: 14,
         cursor: 'pointer', textAlign: 'left',
-        boxShadow: ativo ? `0 0 0 3px ${corAtivo}25` : 'none',
+        boxShadow: ativo ? `0 0 0 3px ${corAtivo}25` : 'var(--shadow), var(--hi)',
         transition: 'all 0.15s',
         width: '100%',
       }}
       onMouseEnter={e => { if (!ativo) e.currentTarget.style.borderColor = corAtivo + '60'; }}
-      onMouseLeave={e => { if (!ativo) e.currentTarget.style.borderColor = C.border; }}
+      onMouseLeave={e => { if (!ativo) e.currentTarget.style.borderColor = 'var(--hairline)'; }}
     >
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${corAtivo}22, transparent 58%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: corAtivo, opacity: 0.9 }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
       <div style={{ fontSize: 10, textTransform: 'uppercase', color: C.text3, letterSpacing: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         {label}
         {ativo && <span style={{ fontSize: 10, color: corAtivo, fontWeight: 700 }}>● ATIVO</span>}
       </div>
       <div style={{ fontSize: 24, fontWeight: 700, color: valorCor, marginTop: 4 }}>{valor}</div>
       <div style={{ fontSize: 10, color: C.text3 }}>{sub}</div>
+      </div>
     </button>
   );
 }
@@ -846,7 +852,7 @@ function ComboboxBusca({ items, value, onChange, placeholder, emptyLabel, permit
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, zIndex: 100,
           background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 6,
-          maxHeight: 280, overflowY: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+          maxHeight: 280, overflowY: 'auto', boxShadow: 'var(--shadow)',
         }}>
           {permiteVazio && (
             <button
@@ -908,7 +914,10 @@ const modalOverlay = {
   zIndex: 1000, padding: 16, overflowY: 'auto',
 };
 const modalBox = {
-  background: 'var(--cbrio-modal-bg)', padding: 24, borderRadius: 10,
+  background: 'var(--panel)',
+  WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+  padding: 24, borderRadius: 16,
   width: '100%', maxWidth: 520, maxHeight: 'calc(100vh - 48px)',
-  overflowY: 'auto', border: `1px solid ${C.border}`, boxSizing: 'border-box',
+  overflowY: 'auto', border: '1px solid var(--hairline)', boxSizing: 'border-box',
+  boxShadow: 'var(--shadow-hover), var(--hi)',
 };

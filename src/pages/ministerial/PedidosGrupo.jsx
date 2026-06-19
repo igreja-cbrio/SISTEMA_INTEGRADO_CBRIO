@@ -112,7 +112,7 @@ export default function PedidosGrupo({ embedded = false }) {
       {loading ? (
         <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>
       ) : pedidos.length === 0 ? (
-        <div style={{ padding: 60, textAlign: 'center', background: C.card, borderRadius: 12, border: `1px dashed ${C.border}`, color: C.t3, fontSize: 13 }}>
+        <div style={{ padding: 60, textAlign: 'center', background: C.card, borderRadius: 16, border: '1px dashed var(--hairline)', boxShadow: 'var(--shadow)', color: C.t3, fontSize: 13 }}>
           Nenhum pedido {filterStatus === 'pendente' ? 'pendente' : `${STATUS_LABEL[filterStatus].label.toLowerCase()}`}.
         </div>
       ) : (
@@ -123,7 +123,7 @@ export default function PedidosGrupo({ embedded = false }) {
             const status = STATUS_LABEL[p.status];
             const isRejecting = rejectingId === p.id;
             return (
-              <div key={p.id} style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}` }}>
+              <div key={p.id} style={{ background: C.card, borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
                   <div style={{ width: 40, height: 40, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700 }}>
                     {p.nome?.charAt(0)?.toUpperCase() || '?'}

@@ -256,9 +256,9 @@ function KpiPendenteCard({ kpi, ordem, onRevisar, onDetalhe }) {
 
   return (
     <div style={{
-      background: C.card, border: `1px solid ${C.border}`,
+      background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)',
       borderLeft: `3px solid ${sv.cor}`,
-      borderRadius: 8, padding: 12,
+      borderRadius: 16, padding: 12,
       display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
     }}>
       <div style={{
@@ -315,7 +315,7 @@ function ListaRevisados({ revisados }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {revisados.map(r => (
-        <div key={r.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: '3px solid #10B981', borderRadius: 8, padding: 12 }}>
+        <div key={r.id} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderLeft: '3px solid #10B981', borderRadius: 16, padding: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
             <strong style={{ fontSize: 13, color: C.text }}>{r.kpi?.indicador || r.kpi_id}</strong>
             <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#D1FAE5', color: '#065F46', fontWeight: 700, textTransform: 'uppercase' }}>{r.status_revisao}</span>
@@ -336,9 +336,18 @@ function ListaRevisados({ revisados }) {
 
 function Stat({ label, value, cor }) {
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px' }}>
-      <div style={{ fontSize: 22, fontWeight: 800, color: cor, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 9, color: C.t3, marginTop: 4, letterSpacing: 0.3, textTransform: 'uppercase' }}>{label}</div>
+    <div style={{
+      position: 'relative', overflow: 'hidden',
+      background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+      border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+      borderRadius: 16, padding: '10px 14px',
+    }}>
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${cor}22, transparent 58%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: cor, opacity: 0.9 }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: cor, lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 9, color: C.t3, marginTop: 4, letterSpacing: 0.3, textTransform: 'uppercase' }}>{label}</div>
+      </div>
     </div>
   );
 }

@@ -56,8 +56,8 @@ const styles = {
   }),
   kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 24 },
   card: {
-    background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
-    boxShadow: '0 1px 2px rgba(0,0,0,0.05)', overflow: 'hidden',
+    background: C.card, borderRadius: 16, border: '1px solid var(--hairline)',
+    boxShadow: 'var(--shadow)', overflow: 'hidden',
   },
   cardHeader: { padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 14, fontWeight: 700, color: C.text },
@@ -87,7 +87,7 @@ const styles = {
   formGroup: { marginBottom: 14 },
   formRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
   overlay: { position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 60, zIndex: 1000 },
-  modal: { background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: '95%', maxWidth: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 16px 48px rgba(0,0,0,0.12)' },
+  modal: { background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: '95%', maxWidth: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' },
   modalHeader: { padding: '20px 24px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   modalTitle: { fontSize: 18, fontWeight: 700, color: C.text },
   modalBody: { padding: '16px 24px 24px' },
@@ -96,8 +96,8 @@ const styles = {
   clickRow: { cursor: 'pointer', transition: 'background 0.1s' },
   sectionTitle: { fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, marginTop: 24 },
   taskCard: {
-    background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: '14px 18px',
-    marginBottom: 10, boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+    background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', padding: '14px 18px',
+    marginBottom: 10, boxShadow: 'var(--shadow)',
   },
   subtaskRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 14, color: C.text },
   commentBox: { background: 'var(--cbrio-table-header)', borderRadius: 8, padding: '8px 12px', marginTop: 6, fontSize: 12, color: C.text2 },
@@ -817,7 +817,7 @@ export default function Eventos() {
             {(ev.kpi_areas || []).map(a => {
               const b = a.breakdown || {};
               return (
-                <div key={a.area} style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
+                <div key={a.area} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, padding: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ width: 10, height: 10, borderRadius: '50%', background: CAT_COLORS[a.area] || C.t3 }} />
@@ -941,7 +941,7 @@ export default function Eventos() {
           <>
             {/* KPI Medio */}
             <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-              <div style={{ background: C.card, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, flex: '1 1 200px', textAlign: 'center' }}>
+              <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, padding: 20, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', flex: '1 1 200px', textAlign: 'center' }}>
                 <div style={{ fontSize: 40, fontWeight: 800, color: scoreColor(d.kpi_medio) }}>{d.kpi_medio}</div>
                 <div style={{ fontSize: 13, color: C.t3 }}>KPI Medio Institucional</div>
                 <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>{d.eventos?.length || 0} eventos com ciclo criativo</div>
@@ -949,7 +949,7 @@ export default function Eventos() {
 
               {/* Top 3 áreas */}
               {(d.ranking_areas || []).slice(0, 3).map((a, i) => (
-                <div key={a.area} style={{ background: C.card, borderRadius: 14, padding: 16, border: `1px solid ${C.border}`, flex: '1 1 150px' }}>
+                <div key={a.area} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, padding: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', flex: '1 1 150px' }}>
                   <div style={{ fontSize: 10, color: C.t3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 4 }}>{i === 0 ? 'Melhor area' : `#${i + 1}`}</div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: CAT_COLORS[a.area] || C.text }}>{CAT_LABELS[a.area] || a.area}</div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: scoreColor(a.kpi) }}>{a.kpi}</div>
@@ -1009,7 +1009,7 @@ export default function Eventos() {
     const CAT_LABELS = { marketing: 'Marketing', producao: 'Producao', compras: 'Compras', financeiro: 'Financeiro', manutencao: 'Manutencao', limpeza: 'Limpeza', cozinha: 'Cozinha', adm: 'Administrativo' };
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
-        <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 24, maxWidth: 500, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, padding: 24, maxWidth: 500, width: '90%', maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Pesos de Área por Categoria</span>
             <button onClick={() => setKpiConfigOpen(false)} style={{ background: 'none', border: 'none', fontSize: 18, color: C.t3, cursor: 'pointer' }}>{'\u2715'}</button>
@@ -1575,14 +1575,15 @@ export default function Eventos() {
               <div style={{
                 position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
                 width: '95%', maxWidth: 600, maxHeight: '90vh',
-                background: 'var(--cbrio-modal-bg, #fff)', zIndex: 901,
-                borderRadius: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', overflowY: 'auto',
+                background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+                border: '1px solid var(--hairline)', zIndex: 901,
+                borderRadius: 16, boxShadow: 'var(--shadow-hover), var(--hi)', overflowY: 'auto',
                 animation: 'fadeScaleIn 0.15s ease-out',
               }}>
                 <style>{`@keyframes fadeScaleIn { from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }`}</style>
 
                 {/* Header */}
-                <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--cbrio-border)', position: 'sticky', top: 0, background: 'var(--cbrio-modal-bg, #fff)', zIndex: 1 }}>
+                <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--hairline)', position: 'sticky', top: 0, background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', zIndex: 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--cbrio-text)', lineHeight: 1.3, marginBottom: 8 }}>{task.titulo}</div>
@@ -1724,7 +1725,7 @@ export default function Eventos() {
           const eventPhases = filteredPhases.filter(p => p.event_id === selectedEventId).sort((a, b) => a.numero_fase - b.numero_fase);
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); setNewTaskEventId(''); }}>
-              <div style={{ background: 'var(--cbrio-modal-bg, #fff)', borderRadius: 16, padding: 24, width: '95%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+              <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow-hover), var(--hi)', borderRadius: 16, padding: 24, width: '95%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                   <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--cbrio-text)' }}>Nova Tarefa</span>
                   <button onClick={() => { setShowKanbanNewTask(false); setKanbanNewTaskSubs([]); setNewTaskEventId(''); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--cbrio-text3)' }}>✕</button>
@@ -1960,8 +1961,9 @@ export default function Eventos() {
               <div style={{
                 position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
                 width: '95%', maxWidth: 540, maxHeight: '85vh',
-                background: 'var(--cbrio-modal-bg, #fff)', zIndex: 901,
-                borderRadius: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', overflowY: 'auto',
+                background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+                border: '1px solid var(--hairline)', zIndex: 901,
+                borderRadius: 16, boxShadow: 'var(--shadow-hover), var(--hi)', overflowY: 'auto',
               }}>
                 <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--cbrio-text)' }}>🤖 Gerar Relatório IA</span>
@@ -2445,9 +2447,9 @@ export default function Eventos() {
         {/* KPIs */}
         {/* Barra de status compacta */}
         <div style={{
-          background: 'var(--cbrio-card)', borderRadius: 12, border: `1px solid ${C.border}`,
+          background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)',
           padding: '14px 24px', marginBottom: 20, display: 'flex', gap: 16, alignItems: 'center',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflowX: 'auto',
+          boxShadow: 'var(--shadow)', overflowX: 'auto',
         }}>
           {[
             { label: 'Eventos', value: counts.total, color: C.primary, action: () => kpiDrillDown('') },
@@ -2576,9 +2578,9 @@ export default function Eventos() {
       <>
         {/* KPIs — barra inline compacta (mesmo formato da Home) */}
         <div style={{
-          background: 'var(--cbrio-card)', borderRadius: 12, border: `1px solid ${C.border}`,
+          background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)',
           padding: '14px 24px', marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+          boxShadow: 'var(--shadow)',
         }}>
           {[
             { label: 'Eventos', value: counts.total, color: C.primary, action: () => kpiDrillDown('') },
@@ -3505,7 +3507,7 @@ export default function Eventos() {
       {/* KPI Doc Resumo Modal */}
       {kpiDocModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={() => setKpiDocModal(null)}>
-          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 24, maxWidth: 550, width: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, padding: 24, maxWidth: 550, width: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{kpiDocModal.doc?.card_titulo}</span>
               <button onClick={() => setKpiDocModal(null)} style={{ background: 'none', border: 'none', fontSize: 18, color: C.t3, cursor: 'pointer' }}>{'\u2715'}</button>

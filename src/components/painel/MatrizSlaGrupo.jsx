@@ -163,7 +163,7 @@ export default function MatrizSlaGrupo({ titulo, subtitulo, loadMatriz, loadCelu
                         }}
                         onMouseEnter={e => {
                           e.currentTarget.style.transform = 'scale(1.04)';
-                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+                          e.currentTarget.style.boxShadow = 'var(--shadow-hover)';
                         }}
                         onMouseLeave={e => {
                           e.currentTarget.style.transform = 'scale(1)';
@@ -265,9 +265,10 @@ function ModalCelulaAdm({ cell, loadCelula, onClose }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: C.modalBg, borderRadius: 16,
+        background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+        border: '1px solid var(--hairline)', borderRadius: 16,
         maxWidth: 760, width: '100%', maxHeight: '85vh', overflow: 'auto',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        boxShadow: 'var(--shadow-hover), var(--hi)',
       }}>
         <header style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -351,14 +352,15 @@ function KpiCard({ kpi, onAbrir }) {
       onClick={onAbrir}
       style={{
         background: 'var(--cbrio-card)',
-        border: `1px solid ${C.border}`,
+        border: '1px solid var(--hairline)',
         borderLeft: `3px solid ${corValor}`,
-        borderRadius: 8, padding: 12,
+        borderRadius: 16, padding: 12,
+        boxShadow: 'var(--shadow)',
         cursor: 'pointer', transition: 'border-color 0.15s',
         display: 'flex', alignItems: 'center', gap: 12,
       }}
       onMouseEnter={e => { e.currentTarget.style.borderColor = corValor; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.borderLeft = `3px solid ${corValor}`; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--hairline)'; e.currentTarget.style.borderLeft = `3px solid ${corValor}`; }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -426,7 +428,8 @@ function LinhaSolicitacao({ sol }) {
 const cardStyle = {
   background: C.card,
   borderRadius: 16,
-  border: `1px solid ${C.border}`,
+  border: '1px solid var(--hairline)',
+  boxShadow: 'var(--shadow)',
   padding: '20px 24px',
 };
 

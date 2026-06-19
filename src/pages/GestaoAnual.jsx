@@ -29,7 +29,7 @@ function fmtDate(d) {
   return `${dd}/${m}/${y}`;
 }
 
-const cardStyle = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12 };
+const cardStyle = { background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16 };
 const btn = (v = 'primary') => ({
   padding: '7px 13px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none',
   display: 'inline-flex', alignItems: 'center', gap: 6,

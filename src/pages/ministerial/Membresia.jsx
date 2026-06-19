@@ -219,7 +219,7 @@ function FamiliaAutocomplete({ familias, value, onChange, placeholder = 'Buscar 
         )}
       </div>
       {open && (filtradas.length > 0 || podeCriar) && (
-        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 1100, background: 'var(--cbrio-modal-bg, var(--cbrio-card))', border: '1px solid var(--cbrio-border)', borderRadius: 10, maxHeight: 240, overflow: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 1100, background: 'var(--cbrio-modal-bg, var(--cbrio-card))', border: '1px solid var(--hairline)', borderRadius: 10, maxHeight: 240, overflow: 'auto', boxShadow: 'var(--shadow)' }}>
           {filtradas.map(f => (
             <button
               key={f.id}
@@ -1228,7 +1228,7 @@ export default function Membresia() {
       </div>
 
       {/* Table */}
-      <div style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
@@ -1316,7 +1316,7 @@ export default function Membresia() {
       {/* Member Detail Modal */}
       {selectedMembro && (
         <div style={{ position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setSelectedMembro(null)}>
-          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 20, width: '100%', maxWidth: 700, maxHeight: '90vh', overflow: 'auto', border: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', borderRadius: 16, width: '100%', maxWidth: 700, maxHeight: '90vh', overflow: 'auto', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow-hover), var(--hi)' }} onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div style={{ padding: '28px 32px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
               <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>

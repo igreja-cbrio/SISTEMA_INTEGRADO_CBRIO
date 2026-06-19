@@ -103,7 +103,7 @@ function PlanoContasPanel() {
         <div style={{ fontSize: 12, color: C.text3, alignSelf: 'center' }}>{filtered.length} contas</div>
       </div>
 
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         {filtered.map((item, i) => {
           if (isHidden(item)) return null;
           const hasChildren = data.some(d => d.codigo_pai === item.codigo);
@@ -208,7 +208,7 @@ function CentrosCustoPanel() {
         <div style={{ fontSize: 12, color: C.text3, alignSelf: 'center' }}>{filtered.length} centros</div>
       </div>
 
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         {filtered.map((item, i) => {
           if (isHidden(item)) return null;
           const hasChildren = data.some(d => d.codigo_pai === item.codigo);
@@ -296,7 +296,7 @@ function IdentificadoresPanel() {
         </Button>
       </div>
 
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead style={{ background: 'var(--cbrio-table-header)' }}>
             <tr>
@@ -421,7 +421,7 @@ function CultoSlotsPanel() {
         A engine pega a hora do PIX (do End-to-End ID) e identifica em qual janela cai.
       </div>
 
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead style={{ background: 'var(--cbrio-table-header)' }}>
             <tr>
@@ -471,7 +471,7 @@ function RegrasPanel() {
       <div style={{ marginBottom: 16, padding: 12, background: 'var(--cbrio-bg)', borderRadius: 6, fontSize: 12, color: C.text2, border: `1px solid ${C.border}` }}>
         Regras explicitas pra classificacao automatica. Ex: <code>RENDIMENTO LIQUIDO DE CONTAMAX</code> sempre vai pra "Rendimentos Aplicacoes Financeiras".
       </div>
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead style={{ background: 'var(--cbrio-table-header)' }}>
             <tr>
@@ -532,11 +532,13 @@ const modalOverlay = {
   overflowY: 'auto',
 };
 const modalBox = {
-  background: 'var(--cbrio-modal-bg)',
-  padding: 24, borderRadius: 10,
+  background: 'var(--panel)',
+  WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+  padding: 24, borderRadius: 16,
   width: '100%', maxWidth: 480,
   maxHeight: 'calc(100vh - 48px)',
   overflowY: 'auto',
-  border: `1px solid ${C.border}`,
+  border: '1px solid var(--hairline)',
   boxSizing: 'border-box',
+  boxShadow: 'var(--shadow-hover), var(--hi)',
 };

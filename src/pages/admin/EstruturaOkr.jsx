@@ -400,8 +400,8 @@ function ObjetivoLinha({ objetivo, expanded, onToggle, onEdit, onRemove, onAddKr
 
   return (
     <div style={{
-      background: C.card, border: `1px solid ${C.border}`,
-      borderRadius: 8, overflow: 'hidden',
+      background: C.card, border: '1px solid var(--hairline)',
+      borderRadius: 16, overflow: 'hidden', boxShadow: 'var(--shadow)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12 }}>
         <button
@@ -535,7 +535,7 @@ function ResumoGerais({ detalhes, onAddKr, onEditKr, removerKr, onAbrirEspecific
             padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700,
             background: C.primary, color: '#fff', border: `1px solid ${C.primary}`,
             cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
-            boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
+            boxShadow: 'var(--shadow)',
           }}>
             <Activity size={12} />
             {isOperacional
@@ -569,9 +569,10 @@ function ModalEspecificos({ detalhes, onClose, onEditKr, removerKr }) {
       }}
     >
       <div onClick={e => e.stopPropagation()} style={{
-        background: C.modalBg, borderRadius: 12,
+        background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+        border: '1px solid var(--hairline)', borderRadius: 16,
         maxWidth: 1280, width: '100%', maxHeight: '90vh', overflow: 'auto',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        boxShadow: 'var(--shadow-hover), var(--hi)',
       }}>
         <header style={{
           padding: '16px 24px', borderBottom: `1px solid ${C.border}`,
@@ -722,7 +723,7 @@ function TabelaCascataOkr({ detalhes, onAddKr, onEditKr, removerKr, semHeader = 
           Nenhum KR ainda. Sugestao: 3 KRs por objetivo (volume, comparacao historica, threshold).
         </div>
       ) : (
-        <div style={{ overflowX: 'auto', background: 'var(--cbrio-card)', borderRadius: 8, border: `1px solid ${C.border}` }}>
+        <div style={{ overflowX: 'auto', background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, minWidth: 820, tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: '24%' }} />
@@ -1062,9 +1063,10 @@ function Modal({ title, children, onClose, onSubmit, saving }) {
     }}
     onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: C.modalBg, borderRadius: 12, maxWidth: 600, width: '100%',
+        background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+        border: '1px solid var(--hairline)', borderRadius: 16, maxWidth: 600, width: '100%',
         maxHeight: '90vh', overflow: 'auto',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.2)',
+        boxShadow: 'var(--shadow-hover), var(--hi)',
       }}>
         <header style={{ padding: 18, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: 0 }}>{title}</h2>
@@ -1094,7 +1096,7 @@ function Field({ label, children }) {
 }
 
 const cardStyle = {
-  background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18,
+  background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, padding: 18, boxShadow: 'var(--shadow)',
 };
 const hh3 = {
   fontSize: 13, fontWeight: 700, color: C.t2, margin: 0, marginBottom: 8,

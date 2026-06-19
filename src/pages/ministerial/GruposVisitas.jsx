@@ -358,11 +358,19 @@ export default function GruposVisitas({ onOpenGrupo }) {
           const ativo = filtro === k.key;
           return (
             <button key={k.key} onClick={() => setFiltro(k.key)} title="Clique pra filtrar a lista" style={{
-              background: ativo ? `${k.color}10` : C.card, borderRadius: 12, padding: 14, textAlign: 'left',
-              border: ativo ? `2px solid ${k.color}` : `1px solid ${C.border}`, cursor: 'pointer', transition: 'border-color 0.12s',
+              position: 'relative', overflow: 'hidden',
+              background: 'var(--panel)',
+              WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+              borderRadius: 16, padding: 14, textAlign: 'left',
+              border: ativo ? `2px solid ${k.color}` : '1px solid var(--hairline)',
+              boxShadow: 'var(--shadow), var(--hi)', cursor: 'pointer', transition: 'border-color 0.12s',
             }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: k.color }}>{k.value}</div>
-              <div style={{ fontSize: 11, color: ativo ? k.color : C.t3, fontWeight: ativo ? 600 : 400 }}>{k.label}</div>
+              <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${k.color}22, transparent 58%)`, pointerEvents: 'none' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: k.color, opacity: 0.9 }} />
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: k.color }}>{k.value}</div>
+                <div style={{ fontSize: 11, color: ativo ? k.color : C.t3, fontWeight: ativo ? 600 : 400 }}>{k.label}</div>
+              </div>
             </button>
           );
         })}
@@ -370,7 +378,7 @@ export default function GruposVisitas({ onOpenGrupo }) {
 
       {/* Próximas visitas agendadas */}
       {agendadas.length > 0 && (
-        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginBottom: 14 }}>
+        <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden', marginBottom: 14 }}>
           <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Calendar size={14} style={{ color: C.blue }} />
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Próximas visitas ({agendadas.length})</span>
@@ -448,7 +456,7 @@ export default function GruposVisitas({ onOpenGrupo }) {
       </div>
 
       {/* Lista de grupos · mais tempo sem visita primeiro */}
-      <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
         {filtrados.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>
             {filtro === 'sem60' ? 'Nenhum grupo há mais de 2 meses sem visita. 🎉' : 'Nenhum grupo encontrado.'}
@@ -510,7 +518,7 @@ export default function GruposVisitas({ onOpenGrupo }) {
 
       {/* Histórico recente (realizadas + canceladas) */}
       {historico.length > 0 && (
-        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginTop: 14 }}>
+        <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden', marginTop: 14 }}>
           <button onClick={() => setVerHistorico(v => !v)} style={{
             width: '100%', padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer',
             display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left',

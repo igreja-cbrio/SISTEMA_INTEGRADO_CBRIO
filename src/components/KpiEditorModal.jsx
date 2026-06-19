@@ -632,7 +632,7 @@ function KrEditorInline({ kr, onClose, onSaved }) {
     <div {...backdropProps}
       style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()}
-        style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: 520, maxHeight: '85vh', overflow: 'auto' }}>
+        style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: 520, maxHeight: '85vh', overflow: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
         <header style={{ padding: 16, borderBottom: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
             {isNovo ? 'Novo KR especifico' : 'Editar KR'}

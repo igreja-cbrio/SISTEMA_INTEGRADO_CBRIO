@@ -63,14 +63,14 @@ function sanearExtracao(raw) {
  * Lê a nota fiscal (imagem ou PDF) e devolve { extraido, raw }.
  * Lança erro se a IA não devolver JSON utilizável.
  */
-async function extrairNotaFiscal(buffer, mimeType) {
+async function extrairNotaFiscal(buffer, mimeType, model = MODEL) {
   const client = new Anthropic();
   const bloco = mimeType === 'application/pdf'
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }
     : { type: 'image', source: { type: 'base64', media_type: mimeType, data: buffer.toString('base64') } };
 
   const response = await client.messages.create({
-    model: MODEL,
+    model,
     max_tokens: 2500,
     messages: [{ role: 'user', content: [bloco, { type: 'text', text: EXTRACT_PROMPT }] }],
   });

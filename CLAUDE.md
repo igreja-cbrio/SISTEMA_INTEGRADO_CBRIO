@@ -1095,6 +1095,101 @@ lançar — rastreabilidade de cada compra ponta a ponta.
 - Sem env nova (`ANTHROPIC_API_KEY` já existe). Modelo: Haiku 4.5 (regra da
   casa pra classificação).
 
+## Compras · aba Compras (ledger do Pery) + scan + vínculo fiscal (2026-06-18)
+
+Pedido do Matheus: a aba **Compras** da Logística substitui a planilha manual
+"CONTROLE DE COMPRAS FIXOS E VARIÁVEIS" que o Pery alimentava à mão. NÃO confundir
+com a aba **Notas Fiscais** (fluxo Amaury→Yago que CRIA `fin_transacoes`): aqui a
+compra é o registro operacional do Pery e VINCULA com a saída que JÁ existe no
+balanço (sentido inverso).
+
+- **Tabela `log_compras`** (migration `20260618160000` · aditiva): espelha a
+  planilha (data_compra, n_pedido, comprador, fornecedor, materiais, `centro_custo`
+  = coluna TORRE, valor, forma_pgto, status_entrega, parcelas) + scan
+  (origem_registro planilha|scan|manual, storage_path, emitente_cnpj, numero_nota,
+  extracao_raw/confianca) + aprovação (`status_aprovacao` pendente|aprovada|
+  rejeitada · planilha nasce aprovada, scan nasce pendente) + vínculo fiscal
+  (`fin_transacao_id` FK + `vinculo_status` nao_vinculada|sugerida|confirmada).
+  PII-leve: `deleted_at` + whitelist (anexada lendo a lista viva) + RLS por módulo
+  `logistica` (SELECT≥1, write≥2, delete super-admin) + service_role. `import_chave`
+  UNIQUE (hash conteúdo+linha) = idempotência da importação.
+- **Importação** (`services/comprasImporter.js` · `POST /logistica/compras/importar`
+  multer xlsx): lê as 3 abas (FIXOS/VARIÁVEL/CARTÃO) com header detectado por
+  conteúdo (robusto a offset de range — a aba CARTÃO começa em A2). Upsert por
+  `import_chave` (reimportar o mesmo arquivo não duplica). Carga inicial 2026 = 502
+  compras (R$ 341.598,33). Botão "Importar planilha" na aba.
+- **Scan** (`POST /logistica/compras/escanear` · reusa `nfScanner.extrairNotaFiscal`
+  Haiku): foto/PDF → IA extrai → compra nasce `pendente` → **fila de aprovação do
+  Pery** (ele confere e aprova/rejeita/edita · o sistema NUNCA lança sozinho) →
+  `notificar('logistica')`. Botão "Escanear nota" (input capture=camera no mobile).
+- **Vínculo com a saída do balanço** (`services/comprasMatch.js` · `GET
+  /compras/:id/sugestoes-vinculo` + `POST /vincular|/desvincular`): sugere
+  `fin_transacoes` tipo='despesa' por valor (±2%) + janela de data (−7/+45d) +
+  similaridade de texto (fornecedor/materiais × descrição), ranqueado, marcando as
+  já vinculadas a outra compra. **Confirmação SEMPRE manual** (nunca vincula
+  sozinho) — serve pra quem lança o financeiro cruzar a info fiscal certinha.
+- **Frontend**: `src/pages/admin/logistica/LogisticaCompras.jsx` (aba nova índice 4 ·
+  reindexou ComprasML→5/Rastreio→6/Estoque→7/Solicitações→8) — KPIs, fila de
+  aprovação, tabela com filtros (comprador/centro/pagamento/status/vínculo/mês),
+  modais de conferência e de vínculo. `api.js`: `logistica.compras.*`.
+- **Visual vidro**: o módulo Logística inteiro migrou do estilo sólido pro tema
+  vidro (StatCards translúcidos com tint do acento em vez de fundo sólido, KPI/modais
+  com `var(--panel)`+blur); tabelas seguem nítidas (regra de ouro).
+- Sem env nova (`ANTHROPIC_API_KEY` já existe). ⚠️ Aplicar a migration
+  `20260618160000` antes do merge; depois importar a planilha pela própria aba.
+
+### Consolidação com financeiro/RH + câmera (2026-06-18 · 2ª leva)
+
+Migration `20260618210000` (aplicada): `log_compras.comprador_id` (FK
+`rh_funcionarios`) + `log_fornecedores.endereco`.
+
+- **Centro de custo = do financeiro**: o campo deixou de ser texto livre e passou
+  a referenciar `fin_centros_custo` (`centro_custo_id`). **Vincular a saída do
+  balanço consolida**: a compra herda o `centro_custo_id` da `fin_transacoes`
+  vinculada. Endpoint `GET /logistica/compras/aux/centros-custo` (ativo +
+  aceita_lancamento). O texto `centro_custo` (TORRE) vira fallback histórico.
+- **Comprador = colaborador real** (`rh_funcionarios`): `comprador_id` + select no
+  modal (`GET /compras/aux/compradores` = ativos). Backfill por mapeamento
+  confirmado pelo Matheus (Erivelton/Pery/Amaury de Araújo Junior/Yago Coelho
+  Torres/Juliana/Marcos Paulo/Juninho=Pedro Luis Barreto Litwinczuk Júnior) ·
+  495/502 (os 7 restantes = "Cartão"/vazio).
+- **Fornecedor find-or-create**: ao lançar/escanear/aprovar, `resolverFornecedor`
+  acha por CNPJ/nome ou **cria** em `log_fornecedores`. A aba Fornecedores
+  **sinaliza "Incompleto"** (badge âmbar + filtro) quando falta CNPJ/endereço/
+  telefone. Backfill criou os fornecedores das 502 compras.
+- **Escanear nota = câmera**: o botão abre `CameraModal` (getUserMedia
+  facingMode environment) com captura + fallback "Enviar foto/arquivo".
+- `COMPRA_SELECT` (logistica.js) embute fornecedor + `centro_fin:fin_centros_custo`
+  + `comprador_fn:rh_funcionarios`. ⚠️ Aplicar `20260618210000` + `NOTIFY pgrst`
+  (os embeds precisam do schema recarregado).
+
+### Nota fiscal por foto no WhatsApp (2026-06-18 · 3ª leva)
+
+Qualquer número manda **"nota fiscal"** pro bot → ele pede a(s) foto(s), aceita
+**várias** (uma de cada vez, perguntando "tem mais?"), e ao finalizar extrai
+TODAS com **Opus 4.8** (`claude-opus-4-8` · melhor visão) e cria uma **compra
+pendente por nota** na aba Compras (aguardando aprovação · nada entra direto).
+
+- **`services/whatsappNota.js`** · `tratarNotaFiscal({m,telefone,texto,messageId})`:
+  intercepta no `publicWhatsapp.js` **ANTES da checagem de líder** (logo após o
+  dedup) — qualquer número usa. Só assume quando há **sessão de nota aberta** ou
+  **gatilho** (`ehGatilho`: "nota fiscal"/"nf"/"enviar nota", ou "nota" sozinha
+  curta sem números — não dispara em relato de culto/grupo); senão devolve
+  `false` e o fluxo normal segue. Sessão = `whatsapp_coletas` (status
+  `aguardando_info`, `parsed.fonte='nota_fiscal'`, `fotos[]`, `msg_ids[]` dedup),
+  janela 60 min. Foto → `baixarMedia` (Meta) → bucket `log-arquivos`
+  (`compras/whatsapp/...`). "não/acabou/só essa" finaliza · "sim/mais" pede a
+  próxima · "cancelar" descarta.
+- **`services/comprasShared.js`** (novo · extraído de logistica.js):
+  `resolverFornecedor` (find-or-create), `matchCompradorPorTelefone` (casa o
+  telefone do remetente com `rh_funcionarios` ativo → sugere comprador) e
+  `criarCompraPendenteDeNota` (cria `log_compras` pendente · `origem_registro='whatsapp'`).
+  `nfScanner.extrairNotaFiscal(buffer, mime, model)` ganhou o param de modelo
+  (default Haiku; WhatsApp passa Opus).
+- **Sem migration, sem env nova** (reusa `whatsapp_coletas` + `log_compras` +
+  `WHATSAPP_ACCESS_TOKEN`/`ANTHROPIC_API_KEY`). Notifica `logistica` ao criar.
+  ⚠️ Custo: Opus por nota é mais caro — decisão do Matheus ("melhor modelo").
+
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 
 Sintoma recorrente: **"Erro ao atualizar/excluir evento"** mas a mudança

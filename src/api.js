@@ -870,6 +870,8 @@ export const logistica = {
     create: (data) => post('/logistica/fornecedores', data),
     update: (id, data) => put(`/logistica/fornecedores/${id}`, data),
     remove: (id) => del(`/logistica/fornecedores/${id}`),
+    enriquecer: (id) => post(`/logistica/fornecedores/${id}/enriquecer`, {}),
+    enriquecerIncompletos: () => post('/logistica/fornecedores/enriquecer-incompletos', {}),
   },
   solicitacoes: {
     list: (params) => get('/logistica/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -898,6 +900,32 @@ export const logistica = {
     },
     enviarFinanceiro: (id) => post(`/logistica/notas/${id}/enviar-financeiro`, {}),
     categorias: () => get('/logistica/notas/aux/categorias'),
+  },
+  // Compras (aba Compras · ledger do Pery · scan→aprovação→vínculo com a saída do balanço)
+  compras: {
+    list: (params) => get('/logistica/compras' + (params ? '?' + new URLSearchParams(params) : '')),
+    kpis: () => get('/logistica/compras/kpis'),
+    centrosCusto: () => get('/logistica/compras/aux/centros-custo'),
+    planoContas: () => get('/logistica/compras/aux/plano-contas'),
+    compradores: () => get('/logistica/compras/aux/compradores'),
+    create: (data) => post('/logistica/compras', data),
+    update: (id, data) => put(`/logistica/compras/${id}`, data),
+    remove: (id) => del(`/logistica/compras/${id}`),
+    escanear: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/logistica/compras/escanear', fd, { timeoutMs: 120_000 });
+    },
+    importar: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/logistica/compras/importar', fd, { timeoutMs: 180_000 });
+    },
+    aprovar: (id, correcoes) => post(`/logistica/compras/${id}/aprovar`, correcoes || {}),
+    rejeitar: (id, motivo) => post(`/logistica/compras/${id}/rejeitar`, { motivo }),
+    sugestoesVinculo: (id) => get(`/logistica/compras/${id}/sugestoes-vinculo`),
+    vincular: (id, fin_transacao_id, score) => post(`/logistica/compras/${id}/vincular`, { fin_transacao_id, score }),
+    desvincular: (id) => post(`/logistica/compras/${id}/desvincular`, {}),
   },
   movimentacoes: {
     list: (params) => get('/logistica/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
