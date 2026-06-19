@@ -1267,7 +1267,37 @@ router.get('/nsm/pessoas', async (req, res) => {
       }
     }
     const pessoas = [...pessoaPorMembro.values()];
-    const totalConvertidos = pessoas.length;
+
+    // Órfãos: convertidos da coorte SEM membro_id (não rastreáveis até reconciliar).
+    // Entram no TOTAL (= denominador do card · accountability) como NÃO engajados,
+    // marcados (orfao:true) pra virar worklist de reconciliação (Kevyn/Next-Batismo).
+    // Sem isso, o card conta 112 e a página 101 (divergência que o Marcos pegou).
+    const orfaoRows = [];
+    let ofrom = 0;
+    for (;;) {
+      let oq = supabase
+        .from('cui_convertidos')
+        .select('id, nome, telefone, cpf, area, data_culto')
+        .is('deleted_at', null)
+        .is('membro_id', null)
+        .gte('data_culto', periodo.inicio)
+        .lte('data_culto', periodo.fim)
+        .range(ofrom, ofrom + page - 1);
+      if (tipoDecisao === 'online') oq = oq.eq('area', 'online');
+      else if (tipoDecisao === 'presencial') oq = oq.neq('area', 'online');
+      const { data, error } = await oq;
+      if (error) throw error;
+      orfaoRows.push(...(data || []));
+      if (!data || data.length < page) break;
+      ofrom += page;
+    }
+    const orfaos = orfaoRows.filter(c => c.data_culto).map(c => ({
+      id: 'orf:' + c.id, nome: c.nome, telefone: c.telefone, cpf: c.cpf, email: null,
+      tipo_decisao: c.area === 'online' ? 'online' : 'presencial',
+      data_decisao: c.data_culto, orfao: true,
+    }));
+
+    const totalConvertidos = pessoas.length + orfaos.length;
 
     const baseResp = {
       segmento, ano: periodo.ano, janela, periodo,
@@ -1286,23 +1316,19 @@ router.get('/nsm/pessoas', async (req, res) => {
     }
 
     // 2. Sinais de engajamento por convertido · MESMA regra do card
-    //    (fn_nsm_sinais_engajados · ±60d · sinais, não valores).
+    //    (fn_nsm_sinais_engajados · ±60d · sinais, não valores). Só pros com membro_id.
     const sinMapa = await nsmSinaisCohorte(pessoas);
 
     // 3. Enriquece com os sinais (engajado = ≥1 sinal · igual ao numerador do card).
+    //    Órfãos entram sempre como NÃO engajados (não há como rastrear sem membro_id).
     const hoje = new Date();
-    const enriquecidos = pessoas.map(p => {
-      const todas = sinMapa.get(p.id) || [];
+    const enrich = (p) => {
+      const todas = p.orfao ? [] : (sinMapa.get(p.id) || []);
       const valoresEng = [...new Set(todas.map(a => a.valor))];
       const diasDecorridos = Math.floor((hoje - new Date(p.data_decisao + 'T12:00:00')) / 86400000);
-      return {
-        ...p,
-        atividades: todas,
-        valores_engajados: valoresEng,
-        engajado: valoresEng.length > 0,
-        dias_decorridos: diasDecorridos,
-      };
-    });
+      return { ...p, atividades: todas, valores_engajados: valoresEng, engajado: valoresEng.length > 0, dias_decorridos: diasDecorridos };
+    };
+    const enriquecidos = [...pessoas.map(enrich), ...orfaos.map(enrich)];
 
     const totalEngajados = enriquecidos.filter(p => p.engajado).length;
 
