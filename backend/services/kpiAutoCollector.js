@@ -132,8 +132,18 @@ async function cohortNoPrazoPct({ inicio, fim, area, marco }) {
       q => q.eq('status', 'realizado').is('deleted_at', null).not('data_batismo', 'is', null));
     for (const b of rows) { put(byMembro, b.membro_id, b.data_batismo); put(byCpf, dig(b.cpf).length === 11 ? dig(b.cpf) : null, b.data_batismo); put(byNome, String(b.nome || '').trim().toLowerCase() || null, b.data_batismo); }
   } else {
-    const rows = await fetchAll('next_inscricoes', 'membro_id, nome, cpf, check_in_at', q => q.not('check_in_at', 'is', null));
-    for (const n of rows) { const d = String(n.check_in_at).slice(0, 10); put(byMembro, n.membro_id, d); put(byCpf, dig(n.cpf).length === 11 ? dig(n.cpf) : null, d); put(byNome, String(n.nome || '').trim().toLowerCase() || null, d); }
+    // Next "feito" = formado na turma (presente em todos os encontros) · data = último encontro da turma
+    const mats = await fetchAll('next_matriculas', 'membro_id, nome, cpf, turma_id, status', q => q.eq('status', 'formado').is('deleted_at', null));
+    const turmaIds = [...new Set(mats.map(m => m.turma_id).filter(Boolean))];
+    const dataPorTurma = new Map();
+    if (turmaIds.length) {
+      const encs = await fetchAll('next_encontros', 'turma_id, data', q => q.in('turma_id', turmaIds).not('data', 'is', null));
+      for (const e of encs) { const d = String(e.data).slice(0, 10); const cur = dataPorTurma.get(e.turma_id); if (!cur || d > cur) dataPorTurma.set(e.turma_id, d); }
+    }
+    for (const n of mats) {
+      const d = dataPorTurma.get(n.turma_id); if (!d) continue;
+      put(byMembro, n.membro_id, d); put(byCpf, dig(n.cpf).length === 11 ? dig(n.cpf) : null, d); put(byNome, String(n.nome || '').trim().toLowerCase() || null, d);
+    }
   }
   const dataEventoDe = (c) => {
     const cands = [c.membro_id ? byMembro.get(c.membro_id) : null, dig(c.cpf).length === 11 ? byCpf.get(dig(c.cpf)) : null, byNome.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
@@ -569,11 +579,12 @@ const COLLECTORS = {
   // NEXT-01: % inscritos NÃO batizados pre-NEXT que viraram batizandos
   //          (indicaram batismo no NEXT do mês)
   'next.batismos': async ({ inicio, fim }) => {
-    // Inscritos no período que estavam ja_batizado=false
+    // Matrículas no período que estavam ja_batizado=false (cutover: next_matriculas)
     const { data: inscritos } = await supabase
-      .from('next_inscricoes')
+      .from('next_matriculas')
       .select('id, indicou_batismo')
       .eq('ja_batizado', false)
+      .is('deleted_at', null)
       .gte('created_at', inicio)
       .lt('created_at', fim);
     const total = (inscritos || []).length;
@@ -589,9 +600,10 @@ const COLLECTORS = {
   // NEXT-02: % inscritos NÃO voluntários pre-NEXT que indicaram servir
   'next.voluntarios': async ({ inicio, fim }) => {
     const { data: inscritos } = await supabase
-      .from('next_inscricoes')
+      .from('next_matriculas')
       .select('id, indicou_servir')
       .eq('ja_voluntario', false)
+      .is('deleted_at', null)
       .gte('created_at', inicio)
       .lt('created_at', fim);
     const total = (inscritos || []).length;
@@ -607,8 +619,9 @@ const COLLECTORS = {
   // NEXT-03: % inscritos com indicacao de dizimo pos-NEXT
   'next.dizimo': async ({ inicio, fim }) => {
     const { data: inscritos } = await supabase
-      .from('next_inscricoes')
+      .from('next_matriculas')
       .select('id, indicou_dizimo')
+      .is('deleted_at', null)
       .gte('created_at', inicio)
       .lt('created_at', fim);
     const total = (inscritos || []).length;
