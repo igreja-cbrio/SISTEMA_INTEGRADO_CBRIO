@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
-import { financeiro } from '../../../api';
+import { financeiro, financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import { exportPDF } from '../../../lib/export';
 import SantanderTab from './SantanderTab';
@@ -240,7 +240,10 @@ function StatCard({ label, value, bg, svg }) {
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Financeiro() {
-  const { isDiretor } = useAuth();
+  const { isDiretor, getAccessLevel } = useAuth();
+  const nivelFin = getAccessLevel(['financeiro']);
+  const podeEditarFin = isDiretor || nivelFin >= 3;   // editar/lançar conta a pagar (write)
+  const podeImportarFin = isDiretor || nivelFin >= 4;  // importar planilha (mesmo nível do backend)
   const [tab, setTab] = useState(0);
   const [subOp, setSubOp] = useState(0);
   const [subGestao, setSubGestao] = useState(0);
@@ -304,6 +307,14 @@ export default function Financeiro() {
 
   // Filtro contas a pagar
   const [filtroPagarStatus, setFiltroPagarStatus] = useState('');
+  const [filtroPagarAno, setFiltroPagarAno] = useState('');
+  const [filtroPagarBusca, setFiltroPagarBusca] = useState('');
+  const [cpResumo, setCpResumo] = useState(null);
+  const [cpTotal, setCpTotal] = useState(0);
+  const [cpPage, setCpPage] = useState(1);
+  const [importingCp, setImportingCp] = useState(false);
+  const [cpMsg, setCpMsg] = useState('');
+  const CP_PAGE_SIZE = 100;
 
   // Filtro reembolsos
   const [filtroReembolsoStatus, setFiltroReembolsoStatus] = useState('');
@@ -364,12 +375,26 @@ export default function Financeiro() {
   const loadContasPagar = useCallback(async () => {
     try {
       setLoading(true);
-      const params = {};
-      if (filtroPagarStatus) params.status = filtroPagarStatus;
-      setContasPagar(await financeiro.contasPagar.list(params));
+      const params = { page: cpPage, pageSize: CP_PAGE_SIZE };
+      if (filtroPagarStatus === 'vencido') params.vencido = 'true';
+      else if (filtroPagarStatus) params.status = filtroPagarStatus;
+      if (filtroPagarAno) params.ano = filtroPagarAno;
+      if (filtroPagarBusca) params.q = filtroPagarBusca;
+      // O resumo (KPIs) segue o recorte ano/busca, mas ignora o filtro de status
+      // → os 4 cards sempre mostram total / baixado / aberto / vencido do escopo.
+      const resumoParams = {};
+      if (filtroPagarAno) resumoParams.ano = filtroPagarAno;
+      if (filtroPagarBusca) resumoParams.q = filtroPagarBusca;
+      const [lista, resumo] = await Promise.all([
+        financeiroV2.contasPagar.list(params),
+        financeiroV2.contasPagar.resumo(resumoParams),
+      ]);
+      setContasPagar(lista.items || []);
+      setCpTotal(lista.total || 0);
+      setCpResumo(resumo || null);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroPagarStatus]);
+  }, [filtroPagarStatus, filtroPagarAno, filtroPagarBusca, cpPage]);
 
   const loadReembolsos = useCallback(async () => {
     try {
@@ -443,6 +468,23 @@ export default function Financeiro() {
       loadContasPagar();
       loadDash();
     } catch (e) { handleError(e); }
+  };
+
+  const importarPlanilhaPagar = async (file) => {
+    if (!file) return;
+    setImportingCp(true);
+    setCpMsg('');
+    try {
+      const r = await financeiroV2.contasPagar.importar(file);
+      setCpMsg(
+        `Importado: ${r.gravadas} título(s) · ${r.baixadas} baixado(s), ${r.abertas} em aberto · total ${fmtMoney(r.valor_total)}`
+        + ((r.sem_plano || r.sem_centro) ? ` · ${r.sem_plano} sem plano de contas / ${r.sem_centro} sem centro de custo` : '')
+      );
+      setFiltroPagarStatus(''); setFiltroPagarAno(''); setFiltroPagarBusca(''); setCpPage(1);
+      loadContasPagar();
+      loadDash();
+    } catch (e) { handleError(e); }
+    finally { setImportingCp(false); }
   };
 
   const saveReembolso = async (form) => {
@@ -736,17 +778,59 @@ export default function Financeiro() {
   // ═══════════════════════════════════════════════════════════
   // TAB: CONTAS A PAGAR
   // ═══════════════════════════════════════════════════════════
-  const renderContasPagar = () => (
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const cpTotalPaginas = Math.max(1, Math.ceil(cpTotal / CP_PAGE_SIZE));
+  const renderContasPagar = () => {
+    const cards = cpResumo ? [
+      { label: 'Total de títulos', valor: fmtMoney(cpResumo.total_valor), sub: `${cpResumo.total_n || 0} título(s)`, cor: C.text },
+      { label: 'Baixado (pago)', valor: fmtMoney(cpResumo.baixadas_valor), sub: `${cpResumo.baixadas_n || 0} título(s)`, cor: C.green },
+      { label: 'Em aberto', valor: fmtMoney(cpResumo.abertas_valor), sub: `${cpResumo.abertas_n || 0} título(s)`, cor: C.amber },
+      { label: 'Vencido (em aberto)', valor: fmtMoney(cpResumo.vencidas_valor), sub: `${cpResumo.vencidas_n || 0} título(s)`, cor: C.red },
+    ] : [];
+    return (
     <>
-      <div style={styles.filterRow}>
-        <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarStatus} onChange={e => setFiltroPagarStatus(e.target.value)}>
+      {cards.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 14 }}>
+          {cards.map((c) => (
+            <div key={c.label} style={{ ...styles.card, padding: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{c.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: c.cor, marginTop: 4 }}>{c.valor}</div>
+              <div style={{ fontSize: 12, color: C.text2, marginTop: 2 }}>{c.sub}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ ...styles.filterRow, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarStatus} onChange={e => { setFiltroPagarStatus(e.target.value); setCpPage(1); }}>
           <option value="">Todos os status</option>
-          <option value="pendente">Pendente</option>
-          <option value="pago">Pago</option>
-          <option value="cancelado">Cancelado</option>
+          <option value="pendente">Em aberto</option>
+          <option value="pago">Baixado (pago)</option>
           <option value="vencido">Vencido</option>
+          <option value="cancelado">Cancelado</option>
         </select>
-        {isDiretor && (
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarAno} onChange={e => { setFiltroPagarAno(e.target.value); setCpPage(1); }}>
+          <option value="">Todos os anos</option>
+          {(cpResumo?.anos || []).map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <input
+          className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          style={{ minWidth: 220 }}
+          placeholder="Buscar fornecedor / histórico..."
+          value={filtroPagarBusca}
+          onChange={e => { setFiltroPagarBusca(e.target.value); setCpPage(1); }}
+        />
+        <div style={{ flex: 1 }} />
+        {podeImportarFin && (
+          <>
+            <input type="file" accept=".xlsx,.xls" id="cp-import-file" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importarPlanilhaPagar(f); }} />
+            <Button variant="outline" disabled={importingCp} onClick={() => document.getElementById('cp-import-file')?.click()}>
+              {importingCp ? 'Importando...' : 'Importar planilha'}
+            </Button>
+          </>
+        )}
+        {podeEditarFin && (
           <Button onClick={() => setModalPagar({
             descricao: '', fornecedor: '', categoria_id: '', valor: '', data_vencimento: '', data_pagamento: '', conta_id: '', status: 'pendente',
           })}>
@@ -754,36 +838,48 @@ export default function Financeiro() {
           </Button>
         )}
       </div>
+      {cpMsg && (
+        <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 8, background: C.greenBg, color: C.green, fontSize: 13, fontWeight: 600 }}>{cpMsg}</div>
+      )}
+
       <div style={styles.card}>
         {loading ? (
           <div style={styles.empty}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></div>
         ) : contasPagar.length === 0 ? (
-          <div style={styles.empty}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhuma conta a pagar encontrada.</span></div></div>
+          <div style={styles.empty}><div className="flex flex-col items-center py-10 gap-2"><span className="text-sm font-medium text-foreground">Nenhuma conta a pagar encontrada. Use "Importar planilha" pra trazer do sistema externo.</span></div></div>
         ) : (
+          <>
           <table style={styles.table}>
             <thead>
               <tr>
                 <th style={styles.th}>Descrição</th>
                 <th style={styles.th}>Fornecedor</th>
+                <th style={styles.th}>Plano de Contas</th>
+                <th style={styles.th}>Centro de Custo</th>
                 <th style={styles.th}>Valor</th>
                 <th style={styles.th}>Vencimento</th>
-                <th style={styles.th}>Pagamento</th>
+                <th style={styles.th}>Baixa</th>
                 <th style={styles.th}>Status</th>
-                {isDiretor && <th style={styles.th}>Ações</th>}
+                {podeEditarFin && <th style={styles.th}>Ações</th>}
               </tr>
             </thead>
             <tbody>
-              {contasPagar.map(cp => (
-                <tr key={cp.id} style={cp.status === 'vencido' ? { background: C.redBg } : {}}>
+              {contasPagar.map(cp => {
+                const vencido = cp.status !== 'pago' && cp.status !== 'cancelado' && cp.data_vencimento && cp.data_vencimento < hojeISO;
+                const stExib = vencido ? 'vencido' : cp.status;
+                return (
+                <tr key={cp.id} style={vencido ? { background: C.redBg } : {}}>
                   <td style={{ ...styles.td, fontWeight: 600 }}>{cp.descricao}</td>
-                  <td style={styles.td}>{cp.fornecedor || '\u2014'}</td>
+                  <td style={styles.td}>{cp.fornecedor || '—'}</td>
+                  <td style={styles.td}>{cp.plano?.nome || cp.plano_contas_nome || '—'}</td>
+                  <td style={styles.td}>{cp.centro?.nome || cp.centro_custo_nome || '—'}</td>
                   <td style={{ ...styles.td, fontWeight: 700 }}>{fmtMoney(cp.valor)}</td>
                   <td style={styles.td}>{fmtDate(cp.data_vencimento)}</td>
                   <td style={styles.td}>{fmtDate(cp.data_pagamento)}</td>
-                  <td style={styles.td}><Badge status={cp.status} map={STATUS_PAGAR} /></td>
-                  {isDiretor && (
+                  <td style={styles.td}><Badge status={stExib} map={STATUS_PAGAR} /></td>
+                  {podeEditarFin && (
                     <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
-                      {(cp.status === 'pendente' || cp.status === 'vencido') && (
+                      {cp.status !== 'pago' && cp.status !== 'cancelado' && (
                         <Button variant="success" size="sm" className="mr-1" onClick={() => pagarConta(cp)}>Pagar</Button>
                       )}
                       <Button variant="ghost" size="sm" onClick={() => setModalPagar(cp)}>Editar</Button>
@@ -791,13 +887,23 @@ export default function Financeiro() {
                     </td>
                   )}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 4px', fontSize: 13, color: C.text2 }}>
+            <span>{cpTotal} título(s) · página {cpPage} de {cpTotalPaginas}</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="outline" size="sm" disabled={cpPage <= 1} onClick={() => setCpPage(p => Math.max(1, p - 1))}>Anterior</Button>
+              <Button variant="outline" size="sm" disabled={cpPage >= cpTotalPaginas} onClick={() => setCpPage(p => p + 1)}>Próxima</Button>
+            </div>
+          </div>
+          </>
         )}
       </div>
     </>
-  );
+    );
+  };
 
   // ═══════════════════════════════════════════════════════════
   // TAB: REEMBOLSOS

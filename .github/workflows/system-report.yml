@@ -1,0 +1,73 @@
+name: system-report
+
+# Mantém docs/system-report/index.html sempre atualizado: atividade (commits/
+# merges por pessoa, % assistido por IA) lida do git + custos acumulados e
+# projeção de 12 meses (config editável). Roda diariamente, a cada push na main
+# e sob demanda. Commita só se algo mudou e publica a página no GitHub Pages
+# (apenas a pasta do dashboard — os demais docs internos NÃO vão pro Pages).
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 06h BRT
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/system-report/**'   # evita loop (o próprio commit do report)
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commitar o index.html regenerado
+  pages: write      # publicar no GitHub Pages
+  id-token: write   # OIDC exigido pelo deploy-pages
+
+concurrency:
+  group: system-report
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # histórico completo pro git log
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Gerar dashboard
+        env:
+          REPORT_REF: origin/main
+          GH_TOKEN: ${{ github.token }}   # autentica a Search API (PRs integrados)
+        run: node scripts/system-report/build.mjs
+      # Best-effort: commitar de volta é só pra manter o arquivo versionado.
+      # Se o push falhar (ex.: main avançou, ou é um re-run de commit antigo),
+      # NÃO pode travar a publicação do Pages — por isso continue-on-error.
+      - name: Commitar se mudou (best-effort)
+        continue-on-error: true
+        run: |
+          if [[ -n "$(git status --porcelain docs/system-report/index.html)" ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add docs/system-report/index.html docs/system-report/.nojekyll
+            git commit -m 'chore(report): atualiza dashboard de custos e atividade [skip ci]'
+            git pull --rebase --autostash origin main || true
+            git push || echo 'push falhou (main avancou) — Pages publica mesmo assim'
+          else
+            echo 'Sem mudanças no dashboard.'
+          fi
+      # ── Publicar no GitHub Pages (só a pasta do dashboard) ──────────────────
+      # Requer, uma única vez: Settings → Pages → Source: "GitHub Actions".
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true   # liga o Pages (source = GitHub Actions) sem toggle manual
+      - name: Empacotar artefato (apenas o dashboard)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/system-report
+      - name: Deploy no Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

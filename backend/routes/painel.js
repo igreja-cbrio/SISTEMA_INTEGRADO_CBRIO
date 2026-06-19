@@ -1052,7 +1052,6 @@ router.get('/kpi/:id', async (req, res) => {
 // ----------------------------------------------------------------------------
 const NSM_ATIVIDADES = {
   seguir:       [
-    { id: 'primeiro_contato', label: '1º Contato' },
     { id: 'batismo',          label: 'Batismo' },
     { id: 'next',             label: 'Next' },
   ],
@@ -1060,16 +1059,13 @@ const NSM_ATIVIDADES = {
     { id: 'grupo', label: 'Em grupo' },
   ],
   investir:     [
-    { id: 'devocional',     label: 'Devocional' },
-    { id: 'jornada180',     label: 'Jornada 180' },
-    { id: 'aconselhamento', label: 'Aconselhamento' },
+    { id: 'investir', label: 'Investir' },
   ],
   servir:       [
     { id: 'voluntario', label: 'Voluntário' },
   ],
   generosidade: [
-    { id: 'dizimo', label: 'Dízimo' },
-    { id: 'oferta', label: 'Oferta' },
+    { id: 'dizimo', label: 'Generosidade' },
   ],
 };
 
@@ -1105,53 +1101,81 @@ function nsmChunk(arr, n) {
   return out;
 }
 
-// Busca todas as atividades de engajamento dos membros entre [início, fim].
-// Retorna Map<membro_id, Array<{ valor, atividade, data, detalhe }>>.
-// (chunk em .in() pra não estourar a URL · 1 leva de queries por chunk)
-async function nsmAtividades(ids, inicio, fim) {
+
+// Sinais de engajamento por convertido · ESPELHA fn_nsm_sinais_engajados (a função
+// SQL do card · migration 20260619140000): sinais {batismo,next,grupo,investir,
+// servir,generosidade}, janela ±60d da conversão, casa por id/cpf/nome (batismo/
+// next · ~97% sem CPF → nome), grupo sem gate de data (entrou_em = data de import).
+// 1º contato NÃO é sinal. Mantida em JS aqui só pra devolver a lista pra a UI;
+// a regra de "engajado" é idêntica à do card. Map<membro_id, [{valor,atividade,data}]>.
+async function nsmSinaisCohorte(pessoas) {
   const mapa = new Map();
-  if (!ids.length) return mapa;
-  const push = (mid, valor, atividade, data, detalhe) => {
-    if (!mid || !data) return;
-    if (!mapa.has(mid)) mapa.set(mid, []);
-    mapa.get(mid).push({ valor, atividade, data: String(data).slice(0, 10), detalhe: detalhe || null });
+  if (!pessoas.length) return mapa;
+  const ids = pessoas.map(p => p.id);
+  const dig = (v) => String(v || '').replace(/\D/g, '');
+  const lower = (v) => String(v || '').trim().toLowerCase();
+  const DIA = 86400000;
+  const inWin = (d, dc) => {
+    if (!d || !dc) return false;
+    const t = new Date(String(d).slice(0, 10) + 'T12:00:00').getTime();
+    const c = new Date(dc + 'T12:00:00').getTime();
+    return t >= c - 60 * DIA && t <= c + 60 * DIA;
   };
-
+  const add = (m, k, d) => { if (!k || !d) return; (m.get(k) || m.set(k, []).get(k)).push(d); };
+  const pageAll = async (table, cols, build) => {
+    const out = []; let f = 0;
+    for (;;) {
+      let q = supabase.from(table).select(cols).range(f, f + 999);
+      if (build) q = build(q);
+      const { data, error } = await q;
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+      f += 1000;
+    }
+    return out;
+  };
+  // batismo / next · globais (casa por id/cpf/nome)
+  const bat = await pageAll('batismo_inscricoes', 'membro_id, cpf, nome, data_batismo',
+    q => q.eq('status', 'realizado').not('data_batismo', 'is', null));
+  const bM = new Map(), bC = new Map(), bN = new Map();
+  bat.forEach(b => { add(bM, b.membro_id, b.data_batismo); add(bC, dig(b.cpf).length === 11 ? dig(b.cpf) : null, b.data_batismo); add(bN, lower(b.nome) || null, b.data_batismo); });
+  const nxM = await pageAll('next_matriculas', 'membro_id, cpf, nome, created_at', q => q.eq('status', 'formado').is('deleted_at', null));
+  const nxL = await pageAll('next_inscricoes', 'membro_id, nome, check_in_at', q => q.not('check_in_at', 'is', null));
+  const nM = new Map(), nC = new Map(), nN = new Map();
+  nxM.forEach(n => { add(nM, n.membro_id, n.created_at); add(nC, dig(n.cpf).length === 11 ? dig(n.cpf) : null, n.created_at); add(nN, lower(n.nome) || null, n.created_at); });
+  nxL.forEach(n => { add(nM, n.membro_id, n.check_in_at); add(nN, lower(n.nome) || null, n.check_in_at); });
+  // grupo (sem data) + investir/servir/generosidade (por membro_id) · chunked
+  const gru = new Set(); const inv = new Map(), ser = new Map(), gen = new Map();
   for (const part of nsmChunk(ids, 150)) {
-    const [trilha, batismos, nexts, grupos, devs, j180, acons, vols, contribs] = await Promise.all([
-      supabase.from('mem_trilha_valores').select('membro_id, etapa, data_conclusao')
-        .is('deleted_at', null).in('membro_id', part).eq('concluida', true)
-        .in('etapa', ['primeiro_contato', 'batismo']).gte('data_conclusao', inicio).lte('data_conclusao', fim),
-      supabase.from('batismo_inscricoes').select('membro_id, data_batismo')
-        .in('membro_id', part).eq('status', 'realizado').gte('data_batismo', inicio).lte('data_batismo', fim),
-      supabase.from('next_inscricoes').select('membro_id, check_in_at')
-        .in('membro_id', part).not('check_in_at', 'is', null)
-        .gte('check_in_at', inicio).lte('check_in_at', fim + 'T23:59:59'),
-      supabase.from('mem_grupo_membros').select('membro_id, entrou_em, grupo_id')
-        .is('deleted_at', null).in('membro_id', part).is('saiu_em', null)
-        .gte('entrou_em', inicio).lte('entrou_em', fim),
-      supabase.from('mem_devocionais').select('membro_id, data_devocional')
-        .in('membro_id', part).eq('concluida', true).gte('data_devocional', inicio).lte('data_devocional', fim),
-      supabase.from('cui_jornada180').select('membro_id, data_encontro, presente')
-        .is('deleted_at', null).in('membro_id', part).gte('data_encontro', inicio).lte('data_encontro', fim),
-      supabase.from('cui_acompanhamentos').select('membro_id, data_inicio, motivo')
-        .in('membro_id', part).gte('data_inicio', inicio).lte('data_inicio', fim),
-      supabase.from('mem_voluntarios').select('membro_id, desde, ministerio_id')
-        .is('deleted_at', null).in('membro_id', part).is('ate', null).gte('desde', inicio).lte('desde', fim),
-      supabase.from('mem_contribuicoes').select('membro_id, data, tipo')
-        .is('deleted_at', null).in('membro_id', part).in('tipo', ['dizimo', 'oferta'])
-        .gte('data', inicio).lte('data', fim),
+    const [g, dev, j, ac, vol, con] = await Promise.all([
+      supabase.from('mem_grupo_membros').select('membro_id').is('deleted_at', null).in('membro_id', part).is('saiu_em', null),
+      supabase.from('mem_devocionais').select('membro_id, data_devocional').in('membro_id', part).eq('concluida', true).not('data_devocional', 'is', null),
+      supabase.from('cui_jornada180').select('membro_id, data_encontro, presente').is('deleted_at', null).in('membro_id', part).not('data_encontro', 'is', null),
+      supabase.from('cui_acompanhamentos').select('membro_id, data_inicio').in('membro_id', part).not('data_inicio', 'is', null),
+      supabase.from('mem_voluntarios').select('membro_id, desde').is('deleted_at', null).in('membro_id', part).is('ate', null).not('desde', 'is', null),
+      supabase.from('mem_contribuicoes').select('membro_id, data, tipo').is('deleted_at', null).in('membro_id', part).in('tipo', ['dizimo', 'oferta']).not('data', 'is', null),
     ]);
-
-    (trilha.data || []).forEach(r => push(r.membro_id, 'seguir', r.etapa === 'batismo' ? 'batismo' : 'primeiro_contato', r.data_conclusao));
-    (batismos.data || []).forEach(r => push(r.membro_id, 'seguir', 'batismo', r.data_batismo));
-    (nexts.data || []).forEach(r => push(r.membro_id, 'seguir', 'next', r.check_in_at));
-    (grupos.data || []).forEach(r => push(r.membro_id, 'conectar', 'grupo', r.entrou_em, r.grupo_id));
-    (devs.data || []).forEach(r => push(r.membro_id, 'investir', 'devocional', r.data_devocional));
-    (j180.data || []).forEach(r => { if (r.presente !== false) push(r.membro_id, 'investir', 'jornada180', r.data_encontro); });
-    (acons.data || []).forEach(r => push(r.membro_id, 'investir', 'aconselhamento', r.data_inicio, r.motivo));
-    (vols.data || []).forEach(r => push(r.membro_id, 'servir', 'voluntario', r.desde, r.ministerio_id));
-    (contribs.data || []).forEach(r => push(r.membro_id, 'generosidade', r.tipo === 'dizimo' ? 'dizimo' : 'oferta', r.data));
+    (g.data || []).forEach(r => gru.add(r.membro_id));
+    (dev.data || []).forEach(r => add(inv, r.membro_id, r.data_devocional));
+    (j.data || []).forEach(r => { if (r.presente !== false) add(inv, r.membro_id, r.data_encontro); });
+    (ac.data || []).forEach(r => add(inv, r.membro_id, r.data_inicio));
+    (vol.data || []).forEach(r => add(ser, r.membro_id, r.desde));
+    (con.data || []).forEach(r => add(gen, r.membro_id, r.data));
+  }
+  const firstIn = (arrs, dc) => { for (const a of arrs) { if (!a) continue; for (const d of a) if (inWin(d, dc)) return d; } return null; };
+  for (const p of pessoas) {
+    const dc = p.data_decisao;
+    const cpf = dig(p.cpf).length === 11 ? dig(p.cpf) : null;
+    const nome = lower(p.nome);
+    const atv = []; let d;
+    if ((d = firstIn([bM.get(p.id), cpf && bC.get(cpf), bN.get(nome)], dc))) atv.push({ valor: 'seguir', atividade: 'batismo', data: String(d).slice(0, 10) });
+    if ((d = firstIn([nM.get(p.id), cpf && nC.get(cpf), nN.get(nome)], dc))) atv.push({ valor: 'seguir', atividade: 'next', data: String(d).slice(0, 10) });
+    if (gru.has(p.id)) atv.push({ valor: 'conectar', atividade: 'grupo', data: dc });
+    if ((d = firstIn([inv.get(p.id)], dc))) atv.push({ valor: 'investir', atividade: 'investir', data: String(d).slice(0, 10) });
+    if ((d = firstIn([ser.get(p.id)], dc))) atv.push({ valor: 'servir', atividade: 'voluntario', data: String(d).slice(0, 10) });
+    if ((d = firstIn([gen.get(p.id)], dc))) atv.push({ valor: 'generosidade', atividade: 'dizimo', data: String(d).slice(0, 10) });
+    if (atv.length) mapa.set(p.id, atv);
   }
   return mapa;
 }
@@ -1209,7 +1233,7 @@ router.get('/nsm/pessoas', async (req, res) => {
     for (;;) {
       let q = supabase
         .from('cui_convertidos')
-        .select('membro_id, nome, telefone, area, data_culto')
+        .select('membro_id, nome, telefone, cpf, area, data_culto')
         .is('deleted_at', null)
         .not('membro_id', 'is', null)
         .gte('data_culto', periodo.inicio)
@@ -1235,6 +1259,7 @@ router.get('/nsm/pessoas', async (req, res) => {
           id: c.membro_id,
           nome: c.nome,
           telefone: c.telefone,
+          cpf: c.cpf,
           email: null,
           tipo_decisao: c.area === 'online' ? 'online' : 'presencial',
           data_decisao: dataDec,
@@ -1260,24 +1285,16 @@ router.get('/nsm/pessoas', async (req, res) => {
       });
     }
 
-    // 2. Atividades dos membros no período
-    const ids = pessoas.map(p => p.id);
-    const atvMapa = await nsmAtividades(ids, periodo.inicio, periodo.fim);
+    // 2. Sinais de engajamento por convertido · MESMA regra do card
+    //    (fn_nsm_sinais_engajados · ±60d · sinais, não valores).
+    const sinMapa = await nsmSinaisCohorte(pessoas);
 
-    // 3. Enriquece: so conta atividade feita ENTRE a decisão e o fim da janela de engajamento
+    // 3. Enriquece com os sinais (engajado = ≥1 sinal · igual ao numerador do card).
     const hoje = new Date();
     const enriquecidos = pessoas.map(p => {
-      const dDec = p.data_decisao;
-      let limiteEng = periodo.fim;
-      if (periodo.janelaDias) {
-        const lim = new Date(dDec + 'T12:00:00');
-        lim.setDate(lim.getDate() + periodo.janelaDias);
-        const limStr = lim.toISOString().slice(0, 10);
-        limiteEng = limStr < periodo.fim ? limStr : periodo.fim;
-      }
-      const todas = (atvMapa.get(p.id) || []).filter(a => a.data >= dDec && a.data <= limiteEng);
+      const todas = sinMapa.get(p.id) || [];
       const valoresEng = [...new Set(todas.map(a => a.valor))];
-      const diasDecorridos = Math.floor((hoje - new Date(dDec + 'T12:00:00')) / 86400000);
+      const diasDecorridos = Math.floor((hoje - new Date(p.data_decisao + 'T12:00:00')) / 86400000);
       return {
         ...p,
         atividades: todas,

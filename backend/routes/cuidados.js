@@ -1171,7 +1171,8 @@ router.get('/visitas-pendentes', async (req, res) => {
 // GET /api/cuidados/jornada-convertidos?area=&status=
 // Os 3 marcos dos primeiros 90 dias por convertido: contato ≤3d, batismo ≤90d,
 // Next ≤90d · status semáforo. Segmentável por área (cada líder vê a sua;
-// Marcelo/Cuidados vê todas). Cruza batismo_inscricoes + next_inscricoes (paginado).
+// Marcelo/Cuidados vê todas). Cruza batismo_inscricoes + Next (check-in legado em
+// next_inscricoes OU formado na turma em next_matriculas · paginado).
 router.get('/jornada-convertidos', async (req, res) => {
   try {
     const { area } = req.query;
@@ -1199,7 +1200,8 @@ router.get('/jornada-convertidos', async (req, res) => {
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
     );
     const batismos = await fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome', (q) => q.is('deleted_at', null));
-    const nextInsc = await fetchAll('next_inscricoes', 'membro_id, nome, check_in_at'); // sem deleted_at nessa tabela
+    const nextInsc = await fetchAll('next_inscricoes', 'membro_id, nome, cpf, check_in_at'); // legado (check-in) · sem deleted_at
+    const nextMats = await fetchAll('next_matriculas', 'membro_id, cpf, nome, status', (q) => q.is('deleted_at', null)); // turmas novas (formado)
 
     // índices de batismo (realizado > inscrito) e de Next (fez check-in > só inscrito)
     const bM = new Map(), bC = new Map(), bN = new Map();
@@ -1221,18 +1223,28 @@ router.get('/jornada-convertidos', async (req, res) => {
       const hit = bN.get(String(c.nome || '').trim().toLowerCase());
       return hit ? { real: hit.real } : null;
     };
-    const nM = new Map(), nN = new Map();
+    // "fez Next" = check-in legado OU formado na turma do mês (cutover · OR dos dois na transição)
+    const nM = new Map(), nC = new Map(), nN = new Map();
     const putN = (m, k, fez) => { if (!k) return; const c = m.get(k); const r = fez ? 2 : 1; if (!c || r > c.r) m.set(k, { r, fez }); };
     for (const n of nextInsc) {
       const fez = !!n.check_in_at;
       putN(nM, n.membro_id, fez);
+      putN(nC, onlyDigits(n.cpf).length === 11 ? onlyDigits(n.cpf) : null, fez);
       putN(nN, String(n.nome || '').trim().toLowerCase() || null, fez);
     }
+    for (const m of nextMats) {
+      const fez = m.status === 'formado';
+      putN(nM, m.membro_id, fez);
+      putN(nC, onlyDigits(m.cpf).length === 11 ? onlyDigits(m.cpf) : null, fez);
+      putN(nN, String(m.nome || '').trim().toLowerCase() || null, fez);
+    }
     const nextOf = (c) => {
-      // Idem batOf: com membro_id casa só por membro_id; nome só sem identificação.
-      if (c.membro_id) {
-        const hit = nM.get(c.membro_id);
-        return hit ? { fez: hit.fez } : null;
+      // Com membro_id/CPF casa SÓ por chave forte — cruzar por nome aqui gera
+      // falso positivo (homônimo). Nome só quando não há identificação.
+      const temCpf = onlyDigits(c.cpf).length === 11;
+      if (c.membro_id || temCpf) {
+        const cs = [c.membro_id ? nM.get(c.membro_id) : null, temCpf ? nC.get(onlyDigits(c.cpf)) : null].filter(Boolean);
+        return cs.length ? { fez: cs.some(x => x.fez) } : null;
       }
       const hit = nN.get(String(c.nome || '').trim().toLowerCase());
       return hit ? { fez: hit.fez } : null;

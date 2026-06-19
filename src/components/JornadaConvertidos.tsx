@@ -156,7 +156,18 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
             ) : itens.map((i: any) => (
               <TableRow key={i.id} className={i.contato.status === 'atrasado' ? 'border-l-2 border-l-destructive' : undefined}>
                 <TableCell className="font-medium">
-                  {i.nome}
+                  {(() => {
+                    // Inscrito no Batismo/Next mas ainda não foi/não formou → nome em azul
+                    const inscritoPendente = i.batismo?.status === 'inscrito' || i.next?.status === 'inscrito';
+                    return (
+                      <span
+                        style={inscritoPendente ? { color: '#3b82f6' } : undefined}
+                        title={inscritoPendente ? 'Inscrito no Batismo/Next, mas ainda não foi/não formou' : undefined}
+                      >
+                        {i.nome}
+                      </span>
+                    );
+                  })()}
                   {i.telefone && <div className="text-xs text-muted-foreground">{i.telefone}</div>}
                 </TableCell>
                 {!area && <TableCell className="text-sm">{AREA_LABEL[i.area] || '—'}</TableCell>}
