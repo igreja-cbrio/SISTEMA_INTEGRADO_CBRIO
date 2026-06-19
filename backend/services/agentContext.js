@@ -571,6 +571,18 @@ async function fetchIntegracaoContext() {
     .order('data_visita', { ascending: false })
     .limit(30);
 
+  // Batismos (estavam fora de qualquer contexto — perguntas tipo "quem foi a
+  // última pessoa a se batizar?" não eram respondíveis).
+  const { count: batTotal }      = await supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true }).is('deleted_at', null);
+  const { count: batRealizados } = await supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'realizado');
+  const { count: batInscritos }  = await supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'inscrito');
+  const { data: ultimosBatismos } = await supabase
+    .from('batismo_inscricoes')
+    .select('nome, sobrenome, data_batismo, area_kpi')
+    .is('deleted_at', null).eq('status', 'realizado').not('data_batismo', 'is', null)
+    .order('data_batismo', { ascending: false })
+    .limit(15);
+
   return {
     resumo: {
       total_visitantes: totalVisitantes,
@@ -581,6 +593,14 @@ async function fetchIntegracaoContext() {
       virou_membro_ultimos_90d: virouMembro,
     },
     visitantes_novos_sem_responsavel: novosSemResp || [],
+    batismos: {
+      total: batTotal, realizados: batRealizados, inscritos_aguardando: batInscritos,
+      ultimos_batizados: (ultimosBatismos || []).map((b) => ({
+        nome: [b.nome, b.sobrenome].filter(Boolean).join(' '),
+        data_batismo: b.data_batismo ? String(b.data_batismo).slice(0, 10) : null,
+        area: b.area_kpi || null,
+      })),
+    },
   };
 }
 

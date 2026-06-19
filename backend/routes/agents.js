@@ -131,12 +131,12 @@ router.post('/chat', chatLimiter, async (req, res) => {
     //    + busca relevante no Cérebro (vault Obsidian)
     let contextStr = '';
     try {
-      const ctx = await buildContext(
-        [agentModule === 'supervisor' ? 'all' : agentModule],
-        req,
-        { query: message, vaultLimit: 5 },
-      );
-      contextStr = serializeContext(ctx, 24000);
+      // Todo agente recebe o contexto de TODOS os módulos (filtrado por permissão
+      // do usuário) — assim qualquer agente fica "por dentro de tudo" do sistema
+      // e do app, não só do seu módulo. A persona do agente (system prompt) ainda
+      // molda o tom; o dado é sempre completo.
+      const ctx = await buildContext(['all'], req, { query: message, vaultLimit: 5 });
+      contextStr = serializeContext(ctx, 60000);
     } catch (e) {
       console.warn('[AGENTS] Context build failed:', e.message);
     }
