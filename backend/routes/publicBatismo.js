@@ -2,6 +2,7 @@ const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 
 // Rate limit: 10 inscrições por IP a cada 15 min
 const limiter = rateLimit({
@@ -93,35 +94,50 @@ router.post('/', limiter, async (req, res) => {
     const nomeT = String(nome).trim();
     const sobrenomeT = String(sobrenome).trim();
 
-    // Dedup: não deixa a mesma pessoa se inscrever duas vezes pro mesmo
-    // batismo (mesmo CPF ou email+telefone + status pendente/confirmado)
-    if (cpfNorm) {
-      const { data: dup } = await supabase
-        .from('batismo_inscricoes')
-        .select('id, nome, sobrenome, status')
-        .eq('cpf', cpfNorm)
-        .in('status', ['pendente', 'confirmado'])
-        .maybeSingle();
-      if (dup) {
-        return res.status(200).json({
-          ok: true,
-          duplicado: true,
-          mensagem: `Você já tem uma inscrição em andamento (status: ${dup.status}). Sua data será mantida.`,
-        });
-      }
+    // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
+    // deduplicado (CPF → e-mail → telefone+nome → nome+nascimento · NUNCA
+    // telefone/e-mail sozinho) em vez do match-só-por-CPF com full-scan de
+    // mem_membros — que batia no cap de 1000 do PostgREST e deixava órfão mesmo
+    // quando a pessoa já existia. Toda inscrição nasce ligada a uma pessoa real
+    // e deduplicada → some o backlog de "sem vínculo" do funil (Entradas).
+    let membroId = null;
+    try {
+      const r = await acharOuCriarGuardado({
+        cpf: cpfNorm, email: emailNorm, telefone: telNorm,
+        nome: `${nomeT} ${sobrenomeT}`.trim(),
+        dataNascimento: data_nascimento || null,
+        status: 'visitante',
+      });
+      membroId = r.membro_id;
+    } catch (e) {
+      console.error('[publicBatismo] acharOuCriarGuardado:', e.message);
+      // fail-open: segue sem vínculo (o funil/Entradas liga depois)
     }
 
-    // Tenta vincular a um membro existente por CPF
-    let membroId = null;
-    if (cpfNorm) {
-      const { data: membros } = await supabase
-        .from('mem_membros')
-        .select('id, cpf')
-        .filter('cpf', 'not.is', null);
-      const match = (membros || []).find(m =>
-        String(m.cpf || '').replace(/\D/g, '') === cpfNorm
-      );
-      if (match) membroId = match.id;
+    // Dedup de INSCRIÇÃO: a mesma pessoa não se inscreve 2x pro batismo em aberto
+    // — agora por membro resolvido OU por CPF (pega a reinscrição sem CPF, que o
+    // check antigo só-por-CPF deixava passar criando 2 inscrições).
+    {
+      const ors = [];
+      if (membroId) ors.push(`membro_id.eq.${membroId}`);
+      if (cpfNorm) ors.push(`cpf.eq.${cpfNorm}`);
+      if (ors.length) {
+        const { data: dups } = await supabase
+          .from('batismo_inscricoes')
+          .select('id, status')
+          .or(ors.join(','))
+          .in('status', ['pendente', 'confirmado'])
+          .is('deleted_at', null)
+          .limit(1);
+        const dup = dups && dups[0];
+        if (dup) {
+          return res.status(200).json({
+            ok: true,
+            duplicado: true,
+            mensagem: `Você já tem uma inscrição em andamento (status: ${dup.status}). Sua data será mantida.`,
+          });
+        }
+      }
     }
 
     const dataBatismo = proximoQuartoDomingoISO();
