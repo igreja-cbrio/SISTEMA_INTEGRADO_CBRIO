@@ -213,7 +213,7 @@ export default function KpiQuickFillModal({ open, kpi, periodKey, onClose, onSav
       onClick={(e) => { if (saving) return; backdropProps.onClick(e); }}
     >
       <div
-        style={{ background: C.modalBg, borderRadius: 12, width: 460, padding: 20, boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}
+        style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: 460, padding: 20, boxShadow: 'var(--shadow-hover), var(--hi)' }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKey}
       >

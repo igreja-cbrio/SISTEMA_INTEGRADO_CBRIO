@@ -75,7 +75,7 @@ function PessoaPicker({ disponiveis, onPick }) {
           background: 'var(--cbrio-card)',
           border: '1px solid var(--cbrio-border)',
           borderRadius: 8,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          boxShadow: 'var(--shadow)',
           maxHeight: 320,
           display: 'flex',
           flexDirection: 'column',
@@ -300,14 +300,16 @@ export default function SolicitacoesResponsaveis() {
           zIndex: 30,
           marginBottom: 16,
           padding: '10px 14px',
-          background: C.card,
+          background: 'var(--panel)',
+          WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+          backdropFilter: 'blur(14px) saturate(140%)',
           border: `1px solid ${C.primary}`,
-          borderRadius: 10,
+          borderRadius: 16,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 12,
-          boxShadow: '0 6px 18px rgba(0,0,0,0.18)',
+          boxShadow: 'var(--shadow-hover), var(--hi)',
         }}>
           <div style={{ fontSize: 13, color: C.text }}>
             <span style={{ fontWeight: 700, color: C.primary }}>{dirtyAreas.length}</span>
@@ -352,10 +354,13 @@ export default function SolicitacoesResponsaveis() {
             <div
               key={area.id}
               style={{
-                background: C.card,
-                border: `1px solid ${C.border}`,
+                background: 'var(--panel)',
+                WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+                backdropFilter: 'blur(14px) saturate(140%)',
+                border: '1px solid var(--hairline)',
+                boxShadow: 'var(--shadow), var(--hi)',
                 borderLeft: `4px solid ${area.color}`,
-                borderRadius: 10,
+                borderRadius: 16,
                 padding: 16,
                 display: 'flex',
                 flexDirection: 'column',

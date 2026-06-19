@@ -149,7 +149,7 @@ export default function FeedbackAdmin() {
                 const tm = TIPO_META[it.tipo] || TIPO_META.bug;
                 const Icon = tm.icon;
                 return (
-                  <div key={it.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '12px 14px', borderLeft: `4px solid ${SEV_COR[it.severidade] || C.border}` }}>
+                  <div key={it.id} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: '12px 14px', borderLeft: `4px solid ${SEV_COR[it.severidade] || C.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: tm.cor }}>
                         <Icon size={13} /> {tm.label}
@@ -179,7 +179,7 @@ export default function FeedbackAdmin() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {erros.map((e) => (
-              <div key={e.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', borderLeft: '4px solid #f97316' }}>
+              <div key={e.id} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: '10px 12px', borderLeft: '4px solid #f97316' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 11, color: C.t3, marginBottom: 4 }}>
                   <span style={{ fontWeight: 700, color: '#f97316' }}>{e.status}</span>
                   <code style={{ color: C.t2 }}>{e.metodo} {e.rota}</code>
@@ -205,7 +205,7 @@ export default function FeedbackAdmin() {
             {relatorios.map((r) => {
               const at = r.actions_taken || {};
               return (
-                <div key={r.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 16px' }}>
+                <div key={r.id} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: '14px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8, fontSize: 11, color: C.t3 }}>
                     <span style={{ fontWeight: 700, color: C.text, fontSize: 13 }}>{quando(r.created_at)}</span>
                     {typeof at.feedbacks === 'number' && <span>· {at.feedbacks} reporte(s)</span>}
@@ -228,9 +228,13 @@ export default function FeedbackAdmin() {
 
 function Stat({ label, valor, cor }) {
   return (
-    <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--cbrio-border)', borderRadius: 12, padding: '12px 18px', minWidth: 110 }}>
-      <div style={{ fontSize: 24, fontWeight: 800, color: cor || 'var(--cbrio-text)', lineHeight: 1 }}>{valor ?? '—'}</div>
-      <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 4 }}>{label}</div>
+    <div style={{ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', borderRadius: 16, padding: '12px 18px', minWidth: 110 }}>
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${cor || '#00B39D'}22, transparent 58%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: cor || '#00B39D', opacity: 0.9 }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{ fontSize: 24, fontWeight: 800, color: cor || 'var(--cbrio-text)', lineHeight: 1 }}>{valor ?? '—'}</div>
+        <div style={{ fontSize: 11, color: 'var(--cbrio-text2)', marginTop: 4 }}>{label}</div>
+      </div>
     </div>
   );
 }

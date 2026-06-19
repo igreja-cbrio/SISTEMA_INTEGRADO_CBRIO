@@ -133,7 +133,7 @@ export default function NotasCompras() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40, color: C.text3, fontSize: 13 }}>Carregando…</div>
       ) : notas.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 40, color: C.text3, fontSize: 13, background: C.card, borderRadius: 12, border: `1px solid ${C.border}` }}>
+        <div style={{ textAlign: 'center', padding: 40, color: C.text3, fontSize: 13, background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
           {filtro === 'enviada_financeiro' ? 'Nenhuma nota aguardando lançamento. 🎉' : 'Nenhuma nota neste filtro.'}
         </div>
       ) : (
@@ -145,7 +145,7 @@ export default function NotasCompras() {
             const centroSel = e.centro_custo_id !== undefined ? e.centro_custo_id : (n.sugestao_centro_custo_id || '');
             const pendente = n.status === 'enviada_financeiro';
             return (
-              <div key={n.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+              <div key={n.id} style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', padding: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
                   <div style={{ minWidth: 260, flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>

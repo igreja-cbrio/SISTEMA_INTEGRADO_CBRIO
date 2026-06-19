@@ -13,7 +13,7 @@ const C = {
 const st = {
   subtabs: { display: 'flex', gap: 4, marginBottom: 20, flexWrap: 'wrap' },
   subtab: (a) => ({ padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: a ? C.primary : 'transparent', color: a ? '#fff' : C.text2 }),
-  card: { background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' },
+  card: { background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' },
   table: { width: '100%', borderCollapse: 'collapse' },
   th: { padding: '10px 14px', fontSize: 11, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, textAlign: 'left', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' },
   td: { padding: '10px 14px', fontSize: 14, color: C.text, borderBottom: `1px solid ${C.border}` },
@@ -23,7 +23,9 @@ const st = {
   filterRow: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
   btn: (v = 'primary') => ({ padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', ...(v === 'primary' ? { background: C.primary, color: '#fff' } : v === 'sec' ? { background: 'transparent', color: C.primary, border: `1px solid ${C.primary}` } : { background: 'transparent', color: C.text2 }) }),
   empty: { textAlign: 'center', padding: 36, color: C.text3, fontSize: 14 },
-  kpi: (color) => ({ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, borderLeft: `4px solid ${color}` }),
+  kpi: (color) => ({ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)' }),
+  kpiTint: (color) => ({ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${color}22, transparent 58%)`, pointerEvents: 'none' }),
+  kpiBar: (color) => ({ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: color, opacity: 0.9 }),
 };
 const CATEGORIAS = ['Limpeza', 'Descartáveis', 'Alimentos', 'Bebidas', 'Papelaria', 'Infra', 'Ministerial', 'Livraria'];
 const SUBTIPOS_INFRA = ['Elétrico', 'Hidráulico', 'Pintura', 'Refrigeração', 'Mat. Const.', 'Ferramenta'];
@@ -114,9 +116,9 @@ function ProdutosView({ produtos, loading, filtro, setFiltro, totais, onChanged 
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12, marginBottom: 20 }}>
-        <div style={st.kpi(C.primary)}><div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{totais.ativos}</div><div style={{ fontSize: 12, color: C.text2 }}>Produtos ativos</div></div>
-        <div style={st.kpi(C.red)}><div style={{ fontSize: 22, fontWeight: 700, color: totais.repor ? C.red : C.text }}>{totais.repor}</div><div style={{ fontSize: 12, color: C.text2 }}>A repor (≤ mínimo)</div></div>
-        <div style={st.kpi(C.green)}><div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{fmtMoney(totais.valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Valor em estoque</div></div>
+        <div style={st.kpi(C.primary)}><div style={st.kpiTint(C.primary)} /><div style={st.kpiBar(C.primary)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{totais.ativos}</div><div style={{ fontSize: 12, color: C.text2 }}>Produtos ativos</div></div></div>
+        <div style={st.kpi(C.red)}><div style={st.kpiTint(C.red)} /><div style={st.kpiBar(C.red)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 22, fontWeight: 700, color: totais.repor ? C.red : C.text }}>{totais.repor}</div><div style={{ fontSize: 12, color: C.text2 }}>A repor (≤ mínimo)</div></div></div>
+        <div style={st.kpi(C.green)}><div style={st.kpiTint(C.green)} /><div style={st.kpiBar(C.green)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{fmtMoney(totais.valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Valor em estoque</div></div></div>
       </div>
 
       <div style={st.filterRow}>
@@ -195,7 +197,7 @@ function ProdutoModal({ produto, onClose, onSaved }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 60, zIndex: 1000 }} onClick={onClose}>
-      <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: '95%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: '95%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', padding: 24, boxShadow: 'var(--shadow-hover), var(--hi)' }} onClick={e => e.stopPropagation()}>
         <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 16 }}>{novo ? 'Novo produto' : 'Editar produto'}</h3>
         <div style={{ marginBottom: 12 }}><label style={st.label}>Nome *</label><input style={{ ...st.input, width: '100%' }} value={f.nome} onChange={e => set('nome', e.target.value)} /></div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -498,12 +500,12 @@ function RelatorioView() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 20 }}>
-        <div style={st.kpi(C.green)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.valor_total)}</div><div style={{ fontSize: 12, color: C.text2 }}>Valor em estoque</div></div>
-        <div style={st.kpi(C.primary)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{r.produtos}</div><div style={{ fontSize: 12, color: C.text2 }}>Produtos ativos</div></div>
-        <div style={st.kpi(C.red)}><div style={{ fontSize: 20, fontWeight: 700, color: r.a_repor ? C.red : C.text }}>{r.a_repor}</div><div style={{ fontSize: 12, color: C.text2 }}>A repor</div></div>
-        <div style={st.kpi(C.amber)}><div style={{ fontSize: 20, fontWeight: 700, color: lotes.length ? C.amber : C.text }}>{lotes.length}</div><div style={{ fontSize: 12, color: C.text2 }}>Vencendo (30d)</div></div>
-        <div style={st.kpi(C.green)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.entradas_valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Entradas no período</div></div>
-        <div style={st.kpi(C.red)}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.saidas_valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Saídas no período</div></div>
+        <div style={st.kpi(C.green)}><div style={st.kpiTint(C.green)} /><div style={st.kpiBar(C.green)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.valor_total)}</div><div style={{ fontSize: 12, color: C.text2 }}>Valor em estoque</div></div></div>
+        <div style={st.kpi(C.primary)}><div style={st.kpiTint(C.primary)} /><div style={st.kpiBar(C.primary)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{r.produtos}</div><div style={{ fontSize: 12, color: C.text2 }}>Produtos ativos</div></div></div>
+        <div style={st.kpi(C.red)}><div style={st.kpiTint(C.red)} /><div style={st.kpiBar(C.red)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 20, fontWeight: 700, color: r.a_repor ? C.red : C.text }}>{r.a_repor}</div><div style={{ fontSize: 12, color: C.text2 }}>A repor</div></div></div>
+        <div style={st.kpi(C.amber)}><div style={st.kpiTint(C.amber)} /><div style={st.kpiBar(C.amber)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 20, fontWeight: 700, color: lotes.length ? C.amber : C.text }}>{lotes.length}</div><div style={{ fontSize: 12, color: C.text2 }}>Vencendo (30d)</div></div></div>
+        <div style={st.kpi(C.green)}><div style={st.kpiTint(C.green)} /><div style={st.kpiBar(C.green)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.entradas_valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Entradas no período</div></div></div>
+        <div style={st.kpi(C.red)}><div style={st.kpiTint(C.red)} /><div style={st.kpiBar(C.red)} /><div style={{ position: 'relative', zIndex: 1 }}><div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmtMoney(r.saidas_valor)}</div><div style={{ fontSize: 12, color: C.text2 }}>Saídas no período</div></div></div>
       </div>
 
       <div style={{ ...st.card, padding: 16, marginBottom: 16 }}>

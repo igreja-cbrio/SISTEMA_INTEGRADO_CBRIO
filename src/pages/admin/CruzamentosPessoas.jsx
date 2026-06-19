@@ -156,8 +156,9 @@ export default function CruzamentosPessoas() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
         {CRITERIOS.map(grupo => (
           <section key={grupo.grupo} style={{
-            background: C.card, border: `1px solid ${C.border}`,
-            borderRadius: 10, padding: 14,
+            background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+            border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+            borderRadius: 16, padding: 14,
           }}>
             <div style={{ marginBottom: 10 }}>
               <h3 style={{ fontSize: 12, fontWeight: 700, color: C.t2, margin: 0, textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -218,8 +219,9 @@ export default function CruzamentosPessoas() {
 
       {/* Resultado · contagem + barra + lista */}
       <section style={{
-        background: C.card, border: `1px solid ${C.border}`,
-        borderRadius: 10, padding: 18, marginBottom: 16,
+        background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+        border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+        borderRadius: 16, padding: 18, marginBottom: 16,
       }}>
         {loading && !resultado ? (
           <SkeletonBlock height={100} />
@@ -284,7 +286,7 @@ export default function CruzamentosPessoas() {
               mensagem="Tente afrouxar 1 ou 2 critérios · talvez algum 'tem' esteja vazio."
             />
           ) : (
-            <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+            <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
               <div style={{
                 padding: '10px 16px', background: 'var(--cbrio-table-header)',
                 fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5,

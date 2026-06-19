@@ -273,7 +273,7 @@ export default function Destaques() {
       </div>
 
       {criando && (
-        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, padding: 20, marginBottom: 24, maxWidth: 560, position: 'relative' }}>
+        <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', padding: 20, marginBottom: 24, maxWidth: 560, position: 'relative' }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Novo destaque</div>
           <FormDestaque exigirImagem onSalvar={criar} onCancelar={() => setCriando(false)} salvando={salvando} />
           {salvando && progresso && <OverlayEnvio texto={progresso} />}
@@ -283,7 +283,7 @@ export default function Destaques() {
       {loading ? (
         <div style={{ color: C.text3, fontSize: 13, padding: 32, textAlign: 'center' }}>Carregando...</div>
       ) : itens.length === 0 && !criando ? (
-        <div style={{ background: C.card, borderRadius: 12, border: `1px dashed ${C.border}`, padding: 48, textAlign: 'center' }}>
+        <div style={{ background: C.card, borderRadius: 16, border: `1px dashed ${C.border}`, boxShadow: 'var(--shadow)', padding: 48, textAlign: 'center' }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Nenhum destaque ainda</div>
           <div style={{ fontSize: 13, color: C.text3, marginTop: 4 }}>
             Publique a primeira foto — ela aparece no carrossel da Home do app de todos os membros.
@@ -294,7 +294,7 @@ export default function Destaques() {
           {itens.map((d, idx) => {
             const st = statusDe(d);
             return (
-              <div key={d.id} style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', opacity: st.label === 'No ar' ? 1 : 0.75 }}>
+              <div key={d.id} style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden', opacity: st.label === 'No ar' ? 1 : 0.75 }}>
                 <div style={{ aspectRatio: '16 / 9', background: C.inputBg, position: 'relative' }}>
                   <img src={d.imagem_url} alt={d.titulo || ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   <span style={{
@@ -333,7 +333,7 @@ export default function Destaques() {
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
           }}
         >
-          <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 14, border: `1px solid ${C.border}`, padding: 20, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
+          <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow-hover), var(--hi)', padding: 20, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 12 }}>Editar destaque</div>
             <FormDestaque inicial={editando} onSalvar={editar} onCancelar={() => setEditando(null)} salvando={salvando} />
             {salvando && progresso && <OverlayEnvio texto={progresso} />}
