@@ -3,93 +3,128 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CBRio · Custos & Atividade do Sistema</title>
+<title>cbrio · Custos & Atividade do Sistema</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#070c16; --bg2:#0b1220; --panel:rgba(20,29,48,.72); --panel2:#121a2b;
-    --line:rgba(255,255,255,.08); --hair:rgba(255,255,255,.06);
-    --txt:#eaf1fb; --txt2:#9fb0cd; --txt3:#69799a;
-    --teal:#00B39D; --teal-d:#0c8c7c; --purple:#8b5cf6; --amber:#f59e0b; --blue:#3b82f6;
+    --brand:#408097; --brand2:#70a8b0; --brand3:#9cc2c8; --mist:#d5e4e6; --cream:#eae3da;
+    --warm:#c89b6a; --slate:#5a7682;
+    --ink:#22424e; --ink2:#5b7480; --ink3:#90a6af;
+    --panel:rgba(255,255,255,.55); --panel2:rgba(255,255,255,.74); --hair:rgba(64,128,151,.16);
+    --shadow:0 22px 48px -28px rgba(34,66,78,.40); --hi:inset 0 1px 0 rgba(255,255,255,.6);
   }
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
   body{
-    margin:0; color:var(--txt);
+    margin:0; color:var(--ink);
     font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;
     background:
-      radial-gradient(1100px 560px at 84% -12%, rgba(0,179,157,.16), transparent 60%),
-      radial-gradient(900px 500px at -8% 8%, rgba(139,92,246,.12), transparent 55%),
-      var(--bg);
+      radial-gradient(1000px 520px at 84% -12%, rgba(112,168,176,.50), transparent 60%),
+      radial-gradient(880px 520px at -6% 6%, rgba(213,228,230,.85), transparent 55%),
+      radial-gradient(700px 600px at 60% 120%, rgba(234,227,218,.7), transparent 60%),
+      linear-gradient(160deg,#eef5f6,#f5f1eb);
     background-attachment:fixed; min-height:100vh;
   }
-  .wrap{max-width:1200px;margin:0 auto;padding:30px 20px 72px}
-  a{color:var(--teal)}
-  .head{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;justify-content:space-between}
-  h1{font-size:26px;margin:0;letter-spacing:-.02em;font-weight:800}
-  .sub{color:var(--txt2);font-size:13px;margin-top:6px;max-width:680px}
-  .pill{display:inline-flex;align-items:center;gap:7px;background:rgba(0,179,157,.10);
-    color:var(--teal);border:1px solid rgba(0,179,157,.32);border-radius:999px;padding:3px 11px;font-size:12px;font-weight:600}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 3px rgba(0,179,157,.22)}
-  .dot.snap{background:var(--txt3);box-shadow:0 0 0 3px rgba(105,121,154,.18)}
-  .dot.err{background:var(--amber);box-shadow:0 0 0 3px rgba(245,158,11,.2)}
+  .wrap{max-width:1200px;margin:0 auto;padding:26px 20px 72px}
+  a{color:var(--brand)}
+  .head{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+  .brand{display:flex;align-items:center;gap:12px}
+  .brand svg{width:42px;height:42px;flex:none}
+  .brand .wm{font-family:'Quicksand',ui-sans-serif,system-ui,sans-serif;font-size:33px;font-weight:700;color:var(--brand);letter-spacing:-.01em;line-height:1}
+  .brand .tt{font-size:12.5px;color:var(--ink2);margin-top:3px}
   .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  button{font:inherit;cursor:pointer;border-radius:11px;border:1px solid var(--line);
-    background:var(--panel2);color:var(--txt);padding:9px 14px;font-weight:600;transition:.15s}
-  button:hover{border-color:rgba(0,179,157,.5);color:#fff}
-  button.primary{background:linear-gradient(180deg,var(--teal),var(--teal-d));border-color:transparent;color:#04201c}
-  button.primary:hover{filter:brightness(1.07)}
+  .pill{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.6);
+    color:var(--brand);border:1px solid var(--hair);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600;backdrop-filter:blur(8px)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px rgba(64,128,151,.18)}
+  .dot.snap{background:var(--ink3);box-shadow:0 0 0 3px rgba(144,166,175,.18)}
+  .dot.err{background:var(--warm);box-shadow:0 0 0 3px rgba(200,155,106,.22)}
+  button{font:inherit;cursor:pointer;border-radius:12px;border:1px solid var(--hair);
+    background:var(--panel2);color:var(--ink);padding:9px 14px;font-weight:600;transition:.15s;backdrop-filter:blur(8px)}
+  button:hover{border-color:var(--brand);color:var(--brand)}
+  button.primary{background:linear-gradient(180deg,var(--brand),#356f85);border-color:transparent;color:#fff}
+  button.primary:hover{filter:brightness(1.06);color:#fff}
   button:disabled{opacity:.55;cursor:wait}
-  .ghost{background:transparent}
+  .ghost{background:rgba(255,255,255,.4)}
+  .tabs{display:flex;gap:6px;margin:22px 0 4px;padding:5px;border-radius:16px;
+    background:var(--panel);border:1px solid var(--hair);backdrop-filter:blur(14px);width:fit-content;max-width:100%;flex-wrap:wrap;box-shadow:var(--shadow),var(--hi)}
+  .tab-btn{background:transparent;border:none;color:var(--ink2);padding:9px 18px;border-radius:11px;font-weight:700;font-size:13.5px}
+  .tab-btn:hover{color:var(--brand)}
+  .tab-btn.active{background:#fff;color:var(--brand);box-shadow:0 6px 16px -8px rgba(34,66,78,.4)}
+  .tab{display:none;animation:fade .25s ease}
+  .tab.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
   .grid{display:grid;gap:16px}
-  .kpis{grid-template-columns:repeat(auto-fit,minmax(176px,1fr));margin:26px 0 8px}
-  .card{
-    position:relative;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px 18px 16px;
-    backdrop-filter:blur(16px) saturate(135%);
-    box-shadow:0 22px 50px -28px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.05);
-  }
-  .card.solid{background:var(--panel2);backdrop-filter:none}
-  .kpi .label{color:var(--txt3);font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:700}
-  .kpi .val{font-size:30px;font-weight:800;margin-top:7px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-  .kpi .hint{color:var(--txt2);font-size:12px;margin-top:3px}
-  .teal{color:var(--teal)} .purple{color:var(--purple)} .amber{color:var(--amber)}
-  .est{color:var(--amber);font-weight:600;font-size:11px}
-  .sec-title{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--txt3);font-weight:700;margin:34px 2px 2px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(172px,1fr));margin:20px 0 8px}
+  .card{position:relative;background:var(--panel);border:1px solid var(--hair);border-radius:20px;padding:18px 18px 16px;
+    backdrop-filter:blur(18px) saturate(130%);box-shadow:var(--shadow),var(--hi)}
+  .kpi .label{color:var(--ink3);font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:800}
+  .kpi .val{font-size:30px;font-weight:800;margin-top:7px;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--ink)}
+  .kpi .hint{color:var(--ink2);font-size:12px;margin-top:3px}
+  .teal{color:var(--brand)} .warm{color:var(--warm)}
+  .est{color:var(--warm);font-weight:700;font-size:11px}
+  .sec-title{font-size:11.5px;text-transform:uppercase;letter-spacing:.11em;color:var(--ink3);font-weight:800;margin:30px 2px 2px}
   .row{display:grid;gap:16px;grid-template-columns:1fr 1fr}
-  .row3{display:grid;gap:16px;grid-template-columns:1.2fr 1fr 1fr}
+  .row3{display:grid;gap:16px;grid-template-columns:1.25fr 1fr 1fr}
   @media(max-width:860px){.row,.row3{grid-template-columns:1fr}}
-  h2{font-size:14px;margin:0 0 14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:8px}
-  .ch{position:relative;height:300px}
-  .vs{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch}
+  h2{font-size:14px;margin:0 0 14px;font-weight:800;display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--ink)}
+  .ch{position:relative;height:290px}
+  .vs{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:stretch}
   @media(max-width:560px){.vs{grid-template-columns:1fr}}
-  .vs .who{border-radius:14px;padding:16px;border:1px solid var(--line);background:rgba(255,255,255,.02)}
-  .vs .who.me{border-color:rgba(0,179,157,.45);background:rgba(0,179,157,.07)}
-  .vs .who.mp{border-color:rgba(139,92,246,.42);background:rgba(139,92,246,.07)}
-  .vs .name{font-weight:800;font-size:15px;display:flex;align-items:center;gap:8px}
-  .vs .tag{font-size:10.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:.08em;font-weight:700}
-  .vs .big{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.05;margin-top:8px}
-  .vs .small{color:var(--txt2);font-size:13px;margin-top:2px}
-  .vs .mid{display:flex;align-items:center;justify-content:center;color:var(--txt3);font-weight:800;font-size:13px}
-  .bar{height:7px;border-radius:99px;background:rgba(255,255,255,.07);margin-top:12px;overflow:hidden}
-  .bar > i{display:block;height:100%;border-radius:99px}
+  .who{border-radius:16px;padding:16px;border:1px solid var(--hair);background:rgba(255,255,255,.4)}
+  .who.me{border-color:rgba(64,128,151,.4);background:rgba(64,128,151,.08)}
+  .who.mp{border-color:rgba(112,168,176,.45);background:rgba(112,168,176,.12)}
+  .who .name{font-weight:800;font-size:15px;display:flex;align-items:center;gap:8px}
+  .who .tag{font-size:10.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-top:2px}
+  .who .big{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.05;margin-top:8px}
+  .who .small{color:var(--ink2);font-size:13px;margin-top:2px}
+  .mid{display:flex;align-items:center;justify-content:center;color:var(--ink3);font-weight:800;font-size:13px}
+  .bar{height:7px;border-radius:99px;background:rgba(64,128,151,.12);margin-top:12px;overflow:hidden}
+  .bar > i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--brand),var(--brand2))}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:9px 6px;border-bottom:1px solid var(--hair)}
-  th{color:var(--txt3);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  th{color:var(--ink3);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
   td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
-  tr.tot td{font-weight:800;border-top:1px solid var(--line);border-bottom:none}
-  .swatch{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;vertical-align:middle}
-  .cinp{width:104px;text-align:right;font:inherit;font-variant-numeric:tabular-nums;background:var(--bg2);
-    color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
-  .cinp:focus{outline:none;border-color:var(--teal)}
-  .mut{color:var(--txt3);font-size:11px}
-  .foot{color:var(--txt3);font-size:12px;margin-top:30px;line-height:1.7}
-  code{background:rgba(255,255,255,.06);padding:1px 6px;border-radius:6px;font-size:12px}
+  tr.tot td{font-weight:800;border-top:1px solid var(--hair);border-bottom:none}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:8px;vertical-align:middle}
+  .cinp{width:96px;text-align:right;font:inherit;font-variant-numeric:tabular-nums;background:rgba(255,255,255,.7);
+    color:var(--ink);border:1px solid var(--hair);border-radius:9px;padding:6px 8px}
+  .cinp:focus{outline:none;border-color:var(--brand)}
+  .mut{color:var(--ink3);font-size:11px}
+  .hero{display:grid;grid-template-columns:1.3fr 1fr;gap:20px;align-items:center;
+    background:linear-gradient(135deg,rgba(64,128,151,.12),rgba(112,168,176,.08)),var(--panel2);
+    border:1px solid var(--hair);border-radius:24px;padding:24px;backdrop-filter:blur(18px);box-shadow:var(--shadow),var(--hi)}
+  @media(max-width:680px){.hero{grid-template-columns:1fr}}
+  .hero .mega{font-size:46px;font-weight:800;letter-spacing:-.03em;color:var(--brand);line-height:1;font-variant-numeric:tabular-nums}
+  .hero .mega small{font-size:18px;color:var(--ink2);font-weight:700}
+  .hero .sub{color:var(--ink2);font-size:13px;margin-top:8px;max-width:42ch}
+  .hero .mini{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .hero .mini .b{background:rgba(255,255,255,.55);border:1px solid var(--hair);border-radius:14px;padding:12px 14px}
+  .hero .mini .b .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);font-weight:800}
+  .hero .mini .b .v{font-size:20px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
+  .crono-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:20px 0 6px}
+  .crono-list{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .crow{display:grid;grid-template-columns:1.7fr 0.9fr 1.3fr auto;gap:14px;align-items:center;
+    background:var(--panel);border:1px solid var(--hair);border-radius:16px;padding:13px 16px;backdrop-filter:blur(14px);box-shadow:0 12px 30px -26px rgba(34,66,78,.5)}
+  @media(max-width:760px){.crow{grid-template-columns:1fr;gap:8px}}
+  .crow .ttl{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:9px}
+  .crow .meta{color:var(--ink3);font-size:12px}
+  .cbar{height:9px;border-radius:99px;background:rgba(64,128,151,.12);overflow:hidden}
+  .cbar > i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .4s}
+  .badge{font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap}
+  .b-done{background:rgba(64,128,151,.14);color:var(--brand)}
+  .b-prog{background:rgba(200,155,106,.18);color:#a9743f}
+  .b-wait{background:rgba(90,118,130,.14);color:var(--slate)}
+  .pinp{width:58px}
+  .cpct{font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;min-width:46px;text-align:right;color:var(--ink)}
+  .foot{color:var(--ink3);font-size:12px;margin-top:30px;line-height:1.7}
+  code{background:rgba(64,128,151,.10);padding:1px 6px;border-radius:6px;font-size:12px;color:var(--brand)}
   .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px;
-    background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;backdrop-filter:blur(12px)}
-  .toolbar label{font-size:12px;color:var(--txt2);display:flex;align-items:center;gap:6px}
-  .toolbar input[type=text],.toolbar input[type=date],.toolbar input[type=number]{
-    font:inherit;background:var(--bg2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 9px}
-  .tok{width:230px}
+    background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:12px 14px;backdrop-filter:blur(12px)}
+  .toolbar label{font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:6px}
+  .toolbar input{font:inherit;background:rgba(255,255,255,.7);color:var(--ink);border:1px solid var(--hair);border-radius:9px;padding:6px 9px}
   .hidden{display:none}
 </style>
 </head>
@@ -97,117 +132,150 @@
 <div class="wrap">
 
   <div class="head">
-    <div>
-      <h1>Custos &amp; Atividade do Sistema · CBRio</h1>
-      <div class="sub">Sistema Integrado CBRio (ERP da igreja). Atividade de desenvolvimento lida do histórico do GitHub; custos são estimativas editáveis com projeção de 12 meses. Esta página é regenerada automaticamente todo dia.</div>
+    <div class="brand">
+      <svg viewBox="0 0 100 100" aria-label="cbrio" role="img">
+        <path d="M33 72 C 10 54, 14 25, 35 25 C 47 25, 50 35, 50 35 C 50 35, 53 25, 65 25 C 88 25, 90 55, 60 78 L 79 96"
+          fill="none" stroke="#408097" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>
+        <div class="wm">cbrio</div>
+        <div class="tt">Custos &amp; Atividade do Sistema</div>
+      </div>
     </div>
     <div style="text-align:right">
       <div class="pill" id="liveBadge"><span class="dot snap" id="liveDot"></span><span id="liveTxt">snapshot</span></div>
       <div class="actions" style="margin-top:10px;justify-content:flex-end">
         <button class="primary" id="btnRefresh">↻ Atualizar ao vivo</button>
-        <button class="ghost" id="btnToken" title="Token opcional p/ aumentar o limite da API">⚙︎</button>
       </div>
     </div>
   </div>
 
-  <div class="toolbar hidden" id="tokenBar">
-    <label>Token GitHub (opcional, fica só no seu navegador):
-      <input type="text" class="tok" id="tokInput" placeholder="ghp_… (fine-grained, read-only)" autocomplete="off">
-    </label>
-    <button id="tokSave">Salvar</button>
-    <span class="mut">Os repositórios são públicos — funciona sem token (limite ~60 req/h). Com token o limite sobe pra 5.000/h.</span>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="atividade">Atividade</button>
+    <button class="tab-btn" data-tab="custos">Custos</button>
+    <button class="tab-btn" data-tab="cronograma">Cronograma</button>
   </div>
 
-  <div class="sec-title">Atividade de desenvolvimento</div>
-  <div class="grid kpis">
-    <div class="card solid kpi"><div class="label">Commits</div><div class="val" id="kCommits">—</div><div class="hint" id="kCommitsHint">—</div></div>
-    <div class="card solid kpi"><div class="label">Merges (PRs integrados)</div><div class="val" id="kMerges">—</div><div class="hint">pull requests mesclados</div></div>
-    <div class="card solid kpi"><div class="label">Assistido por IA</div><div class="val teal" id="kIA">—</div><div class="hint" id="kIAHint">commits com co-autor Claude</div></div>
-    <div class="card solid kpi"><div class="label">Tempo de desenvolvimento</div><div class="val" id="kDias">—</div><div class="hint" id="kDiasHint">desde o 1º commit</div></div>
-  </div>
+  <!-- ===================== ATIVIDADE ===================== -->
+  <section class="tab active" id="tab-atividade">
+    <div class="grid kpis">
+      <div class="card kpi"><div class="label">Commits</div><div class="val" id="kCommits">—</div><div class="hint" id="kCommitsHint">—</div></div>
+      <div class="card kpi"><div class="label">PRs integrados</div><div class="val teal" id="kPRs">—</div><div class="hint">pull requests mesclados (GitHub)</div></div>
+      <div class="card kpi"><div class="label">Assistido por IA</div><div class="val" id="kIA">—</div><div class="hint" id="kIAHint">co-autoria Claude</div></div>
+      <div class="card kpi"><div class="label">Tempo de desenvolvimento</div><div class="val" id="kDias">—</div><div class="hint" id="kDiasHint">desde o 1º commit</div></div>
+    </div>
 
-  <div class="sec-title">Matheus &times; Marcos Paulo</div>
-  <div class="card">
-    <div class="vs">
-      <div class="who me">
-        <div class="name"><span class="swatch" style="background:var(--teal)"></span>Matheus Toscano</div>
-        <div class="tag">mtoscano99</div>
-        <div class="big teal" id="meCommits">—</div>
-        <div class="small">commits · <b id="meMerges">—</b> merges</div>
-        <div class="bar"><i id="meBar" style="background:var(--teal);width:0"></i></div>
+    <div class="sec-title">Matheus &times; Marcos Paulo</div>
+    <div class="card" style="margin-top:8px">
+      <div class="vs">
+        <div class="who me">
+          <div class="name"><span class="swatch" style="background:var(--brand)"></span>Matheus Toscano</div>
+          <div class="tag">mtoscano99</div>
+          <div class="big teal" id="meCommits">—</div>
+          <div class="small">commits · <b id="mePRs">—</b> PRs integrados</div>
+          <div class="bar"><i id="meBar" style="width:0"></i></div>
+        </div>
+        <div class="mid">vs</div>
+        <div class="who mp">
+          <div class="name"><span class="swatch" style="background:var(--brand2)"></span>Marcos Paulo</div>
+          <div class="tag">MarcosPaulo1</div>
+          <div class="big" style="color:var(--brand2)" id="mpCommits">—</div>
+          <div class="small">commits · <b id="mpPRs">—</b> PRs integrados</div>
+          <div class="bar"><i id="mpBar" style="width:0;background:linear-gradient(90deg,var(--brand2),var(--brand3))"></i></div>
+        </div>
       </div>
-      <div class="mid">vs</div>
-      <div class="who mp">
-        <div class="name"><span class="swatch" style="background:var(--purple)"></span>Marcos Paulo</div>
-        <div class="tag">MarcosPaulo1</div>
-        <div class="big purple" id="mpCommits">—</div>
-        <div class="small">commits · <b id="mpMerges">—</b> merges</div>
-        <div class="bar"><i id="mpBar" style="background:var(--purple);width:0"></i></div>
+      <div class="mut" style="margin-top:12px" id="vsNote"></div>
+    </div>
+
+    <div class="sec-title">Gráficos</div>
+    <div class="row3" style="margin-top:8px">
+      <div class="card"><h2>Atividade por mês</h2><div class="ch"><canvas id="cTimeline"></canvas></div></div>
+      <div class="card"><h2>Commits por pessoa</h2><div class="ch"><canvas id="cPessoas"></canvas></div></div>
+      <div class="card"><h2>PRs integrados por pessoa</h2><div class="ch"><canvas id="cPRs"></canvas></div></div>
+    </div>
+
+    <div style="height:16px"></div>
+    <div class="card">
+      <h2>Contribuição por pessoa</h2>
+      <table>
+        <thead><tr><th>Pessoa</th><th class="n">Commits</th><th class="n">% commits</th><th class="n">PRs integrados</th></tr></thead>
+        <tbody id="tbPessoas"></tbody>
+      </table>
+      <div class="mut" style="margin-top:10px">PRs integrados são contados por quem <b>abriu</b> o pull request (Claude commita como co-autor dentro dos PRs do Matheus/Marcos, por isso aparece com 0 PRs próprios).</div>
+    </div>
+  </section>
+
+  <!-- ===================== CUSTOS ===================== -->
+  <section class="tab" id="tab-custos">
+    <div class="hero" style="margin-top:20px">
+      <div>
+        <div class="mega" id="heroRec">—<small> /mês</small></div>
+        <div class="sub">Custo recorrente estimado da infraestrutura do sistema (Supabase, Vercel, IA, WhatsApp, etc.). Os valores são editáveis abaixo — ajuste com as faturas reais.</div>
+      </div>
+      <div class="mini">
+        <div class="b"><div class="l">Gasto acumulado</div><div class="v" id="heroAcum">—</div><div class="mut" id="heroAcumHint">desde o início</div></div>
+        <div class="b"><div class="l">Projeção 12 meses</div><div class="v teal" id="heroProj">—</div><div class="mut">custo do 1º ano</div></div>
       </div>
     </div>
-    <div class="mut" style="margin-top:12px" id="vsNote">Barras = participação relativa nos commits entre os dois.</div>
-  </div>
 
-  <div class="sec-title">Gráficos de atividade</div>
-  <div class="row3">
-    <div class="card solid"><h2>Atividade por mês (commits)</h2><div class="ch"><canvas id="cTimeline"></canvas></div></div>
-    <div class="card solid"><h2>Commits por pessoa</h2><div class="ch"><canvas id="cPessoas"></canvas></div></div>
-    <div class="card solid"><h2>Merges por pessoa</h2><div class="ch"><canvas id="cMerges"></canvas></div></div>
-  </div>
-
-  <div style="height:16px"></div>
-  <div class="card solid">
-    <h2>Contribuição por pessoa</h2>
-    <table>
-      <thead><tr><th>Pessoa</th><th class="n">Commits</th><th class="n">% commits</th><th class="n">Merges</th></tr></thead>
-      <tbody id="tbPessoas"></tbody>
-    </table>
-  </div>
-
-  <div class="sec-title">Custos do sistema</div>
-  <div class="grid kpis">
-    <div class="card kpi"><div class="label">Custo recorrente</div><div class="val" id="kRec">—</div><div class="hint">por mês <span class="est">estimativa</span></div></div>
-    <div class="card kpi"><div class="label">Gasto acumulado</div><div class="val" id="kAcum">—</div><div class="hint" id="kAcumHint">desde o início</div></div>
-    <div class="card kpi"><div class="label">Projeção 12 meses</div><div class="val teal" id="kProj">—</div><div class="hint">custo do 1º ano <span class="est">estimativa</span></div></div>
-    <div class="card kpi"><div class="label">Custo por mês de uso</div><div class="val" id="kPerMonth">—</div><div class="hint" id="kPerMonthHint">recorrente fixo/mês</div></div>
-  </div>
-
-  <div class="row" style="margin-top:16px">
-    <div class="card solid">
-      <h2>Custo mensal por serviço <span class="est">estimativa</span></h2>
-      <div class="ch"><canvas id="cCustos"></canvas></div>
+    <div class="row" style="margin-top:18px">
+      <div class="card">
+        <h2>Custo por serviço <span class="est">estimativa</span></h2>
+        <div class="ch"><canvas id="cCustos"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Acumulado · projeção 12 meses <span class="est">estimativa</span></h2>
+        <div class="ch"><canvas id="cProj"></canvas></div>
+      </div>
     </div>
-    <div class="card solid">
-      <h2>Custo acumulado · projeção 12 meses <span class="est">estimativa</span></h2>
-      <div class="ch"><canvas id="cProj"></canvas></div>
-    </div>
-  </div>
 
-  <div style="height:16px"></div>
-  <div class="card solid">
-    <h2>Custos recorrentes <span class="mut">— edite os valores; tudo recalcula e fica salvo no navegador</span></h2>
-    <div class="toolbar" style="margin:0 0 14px;background:transparent;border:none;padding:0">
-      <label>Início do projeto <input type="date" id="inStart"></label>
-      <label>Câmbio US$→R$ <input type="number" id="inFx" step="0.01" style="width:90px"></label>
-      <button class="ghost" id="btnReset">Restaurar padrão</button>
+    <div style="height:16px"></div>
+    <div class="card">
+      <h2>Custos recorrentes <span class="mut">— edite os valores; recalcula e fica salvo no navegador</span></h2>
+      <div class="toolbar" style="margin:0 0 14px;background:transparent;border:none;padding:0">
+        <label>Início do projeto <input type="date" id="inStart"></label>
+        <label>Câmbio US$→R$ <input type="number" id="inFx" step="0.01" style="width:90px"></label>
+        <button class="ghost" id="btnResetCusto">Restaurar padrão</button>
+      </div>
+      <table>
+        <thead><tr><th>Serviço</th><th class="n">Valor</th><th>Moeda</th><th class="n">R$/mês</th></tr></thead>
+        <tbody id="tbCustos"></tbody>
+        <tfoot><tr class="tot"><td>Total recorrente</td><td></td><td></td><td class="n teal" id="custosTot">—</td></tr></tfoot>
+      </table>
     </div>
-    <table>
-      <thead><tr><th>Serviço</th><th class="n">Valor</th><th>Moeda</th><th class="n">R$/mês</th></tr></thead>
-      <tbody id="tbCustos"></tbody>
-      <tfoot><tr class="tot"><td>Total recorrente</td><td></td><td></td><td class="n teal" id="custosTot">—</td></tr></tfoot>
-    </table>
-  </div>
+  </section>
+
+  <!-- ===================== CRONOGRAMA ===================== -->
+  <section class="tab" id="tab-cronograma">
+    <div class="sec-title" style="margin-top:20px">Prestação de contas · o que foi entregue</div>
+    <div class="crono-sum">
+      <div class="card kpi"><div class="label">Conclusão geral</div><div class="val teal" id="crPct">—</div><div class="hint">média das entregas</div></div>
+      <div class="card kpi"><div class="label">Concluídas</div><div class="val" id="crDone">—</div><div class="hint">entregas finalizadas</div></div>
+      <div class="card kpi"><div class="label">Em andamento</div><div class="val warm" id="crProg">—</div><div class="hint">em desenvolvimento</div></div>
+      <div class="card kpi"><div class="label">Entregas totais</div><div class="val" id="crTotal">—</div><div class="hint">frentes do sistema</div></div>
+    </div>
+
+    <div class="toolbar">
+      <span class="mut">Progresso <b>calculado automaticamente</b> pela atividade no git: frente estabilizada (poucos/nenhum commit recente) tende a 100%; frente com muito trabalho recente aparece como "em andamento". Recalcula todo dia.</span>
+    </div>
+
+    <div class="crono-list" id="cronoList"></div>
+
+    <div class="card" style="margin-top:18px">
+      <h2>Conclusão por frente</h2>
+      <div class="ch" style="height:360px"><canvas id="cCrono"></canvas></div>
+    </div>
+  </section>
 
   <div class="foot">
-    <b>Como os números são apurados.</b> Atividade = histórico de commits dos repositórios públicos
-    <code>igreja-cbrio/SISTEMA_INTEGRADO_CBRIO</code> e <code>igreja-cbrio/whitelabel-erp</code> (branch principal).
-    Identidades consolidadas por pessoa (cada um comita com mais de um nome): <span class="teal">Matheus Toscano</span> (mtoscano99),
-    <span class="purple">Marcos Paulo</span> (MarcosPaulo1) e <span class="amber">Claude (IA)</span> (co-autoria + bot).
-    "Merge" = commit com 2+ pais (PR integrado). "Assistido por IA" = commits com o rótulo <code>Co-Authored-By: Claude</code>.
-    <br><b>Custos</b> são <span class="est">estimativas editáveis</span> (USD convertido pelo câmbio acima). O acumulado usa os meses
-    decorridos desde o início; a projeção de 12 meses = recorrente × 12 + custos pontuais. Ajuste com as faturas reais em
-    <code>scripts/system-report/config.json</code>.
-    <br><span class="mut">Regenerada automaticamente pela GitHub Action <code>system-report</code> (diária + a cada push na main). O botão "Atualizar ao vivo" rebusca o GitHub no seu navegador.</span>
+    <b>Como os números são apurados.</b> Commits, timeline e % de IA = histórico do git dos repositórios públicos
+    <code>SISTEMA_INTEGRADO_CBRIO</code> e <code>whitelabel-erp</code>. <b>PRs integrados</b> = pull requests mesclados,
+    direto da busca oficial do GitHub (bate com o que você vê no repositório). Identidades consolidadas:
+    <span class="teal">Matheus Toscano</span> (mtoscano99), <span style="color:var(--brand2)">Marcos Paulo</span> (MarcosPaulo1)
+    e <span class="warm">Claude (IA)</span> (co-autoria).
+    <br><b>Custos</b> e <b>cronograma</b> são <span class="est">estimativas editáveis</span> — custos em
+    <code>scripts/system-report/config.json</code>; o cronograma é a curadoria das frentes do sistema.
+    <br><span class="mut">Página regenerada automaticamente todo dia. "Atualizar ao vivo" rebusca os commits do GitHub no navegador.</span>
   </div>
 
 </div>
@@ -217,74 +285,110 @@
 const SNAPSHOT = __SNAPSHOT__;
 const COSTS_DEFAULT = __COSTS__;
 
-/* ======================= CONFIG ======================= */
-const REPOS = [
-  ['igreja-cbrio','SISTEMA_INTEGRADO_CBRIO'],
-  ['igreja-cbrio','whitelabel-erp'],
+/* ======================= CRONOGRAMA (curadoria · editável) ======================= */
+const CRONO_DEFAULT = [
+  { nome:'Sistema OKR / NSM — painel, matriz 6×5, ~150 KPIs', cat:'Estratégia',        ini:'2026-04', fim:'2026-05', pct:100, status:'done' },
+  { nome:'Integração — cultos, frequência, decisões, batismos', cat:'Ministerial',      ini:'2026-04', fim:'2026-05', pct:100, status:'done' },
+  { nome:'Cuidados — jornada do convertido (90 dias)',         cat:'Ministerial',       ini:'2026-05', fim:'2026-06', pct:100, status:'done' },
+  { nome:'Grupos de conexão — entrada, visitas, pessoas',      cat:'Ministerial',       ini:'2026-05', fim:'2026-06', pct:100, status:'done' },
+  { nome:'Membresia — cadastro, duplicados, faixa etária',     cat:'Ministerial',       ini:'2026-04', fim:'2026-06', pct:100, status:'done' },
+  { nome:'Solicitações — backbone adm (SLA, aprovações)',      cat:'Operacional',       ini:'2026-05', fim:'2026-05', pct:100, status:'done' },
+  { nome:'Cérebro CBRio — SharePoint → Obsidian (IA)',         cat:'IA & Automação',    ini:'2026-04', fim:'2026-05', pct:100, status:'done' },
+  { nome:'Voluntariado — perfis, escalas, check-in',           cat:'Ministerial',       ini:'2026-05', fim:'2026-06', pct:95,  status:'done' },
+  { nome:'Marketing — kanban, planner, capacidade',            cat:'Operacional',       ini:'2026-05', fim:'2026-05', pct:95,  status:'done' },
+  { nome:'Online / YouTube — coleta automática (OAuth)',       cat:'Ministerial',       ini:'2026-05', fim:'2026-05', pct:95,  status:'done' },
+  { nome:'Auditoria de Segurança — RLS, soft-delete, audit',   cat:'Infra & Segurança', ini:'2026-05', fim:'2026-06', pct:95,  status:'done' },
+  { nome:'Devocionais — planos, check-in, KPIs',               cat:'Ministerial',       ini:'2026-05', fim:'2026-06', pct:90,  status:'done' },
+  { nome:'Governança / Planejamento Estratégico / Gestão Anual', cat:'Estratégia',      ini:'2026-06', fim:'2026-06', pct:90,  status:'done' },
+  { nome:'Logística / Compras — ledger, scan de NF, vínculo',  cat:'Operacional',       ini:'2026-06', fim:'2026-06', pct:90,  status:'done' },
+  { nome:'Financeiro + Agente Executor (Railway)',            cat:'IA & Automação',    ini:'2026-05', fim:'2026-06', pct:85,  status:'prog' },
+  { nome:'Totem Kids — check-in, pré-check-in, vínculo, foto', cat:'Ministerial',       ini:'2026-05', fim:'2026-06', pct:85,  status:'wait' },
+  { nome:'Bot WhatsApp — coleta de culto, grupos, NF por foto', cat:'IA & Automação',   ini:'2026-05', fim:'2026-06', pct:80,  status:'wait' },
+  { nome:'App de membros — mural, meu grupo, modo culto, vídeos', cat:'App',            ini:'2026-06', fim:'2026-06', pct:75,  status:'prog' },
 ];
+const CAT_COR = { 'Estratégia':'#408097','Ministerial':'#70a8b0','Operacional':'#88b0a0','IA & Automação':'#c89b6a','App':'#7f9fb5','Infra & Segurança':'#5a7682' };
+const STATUS_TXT = { done:'Concluído', prog:'Em andamento', wait:'Aguardando' };
+const STATUS_CLS = { done:'b-done', prog:'b-prog', wait:'b-wait' };
+
+/* ======================= CONFIG / HELPERS ======================= */
+const REPOS = [['igreja-cbrio','SISTEMA_INTEGRADO_CBRIO'],['igreja-cbrio','whitelabel-erp']];
 const IDENT = [
-  { nome:'Matheus Toscano', cor:'#00B39D', re:/mtoscano99|matheus@cbrio|matheus toscano/i },
-  { nome:'Marcos Paulo',    cor:'#8b5cf6', re:/marcospaulo1|marcospaulo\.almeida|marcos paulo/i },
-  { nome:'Claude (IA)',     cor:'#f59e0b', re:/noreply@anthropic|claudebot|claude\.ai|^claude\b|\[bot\]|github-actions/i },
+  { nome:'Matheus Toscano', cor:'#408097', re:/mtoscano99|matheus@cbrio|matheus toscano/i },
+  { nome:'Marcos Paulo',    cor:'#70a8b0', re:/marcospaulo1|marcospaulo\.almeida|marcos paulo/i },
+  { nome:'Claude (IA)',     cor:'#c89b6a', re:/noreply@anthropic|claudebot|claude\.ai|^claude\b|\[bot\]|github-actions/i },
 ];
 const canon = (a) => (IDENT.find(i=>i.re.test(a))?.nome) || 'Outros';
-const corDe = (n) => (IDENT.find(i=>i.nome===n)?.cor) || '#64748b';
-const C = { teal:'#00B39D', purple:'#8b5cf6', amber:'#f59e0b', blue:'#3b82f6', txt2:'#9fb0cd', grid:'rgba(255,255,255,.06)' };
+const corDe = (n) => (IDENT.find(i=>i.nome===n)?.cor) || '#aab9c0';
+const C = { brand:'#408097', brand2:'#70a8b0', warm:'#c89b6a', ink2:'#5b7480', grid:'rgba(64,128,151,.12)' };
 
 const $ = (id) => document.getElementById(id);
-const nf = (v) => Number(v||0).toLocaleString('pt-BR');
+const nf = (v) => (v==null ? '—' : Number(v).toLocaleString('pt-BR'));
 const brl = (v) => 'R$ ' + Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:0});
 const pctv = (a,b) => b>0 ? Math.round(a/b*100) : 0;
 const LS = { get:(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}}, set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}} };
+const MES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+function fmtMes(ym){const [y,m]=ym.split('-');return MES[(+m)-1]+'/'+y.slice(2);}
+function periodo(ini,fim){ return ini===fim ? fmtMes(ini) : fmtMes(ini)+' – '+fmtMes(fim); }
 
 let COSTS = LS.get('cbrio-costs', null) || structuredClone(COSTS_DEFAULT);
+let CRONO = (SNAPSHOT.cronograma && SNAPSHOT.cronograma.length) ? SNAPSHOT.cronograma : structuredClone(CRONO_DEFAULT);
 
-Chart.defaults.color = C.txt2;
+Chart.defaults.color = C.ink2;
 Chart.defaults.borderColor = C.grid;
 Chart.defaults.font.family = 'ui-sans-serif,system-ui,sans-serif';
 const charts = {};
+function upChart(id,type,data,options){
+  if(charts[id]){ charts[id].data=data; charts[id].options=options; charts[id].update(); }
+  else charts[id]=new Chart($(id),{type,data,options:{responsive:true,maintainAspectRatio:false,...options}});
+}
 
-function fmtMes(ym){const [y,m]=ym.split('-');return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][(+m)-1]+'/'+y.slice(2);}
+/* ======================= TABS ======================= */
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(s=>s.classList.toggle('active', s.id==='tab-'+name));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  requestAnimationFrame(()=>{ Object.values(charts).forEach(c=>{try{c.resize()}catch{}}); });
+}
+document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
 
+/* ======================= ATIVIDADE ======================= */
 function renderAtividade(D){
   const pessoas = [...D.pessoas].sort((a,b)=>b.commits-a.commits);
   $('kCommits').textContent = nf(D.total);
   $('kCommitsHint').textContent = nf(D.pessoas.length) + ' contribuintes';
-  $('kMerges').textContent = nf(D.merges);
+  $('kPRs').textContent = nf(D.prs_merged);
   $('kIA').textContent = pctv(D.ia, D.total) + '%';
   $('kIAHint').textContent = nf(D.ia) + ' de ' + nf(D.total) + ' commits';
   const dias = Math.max(1, Math.round((new Date(D.ultimo) - new Date(D.primeiro))/86400000));
   $('kDias').textContent = nf(dias) + ' dias';
   $('kDiasHint').textContent = 'desde ' + new Date(D.primeiro+'T00:00:00').toLocaleDateString('pt-BR');
 
-  const me = pessoas.find(p=>p.nome==='Matheus Toscano') || {commits:0,merges:0};
-  const mp = pessoas.find(p=>p.nome==='Marcos Paulo') || {commits:0,merges:0};
-  $('meCommits').textContent = nf(me.commits);
-  $('meMerges').textContent  = nf(me.merges);
-  $('mpCommits').textContent = nf(mp.commits);
-  $('mpMerges').textContent  = nf(mp.merges);
+  const me = pessoas.find(p=>p.nome==='Matheus Toscano') || {commits:0,prs:0};
+  const mp = pessoas.find(p=>p.nome==='Marcos Paulo') || {commits:0,prs:0};
+  $('meCommits').textContent = nf(me.commits); $('mePRs').textContent = nf(me.prs);
+  $('mpCommits').textContent = nf(mp.commits); $('mpPRs').textContent = nf(mp.prs);
   const soma = (me.commits + mp.commits) || 1;
   $('meBar').style.width = (me.commits/soma*100).toFixed(1)+'%';
   $('mpBar').style.width = (mp.commits/soma*100).toFixed(1)+'%';
   const lider = me.commits===mp.commits ? 'Empate técnico em commits' :
     (me.commits>mp.commits ? 'Matheus lidera' : 'Marcos Paulo lidera') + ' em commits';
-  $('vsNote').textContent = lider + ' · merges: Matheus ' + nf(me.merges) + ' × ' + nf(mp.merges) + ' Marcos Paulo.';
+  $('vsNote').textContent = lider + ' · PRs integrados: Matheus ' + nf(me.prs) + ' × ' + nf(mp.prs) + ' Marcos Paulo.';
 
   $('tbPessoas').innerHTML = pessoas.map(p =>
     '<tr><td><span class="swatch" style="background:'+corDe(p.nome)+'"></span>'+p.nome+'</td>'+
     '<td class="n">'+nf(p.commits)+'</td><td class="n">'+pctv(p.commits,D.total)+'%</td>'+
-    '<td class="n">'+nf(p.merges)+'</td></tr>').join('');
+    '<td class="n">'+nf(p.prs||0)+'</td></tr>').join('');
 
   const labels = pessoas.map(p=>p.nome), cores = pessoas.map(p=>corDe(p.nome));
-  upChart('cPessoas','doughnut',{labels,datasets:[{data:pessoas.map(p=>p.commits),backgroundColor:cores,borderWidth:0}]},
-    {plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}}},cutout:'60%'});
-  upChart('cMerges','bar',{labels,datasets:[{data:pessoas.map(p=>p.merges),backgroundColor:cores,borderRadius:7}]},
+  upChart('cPessoas','doughnut',{labels,datasets:[{data:pessoas.map(p=>p.commits),backgroundColor:cores,borderWidth:2,borderColor:'#fff'}]},
+    {plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}}},cutout:'62%'});
+  upChart('cPRs','bar',{labels,datasets:[{data:pessoas.map(p=>p.prs||0),backgroundColor:cores,borderRadius:8}]},
     {plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,grid:{color:C.grid}},x:{grid:{display:false},ticks:{font:{size:10}}}}});
   const tl = [...D.timeline].sort((a,b)=>a.mes<b.mes?-1:1);
-  upChart('cTimeline','bar',{labels:tl.map(t=>fmtMes(t.mes)),datasets:[{data:tl.map(t=>t.qtd),backgroundColor:C.teal,borderRadius:7}]},
+  upChart('cTimeline','bar',{labels:tl.map(t=>fmtMes(t.mes)),datasets:[{data:tl.map(t=>t.qtd),backgroundColor:C.brand,borderRadius:8}]},
     {plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,grid:{color:C.grid}},x:{grid:{display:false}}}});
 }
 
+/* ======================= CUSTOS ======================= */
 function emBRL(v,moeda){ return moeda==='USD' ? Number(v)*Number(COSTS.fx||1) : Number(v); }
 function renderCustos(){
   $('inStart').value = COSTS.project_start;
@@ -296,56 +400,79 @@ function renderCustos(){
   const acumulado = recMensal*meses + pontuais;
   const proj12 = recMensal*12 + pontuais;
 
-  $('kRec').textContent = brl(recMensal);
-  $('kAcum').textContent = brl(acumulado);
-  $('kAcumHint').textContent = meses.toFixed(1) + ' meses de uso';
-  $('kProj').textContent = brl(proj12);
-  $('kPerMonth').textContent = brl(recMensal);
+  $('heroRec').innerHTML = brl(recMensal) + '<small> /mês</small>';
+  $('heroAcum').textContent = brl(acumulado);
+  $('heroAcumHint').textContent = meses.toFixed(1) + ' meses de uso';
+  $('heroProj').textContent = brl(proj12);
   $('custosTot').textContent = brl(recMensal);
 
   $('tbCustos').innerHTML = COSTS.recorrentes.map((r,i) =>
     '<tr><td>'+r.nome+'</td>'+
     '<td class="n"><input class="cinp" type="number" step="0.01" data-i="'+i+'" value="'+r.valor+'"></td>'+
     '<td>'+r.moeda+'</td><td class="n">'+brl(emBRL(r.valor,r.moeda))+'</td></tr>').join('');
-  $('tbCustos').querySelectorAll('input[data-i]').forEach(inp=>{
-    inp.addEventListener('input', e=>{
-      COSTS.recorrentes[+e.target.dataset.i].valor = parseFloat(e.target.value)||0;
-      LS.set('cbrio-costs', COSTS); renderCustos();
-    });
-  });
+  $('tbCustos').querySelectorAll('input[data-i]').forEach(inp=>inp.addEventListener('input', e=>{
+    COSTS.recorrentes[+e.target.dataset.i].valor = parseFloat(e.target.value)||0;
+    LS.set('cbrio-costs', COSTS); renderCustos();
+  }));
 
   const ativos = COSTS.recorrentes.filter(r=>emBRL(r.valor,r.moeda)>0);
-  const palette = ['#00B39D','#8b5cf6','#f59e0b','#3b82f6','#ec4899','#10b981','#ef4444','#06b6d4'];
+  const palette = ['#408097','#70a8b0','#9cc2c8','#c89b6a','#88b0a0','#7f9fb5','#5a7682','#d5e4e6'];
   upChart('cCustos','doughnut',
-    {labels:ativos.map(r=>r.nome),datasets:[{data:ativos.map(r=>emBRL(r.valor,r.moeda)),backgroundColor:palette,borderWidth:0}]},
-    {plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}},tooltip:{callbacks:{label:c=>c.label+': '+brl(c.raw)}}},cutout:'58%'});
+    {labels:ativos.map(r=>r.nome),datasets:[{data:ativos.map(r=>emBRL(r.valor,r.moeda)),backgroundColor:palette,borderWidth:2,borderColor:'#fff'}]},
+    {plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}},tooltip:{callbacks:{label:c=>c.label+': '+brl(c.raw)}}},cutout:'60%'});
 
-  const serie = []; for(let m=0;m<=12;m++) serie.push({mes:m, valor:pontuais+recMensal*m});
+  const serie=[]; for(let m=0;m<=12;m++) serie.push({mes:m,valor:pontuais+recMensal*m});
   const real = serie.map(s=> s.mes<=meses ? s.valor : null);
   const proj = serie.map(s=> s.mes>=Math.floor(meses) ? s.valor : null);
   upChart('cProj','line',{labels:serie.map(s=>'Mês '+s.mes),datasets:[
-      {label:'Realizado',data:real,borderColor:C.teal,backgroundColor:'rgba(0,179,157,.14)',fill:true,tension:.25,pointRadius:2},
-      {label:'Projetado',data:proj,borderColor:C.amber,borderDash:[6,4],fill:false,tension:.25,pointRadius:0},
+      {label:'Realizado',data:real,borderColor:C.brand,backgroundColor:'rgba(64,128,151,.14)',fill:true,tension:.25,pointRadius:2},
+      {label:'Projetado',data:proj,borderColor:C.warm,borderDash:[6,4],fill:false,tension:.25,pointRadius:0},
     ]},
     {plugins:{legend:{position:'bottom',labels:{boxWidth:14}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
      scales:{y:{beginAtZero:true,grid:{color:C.grid},ticks:{callback:v=>brl(v)}},x:{grid:{display:false}}}});
 }
 
-function upChart(id,type,data,options){
-  if(charts[id]){ charts[id].data=data; charts[id].options=options; charts[id].update(); }
-  else charts[id]=new Chart($(id),{type,data,options:{responsive:true,maintainAspectRatio:false,...options}});
+/* ======================= CRONOGRAMA ======================= */
+function renderCrono(){
+  const total = CRONO.length;
+  const comPct = CRONO.filter(c=>c.pct!=null);
+  const media = comPct.length ? Math.round(comPct.reduce((s,c)=>s+(+c.pct),0)/comPct.length) : 0;
+  $('crPct').textContent = media+'%';
+  $('crDone').textContent = CRONO.filter(c=>c.status==='done').length;
+  $('crProg').textContent = CRONO.filter(c=>c.status==='prog').length;
+  $('crTotal').textContent = total;
+
+  $('cronoList').innerHTML = CRONO.map((c)=>
+    '<div class="crow">'+
+      '<div><div class="ttl"><span class="swatch" style="background:'+(CAT_COR[c.cat]||'#888')+'"></span>'+c.nome+'</div>'+
+        '<div class="meta">'+c.cat+'</div></div>'+
+      '<div class="meta">'+(c.ini?periodo(c.ini,c.fim):'—')+' · '+nf(c.commits||0)+' commits</div>'+
+      '<div style="display:flex;align-items:center;gap:10px">'+
+        '<div class="cbar" style="flex:1"><i style="width:'+(c.pct!=null?c.pct:0)+'%"></i></div>'+
+        '<span class="cpct">'+(c.pct!=null?c.pct+'%':'—')+'</span>'+
+      '</div>'+
+      '<div style="text-align:right"><span class="badge '+STATUS_CLS[c.status]+'">'+STATUS_TXT[c.status]+'</span></div>'+
+    '</div>').join('');
+
+  const ord = [...CRONO].filter(c=>c.pct!=null).sort((a,b)=>b.pct-a.pct);
+  upChart('cCrono','bar',{labels:ord.map(c=>c.nome),datasets:[{data:ord.map(c=>c.pct),
+      backgroundColor:ord.map(c=>CAT_COR[c.cat]||'#888'),borderRadius:7}]},
+    {indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.raw+'%'}}},
+     scales:{x:{beginAtZero:true,max:100,grid:{color:C.grid},ticks:{callback:v=>v+'%'}},
+             y:{grid:{display:false},ticks:{font:{size:10.5},autoSkip:false}}}});
 }
 
+/* ======================= LIVE FETCH (commits) ======================= */
 function setLive(state, txt){
   $('liveDot').className = 'dot ' + (state==='live'?'':state==='err'?'err':'snap');
   $('liveTxt').textContent = txt;
 }
-async function fetchAll(token){
+async function fetchCommits(){
   let commits = [];
   for(const [o,r] of REPOS){
     for(let page=1; page<=60; page++){
       const res = await fetch('https://api.github.com/repos/'+o+'/'+r+'/commits?per_page=100&page='+page,
-        { headers: token ? { Authorization:'Bearer '+token, Accept:'application/vnd.github+json' } : { Accept:'application/vnd.github+json' } });
+        { headers:{ Accept:'application/vnd.github+json' } });
       if(res.status===409) break;
       if(res.status===403 || res.status===429) throw { rate:true };
       if(!res.ok) throw { status:res.status };
@@ -358,55 +485,46 @@ async function fetchAll(token){
   return aggregate(commits);
 }
 function aggregate(commits){
-  const P = {}; let total=0, merges=0, ia=0; const mes={}; let primeiro=null, ultimo=null;
-  const add=(n,f)=>{ (P[n]??={nome:n,cor:corDe(n),commits:0,merges:0}); P[n][f]++; };
+  const P={}; let total=0, ia=0; const mes={}; let primeiro=null, ultimo=null;
+  const add=(n)=>{ (P[n]??={nome:n,cor:corDe(n),commits:0,prs:0}); P[n].commits++; };
   for(const c of commits){
-    const a = (c.commit?.author?.name||'')+'|'+(c.commit?.author?.email||'');
-    const who = canon(a);
-    total++; add(who,'commits');
-    if((c.parents||[]).length>=2){ merges++; add(who,'merges'); }
+    const a=(c.commit?.author?.name||'')+'|'+(c.commit?.author?.email||'');
+    add(canon(a)); total++;
     if(/Co-Authored-By:\s*Claude/i.test(c.commit?.message||'')) ia++;
-    const d = (c.commit?.author?.date||'').slice(0,10);
+    const d=(c.commit?.author?.date||'').slice(0,10);
     if(d){ const ym=d.slice(0,7); mes[ym]=(mes[ym]||0)+1; if(!ultimo||d>ultimo)ultimo=d; if(!primeiro||d<primeiro)primeiro=d; }
   }
-  return { gerado_em:new Date().toISOString(), total, merges, ia, primeiro, ultimo,
-    pessoas:Object.values(P).sort((a,b)=>b.commits-a.commits),
-    timeline:Object.entries(mes).sort().map(([m,q])=>({mes:m,qtd:q})) };
+  // PRs integrados vêm do snapshot do servidor (busca oficial diária) — commits ao vivo não trazem PRs.
+  const snapPrs = {}; (SNAPSHOT.pessoas||[]).forEach(p=>snapPrs[p.nome]=p.prs||0);
+  const pessoas = Object.values(P).sort((a,b)=>b.commits-a.commits);
+  pessoas.forEach(p=>p.prs = snapPrs[p.nome] ?? 0);
+  return { gerado_em:new Date().toISOString(), total, ia, prs_merged:SNAPSHOT.prs_merged, primeiro, ultimo, pessoas, timeline:Object.entries(mes).sort().map(([m,q])=>({mes:m,qtd:q})) };
 }
 async function refresh(force){
   const cache = LS.get('cbrio-activity-cache', null);
-  const fresh = cache && (Date.now()-cache.ts < 6*3600*1000);
-  if(cache && fresh && !force){
-    renderAtividade(cache.data);
-    setLive('live','ao vivo · '+new Date(cache.ts).toLocaleString('pt-BR'));
-    return;
+  if(cache && (Date.now()-cache.ts < 6*3600*1000) && !force){
+    renderAtividade(cache.data); setLive('live','ao vivo · '+new Date(cache.ts).toLocaleString('pt-BR')); return;
   }
-  const btn = $('btnRefresh'); btn.disabled=true; btn.textContent='↻ buscando…';
-  setLive('snap','buscando no GitHub…');
+  const btn=$('btnRefresh'); btn.disabled=true; btn.textContent='↻ buscando…'; setLive('snap','buscando no GitHub…');
   try{
-    const token = LS.get('cbrio-gh-token','') || '';
-    const D = await fetchAll(token);
-    if(D.total>0){
-      LS.set('cbrio-activity-cache', { ts:Date.now(), data:D });
-      renderAtividade(D);
-      setLive('live','ao vivo · '+new Date().toLocaleString('pt-BR'));
-    } else throw {empty:true};
+    const D = await fetchCommits();
+    if(D.total>0){ LS.set('cbrio-activity-cache',{ts:Date.now(),data:D}); renderAtividade(D); setLive('live','ao vivo · '+new Date().toLocaleString('pt-BR')); }
+    else throw {empty:true};
   }catch(e){
     if(cache){ renderAtividade(cache.data); setLive('err','cache · '+new Date(cache.ts).toLocaleString('pt-BR')); }
-    else { renderAtividade(SNAPSHOT); setLive('err', e.rate?'limite da API — use ⚙︎ p/ token':'snapshot do servidor'); }
+    else { renderAtividade(SNAPSHOT); setLive('err', e.rate?'limite da API — tente em 1 min':'snapshot do servidor'); }
   }finally{ btn.disabled=false; btn.textContent='↻ Atualizar ao vivo'; }
 }
 
+/* ======================= EVENTS / BOOT ======================= */
 $('btnRefresh').addEventListener('click', ()=>refresh(true));
-$('btnToken').addEventListener('click', ()=> $('tokenBar').classList.toggle('hidden'));
-$('tokInput').value = LS.get('cbrio-gh-token','')||'';
-$('tokSave').addEventListener('click', ()=>{ LS.set('cbrio-gh-token', $('tokInput').value.trim()); $('tokenBar').classList.add('hidden'); refresh(true); });
 $('inStart').addEventListener('change', e=>{ COSTS.project_start=e.target.value; LS.set('cbrio-costs',COSTS); renderCustos(); });
 $('inFx').addEventListener('input', e=>{ COSTS.fx=parseFloat(e.target.value)||1; LS.set('cbrio-costs',COSTS); renderCustos(); });
-$('btnReset').addEventListener('click', ()=>{ COSTS=structuredClone(COSTS_DEFAULT); LS.set('cbrio-costs',COSTS); renderCustos(); });
+$('btnResetCusto').addEventListener('click', ()=>{ COSTS=structuredClone(COSTS_DEFAULT); LS.set('cbrio-costs',COSTS); renderCustos(); });
 
 renderAtividade(SNAPSHOT);
 renderCustos();
+renderCrono();
 refresh(false);
 </script>
 </body>
