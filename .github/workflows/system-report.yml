@@ -56,6 +56,8 @@ jobs:
       # Requer, uma única vez: Settings → Pages → Source: "GitHub Actions".
       - name: Configurar Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true   # liga o Pages (source = GitHub Actions) sem toggle manual
       - name: Empacotar artefato (apenas o dashboard)
         uses: actions/upload-pages-artifact@v3
         with:
