@@ -29,9 +29,18 @@ const dreUpload = multer({
 // ── DASHBOARD ──────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
   try {
+    // Escopa as transações ao mês corrente NO BANCO — sem isso o select traz a
+    // tabela inteira e o cap de 1000 do PostgREST subconta silenciosamente os
+    // totais do mês quando fin_transacoes passa de 1000 linhas (ledger cresce).
+    const agora = new Date();
+    const mesInicio = `${agora.toISOString().slice(0, 7)}-01`;
+    const mesProximo = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+
     const [contas, transacoes, pagar, reembolsos] = await Promise.all([
       supabase.from('fin_contas').select('id, nome, tipo, saldo, ativa'),
-      supabase.from('fin_transacoes').select('tipo, valor, status, data_competencia').neq('status', 'cancelado'),
+      supabase.from('fin_transacoes').select('tipo, valor, status, data_competencia')
+        .neq('status', 'cancelado')
+        .gte('data_competencia', mesInicio).lt('data_competencia', mesProximo),
       supabase.from('fin_contas_pagar').select('id, valor, status, data_vencimento'),
       supabase.from('fin_reembolsos').select('id, valor, status'),
     ]);
@@ -39,9 +48,7 @@ router.get('/dashboard', async (req, res) => {
     const saldoTotal = (contas.data || []).filter(c => c.ativa).reduce((s, c) => s + Number(c.saldo), 0);
     const hoje = new Date().toISOString().slice(0, 10);
 
-    const trans = transacoes.data || [];
-    const mesAtual = new Date().toISOString().slice(0, 7);
-    const transMes = trans.filter(t => t.data_competencia?.startsWith(mesAtual));
+    const transMes = transacoes.data || [];
     const receitasMes = transMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
     const despesasMes = transMes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
 

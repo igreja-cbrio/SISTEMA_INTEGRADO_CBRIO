@@ -41,6 +41,7 @@ async function sugerirSaidas(compra, opts = {}) {
   let q = supabase.from('fin_transacoes')
     .select('id, valor, descricao, data_competencia, plano_contas_id, centro_custo_id, status, forma_pagamento')
     .eq('tipo', 'despesa')
+    .neq('status', 'cancelado')                          // não sugerir saída cancelada
     .gte('valor', valor * (1 - tol))
     .lte('valor', valor * (1 + tol));
 

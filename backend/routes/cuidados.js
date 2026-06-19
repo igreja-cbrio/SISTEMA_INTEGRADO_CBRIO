@@ -61,9 +61,9 @@ router.get('/dashboard', async (req, res) => {
     const iniIso = inicioMesAnterior.toISOString().slice(0, 10);
     const fimIso = fimMesAnterior.toISOString().slice(0, 10);
 
-    const [{ count: aconsAnt }, { count: capelAnt }, { count: jornAnt }, { count: convAtAnt }, { count: convCadAnt }] = await Promise.all([
-      supabase.from('cui_atendimentos_agregado').select('id', { count: 'exact', head: true }).eq('mes', iniIso).eq('tipo', 'aconselhamento'),
-      supabase.from('cui_atendimentos_agregado').select('id', { count: 'exact', head: true }).eq('mes', iniIso).eq('tipo', 'capelania'),
+    // aconselhamento/capelania vêm da SOMA de quantidade (agregadoAnt abaixo), não
+    // de count — por isso só contamos jornada180/convertidos aqui.
+    const [{ count: jornAnt }, { count: convAtAnt }, { count: convCadAnt }] = await Promise.all([
       supabase.from('cui_jornada180').select('id', { count: 'exact', head: true }).is('deleted_at', null).gte('data_encontro', iniIso).lt('data_encontro', fimIso),
       supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('atendido_apos_culto', true).gte('data_culto', iniIso).lt('data_culto', fimIso),
       supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('cadastrado', true).gte('data_culto', iniIso).lt('data_culto', fimIso),
@@ -1211,8 +1211,15 @@ router.get('/jornada-convertidos', async (req, res) => {
       putB(bN, String(b.nome || '').trim().toLowerCase() || null, real);
     }
     const batOf = (c) => {
-      const cs = [c.membro_id ? bM.get(c.membro_id) : null, onlyDigits(c.cpf).length === 11 ? bC.get(onlyDigits(c.cpf)) : null, bN.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
-      return cs.length ? { real: cs.some(x => x.real) } : null;
+      // Com membro_id/CPF, casa SÓ por chave forte — cruzar por nome aqui gera
+      // falso positivo (homônimo) e super-conta. Nome só quando não há identificação.
+      const temCpf = onlyDigits(c.cpf).length === 11;
+      if (c.membro_id || temCpf) {
+        const cs = [c.membro_id ? bM.get(c.membro_id) : null, temCpf ? bC.get(onlyDigits(c.cpf)) : null].filter(Boolean);
+        return cs.length ? { real: cs.some(x => x.real) } : null;
+      }
+      const hit = bN.get(String(c.nome || '').trim().toLowerCase());
+      return hit ? { real: hit.real } : null;
     };
     const nM = new Map(), nN = new Map();
     const putN = (m, k, fez) => { if (!k) return; const c = m.get(k); const r = fez ? 2 : 1; if (!c || r > c.r) m.set(k, { r, fez }); };
@@ -1222,8 +1229,13 @@ router.get('/jornada-convertidos', async (req, res) => {
       putN(nN, String(n.nome || '').trim().toLowerCase() || null, fez);
     }
     const nextOf = (c) => {
-      const cs = [c.membro_id ? nM.get(c.membro_id) : null, nN.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
-      return cs.length ? { fez: cs.some(x => x.fez) } : null;
+      // Idem batOf: com membro_id casa só por membro_id; nome só sem identificação.
+      if (c.membro_id) {
+        const hit = nM.get(c.membro_id);
+        return hit ? { fez: hit.fez } : null;
+      }
+      const hit = nN.get(String(c.nome || '').trim().toLowerCase());
+      return hit ? { fez: hit.fez } : null;
     };
 
     const itens = convertidos.map((c) => {
