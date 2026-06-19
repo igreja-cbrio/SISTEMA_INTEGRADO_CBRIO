@@ -82,6 +82,14 @@ async function cnpjPorNomeIA(nome) {
   } catch (e) { console.error('[enriquecer] IA web:', e.message); return null; }
 }
 
+// Vale gastar IA buscando por nome? Pula prefixo de CNPJ (MEI-pessoa, já tentado
+// por CNPJ e que a IA não acha) e nomes-lixo (",", "09-", muito curtos).
+function pareceEmpresa(nome) {
+  const n = (nome || '').trim();
+  if (!n || /^\d{2}\.\d{3}\.\d{3}/.test(n)) return false;
+  return n.replace(/[^a-zA-Zà-úÀ-Ú]/g, '').length >= 4;
+}
+
 async function enriquecerFornecedor(forn, { usarIA = true } = {}) {
   const nome = forn.razao_social || forn.nome_fantasia || '';
   let dados = null;
@@ -89,7 +97,7 @@ async function enriquecerFornecedor(forn, { usarIA = true } = {}) {
     dados = await consultarReceita(cnpj);
     if (dados) break;
   }
-  if (!dados && usarIA && nome) {
+  if (!dados && usarIA && pareceEmpresa(nome)) {
     const cnpj = await cnpjPorNomeIA(nome);
     if (cnpj) dados = await consultarReceita(cnpj);
   }
