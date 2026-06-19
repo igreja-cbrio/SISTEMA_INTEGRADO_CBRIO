@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { AbrirRotaMenu } from '../../components/grupos/AbrirRotaMenu';
 import { grupos as api, membresia, encaminhamentos } from '../../api';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -58,6 +60,7 @@ function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').
 
 // v2 - tabs membros/arquivos
 export default function Grupos() {
+  const navigate = useNavigate();
   const { profile, isAdmin, getAccessLevel } = useAuth();
   // Líder de área com nível 1 (so leitura) na matriz: ve tudo mas não edita.
   // Admin/diretor/lider com nível >=3 edita. Sincroniza com cargo_modulo_permissao.
@@ -445,26 +448,22 @@ export default function Grupos() {
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
               {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Líder: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
-              {(g.bairro || g.local) && (() => {
-                const url = (g.lat != null && g.lng != null)
-                  ? `https://www.google.com/maps/search/?api=1&query=${g.lat},${g.lng}`
-                  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([g.endereco, g.complemento, g.bairro, 'Rio de Janeiro'].filter(Boolean).join(', '))}`;
-                return (
-                  <a href={url} target="_blank" rel="noopener noreferrer" title="Abrir no Google Maps" style={{
+              {(g.bairro || g.local) && (
+                <AbrirRotaMenu
+                  lat={g.lat} lng={g.lng}
+                  endereco={[g.endereco, g.complemento, g.bairro, 'Rio de Janeiro'].filter(Boolean).join(', ')}
+                  style={{
                     fontSize: 13, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: 4,
-                    textDecoration: 'none', cursor: 'pointer',
+                    background: 'none', border: 'none', padding: 0,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
-                  >
-                    <MapPin size={12} />
-                    {g.bairro || ''}
-                    {g.bairro && g.local ? ' · ' : ''}
-                    {g.local || ''}
-                    {g.complemento ? ` — ${g.complemento}` : ''}
-                  </a>
-                );
-              })()}
+                >
+                  <MapPin size={12} />
+                  {g.bairro || ''}
+                  {g.bairro && g.local ? ' · ' : ''}
+                  {g.local || ''}
+                  {g.complemento ? ` — ${g.complemento}` : ''}
+                </AbrirRotaMenu>
+              )}
               {g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
               {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] ? (
                 <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: STATUS_TEMPORADA[g.status_temporada].bg, color: STATUS_TEMPORADA[g.status_temporada].cor, fontWeight: 600 }}>
@@ -610,7 +609,19 @@ export default function Grupos() {
                       <div style={{ width: 32, height: 32, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: C.primary }}>
                         {!m.foto_url && (m.nome?.charAt(0) || '?')}
                       </div>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</span>
+                      {m.id ? (
+                        <button
+                          onClick={() => navigate(`/ministerial/membresia?membro=${m.id}`)}
+                          title="Abrir ficha na Membresia"
+                          style={{ fontSize: 13, fontWeight: 600, color: C.primary, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+                        >
+                          {m.nome}
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</span>
+                      )}
                     </td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{m.telefone || '-'}</td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{fmtDate(m.entrou_em)}</td>

@@ -1465,6 +1465,24 @@ router.post('/geocode-batch', authorizeModule('grupos', 3), async (req, res) => 
 
       let foundLat = null, foundLng = null, fonte = null;
 
+      // Helper: consulta Nominatim (countrycodes=br) e valida que cai no RJ
+      // metropolitano/Baixada (evita match errado em outra cidade homônima).
+      const inRJ = (lat, lng) => lat <= -21.8 && lat >= -23.6 && lng <= -42.4 && lng >= -44.3;
+      const nominatim = async (q) => {
+        try {
+          const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=br`;
+          const nom = await fetch(url, { headers: { 'User-Agent': userAgent } }).then(r => r.json());
+          if (nom?.[0]) {
+            const la = parseFloat(nom[0].lat), ln = parseFloat(nom[0].lon);
+            if (inRJ(la, ln)) return { lat: la, lng: ln };
+          }
+        } catch (e) { /* segue */ }
+        return null;
+      };
+      const endUtil = (e) => e && !/endere[çc]o\s+n[ãa]o\s+informado/i.test(e) && e.replace(/\W/g, '').length >= 4;
+      const semNumero = (e) => String(e || '').replace(/,?\s*\d+\s*$/, '').trim();
+      const bairro = (g.bairro || '').trim();
+
       // Tenta via CEP se tiver
       const cepLimpo = (g.cep || '').replace(/\D/g, '');
       if (cepLimpo.length === 8) {
@@ -1472,29 +1490,34 @@ router.post('/geocode-batch', authorizeModule('grupos', 3), async (req, res) => 
           const vc = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`).then(r => r.json());
           if (!vc.erro) {
             await sleep(1100);
-            const qStr = encodeURIComponent(`${vc.logradouro || ''} ${vc.bairro || ''} ${vc.localidade} ${vc.uf} Brasil`.trim());
-            const nom = await fetch(`https://nominatim.openstreetmap.org/search?q=${qStr}&format=json&limit=1`, { headers: { 'User-Agent': userAgent } }).then(r => r.json());
-            if (nom?.[0]) {
-              foundLat = parseFloat(nom[0].lat);
-              foundLng = parseFloat(nom[0].lon);
-              fonte = 'cep';
-            }
+            const hit = await nominatim(`${vc.logradouro || ''} ${vc.bairro || ''} ${vc.localidade} ${vc.uf} Brasil`.trim());
+            if (hit) { foundLat = hit.lat; foundLng = hit.lng; fonte = 'cep'; }
           }
         } catch (e) { /* segue tentando */ }
       }
 
-      // Fallback: texto livre do "local"
-      if ((foundLat == null || foundLng == null) && g.local) {
-        await sleep(1100);
-        try {
-          const qStr = encodeURIComponent(`${g.local} ${g.bairro || ''} Rio de Janeiro RJ Brasil`.trim());
-          const nom = await fetch(`https://nominatim.openstreetmap.org/search?q=${qStr}&format=json&limit=1`, { headers: { 'User-Agent': userAgent } }).then(r => r.json());
-          if (nom?.[0]) {
-            foundLat = parseFloat(nom[0].lat);
-            foundLng = parseFloat(nom[0].lon);
-            fonte = 'texto_local';
-          }
-        } catch (e) { /* segue */ }
+      // Texto livre: usa endereco (rua+número) ou local, + bairro
+      const ruaBase = endUtil(g.endereco) ? g.endereco.trim() : (g.local || '').trim();
+      if ((foundLat == null || foundLng == null) && ruaBase) {
+        const tentativas = [
+          `${ruaBase}, ${bairro}, Rio de Janeiro, RJ, Brasil`,
+          `${ruaBase}, ${bairro}, RJ, Brasil`,
+          `${semNumero(ruaBase)}, ${bairro}, Rio de Janeiro, RJ, Brasil`,
+        ].filter((q, i, a) => q && a.indexOf(q) === i);
+        for (const q of tentativas) {
+          await sleep(1100);
+          const hit = await nominatim(q);
+          if (hit) { foundLat = hit.lat; foundLng = hit.lng; fonte = 'texto_endereco'; break; }
+        }
+      }
+
+      // Último fallback: centroide do bairro (pin aproximado no bairro certo)
+      if ((foundLat == null || foundLng == null) && bairro) {
+        for (const q of [`${bairro}, Rio de Janeiro, RJ, Brasil`, `${bairro}, RJ, Brasil`]) {
+          await sleep(1100);
+          const hit = await nominatim(q);
+          if (hit) { foundLat = hit.lat; foundLng = hit.lng; fonte = 'bairro'; break; }
+        }
       }
 
       if (foundLat != null && foundLng != null) {
@@ -1503,8 +1526,8 @@ router.post('/geocode-batch', authorizeModule('grupos', 3), async (req, res) => 
       } else {
         falhas.push({
           id: g.id, codigo: g.codigo, nome: g.nome,
-          local: g.local, bairro: g.bairro, cep: g.cep,
-          motivo: cepLimpo.length === 8 ? 'cep_e_texto_falharam' : (g.local ? 'sem_cep_texto_ambiguo' : 'sem_endereco'),
+          local: g.local, endereco: g.endereco, bairro: g.bairro, cep: g.cep,
+          motivo: (ruaBase || bairro) ? 'nao_geocodou' : 'sem_endereco',
         });
       }
 
