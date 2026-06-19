@@ -1226,7 +1226,7 @@ router.get('/meu-grupo', authApp, async (req, res) => {
     if (!membro) return res.json({ grupos: [] });
     const { data: vinculos } = await supabase
       .from('mem_grupo_membros')
-      .select('grupo_id, funcao, mem_grupos(id, nome, dia_semana, horario, local, foto_url, lider_id)')
+      .select('grupo_id, funcao, mem_grupos(id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id)')
       .eq('membro_id', membro.id)
       .is('saiu_em', null);
 
@@ -1253,7 +1253,9 @@ router.get('/meu-grupo', authApp, async (req, res) => {
       }));
       grupos.push({
         id: g.id, nome: g.nome, dia_semana: g.dia_semana, horario: g.horario,
-        local: g.local, foto_url: g.foto_url, funcao: v.funcao, lider,
+        local: g.local, endereco: g.endereco, bairro: g.bairro, complemento: g.complemento,
+        lat: g.lat, lng: g.lng,
+        foto_url: g.foto_url, funcao: v.funcao, lider,
         proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario),
         materiais,
       });

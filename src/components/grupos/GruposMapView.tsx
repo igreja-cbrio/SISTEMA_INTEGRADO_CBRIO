@@ -17,6 +17,7 @@ import { Map, MapMarker, MarkerContent, MarkerPopup, MapControls, useMap } from 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { AbrirRotaMenu } from "@/components/grupos/AbrirRotaMenu";
 
 const DIAS_MAP: Record<number, string> = {
   0: "Domingo",
@@ -494,6 +495,15 @@ export function GruposMapView({
                     <p className="text-xs text-[#00B39D] font-medium">
                       {fmtDist(g.dist)} de você
                     </p>
+                  )}
+                  {(g.lat != null && g.lng != null) && (
+                    <AbrirRotaMenu
+                      lat={g.lat} lng={g.lng}
+                      endereco={[g.local, g.bairro, "Rio de Janeiro"].filter(Boolean).join(", ")}
+                      className="inline-flex items-center gap-1 mt-1 text-xs font-medium text-[#00B39D] hover:underline"
+                    >
+                      <NavIcon className="h-3 w-3" /> Como chegar
+                    </AbrirRotaMenu>
                   )}
                   {onGroupSelect && (
                     <Button
