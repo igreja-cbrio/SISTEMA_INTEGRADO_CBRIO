@@ -119,7 +119,7 @@ export default function FotosBatismo() {
                 key={d.data}
                 onClick={() => abrir(d)}
                 style={{
-                  background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
+                  background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)',
                   padding: '18px 20px', textAlign: 'left', cursor: 'pointer',
                 }}
               >

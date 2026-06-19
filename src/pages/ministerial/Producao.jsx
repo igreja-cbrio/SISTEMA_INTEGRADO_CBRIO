@@ -551,7 +551,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
       {...backdropProps}
       style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
     >
-      <div onClick={e => e.stopPropagation()} style={{ background: C.modalBg, borderRadius: 12, maxWidth: 680, width: '100%', maxHeight: '92vh', overflow: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, maxWidth: 680, width: '100%', maxHeight: '92vh', overflow: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
         <header style={{ padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <div>
             <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>{culto.nome || culto.service_type_name}</h2>
@@ -1111,10 +1111,14 @@ function AbaDesempenho() {
         <h3 style={subTit}>NPS interno · Produção vs outras áreas criativas</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
           {data.nps_comparativo.map(n => (
-            <div key={n.area} style={{ padding: 14, borderRadius: 10, background: n.destaque ? C.primaryBg : C.card, border: `1px solid ${n.destaque ? C.primary : C.border}` }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: n.destaque ? C.primary : C.t2 }}>{n.area}{n.destaque ? ' (você)' : ''}</div>
-              <div style={{ fontSize: 26, fontWeight: 800, color: C.text }}>{n.valor == null ? '—' : `${n.valor}`}<span style={{ fontSize: 13, color: C.t3 }}>/10</span></div>
-              <div style={{ fontSize: 10, color: C.t3 }}>{n.periodo || 'sem período'}</div>
+            <div key={n.area} style={{ position: 'relative', overflow: 'hidden', padding: 14, borderRadius: 16, background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)' }}>
+              {n.destaque && <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${C.primary}22, transparent 58%)`, pointerEvents: 'none' }} />}
+              {n.destaque && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: C.primary, opacity: 0.9 }} />}
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: n.destaque ? C.primary : 'var(--cbrio-text2)' }}>{n.area}{n.destaque ? ' (você)' : ''}</div>
+                <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--cbrio-text)' }}>{n.valor == null ? '—' : `${n.valor}`}<span style={{ fontSize: 13, color: 'var(--cbrio-text2)' }}>/10</span></div>
+                <div style={{ fontSize: 10, color: 'var(--cbrio-text2)' }}>{n.periodo || 'sem período'}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -1132,10 +1136,14 @@ function Field({ label, children }) {
 }
 function Kpi({ titulo, valor, sub, cor }) {
   return (
-    <div style={{ padding: 14, borderRadius: 10, background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${cor || C.primary}` }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.t3 }}>{titulo}</div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginTop: 2 }}>{valor}</div>
-      {sub && <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>{sub}</div>}
+    <div style={{ position: 'relative', overflow: 'hidden', padding: 14, borderRadius: 16, background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)' }}>
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${(cor || C.primary)}22, transparent 58%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: cor || C.primary, opacity: 0.9 }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--cbrio-text2)' }}>{titulo}</div>
+        <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--cbrio-text)', marginTop: 2 }}>{valor}</div>
+        {sub && <div style={{ fontSize: 10, color: 'var(--cbrio-text2)', marginTop: 2 }}>{sub}</div>}
+      </div>
     </div>
   );
 }

@@ -101,9 +101,10 @@ export default function KpiDetalheModal({ open, kpiId, onClose, onUpdated, openI
       >
         <div onClick={e => e.stopPropagation()}
           style={{
-            background: C.modalBg, borderRadius: 12,
+            background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+            border: '1px solid var(--hairline)', borderRadius: 16,
             maxWidth: 880, width: '100%', maxHeight: '92vh', overflow: 'auto',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+            boxShadow: 'var(--shadow-hover), var(--hi)',
           }}
         >
           {loading ? (

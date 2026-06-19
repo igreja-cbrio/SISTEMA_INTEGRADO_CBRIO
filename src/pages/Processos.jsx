@@ -53,7 +53,7 @@ function Modal({ open, onClose, title, children, footer, wide }) {
   if (!open) return null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay }} onClick={onClose}>
-      <div style={{ background: C.modalBg, borderRadius: 12, width: wide ? 720 : 520, maxHeight: '90vh', overflow: 'auto', padding: 24, boxShadow: '0 20px 60px rgba(0,0,0,.3)' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: wide ? 720 : 520, maxHeight: '90vh', overflow: 'auto', padding: 24, boxShadow: 'var(--shadow-hover), var(--hi)' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>{title}</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: C.t3 }}>&times;</button>
@@ -296,16 +296,20 @@ function TabHome({ stats, list, kpisByArea = {} }) {
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 24 }}>
         {[{ l: 'Total de Processos', v: stats.total, c: C.primary }, { l: 'Ativos', v: stats.ativos, c: C.green }, { l: 'OKRs', v: stats.okrs, c: C.purple }, { l: 'KPIs Vinculados', v: list.reduce((s, p) => s + (p.indicador_ids?.length || 0), 0), c: C.blue }].map(k => (
-          <div key={k.l} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, borderLeft: `4px solid ${k.c}` }}>
-            <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>{k.l}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: k.c }}>{k.v}</div>
+          <div key={k.l} style={{ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', borderRadius: 16, padding: 16 }}>
+            <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${k.c}22, transparent 58%)`, pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: k.c, opacity: 0.9 }} />
+            <div style={{ position: 'relative', zIndex: 1 }}>
+              <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>{k.l}</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: k.c }}>{k.v}</div>
+            </div>
           </div>
         ))}
       </div>
       <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 12 }}>Por Categoria</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
         {CATEGORIAS.map(cat => { const cm = CAT_MAP[cat] || FALLBACK_CAT; return (
-          <div key={cat} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <div key={cat} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><Badge label={cat} color={cm.c} bg={cm.bg} /><span style={{ fontSize: 24, fontWeight: 700, color: cm.c }}>{stats.byCat[cat] || 0}</span></div>
             <div style={{ fontSize: 12, color: C.t3 }}>{(CATEGORIA_AREAS[cat] || []).map(a => getAreaNome(a)).join(', ') || 'Sem \u00e1reas'}</div>
           </div>
@@ -314,7 +318,7 @@ function TabHome({ stats, list, kpisByArea = {} }) {
       <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 12 }}>{'Por \u00c1rea'}</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
         {AREAS.map(area => { const count = stats.byArea[area.id] || 0; return (
-          <div key={area.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div key={area.id} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div><div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{area.nome}</div><div style={{ fontSize: 11, color: C.t3 }}>{(kpisByArea[area.id] || []).length} KPIs</div></div>
             <span style={{ fontSize: 20, fontWeight: 700, color: count > 0 ? C.primary : C.t3 }}>{count}</span>
           </div>
@@ -350,8 +354,8 @@ function ProcessoCard({ p, canWrite, onEdit, onDelete, onDetail }) {
   const cat = CAT_MAP[p.categoria] || CAT_MAP.Ministerial;
   const st = STATUS_MAP[p.status] || STATUS_MAP.ativo;
   return (
-    <div onClick={() => onDetail(p)} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, transition: 'border-color .15s' }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = C.primary} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+    <div onClick={() => onDetail(p)} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, transition: 'border-color .15s' }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = C.primary} onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hairline)'}>
       <div style={{ flex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>{p.nome}</span>
@@ -402,7 +406,7 @@ function DetailView({ processo: p, registros, kpiById = {}, canWrite, onBack, on
   return (
     <div>
       <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.primary, fontSize: 14, fontWeight: 600, marginBottom: 16, padding: 0 }}>{'← Voltar para lista'}</button>
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+      <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 20, marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -431,16 +435,16 @@ function DetailView({ processo: p, registros, kpiById = {}, canWrite, onBack, on
 
       {detailTab === 'info' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+          <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 4 }}>{'Respons\u00e1vel'}</div>
             <div style={{ fontSize: 14, color: C.text }}>{p.responsavel_nome || 'N\u00e3o definido'}</div>
           </div>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+          <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 4 }}>Indicadores vinculados</div>
             <div style={{ fontSize: 14, color: C.text }}>{kpis.length}</div>
           </div>
           {p.descricao && (
-            <div style={{ gridColumn: '1/-1', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
+            <div style={{ gridColumn: '1/-1', background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: C.t3, marginBottom: 4 }}>{'Descri\u00e7\u00e3o'}</div>
               <div style={{ fontSize: 14, color: C.text, lineHeight: 1.5 }}>{p.descricao}</div>
             </div>
@@ -452,7 +456,7 @@ function DetailView({ processo: p, registros, kpiById = {}, canWrite, onBack, on
         <div style={{ display: 'grid', gap: 8 }}>
           {kpis.length === 0 ? <p style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Nenhum indicador vinculado</p> :
             kpis.map(kpi => (
-              <div key={kpi.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+              <div key={kpi.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16 }}>
                 <div><span style={{ fontWeight: 600, color: C.text }}>{kpi.id}</span><span style={{ color: C.t2, marginLeft: 8 }}>{kpi.nome}</span></div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <Badge label={periodLabelOf(kpi)} color={PERIOD_COLORS[kpi.periodicidade] || C.t3} bg={(PERIOD_COLORS[kpi.periodicidade] || C.t3) + '20'} />
@@ -466,7 +470,7 @@ function DetailView({ processo: p, registros, kpiById = {}, canWrite, onBack, on
       {detailTab === 'preencher' && (
         <div>
           {canWrite && (
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+            <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16, marginBottom: 20 }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, color: C.text, marginTop: 0, marginBottom: 12 }}>Novo registro</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                 <Field label="Indicador *">
@@ -484,7 +488,7 @@ function DetailView({ processo: p, registros, kpiById = {}, canWrite, onBack, on
           )}
           <h3 style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 12 }}>{'Hist\u00f3rico'}</h3>
           {registros.length === 0 ? <p style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Nenhum registro ainda</p> : (
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead><tr style={{ background: C.tableHeader }}>
                   <th style={{ padding: '8px 12px', textAlign: 'left', color: C.t2, fontWeight: 600, fontSize: 12 }}>Data</th>
@@ -522,7 +526,7 @@ function TabOKR({ list, kpiById = {}, canWrite, onEdit, onDetail }) {
           <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 12 }}>{getAreaNome(area)} <Badge label={`${procs.length} OKR${procs.length > 1 ? 's' : ''}`} color={C.purple} bg={C.purpleBg} /></h3>
           <div style={{ display: 'grid', gap: 12 }}>
             {procs.map(p => (
-              <div key={p.id} onClick={() => onDetail(p)} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, borderLeft: `4px solid ${C.purple}`, cursor: 'pointer' }}>
+              <div key={p.id} onClick={() => onDetail(p)} style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, padding: 16, borderLeft: `4px solid ${C.purple}`, cursor: 'pointer' }}>
                 <span style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{p.nome}</span>
                 {p.indicador_ids?.length > 0 && (
                   <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
@@ -554,7 +558,7 @@ function TabKPIs({ list, kpisByArea = {}, onDetail }) {
       {AREAS.map(area => { const kpis = kpisByArea[area.id] || []; return (
         <div key={area.id} style={{ marginBottom: 24 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 8 }}>{area.nome} <span style={{ fontSize: 12, fontWeight: 400, color: C.t3 }}>{kpis.length} indicadores</span></h3>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ background: C.tableHeader }}>
                 <th style={{ padding: '8px 12px', textAlign: 'left', color: C.t2, fontWeight: 600, fontSize: 12 }}>ID</th>
@@ -648,7 +652,7 @@ function TabAgenda({ agenda, canWrite, onSave }) {
         return (
           <div key={area.id} style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 8 }}>{area.nome}</h3>
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'auto' }}>
+            <div style={{ background: C.card, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 800 }}>
                 <thead><tr style={{ background: C.tableHeader }}>
                   <th style={{ padding: '8px 12px', textAlign: 'left', color: C.t2, fontWeight: 600, fontSize: 12, minWidth: 220 }}>Indicador</th>

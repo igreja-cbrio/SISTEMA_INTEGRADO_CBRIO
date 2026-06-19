@@ -35,10 +35,10 @@ function fmtData(d) {
 }
 
 const styles = {
-  section: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, marginBottom: 16 },
+  section: { background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', padding: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   grid3: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 },
-  kpi: { padding: 16, background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` },
+  kpi: { padding: 16, background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)' },
   kpiLabel: { fontSize: 12, color: C.text3, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.4 },
   kpiValue: { fontSize: 22, fontWeight: 700, color: C.text, lineHeight: 1.2 },
   kpiSub: { fontSize: 11, color: C.text3, marginTop: 4 },

@@ -150,7 +150,7 @@ export default function ImportarExtratos() {
       {/* Histórico de uploads */}
       <div style={{ marginTop: 24 }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: C.text }}>Histórico de importacoes</h3>
-        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--cbrio-table-header)' }}>
               <tr>
@@ -216,7 +216,7 @@ function UploadCard({ title, subtitle, accept, icon, color, colorBg, processando
 
   return (
     <div style={{
-      background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20,
+      background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', padding: 20,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <div style={{ fontSize: 28 }}>{icon}</div>

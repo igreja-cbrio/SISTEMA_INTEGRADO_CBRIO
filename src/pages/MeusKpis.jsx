@@ -300,7 +300,7 @@ export default function MeusKpis() {
       </div>
 
       {meusKpis.length === 0 ? (
-        <div style={{ padding: 60, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 12, border: `1px dashed ${C.border}` }}>
+        <div style={{ padding: 60, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 16, border: `1px dashed ${C.border}`, boxShadow: 'var(--shadow)' }}>
           Nenhum KPI ativo nas suas areas ainda. {canEditAny && 'Clique em "Novo KPI da minha área" para criar o primeiro.'}
         </div>
       ) : (
@@ -353,8 +353,10 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
           const StatusIcon = status.Icon;
           const podeEditar = canEditArea(kpi);
           return (
-            <div key={kpi.id} style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+            <div key={kpi.id} style={{ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${status.cor}22, transparent 58%)`, pointerEvents: 'none' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: status.cor, opacity: 0.9 }} />
+              <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 10, color: C.t3, fontWeight: 600 }}>{kpi.id} · {kpi.area}</div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginTop: 2 }}>{kpi.indicador}</div>
@@ -369,10 +371,10 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
               </div>
 
               {kpi.descricao && (
-                <div style={{ fontSize: 11, color: C.t3, marginBottom: 8, lineHeight: 1.4 }}>{kpi.descricao}</div>
+                <div style={{ position: 'relative', zIndex: 1, fontSize: 11, color: C.t3, marginBottom: 8, lineHeight: 1.4 }}>{kpi.descricao}</div>
               )}
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: C.t2, marginBottom: 8, flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: C.t2, marginBottom: 8, flexWrap: 'wrap' }}>
                 {kpi.meta_descricao && (
                   <span><strong style={{ color: C.text }}>Meta:</strong> {kpi.meta_descricao}{kpi.unidade ? ` ${kpi.unidade}` : ''}</span>
                 )}
@@ -385,7 +387,7 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
               </div>
 
               {kpi.valores?.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
                   {kpi.valores.map(v => {
                     const meta = VALORES_LABEL[v];
                     if (!meta) return null;
@@ -403,7 +405,7 @@ function SecaoPeriodicidade({ periodicidade, kpis, statusKpi, ultimoRegPorIndica
               )}
 
               {/* Origem do dado · indica onde preencher (módulo) ou se e automático */}
-              <OrigemDado kpi={kpi} podeEditar={podeEditar} onEditar={onEditar} />
+              <div style={{ position: 'relative', zIndex: 1 }}><OrigemDado kpi={kpi} podeEditar={podeEditar} onEditar={onEditar} /></div>
             </div>
           );
         })}

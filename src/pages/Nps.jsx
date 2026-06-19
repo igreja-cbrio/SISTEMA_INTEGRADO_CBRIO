@@ -109,7 +109,7 @@ function Modal({ open, onClose, title, children, footer, width = 640 }) {
   if (!open) return null;
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay, padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: C.modalBg, borderRadius: 12, width, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', padding: 24, boxShadow: '0 20px 60px rgba(0,0,0,.4)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', padding: 24, boxShadow: 'var(--shadow-hover), var(--hi)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: 18, color: C.text, fontWeight: 700 }}>{title}</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3, lineHeight: 1 }}>×</button>
@@ -251,10 +251,12 @@ export default function Nps() {
             const accentColor = v?.color || C.primary;
             return (
               <div key={p.id} onClick={() => setDetalheId(p.id)}
-                style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, cursor: 'pointer', transition: 'transform .12s', borderLeft: `4px solid ${accentColor}` }}
+                style={{ position: 'relative', overflow: 'hidden', background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', borderRadius: 16, padding: 18, cursor: 'pointer', transition: 'transform .12s' }}
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+                <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${accentColor}22, transparent 58%)`, pointerEvents: 'none' }} />
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: accentColor, opacity: 0.9 }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 10, position: 'relative', zIndex: 1 }}>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {v && (
                       <span style={{ fontSize: 11, fontWeight: 700, color: v.color, padding: '2px 8px', borderRadius: 10, background: `${v.color}15` }}>{v.label}</span>
@@ -265,9 +267,9 @@ export default function Nps() {
                   </div>
                   <NpsBadge status={p.status} />
                 </div>
-                <h3 style={{ margin: '0 0 6px', fontSize: 15, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{p.titulo}</h3>
-                <p style={{ margin: '0 0 14px', fontSize: 12, color: C.t2, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.objetivo}</p>
-                <ScoreCard stats={p.stats} />
+                <h3 style={{ position: 'relative', zIndex: 1, margin: '0 0 6px', fontSize: 15, fontWeight: 700, color: C.text, lineHeight: 1.3 }}>{p.titulo}</h3>
+                <p style={{ position: 'relative', zIndex: 1, margin: '0 0 14px', fontSize: 12, color: C.t2, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.objetivo}</p>
+                <div style={{ position: 'relative', zIndex: 1 }}><ScoreCard stats={p.stats} /></div>
               </div>
             );
           })}
@@ -723,9 +725,13 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
 
 function StatBox({ label, value, color }) {
   return (
-    <div style={{ padding: 12, background: C.inputBg, borderRadius: 8, border: `1px solid ${C.border}`, textAlign: 'center' }}>
-      <div style={{ fontSize: 10, color: C.t3, fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+    <div style={{ position: 'relative', overflow: 'hidden', padding: 12, background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', textAlign: 'center' }}>
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${color}22, transparent 58%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: color, opacity: 0.9 }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{ fontSize: 10, color: 'var(--cbrio-text2)', fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+      </div>
     </div>
   );
 }

@@ -84,7 +84,7 @@ export default function NotificacaoRegras() {
       </div>
 
       {/* Adicionar regra */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center', padding: 16, background: C.card, borderRadius: 12, border: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center', padding: 16, background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)' }}>
         <select value={addModulo} onChange={e => setAddModulo(e.target.value)}
           style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, background: 'var(--cbrio-input-bg)', color: C.text }}>
           <option value="">Selecione módulo...</option>
@@ -101,7 +101,7 @@ export default function NotificacaoRegras() {
       {/* Regras por módulo */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 16 }}>
         {MODULOS.map(m => (
-          <div key={m.id} style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, borderLeft: `4px solid ${m.color}`, overflow: 'hidden' }}>
+          <div key={m.id} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)', borderLeft: `4px solid ${m.color}`, overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: `1px solid ${C.border}` }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{m.label}</div>
               <div style={{ fontSize: 12, color: C.text3, marginTop: 2 }}>{m.desc}</div>

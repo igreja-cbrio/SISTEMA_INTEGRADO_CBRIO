@@ -68,13 +68,15 @@ export default function ModalCelula({ area, valor, cell, onClose }) {
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          background: C.modalBg,
+          background: 'var(--panel)',
+          WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)',
+          border: '1px solid var(--hairline)',
           borderRadius: 16,
           maxWidth: 720,
           width: '100%',
           maxHeight: '85vh',
           overflow: 'auto',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+          boxShadow: 'var(--shadow-hover), var(--hi)',
         }}
       >
         {/* Header */}
@@ -166,15 +168,16 @@ function KpiRow({ kpi, onAbrir }) {
       onClick={onAbrir}
       style={{
         background: 'var(--cbrio-card)',
-        border: `1px solid ${C.border}`,
+        border: '1px solid var(--hairline)',
         borderLeft: `3px solid ${sv.cor}`,
-        borderRadius: 8,
+        borderRadius: 16,
         padding: 14,
+        boxShadow: 'var(--shadow)',
         cursor: onAbrir ? 'pointer' : 'default',
         transition: 'border-color 0.15s, transform 0.1s',
       }}
       onMouseEnter={e => { if (onAbrir) { e.currentTarget.style.borderColor = sv.cor; } }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.borderLeft = `3px solid ${sv.cor}`; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--hairline)'; e.currentTarget.style.borderLeft = `3px solid ${sv.cor}`; }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{
