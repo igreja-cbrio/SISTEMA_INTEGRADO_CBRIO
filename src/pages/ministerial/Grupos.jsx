@@ -505,11 +505,21 @@ export default function Grupos() {
             { label: 'Total', value: totalMembros, color: C.blue },
             { label: 'Multiplicacoes', value: isOptimistic ? null : (g.multiplicacoes?.length || 0), color: '#8b5cf6' },
           ].map(k => (
-            <div key={k.label} style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: k.color, opacity: k.value == null ? 0.3 : 1 }}>
-                {k.value == null ? '—' : k.value}
+            <div key={k.label} style={{
+              position: 'relative', overflow: 'hidden',
+              background: 'var(--panel)',
+              WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+              border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+              borderRadius: 16, padding: 16,
+            }}>
+              <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${k.color}22, transparent 58%)`, pointerEvents: 'none' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: k.color, opacity: 0.9 }} />
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: k.color, opacity: k.value == null ? 0.3 : 1 }}>
+                  {k.value == null ? '—' : k.value}
+                </div>
+                <div style={{ fontSize: 12, color: C.t3 }}>{k.label}</div>
               </div>
-              <div style={{ fontSize: 12, color: C.t3 }}>{k.label}</div>
             </div>
           ))}
         </div>
@@ -519,14 +529,14 @@ export default function Grupos() {
           <SaudeDoGrupo metricas={metricas} />
         )}
         {!isOptimistic && metricas && metricas.total_encontros === 0 && (
-          <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px dashed ${C.border}`, marginBottom: 24, fontSize: 12, color: C.t3, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ background: C.card, borderRadius: 16, padding: 16, border: '1px dashed var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 24, fontSize: 12, color: C.t3, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Activity size={14} /> Saude do grupo aparece aqui depois do primeiro encontro registrado.
           </div>
         )}
 
         {/* Grupo de origem e multiplicacoes */}
         {(g.grupo_origem || g.multiplicacoes?.length > 0) && (
-          <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginBottom: 24 }}>
+          <div style={{ background: C.card, borderRadius: 16, padding: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <ArrowRightLeft size={16} style={{ color: C.primary }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Arvore de multiplicacao</span>
@@ -550,7 +560,7 @@ export default function Grupos() {
         )}
 
         {/* Membros */}
-        <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+        <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}`, gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
               Membros ({isOptimistic ? (g.membros_count ?? '...') : membrosAtivos.length})
@@ -650,7 +660,7 @@ export default function Grupos() {
 
         {/* Encontros recentes */}
         {!isOptimistic && (
-          <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginTop: 16 }}>
+          <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden', marginTop: 16 }}>
             <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Calendar size={14} style={{ color: C.primary }} />
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Encontros recentes ({encontros.length})</span>
@@ -696,7 +706,7 @@ export default function Grupos() {
           const saidas = historicoMembros.filter(h => h.saiu_em);
           if (saidas.length === 0) return null;
           return (
-            <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden', marginTop: 16 }}>
+            <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden', marginTop: 16 }}>
               <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <ArrowRightLeft size={14} style={{ color: C.t3 }} />
                 <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Histórico de saídas e transferências ({saidas.length})</span>
@@ -741,7 +751,7 @@ export default function Grupos() {
 
         {/* Observações */}
         {g.observacoes && (
-          <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, marginTop: 16 }}>
+          <div style={{ background: C.card, borderRadius: 16, padding: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginTop: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 8 }}>Observações</div>
             <div style={{ fontSize: 13, color: C.t2, whiteSpace: 'pre-wrap' }}>{g.observacoes}</div>
           </div>
@@ -913,7 +923,7 @@ export default function Grupos() {
         <div>
           {/* Upload · so quem edita */}
           {podeEditarGrupos && (
-          <div style={{ background: C.card, borderRadius: 12, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16 }}>
+          <div style={{ background: C.card, borderRadius: 16, padding: 20, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
               <FileUp size={16} /> Enviar material
             </div>
@@ -1010,7 +1020,7 @@ export default function Grupos() {
           </p>
 
           {/* Lista */}
-          <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+          <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
             {materiais.length === 0 ? (
               <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum material encontrado</div>
             ) : materiais.map(doc => {
@@ -1123,7 +1133,7 @@ export default function Grupos() {
       {tabAtiva === 'grupos' && <>
       {/* Resumo de saúde */}
       {saudeAgregada && saudeAgregada.total > 0 && (
-        <div style={{ background: C.card, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ background: C.card, borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Activity size={18} style={{ color: C.primary }} />
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Saúde dos grupos</span>
@@ -1264,14 +1274,14 @@ export default function Grupos() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
           {filtered.map(g => (
             <div key={g.id} onClick={() => openGrupo(g)} style={{
-              background: C.card, borderRadius: 14, padding: 18, border: `1px solid ${C.border}`,
+              background: C.card, borderRadius: 16, padding: 18, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)',
               cursor: 'pointer', transition: 'border-color 0.15s, transform 0.1s',
               opacity: g.ativo ? 1 : 0.6,
             }}
               onMouseDown={e => e.currentTarget.style.transform = 'scale(0.99)'}
               onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
               onMouseEnter={e => e.currentTarget.style.borderColor = C.primary}
-              onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+              onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--hairline)'}>
               <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
                 <div style={{ width: 52, height: 52, borderRadius: 12, background: g.foto_url ? `url(${g.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {!g.foto_url && <Users size={22} style={{ color: C.primary }} />}
@@ -1883,7 +1893,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
                 {todosMarcados ? 'Desmarcar todos' : 'Marcar todos'}
               </button>
             </div>
-            <div style={{ maxHeight: 280, overflowY: 'auto', border: `1px solid var(--cbrio-border)`, borderRadius: 8 }}>
+            <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--hairline)', borderRadius: 8 }}>
               {membros.map(m => {
                 const ativo = presentes.has(m.id);
                 return (
@@ -1934,7 +1944,7 @@ function SaudeDoGrupo({ metricas }) {
   const maxBar = Math.max(...(m.presencas_ultimos.length ? m.presencas_ultimos : [1]), 1);
 
   return (
-    <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${m.em_risco ? '#ef444460' : C.border}`, marginBottom: 24 }}>
+    <div style={{ background: C.card, borderRadius: 16, padding: 16, border: `1px solid ${m.em_risco ? '#ef444460' : 'var(--hairline)'}`, boxShadow: 'var(--shadow)', marginBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <Activity size={16} style={{ color: corScore }} />
         <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Saúde do grupo</span>
