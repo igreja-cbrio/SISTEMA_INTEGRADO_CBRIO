@@ -192,14 +192,9 @@ export default function PainelNsmPessoas() {
     for (const p of universo.pessoas) {
       if (!p.data_decisao || p.data_decisao < inicioRecorte) continue;
       if (tipoF !== 'todos' && p.tipo_decisao !== tipoF) continue;
-      let atividades = p.atividades || [];
-      if (janelaDias && fim) {
-        const lim = addDias(p.data_decisao, janelaDias);
-        const limiteEng = lim < fim ? lim : fim;
-        atividades = atividades.filter(a => a.data <= limiteEng);
-      }
-      const valoresEng = [...new Set(atividades.map(a => a.valor))];
-      pessoas.push({ ...p, atividades, valores_engajados: valoresEng, engajado: valoresEng.length > 0 });
+      // Engajamento vem do backend (mesma regra do card · fn_nsm_sinais_engajados · ±60d).
+      // O recorte por janela só decide QUEM entra (data_decisao), não a janela de engajamento.
+      pessoas.push(p);
     }
     const engajados = pessoas.filter(p => p.engajado).length;
     return {
