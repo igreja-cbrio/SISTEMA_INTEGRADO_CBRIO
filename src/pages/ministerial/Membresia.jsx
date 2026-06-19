@@ -31,7 +31,6 @@ import {
 } from '../../components/ui/tabs';
 import TabCadastros from './TabCadastros';
 import MembersJornadaPanel from '../../components/MembersJornadaPanel';
-import MembrosDuplicadosPanel from '../../components/MembrosDuplicadosPanel';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -1305,7 +1304,21 @@ export default function Membresia() {
         </TabsContent>
 
         <TabsContent value="duplicados">
-          <MembrosDuplicadosPanel />
+          <div className="rounded-xl border border-dashed bg-muted/20 p-8 text-center max-w-lg mx-auto">
+            <GitMerge className="size-8 mx-auto text-muted-foreground/60 mb-3" />
+            <p className="text-sm font-medium text-foreground">A revisão de duplicados agora vive em Entradas</p>
+            <p className="text-xs text-muted-foreground mt-1 mb-4">
+              Unificamos a resolução de identidade na porta de entrada da igreja. Lá você revisa as
+              duplicatas do funil e da base inteira, e abre a ficha de cada pessoa.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/next-batismo')}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition"
+            >
+              <GitMerge className="size-4" /> Abrir Entradas
+            </button>
+          </div>
         </TabsContent>
 
         <TabsContent value="cadastros">

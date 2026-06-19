@@ -1481,6 +1481,7 @@ export const nextBatismo = {
   ligar: (data) => post('/next-batismo/ligar', data),
   ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
   fundir: (data) => post('/next-batismo/fundir', data),
+  pessoa: (id) => get('/next-batismo/pessoa/' + encodeURIComponent(id)),
 };
 
 export const membresia = {
