@@ -156,10 +156,11 @@ function nomesMesmaPessoa(a, b) {
 //   duplicata). Colisão de telefone sem nome batendo cria stub e a
 //   vw_membros_duplicados / vw_nb_duplicados_suspeitos + a fila do Kevyn pegam.
 // `extra` = campos extras pro insert (ex.: data_nascimento, familia_id).
-async function acharOuCriarGuardado({ cpf, email, telefone, nome, status = 'visitante', extra = {} } = {}) {
+async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, status = 'visitante', extra = {} } = {}) {
   const cpf11 = normalizarCpf(cpf);
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
+  const nasc = dataNascimento || extra.data_nascimento || null;
 
   if (cpf11) {
     const { data } = await supabase.from('mem_membros').select('id').eq('cpf', cpf11).maybeSingle();
@@ -173,6 +174,15 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, status = 'visi
     const cands = await buscarCandidatos({ telefone }, { limit: 8 });
     const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
     if (hit) return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
+  }
+  // nome + data de nascimento · forte pra quem não tem CPF/e-mail/telefone batendo
+  // (ex.: pessoas importadas de grupos têm nome+nascimento). Conservador: mesma
+  // data de nascimento E nome batendo (≥0.90) — não liga por nascimento sozinho.
+  if (nasc && nome) {
+    const { data } = await supabase.from('mem_membros')
+      .select('id, nome').eq('data_nascimento', nasc).is('deleted_at', null).limit(30);
+    const hit = (data || []).find((c) => nomesMesmaPessoa(c.nome, nome));
+    if (hit) return { membro_id: hit.id, created: false, matched_by: 'nome+nascimento' };
   }
 
   const { data, error } = await supabase.from('mem_membros').insert({

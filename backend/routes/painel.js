@@ -1583,21 +1583,23 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
       agg.set(p, gruposAtivos.size);
     }
   } else if (valor === 'conectar' && dado === 'membros_em_grupos') {
-    // Snapshot por mês: quantos membros estavam ativos em grupos no fim do mês
-    // (entrou_em <= fim_do_mes AND (saiu_em IS NULL OR saiu_em > fim_do_mes))
+    // Snapshot por mês: quantas PESSOAS (membro_id distinto) estavam ativas em
+    // grupos no fim do mês (entrou_em <= fim_do_mes AND (saiu_em IS NULL OR
+    // saiu_em > fim_do_mes)). Conta pessoas únicas (quem está em 2 grupos não
+    // conta 2x) e ignora vínculos removidos.
     const { data, error } = await supabase.from('mem_grupo_membros')
-      .select('entrou_em, saiu_em');
+      .select('membro_id, entrou_em, saiu_em').is('deleted_at', null);
     if (error) throw error;
     const periodos = preencherLacunas([], inicio, fim, granularidade).map(p => p.periodo);
     for (const p of periodos) {
       const fimP = granularidade === 'semana'
         ? new Date(new Date(p + 'T12:00:00').setDate(new Date(p + 'T12:00:00').getDate() + 6)).toISOString().slice(0, 10)
         : new Date(Number(p.slice(0, 4)), Number(p.slice(5, 7)), 0).toISOString().slice(0, 10);
-      const ativos = (data || []).filter(r =>
-        r.entrou_em && r.entrou_em <= fimP &&
-        (!r.saiu_em || r.saiu_em > fimP)
-      ).length;
-      agg.set(p, ativos);
+      const ativos = new Set();
+      (data || []).forEach(r => {
+        if (r.entrou_em && r.entrou_em <= fimP && (!r.saiu_em || r.saiu_em > fimP)) ativos.add(r.membro_id);
+      });
+      agg.set(p, ativos.size);
     }
   } else if (valor === 'conectar' && dado === 'entradas_grupos') {
     const { data, error } = await supabase.from('mem_grupo_membros')

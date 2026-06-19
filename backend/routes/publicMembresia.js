@@ -393,6 +393,22 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       }
     }
 
+    // Nome + data de nascimento · pega quem já existe sem CPF/e-mail/telefone
+    // batendo (ex.: importados de grupos com nome+nascimento). Conservador:
+    // mesma data de nascimento E nome igual (normalizado).
+    if (!duplicadoDeId && data_nascimento) {
+      const normNome = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      const alvo = normNome(nome);
+      const { data: cands } = await supabase
+        .from('mem_membros')
+        .select('id, nome')
+        .eq('active', true)
+        .eq('data_nascimento', data_nascimento)
+        .limit(30);
+      const match = (cands || []).find((c) => normNome(c.nome) === alvo);
+      if (match) duplicadoDeId = match.id;
+    }
+
     // ── Monta payload de inserção ──
     const ip =
       (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() ||
