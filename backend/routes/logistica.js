@@ -193,6 +193,20 @@ router.delete('/fornecedores/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao remover fornecedor' }); }
 });
 
+// Grava o resultado do enriquecimento garantindo que o STATUS sempre persista
+// (senão o item é reprocessado e gasta IA à toa). Se o CNPJ já existe em outro
+// fornecedor (constraint UNIQUE — empresa duplicada), grava os demais campos sem
+// o cnpj; se ainda assim falhar, grava só o status.
+async function gravarEnriq(id, patch, status) {
+  const base = { enriquecimento_status: status, enriquecimento_em: new Date().toISOString() };
+  let { error } = await supabase.from('log_fornecedores').update({ ...patch, ...base }).eq('id', id);
+  if (error && patch && patch.cnpj) {
+    const { cnpj, ...semCnpj } = patch;
+    ({ error } = await supabase.from('log_fornecedores').update({ ...semCnpj, ...base }).eq('id', id));
+  }
+  if (error) await supabase.from('log_fornecedores').update(base).eq('id', id);
+}
+
 // Enriquece um LOTE de fornecedores incompletos (Receita via CNPJ). O frontend
 // chama em loop até restam=0. Marca enriquecimento_status pra não reprocessar e
 // pra sinalizar os "nao_encontrado" (ação manual). Lote pequeno + delay = gentil
@@ -210,13 +224,8 @@ router.post('/fornecedores/enriquecer-incompletos', async (req, res) => {
       let r;
       try { r = await enriquecerFornecedor(f, { usarIA: true }); }   // CNPJ + IA (busca na web por nome)
       catch (e) { if (e.rateLimited) { rateLimited = true; break; } r = { ok: false }; }
-      if (r.ok) {
-        await supabase.from('log_fornecedores').update({ ...r.patch, enriquecimento_status: 'enriquecido', enriquecimento_em: agora }).eq('id', f.id);
-        enriquecidos++;
-      } else {
-        await supabase.from('log_fornecedores').update({ enriquecimento_status: 'nao_encontrado', enriquecimento_em: agora }).eq('id', f.id);
-        naoEncontrados++;
-      }
+      if (r.ok) { await gravarEnriq(f.id, r.patch, 'enriquecido'); enriquecidos++; }
+      else { await gravarEnriq(f.id, {}, 'nao_encontrado'); naoEncontrados++; }
       await sleep(350);
     }
     const processados = enriquecidos + naoEncontrados;
@@ -229,13 +238,12 @@ router.post('/fornecedores/:id/enriquecer', async (req, res) => {
     const { data: forn } = await supabase.from('log_fornecedores').select('*').eq('id', req.params.id).maybeSingle();
     if (!forn) return res.status(404).json({ error: 'Fornecedor não encontrado' });
     const r = await enriquecerFornecedor(forn);
-    const agora = new Date().toISOString();
     if (!r.ok) {
-      await supabase.from('log_fornecedores').update({ enriquecimento_status: 'nao_encontrado', enriquecimento_em: agora }).eq('id', forn.id);
+      await gravarEnriq(forn.id, {}, 'nao_encontrado');
       return res.json({ ok: false, mensagem: 'Não encontrei dados oficiais (CNPJ não localizado ou empresa não consta na Receita).' });
     }
-    const { data } = await supabase.from('log_fornecedores')
-      .update({ ...r.patch, enriquecimento_status: 'enriquecido', enriquecimento_em: agora }).eq('id', forn.id).select().single();
+    await gravarEnriq(forn.id, r.patch, 'enriquecido');
+    const { data } = await supabase.from('log_fornecedores').select('*').eq('id', forn.id).single();
     res.json({ ok: true, fornecedor: data || forn, dados: r.dados, preenchidos: Object.keys(r.patch) });
   } catch (e) { console.error('[LOG] enriquecer fornecedor:', e); res.status(500).json({ error: 'Erro ao buscar dados do fornecedor' }); }
 });
