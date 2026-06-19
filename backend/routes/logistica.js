@@ -202,13 +202,13 @@ router.post('/fornecedores/enriquecer-incompletos', async (req, res) => {
     const incompleto = (f) => !f.cnpj || !f.endereco || !f.telefone;
     const { data: forns } = await supabase.from('log_fornecedores').select('*').eq('ativo', true);
     const pendentes = (forns || []).filter((f) => incompleto(f) && !f.enriquecimento_status);
-    const lote = pendentes.slice(0, 18);
+    const lote = pendentes.slice(0, 10);
     const agora = new Date().toISOString();
     let enriquecidos = 0; let naoEncontrados = 0; let rateLimited = false;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (const f of lote) {
       let r;
-      try { r = await enriquecerFornecedor(f, { usarIA: false }); }
+      try { r = await enriquecerFornecedor(f, { usarIA: true }); }   // CNPJ + IA (busca na web por nome)
       catch (e) { if (e.rateLimited) { rateLimited = true; break; } r = { ok: false }; }
       if (r.ok) {
         await supabase.from('log_fornecedores').update({ ...r.patch, enriquecimento_status: 'enriquecido', enriquecimento_em: agora }).eq('id', f.id);
