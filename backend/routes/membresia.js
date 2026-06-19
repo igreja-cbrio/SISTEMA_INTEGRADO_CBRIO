@@ -2093,57 +2093,56 @@ router.delete('/cadastros/:id', authorize('admin', 'diretor'), async (req, res) 
 // ── KPIs ──
 router.get('/kpis', async (req, res) => {
   try {
-    // Total REAL (count, sem cap). O antigo `membros.length` capava em 1000
-    // (cap do PostgREST) → "Total membros = 1000" e contagem por status errada.
-    const { count: total } = await supabase
-      .from('mem_membros').select('id', { count: 'exact', head: true })
-      .is('deleted_at', null).eq('active', true);
-
-    // byStatus: pagina a lista inteira (status) pra não cair no cap de 1000.
-    const byStatus = {};
-    {
-      const page = 1000; let from = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { data, error } = await supabase.from('mem_membros')
-          .select('status').is('deleted_at', null).eq('active', true)
-          .range(from, from + page - 1);
-        if (error) throw error;
-        if (!data || !data.length) break;
-        for (const m of data) byStatus[m.status] = (byStatus[m.status] || 0) + 1;
-        if (data.length < page) break;
-        from += page;
-      }
+    // PostgREST capa em 1000 linhas server-side → paginar pra contar de verdade
+    // (lição cargo_modulo_permissao · CLAUDE.md). O .length de um select sem
+    // paginação travava o card "Total de pessoas" em exatamente 1000.
+    const membros = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .select('id, status')
+        .is('deleted_at', null)
+        .eq('active', true)
+        .range(from, from + 999);
+      if (error) break;
+      membros.push(...(data || []));
+      if (!data || data.length < 1000) break;
     }
+
+    const total = membros.length;
+    const byStatus = {};
+    membros.forEach(m => {
+      byStatus[m.status] = (byStatus[m.status] || 0) + 1;
+    });
 
     const { count: familias } = await supabase
       .from('mem_familias')
       .select('id', { count: 'exact', head: true });
 
-    // Contribuintes ativos (≤30 dias) = membros distintos com contribuição
-    // recente. Pagina mem_contribuicoes (também passa de 1000) e deduplica.
-    const limite30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const distintos = new Set();
-    {
-      const page = 1000; let from = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { data, error } = await supabase.from('mem_contribuicoes')
-          .select('membro_id').is('deleted_at', null).gte('data', limite30d)
-          .range(from, from + page - 1);
-        if (error) throw error;
-        if (!data || !data.length) break;
-        for (const c of data) if (c.membro_id) distintos.add(c.membro_id);
-        if (data.length < page) break;
-        from += page;
-      }
+    // Contribuintes ativos (≤30 dias) — membros ativos com contribuição recente.
+    // Paginado (mem_contribuicoes passou de 1000 linhas) e sem .in() gigante.
+    const limite30dStr = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const ativosSet = new Set(membros.map(m => m.id));
+    const contribRecentes = new Set();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('mem_contribuicoes')
+        .select('membro_id')
+        .is('deleted_at', null)
+        .gte('data', limite30dStr)
+        .not('membro_id', 'is', null)
+        .range(from, from + 999);
+      if (error) break;
+      (data || []).forEach(c => { if (ativosSet.has(c.membro_id)) contribRecentes.add(c.membro_id); });
+      if (!data || data.length < 1000) break;
     }
+    const contribuintesAtivos = contribRecentes.size;
 
     res.json({
       total: total || 0,
       byStatus,
       familias: familias || 0,
-      contribuintes_ativos: distintos.size,
+      contribuintes_ativos: contribuintesAtivos,
     });
   } catch (e) {
     console.error('[membresia/kpis]', e.message);

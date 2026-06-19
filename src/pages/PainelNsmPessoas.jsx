@@ -69,11 +69,13 @@ const CATALOGO = {
 
 const labelAtividade = (valor, id) => CATALOGO[valor]?.find(a => a.id === id)?.label || id;
 
+// NSM = recém-convertidos. A lista é escopada a recentes (até 90d) · quem passa
+// gradua pra fora (segue no histórico/Jornada). Sem "acumulado" pra não misturar
+// convertidos antigos (já fora da janela) — isso é papel da Jornada da Igreja.
 const JANELAS = [
   { id: '30', label: '30 dias' },
   { id: '60', label: '60 dias' },
   { id: '90', label: '90 dias' },
-  { id: 'acumulado', label: 'Ano acumulado' },
 ];
 
 const STATUS_OPCOES = [
@@ -106,7 +108,7 @@ export default function PainelNsmPessoas() {
 
   const [tab, setTab] = useState('pessoas');            // pessoas | sem_dados
   const [ano, setAno] = useState(anoAtual);
-  const [janela, setJanela] = useState('60');
+  const [janela, setJanela] = useState('90');  // NSM escopado a recém-convertidos (≤90d)
   // Deep links do /painel: ?segmento=online (card NSM Online) e ?engajados=false
   const [statusF, setStatusF] = useState(() => {
     const s = (searchParams.get('status') || '').toLowerCase();

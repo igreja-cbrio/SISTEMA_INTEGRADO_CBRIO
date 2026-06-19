@@ -355,6 +355,16 @@ export default function Grupos() {
     } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
   };
 
+  // Marca/desmarca um membro como "líder" do grupo. Um grupo pode ter vários
+  // líderes (o "principal" fica em mem_grupos.lider_id; os demais aqui via funcao).
+  const handleToggleLider = async (participacaoId, isLider) => {
+    try {
+      await api.setFuncaoMembro(participacaoId, isLider ? 'frequentador' : 'lider');
+      toast.success(isLider ? 'Removido de líder' : 'Marcado como líder');
+      loadDetail(selectedGrupo);
+    } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
+  };
+
   const handleUploadMaterial = async (file) => {
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) { toast.error('Arquivo deve ter no máximo 10MB'); return; }
@@ -447,7 +457,15 @@ export default function Grupos() {
             {g.codigo && <div style={{ fontSize: 11, color: C.t3, fontWeight: 600, fontFamily: 'monospace', marginBottom: 2 }}>{g.codigo}</div>}
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{g.nome}</h1>
             <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
-              {g.lider && <span style={{ fontSize: 13, color: C.t2 }}>Líder: <strong style={{ color: C.text }}>{g.lider.nome}</strong></span>}
+              {(() => {
+                const lid = [];
+                if (g.lider) lid.push({ id: g.lider.id, nome: g.lider.nome });
+                membrosAtivos.forEach(m => {
+                  if ((m.funcao === 'lider' || m.funcao === 'co_lider') && !lid.some(l => l.id === m.id)) lid.push({ id: m.id, nome: m.nome });
+                });
+                if (!lid.length) return null;
+                return <span style={{ fontSize: 13, color: C.t2 }}>{lid.length > 1 ? 'Líderes' : 'Líder'}: <strong style={{ color: C.text }}>{lid.map(l => l.nome).join(', ')}</strong></span>;
+              })()}
               {(g.bairro || g.local) && (
                 <AbrirRotaMenu
                   lat={g.lat} lng={g.lng}
@@ -598,6 +616,7 @@ export default function Grupos() {
                   <th style={{ padding: '8px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Entrou em</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Presenças</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Tipo</th>
+                  <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Líder</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3, textTransform: 'uppercase' }}>Treino</th>
                   <th style={{ padding: '8px 16px', textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.t3 }}></th>
                 </tr>
@@ -630,6 +649,40 @@ export default function Grupos() {
                       <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: m.is_visitante ? '#f59e0b20' : '#10b98120', color: m.is_visitante ? C.amber : C.green, fontWeight: 600 }}>
                         {m.is_visitante ? 'Visitante' : 'Membro'}
                       </span>
+                    </td>
+                    <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                      {(() => {
+                        const isPrincipal = g.lider && m.id === g.lider.id;
+                        const isLider = m.funcao === 'lider' || m.funcao === 'co_lider';
+                        if (isPrincipal) {
+                          return (
+                            <span title="Líder principal (definido em Editar)" style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <Star size={12} /> Principal
+                            </span>
+                          );
+                        }
+                        if (podeEditarGrupos) {
+                          return (
+                            <button
+                              onClick={() => handleToggleLider(m.participacao_id, isLider)}
+                              title={isLider ? 'Remover de líder' : 'Marcar como líder'}
+                              style={{
+                                fontSize: 11, padding: '2px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                border: isLider ? `1px solid ${C.primary}` : `1px dashed ${C.border}`,
+                                background: isLider ? C.primaryBg : 'transparent',
+                                color: isLider ? C.primary : C.t3,
+                              }}>
+                              <Star size={12} /> {isLider ? 'Líder' : 'Marcar'}
+                            </button>
+                          );
+                        }
+                        return isLider ? (
+                          <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <Star size={12} /> Líder
+                          </span>
+                        ) : <span style={{ fontSize: 11, color: C.t3 }}>—</span>;
+                      })()}
                     </td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                       {(() => {

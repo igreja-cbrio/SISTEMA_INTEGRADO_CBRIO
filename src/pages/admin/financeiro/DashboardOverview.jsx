@@ -243,7 +243,7 @@ export default function DashboardOverview({ onNavigate }) {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
         <StatCard
           custom={0}
           variants={cardVariants}
@@ -293,6 +293,20 @@ export default function DashboardOverview({ onNavigate }) {
           delay={0.8}
           value={fmtMoney(stats.resultadoMes)}
           subtitle={stats.resultadoMes >= 0 ? 'Superávit' : 'Déficit'}
+        />
+        <StatCard
+          custom={4}
+          variants={cardVariants}
+          title="Contas a Pagar"
+          icon={CreditCard}
+          iconBg={pendencias.contas_pagar_vencidas > 0 ? 'bg-rose-500/10' : 'bg-amber-500/10'}
+          iconColor={pendencias.contas_pagar_vencidas > 0 ? 'text-rose-600' : 'text-amber-600'}
+          gradient={pendencias.contas_pagar_vencidas > 0 ? 'from-rose-500 to-rose-400' : 'from-amber-500 to-amber-400'}
+          delay={0.9}
+          value={fmtMoney(pendencias.valor_pagar)}
+          subtitle={pendencias.contas_pagar_vencidas > 0
+            ? `${pendencias.contas_pagar_vencidas} vencida${pendencias.contas_pagar_vencidas === 1 ? '' : 's'} · ${pendencias.contas_pagar} pendentes`
+            : `${pendencias.contas_pagar} pendente${pendencias.contas_pagar === 1 ? '' : 's'}`}
         />
       </div>
 

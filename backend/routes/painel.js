@@ -1351,6 +1351,32 @@ router.get('/nsm/pessoas', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /nsm/serie - tendência mensal do NSM (coorte por mês de conversão)
+// query: ?meses=12 (1..36) · ?segmento=central|online
+// Cada ponto = dos convertidos que decidiram no mês, % engajados em ±60d.
+// ----------------------------------------------------------------------------
+router.get('/nsm/serie', async (req, res) => {
+  try {
+    const meses = Math.min(Math.max(Number(req.query.meses) || 12, 1), 36);
+    const segmento = String(req.query.segmento || 'central').toLowerCase();
+    const area = segmento === 'online' ? 'online' : null;
+    const cacheKey = `nsm-serie:${meses}:${area || 'all'}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
+    const { data, error } = await supabase.rpc('fn_nsm_serie_mensal', { p_meses: meses, p_area: area });
+    if (error) throw error;
+
+    const resp = { meses, segmento, serie: data || [] };
+    cacheSet(cacheKey, resp);
+    res.json(resp);
+  } catch (e) {
+    console.error('painel/nsm/serie:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a série do NSM' });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /alertas - KPIs em alerta (criticos primeiro, depois atrasados)
 // query: ?limit=3 (default 3, max 20)
 //
