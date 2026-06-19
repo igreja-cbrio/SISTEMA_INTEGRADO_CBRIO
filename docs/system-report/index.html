@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cbrio · Custos & Atividade do Sistema</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --brand:#408097; --brand2:#70a8b0; --brand3:#9cc2c8; --mist:#d5e4e6; --cream:#eae3da;
@@ -30,7 +33,7 @@
   .head{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
   .brand{display:flex;align-items:center;gap:12px}
   .brand svg{width:42px;height:42px;flex:none}
-  .brand .wm{font-size:30px;font-weight:800;color:var(--brand);letter-spacing:-.02em;line-height:1}
+  .brand .wm{font-family:'Quicksand',ui-sans-serif,system-ui,sans-serif;font-size:33px;font-weight:700;color:var(--brand);letter-spacing:-.01em;line-height:1}
   .brand .tt{font-size:12.5px;color:var(--ink2);margin-top:3px}
   .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .pill{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.6);
@@ -115,6 +118,7 @@
   .b-prog{background:rgba(200,155,106,.18);color:#a9743f}
   .b-wait{background:rgba(90,118,130,.14);color:var(--slate)}
   .pinp{width:58px}
+  .cpct{font-variant-numeric:tabular-nums;font-weight:800;font-size:13px;min-width:46px;text-align:right;color:var(--ink)}
   .foot{color:var(--ink3);font-size:12px;margin-top:30px;line-height:1.7}
   code{background:rgba(64,128,151,.10);padding:1px 6px;border-radius:6px;font-size:12px;color:var(--brand)}
   .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px;
@@ -130,8 +134,8 @@
   <div class="head">
     <div class="brand">
       <svg viewBox="0 0 100 100" aria-label="cbrio" role="img">
-        <path d="M27 74 C 4 52, 11 24, 35 24 C 47 24, 50 35, 50 35 C 50 35, 53 24, 65 24 C 89 24, 96 52, 64 80 L 80 95"
-          fill="none" stroke="#408097" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M33 72 C 10 54, 14 25, 35 25 C 47 25, 50 35, 50 35 C 50 35, 53 25, 65 25 C 88 25, 90 55, 60 78 L 79 96"
+          fill="none" stroke="#408097" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <div>
         <div class="wm">cbrio</div>
@@ -251,9 +255,8 @@
       <div class="card kpi"><div class="label">Entregas totais</div><div class="val" id="crTotal">—</div><div class="hint">frentes do sistema</div></div>
     </div>
 
-    <div class="toolbar" style="justify-content:space-between">
-      <span class="mut">O % é editável (clique no número) e fica salvo no seu navegador — ajuste para a reunião da diretoria.</span>
-      <button class="ghost" id="btnResetCrono">Restaurar padrão</button>
+    <div class="toolbar">
+      <span class="mut">Progresso <b>calculado automaticamente</b> pela atividade no git: frente estabilizada (poucos/nenhum commit recente) tende a 100%; frente com muito trabalho recente aparece como "em andamento". Recalcula todo dia.</span>
     </div>
 
     <div class="crono-list" id="cronoList"></div>
@@ -279,7 +282,7 @@
 
 <script>
 /* ======================= DADOS INJETADOS NA BUILD ======================= */
-const SNAPSHOT = {"gerado_em":"2026-06-19T14:42:51.961Z","total":2657,"merges":900,"ia":546,"prs_merged":1170,"primeiro":"2025-01-01","ultimo":"2026-06-19","pessoas":[{"nome":"Marcos Paulo","cor":"#70a8b0","commits":1053,"merges":386,"prs":576},{"nome":"Claude (IA)","cor":"#c89b6a","commits":937,"merges":125,"prs":0},{"nome":"Matheus Toscano","cor":"#408097","commits":666,"merges":389,"prs":594},{"nome":"Outros","cor":"#aab9c0","commits":1,"merges":0,"prs":0}],"timeline":[{"mes":"2025-01","qtd":1},{"mes":"2026-04","qtd":975},{"mes":"2026-05","qtd":1078},{"mes":"2026-06","qtd":603}]};
+const SNAPSHOT = {"gerado_em":"2026-06-19T15:06:32.256Z","total":2658,"ia":546,"prs_merged":1170,"primeiro":"2025-01-01","ultimo":"2026-06-19","pessoas":[{"nome":"Marcos Paulo","cor":"#70a8b0","commits":1053,"prs":576},{"nome":"Claude (IA)","cor":"#c89b6a","commits":938,"prs":0},{"nome":"Matheus Toscano","cor":"#408097","commits":666,"prs":594},{"nome":"Outros","cor":"#aab9c0","commits":1,"prs":0}],"timeline":[{"mes":"2025-01","qtd":1},{"mes":"2026-04","qtd":975},{"mes":"2026-05","qtd":1078},{"mes":"2026-06","qtd":604}],"cronograma":[{"nome":"Eventos & Projetos — ciclo criativo","cat":"Operacional","commits":47,"ini":"2026-04","fim":"2026-06","pct":94,"status":"done"},{"nome":"Cérebro CBRio — IA documental","cat":"IA & Automação","commits":17,"ini":"2026-04","fim":"2026-06","pct":92,"status":"done"},{"nome":"Membresia","cat":"Ministerial","commits":57,"ini":"2026-04","fim":"2026-06","pct":89,"status":"prog"},{"nome":"Governança / Planejamento Estratégico","cat":"Estratégia","commits":25,"ini":"2026-04","fim":"2026-06","pct":89,"status":"prog"},{"nome":"OKR / NSM — painel, matriz, ~150 KPIs","cat":"Estratégia","commits":144,"ini":"2026-04","fim":"2026-06","pct":84,"status":"prog"},{"nome":"Grupos de conexão","cat":"Ministerial","commits":36,"ini":"2026-04","fim":"2026-06","pct":83,"status":"prog"},{"nome":"Voluntariado","cat":"Ministerial","commits":76,"ini":"2026-04","fim":"2026-06","pct":83,"status":"prog"},{"nome":"Devocionais","cat":"Ministerial","commits":15,"ini":"2026-04","fim":"2026-06","pct":82,"status":"prog"},{"nome":"Segurança & Permissões (RLS)","cat":"Infra & Segurança","commits":47,"ini":"2026-04","fim":"2026-06","pct":78,"status":"prog"},{"nome":"RH & Patrimônio","cat":"Operacional","commits":37,"ini":"2026-04","fim":"2026-06","pct":76,"status":"prog"},{"nome":"Online / YouTube","cat":"Ministerial","commits":32,"ini":"2026-05","fim":"2026-06","pct":75,"status":"prog"},{"nome":"Integração — cultos, decisões, batismos","cat":"Ministerial","commits":13,"ini":"2026-04","fim":"2026-06","pct":72,"status":"prog"},{"nome":"Solicitações — backbone administrativo","cat":"Operacional","commits":42,"ini":"2026-04","fim":"2026-06","pct":70,"status":"prog"},{"nome":"Logística / Compras — scan de NF","cat":"Operacional","commits":21,"ini":"2026-04","fim":"2026-06","pct":70,"status":"prog"},{"nome":"Financeiro + Agente Executor (IA)","cat":"IA & Automação","commits":102,"ini":"2026-04","fim":"2026-06","pct":67,"status":"prog"},{"nome":"App de membros","cat":"App","commits":32,"ini":"2026-04","fim":"2026-06","pct":66,"status":"prog"},{"nome":"Cuidados — jornada do convertido (90d)","cat":"Ministerial","commits":23,"ini":"2026-04","fim":"2026-06","pct":63,"status":"prog"},{"nome":"Bot WhatsApp","cat":"IA & Automação","commits":19,"ini":"2026-05","fim":"2026-06","pct":60,"status":"prog"},{"nome":"Marketing — kanban, planner","cat":"Operacional","commits":28,"ini":"2026-05","fim":"2026-06","pct":55,"status":"prog"},{"nome":"Totem Kids — check-in infantil","cat":"Ministerial","commits":13,"ini":"2026-05","fim":"2026-06","pct":55,"status":"prog"}]};
 const COSTS_DEFAULT = {"project_start":"2026-05-26","fx":5.4,"recorrentes":[{"nome":"Supabase (Pro)","valor":25,"moeda":"USD"},{"nome":"Vercel","valor":20,"moeda":"USD"},{"nome":"Anthropic / Claude API","valor":40,"moeda":"USD"},{"nome":"Railway (agente financeiro)","valor":10,"moeda":"USD"},{"nome":"OpenAI (transcrição de áudio)","valor":5,"moeda":"USD"},{"nome":"WhatsApp Cloud API (Meta)","valor":15,"moeda":"USD"},{"nome":"Domínio (cbrio.org/.com.br)","valor":1.5,"moeda":"USD"},{"nome":"Desenvolvimento (Claude Code)","valor":0,"moeda":"USD"}],"pontuais":[{"nome":"Setup inicial / migração","valor":0,"moeda":"BRL"}]};
 
 /* ======================= CRONOGRAMA (curadoria · editável) ======================= */
@@ -328,7 +331,7 @@ function fmtMes(ym){const [y,m]=ym.split('-');return MES[(+m)-1]+'/'+y.slice(2);
 function periodo(ini,fim){ return ini===fim ? fmtMes(ini) : fmtMes(ini)+' – '+fmtMes(fim); }
 
 let COSTS = LS.get('cbrio-costs', null) || structuredClone(COSTS_DEFAULT);
-let CRONO = LS.get('cbrio-crono', null) || structuredClone(CRONO_DEFAULT);
+let CRONO = (SNAPSHOT.cronograma && SNAPSHOT.cronograma.length) ? SNAPSHOT.cronograma : structuredClone(CRONO_DEFAULT);
 
 Chart.defaults.color = C.ink2;
 Chart.defaults.borderColor = C.grid;
@@ -432,29 +435,26 @@ function renderCustos(){
 /* ======================= CRONOGRAMA ======================= */
 function renderCrono(){
   const total = CRONO.length;
-  const media = Math.round(CRONO.reduce((s,c)=>s+(+c.pct||0),0)/(total||1));
+  const comPct = CRONO.filter(c=>c.pct!=null);
+  const media = comPct.length ? Math.round(comPct.reduce((s,c)=>s+(+c.pct),0)/comPct.length) : 0;
   $('crPct').textContent = media+'%';
   $('crDone').textContent = CRONO.filter(c=>c.status==='done').length;
   $('crProg').textContent = CRONO.filter(c=>c.status==='prog').length;
   $('crTotal').textContent = total;
 
-  $('cronoList').innerHTML = CRONO.map((c,i)=>
+  $('cronoList').innerHTML = CRONO.map((c)=>
     '<div class="crow">'+
       '<div><div class="ttl"><span class="swatch" style="background:'+(CAT_COR[c.cat]||'#888')+'"></span>'+c.nome+'</div>'+
         '<div class="meta">'+c.cat+'</div></div>'+
-      '<div class="meta">'+periodo(c.ini,c.fim)+'</div>'+
+      '<div class="meta">'+(c.ini?periodo(c.ini,c.fim):'—')+' · '+nf(c.commits||0)+' commits</div>'+
       '<div style="display:flex;align-items:center;gap:10px">'+
-        '<div class="cbar" style="flex:1"><i style="width:'+(+c.pct)+'%"></i></div>'+
-        '<input class="cinp pinp" type="number" min="0" max="100" data-ci="'+i+'" value="'+c.pct+'">'+
+        '<div class="cbar" style="flex:1"><i style="width:'+(c.pct!=null?c.pct:0)+'%"></i></div>'+
+        '<span class="cpct">'+(c.pct!=null?c.pct+'%':'—')+'</span>'+
       '</div>'+
       '<div style="text-align:right"><span class="badge '+STATUS_CLS[c.status]+'">'+STATUS_TXT[c.status]+'</span></div>'+
     '</div>').join('');
-  $('cronoList').querySelectorAll('input[data-ci]').forEach(inp=>inp.addEventListener('input', e=>{
-    CRONO[+e.target.dataset.ci].pct = Math.max(0,Math.min(100, parseInt(e.target.value)||0));
-    LS.set('cbrio-crono', CRONO); renderCrono();
-  }));
 
-  const ord = [...CRONO].sort((a,b)=>b.pct-a.pct);
+  const ord = [...CRONO].filter(c=>c.pct!=null).sort((a,b)=>b.pct-a.pct);
   upChart('cCrono','bar',{labels:ord.map(c=>c.nome),datasets:[{data:ord.map(c=>c.pct),
       backgroundColor:ord.map(c=>CAT_COR[c.cat]||'#888'),borderRadius:7}]},
     {indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.raw+'%'}}},
@@ -521,7 +521,6 @@ $('btnRefresh').addEventListener('click', ()=>refresh(true));
 $('inStart').addEventListener('change', e=>{ COSTS.project_start=e.target.value; LS.set('cbrio-costs',COSTS); renderCustos(); });
 $('inFx').addEventListener('input', e=>{ COSTS.fx=parseFloat(e.target.value)||1; LS.set('cbrio-costs',COSTS); renderCustos(); });
 $('btnResetCusto').addEventListener('click', ()=>{ COSTS=structuredClone(COSTS_DEFAULT); LS.set('cbrio-costs',COSTS); renderCustos(); });
-$('btnResetCrono').addEventListener('click', ()=>{ CRONO=structuredClone(CRONO_DEFAULT); LS.set('cbrio-crono',CRONO); renderCrono(); });
 
 renderAtividade(SNAPSHOT);
 renderCustos();
