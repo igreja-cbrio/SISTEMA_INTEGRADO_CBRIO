@@ -4,6 +4,7 @@ const { authenticate, authorize, getEffectiveLevel } = require('../middleware/au
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -659,35 +660,24 @@ router.post('/batismos', authorizeIntegracao, async (req, res) => {
   const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
   const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
-  let membro_id = null;
   const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
 
-  if (cpfClean && cpfClean.length === 11) {
-    // Busca membro existente
-    const { data: membro } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('cpf', cpfClean)
-      .maybeSingle();
-
-    if (membro) {
-      membro_id = membro.id;
-    } else {
-      // Cria novo membro automaticamente
-      const { data: newMembro } = await supabase
-        .from('mem_membros')
-        .insert({
-          nome: `${nome} ${sobrenome}`.trim(),
-          cpf: cpfClean,
-          data_nascimento: data_nascimento || null,
-          telefone: telefone || null,
-          email: email || null,
-          status: 'visitante',
-        })
-        .select('id')
-        .single();
-      if (newMembro) membro_id = newMembro.id;
-    }
+  // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
+  // deduplicado em vez do match-só-por-CPF (que deixava órfão quem inscrevia sem
+  // CPF e não pegava match por e-mail/telefone+nome). Consistente com a intake
+  // pública e com Next/grupos/Kids. NUNCA liga por telefone/e-mail sozinho.
+  let membro_id = null;
+  try {
+    const r = await acharOuCriarGuardado({
+      cpf: cpfClean, email: email || null, telefone: telefone || null,
+      nome: `${nome} ${sobrenome}`.trim(),
+      dataNascimento: data_nascimento || null,
+      status: 'visitante',
+    });
+    membro_id = r.membro_id;
+  } catch (e) {
+    console.error('[kpis/batismos] acharOuCriarGuardado:', e.message);
+    // fail-open: segue sem vínculo (Entradas liga depois)
   }
 
   const { data: inscricao, error } = await supabase
