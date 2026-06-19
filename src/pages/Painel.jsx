@@ -19,6 +19,7 @@ import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Use
 import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import CarrosselValores from '../components/painel/CarrosselValores';
+import NsmTendencia from '../components/painel/NsmTendencia';
 import MatrizValorArea from '../components/painel/MatrizValorArea';
 import MatrizSlaGrupo from '../components/painel/MatrizSlaGrupo';
 import AlertasCriticos from '../components/painel/AlertasCriticos';
@@ -193,6 +194,11 @@ export default function Painel() {
           </div>
         </div>
       ) : null}
+
+      {/* Tendência mensal do NSM · acima das mandalas */}
+      <div style={{ marginTop: 24 }}>
+        <NsmTendencia />
+      </div>
 
       {/* Sub-componentes carregam em paralelo ao NSM · cada um tem próprio loading */}
       <div style={{ marginTop: 24 }}>
