@@ -116,6 +116,10 @@
     {
       "path": "/api/notificacoes/cron/alerta-culto-dados",
       "schedule": "0 13 * * 1"
+    },
+    {
+      "path": "/api/notificacoes/cron",
+      "schedule": "0 9 * * *"
     }
   ],
   "rewrites": [
