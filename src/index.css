@@ -470,3 +470,96 @@ a img[data-foto-avatar],
 [role="menuitem"] img[data-foto-avatar],
 [role="button"] img[data-foto-avatar],
 [data-foto-skip] img[data-foto-avatar] { cursor: inherit; }
+
+/* ============================================================
+   GLASS THEME · PREVIEW ESCOPADO (2026-06-18)
+   Estilo "central de comando": dark + vidro fosco + acento teal #00B39D.
+   Vale SÓ dentro de .cbrio-glass-scope (1 tela por vez · aba Financeiro do
+   Dashboard Semanal) pra validar antes de virar padrão global. NÃO afeta o
+   resto do sistema. Quando aprovado, estes tokens migram pro :root.
+   ============================================================ */
+.cbrio-glass-scope {
+  /* paleta escura local · vale mesmo se o usuário estiver no tema claro */
+  color-scheme: dark;
+  --background: 200 24% 7%;
+  --foreground: 0 0% 95%;
+  --card: 200 20% 12%;
+  --card-foreground: 0 0% 95%;
+  --popover: 200 22% 11%;
+  --popover-foreground: 0 0% 95%;
+  --secondary: 200 14% 16%;
+  --secondary-foreground: 0 0% 72%;
+  --muted: 200 12% 19%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 200 14% 18%;
+  --accent-foreground: 0 0% 95%;
+  --border: 200 14% 24%;
+  --input: 200 14% 24%;
+  --primary: 170 100% 38%;
+  --primary-foreground: 200 24% 7%;
+  --ring: 170 100% 42%;
+
+  position: relative;
+  border-radius: 22px;
+  padding: 18px;
+  /* fundo ambiente · dá profundidade pro vidro (glows teal + base escura) */
+  background:
+    radial-gradient(1100px 520px at 10% -10%, rgba(0,179,157,0.18), transparent 60%),
+    radial-gradient(900px 460px at 112% -4%, rgba(0,179,157,0.10), transparent 55%),
+    radial-gradient(760px 720px at 50% 124%, rgba(0,120,150,0.12), transparent 60%),
+    linear-gradient(180deg, #0b1116 0%, #080c0f 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+
+/* grade técnica sutil sobre o gradiente (some nas bordas via máscara) */
+.cbrio-glass-scope::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.022) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 0%, #000 35%, transparent 82%);
+          mask-image: radial-gradient(ellipse at 50% 0%, #000 35%, transparent 82%);
+}
+.cbrio-glass-scope > * { position: relative; z-index: 1; }
+
+/* CARDS → vidro fosco translúcido */
+.cbrio-glass-scope .bg-card {
+  background: rgba(22, 30, 35, 0.55) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+          backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid rgba(255,255,255,0.09) !important;
+  border-radius: 18px !important;
+  box-shadow:
+    0 10px 34px rgba(0,0,0,0.42),
+    inset 0 1px 0 rgba(255,255,255,0.07) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease !important;
+}
+.cbrio-glass-scope .bg-card:hover {
+  border-color: rgba(0,179,157,0.40) !important;
+  box-shadow:
+    0 14px 40px rgba(0,0,0,0.48),
+    0 0 0 1px rgba(0,179,157,0.18),
+    inset 0 1px 0 rgba(255,255,255,0.08) !important;
+}
+
+/* selects/inputs ganham vidro leve em vez de fundo chapado */
+.cbrio-glass-scope select,
+.cbrio-glass-scope input {
+  background: rgba(255,255,255,0.05) !important;
+  border-color: rgba(255,255,255,0.12) !important;
+}
+
+/* fallback acessível · sistema com "reduzir transparência" → cards sólidos */
+@media (prefers-reduced-transparency: reduce) {
+  .cbrio-glass-scope .bg-card {
+    background: #141b1f !important;
+    -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+  }
+}
