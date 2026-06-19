@@ -52,7 +52,7 @@ const styles = {
     color: a ? C.primary : C.t2, borderBottom: a ? `2px solid ${C.primary}` : '2px solid transparent',
     marginBottom: -2, transition: 'all 0.15s',
   }),
-  card: { background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden' },
+  card: { background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' },
   cardHeader: { padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 15, fontWeight: 700, color: C.text },
   table: { width: '100%', borderCollapse: 'collapse' },
@@ -75,7 +75,7 @@ const styles = {
   formGroup: { marginBottom: 14 },
   formRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
   overlay: { position: 'fixed', inset: 0, background: 'var(--cbrio-overlay, rgba(0,0,0,0.5))', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 60, zIndex: 1000 },
-  modal: { background: 'var(--cbrio-modal-bg, #fff)', borderRadius: 16, width: '95%', maxWidth: 680, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' },
+  modal: { background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: '95%', maxWidth: 680, maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' },
   modalHeader: { padding: '20px 24px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   modalTitle: { fontSize: 18, fontWeight: 700, color: C.text },
   modalBody: { padding: '16px 24px 24px' },
@@ -164,15 +164,15 @@ function ConfirmDialog({ message, details, onConfirm, onCancel }) {
   if (!message) return null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }}>
-      <div style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 16, padding: 28, maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+      <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, padding: 28, maxWidth: 440, boxShadow: 'var(--shadow-hover), var(--hi)' }}>
         <div style={{ textAlign: 'center' }}>
           <AlertTriangle style={{ width: 36, height: 36, color: '#f59e0b', margin: '0 auto 12px' }} />
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--cbrio-text)', marginBottom: details ? 12 : 20 }}>{message}</div>
         </div>
         {details && details.length > 0 && (
-          <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 20, borderRadius: 10, border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-bg)' }}>
+          <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 20, borderRadius: 10, border: '1px solid var(--hairline)', background: 'var(--cbrio-bg)' }}>
             {details.map((item, i) => (
-              <div key={i} style={{ padding: '8px 14px', fontSize: 13, color: 'var(--cbrio-text)', borderBottom: i < details.length - 1 ? '1px solid var(--cbrio-border)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div key={i} style={{ padding: '8px 14px', fontSize: 13, color: 'var(--cbrio-text)', borderBottom: i < details.length - 1 ? '1px solid var(--hairline)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
                 {item}
               </div>
@@ -212,9 +212,11 @@ function ProgressBar({ pct, color, height = 8, showLabel = true }) {
 function KpiBar({ items }) {
   return (
     <div style={{
-      background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
+      background: 'var(--panel)',
+      WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+      borderRadius: 16, border: '1px solid var(--hairline)',
       padding: '14px 24px', marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflowX: 'auto',
+      boxShadow: 'var(--shadow), var(--hi)', overflowX: 'auto',
     }}>
       {items.map((item, i) => {
         if (!item) return <div key={i} style={{ width: 1, height: 24, background: C.border }} />;
@@ -883,9 +885,9 @@ export default function Expansao() {
           <div style={{
             position: 'fixed', left: tooltip.x, top: tooltip.y,
             transform: 'translate(-50%, -100%)',
-            background: 'var(--cbrio-modal-bg, #1a1a2e)', border: `1px solid ${C.border}`,
+            background: 'var(--cbrio-modal-bg, #1a1a2e)', border: '1px solid var(--hairline)',
             borderRadius: 8, padding: '8px 12px', zIndex: 2000,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.2)', maxWidth: 260, pointerEvents: 'none',
+            boxShadow: 'var(--shadow)', maxWidth: 260, pointerEvents: 'none',
           }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>{tooltip.mi.name}</div>
             <div style={{ fontSize: 11, color: C.t3 }}>
@@ -1096,8 +1098,8 @@ export default function Expansao() {
                       opacity: isDragging ? 0.4 : 1,
                       transition: 'opacity 0.15s, box-shadow 0.15s',
                     }}
-                    onMouseEnter={e => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}>
+                    onMouseEnter={e => e.currentTarget.style.boxShadow = 'var(--shadow-hover)'}
+                    onMouseLeave={e => e.currentTarget.style.boxShadow = 'var(--shadow)'}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>{mi.name}</div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
                       <span style={{ ...styles.badge(ax.color || C.t3, ax.bg || '#f3f4f6'), fontSize: 9 }}>{mi.year}</span>
@@ -1333,8 +1335,8 @@ export default function Expansao() {
       return (
         <div onClick={() => setSelectedPlano(p)}
           style={{ ...styles.card, padding: '18px 20px', cursor: 'pointer', borderLeft: `4px solid ${encerrado ? C.t3 : C.primary}` }}
-          onMouseEnter={e => e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.10)'}
-          onMouseLeave={e => e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'}>
+          onMouseEnter={e => e.currentTarget.style.boxShadow = 'var(--shadow-hover)'}
+          onMouseLeave={e => e.currentTarget.style.boxShadow = 'var(--shadow)'}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
             <div>
               <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{p.nome}</div>
