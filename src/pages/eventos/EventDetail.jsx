@@ -187,7 +187,7 @@ export default function EventDetail() {
       </div>
 
       {/* Info */}
-      <div style={{ background: 'var(--cbrio-card)', borderRadius: 10, padding: 16, border: `1px solid ${C.border}`, marginBottom: 16 }}>
+      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, padding: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 16 }}>
         <div className="info-grid">
           <InfoRow label="Data" value={event.date && new Date(event.date + 'T12:00:00').toLocaleDateString('pt-BR')} />
           <InfoRow label="Responsável" value={event.responsible} />

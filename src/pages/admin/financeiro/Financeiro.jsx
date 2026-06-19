@@ -73,8 +73,8 @@ const styles = {
   }),
   kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 24 },
   card: {
-    background: C.card, borderRadius: 12, border: `1px solid ${C.border}`,
-    boxShadow: '0 1px 2px rgba(0,0,0,0.05)', overflow: 'hidden',
+    background: C.card, borderRadius: 16, border: '1px solid var(--hairline)',
+    boxShadow: 'var(--shadow)', overflow: 'hidden',
   },
   cardHeader: { padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 14, fontWeight: 700, color: C.text },
@@ -105,7 +105,7 @@ const styles = {
   formGroup: { marginBottom: 14 },
   formRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
   overlay: { position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 60, zIndex: 1000 },
-  modal: { background: 'var(--cbrio-modal-bg)', borderRadius: 12, width: '95%', maxWidth: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 16px 48px rgba(0,0,0,0.12)' },
+  modal: { background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: '95%', maxWidth: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' },
   modalHeader: { padding: '20px 24px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   modalTitle: { fontSize: 18, fontWeight: 700, color: C.text },
   modalBody: { padding: '16px 24px 24px' },
@@ -216,12 +216,21 @@ function StatCard({ label, value, bg, svg }) {
   return (
     <div
       className="cbrio-kpi"
-      style={{ position: 'relative', overflow: 'hidden', background: bg, borderRadius: 12, padding: '20px 24px', color: '#fff', minHeight: 100 }}
+      style={{
+        position: 'relative', overflow: 'hidden',
+        background: 'var(--panel)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+        border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+        borderRadius: 16, padding: '20px 24px', minHeight: 100,
+      }}
     >
-      {svg}
+      {/* tint translúcido do acento + faixa no topo + ícone fantasma */}
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${bg}22, transparent 58%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: bg, opacity: 0.9 }} />
+      <div style={{ position: 'absolute', right: -8, top: -4, opacity: 0.07 }}>{svg}</div>
       <div style={{ position: 'relative', zIndex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>{label}</div>
-        <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: -1 }}>{value}</div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: C.text2, marginBottom: 8 }}>{label}</div>
+        <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: -1, color: C.text }}>{value}</div>
       </div>
     </div>
   );

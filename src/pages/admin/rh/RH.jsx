@@ -220,7 +220,7 @@ const styles = {
   th: { padding: '12px 16px', fontSize: 12, fontWeight: 700, color: 'var(--cbrio-text2)', textTransform: 'uppercase', letterSpacing: 0.5, textAlign: 'left', borderBottom: '1px solid var(--cbrio-border)', background: 'var(--cbrio-table-header)' },
   td: { padding: '12px 16px', fontSize: 14, color: 'var(--cbrio-text)', borderBottom: '1px solid var(--cbrio-border)', lineHeight: 1.5 },
   badge: (color, bg) => ({ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, color, background: bg }),
-  card: { background: 'var(--cbrio-card)', borderRadius: 12, border: '1px solid var(--cbrio-border)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', overflow: 'hidden' },
+  card: { background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' },
   cardHeader: { padding: 16, borderBottom: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 14, fontWeight: 600, color: 'var(--cbrio-text)', lineHeight: 1.5 },
   formGroup: { marginBottom: 14 },
@@ -973,7 +973,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
   }
 
   return (
-    <Card className="py-0 gap-0" style={{ background: 'var(--cbrio-card)', borderColor: 'var(--cbrio-border)' }}>
+    <Card className="py-0 gap-0" style={{ background: 'var(--cbrio-card)', borderColor: 'var(--hairline)' }}>
       <CardHeader className="px-5 pt-5 pb-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
