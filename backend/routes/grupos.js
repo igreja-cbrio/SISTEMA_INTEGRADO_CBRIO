@@ -1273,12 +1273,15 @@ router.get('/:id', async (req, res) => {
     const grupo = grupoRes.data;
 
     // Round 2: líder e grupo de origem (so se houver — em paralelo)
-    const [liderRes, origemRes] = await Promise.all([
+    const [liderRes, origemRes, supRes] = await Promise.all([
       grupo.lider_id
         ? supabase.from('mem_membros').select('id, nome, telefone, email, foto_url').eq('id', grupo.lider_id).single()
         : Promise.resolve({ data: null }),
       grupo.grupo_origem_id
         ? supabase.from('mem_grupos').select('id, nome').eq('id', grupo.grupo_origem_id).single()
+        : Promise.resolve({ data: null }),
+      grupo.supervisor_id
+        ? supabase.from('mem_membros').select('id, nome, foto_url').eq('id', grupo.supervisor_id).single()
         : Promise.resolve({ data: null }),
     ]);
 
@@ -1294,6 +1297,7 @@ router.get('/:id', async (req, res) => {
     res.json({
       ...grupo,
       lider: liderRes.data,
+      supervisor: supRes.data,
       grupo_origem: origemRes.data,
       multiplicacoes: multRes.data || [],
       membros,
