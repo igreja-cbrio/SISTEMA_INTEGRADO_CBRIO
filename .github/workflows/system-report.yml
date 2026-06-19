@@ -1,9 +1,10 @@
 name: system-report
 
 # Mantém docs/system-report/index.html sempre atualizado: atividade (commits/
-# merges/linhas por pessoa, % assistido por IA) lida do git + custos acumulados
-# e projeção de 12 meses (config editável). Roda diariamente, a cada push na
-# main e sob demanda. Commita só se algo mudou.
+# merges por pessoa, % assistido por IA) lida do git + custos acumulados e
+# projeção de 12 meses (config editável). Roda diariamente, a cada push na main
+# e sob demanda. Commita só se algo mudou e publica a página no GitHub Pages
+# (apenas a pasta do dashboard — os demais docs internos NÃO vão pro Pages).
 
 on:
   schedule:
@@ -15,7 +16,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write   # commitar o index.html regenerado
+  pages: write      # publicar no GitHub Pages
+  id-token: write   # OIDC exigido pelo deploy-pages
 
 concurrency:
   group: system-report
@@ -24,6 +27,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,9 +46,20 @@ jobs:
           if [[ -n "$(git status --porcelain docs/system-report/index.html)" ]]; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add docs/system-report/index.html
+            git add docs/system-report/index.html docs/system-report/.nojekyll
             git commit -m 'chore(report): atualiza dashboard de custos e atividade [skip ci]'
             git push
           else
             echo 'Sem mudanças no dashboard.'
           fi
+      # ── Publicar no GitHub Pages (só a pasta do dashboard) ──────────────────
+      # Requer, uma única vez: Settings → Pages → Source: "GitHub Actions".
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+      - name: Empacotar artefato (apenas o dashboard)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/system-report
+      - name: Deploy no Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
