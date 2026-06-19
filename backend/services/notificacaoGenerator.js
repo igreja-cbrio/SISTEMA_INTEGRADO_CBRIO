@@ -8,26 +8,33 @@ const { notificar } = require('./notificar');
 async function gerarTodasNotificacoes() {
   console.log('[Notificações] Gerando notificações automáticas...');
   let total = 0;
-  try {
-    total += await gerarNotificacoesRH();
-    await snapshotFolhaMensal(); // foto mensal da folha (não gera notificação)
-    total += await gerarNotificacoesFinanceiro();
-    total += await rodarAnaliseFinanceiraDiaria();
-    total += await gerarNotificacoesLogistica();
-    total += await gerarNotificacoesPatrimonio();
-    total += await gerarNotificacoesMembresia();
-    total += await gerarNotificacoesKpis();
-    total += await gerarNotificacoesCuidados();
-    total += await gerarNotificacoesJornadaConvertidos();
-    total += await gerarNotificacoesGrupos();
-    total += await gerarNotificacoesRitual();
-    total += await gerarNotificacoesSolicitacoes();
-    total += await gerarNotificacoesMarketing();
-    total += await gerarNotificacoesOnline();
-    console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
-  } catch (e) {
-    console.error('[Notificações] Erro:', e.message);
-  }
+  // Cada gerador é isolado: um erro num módulo (ex.: tabela ausente em prod)
+  // não pode abortar os demais — senão um único bug derruba a fila inteira.
+  const safe = async (nome, fn) => {
+    try {
+      const n = await fn();
+      return typeof n === 'number' ? n : 0;
+    } catch (e) {
+      console.error(`[Notificações] ${nome} falhou:`, e.message);
+      return 0;
+    }
+  };
+  total += await safe('RH', gerarNotificacoesRH);
+  await safe('snapshotFolha', snapshotFolhaMensal); // foto mensal da folha (não gera notificação)
+  total += await safe('Financeiro', gerarNotificacoesFinanceiro);
+  total += await safe('AnaliseFinanceira', rodarAnaliseFinanceiraDiaria);
+  total += await safe('Logistica', gerarNotificacoesLogistica);
+  total += await safe('Patrimonio', gerarNotificacoesPatrimonio);
+  total += await safe('Membresia', gerarNotificacoesMembresia);
+  total += await safe('Kpis', gerarNotificacoesKpis);
+  total += await safe('Cuidados', gerarNotificacoesCuidados);
+  total += await safe('JornadaConvertidos', gerarNotificacoesJornadaConvertidos);
+  total += await safe('Grupos', gerarNotificacoesGrupos);
+  total += await safe('Ritual', gerarNotificacoesRitual);
+  total += await safe('Solicitacoes', gerarNotificacoesSolicitacoes);
+  total += await safe('Marketing', gerarNotificacoesMarketing);
+  total += await safe('Online', gerarNotificacoesOnline);
+  console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
 
@@ -240,47 +247,61 @@ async function snapshotFolhaMensal() {
 async function gerarNotificacoesFinanceiro() {
   let count = 0;
   const today = new Date().toISOString().slice(0, 10);
-  const in3d = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  const in7d = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const fmtDia = (d) => new Date(d + 'T12:00:00').toLocaleDateString('pt-BR');
 
-  // 1. Contas a pagar vencendo em 3 dias
+  // 1. Contas a pagar vencendo nos próximos 7 dias — 1 alerta agregado
+  //    (evita inundar o sino com uma notificação por conta).
   const { data: contasVencendo } = await supabase
     .from('fin_contas_pagar')
     .select('id, descricao, valor, data_vencimento')
     .eq('status', 'pendente')
     .gte('data_vencimento', today)
-    .lte('data_vencimento', in3d);
+    .lte('data_vencimento', in7d)
+    .order('data_vencimento', { ascending: true });
 
-  for (const c of contasVencendo || []) {
-    const fmtDate = new Date(c.data_vencimento + 'T12:00:00').toLocaleDateString('pt-BR');
-    const fmtVal = Number(c.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  if ((contasVencendo || []).length) {
+    const totalV = contasVencendo.reduce((s, c) => s + Number(c.valor || 0), 0);
+    const prox = contasVencendo[0];
     count += await notificar({
       modulo: 'financeiro',
       tipo: 'conta_vencendo',
-      titulo: `Conta a pagar vencendo`,
-      mensagem: `${c.descricao} — ${fmtVal} vence em ${fmtDate}.`,
+      titulo: contasVencendo.length === 1
+        ? 'Conta a pagar vencendo'
+        : `${contasVencendo.length} contas a pagar vencem em 7 dias`,
+      mensagem: contasVencendo.length === 1
+        ? `${prox.descricao} — ${fmtBRL(prox.valor)} vence em ${fmtDia(prox.data_vencimento)}.`
+        : `${contasVencendo.length} contas vencem nos próximos 7 dias · total ${fmtBRL(totalV)}. Próxima: ${prox.descricao} em ${fmtDia(prox.data_vencimento)}.`,
       link: '/admin/financeiro',
       severidade: 'aviso',
-      chaveDedup: `conta_vencendo_${c.id}`,
+      chaveDedup: `contas_vencendo_${today}`,
     });
   }
 
-  // 2. Contas vencidas
+  // 2. Contas vencidas — 1 alerta agregado (re-alerta a cada dia até quitar)
   const { data: contasVencidas } = await supabase
     .from('fin_contas_pagar')
     .select('id, descricao, valor, data_vencimento')
     .eq('status', 'pendente')
-    .lt('data_vencimento', today);
+    .lt('data_vencimento', today)
+    .order('data_vencimento', { ascending: true });
 
-  for (const c of contasVencidas || []) {
-    const fmtVal = Number(c.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  if ((contasVencidas || []).length) {
+    const totalVenc = contasVencidas.reduce((s, c) => s + Number(c.valor || 0), 0);
+    const antiga = contasVencidas[0];
     count += await notificar({
       modulo: 'financeiro',
       tipo: 'conta_vencida',
-      titulo: `Conta VENCIDA`,
-      mensagem: `${c.descricao} — ${fmtVal} está vencida!`,
+      titulo: contasVencidas.length === 1
+        ? 'Conta a pagar VENCIDA'
+        : `${contasVencidas.length} contas a pagar VENCIDAS`,
+      mensagem: contasVencidas.length === 1
+        ? `${antiga.descricao} — ${fmtBRL(antiga.valor)} está vencida (desde ${fmtDia(antiga.data_vencimento)}).`
+        : `${contasVencidas.length} contas vencidas · total ${fmtBRL(totalVenc)}. A mais antiga: ${antiga.descricao} desde ${fmtDia(antiga.data_vencimento)}.`,
       link: '/admin/financeiro',
       severidade: 'urgente',
-      chaveDedup: `conta_vencida_${c.id}`,
+      chaveDedup: `contas_vencidas_${today}`,
     });
   }
 
