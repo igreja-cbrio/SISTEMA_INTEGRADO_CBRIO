@@ -39,7 +39,7 @@ const PAGES: SearchItem[] = [
   { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos', module: 'expansao' },
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial', perm: 'canMembresia' },
   { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial', module: 'cuidados' },
-  { label: 'Next - Batismo', description: 'Check de pessoas · liga inscrição ao membro e funde duplicados', path: '/next-batismo', icon: Users, category: 'Ministerial', module: 'next-batismo' },
+  { label: 'Entradas', description: 'Porta de entrada · liga inscrição ao membro e funde duplicados', path: '/next-batismo', icon: Users, category: 'Ministerial', module: 'next-batismo' },
 ]
 
 export function CommandSearch() {

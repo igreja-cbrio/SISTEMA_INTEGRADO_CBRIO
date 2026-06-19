@@ -1,31 +1,39 @@
 // ============================================================================
-// Next - Batismo · "Check de pessoas" do funil de novos convertidos (Fase 1)
+// Entradas · porta de entrada de quem chega na igreja (resolução de identidade)
 //
-// Console de RESOLUÇÃO DE IDENTIDADE do Kevyn (Marcos · 2026-06-15). NÃO faz
-// CRUD/presença — Integração confirma presença e consome as identidades limpas.
-// Duas lentes:
+// Console do funil de novos convertidos (Marcos · 2026-06-15; renomeado de
+// "Next - Batismo" → "Entradas" em 2026-06-19). NÃO faz CRUD/presença —
+// Integração confirma presença e consome as identidades limpas. Lentes:
 //   1. Duplicatas possíveis · funde (mantém um, absorve o outro) ou marca
 //      "não é a mesma pessoa". Detecta convertido recém-chegado (nome parecido
 //      sem CPF/nascimento · revisão humana · NUNCA auto-funde).
 //   2. Sem vínculo · inscrição (Next/Batismo) ou decisão sem membro vinculado →
-//      liga ao membro certo (sugestões por CPF/telefone/e-mail/nome) ou cria o
-//      cadastro novo.
+//      liga ao membro certo (sugestões por CPF/telefone/e-mail/nome) ou cria.
+//   3. Buscar pessoa · abre a FICHA DE ENTRADA (por onde entrou · linha do tempo
+//      de toques · conexões · quem perguntar) — a vitrine pra decidir com contexto.
+//   4. Base inteira (só admin) · reusa o painel de duplicados do Membresia (a
+//      revisão da base toda mora aqui agora · a aba do Membresia virou ponteiro).
 // ============================================================================
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { nextBatismo as api } from '../../api';
+import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 import {
   UserSearch, GitMerge, X, RefreshCw, Loader2, ArrowLeft, ArrowRight,
   Phone, Mail, Calendar, User as UserIcon, IdCard, Link2, UserPlus, Users,
+  DoorOpen, Search, Heart, Droplets, Footprints, Eye, Network, HelpCircle,
+  Sparkles, MapPin,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
+import { Input } from '../../components/ui/input';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '../../components/ui/dialog';
+import MembrosDuplicadosPanel from '../../components/MembrosDuplicadosPanel';
 
 const MOTIVO_LABELS = {
   cpf_igual:         { label: 'Mesmo CPF',          cor: '#DC2626' },
@@ -64,8 +72,10 @@ function fmtData(iso) {
 }
 
 // ============================================================================
-export default function NextBatismo() {
+export default function Entradas() {
+  const { isAdmin } = useAuth();
   const [tab, setTab] = useState('duplicatas');
+  const [fichaId, setFichaId] = useState(null); // membro_id da Ficha de Entrada aberta
   const { data: resumo } = useQuery({
     queryKey: ['next-batismo', 'resumo'],
     queryFn: () => api.resumo(),
@@ -77,26 +87,37 @@ export default function NextBatismo() {
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-          <UserSearch className="size-5 text-primary" />
+          <DoorOpen className="size-5 text-primary" />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-foreground">Next - Batismo</h1>
+          <h1 className="text-xl font-bold text-foreground">Entradas</h1>
           <p className="text-sm text-muted-foreground">
-            Check de pessoas do funil de novos convertidos · garante uma pessoa = um cadastro
-            antes de seguir pra Membresia.
+            A porta de entrada de quem chega na igreja · garante <strong>uma pessoa = um cadastro</strong>
+            {' '}antes de seguir pra Membresia.
           </p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b">
+      <div className="flex gap-2 border-b overflow-x-auto">
         <TabBtn active={tab === 'duplicatas'} onClick={() => setTab('duplicatas')}
           icon={GitMerge} label="Duplicatas possíveis" count={resumo?.duplicatas} />
         <TabBtn active={tab === 'sem_vinculo'} onClick={() => setTab('sem_vinculo')}
           icon={Link2} label="Sem vínculo" count={resumo?.sem_vinculo} />
+        <TabBtn active={tab === 'pessoa'} onClick={() => setTab('pessoa')}
+          icon={Search} label="Buscar pessoa" />
+        {isAdmin && (
+          <TabBtn active={tab === 'base'} onClick={() => setTab('base')}
+            icon={Users} label="Base inteira" />
+        )}
       </div>
 
-      {tab === 'duplicatas' ? <DuplicadosTab /> : <SemVinculoTab />}
+      {tab === 'duplicatas' && <DuplicadosTab onVerFicha={setFichaId} />}
+      {tab === 'sem_vinculo' && <SemVinculoTab onVerFicha={setFichaId} />}
+      {tab === 'pessoa' && <PessoaTab onVerFicha={setFichaId} />}
+      {tab === 'base' && isAdmin && <MembrosDuplicadosPanel />}
+
+      <FichaEntrada id={fichaId} onClose={() => setFichaId(null)} onVerFicha={setFichaId} />
     </div>
   );
 }
@@ -123,7 +144,7 @@ function TabBtn({ active, onClick, icon: Icon, label, count }) {
 // ----------------------------------------------------------------------------
 // LENTE 1 · Duplicatas
 // ----------------------------------------------------------------------------
-function DuplicadosTab() {
+function DuplicadosTab({ onVerFicha }) {
   const qc = useQueryClient();
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['next-batismo', 'duplicados'],
@@ -175,7 +196,7 @@ function DuplicadosTab() {
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground">{items.length} par(es) pra revisar</div>
           {items.map((par) => (
-            <ParCard key={par.par_id} par={par}
+            <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha}
               onMerge={(keep_id) => setMergeDialog({ par, keep_id })}
               onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending} />
           ))}
@@ -230,7 +251,7 @@ function DuplicadosTab() {
   );
 }
 
-function ParCard({ par, onMerge, onIgnorar, ignorando }) {
+function ParCard({ par, onMerge, onIgnorar, ignorando, onVerFicha }) {
   const motivos = par.motivos || [];
   const corPrincipal = MOTIVO_LABELS[motivos[0]]?.cor || '#6B7280';
   return (
@@ -251,15 +272,15 @@ function ParCard({ par, onMerge, onIgnorar, ignorando }) {
       </CardHeader>
       <CardContent className="p-0">
         <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x">
-          <MembroLado membro={par.membro_a} lado="A" onMerge={() => onMerge(par.membro_a_id)} />
-          <MembroLado membro={par.membro_b} lado="B" onMerge={() => onMerge(par.membro_b_id)} />
+          <MembroLado membro={par.membro_a} lado="A" onMerge={() => onMerge(par.membro_a_id)} onVerFicha={onVerFicha} />
+          <MembroLado membro={par.membro_b} lado="B" onMerge={() => onMerge(par.membro_b_id)} onVerFicha={onVerFicha} />
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function MembroLado({ membro, lado, onMerge }) {
+function MembroLado({ membro, lado, onMerge, onVerFicha }) {
   return (
     <div className="p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -268,7 +289,11 @@ function MembroLado({ membro, lado, onMerge }) {
             ? <img src={membro.foto_url} alt="" className="size-8 rounded-full object-cover" />
             : <div className="size-8 rounded-full bg-muted flex items-center justify-center"><UserIcon className="size-4 text-muted-foreground" /></div>}
           <div>
-            <div className="font-semibold text-sm text-foreground">{membro.nome}</div>
+            <button type="button" onClick={() => onVerFicha?.(membro.id)}
+              className="font-semibold text-sm text-foreground text-left hover:text-primary hover:underline inline-flex items-center gap-1"
+              title="Ver ficha de entrada">
+              {membro.nome} <Eye className="size-3 opacity-60" />
+            </button>
             <div className="text-[10px] text-muted-foreground">{membro.status} · criado {fmtData(membro.criado_em)}</div>
           </div>
         </div>
@@ -289,7 +314,7 @@ function MembroLado({ membro, lado, onMerge }) {
 // ----------------------------------------------------------------------------
 // LENTE 2 · Sem vínculo
 // ----------------------------------------------------------------------------
-function SemVinculoTab() {
+function SemVinculoTab({ onVerFicha }) {
   const qc = useQueryClient();
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['next-batismo', 'sem-vinculo'],
@@ -324,7 +349,7 @@ function SemVinculoTab() {
         </div>
       )}
 
-      <LigarDialog row={ligarRow} onClose={() => setLigarRow(null)} onDone={() => {
+      <LigarDialog row={ligarRow} onVerFicha={onVerFicha} onClose={() => setLigarRow(null)} onDone={() => {
         qc.invalidateQueries({ queryKey: ['next-batismo', 'sem-vinculo'] });
         qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
         qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
@@ -357,7 +382,7 @@ function SemVinculoRow({ row, onLigar }) {
   );
 }
 
-function LigarDialog({ row, onClose, onDone }) {
+function LigarDialog({ row, onClose, onDone, onVerFicha }) {
   const open = !!row;
   const { data, isLoading } = useQuery({
     queryKey: ['next-batismo', 'candidatos', row?.tipo, row?.id],
@@ -421,6 +446,12 @@ function LigarDialog({ row, onClose, onDone }) {
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Badge variant="outline" className="text-[10px]" title={(c.motivos || []).join(', ')}>{c.score}%</Badge>
+                    {onVerFicha && (
+                      <Button size="icon" variant="ghost" className="size-7" title="Ver ficha de entrada"
+                        onClick={() => onVerFicha(c.id)}>
+                        <Eye className="size-3.5" />
+                      </Button>
+                    )}
                     <Button size="sm" className="h-7 text-xs gap-1"
                       disabled={ligarMut.isPending}
                       onClick={() => ligarMut.mutate({ tipo: row.tipo, id: row.id, membro_id: c.id })}>
@@ -443,6 +474,239 @@ function LigarDialog({ row, onClose, onDone }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// LENTE 3 · Buscar pessoa → abre a Ficha de Entrada
+// ----------------------------------------------------------------------------
+function buildBuscaParams(text) {
+  const t = String(text || '').trim();
+  const d = t.replace(/\D/g, '');
+  const p = {};
+  if (d.length === 11) p.cpf = d;
+  if (d.length >= 10 && d.length <= 11) p.telefone = d;
+  if (/[a-zA-ZÀ-ÿ]/.test(t)) p.nome = t;
+  if (!p.cpf && !p.telefone && !p.nome) p.nome = t;
+  return p;
+}
+
+function PessoaTab({ onVerFicha }) {
+  const [q, setQ] = useState('');
+  const [enviado, setEnviado] = useState('');
+  const { data, isFetching } = useQuery({
+    queryKey: ['next-batismo', 'busca', enviado],
+    queryFn: () => api.candidatos(buildBuscaParams(enviado)),
+    enabled: enviado.trim().length >= 3,
+    staleTime: 10_000,
+  });
+  const resultados = data?.candidatos || [];
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground max-w-2xl">
+        Busque por nome, CPF ou telefone e abra a <strong>ficha de entrada</strong> da pessoa —
+        por onde entrou, a linha do tempo de toques, conexões e quem perguntar em caso de dúvida.
+      </p>
+      <form onSubmit={(e) => { e.preventDefault(); setEnviado(q); }} className="flex gap-2">
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nome, CPF ou telefone..." className="max-w-md" />
+        <Button type="submit" className="gap-1.5" disabled={q.trim().length < 3}>
+          <Search className="size-4" /> Buscar
+        </Button>
+      </form>
+
+      {enviado.trim().length >= 3 && (
+        isFetching ? (
+          <Centro><Loader2 className="size-5 animate-spin mr-2" /> Buscando...</Centro>
+        ) : resultados.length === 0 ? (
+          <Vazio icon={Search} titulo="Ninguém encontrado" texto="Tente outro nome, CPF ou telefone." />
+        ) : (
+          <div className="space-y-2">
+            <div className="text-xs text-muted-foreground">{resultados.length} resultado(s)</div>
+            {resultados.map((c) => (
+              <button key={c.id} type="button" onClick={() => onVerFicha?.(c.id)}
+                className="w-full flex items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2 text-left hover:border-primary/50 transition-colors">
+                <div className="flex items-center gap-2 min-w-0">
+                  {c.foto_url
+                    ? <img src={c.foto_url} alt="" className="size-8 rounded-full object-cover shrink-0" />
+                    : <div className="size-8 rounded-full bg-muted flex items-center justify-center shrink-0"><UserIcon className="size-4 text-muted-foreground" /></div>}
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-foreground truncate">{c.nome}</div>
+                    <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2">
+                      {c.cpf && <span className="font-mono">{maskCpf(c.cpf)}</span>}
+                      {c.telefone && <span>{maskTelefone(c.telefone)}</span>}
+                      <span className="opacity-70">{c.status}</span>
+                    </div>
+                  </div>
+                </div>
+                <span className="text-xs text-primary inline-flex items-center gap-1 shrink-0"><Eye className="size-3.5" /> Ver ficha</span>
+              </button>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Ficha de Entrada · a vitrine (por onde entrou · linha do tempo · conexões · quem perguntar)
+// ----------------------------------------------------------------------------
+const TOQUE_META = {
+  decisao:  { icon: Heart,      cor: '#DB2777', label: 'Decisão' },
+  next:     { icon: Sparkles,   cor: '#0EA5E9', label: 'Next' },
+  batismo:  { icon: Droplets,   cor: '#2563EB', label: 'Batismo' },
+  batizado: { icon: Droplets,   cor: '#1D4ED8', label: 'Batizado' },
+  grupo:    { icon: Users,      cor: '#16A34A', label: 'Grupo' },
+  trilha:   { icon: Footprints, cor: '#7C3AED', label: 'Trilha' },
+  cadastro: { icon: UserPlus,   cor: '#6B7280', label: 'Cadastro' },
+};
+
+function FichaEntrada({ id, onClose, onVerFicha }) {
+  const open = !!id;
+  const { data, isLoading } = useQuery({
+    queryKey: ['next-batismo', 'ficha', id],
+    queryFn: () => api.pessoa(id),
+    enabled: open,
+    staleTime: 10_000,
+  });
+  const p = data?.pessoa;
+  const toques = data?.toques || [];
+  const conexoes = data?.conexoes || {};
+  const quem = data?.quem_perguntar || [];
+  const primeiro = data?.primeiro_toque;
+  const pm = primeiro ? (TOQUE_META[primeiro.tipo] || TOQUE_META.cadastro) : null;
+  const semConexao = !conexoes.familia?.length && !conexoes.mesmo_contato?.length && !conexoes.mesmo_grupo?.length;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        {(isLoading || !p) ? (
+          <div className="py-12 flex items-center justify-center text-muted-foreground"><Loader2 className="size-5 animate-spin mr-2" /> Montando ficha...</div>
+        ) : (
+          <>
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                {p.foto_url
+                  ? <img src={p.foto_url} alt="" className="size-12 rounded-full object-cover" />
+                  : <div className="size-12 rounded-full bg-muted flex items-center justify-center"><UserIcon className="size-6 text-muted-foreground" /></div>}
+                <div className="min-w-0">
+                  <DialogTitle className="truncate text-left">{p.nome}</DialogTitle>
+                  <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-x-2">
+                    <span className="capitalize">{p.status}</span>
+                    {p.cpf && <span className="font-mono">{maskCpf(p.cpf)}</span>}
+                    {p.telefone && <span>{maskTelefone(p.telefone)}</span>}
+                  </div>
+                </div>
+              </div>
+            </DialogHeader>
+
+            {pm && (
+              <div className="rounded-lg border p-3 flex items-center gap-3" style={{ borderLeft: `3px solid ${pm.cor}` }}>
+                <div className="size-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: pm.cor + '1A' }}>
+                  <pm.icon className="size-4" style={{ color: pm.cor }} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase font-bold tracking-wide text-muted-foreground">Por onde entrou</div>
+                  <div className="text-sm font-semibold text-foreground">{primeiro.label}</div>
+                  {primeiro.quando && <div className="text-xs text-muted-foreground">{fmtData(primeiro.quando)}</div>}
+                </div>
+              </div>
+            )}
+
+            <Secao icon={MapPin} titulo="Linha do tempo">
+              {toques.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Sem toques registrados ainda.</p>
+              ) : (
+                <ol className="relative border-l ml-2 space-y-3 pl-4">
+                  {toques.map((t, i) => {
+                    const m = TOQUE_META[t.tipo] || TOQUE_META.cadastro;
+                    return (
+                      <li key={i} className="relative">
+                        <span className="absolute -left-[1.42rem] top-1 size-3 rounded-full ring-2 ring-background" style={{ background: m.cor }} />
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-foreground inline-flex items-center gap-1.5">
+                            <m.icon className="size-3.5" style={{ color: m.cor }} /> {t.titulo}
+                          </span>
+                          {t.quando && <span className="text-[10px] text-muted-foreground shrink-0">{fmtData(t.quando)}</span>}
+                        </div>
+                        {t.contexto && <div className="text-xs text-muted-foreground">{t.contexto}</div>}
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </Secao>
+
+            <Secao icon={Network} titulo="Conexões">
+              {semConexao ? (
+                <p className="text-xs text-muted-foreground">Nenhuma conexão encontrada.</p>
+              ) : (
+                <>
+                  <ConexaoGrupo titulo="Família" itens={conexoes.familia} onVerFicha={onVerFicha} />
+                  <ConexaoGrupo titulo="Mesmo contato (possível mesma pessoa)" itens={conexoes.mesmo_contato} onVerFicha={onVerFicha} alerta />
+                  <ConexaoGrupo titulo="Mesmo grupo" itens={conexoes.mesmo_grupo} onVerFicha={onVerFicha} sufixoGrupo />
+                </>
+              )}
+            </Secao>
+
+            <Secao icon={HelpCircle} titulo="Quem perguntar em caso de dúvida">
+              {quem.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Sem responsável direto identificado — fale com a Integração.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {quem.map((qp, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="text-foreground">
+                        <strong>{qp.nome || qp.papel}</strong>
+                        {qp.nome && <span className="text-muted-foreground"> · {qp.papel}</span>}
+                        {qp.contexto && <span className="text-muted-foreground"> · {qp.contexto}</span>}
+                      </span>
+                      {qp.telefone && <span className="text-[10px] text-muted-foreground font-mono shrink-0">{maskTelefone(qp.telefone)}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Secao>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose}>Fechar</Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Secao({ icon: Icon, titulo, children }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+        <Icon className="size-3.5" /> {titulo}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ConexaoGrupo({ titulo, itens, onVerFicha, alerta, sufixoGrupo }) {
+  if (!itens || itens.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <div className={`text-[10px] font-medium ${alerta ? 'text-amber-600' : 'text-muted-foreground'}`}>{titulo}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {itens.map((it) => (
+          <button key={it.id} type="button" onClick={() => onVerFicha?.(it.id)}
+            className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs hover:border-primary/50 transition-colors"
+            title="Ver ficha">
+            <UserIcon className="size-3 text-muted-foreground" />
+            {it.nome}
+            {sufixoGrupo && it.grupo && <span className="text-muted-foreground">· {it.grupo}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

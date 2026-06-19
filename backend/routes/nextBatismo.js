@@ -281,6 +281,159 @@ router.post('/ignorar-duplicata', authorizeModule('next-batismo', 2), async (req
   }
 });
 
+// ── Mesa responsável por origem (NÃO hardcoda pessoa · líder de grupo vem real) ──
+const DESK_POR_ORIGEM = {
+  decisao: { papel: 'Cuidados', contexto: 'acompanhamento do novo convertido' },
+  next:    { papel: 'Integração', contexto: 'inscrição no Next' },
+  batismo: { papel: 'Integração', contexto: 'inscrição de batismo' },
+};
+
+// ── GET /pessoa/:id · Ficha de Entrada (vitrine) ─────────────────────────────
+// Por onde a pessoa entrou (1º toque) · linha do tempo de todos os toques ·
+// conexões (família / mesmo contato / mesmo grupo) · quem perguntar. Cada fonte
+// roda em try/catch isolado: se a outra sessão (a que unifica a pessoa/NSM)
+// reescrever uma tabela, a ficha DEGRADA (some aquele toque) em vez de quebrar.
+// Contrato fino de propósito — esta tela é a vitrine, não dona do dado.
+router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { data: pessoa, error: pErr } = await supabase
+      .from('mem_membros')
+      .select('id, nome, cpf, telefone, email, status, foto_url, data_nascimento, familia_id, created_at')
+      .eq('id', id).is('deleted_at', null).maybeSingle();
+    if (pErr) throw pErr;
+    if (!pessoa) return res.status(404).json({ error: 'Pessoa não encontrada' });
+
+    const toques = [];
+    const quemPerguntar = [];
+    const origensVistas = new Set();
+    const gruposDaPessoa = [];
+    const safe = async (label, fn) => {
+      try { await fn(); } catch (e) { console.error(`[next-batismo/pessoa ${label}]`, e.message); }
+    };
+
+    // Decisão / convertido
+    await safe('decisao', async () => {
+      const { data } = await supabase.from('cui_convertidos')
+        .select('id, area, data_culto, atendido_apos_culto, created_at')
+        .eq('membro_id', id).is('deleted_at', null);
+      (data || []).forEach((r) => {
+        origensVistas.add('decisao');
+        toques.push({
+          tipo: 'decisao', titulo: 'Decisão por Jesus',
+          contexto: [r.area ? `Área ${String(r.area).toUpperCase()}` : null, r.atendido_apos_culto ? 'já atendido' : 'aguardando contato'].filter(Boolean).join(' · '),
+          quando: r.data_culto || r.created_at,
+        });
+      });
+    });
+
+    // Next
+    await safe('next', async () => {
+      const { data } = await supabase.from('next_inscricoes')
+        .select('id, evento_id, created_at').eq('membro_id', id);
+      (data || []).forEach((r) => {
+        origensVistas.add('next');
+        toques.push({ tipo: 'next', titulo: 'Inscrição no Next', contexto: 'Funil de novo convertido', quando: r.created_at });
+      });
+    });
+
+    // Batismo
+    await safe('batismo', async () => {
+      const { data } = await supabase.from('batismo_inscricoes')
+        .select('id, status, data_batismo, created_at').eq('membro_id', id).is('deleted_at', null);
+      (data || []).forEach((r) => {
+        origensVistas.add('batismo');
+        toques.push({ tipo: 'batismo', titulo: 'Inscrição de batismo', contexto: r.status || 'pendente', quando: r.created_at });
+        if (r.data_batismo) toques.push({ tipo: 'batizado', titulo: 'Batizado', contexto: '', quando: r.data_batismo });
+      });
+    });
+
+    // Grupo (vínculo ativo)
+    await safe('grupo', async () => {
+      const { data } = await supabase.from('mem_grupo_membros')
+        .select('grupo_id, funcao, mem_grupos(id, nome, lider_id)')
+        .eq('membro_id', id).is('saiu_em', null).is('deleted_at', null);
+      (data || []).forEach((r) => {
+        const g = r.mem_grupos;
+        if (g) {
+          gruposDaPessoa.push(g);
+          toques.push({ tipo: 'grupo', titulo: 'Entrou em grupo', contexto: g.nome || '', quando: null });
+        }
+      });
+    });
+
+    // Trilha (marcos da jornada já concluídos)
+    await safe('trilha', async () => {
+      const { data } = await supabase.from('mem_trilha_valores')
+        .select('etapa, concluida, data_conclusao').eq('membro_id', id).eq('concluida', true);
+      (data || []).forEach((r) => {
+        toques.push({ tipo: 'trilha', titulo: `Trilha · ${r.etapa}`, contexto: 'concluída', quando: r.data_conclusao });
+      });
+    });
+
+    // Ordena cronológico (toques sem data caem ao fim)
+    toques.sort((a, b) => {
+      if (!a.quando) return 1; if (!b.quando) return -1;
+      return new Date(a.quando) - new Date(b.quando);
+    });
+    const primeiroComData = toques.find((t) => t.quando);
+    const primeiro_toque = primeiroComData
+      ? { tipo: primeiroComData.tipo, label: primeiroComData.titulo, quando: primeiroComData.quando }
+      : { tipo: 'cadastro', label: 'Cadastro criado', quando: pessoa.created_at };
+
+    // Conexões
+    const conexoes = { familia: [], mesmo_contato: [], mesmo_grupo: [] };
+    await safe('familia', async () => {
+      if (!pessoa.familia_id) return;
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, status').eq('familia_id', pessoa.familia_id).neq('id', id).is('deleted_at', null).limit(20);
+      conexoes.familia = data || [];
+    });
+    await safe('mesmo_contato', async () => {
+      const cands = await buscarCandidatos({ cpf: pessoa.cpf, email: pessoa.email, telefone: pessoa.telefone }, { limit: 10 });
+      conexoes.mesmo_contato = cands.filter((c) => c.id !== id)
+        .map((c) => ({ id: c.id, nome: c.nome, status: c.status, motivos: c.motivos }));
+    });
+    await safe('mesmo_grupo', async () => {
+      const ids = gruposDaPessoa.map((g) => g.id).filter(Boolean);
+      if (!ids.length) return;
+      const { data } = await supabase.from('mem_grupo_membros')
+        .select('membro_id, mem_membros(id, nome, status), mem_grupos(nome)')
+        .in('grupo_id', ids).neq('membro_id', id).is('saiu_em', null).is('deleted_at', null).limit(30);
+      const seen = new Set();
+      (data || []).forEach((r) => {
+        const m = r.mem_membros;
+        if (m && !seen.has(m.id)) { seen.add(m.id); conexoes.mesmo_grupo.push({ id: m.id, nome: m.nome, status: m.status, grupo: r.mem_grupos?.nome || '' }); }
+      });
+    });
+
+    // Quem perguntar (líder de grupo = nome REAL · mesa por origem = sem nome)
+    await safe('quem-perguntar', async () => {
+      const liderIds = [...new Set(gruposDaPessoa.map((g) => g.lider_id).filter(Boolean))];
+      if (liderIds.length) {
+        const { data } = await supabase.from('mem_membros').select('id, nome, telefone').in('id', liderIds);
+        const byId = new Map((data || []).map((m) => [m.id, m]));
+        gruposDaPessoa.forEach((g) => {
+          const l = g.lider_id && byId.get(g.lider_id);
+          if (l) quemPerguntar.push({ papel: 'Líder do grupo', nome: l.nome, contexto: g.nome || '', telefone: l.telefone || null });
+        });
+      }
+      origensVistas.forEach((o) => {
+        const d = DESK_POR_ORIGEM[o];
+        if (d) quemPerguntar.push({ papel: d.papel, nome: null, contexto: d.contexto });
+      });
+    });
+
+    res.json({
+      pessoa: { ...pessoa, criado_em: pessoa.created_at },
+      primeiro_toque, toques, conexoes, quem_perguntar: quemPerguntar,
+    });
+  } catch (e) {
+    console.error('[next-batismo/pessoa]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao montar ficha' });
+  }
+});
+
 // ── POST /fundir · merge_membros (sensível · nível 3) ─────────────────────────
 router.post('/fundir', authorizeModule('next-batismo', 3), async (req, res) => {
   try {
