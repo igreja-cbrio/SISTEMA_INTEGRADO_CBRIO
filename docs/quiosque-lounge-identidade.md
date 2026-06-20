@@ -177,6 +177,21 @@ vê/reenisa · token não expira mas é revogável) · galeria Fase 1 (por data 
 - **~3–5 quiosques** no lounge (inscrição/info); **2 viram exclusivos de check-in** com
   impressora no dia do batismo; os outros não precisam de impressora.
 
+### Parte 2 (2026-06-20)
+- **Fluxo do código = PRIMEIRO ACESSO (não magic-link puro):** o link da etiqueta **abre o
+  primeiro acesso → a pessoa troca a senha → vê as fotos**. Posse física da etiqueta = a
+  verificação; sem página remota de CPF→senha.
+- **O código vive na INSCRIÇÃO de batismo:** gerado **assim que a pessoa se inscreve** (campo
+  da inscrição) e **impresso no check-in**. Recuperação = **Lorena abre a janela do batismo da
+  pessoa, vê o código e repassa** (sem expirar · revogável).
+- **Não misturar dados → a lógica do quiosque vai no módulo TOTEM MEMBRO** (`/totem`), **NÃO**
+  no Totem Kids (dados de menor). *(varredura de prontidão do Totem Membro em curso.)*
+- **Consentimento = modal PADRÃO pra todos** + legenda fixa: *"menores de 18 anos precisam de
+  autorização do responsável, caso ele esteja, pode autorizar!"*. Sem ramificação por idade.
+- **LGPD: encerrado** — basta o campo "consentiu" (data) no cadastro.
+- **Face: PC da igreja + webcam local + InsightFace/ArcFace** (Claude cuida da validação ·
+  universo só do dia + limiar/margem + fila da Lorena).
+
 ---
 
 ## 14. ⚠️ Premissa corrigida (2026-06-20 · auditoria do código vivo)
@@ -278,7 +293,54 @@ muito menor do que parecia.
 | Login passwordless | magic link | `publicVoluntariado` / `publicDevocional` |
 | RLS por dono | `current_user_membro_id` · `is_super_admin` | `20260521190000` |
 
-### 15.6 Infra do face-match (Fase 2)
+## 16. Veredito de prontidão do TOTEM MEMBRO (2026-06-20 · varredura do código vivo)
+
+**O quiosque mora no Totem Membro (`/totem` · `src/pages/TotemMembro.tsx` ~2046 linhas ·
+`backend/routes/membresia.js:60-1386`). Módulo MADURO (~80% pronto), não esqueleto.** Decisão
+do Marcos: não misturar com o Totem Kids (dados de menor).
+
+**Já existe (reuso direto · não recriar):**
+- **Modo kiosk real:** fullscreen, **fora do AppShell**, **auto-reset por inatividade (60s)**,
+  touch-friendly, **teclado virtual numérico**, PIN local (localStorage). NÃO tem pareamento de
+  estação (≠ Totem Kids) — roda numa aba logada (perm `isAdmin`) + PIN.
+- **Identificação por CPF** (`CpfInputScreen`) **e QR** (scanner USB) → `cpf-lookup`/`qr-lookup`
+  acham em `mem_membros`/`mem_cadastros_pendentes`.
+- **Captura de foto por webcam** (`getUserMedia` + canvas) já no fluxo "Meus Dados"
+  (`MeusDadosFlow` · TotemMembro.tsx:823-1022) → é a peça da **selfie**. (Inline · não há
+  componente genérico, mas o padrão se repete em `VolMeuPerfil`/`FaceScanner`/`useVolFace`.)
+- **Inscrição de batismo / Next / grupos / apresentação de bebê** já implementadas. O batismo
+  vai por `kpisApi.batismos.create` → **já passa pela guarda de CPF #1193 (nasce deduplicado).**
+
+**Falta (extensão pontual · NÃO reconstrução):**
+1. **Fluxo de CHECK-IN de batismo** (≠ a inscrição que já existe): tela "batizandos **do dia**
+   → a pessoa se acha → confirma → CPF + selfie + consentimento". Base (lista/lookup/câmera) já
+   existe. [médio]
+2. **Impressão de etiqueta:** Totem Membro **não imprime** hoje; `totemKids/lib/imprimir.ts`
+   (Brother + bwip-js · interface genérica nome/código/barcode) é ~90% reusável. [médio]
+3. **4 colunas aditivas em `batismo_inscricoes`:** `codigo_acesso`, `checkin_em`,
+   `foto_referencia_url`, `consentimento_em`. [mínimo]
+4. **Gerar o código:** clonar `fn_kids_gerar_codigo_seguranca()` → `fn_batismo_gerar_codigo_acesso()`. [mínimo]
+5. **Acesso por link → 1º acesso → troca senha:** **JÁ EXISTE 100%** —
+   `PrimeiroAcessoSenhaModal` dispara quando `profiles.password_changed_at IS NULL`; magic-link
+   via `supabase.auth.admin.generateLink({type:'magiclink', redirectTo})` (padrão de
+   voluntariado/devocional). Só plugar com `redirectTo` pras fotos. [quase zero]
+
+**⚠️ Ressalva de segurança (Claude cuida · não é decisão do Marcos):** o código de **4 chars**
+do Kids (~1M combinações) é ótimo presencial, mas **fraco** num link público de acesso a
+conta/fotos (varrível). Desenho: a etiqueta carrega **um TOKEN FORTE no QR** (aleatório/longo =
+o acesso real) **+ um código curto legível** (~6 chars) só pra **conferência humana** (a Lorena
+vê na janela do batismo). Recuperação = Lorena **reenvia o link/QR** (token forte), não o número
+curto. Mantém "permanente · não expira · Lorena vê e repassa" **sem ser adivinhável**. Nuance:
+magic-link do Supabase EXPIRA (~1h) — então o QR aponta pra `/batismo/acesso?token=<forte>`
+(token permanente em `batismo_inscricoes.codigo_acesso`), e o backend **gera o magic-link fresco
+na hora** que a pessoa escaneia → 1º acesso → troca senha → fotos.
+
+> **Supersede** as menções genéricas a `quiosque_estacoes` (§15.1) e `membro_acesso_token`: a
+> casa é o **Totem Membro** (sem pareamento de estação · PIN local basta) e o token de acesso é
+> **`batismo_inscricoes.codigo_acesso`** (campo na própria inscrição · gerado na inscrição ·
+> impresso no check-in), como o Marcos definiu.
+
+## 17. Infra do face-match (Fase 2)
 PC/worker **em casa** (não roda no Vercel serverless) com **InsightFace/ArcFace** → embedding
 512d → **pgvector** (cosine), comparando **só contra os batizandos do dia** → limiar alto +
 margem → fila de revisão. Rosto **nunca sai** pra terceiro. Mesmo espírito do agente do
