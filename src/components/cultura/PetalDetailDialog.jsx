@@ -15,7 +15,7 @@ const META = {
   },
   investir: {
     title: 'Investir Tempo com Deus',
-    desc: 'Views diárias médias dos vídeos PENSE no YouTube.',
+    desc: 'Pessoas que fizeram devocional no app neste mês.',
     color: '#008B7A',
   },
   servir: {
@@ -53,9 +53,8 @@ export default function PetalDetailDialog({ open, onClose, petalKey, data }) {
       case 'investir':
         return (
           <>
-            <Row label="Views totais no mês (PENSE)" value={fmt(data.investir_deus_total)} />
-            <Row label="Dias no mês" value={fmt(data.dias_no_mes)} />
-            <Row label="Média de views / dia" value={fmt(data.investir_deus)} accent={meta.color} />
+            <Row label="Pessoas no devocional (mês)" value={fmt(data.investir_deus)} accent={meta.color} />
+            <Row label="Check-ins de devocional (mês)" value={fmt(data.investir_deus_total)} />
           </>
         );
       case 'servir':

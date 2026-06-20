@@ -72,7 +72,7 @@ function petalSubLabel(key) {
   switch (key) {
     case 'seguir':       return 'Pres / Online (sem)';
     case 'conectar':     return 'em grupos';
-    case 'investir':     return 'views/dia (PENSE)';
+    case 'investir':     return 'no devocional (mês)';
     case 'servir':       return 'voluntários (90d)';
     case 'generosidade': return 'dizim / ofert';
     default: return '';
