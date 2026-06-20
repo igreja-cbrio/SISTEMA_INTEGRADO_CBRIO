@@ -19,6 +19,7 @@ import TemporadasGrupos from '../admin/TemporadasGrupos';
 import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
+import GruposOrganograma from './GruposOrganograma';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { StatisticsCard } from '../../components/ui/statistics-card';
@@ -48,7 +49,20 @@ const RECORRENCIAS = [
 
 const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais', 'Jovens', 'Mulheres', 'Homens', 'Misto'];
 
-const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'mapa', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
+const PAGE_TABS = ['grupos', 'pessoas', 'organograma', 'relatorios', 'mapa', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
+
+// Tipo/papel do membro no grupo · vem da funcao (mem_grupo_membros). "Membro" é
+// o padrão (frequentador); "Visitante" só quem foi marcado como tal (regra:
+// quem vai >3 vezes vira membro). Líder/treinamento aparecem aqui também.
+const TIPO_PAPEL = {
+  visitante: { label: 'Visitante', cor: '#f59e0b', bg: '#f59e0b20' },
+  frequentador: { label: 'Membro', cor: '#10b981', bg: '#10b98120' },
+  lider_treinamento: { label: 'Líder em treinamento', cor: '#8b5cf6', bg: '#8b5cf620' },
+  co_lider: { label: 'Co-líder', cor: '#0ea5e9', bg: '#0ea5e920' },
+  lider: { label: 'Líder', cor: '#00B39D', bg: '#00B39D20' },
+  supervisor: { label: 'Supervisor', cor: '#3b82f6', bg: '#3b82f620' },
+  coordenador: { label: 'Coordenador', cor: '#8b5cf6', bg: '#8b5cf620' },
+};
 // Chaves antigas de aba (links/notificações) → aba nova
 const TAB_LEGADO = { pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas', geocode: 'config', temporadas: 'config' };
 
@@ -453,8 +467,10 @@ export default function Grupos() {
     const g = detailData;
     const isOptimistic = g._optimistic === true;
     const membrosAtivos = g.membros || [];
-    const visitantes = membrosAtivos.filter(m => m.is_visitante);
-    const regulares = membrosAtivos.filter(m => !m.is_visitante);
+    // Membro vs visitante vem da funcao (não do nº de presenças): quem o Matheus
+    // subiu é frequentador = membro; visitante só quem foi marcado como tal.
+    const visitantes = membrosAtivos.filter(m => m.funcao === 'visitante');
+    const regulares = membrosAtivos.filter(m => m.funcao !== 'visitante');
     const totalMembros = isOptimistic ? (g.membros_count ?? null) : membrosAtivos.length;
 
     return (
@@ -694,9 +710,9 @@ export default function Grupos() {
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{fmtDate(m.entrou_em)}</td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2, textAlign: 'center' }}>{m.presencas}</td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: m.is_visitante ? '#f59e0b20' : '#10b98120', color: m.is_visitante ? C.amber : C.green, fontWeight: 600 }}>
-                        {m.is_visitante ? 'Visitante' : 'Membro'}
-                      </span>
+                      {(() => { const t = TIPO_PAPEL[m.funcao] || TIPO_PAPEL.frequentador; return (
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: t.bg, color: t.cor, fontWeight: 600 }}>{t.label}</span>
+                      ); })()}
                     </td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                       {(() => {
@@ -944,6 +960,7 @@ export default function Grupos() {
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'pessoas', label: 'Pessoas', icon: UserCog },
+          { key: 'organograma', label: 'Organograma', icon: Compass },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
           { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
@@ -1197,6 +1214,9 @@ export default function Grupos() {
           gruposOptions={gruposList.filter(g => g.ativo)}
         />
       )}
+
+      {/* ═══ TAB ORGANOGRAMA ═══ */}
+      {tabAtiva === 'organograma' && <GruposOrganograma onOpenGrupo={openGrupoById} />}
 
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
