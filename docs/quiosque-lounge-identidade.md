@@ -110,10 +110,13 @@ resto do dedup:
   (sem face-match ainda). Entrega: **CPF limpo na origem + acesso seguro + o ímã da
   foto**.
 - **Fase 2 — Reconhecimento facial:** match **rosto → fotos da cerimônia**, entrega
-  "as suas". Rosto vira **2ª chave de dedup**. Exige consentimento biométrico
-  formal + **pipeline de match em casa** (detecção + embedding + match · limiar de
-  confiança **alto** · fallback manual). **Nunca** liberar foto no "achismo"
-  (match errado = vazamento).
+  "as suas". Rosto vira **2ª chave de dedup**. **3 alavancas de confiabilidade (em
+  ordem de impacto):** (1) **restringir o universo** — comparar só contra os
+  **batizandos daquele dia** (~30 refs), não a igreja inteira [maior alavanca]; (2)
+  guardar o **embedding** (vetor), não só a imagem — a "chave" é o vetor; (3) **limiar
+  alto + margem** entre 1º e 2º melhor match → abaixo disso vai pra **fila de revisão**
+  (Lorena), **nunca** libera no "achismo" (match errado = vazamento). + **gate de
+  qualidade na captura** (rosto frontal/nítido/único, com devolutiva). Tudo **em casa**.
 - **Fase 3 — 2º pilar (voluntário):** check-in do lanche captura **CPF + foto**
   (mesma infra).
 - **Trilho paralelo — aba Entradas:** redesenho pra **2 abas** (Duplicatas com
@@ -135,20 +138,24 @@ Totem/pareamento de estação · Brother QL + bwip-js (etiqueta/QR) · `batismoF
 
 ## 12. Decisões em aberto (a esmiuçar)
 
-- **Integração com o app do Matheus** *(item-chave)*: como o token do quiosque vira
-  acesso no app dele (Supabase session / magic-link?) · tela de fotos no app ·
-  cronograma da publicação nas lojas. **Exige conversa com o Matheus.**
-- **Walk-in no batismo** (apareceu e não está na lista do dia): inscreve na hora no
-  próprio quiosque? (provável que sim).
-- **Recuperação de acesso** (etiqueta perdida): inclui o link por WhatsApp? token
-  com qual validade?
-- **Onde salvar a selfie de referência** (SharePoint, como Cérebro/Marketing, ou
-  Supabase Storage?) + retenção/expurgo do template facial.
-- **Quantos quiosques** + setup de pareamento/impressora (1 no lounge? mais?).
-- **Tecnologia de face (Fase 2):** modelo em casa (InsightFace / face-api) · limiar
-  · fallback manual.
-- **Granularidade da galeria na Fase 1:** "por sessão/data" mostra todos do dia —
-  ok pro batismo (cerimônia pública) ou apertar já?
+**Resolvidas nesta rodada (2026-06-19/20):** integração app Matheus (compartilha
+Supabase · ele faz a tela) · walk-in (sim, até pós-batismo) · recuperação (Lorena
+vê/reenisa · token não expira mas é revogável) · galeria Fase 1 (por data · já no ar)
+· nº de quiosques (~3–5 · 2 exclusivos no batismo) · fotos de batismo (já existem · §14).
+
+**Ainda abertas:**
+- **Tela do app (Matheus):** alinhar o **contrato do token** (QR → sessão Supabase)
+  e o cronograma da publicação nas lojas. Integração de código é mínima, mas a tela
+  e o consumo do token são dele. **Conversa com o Matheus.**
+- **Storage da selfie de referência + expurgo:** bucket próprio (ex.: `biometria`,
+  privado) vs SharePoint · retenção do `embedding` e política de expurgo (LGPD).
+- **Token de acesso:** tabela nova `membro_acesso_token` vs reuso de
+  `vol_checkin_membro_token` — decidir na implementação.
+- **`quiosque_estacoes`:** tabela própria (recomendado · isola do Kids) vs generalizar
+  `kids_estacoes`.
+- **Tecnologia de face (Fase 2):** InsightFace/ArcFace (recomendado) vs face-api ·
+  limiar + margem · **infra do worker em casa** (PC da igreja vs Railway).
+- **Faixa etária no batismo:** menor (Bridge) = consentimento do responsável no quiosque.
 
 ## 13. Decisões já travadas (resumo)
 
@@ -159,3 +166,120 @@ Totem/pareamento de estação · Brother QL + bwip-js (etiqueta/QR) · `batismoF
 - Consentimento biométrico presencial e voluntário; **foto não obrigatória**;
   **só na igreja, só no horário**; **nada de casa**.
 - Acesso = **etiqueta (QR+código) = posse física**; sem página remota de CPF→senha.
+- **App do Matheus** = integração **quase nula**: compartilha o **mesmo Supabase**; ele
+  só faz a **tela** seguindo nossas regras (o QR/token vira sessão Supabase).
+- **Walk-in:** pode se inscrever **na hora** (até depois do batismo, só pra pegar a foto).
+- **Token de acesso NÃO expira**, mas é **revogável**; vinculado à pessoa/inscrição e
+  **legível pela líder de Integração (Lorena)** — recuperação = ela vê/reenvia (WhatsApp).
+- **Duas fotos no perfil:** foto de **perfil** (a pessoa troca à vontade = `mem_membros.foto_url`)
+  × foto de **referência** **imutável** (a chave biométrica). O quiosque **avalia a foto e dá
+  devolutiva na hora** (gate de qualidade).
+- **~3–5 quiosques** no lounge (inscrição/info); **2 viram exclusivos de check-in** com
+  impressora no dia do batismo; os outros não precisam de impressora.
+
+---
+
+## 14. ⚠️ Premissa corrigida (2026-06-20 · auditoria do código vivo)
+
+**As fotos de batismo JÁ existem em produção** — o desenho NÃO recria isso (uma
+auditoria automática chegou a dizer "greenfield"; **verificado no arquivo, está errado**):
+- Bucket Supabase Storage **`batismos`** · fotos por pasta de **data** (`YYYY-MM-DD/`).
+- `backend/routes/batismoFotos.js` · upload em lote (admin/diretor), listar, deletar.
+- Edge Function `notify-batismo-fotos` avisa os batizados quando o álbum chega.
+- **O app do Matheus já tem aba Batismo** mostrando "cada pessoa vê só a pasta da data do
+  próprio batismo" (`lib/batismo.ts` do app · repo separado).
+- **Não há tabela de metadados de foto** — o vínculo é **pasta = data**. Por isso a entrega
+  hoje é **por data** (todos do dia veem as fotos do dia · aceitável pra cerimônia pública),
+  e a **Fase 2 (face)** é o que dá o salto **"da data" → "as suas"**.
+
+Efeito no escopo: o quiosque **não constrói entrega de foto** — ele adiciona **captura de
+identidade na origem** (CPF + selfie + consentimento) + **acesso por etiqueta**. Trabalho
+muito menor do que parecia.
+
+## 15. BLUEPRINT (ancorado no código vivo · 2026-06-20)
+
+### 15.1 Modelo de dados
+**Já existe (reusar, não recriar):**
+- `batismo_inscricoes` — lista do dia por `data_batismo`/`status`; `membro_id`, `cpf` (a
+  guarda #1193 já liga o membro na intake). Migration `20260417200000` + extensões.
+- Bucket `batismos` + `batismoFotos.js` + Edge `notify-batismo-fotos`.
+- `mem_membros.foto_url` (foto única hoje) ↔ `profiles.membro_id` ↔ `auth.users`; helper
+  `current_user_membro_id()`.
+- `mem_qrcodes` (token SHA256(salt+CPF)[:24] → CPF · QR de identidade · `/membresia/qr-lookup`).
+- Magic link passwordless (voluntariado/devocional).
+- Padrão `kids_estacoes` (pareamento por QR token timing-safe, regenerável, config de impressora).
+
+**Novo (tudo aditivo):**
+- `batismo_inscricoes` += `checkin_em`, `checkin_estacao_id` (marca presença no quiosque).
+- `membro_biometria` (membro_id FK · `foto_referencia_path` · `embedding vector(512)` via
+  **pgvector** · `consentimento_em` · `capturada_por_estacao` · `ativo`) — a referência
+  **imutável** + o **vetor** (a chave). RLS: dono + super-admin + integração. Expurgo definido.
+- `membro_acesso_token` (token **aleatório**, permanente, **revogável**, membro_id FK,
+  `revogado_em`) — a etiqueta. Legível pela Integração (Lorena reenvia). ⓘ avaliar reuso de
+  `vol_checkin_membro_token` (`20260603210000`) na implementação.
+- `membro_consentimentos` (membro_id · `tipo='biometria_fotos'` · texto · `aceito_em` · escopo).
+- `quiosque_estacoes` — espelha o padrão de `kids_estacoes` em **tabela própria** (lounge ≠
+  Kids/LGPD-menor · zero acoplamento). [ou generalizar — decisão de implementação]
+
+### 15.2 Telas
+**Quiosque** (touch · modo kiosk sem login via token de estação · auto-reset por inatividade):
+- Menu: **Batismo (check-in)** · Inscrever em grupo · Quero ser voluntário · Next · Saber mais.
+- **Check-in batismo:** lista batizandos do dia → a pessoa se acha → "Complete seus dados pra
+  receber sua foto": **CPF (opcional)** + **consentimento** + **selfie (opcional · gate de
+  qualidade + devolutiva)** → **imprime etiqueta (QR + código)**.
+- **Inscrições:** reusa as telas públicas (`InscricaoGrupos/Voluntariado/Next`) adaptadas a touch.
+
+**App do Matheus** (ele faz a tela · regras nossas · mesmo Supabase):
+- Primeiro acesso: **QR da etiqueta → troca token por sessão → galeria** (hoje por data; Fase 2
+  por face). Aba Batismo já existe.
+
+**ERP (admin / Lorena):**
+- Gerir estações do quiosque (cadastrar/parear/regenerar token) — reusa o padrão Kids.
+- Ver/reenviar o **código de acesso** da pessoa + **revogar** (ação autorizada e logada).
+- Upload das fotos da cerimônia (`batismoFotos`, já existe).
+- **Fila de revisão de face-match** (Fase 2).
+
+### 15.3 Fluxos
+1. **Check-in batismo** (voluntário assiste): seleciona da lista do dia → confirma → CPF →
+   `acharOuCriarGuardado` (liga/cria deduplicado) → consentimento gravado → selfie → foto de
+   referência (+ embedding na Fase 2) → marca `checkin_em` → gera `membro_acesso_token` →
+   imprime etiqueta.
+2. **Walk-in:** não está na lista (até pós-batismo) → inscreve na hora no quiosque (cria
+   `batismo_inscricoes` + segue o fluxo 1).
+3. **Acesso às fotos:** QR → app → sessão → galeria (por data hoje · "as suas" na Fase 2).
+4. **Recuperação:** perdeu a etiqueta → Lorena abre a pessoa no ERP → vê/reenvia o código
+   (WhatsApp do nº em ficha) ou **regenera**.
+5. **Inscrição grupo/vol/next:** quiosque hospeda a tela pública → dedup na origem → cai no
+   funil existente (Entradas pega o resíduo).
+6. **Face-match (Fase 2):** fotógrafo sobe fotos da cerimônia → worker **em casa** detecta +
+   gera embedding de cada rosto → compara **só contra os batizandos daquele dia** → match com
+   **limiar alto + margem** → vincula foto↔pessoa; ambíguo → **fila de revisão da Lorena**.
+
+### 15.4 "Não quebrar" (tudo aditivo)
+- `batismo_inscricoes`: a guarda de CPF (#1193) já liga membro; quiosque só **adiciona** colunas
+  de check-in. KPIs/cobertura que leem a tabela **não mudam**.
+- Fotos: bucket/rota/Edge **intactos**; quiosque não toca o upload da cerimônia (segue
+  admin/diretor); galeria do app por data **segue**; Fase 2 só **adiciona** o vínculo por face.
+- Auth: padrão **passwordless** preservado; token **não seta senha** em conta existente (lição
+  account-takeover · [[senhas-account-takeover-fix]]); RLS por dono via `current_user_membro_id()`.
+- Totem Kids: clonamos o **código/padrão** com **tabela de estação própria** → **zero risco** ao
+  Kids/LGPD-menor.
+- **pgvector**: `CREATE EXTENSION` — aditivo.
+
+### 15.5 Mapa de reuso
+| Precisa | Reusa | Onde |
+|---|---|---|
+| Estação/pareamento/kiosk | padrão `kids_estacoes` | `totemKids.js` (1035–1160) · `TotemKidsParear.tsx` · `lib/estacaoPareada.ts` |
+| Etiqueta QR | `bwip-js` + `window.print` | `totemKids/lib/imprimir.ts` |
+| Dedup na origem | `acharOuCriarGuardado` | `services/membroMatch.js` |
+| Fotos de batismo | bucket `batismos` + rota | `batismoFotos.js` + Edge `notify-batismo-fotos` |
+| QR de identidade (achar a pessoa) | `mem_qrcodes` | `20260417000000` + `/membresia/qr-lookup` |
+| Telas de inscrição | públicas | `InscricaoNext/Voluntariado/Grupos` |
+| Login passwordless | magic link | `publicVoluntariado` / `publicDevocional` |
+| RLS por dono | `current_user_membro_id` · `is_super_admin` | `20260521190000` |
+
+### 15.6 Infra do face-match (Fase 2)
+PC/worker **em casa** (não roda no Vercel serverless) com **InsightFace/ArcFace** → embedding
+512d → **pgvector** (cosine), comparando **só contra os batizandos do dia** → limiar alto +
+margem → fila de revisão. Rosto **nunca sai** pra terceiro. Mesmo espírito do agente do
+pager/Brother (processo local) ou do worker financeiro (Railway).
