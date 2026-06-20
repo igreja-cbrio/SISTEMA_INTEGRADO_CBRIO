@@ -215,10 +215,39 @@ async function vincularMatriculaNext(membroId, row) {
   } catch (e) { console.error('[next-batismo] vincular matrícula Next:', e.message); }
 }
 
+function ultimoSobrenome(nome) {
+  const t = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  return t.length ? t[t.length - 1] : '';
+}
+
+// Liga `novoMembroId` à MESMA família do `candidatoId` (cria a família se o
+// candidato ainda não tiver uma) e marca o par como NÃO-duplicata (são família,
+// não a mesma pessoa) pra parar de aparecer na fila de duplicados.
+async function ligarMesmaFamilia(novoMembroId, candidatoId, feitoPor) {
+  if (!novoMembroId || !candidatoId || novoMembroId === candidatoId) return null;
+  const { data: cand } = await supabase.from('mem_membros').select('id, nome, familia_id').eq('id', candidatoId).maybeSingle();
+  if (!cand) return null;
+  let familiaId = cand.familia_id;
+  if (!familiaId) {
+    const { data: novo } = await supabase.from('mem_membros').select('nome').eq('id', novoMembroId).maybeSingle();
+    const sob = ultimoSobrenome(cand.nome) || ultimoSobrenome(novo?.nome) || 'sem sobrenome';
+    const { data: fam, error } = await supabase.from('mem_familias').insert({ nome: `Família ${sob}` }).select('id').single();
+    if (error) throw error;
+    familiaId = fam.id;
+    await supabase.from('mem_membros').update({ familia_id: familiaId }).eq('id', candidatoId);
+  }
+  await supabase.from('mem_membros').update({ familia_id: familiaId }).eq('id', novoMembroId);
+  const [a, b] = [novoMembroId, candidatoId].sort();
+  await supabase.from('mem_duplicados_ignorados').upsert(
+    { membro_a_id: a, membro_b_id: b, ignorado_por: feitoPor || null, motivo: 'Mesma família (não é a mesma pessoa) · Next-Batismo' },
+    { onConflict: 'membro_a_id,membro_b_id' });
+  return familiaId;
+}
+
 // ── POST /ligar · carimba membro_id na linha do funil (ligar OU criar) ────────
 router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
   try {
-    const { tipo, id, membro_id, criar } = req.body || {};
+    const { tipo, id, membro_id, criar, familia_de } = req.body || {};
     const tabela = TABELA[tipo];
     if (!tabela || !id) return res.status(400).json({ error: 'tipo (next|batismo|convertido) e id obrigatórios' });
 
@@ -229,8 +258,20 @@ router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
 
     let alvoMembroId = membro_id || null;
     let criado = false;
+    let familiaLigada = false;
 
-    if (!alvoMembroId) {
+    // "É da mesma família": pessoa NOVA (distinta do candidato) ligada à família dele.
+    if (familia_de && !membro_id) {
+      const nome = [row.nome, row.sobrenome].filter(Boolean).join(' ').trim() || row.nome || 'Sem nome';
+      const r = await acharOuCriarGuardado({
+        cpf: row.cpf, email: row.email, telefone: row.telefone, nome,
+        dataNascimento: row.data_nascimento, status: 'visitante',
+      });
+      alvoMembroId = r.membro_id;
+      criado = !!r.created;
+      await ligarMesmaFamilia(alvoMembroId, familia_de, req.user?.id);
+      familiaLigada = true;
+    } else if (!alvoMembroId) {
       if (!criar) return res.status(400).json({ error: 'informe membro_id ou criar:true' });
       const nome = [row.nome, row.sobrenome].filter(Boolean).join(' ').trim() || row.nome || 'Sem nome';
       // acharOuCriarGuardado reaproveita match por telefone+nome e nome+nascimento
@@ -255,7 +296,7 @@ router.post('/ligar', authorizeModule('next-batismo', 2), async (req, res) => {
       throw upErr;
     }
     if (tipo === 'next') await vincularMatriculaNext(alvoMembroId, row);
-    res.json({ ok: true, membro_id: alvoMembroId, criado });
+    res.json({ ok: true, membro_id: alvoMembroId, criado, familia_ligada: familiaLigada });
   } catch (e) {
     console.error('[next-batismo/ligar]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao ligar' });

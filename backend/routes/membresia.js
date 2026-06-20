@@ -874,6 +874,53 @@ router.patch('/membros/:id/familia', authorize('admin', 'diretor'), async (req, 
   }
 });
 
+// POST /api/membresia/membros/:id/mesma-familia — "essa pessoa é da mesma
+// família que <outra>". Junta os dois na MESMA família (usa a do âncora; cria
+// uma se nenhum tiver) e marca o par como não-duplicata.
+router.post('/membros/:id/mesma-familia', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { outro_membro_id, parentesco } = req.body || {};
+    if (!outro_membro_id) return res.status(400).json({ error: 'outro_membro_id obrigatório' });
+    if (outro_membro_id === id) return res.status(400).json({ error: 'Selecione outra pessoa' });
+
+    const ultimoSobrenome = (n) => { const t = String(n || '').trim().split(/\s+/).filter(Boolean); return t.length ? t[t.length - 1] : ''; };
+    const [{ data: atual }, { data: outro }] = await Promise.all([
+      supabase.from('mem_membros').select('id, nome, familia_id').eq('id', id).maybeSingle(),
+      supabase.from('mem_membros').select('id, nome, familia_id').eq('id', outro_membro_id).maybeSingle(),
+    ]);
+    if (!atual) return res.status(404).json({ error: 'Cadastro não encontrado' });
+    if (!outro) return res.status(404).json({ error: 'A outra pessoa não foi encontrada' });
+
+    // Define a família-âncora: a do outro, senão a do atual, senão cria nova.
+    let familiaId = outro.familia_id || atual.familia_id || null;
+    if (!familiaId) {
+      const sob = ultimoSobrenome(outro.nome) || ultimoSobrenome(atual.nome) || 'sem sobrenome';
+      const { data: fam, error: fe } = await supabase.from('mem_familias').insert({ nome: `Família ${sob}` }).select('id').single();
+      if (fe) throw fe;
+      familiaId = fam.id;
+    }
+    // Garante os dois na mesma família (sem mexer no parentesco do outro).
+    if (outro.familia_id !== familiaId) await supabase.from('mem_membros').update({ familia_id: familiaId }).eq('id', outro_membro_id);
+
+    const upd = { familia_id: familiaId };
+    if (parentesco) upd.parentesco = parentesco;
+    const { data, error } = await supabase.from('mem_membros').update(upd).eq('id', id)
+      .select('*, familia:mem_familias(id, nome)').single();
+    if (error) throw error;
+
+    const [a, b] = [id, outro_membro_id].sort();
+    await supabase.from('mem_duplicados_ignorados').upsert(
+      { membro_a_id: a, membro_b_id: b, ignorado_por: req.user?.id || null, motivo: 'Mesma família (vínculo manual)' },
+      { onConflict: 'membro_a_id,membro_b_id' });
+
+    res.json(data);
+  } catch (e) {
+    console.error('[membresia/mesma-familia]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao vincular família' });
+  }
+});
+
 // ── Histórico ──
 
 // POST /api/membresia/historico

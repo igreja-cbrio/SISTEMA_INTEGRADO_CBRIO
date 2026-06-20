@@ -614,6 +614,97 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     </Dialog>
   );
 }
+// "Essa pessoa é da mesma família que..." · busca uma pessoa e vincula os dois
+// na mesma família (cria a família se nenhum tiver). Usado no detalhe do membro.
+function MesmaFamiliaInline({ membroId, excluirIds = [], onDone }) {
+  const [aberto, setAberto] = useState(false);
+  const [q, setQ] = useState('');
+  const [resultados, setResultados] = useState([]);
+  const [buscando, setBuscando] = useState(false);
+  const [sel, setSel] = useState(null);
+  const [parentesco, setParentesco] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (!aberto || sel || q.trim().length < 2) { setResultados([]); return; }
+    let cancel = false;
+    setBuscando(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await membresia.membros.list({ busca: q.trim() });
+        if (!cancel) setResultados((r || []).filter(m => m.id !== membroId && !excluirIds.includes(m.id)).slice(0, 8));
+      } catch { if (!cancel) setResultados([]); }
+      finally { if (!cancel) setBuscando(false); }
+    }, 300);
+    return () => { cancel = true; clearTimeout(t); };
+  }, [q, aberto, sel, membroId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function fechar() { setAberto(false); setSel(null); setQ(''); setParentesco(''); setResultados([]); }
+
+  async function salvar() {
+    if (!sel) return;
+    setSalvando(true);
+    try {
+      await membresia.familias.mesmaFamilia(membroId, { outro_membro_id: sel.id, parentesco: parentesco || undefined });
+      toast.success(`Vinculado à mesma família de ${sel.nome}`);
+      fechar();
+      onDone?.();
+    } catch (e) { toast.error(e?.message || 'Erro ao vincular'); }
+    setSalvando(false);
+  }
+
+  if (!aberto) {
+    return (
+      <Button variant="outline" size="sm" onClick={() => setAberto(true)}>
+        <Users style={{ width: 14, height: 14 }} /> Mesma família que...
+      </Button>
+    );
+  }
+  return (
+    <div style={{ padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <Label style={{ fontSize: 11 }}>Essa pessoa é da mesma família que...</Label>
+      {sel ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 12px', background: 'var(--cbrio-card)', borderRadius: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{sel.nome}</span>
+          <button onClick={() => { setSel(null); setQ(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.text3 }}><X style={{ width: 14, height: 14 }} /></button>
+        </div>
+      ) : (
+        <div style={{ position: 'relative' }}>
+          <Input autoFocus placeholder="Buscar pessoa por nome..." value={q} onChange={e => setQ(e.target.value)} />
+          {q.trim().length >= 2 && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20, marginTop: 4, background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', borderRadius: 10, boxShadow: 'var(--shadow)', maxHeight: 220, overflowY: 'auto' }}>
+              {buscando ? <div style={{ padding: 10, fontSize: 12, color: C.text3 }}>Buscando...</div>
+                : resultados.length === 0 ? <div style={{ padding: 10, fontSize: 12, color: C.text3 }}>Nenhuma pessoa encontrada</div>
+                  : resultados.map(m => (
+                    <button key={m.id} onClick={() => { setSel({ id: m.id, nome: m.nome }); setResultados([]); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: C.text }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.primaryBg} onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                      <span style={{ fontWeight: 500 }}>{m.nome}</span>
+                      {m.telefone && <span style={{ fontSize: 11, color: C.text3 }}>{m.telefone}</span>}
+                    </button>
+                  ))}
+            </div>
+          )}
+        </div>
+      )}
+      <div>
+        <Label style={{ fontSize: 11 }}>Parentesco (opcional)</Label>
+        <Select value={parentesco || '__none__'} onValueChange={v => setParentesco(v === '__none__' ? '' : v)}>
+          <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
+          <SelectContent className="z-[1001]">
+            <SelectItem value="__none__">Não informado</SelectItem>
+            {Object.entries(PARENTESCO_OPTIONS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <Button variant="outline" onClick={fechar}>Cancelar</Button>
+        <Button onClick={salvar} disabled={!sel || salvando}>{salvando ? 'Salvando...' : 'Vincular'}</Button>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main ── */
 export default function Membresia() {
   const navigate = useNavigate();
@@ -1596,6 +1687,17 @@ export default function Membresia() {
                       Nenhum outro familiar cadastrado nesta família
                     </div>
                   ) : null}
+
+                  {/* Vincular por pessoa · "essa pessoa é da mesma família que..." */}
+                  {isDiretor && (
+                    <div style={{ marginTop: 16 }}>
+                      <MesmaFamiliaInline
+                        membroId={selectedMembro.id}
+                        excluirIds={(selectedMembro.familiares || []).map(f => f.id)}
+                        onDone={() => openDetail(selectedMembro.id)}
+                      />
+                    </div>
+                  )}
                 </TabsContent>
 
                 {/* Aba: Grupo de Conexão */}

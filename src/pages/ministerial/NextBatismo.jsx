@@ -24,7 +24,7 @@ import {
   UserSearch, GitMerge, X, RefreshCw, Loader2, ArrowLeft, ArrowRight,
   Phone, Mail, Calendar, User as UserIcon, IdCard, Link2, UserPlus, Users,
   DoorOpen, Search, Heart, Droplets, Footprints, Eye, Network, HelpCircle,
-  Sparkles, MapPin,
+  Sparkles, MapPin, Home,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -394,7 +394,7 @@ function LigarDialog({ row, onClose, onDone, onVerFicha }) {
   const ligarMut = useMutation({
     mutationFn: (payload) => api.ligar(payload),
     onSuccess: (res) => {
-      toast.success(res?.criado ? 'Cadastro novo criado e ligado' : 'Inscrição ligada ao cadastro');
+      toast.success(res?.familia_ligada ? 'Cadastro criado e ligado à mesma família' : res?.criado ? 'Cadastro novo criado e ligado' : 'Inscrição ligada ao cadastro');
       onDone();
     },
     onError: (e) => toast.error(e?.message || 'Erro ao ligar'),
@@ -452,6 +452,12 @@ function LigarDialog({ row, onClose, onDone, onVerFicha }) {
                         <Eye className="size-3.5" />
                       </Button>
                     )}
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                      disabled={ligarMut.isPending}
+                      title="Cria um cadastro novo (pessoa diferente) e liga à mesma família deste"
+                      onClick={() => ligarMut.mutate({ tipo: row.tipo, id: row.id, familia_de: c.id })}>
+                      <Home className="size-3" /> Mesma família
+                    </Button>
                     <Button size="sm" className="h-7 text-xs gap-1"
                       disabled={ligarMut.isPending}
                       onClick={() => ligarMut.mutate({ tipo: row.tipo, id: row.id, membro_id: c.id })}>
