@@ -976,11 +976,14 @@ router.get('/cultura', async (req, res) => {
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
       // mem_grupo_membros (saiu_em IS NULL = ativo). Tabela pode não existir — tolerante.
       supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).is('saiu_em', null),
-      supabase.from('pense_videos')
-        .select('views')
-        .eq('ativo', true)
-        .gte('data_publicacao', inicioStr)
-        .lte('data_publicacao', fimInclusivoStr),
+      // Investir Tempo com Deus = DEVOCIONAL feito no app (mem_devocionais ·
+      // decisão Matheus 2026-06-20). Antes era views/dia dos vídeos PENSE.
+      supabase.from('mem_devocionais')
+        .select('membro_id')
+        .eq('concluida', true)
+        .is('deleted_at', null)
+        .gte('data_devocional', inicioStr)
+        .lte('data_devocional', fimInclusivoStr),
       // RPC: count(distinct volunteer_id) direto no banco — evita trafegar milhares de linhas
       supabase.rpc('kpi_servir_comunidade', { _since: noventaDiasStr }),
       supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
@@ -991,7 +994,7 @@ router.get('/cultura', async (req, res) => {
     const pick = (i) => (settled[i].status === 'fulfilled' ? settled[i].value : { data: null, error: settled[i].reason });
     const cultosRes = pick(0);
     const grupoMembrosRes = pick(1);
-    const penseRes = pick(2);
+    const devocionalRes = pick(2);
     const servirRes = pick(3);
     const culturaMensalRes = pick(4);
     const finGenRes = pick(5);
@@ -1003,8 +1006,10 @@ router.get('/cultura', async (req, res) => {
 
     const conectarPessoas = grupoMembrosRes.error ? null : (grupoMembrosRes.count || 0);
 
-    const penseTotalViews = (penseRes.data || []).reduce((s, v) => s + (v.views || 0), 0);
-    const investirDeus = penseRes.error ? null : Math.round(penseTotalViews / diasNoMes);
+    // Investir = devocional do app · investir_deus = pessoas distintas que
+    // fizeram devocional no mês; total = nº de check-ins concluídos no mês.
+    const devCheckins = (devocionalRes.data || []).length;
+    const investirDeus = devocionalRes.error ? null : new Set((devocionalRes.data || []).map(d => d.membro_id).filter(Boolean)).size;
 
     // Voluntários ativos via RPC kpi_servir_comunidade(_since)
     const servirComunidade = servirRes.error ? null : (typeof servirRes.data === 'number' ? servirRes.data : (servirRes.data ?? null));
@@ -1055,7 +1060,7 @@ router.get('/cultura', async (req, res) => {
       },
       conectar_pessoas: conectarMes,
       investir_deus: investirDeus,
-      investir_deus_total: penseTotalViews,
+      investir_deus_total: devCheckins,
       servir_comunidade: servirComunidade,
       generosidade,
       decisoes: decisoesMes,
