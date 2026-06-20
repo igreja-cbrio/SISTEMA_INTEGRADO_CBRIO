@@ -222,7 +222,8 @@ async function buildKPI(mes) {
     supabase.from('cultos').select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds').gte('data', inicioStr).lte('data', fimStr),
     supabase.from('cultos').select('presencial_adulto, presencial_kids, online_ds').gte('data', mesAnteriorInicio).lte('data', mesAnteriorFim),
     supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('saiu_em', null),
-    supabase.from('pense_videos').select('views').eq('ativo', true).gte('data_publicacao', inicioStr).lte('data_publicacao', fimStr),
+    // Investir em Deus = devocional do app (mem_devocionais · decisão Matheus 2026-06-20, era PENSE)
+    supabase.from('mem_devocionais').select('membro_id').eq('concluida', true).is('deleted_at', null).gte('data_devocional', inicioStr).lte('data_devocional', fimStr),
     supabase.rpc('kpi_servir_comunidade', { _since: noventaDias.toISOString() }),
     supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
     supabase.from('kpi_metas').select('*').order('area'),
@@ -233,7 +234,9 @@ async function buildKPI(mes) {
   const cultosAtual = pick(0).data || [];
   const cultosAnt = pick(1).data || [];
   const gruposCount = pick(2).count || 0;
-  const penseViews = (pick(3).data || []).reduce((s, v) => s + (v.views || 0), 0);
+  const devoRows = pick(3).data || [];
+  const devoCheckins = devoRows.length;
+  const devoPessoas = new Set(devoRows.map(d => d.membro_id).filter(Boolean)).size;
   const volAtivos = pick(4).data != null ? (typeof pick(4).data === 'number' ? pick(4).data : 0) : 0;
   const cm = pick(5).data;
   const metas = pick(6).data || [];
@@ -252,7 +255,7 @@ async function buildKPI(mes) {
   const mandala = {
     seguir_jesus: { label: 'Seguir Jesus', valor: presMedia, detalhe: `${presMedia} presencial + ${Math.round(onlineAtual / semanasNoMes)} online / semana`, cor: '#3b82f6' },
     conectar_pessoas: { label: 'Conectar Pessoas', valor: gruposCount, detalhe: `${gruposCount} membros ativos em grupos`, cor: '#10b981' },
-    investir_deus: { label: 'Investir em Deus', valor: diasNoMes > 0 ? Math.round(penseViews / diasNoMes) : 0, detalhe: `${penseViews} views PENSE no mês (${diasNoMes > 0 ? Math.round(penseViews / diasNoMes) : 0}/dia)`, cor: '#f59e0b' },
+    investir_deus: { label: 'Investir em Deus', valor: devoPessoas, detalhe: `${devoPessoas} pessoas no devocional (${devoCheckins} check-ins no mês)`, cor: '#f59e0b' },
     servir: { label: 'Servir', valor: volAtivos, detalhe: `${volAtivos} voluntarios ativos (90d)`, cor: '#ef4444' },
     generosidade: { label: 'Generosidade', valor: (cm?.qtd_dizimistas || 0) + (cm?.qtd_ofertantes || 0), detalhe: `${cm?.qtd_dizimistas || 0} dizimistas + ${cm?.qtd_ofertantes || 0} ofertantes`, cor: '#8b5cf6' },
   };
