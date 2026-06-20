@@ -2108,6 +2108,16 @@ export const kpis = {
     create: (data) => post('/kpis/batismos', data),
     update: (id, data) => put(`/kpis/batismos/${id}`, data),
     coberturaConvertidos: () => get('/kpis/batismos/cobertura-convertidos'),
+    // Check-in do quiosque (Fase 1): lista do dia, registra check-in, sobe selfie.
+    checkin: {
+      doDia: (params) => get('/kpis/batismos/checkin/do-dia' + (params ? '?' + new URLSearchParams(params) : '')),
+      confirmar: (id, body) => post(`/kpis/batismos/${id}/checkin`, body),
+      fotoReferencia: (id, file) => {
+        const fd = new FormData();
+        fd.append('foto', file, 'selfie.jpg');
+        return requestFile(`/kpis/batismos/${id}/foto-referencia`, fd);
+      },
+    },
   },
   // Dashboard & metas
   dashboard: (semanas) => get(`/kpis/dashboard?semanas=${semanas || 12}`),

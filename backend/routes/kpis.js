@@ -1,4 +1,5 @@
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -7,6 +8,16 @@ const { coletarTodos } = require('../services/kpiAutoCollector');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
+
+// Upload em memória da selfie de referência do check-in de batismo (quiosque).
+const uploadFotoRef = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(jpe?g|png|webp)$/.test(file.mimetype)) cb(null, true);
+    else cb(new Error('Formato inválido (use JPG, PNG ou WebP)'));
+  },
+});
 
 router.use(authenticate);
 
@@ -33,6 +44,11 @@ function nonNeg(v, fallback = 0) {
   const n = Number(v);
   if (Number.isNaN(n) || n < 0) return fallback;
   return n;
+}
+
+// Helper: data de hoje em America/Sao_Paulo (YYYY-MM-DD · en-CA = ISO).
+function hojeSP() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
 
 // ── Service Types (culto types) ───────────────────────────────────────────────
@@ -561,6 +577,11 @@ router.get('/batismos', async (req, res) => {
 
   const DIA_MS = 86400000;
   const enriched = inscricoes.map(b => {
+    // NÃO vaza o token de acesso (codigo_acesso) nem o código de conferência:
+    // esta rota é só `authenticate` (não gated a integração) e o codigo_acesso é
+    // credencial das fotos. Quem precisa vê via fluxos gated (check-in / recuperação).
+    const { codigo_acesso, codigo_conferencia, ...b2 } = b;
+    b = b2;
     const data_conversao = b.membro_id ? (conversaoPorMembro[b.membro_id] || null) : null;
     let dias_conversao_batismo = null;
     if (data_conversao && b.data_batismo) {
@@ -713,7 +734,9 @@ router.post('/batismos', authorizeIntegracao, async (req, res) => {
     chaveDedup: `batismo_${inscricao.id}`,
   }).catch(() => {});
 
-  res.json(inscricao);
+  // Exposição mínima: o token de acesso só sai pelo fluxo de check-in (impressão).
+  const { codigo_acesso: _ca, codigo_conferencia: _cc, ...inscricaoPub } = inscricao;
+  res.json(inscricaoPub);
 });
 
 router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
@@ -745,7 +768,128 @@ router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  // Exposição mínima: não devolve o token de acesso na edição da inscrição.
+  const { codigo_acesso: _ca, codigo_conferencia: _cc, ...dataPub } = data || {};
+  res.json(dataPub);
+});
+
+// ── Check-in de batismo · Quiosque (Fase 1) ──────────────────────────────────
+// Fluxo assistido no Totem Membro: lista os batizandos do dia → a pessoa se acha
+// → captura CPF (dedup na origem) + selfie + consentimento → imprime etiqueta
+// com QR (token forte) + código curto. Spec: docs/quiosque-lounge-identidade.md.
+
+// Lista os batizandos de uma data (default = hoje, São Paulo) para o check-in.
+// Não expõe CPF cru — só nome + flags.
+router.get('/batismos/checkin/do-dia', authorizeIntegracao, async (req, res) => {
+  const data = req.query.data || hojeSP();
+  const { data: rows, error } = await supabase
+    .from('batismo_inscricoes')
+    .select('id, nome, sobrenome, checkin_em, foto_referencia_url')
+    .eq('data_batismo', data)
+    .in('status', ['pendente', 'confirmado'])
+    .is('deleted_at', null)
+    .order('nome', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({
+    data,
+    batizandos: (rows || []).map(r => ({
+      id: r.id,
+      nome: r.nome,
+      sobrenome: r.sobrenome,
+      ja_checkin: !!r.checkin_em,
+      tem_foto: !!r.foto_referencia_url,
+    })),
+  });
+});
+
+// Registra o check-in: dedup por CPF (acharOuCriarGuardado · opcional), grava
+// presença + consentimento, devolve os códigos para imprimir a etiqueta.
+// Idempotente: pode ser rodado de novo (reimpressão) — o token não muda.
+router.post('/batismos/:id/checkin', authorizeIntegracao, async (req, res) => {
+  const { cpf, consentiu } = req.body || {};
+  const cpfClean = cpf ? String(cpf).replace(/\D/g, '') : null;
+
+  const { data: insc, error: e0 } = await supabase
+    .from('batismo_inscricoes')
+    .select('id, nome, sobrenome, telefone, email, data_nascimento, cpf, membro_id, codigo_acesso, codigo_conferencia, consentimento_em, deleted_at')
+    .eq('id', req.params.id)
+    .single();
+  if (e0 || !insc || insc.deleted_at) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+  // Guarda na origem: liga/cria membro deduplicado a partir do CPF (opcional ·
+  // "preço da foto"). Mesmo padrão de POST /batismos e da intake pública. Só
+  // quando a inscrição ainda NÃO tem vínculo — não sobrescreve link existente
+  // (evita relink por erro de digitação) nem cria stub órfão pra quem já é membro.
+  let membro_id = insc.membro_id;
+  if (cpfClean && cpfClean.length === 11 && !insc.membro_id) {
+    try {
+      const r = await acharOuCriarGuardado({
+        cpf: cpfClean,
+        email: insc.email || null,
+        telefone: insc.telefone || null,
+        nome: `${insc.nome} ${insc.sobrenome || ''}`.trim(),
+        dataNascimento: insc.data_nascimento || null,
+        status: 'visitante',
+      });
+      membro_id = r.membro_id || membro_id;
+    } catch (e) {
+      console.error('[kpis/batismos/checkin] acharOuCriarGuardado:', e.message);
+      // fail-open: segue sem vínculo (Entradas liga depois)
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const update = {
+    checkin_em: nowIso,
+    checkin_por: req.user?.id || null,
+    updated_at: nowIso,
+  };
+  if (membro_id && membro_id !== insc.membro_id) update.membro_id = membro_id;
+  if (cpfClean && cpfClean.length === 11 && !insc.cpf) update.cpf = cpfClean;
+  if (consentiu && !insc.consentimento_em) update.consentimento_em = nowIso;
+
+  const { data: row, error } = await supabase
+    .from('batismo_inscricoes')
+    .update(update)
+    .eq('id', req.params.id)
+    .select('id, nome, sobrenome, codigo_acesso, codigo_conferencia')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json({
+    id: row.id,
+    nome: `${row.nome} ${row.sobrenome || ''}`.trim(),
+    codigo_acesso: row.codigo_acesso,
+    codigo_conferencia: row.codigo_conferencia,
+  });
+});
+
+// Upload da selfie de referência (opcional · consentida) → bucket privado.
+router.post('/batismos/:id/foto-referencia', authorizeIntegracao, uploadFotoRef.single('foto'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'arquivo (campo "foto") obrigatório' });
+
+  const { data: insc, error: e0 } = await supabase
+    .from('batismo_inscricoes')
+    .select('id, deleted_at')
+    .eq('id', req.params.id)
+    .single();
+  if (e0 || !insc || insc.deleted_at) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+  const ext = (req.file.originalname.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+  const path = `referencia/${req.params.id}.${ext}`;
+  const { error: upErr } = await supabase.storage
+    .from('batismos-biometria')
+    .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+  if (upErr) return res.status(500).json({ error: upErr.message });
+
+  const nowIso = new Date().toISOString();
+  const { error: e1 } = await supabase
+    .from('batismo_inscricoes')
+    .update({ foto_referencia_url: path, consentimento_em: nowIso, updated_at: nowIso })
+    .eq('id', req.params.id);
+  if (e1) return res.status(500).json({ error: e1.message });
+
+  res.json({ ok: true, foto_referencia_url: path });
 });
 
 // ── Dashboard (agregado) ──────────────────────────────────────────────────────

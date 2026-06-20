@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { membresia, kpis as kpisApi } from '@/api';
+import { imprimirEtiquetaBatismo } from '@/lib/imprimirEtiquetaBatismo';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -9,7 +10,7 @@ import {
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
   MapPin, Clock, Star, Map, List, Navigation, Sun, Moon,
   Camera, RotateCcw, Save, X, ChevronRight, Delete, KeyRound,
-  Baby, LogOut,
+  Baby, LogOut, Search, Printer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +33,7 @@ const MENU_OPTIONS = [
 ] as const;
 
 type OptionId = (typeof MENU_OPTIONS)[number]['id'];
-type KioskState = 'setup' | 'locked' | 'idle' | 'cpf_input' | 'scanning' | 'greeting' | 'option' | 'done' | 'exit_confirm';
+type KioskState = 'setup' | 'locked' | 'idle' | 'cpf_input' | 'scanning' | 'greeting' | 'option' | 'done' | 'exit_confirm' | 'checkin_batismo';
 
 interface MemberData {
   nome: string;
@@ -449,6 +450,11 @@ export default function TotemMembro() {
     />
   );
 
+  // ── Check-in de batismo (quiosque · equipe) ─────────────────────────────────
+  if (state === 'checkin_batismo') return (
+    <CheckinBatismoFlow onExit={() => setState('idle')} />
+  );
+
   // ── Idle (default) ────────────────────────────────────────────────────────
   if (showNovoCadastro) return (
     <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
@@ -501,6 +507,14 @@ export default function TotemMembro() {
           >
             <KeyRound className="h-3.5 w-3.5" />
             Não tem a carteirinha? Entrar com CPF
+          </button>
+          <button
+            onClick={() => setState('checkin_batismo')}
+            className="flex items-center gap-2 text-xs text-[#6366F1]/70 hover:text-[#6366F1] transition-colors py-1 px-3 mt-1"
+            title="Fluxo assistido pela equipe no dia do batismo"
+          >
+            <Droplets className="h-3.5 w-3.5" />
+            Equipe · Check-in de Batismo
           </button>
         </div>
       </div>
@@ -1497,6 +1511,307 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
             {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Droplets className="h-5 w-5" />}
             {saving ? 'Registrando...' : 'Confirmar inscrição'}
           </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Check-in de Batismo (quiosque · Fase 1) ─────────────────────────────────
+// Fluxo assistido pela equipe no dia do batismo: lista os batizandos do dia →
+// a pessoa se acha → CPF (dedup na origem) + selfie + consentimento → imprime a
+// etiqueta (QR de acesso às fotos + código curto). docs/quiosque-lounge-identidade.md
+type CheckinBatizando = { id: string; nome: string; sobrenome?: string; ja_checkin: boolean; tem_foto: boolean };
+
+function CheckinBatismoFlow({ onExit }: { onExit: () => void }) {
+  const [step, setStep] = useState<'lista' | 'dados' | 'sucesso'>('lista');
+  const [lista, setLista] = useState<CheckinBatizando[]>([]);
+  const [loadingLista, setLoadingLista] = useState(true);
+  const [busca, setBusca] = useState('');
+  const [sel, setSel] = useState<CheckinBatizando | null>(null);
+  const [cpf, setCpf] = useState('');
+  const [consentiu, setConsentiu] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [okNome, setOkNome] = useState('');
+  const [dataLabel, setDataLabel] = useState('');
+
+  // Câmera (selfie de referência · opcional)
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [camActive, setCamActive] = useState(false);
+  const [camLoading, setCamLoading] = useState(false);
+  const [camErr, setCamErr] = useState('');
+  const [selfieBlob, setSelfieBlob] = useState<Blob | null>(null);
+  const [selfiePreview, setSelfiePreview] = useState('');
+
+  const carregar = useCallback(async () => {
+    setLoadingLista(true);
+    try {
+      const r = await kpisApi.batismos.checkin.doDia();
+      setLista(r.batizandos || []);
+      if (r.data) {
+        const [y, m, d] = String(r.data).split('-');
+        setDataLabel(`${d}/${m}/${y}`);
+      }
+    } catch {
+      setLista([]);
+    }
+    setLoadingLista(false);
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setCamActive(false);
+  }, []);
+  useEffect(() => () => stopCamera(), [stopCamera]);
+
+  const startCamera = async () => {
+    setCamErr('');
+    setCamLoading(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCamActive(true);
+      setSelfieBlob(null);
+      setSelfiePreview('');
+    } catch {
+      setCamErr('Câmera não disponível ou sem permissão.');
+    }
+    setCamLoading(false);
+  };
+
+  const capture = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const v = videoRef.current;
+    const c = canvasRef.current;
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext('2d')!.drawImage(v, 0, 0);
+    c.toBlob(blob => {
+      if (!blob) return;
+      setSelfieBlob(blob);
+      setSelfiePreview(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
+      stopCamera();
+    }, 'image/jpeg', 0.92);
+  };
+
+  const selecionar = (p: CheckinBatizando) => {
+    setSel(p);
+    setCpf(''); setConsentiu(false); setError('');
+    setSelfieBlob(null); setSelfiePreview('');
+    stopCamera();
+    setStep('dados');
+  };
+
+  const voltarLista = () => {
+    stopCamera();
+    setSel(null);
+    setStep('lista');
+    carregar();
+  };
+
+  const finalizar = async () => {
+    if (!sel) return;
+    stopCamera();  // garante que a câmera pare mesmo se concluir sem capturar
+    setSaving(true); setError('');
+    try {
+      const digits = cpf.replace(/\D/g, '');
+      const r = await kpisApi.batismos.checkin.confirmar(sel.id, { cpf: digits || null, consentiu });
+      if (selfieBlob && consentiu) {
+        try { await kpisApi.batismos.checkin.fotoReferencia(sel.id, selfieBlob); }
+        catch { /* selfie é opcional · não bloqueia o check-in */ }
+      }
+      const qrUrl = `${window.location.origin}/batismo/acesso?token=${r.codigo_acesso}`;
+      await imprimirEtiquetaBatismo({
+        nome: r.nome || `${sel.nome} ${sel.sobrenome || ''}`.trim(),
+        codigoConferencia: r.codigo_conferencia,
+        qrUrl,
+        dataLabel,
+      });
+      setOkNome((r.nome || sel.nome || '').split(' ')[0]);
+      setStep('sucesso');
+    } catch (e: any) {
+      setError(e?.message || 'Não foi possível concluir o check-in.');
+    }
+    setSaving(false);
+  };
+
+  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#6366F1] focus:ring-1 focus:ring-[#6366F1]/30 transition-colors';
+
+  // ── Sucesso ──
+  if (step === 'sucesso') return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+      <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+      <div className="text-center">
+        <h2 className="text-3xl font-bold">Check-in feito!</h2>
+        <p className="text-white/60 mt-2">Etiqueta impressa{okNome ? `, ${okNome}` : ''} · aponte a câmera para ver suas fotos.</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <Button onClick={voltarLista} className="bg-[#6366F1] hover:bg-[#6366F1]/90 text-white px-6 py-3 rounded-2xl">
+          Próxima pessoa
+        </Button>
+        <button onClick={onExit} className="text-white/40 hover:text-white/70 text-sm px-4">Sair</button>
+      </div>
+    </div>
+  );
+
+  // ── Dados (CPF + consentimento + selfie) ──
+  if (step === 'dados' && sel) return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+        <button onClick={voltarLista} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <div>
+          <h2 className="text-xl font-semibold">{`${sel.nome} ${sel.sobrenome || ''}`.trim()}</h2>
+          <p className="text-white/40 text-xs">Complete os dados para receber sua foto</p>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="w-full max-w-md mx-auto space-y-5">
+          {/* CPF */}
+          <div>
+            <label className="block text-xs text-white/40 mb-1">CPF (opcional)</label>
+            <input
+              value={cpf}
+              onChange={(e) => setCpf(maskCpfInput(e.target.value))}
+              className={inputCls}
+              placeholder="000.000.000-00"
+              inputMode="numeric"
+            />
+            <p className="text-[11px] text-white/30 mt-1">O CPF garante que suas fotos fiquem ligadas só a você.</p>
+          </div>
+
+          {/* Consentimento */}
+          <label className="flex items-start gap-3 p-3 rounded-2xl border border-white/10 bg-white/5 cursor-pointer">
+            <input type="checkbox" checked={consentiu} onChange={(e) => setConsentiu(e.target.checked)} className="mt-1 h-5 w-5 accent-[#6366F1]" />
+            <span className="text-sm text-white/80">
+              Autorizo o registro da minha foto para receber as fotos do batismo.
+              <span className="block text-[11px] text-white/40 mt-1">
+                Menores de 18 anos precisam de autorização do responsável — caso ele esteja, pode autorizar!
+              </span>
+            </span>
+          </label>
+
+          {/* Selfie */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 flex flex-col items-center gap-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/40">Foto (opcional)</p>
+            {selfiePreview ? (
+              <img src={selfiePreview} className="h-40 w-40 rounded-2xl object-cover ring-2 ring-[#6366F1]" alt="Selfie" />
+            ) : (
+              <div className="h-40 w-40 rounded-2xl bg-[#6366F1]/10 flex items-center justify-center">
+                <Camera className="h-10 w-10 text-[#6366F1]/60" />
+              </div>
+            )}
+            {camActive ? (
+              <div className="w-full space-y-2">
+                <video ref={videoRef} className="w-full rounded-xl object-cover" autoPlay muted playsInline style={{ maxHeight: 200 }} />
+                <div className="flex gap-2">
+                  <button onClick={capture} className="flex-1 py-2 rounded-xl bg-[#6366F1] text-white text-sm font-semibold flex items-center justify-center gap-2">
+                    <Camera className="h-4 w-4" /> Capturar
+                  </button>
+                  <button onClick={stopCamera} className="p-2 rounded-xl border border-red-500/40 text-red-400">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={startCamera}
+                disabled={!consentiu || camLoading}
+                className="w-full py-2.5 rounded-xl border border-white/20 text-sm font-medium flex items-center justify-center gap-2 text-white/70 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {camLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+                {selfiePreview ? 'Tirar outra foto' : 'Abrir câmera'}
+              </button>
+            )}
+            {!consentiu && <p className="text-[11px] text-white/30 text-center">Marque o consentimento para tirar a foto.</p>}
+            {camErr && <p className="text-xs text-red-400 text-center">{camErr}</p>}
+          </div>
+          <canvas ref={canvasRef} className="hidden" />
+
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+          <Button
+            onClick={finalizar}
+            disabled={saving}
+            className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2"
+          >
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Printer className="h-5 w-5" />}
+            {saving ? 'Processando...' : 'Concluir check-in e imprimir'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Lista do dia ──
+  const termo = busca.trim().toLowerCase();
+  const filtrados = termo
+    ? lista.filter(p => `${p.nome} ${p.sobrenome || ''}`.toLowerCase().includes(termo))
+    : lista;
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+        <button onClick={onExit} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <div className="flex items-center gap-2">
+          <Droplets className="h-5 w-5 text-[#6366F1]" />
+          <h2 className="text-xl font-semibold">Check-in de Batismo</h2>
+        </div>
+        {dataLabel && <span className="ml-auto text-white/40 text-sm">{dataLabel}</span>}
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="w-full max-w-md mx-auto space-y-4">
+          <div className="relative">
+            <Search className="h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#6366F1]"
+              placeholder="Buscar pelo nome..."
+            />
+          </div>
+
+          {loadingLista ? (
+            <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-[#6366F1]" /></div>
+          ) : filtrados.length === 0 ? (
+            <div className="text-center py-16 text-white/40">
+              {lista.length === 0 ? 'Nenhum batizando para hoje.' : 'Nenhum nome encontrado.'}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filtrados.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => selecionar(p)}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left"
+                >
+                  <div className="h-10 w-10 rounded-full bg-[#6366F1]/20 flex items-center justify-center text-lg font-bold text-[#6366F1]">
+                    {p.nome.charAt(0)}
+                  </div>
+                  <span className="flex-1 font-medium">{`${p.nome} ${p.sobrenome || ''}`.trim()}</span>
+                  {p.ja_checkin && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#00B39D]/15 text-[#00B39D] flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> check-in
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
