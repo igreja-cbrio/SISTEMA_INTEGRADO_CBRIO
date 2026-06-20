@@ -749,6 +749,8 @@ export default function Membresia() {
   const [indicandoServir, setIndicandoServir] = useState(false);
   const [devocionalHist, setDevocionalHist] = useState(null); // { data: [], resumo: {} }
   const [loadingDevocional, setLoadingDevocional] = useState(false);
+  const [wifiHist, setWifiHist] = useState(null); // { tem_wifi, total_logins, conexoes: [] }
+  const [loadingWifi, setLoadingWifi] = useState(false);
 
   // Histórico de devocionais (check-ins do app) · carrega ao abrir a aba
   useEffect(() => {
@@ -759,6 +761,18 @@ export default function Membresia() {
       .then(r => { if (!cancelado) setDevocionalHist(r); })
       .catch(() => { if (!cancelado) setDevocionalHist({ data: [], resumo: null }); })
       .finally(() => { if (!cancelado) setLoadingDevocional(false); });
+    return () => { cancelado = true; };
+  }, [selectedMembro?.id, activeTab]);
+
+  // Histórico de conexões no wifi · carrega ao abrir a aba
+  useEffect(() => {
+    if (!selectedMembro?.id || activeTab !== 'wifi') return;
+    let cancelado = false;
+    setLoadingWifi(true);
+    membresia.membros.wifi(selectedMembro.id)
+      .then(r => { if (!cancelado) setWifiHist(r); })
+      .catch(() => { if (!cancelado) setWifiHist({ tem_wifi: false, conexoes: [] }); })
+      .finally(() => { if (!cancelado) setLoadingWifi(false); });
     return () => { cancelado = true; };
   }, [selectedMembro?.id, activeTab]);
 
@@ -925,6 +939,7 @@ export default function Membresia() {
     setShowContribForm(false);
     setVolStatus(null);
     setDevocionalHist(null);
+    setWifiHist(null);
 
     if (typeof mOrId === 'object' && mOrId) {
       setSelectedMembro({ ...mOrId, _optimistic: true });
@@ -1504,6 +1519,7 @@ export default function Membresia() {
                     { key: 'servico', label: 'Serviço', icon: Sparkles },
                     { key: 'next', label: 'NEXT', icon: ArrowRightLeft },
                     { key: 'devocional', label: 'Devocional', icon: BookOpen },
+                    { key: 'wifi', label: 'Wifi', icon: Activity },
                     { key: 'trilha', label: 'Trilha', icon: Star },
                     { key: 'historico', label: 'Histórico', icon: Calendar },
                   ].map(t => {
@@ -2396,6 +2412,61 @@ export default function Membresia() {
                             {d.tipo && d.tipo !== 'pessoal' && (
                               <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 6, background: C.primaryBg, color: C.primary, fontWeight: 700, textTransform: 'uppercase' }}>{d.tipo}</span>
                             )}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </TabsContent>
+
+                {/* Aba: Wifi · histórico de conexões na rede da igreja */}
+                <TabsContent value="wifi" className="mt-4">
+                  {loadingWifi ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text3, fontSize: 13, padding: '24px 0', justifyContent: 'center' }}>
+                      <Loader2 style={{ width: 16, height: 16 }} className="animate-spin" /> Carregando conexões…
+                    </div>
+                  ) : !wifiHist?.tem_wifi ? (
+                    <div style={{ textAlign: 'center', padding: '32px 0', color: C.text3 }}>
+                      <Activity style={{ width: 32, height: 32, margin: '0 auto 8px', opacity: 0.4 }} />
+                      <div style={{ fontSize: 14, color: C.text2 }}>Sem conexões de wifi registradas</div>
+                      <div style={{ fontSize: 12, marginTop: 4 }}>As conexões na rede wifi da igreja aparecem aqui quando telefone, CPF ou e-mail batem com este cadastro.</div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Resumo */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+                        <div style={{ padding: 14, borderRadius: 12, background: C.primaryBg, border: `1px solid ${C.primary}30`, textAlign: 'center' }}>
+                          <Activity style={{ width: 18, height: 18, color: C.primary, margin: '0 auto 4px' }} />
+                          <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{wifiHist.total_logins ?? 0}</div>
+                          <div style={{ fontSize: 11, color: C.text3 }}>conexões</div>
+                        </div>
+                        <div style={{ padding: 14, borderRadius: 12, background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}`, textAlign: 'center' }}>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{wifiHist.cultos_distintos ?? 0}</div>
+                          <div style={{ fontSize: 11, color: C.text3 }}>cultos distintos</div>
+                        </div>
+                        <div style={{ padding: 14, borderRadius: 12, background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}`, textAlign: 'center' }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                            {wifiHist.ultima_conexao ? new Date(wifiHist.ultima_conexao).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.text3 }}>última conexão</div>
+                        </div>
+                      </div>
+
+                      {/* Histórico */}
+                      <div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                        Últimas conexões
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
+                        {(wifiHist.conexoes || []).map((cx, i) => (
+                          <div key={cx.id || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: 'var(--cbrio-input-bg)' }}>
+                            <Activity style={{ width: 16, height: 16, color: C.primary, flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>
+                                {cx.timestamp_evento ? new Date(cx.timestamp_evento).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                              </div>
+                              {cx.culto_nome && <div style={{ fontSize: 12, color: C.text3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cx.culto_nome}</div>}
+                            </div>
+                            {cx.mac_address && <span style={{ fontSize: 10, color: C.text3, fontFamily: 'monospace' }}>{cx.mac_address}</span>}
                           </div>
                         ))}
                       </div>

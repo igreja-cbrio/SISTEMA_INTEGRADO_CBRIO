@@ -1510,6 +1510,7 @@ export const membresia = {
     update: (id, data) => put(`/membresia/membros/${id}`, data),
     remove: (id) => del(`/membresia/membros/${id}`),
     uploadFoto: (id, formData) => requestFile(`/membresia/membros/${id}/foto`, formData),
+    wifi: (id) => get(`/membresia/membros/${id}/wifi`),
   },
   trilha: {
     create: (data) => post('/membresia/trilha', data),
