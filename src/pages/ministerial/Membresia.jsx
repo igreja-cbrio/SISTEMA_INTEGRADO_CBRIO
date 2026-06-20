@@ -53,7 +53,7 @@ const STATUS_MAP = {
 const FAIXA_LABEL = { crianca: 'Crianças', adolescente: 'Adolescentes', jovem: 'Jovens', adulto: 'Adultos' };
 const PAPEL_LABEL = {
   voluntario: 'Voluntários', visitante: 'Visitantes', grupo_ativo: 'Em grupo ativo',
-  contribuinte: 'Contribuintes', inscrito_next: 'Inscritos no NEXT', sem_papel: 'Sem papel ativo',
+  contribuinte: 'Contribuintes', com_familia: 'Com família', inscrito_next: 'Inscritos no NEXT', sem_papel: 'Sem papel ativo',
 };
 
 const TRILHA_ETAPAS = [
@@ -703,6 +703,18 @@ export default function Membresia() {
     return { ativo: partes.length > 0, titulo: partes.join(' · ') };
   }, [filterFaixa, filterStatus, filterPapel, busca]);
 
+  // Clique nos cards de resumo · aplica o filtro correspondente (limpa os demais)
+  // e rola até a lista. cfg=null = "Total de pessoas" (limpa tudo).
+  const filtrarPorCard = useCallback((cfg) => {
+    setBusca('');
+    setFilterFaixa('');
+    setFilterStatus(cfg?.status || '');
+    setFilterPapel(cfg?.papel || '');
+    requestAnimationFrame(() => {
+      document.querySelector('[data-membros-lista]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
   // Dados auxiliares · carregam uma vez (não mudam com a busca)
   const fetchAux = useCallback(async () => {
     try {
@@ -1139,12 +1151,16 @@ export default function Membresia() {
 
         <TabsContent value="membros">
 
-      {/* KPIs */}
+      {/* KPIs · clicáveis (filtram a lista abaixo) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
-        <StatisticsCard title="Total de pessoas" value={kpis.total} icon={Users} iconColor="#00B39D" />
-        <StatisticsCard title="Membros ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981" />
-        <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b" />
-        <StatisticsCard title="Contribuintes Ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e" />
+        <StatisticsCard title="Total de pessoas" value={kpis.total} icon={Users} iconColor="#00B39D"
+          onClick={() => filtrarPorCard(null)} />
+        <StatisticsCard title="Membros ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981"
+          onClick={() => filtrarPorCard({ status: 'membro_ativo' })} />
+        <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b"
+          onClick={() => filtrarPorCard({ papel: 'com_familia' })} />
+        <StatisticsCard title="Contribuintes ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e"
+          onClick={() => filtrarPorCard({ papel: 'contribuinte' })} />
       </div>
 
       {/* Card inteligente do filtro · título muda conforme o que foi filtrado */}
@@ -1167,7 +1183,7 @@ export default function Membresia() {
       )}
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+      <div data-membros-lista style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', scrollMarginTop: 16 }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
           <Search style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 16, height: 16, color: C.text3, zIndex: 1 }} />
           <Input
@@ -1208,6 +1224,7 @@ export default function Membresia() {
               <SelectItem value="visitante">Visitantes</SelectItem>
               <SelectItem value="grupo_ativo">Em grupo ativo</SelectItem>
               <SelectItem value="contribuinte">Contribuintes (90d)</SelectItem>
+              <SelectItem value="com_familia">Com família</SelectItem>
               <SelectItem value="inscrito_next">Inscritos no NEXT</SelectItem>
               <SelectItem value="sem_papel">Sem papel ativo</SelectItem>
             </SelectContent>

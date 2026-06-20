@@ -384,6 +384,7 @@ router.get('/membros', async (req, res) => {
         if (papel === 'visitante') return p.is_visitante;
         if (papel === 'grupo_ativo') return p.in_grupo_ativo;
         if (papel === 'contribuinte') return p.is_contribuinte;
+        if (papel === 'com_familia') return !!m.familia_id;
         if (papel === 'inscrito_next') return p.is_inscrito_next;
         if (papel === 'sem_papel') {
           return !p.is_voluntario && !p.is_visitante && !p.is_inscrito_next
