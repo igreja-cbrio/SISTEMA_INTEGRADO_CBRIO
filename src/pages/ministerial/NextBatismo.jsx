@@ -430,12 +430,13 @@ function LigarDialog({ row, onClose, onDone, onVerFicha }) {
           ) : (
             <div className="space-y-1.5 max-h-64 overflow-y-auto">
               {candidatos.map((c) => (
-                <div key={c.id} className="flex items-center justify-between gap-2 rounded-lg border bg-card px-2.5 py-1.5">
-                  <div className="min-w-0 flex items-center gap-2">
+                <div key={c.id} className="rounded-lg border bg-card px-2.5 py-2 flex flex-col gap-2">
+                  {/* Linha 1 · pessoa + score (trunca, nunca estoura a largura) */}
+                  <div className="flex items-center gap-2 min-w-0">
                     {c.foto_url
                       ? <img src={c.foto_url} alt="" className="size-7 rounded-full object-cover shrink-0" />
                       : <div className="size-7 rounded-full bg-muted flex items-center justify-center shrink-0"><UserIcon className="size-3.5 text-muted-foreground" /></div>}
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium text-foreground truncate">{c.nome}</div>
                       <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2">
                         {c.cpf && <span className="font-mono">{maskCpf(c.cpf)}</span>}
@@ -443,15 +444,16 @@ function LigarDialog({ row, onClose, onDone, onVerFicha }) {
                         <span className="opacity-70">{c.status}</span>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Badge variant="outline" className="text-[10px]" title={(c.motivos || []).join(', ')}>{c.score}%</Badge>
+                    <Badge variant="outline" className="text-[10px] shrink-0" title={(c.motivos || []).join(', ')}>{c.score}%</Badge>
                     {onVerFicha && (
-                      <Button size="icon" variant="ghost" className="size-7" title="Ver ficha de entrada"
+                      <Button size="icon" variant="ghost" className="size-7 shrink-0" title="Ver ficha de entrada"
                         onClick={() => onVerFicha(c.id)}>
                         <Eye className="size-3.5" />
                       </Button>
                     )}
+                  </div>
+                  {/* Linha 2 · ações (alinhadas à direita, cabem sempre) */}
+                  <div className="flex items-center justify-end gap-1.5">
                     <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
                       disabled={ligarMut.isPending}
                       title="Cria um cadastro novo (pessoa diferente) e liga à mesma família deste"
