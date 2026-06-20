@@ -1,12 +1,12 @@
 // ============================================================================
-// Aba "Organograma" do /grupos · árvore Supervisor → Grupos (+ líder), com os
-// grupos SEM supervisor em destaque. Lê de GET /grupos/supervisao/me (admin e
-// coordenador veem tudo; supervisor vê os seus). A fonte da verdade é o
-// supervisor_id de cada grupo — trocar é no detalhe do grupo (card "Supervisão").
+// Aba "Organograma" do /grupos · Supervisor → Grupos (+ líder), lado a lado em
+// colunas pra caber numa tela só. Grupos SEM supervisor em destaque. Lê de
+// GET /grupos/supervisao/me (admin/coordenador veem tudo; supervisor vê os seus).
+// Fonte da verdade = supervisor_id de cada grupo · trocar é no detalhe do grupo.
 // ============================================================================
 import { useState, useEffect } from 'react';
 import { grupos as api } from '../../api';
-import { Eye, Star, Users, AlertTriangle, ChevronRight } from 'lucide-react';
+import { Eye, Star, AlertTriangle } from 'lucide-react';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)', t2: 'var(--cbrio-text2)',
@@ -46,20 +46,17 @@ export default function GruposOrganograma({ onOpenGrupo }) {
 
   return (
     <div>
-      <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Organograma dos grupos</h3>
-        <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0' }}>
-          Cada supervisor e os grupos que acompanha. Pra trocar o supervisor de um grupo, abra o grupo → card “Supervisão”.
-        </p>
+        <span style={{ fontSize: 12, color: C.t3 }}>
+          {comSup.length} supervisores · {data?.total_grupos || 0} grupos
+          {semSup?.total_grupos ? <span style={{ color: C.amber, fontWeight: 600 }}> · {semSup.total_grupos} sem supervisor</span> : null}
+        </span>
+        <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto' }}>Clique num grupo pra abrir e trocar o supervisor.</span>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        <Stat label="Supervisores" value={comSup.length} cor={C.blue} />
-        <Stat label="Grupos" value={data?.total_grupos || 0} cor={C.primary} />
-        <Stat label="Sem supervisor" value={semSup?.total_grupos || 0} cor={C.amber} />
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Colunas (multi-column): supervisores lado a lado, preenchendo a largura */}
+      <div style={{ columns: '300px', columnGap: 12 }}>
         {comSup.map(s => <SupBloco key={s.supervisor_id} s={s} onOpenGrupo={onOpenGrupo} />)}
         {semSup && semSup.total_grupos > 0 && <SupBloco s={semSup} orfao onOpenGrupo={onOpenGrupo} />}
         {comSup.length === 0 && !semSup && (
@@ -70,40 +67,34 @@ export default function GruposOrganograma({ onOpenGrupo }) {
   );
 }
 
-function Stat({ label, value, cor }) {
-  return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: '10px 16px', minWidth: 120 }}>
-      <div style={{ fontSize: 22, fontWeight: 700, color: cor }}>{value}</div>
-      <div style={{ fontSize: 12, color: C.t3 }}>{label}</div>
-    </div>
-  );
-}
-
 function SupBloco({ s, orfao, onOpenGrupo }) {
   const cor = orfao ? C.amber : C.blue;
   return (
-    <div style={{ background: C.card, border: `1px solid ${orfao ? C.amber + '55' : C.border}`, borderLeft: `3px solid ${cor}`, borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${C.border}`, background: orfao ? C.amber + '10' : 'transparent' }}>
-        {orfao ? <AlertTriangle size={16} style={{ color: cor }} /> : <Eye size={16} style={{ color: cor }} />}
-        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{orfao ? 'Sem supervisor' : s.supervisor_nome}</span>
-        <span style={{ fontSize: 12, color: C.t3 }}>· {s.total_grupos} grupo{s.total_grupos !== 1 ? 's' : ''}</span>
+    <div style={{
+      breakInside: 'avoid', WebkitColumnBreakInside: 'avoid', display: 'inline-block', width: '100%',
+      verticalAlign: 'top', marginBottom: 12,
+      background: C.card, border: `1px solid ${orfao ? C.amber + '55' : C.border}`,
+      borderLeft: `3px solid ${cor}`, borderRadius: 10, overflow: 'hidden',
+    }}>
+      <div style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6, borderBottom: `1px solid ${C.border}`, background: orfao ? C.amber + '12' : 'transparent' }}>
+        {orfao ? <AlertTriangle size={13} style={{ color: cor, flexShrink: 0 }} /> : <Eye size={13} style={{ color: cor, flexShrink: 0 }} />}
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{orfao ? 'Sem supervisor' : s.supervisor_nome}</span>
+        <span style={{ fontSize: 11, color: C.t3, marginLeft: 'auto', flexShrink: 0 }}>{s.total_grupos}</span>
       </div>
       <div>
         {(s.grupos || []).map(g => (
-          <button key={g.id} onClick={() => onOpenGrupo?.(g.id)} style={{
+          <button key={g.id} onClick={() => onOpenGrupo?.(g.id)} title={`${g.nome}${g.lider_nome ? ' · ' + g.lider_nome : ''}`} style={{
             width: '100%', textAlign: 'left', background: 'none', border: 'none',
-            borderBottom: `1px solid ${C.border}`, padding: '10px 16px 10px 36px', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8,
+            borderTop: `1px solid ${C.border}`, padding: '4px 10px 4px 22px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 6,
           }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{g.nome}</div>
-              <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
-                <Star size={10} style={{ color: C.primary, verticalAlign: '-1px' }} /> {g.lider_nome || 'sem líder'}
-                {g.total_membros != null && <> · <Users size={10} style={{ verticalAlign: '-1px' }} /> {g.total_membros}</>}
-                {g.bairro && <> · {g.bairro}</>}
-              </div>
-            </div>
-            <ChevronRight size={15} style={{ color: C.t3, flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>{g.nome}</span>
+              {g.lider_nome && <span style={{ fontSize: 11, color: C.t3 }}> · <Star size={9} style={{ verticalAlign: '-1px', color: C.primary }} /> {g.lider_nome}</span>}
+            </span>
+            {g.total_membros != null && (
+              <span style={{ fontSize: 10, color: C.t3, flexShrink: 0, minWidth: 16, textAlign: 'right' }}>{g.total_membros}</span>
+            )}
           </button>
         ))}
       </div>
