@@ -1711,7 +1711,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
       loadMembros();
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
       setForm(data ? { ...data } : {
-        nome: '', categoria: '', lider_id: '', local: '', endereco: '', complemento: '',
+        nome: '', categoria: '', area: 'sede', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
@@ -1751,6 +1751,19 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           <div>
             <Label>Nome do grupo *</Label>
             <Input value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Conexao Barra" />
+          </div>
+
+          <div>
+            <Label>Área (cascata da mandala)</Label>
+            <ShadSelect value={form.area || 'sede'} onValueChange={v => set('area', v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="sede">Sede</SelectItem>
+                <SelectItem value="ami">AMI</SelectItem>
+                <SelectItem value="bridge">Bridge</SelectItem>
+                <SelectItem value="online">Online</SelectItem>
+              </SelectContent>
+            </ShadSelect>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

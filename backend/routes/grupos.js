@@ -1313,7 +1313,7 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('mem_grupos').insert({
-      nome: d.nome, categoria: d.categoria || '', lider_id: d.lider_id || null,
+      nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
       dia_semana: d.dia_semana ?? null, horario: d.horario || null,
       recorrencia: d.recorrencia || 'semanal', tema: d.tema || '',
@@ -1338,7 +1338,7 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
     const { data, error } = await supabase.from('mem_grupos').update({
-      nome: d.nome, categoria: d.categoria || '', lider_id: d.lider_id || null,
+      nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
       dia_semana: d.dia_semana ?? null, horario: d.horario || null,
       recorrencia: d.recorrencia || 'semanal', tema: d.tema || '',
