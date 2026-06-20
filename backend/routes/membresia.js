@@ -921,6 +921,50 @@ router.post('/membros/:id/mesma-familia', authorize('admin', 'diretor'), async (
   }
 });
 
+// GET /api/membresia/membros/:id/wifi — histórico de conexões na rede wifi da
+// igreja deste membro (via wifi_visitantes.membro_id → wifi_conexoes).
+router.get('/membros/:id/wifi', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: vis } = await supabase.from('wifi_visitantes').select('id').eq('membro_id', id).is('deleted_at', null);
+    const visIds = (vis || []).map(v => v.id);
+    if (!visIds.length) return res.json({ tem_wifi: false, total_logins: 0, cultos_distintos: 0, conexoes: [] });
+
+    const conexoes = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('wifi_conexoes')
+        .select('id, timestamp_evento, evento, culto_id, mac_address')
+        .in('wifi_visitante_id', visIds).is('deleted_at', null)
+        .order('timestamp_evento', { ascending: false })
+        .range(from, from + 999);
+      if (error) break;
+      conexoes.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const cultos = new Set(conexoes.map(c => c.culto_id).filter(Boolean));
+    const recentes = conexoes.slice(0, 50);
+    const cultoIds = [...new Set(recentes.map(c => c.culto_id).filter(Boolean))];
+    const cultoNome = {};
+    if (cultoIds.length) {
+      const { data: cs } = await supabase.from('cultos').select('id, data').in('id', cultoIds);
+      (cs || []).forEach(c => { cultoNome[c.id] = c.data ? `Culto · ${String(c.data).slice(0, 10).split('-').reverse().join('/')}` : 'Culto'; });
+    }
+    res.json({
+      tem_wifi: true,
+      total_logins: conexoes.length,
+      cultos_distintos: cultos.size,
+      ultima_conexao: conexoes[0]?.timestamp_evento || null,
+      conexoes: recentes.map(c => ({
+        id: c.id, timestamp_evento: c.timestamp_evento, evento: c.evento,
+        mac_address: c.mac_address, culto_nome: cultoNome[c.culto_id] || null,
+      })),
+    });
+  } catch (e) {
+    console.error('[membresia/membros/:id/wifi]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar histórico de wifi' });
+  }
+});
+
 // ── Histórico ──
 
 // POST /api/membresia/historico
