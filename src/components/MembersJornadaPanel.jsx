@@ -22,7 +22,7 @@ const inp = { padding: '8px 12px', borderRadius: 8, border: '1px solid var(--cbr
 const VALOR_META = [
   { key: 'seguir', nome: 'Seguir a Jesus', desc: 'Fez decisao/conversao ou foi batizado', color: '#3b82f6', bg: '#dbeafe' },
   { key: 'conectar', nome: 'Conectar-se com Pessoas', desc: 'Participa de um grupo ativo', color: '#8b5cf6', bg: '#ede9fe' },
-  { key: 'investir', nome: 'Investir Tempo com Deus', desc: 'Participa da Jornada 180 / Discipulado', color: '#f59e0b', bg: '#fef3c7' },
+  { key: 'investir', nome: 'Investir Tempo com Deus', desc: 'Fez devocional no app (últimos 90 dias)', color: '#f59e0b', bg: '#fef3c7' },
   { key: 'servir', nome: 'Servir em Comunidade', desc: 'Voluntário ativo com check-in recente', color: '#10b981', bg: '#d1fae5' },
   { key: 'generosidade', nome: 'Viver Generosamente', desc: 'Contribuiu nos últimos 90 dias', color: '#ef4444', bg: '#fee2e2' },
 ];
@@ -449,7 +449,7 @@ function TabDetalhe({ detail, loading, onBack }) {
               <div style={{ fontSize: 12, color: C.t3 }}>
                 {v.key === 'seguir' && (ativo ? 'Decisao registrada' : 'Sem registro de conversao')}
                 {v.key === 'conectar' && (ativo ? `Grupo: ${data.dados?.mem_grupos?.nome || 'Ativo'}` : 'Não esta em nenhum grupo')}
-                {v.key === 'investir' && (ativo ? 'Participando da Jornada 180' : 'Sem registro de discipulado')}
+                {v.key === 'investir' && (ativo ? 'Fez devocional no app' : 'Sem devocional recente')}
                 {v.key === 'servir' && (ativo ? `Ministério: ${data.dados?.mem_ministerios?.nome || 'Ativo'}` : 'Não esta servindo')}
                 {v.key === 'generosidade' && (ativo ? `Última contribuição: ${data.dados?.data || ''}` : 'Sem contribuição nos últimos 90 dias')}
               </div>

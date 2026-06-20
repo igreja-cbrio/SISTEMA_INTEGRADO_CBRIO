@@ -79,7 +79,9 @@ router.get('/dashboard', async (req, res) => {
     const [seguirSet, conectarSet, investirSet, servirSet, genSet] = await Promise.all([
       fetchMembroSet('mem_trilha_valores', (q) => q.in('etapa', ['conversao', 'primeiro_contato', 'batismo']).eq('concluida', true)),
       fetchMembroSet('mem_grupo_membros', (q) => q.is('saiu_em', null)),
-      fetchMembroSet('cui_jornada180', (q) => q.gte('data_encontro', daysAgo(90))),
+      // Investir Tempo com Deus = devocional feito no app (mem_devocionais ·
+      // decisão Matheus 2026-06-20). Antes era cui_jornada180.
+      fetchMembroSet('mem_devocionais', (q) => q.eq('concluida', true).gte('data_devocional', daysAgo(90))),
       fetchMembroSet('mem_voluntarios', (q) => q.is('ate', null)),
       fetchMembroSet('mem_contribuicoes', (q) => q.gte('data', daysAgo(90))),
     ]);
@@ -127,7 +129,7 @@ router.get('/membros', async (req, res) => {
     const [trilha, grupos, j180, voluntarios, contribuicoes] = await Promise.all([
       supabase.from('mem_trilha_valores').select('membro_id, etapa, concluida').is('deleted_at', null).in('membro_id', ids).eq('concluida', true),
       supabase.from('mem_grupo_membros').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('saiu_em', null),
-      supabase.from('cui_jornada180').select('membro_id').is('deleted_at', null).in('membro_id', ids).gte('data_encontro', daysAgo(90)),
+      supabase.from('mem_devocionais').select('membro_id').is('deleted_at', null).in('membro_id', ids).eq('concluida', true).gte('data_devocional', daysAgo(90)),
       supabase.from('mem_voluntarios').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('ate', null),
       supabase.from('mem_contribuicoes').select('membro_id').is('deleted_at', null).in('membro_id', ids).gte('data', daysAgo(90)),
     ]);
