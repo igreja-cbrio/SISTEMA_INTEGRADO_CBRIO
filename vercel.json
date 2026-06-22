@@ -111,7 +111,7 @@
     },
     {
       "path": "/api/voluntariado/cron/sync",
-      "schedule": "0 10 * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/notificacoes/cron/alerta-culto-dados",
