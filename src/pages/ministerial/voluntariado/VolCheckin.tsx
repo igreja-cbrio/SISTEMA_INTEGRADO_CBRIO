@@ -1,9 +1,14 @@
 import { useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { QrCode, Hand, Scan } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { QrCode, Hand, Scan, Sun } from 'lucide-react';
+import { voluntariado } from '@/api';
 import { useTodaysServices, useServiceSchedules, useCheckIn, useScheduleByQrCode } from './hooks';
 import QrScanner from './components/checkin/QrScanner';
 import ManualCheckin from './components/checkin/ManualCheckin';
@@ -24,6 +29,52 @@ export default function VolCheckin() {
 
   const maybeCapture = (resp: any, name: string) => {
     if (resp?.needs_cpf && resp?.volunteer_id) setContactCapture({ id: resp.volunteer_id, name });
+  };
+
+  // Cultos da manhã (08:30/10:00/11:30) · pro check-in perguntar em quais a
+  // pessoa vai servir (checkbox). Só aparece quando o culto selecionado é
+  // domingo de manhã.
+  const { data: cultosManha = [] } = useQuery<{ id: string; name: string; recurrence_time: string }[]>({
+    queryKey: ['vol', 'cultos-manha'],
+    queryFn: () => voluntariado.cultosManha(),
+    staleTime: 60 * 60 * 1000,
+  });
+  const selSvc = todayServices.find(s => s.id === selectedServiceId);
+  const ehDomingoManha = (() => {
+    if (!selSvc) return false;
+    try {
+      const wd = new Date(selSvc.scheduled_at).toLocaleDateString('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short' });
+      const h = Number(new Date(selSvc.scheduled_at).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2));
+      return wd === 'Sun' && h < 14 && cultosManha.length > 1;
+    } catch { return false; }
+  })();
+  const serviceDate = selSvc ? new Date(selSvc.scheduled_at).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) : '';
+
+  const [manhaDialog, setManhaDialog] = useState<{ volunteerId?: string; name: string; method: string } | null>(null);
+  const [selCultos, setSelCultos] = useState<Set<string>>(new Set());
+  const [salvandoManha, setSalvandoManha] = useState(false);
+
+  // Intercepta o check-in: se é domingo de manhã, abre o checkbox dos cultos.
+  // Retorna true se interceptou (o chamador deve parar o fluxo normal).
+  const perguntarCultosManha = (volunteerId: string | undefined, name: string, method: string) => {
+    if (!ehDomingoManha) return false;
+    setSelCultos(new Set(cultosManha.map(c => c.id)));
+    setManhaDialog({ volunteerId, name, method });
+    return true;
+  };
+
+  const confirmarManha = async () => {
+    if (!manhaDialog) return;
+    const ids = cultosManha.filter(c => selCultos.has(c.id)).map(c => c.id);
+    if (!ids.length) { toast.error('Marque pelo menos um culto'); return; }
+    setSalvandoManha(true);
+    try {
+      const r = await voluntariado.checkIns.manha({ volunteer_id: manhaDialog.volunteerId, service_date: serviceDate, service_type_ids: ids, method: manhaDialog.method });
+      setSuccess({ name: manhaDialog.name });
+      toast.success(`Check-in em ${r?.criados ?? ids.length} culto(s) da manhã!`);
+      setManhaDialog(null);
+    } catch (e: any) { toast.error(e?.message || 'Erro no check-in'); }
+    setSalvandoManha(false);
   };
 
   // Auto-select if only one service today
@@ -62,6 +113,8 @@ export default function VolCheckin() {
     }
     try {
       const result = await qrLookup.mutateAsync(qrCode);
+      // Domingo de manhã: pergunta em quais cultos vai servir (checkbox).
+      if (perguntarCultosManha(result.profile?.id || undefined, result.volunteerName, 'qr_code')) return;
       if (result.isUnscheduled) {
         const resp = await checkIn.mutateAsync({ volunteer_id: result.profile.id || undefined, service_id: selectedServiceId, method: 'qr_code', is_unscheduled: true });
         setSuccess({ name: result.volunteerName, unscheduled: true });
@@ -79,6 +132,8 @@ export default function VolCheckin() {
 
   const handleFaceMatch = useCallback(async (match: { volunteer_id: string; volunteer_name: string }) => {
     try {
+      // Domingo de manhã: pergunta em quais cultos vai servir (checkbox).
+      if (perguntarCultosManha(match.volunteer_id, match.volunteer_name, 'facial')) return;
       // Try to find schedule for this volunteer
       const sch = schedules.find(s => s.volunteer_id === match.volunteer_id && !s.check_in);
       if (sch) {
@@ -157,6 +212,44 @@ export default function VolCheckin() {
           onDone={() => setContactCapture(null)}
         />
       )}
+
+      {/* Domingo de manhã · em quais cultos a pessoa vai servir? */}
+      <Dialog open={!!manhaDialog} onOpenChange={(o) => !o && setManhaDialog(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sun className="h-5 w-5 text-amber-500" /> Cultos da manhã</DialogTitle>
+          </DialogHeader>
+          {manhaDialog && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <strong className="text-foreground">{manhaDialog.name}</strong> — em quais cultos da manhã vai servir?
+              </p>
+              <div className="space-y-1.5">
+                {cultosManha.map(c => {
+                  const marcado = selCultos.has(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setSelCultos(prev => { const n = new Set(prev); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
+                      className={`w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${marcado ? 'border-primary bg-primary/5' : 'bg-card hover:bg-muted/40'}`}
+                    >
+                      <Checkbox checked={marcado} className="pointer-events-none" />
+                      <span className="text-sm font-medium">{c.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setManhaDialog(null)} disabled={salvandoManha}>Cancelar</Button>
+            <Button onClick={confirmarManha} disabled={salvandoManha || selCultos.size === 0}>
+              {salvandoManha ? 'Salvando…' : `Fazer check-in (${selCultos.size})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

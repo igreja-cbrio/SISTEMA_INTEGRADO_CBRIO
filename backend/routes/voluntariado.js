@@ -1614,6 +1614,91 @@ router.post('/services/limpar-vazios', authorizeModule('voluntariado', 3), async
   }
 });
 
+// Acha-ou-cria o vol_services de um vol_service_type numa data (BRT). Usado pra
+// materializar os cultos da manhã sob demanda (só quando alguém marca presença).
+async function ensureServiceDoTipo(typeId, dateStr) {
+  const ini = `${dateStr}T00:00:00-03:00`, fim = `${dateStr}T23:59:59-03:00`;
+  const { data: ex } = await supabase.from('vol_services').select('id')
+    .eq('service_type_id', typeId).gte('scheduled_at', ini).lte('scheduled_at', fim).limit(1);
+  if (ex && ex[0]) return ex[0].id;
+  const { data: t } = await supabase.from('vol_service_types').select('name, recurrence_time').eq('id', typeId).maybeSingle();
+  if (!t) return null;
+  const hhmm = String(t.recurrence_time || '08:00').slice(0, 5);
+  const { data: svc } = await supabase.from('vol_services')
+    .insert({ name: t.name, service_type_name: t.name, service_type_id: typeId, scheduled_at: `${dateStr}T${hhmm}:00-03:00` })
+    .select('id').single();
+  return svc?.id || null;
+}
+
+// GET /cultos-manha — os tipos de culto de DOMINGO de MANHÃ (08:30/10:00/11:30),
+// pro check-in oferecer como checkbox. (recurrence_day=0 · antes das 14h)
+router.get('/cultos-manha', async (req, res) => {
+  try {
+    const { data } = await supabase.from('vol_service_types')
+      .select('id, name, recurrence_time')
+      .eq('recurrence_day', 0).eq('is_active', true).lt('recurrence_time', '14:00:00')
+      .order('recurrence_time');
+    res.json((data || []).map(t => ({ id: t.id, name: t.name, recurrence_time: t.recurrence_time })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos da manhã' }); }
+});
+
+// POST /check-ins/manha — marca presença do voluntário em VÁRIOS cultos da manhã
+// de uma vez (o operador/voluntário escolhe os horários no checkbox). Cria o
+// vol_services sob demanda e 1 check-in por culto marcado, casando a escala do
+// dia ("Domingo - Manhã" do PCO). Idempotente por (volunteer, service).
+router.post('/check-ins/manha', async (req, res) => {
+  try {
+    const { volunteer_id, service_date, service_type_ids, method, checked_in_at } = req.body || {};
+    if (!method || !service_date || !Array.isArray(service_type_ids) || !service_type_ids.length) {
+      return res.status(400).json({ error: 'volunteer_id, service_date, service_type_ids[] e method obrigatórios' });
+    }
+    let checkedInAt = null;
+    if (checked_in_at) { const t = new Date(checked_in_at); if (!Number.isNaN(t.getTime())) { const now = Date.now(); if (t.getTime() <= now + 3e5 && t.getTime() >= now - 7 * 864e5) checkedInAt = t.toISOString(); } }
+
+    // materializa os serviços dos cultos marcados
+    const svcIds = [];
+    for (const tid of service_type_ids) { const id = await ensureServiceDoTipo(tid, service_date); if (id) svcIds.push(id); }
+    if (!svcIds.length) return res.status(400).json({ error: 'Nenhum culto válido' });
+
+    // casa a escala do voluntário no DIA (a escala do PCO é "Domingo - Manhã")
+    const norm = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    let resolvedScheduleId = null, resolvedVolunteerId = volunteer_id || null;
+    if (volunteer_id) {
+      const { data: svcsDia } = await supabase.from('vol_services').select('id')
+        .gte('scheduled_at', `${service_date}T00:00:00-03:00`).lt('scheduled_at', `${service_date}T23:59:59-03:00`);
+      const idsDia = (svcsDia || []).map(s => s.id);
+      const { data: vp } = await supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', volunteer_id).maybeSingle();
+      const vpName = norm(vp?.full_name);
+      if (idsDia.length) {
+        const { data: scheds } = await supabase.from('vol_schedules')
+          .select('id, volunteer_id, planning_center_person_id, volunteer_name').in('service_id', idsDia);
+        const match = (scheds || []).find(s =>
+          (s.volunteer_id && s.volunteer_id === volunteer_id) ||
+          (vp?.planning_center_id && s.planning_center_person_id === vp.planning_center_id) ||
+          (vpName && norm(s.volunteer_name) === vpName));
+        if (match) { resolvedScheduleId = match.id; if (!resolvedVolunteerId && match.volunteer_id) resolvedVolunteerId = match.volunteer_id; }
+      }
+    }
+
+    let criados = 0, jaTinha = 0;
+    for (const svcId of svcIds) {
+      const { data: ex } = await supabase.from('vol_check_ins').select('id')
+        .eq('service_id', svcId).eq('volunteer_id', resolvedVolunteerId).limit(1);
+      if (ex && ex[0]) { jaTinha++; continue; }
+      const { error } = await supabase.from('vol_check_ins').insert({
+        schedule_id: resolvedScheduleId, volunteer_id: resolvedVolunteerId, service_id: svcId,
+        checked_in_by: req.user.userId, method, is_unscheduled: !resolvedScheduleId,
+        ...(checkedInAt ? { checked_in_at: checkedInAt } : {}),
+      });
+      if (!error) criados++;
+    }
+    res.json({ ok: true, criados, ja_tinha: jaTinha, cultos: svcIds.length });
+  } catch (e) {
+    console.error('[vol checkin manha]', e.message);
+    res.status(500).json({ error: e.message || 'Erro no check-in da manhã' });
+  }
+});
+
 // Atualiza dados de contato de UM vol_profile (operador do check-in preenche
 // o CPF/telefone/email do voluntário que acabou de chegar). Update parcial:
 // so grava o que vier, nunca apaga valor existente. O trigger BEFORE UPDATE
