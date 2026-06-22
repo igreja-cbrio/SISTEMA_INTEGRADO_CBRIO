@@ -53,8 +53,11 @@ const URGENCIAS = [
 // Cada coluna agrupa os status reais via `match` (o backbone tem 10 status mas o
 // board operacional usa 5 colunas). Sem isso, itens em aguardando_aprovacao_financeira/
 // em_atendimento/aguardando_entrega/avaliado não caiam em coluna nenhuma e sumiam do board.
-// aguardando_aprovacao_origem fica de fora de proposito (vive na aba "Aprovar").
+// `aguardando_aprovacao_origem` tem coluna PRÓPRIA (read-only · só visibilidade): a
+// pessoa da área vê que a solicitação está vindo, mas não pode movê-la (quem aprova é
+// o diretor de origem / co-aprovador na aba "Aprovar"). Antes sumia do quadro.
 const KANBAN_COLUMNS = [
+  { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-t-violet-500', match: ['aguardando_aprovacao_origem'], readOnly: true },
   { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-t-cyan-500',    match: ['em_cotacao'] },
   { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-t-blue-500',    match: ['em_analise'] },
@@ -1054,17 +1057,17 @@ export default function Solicitacoes() {
           <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
           {columns.map(col => (
             <div
               key={col.key}
               className={`flex flex-col rounded-lg transition-colors ${dragOverCol === col.key ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
-              onDragOver={e => { if (!isResponsavel) return; e.preventDefault(); setDragOverCol(col.key); }}
+              onDragOver={e => { if (!isResponsavel || col.readOnly) return; e.preventDefault(); setDragOverCol(col.key); }}
               onDragLeave={() => setDragOverCol(null)}
               onDrop={e => {
                 e.preventDefault();
                 setDragOverCol(null);
-                if (!isResponsavel) return;
+                if (!isResponsavel || col.readOnly) return;
                 const itemId = e.dataTransfer.getData('text/plain');
                 if (!itemId) return;
                 // Ignora drop na MESMA coluna · não dispara update nem toast
@@ -1092,7 +1095,7 @@ export default function Solicitacoes() {
                       isAdmin={isResponsavel}
                       onStatusChange={handleStatusChange}
                       onClick={() => setDetailItem(item)}
-                      draggable={isResponsavel}
+                      draggable={isResponsavel && !col.readOnly}
                     />
                   ))}
                 </div>
@@ -1419,6 +1422,11 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
       {aguardandoFin && (
         <div className="mt-2 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
           ⏳ Aguardando aprovação do financeiro
+        </div>
+      )}
+      {item.status === 'aguardando_aprovacao_origem' && (
+        <div className="mt-2 text-[10px] text-violet-700 dark:text-violet-400 bg-violet-500/10 border border-violet-500/30 rounded px-2 py-1">
+          ⏳ Aguardando aprovação{Array.isArray(item.aprovacao_origem_aprovadores) && item.aprovacao_origem_aprovadores.length ? ` de ${item.aprovacao_origem_aprovadores.join(' ou ')}` : ' de origem'}
         </div>
       )}
       {isAdmin && item.status === 'pendente' && (
