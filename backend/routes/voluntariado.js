@@ -1582,6 +1582,38 @@ router.post('/check-ins/rematch', authorizeModule('voluntariado', 3), async (req
   }
 });
 
+// Manutenção: apaga vol_services VAZIOS gerados a partir dos vol_service_types
+// (service_type_id NOT NULL · 0 escala · 0 check-in). São os duplicados do botão
+// "gerar serviços do ano" — as escalas reais vêm do Planning Center ("Domingo -
+// Manhã", "Culto AMI"...). NÃO toca em serviços com escala/check-in nem nos do
+// PCO (service_type_id NULL). ?dry=1 só conta. Idempotente.
+router.post('/services/limpar-vazios', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { data: alvos } = await supabase.from('vol_services').select('id').not('service_type_id', 'is', null).limit(5000);
+    const ids = [];
+    for (const s of alvos || []) {
+      const [{ count: ne }, { count: nc }] = await Promise.all([
+        supabase.from('vol_schedules').select('id', { count: 'exact', head: true }).eq('service_id', s.id),
+        supabase.from('vol_check_ins').select('id', { count: 'exact', head: true }).eq('service_id', s.id),
+      ]);
+      if (!ne && !nc) ids.push(s.id);
+    }
+    if (req.query.dry === '1') return res.json({ ok: true, dry: true, vazios: ids.length });
+    let apagados = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      // limpa indisponibilidades órfãs e apaga
+      await supabase.from('vol_availability').delete().in('service_id', lote);
+      const { error } = await supabase.from('vol_services').delete().in('id', lote);
+      if (!error) apagados += lote.length;
+    }
+    res.json({ ok: true, apagados });
+  } catch (e) {
+    console.error('[vol limpar-vazios]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao limpar serviços vazios' });
+  }
+});
+
 // Atualiza dados de contato de UM vol_profile (operador do check-in preenche
 // o CPF/telefone/email do voluntário que acabou de chegar). Update parcial:
 // so grava o que vier, nunca apaga valor existente. O trigger BEFORE UPDATE
@@ -2103,10 +2135,13 @@ router.post('/service-types/:id/generate', async (req, res) => {
     const makeIfAbsent = async (y, m0, d) => {
       const scheduledAt = toBRTISO(y, m0, d);
       const { data: existing } = await supabase.from('vol_services')
-        .select('id').eq('service_type_id', sType.id)
+        .select('id, service_type_id')
         .gte('scheduled_at', dayStartBRT(y, m0, d))
         .lt('scheduled_at', dayEndBRT(y, m0, d));
-      if (existing && existing.length > 0) return;
+      // Não duplica: pula se já existe esse tipo no dia OU se já há serviço do
+      // Planning Center (service_type_id NULL) no dia — o PCO é a fonte das
+      // escalas; gerar a partir do vol_service_type criaria duplicado vazio.
+      if (existing && existing.some(s => s.service_type_id === sType.id || s.service_type_id === null)) return;
       const { data: svc, error: svcErr } = await supabase.from('vol_services')
         .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: scheduledAt })
         .select().single();
