@@ -8,10 +8,10 @@
 // Grupo. Filtros: busca + grupo + status (+ os cards-contador por função).
 //
 // Status de frequência = derivado da última presença em encontros de grupo
-// (fn_grupos_ultima_frequencia): Frequentando ≤30d · Esfriando 31-60d ·
-// Afastado >60d · Sem registro (ninguém lançou chamada ainda). A função vem da
-// `funcao` real (o trigger fn_grupo_auto_membro mantém visitante→membro no 4º
-// check-in) — sem rebaixar por contagem de presenças.
+// (fn_grupos_ultima_frequencia): 🟢 Frequenta ≤30d · 🟡 Atenção 31-60d ·
+// 🔴 Ausente >60d ou sem presença lançada. A função vem da `funcao` real (o
+// trigger fn_grupo_auto_membro mantém visitante→membro no 4º check-in) — sem
+// rebaixar por contagem de presenças.
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -39,24 +39,23 @@ const PAPEIS = {
   visitante: { label: 'Visitante', plural: 'Visitantes', cor: '#94a3b8', Icon: Users },
 };
 
-// Status de frequência (derivado da última presença em grupo)
+// Status de frequência (derivado da última presença em grupo · bola colorida)
 const STATUS = {
-  frequentando: { label: 'Frequentando', cor: '#10b981' },
-  esfriando: { label: 'Esfriando', cor: '#f59e0b' },
-  afastado: { label: 'Afastado', cor: '#ef4444' },
-  sem_registro: { label: 'Sem registro', cor: '#94a3b8' },
+  frequenta: { label: 'Frequenta', cor: '#10b981' }, // 🟢 ≤30d
+  atencao: { label: 'Atenção', cor: '#f59e0b' },      // 🟡 31-60d
+  ausente: { label: 'Ausente', cor: '#ef4444' },      // 🔴 >60d ou sem presença lançada
 };
 
 const fmtData = (d) => { if (!d) return null; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } };
 
 function statusDe(p) {
-  if (!p.ultima_frequencia) return 'sem_registro';
+  if (!p.ultima_frequencia) return 'ausente'; // sem presença registrada = ausente
   let dias;
   try { dias = Math.floor((Date.now() - new Date(p.ultima_frequencia + 'T12:00:00').getTime()) / 86400000); }
-  catch { return 'sem_registro'; }
-  if (dias <= 30) return 'frequentando';
-  if (dias <= 60) return 'esfriando';
-  return 'afastado';
+  catch { return 'ausente'; }
+  if (dias <= 30) return 'frequenta';
+  if (dias <= 60) return 'atencao';
+  return 'ausente';
 }
 
 // Grupos da pessoa pra exibir/filtrar: participações; se não tiver, cai pros
@@ -136,7 +135,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
         <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
         <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0' }}>
           Censo de quem está nos grupos — função, status de frequência, última presença e grupo.
-          O status vem das chamadas registradas (fica "Sem registro" enquanto ninguém lançar presença).
+          O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Ausente").
         </p>
       </div>
 
