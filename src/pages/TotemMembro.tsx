@@ -1524,7 +1524,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
 type CheckinBatizando = { id: string; nome: string; sobrenome?: string; ja_checkin: boolean; tem_foto: boolean };
 
 function CheckinBatismoFlow({ onExit }: { onExit: () => void }) {
-  const [step, setStep] = useState<'lista' | 'dados' | 'sucesso'>('lista');
+  const [step, setStep] = useState<'lista' | 'dados' | 'sucesso' | 'impressora'>('lista');
   const [lista, setLista] = useState<CheckinBatizando[]>([]);
   const [loadingLista, setLoadingLista] = useState(true);
   const [busca, setBusca] = useState('');
@@ -1535,6 +1535,8 @@ function CheckinBatismoFlow({ onExit }: { onExit: () => void }) {
   const [error, setError] = useState('');
   const [okNome, setOkNome] = useState('');
   const [dataLabel, setDataLabel] = useState('');
+  const [printing, setPrinting] = useState(false);
+  const [printMsg, setPrintMsg] = useState('');
 
   // Câmera (selfie de referência · opcional)
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1642,6 +1644,27 @@ function CheckinBatismoFlow({ onExit }: { onExit: () => void }) {
       setError(e?.message || 'Não foi possível concluir o check-in.');
     }
     setSaving(false);
+  };
+
+  // Teste da impressora · imprime/pré-visualiza uma etiqueta de exemplo pra a
+  // equipe conferir a Brother (por cabo · definida como padrão do Windows).
+  // O navegador não escolhe a impressora por código — a etiqueta de teste sai
+  // na impressora padrão, confirmando o cabo + a configuração antes do culto.
+  const testarImpressao = async (preview: boolean) => {
+    setPrinting(true);
+    setPrintMsg('');
+    try {
+      await imprimirEtiquetaBatismo({
+        nome: 'TESTE DA IMPRESSORA',
+        codigoConferencia: 'TESTE1',
+        qrUrl: `${window.location.origin}/batismo/acesso?token=TESTE`,
+        dataLabel: dataLabel || format(new Date(), 'dd/MM/yyyy'),
+      }, preview);
+      setPrintMsg(preview ? 'Pré-visualização aberta.' : 'Etiqueta de teste enviada à impressora.');
+    } catch {
+      setPrintMsg('Não foi possível imprimir. Confira se a Brother está conectada e definida como padrão.');
+    }
+    setPrinting(false);
   };
 
   const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-sm outline-none focus:border-[#6366F1] focus:ring-1 focus:ring-[#6366F1]/30 transition-colors';
@@ -1754,6 +1777,53 @@ function CheckinBatismoFlow({ onExit }: { onExit: () => void }) {
     </div>
   );
 
+  // ── Impressora (testar / confirmar) ──
+  if (step === 'impressora') return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+        <button onClick={() => { setPrintMsg(''); setStep('lista'); }} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <div className="flex items-center gap-2">
+          <Printer className="h-5 w-5 text-[#6366F1]" />
+          <h2 className="text-xl font-semibold">Impressora de etiquetas</h2>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="w-full max-w-md mx-auto space-y-5">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-2 text-sm text-white/70">
+            <p className="font-semibold text-white/90">Como conectar</p>
+            <p>1. Ligue a impressora <span className="text-white">Brother</span> por cabo (USB) neste computador.</p>
+            <p>2. No Windows, defina a Brother como <span className="text-white">impressora padrão</span>.</p>
+            <p>3. Toque em <span className="text-white">"Imprimir etiqueta de teste"</span> abaixo — ela sai na impressora padrão. Se sair certa, o check-in vai imprimir igual.</p>
+            <p className="text-[11px] text-white/40">Dica: para não aparecer a janela de impressão a cada etiqueta, ligue o modo "imprimir sem caixa de diálogo" no navegador do totem.</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            <Button
+              onClick={() => testarImpressao(false)}
+              disabled={printing}
+              className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2"
+            >
+              {printing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Printer className="h-5 w-5" />}
+              Imprimir etiqueta de teste
+            </Button>
+            <button
+              onClick={() => testarImpressao(true)}
+              disabled={printing}
+              className="w-full py-2.5 rounded-2xl border border-white/20 text-sm font-medium flex items-center justify-center gap-2 text-white/70 hover:bg-white/10 disabled:opacity-40 transition-colors"
+            >
+              <Eye className="h-4 w-4" /> Pré-visualizar (sem imprimir)
+            </button>
+          </div>
+
+          {printMsg && <p className="text-sm text-center text-[#00B39D]">{printMsg}</p>}
+        </div>
+      </div>
+    </div>
+  );
+
   // ── Lista do dia ──
   const termo = busca.trim().toLowerCase();
   const filtrados = termo
@@ -1770,7 +1840,16 @@ function CheckinBatismoFlow({ onExit }: { onExit: () => void }) {
           <Droplets className="h-5 w-5 text-[#6366F1]" />
           <h2 className="text-xl font-semibold">Check-in de Batismo</h2>
         </div>
-        {dataLabel && <span className="ml-auto text-white/40 text-sm">{dataLabel}</span>}
+        <div className="ml-auto flex items-center gap-3">
+          {dataLabel && <span className="text-white/40 text-sm hidden sm:inline">{dataLabel}</span>}
+          <button
+            onClick={() => { setPrintMsg(''); setStep('impressora'); }}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/10 text-white/50 hover:text-white/90 hover:bg-white/5 transition-colors"
+            title="Testar / confirmar a impressora"
+          >
+            <Printer className="h-4 w-4" /> Impressora
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
