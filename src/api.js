@@ -89,6 +89,18 @@ export const tutorial = {
   reset: (tour_id) => del('/tutorial/progress' + (tour_id ? `?tour_id=${encodeURIComponent(tour_id)}` : '')),
 };
 
+// Reconhecimento facial na entrada · membro-ou-anônimo + rostos a resolver
+export const face = {
+  reconhecer: (data) => post('/face/reconhecer', data),
+  resumo: (dias) => get('/face/presencas/resumo' + (dias ? `?dias=${dias}` : '')),
+  anonimos: (params) => get('/face/anonimos' + (params ? '?' + new URLSearchParams(params) : '')),
+  vincular: (anonId, membro_id) => post(`/face/anonimos/${anonId}/vincular`, { membro_id }),
+  cadastrar: (anonId, data) => post(`/face/anonimos/${anonId}/cadastrar`, data),
+  descartar: (anonId) => post(`/face/anonimos/${anonId}/descartar`, {}),
+  enroll: (membroId, descriptor, consentimento) => post(`/face/membros/${membroId}/enroll`, { descriptor, consentimento }),
+  removerEnroll: (membroId) => del(`/face/membros/${membroId}/enroll`),
+};
+
 // Onda 0 · loop de feedback do piloto
 export const feedback = {
   enviar: (data) => post('/feedback', data),

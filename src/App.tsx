@@ -188,6 +188,7 @@ const DashboardSemanal = lazyWithRetry(() => import('./pages/DashboardSemanal'))
 const MonitoramentoOkr = lazyWithRetry(() => import('./pages/MonitoramentoOkr'));
 const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
 const MemberScan = lazyWithRetry(() => import('./pages/ministerial/membresia/MemberScan'));
+const ReconhecimentoFacial = lazyWithRetry(() => import('./pages/ministerial/reconhecimentoFacial/ReconhecimentoFacial'));
 const Online = lazyWithRetry(() => import('./pages/ministerial/Online'));
 const PainelKids = lazyWithRetry(() => import('./pages/ministerial/PainelKids'));
 const PainelAmi = lazyWithRetry(() => import('./pages/ministerial/PainelAmi'));
@@ -489,6 +490,7 @@ function AppRoutes() {
         <Route path="/admin/patrimonio" element={<ModuleGuard permKey="canPatrimonio"><Suspense fallback={<Loading />}><Patrimonio /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Membresia /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia/scan" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><MemberScan /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/reconhecimento-facial" element={<ModuleGuard moduleSlug="face"><Suspense fallback={<Loading />}><ReconhecimentoFacial /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         {/* Totem Kids · check-in/checkout/painel · 2026-05-21 */}
         <Route path="/ministerial/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckin /></Suspense></ModuleGuard>} />
