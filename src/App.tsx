@@ -503,14 +503,14 @@ function AppRoutes() {
         {/* Redirects das URLs antigas (admin separado) · 2026-05-21 */}
         <Route path="/admin/totem-kids" element={<Navigate to="/ministerial/totem-kids/configuracoes" replace />} />
         <Route path="/admin/totem-kids/sessoes" element={<Navigate to="/ministerial/totem-kids/configuracoes?aba=sessoes" replace />} />
-        <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
-        <Route path="/grupos/supervisao" element={<Suspense fallback={<Loading />}><GruposSupervisao /></Suspense>} />
-        <Route path="/grupos/pedidos" element={<Suspense fallback={<Loading />}><PedidosGrupo /></Suspense>} />
+        <Route path="/grupos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
+        <Route path="/grupos/supervisao" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><GruposSupervisao /></Suspense></ModuleGuard>} />
+        <Route path="/grupos/pedidos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><PedidosGrupo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
-        <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/integracao" element={<ModuleGuard moduleSlug="integracao"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
