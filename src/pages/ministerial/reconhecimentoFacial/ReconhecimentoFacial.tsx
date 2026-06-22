@@ -81,11 +81,15 @@ function AbaReconhecer() {
   const [ativa, setAtiva] = useState(false);
   const [conectando, setConectando] = useState(false);
   const [auto, setAuto] = useState(true);
+  const [autoCadastro, setAutoCadastro] = useState(true);
   const [status, setStatus] = useState('');
   const [log, setLog] = useState<LogItem[]>([]);
+  const [cadastro, setCadastro] = useState({ feitos: 0, fila: 0 });
   const reconhecer = useMutation({ mutationFn: (data: any) => face.reconhecer(data) });
   const ultimoRef = useRef(0);
   const logIdRef = useRef(0);
+  const filaRef = useRef<any[]>([]);
+  const enrollRef = useRef(false);
 
   const ligar = useCallback(async () => {
     setConectando(true); setStatus('');
@@ -131,6 +135,37 @@ function AbaReconhecer() {
     catch (e: any) { setStatus(e?.message || 'Erro no reconhecimento'); }
   }, [passo]);
 
+  // Em segundo plano, o device transforma as FOTOS de perfil (app/membresia) que
+  // ainda não viraram vetor → assim quem tem foto passa a ser reconhecido na
+  // entrada, sem etapa manual. Roda devagar e não compete com um reconhecimento.
+  useEffect(() => {
+    if (!ativa || !autoCadastro) return;
+    let parar = false;
+    const refil = async () => {
+      try {
+        const r: any = await face.galeria({ sem_rosto: '1', limit: '25' });
+        filaRef.current = ((r?.itens) || []).filter((m: any) => m.foto_url);
+        setCadastro((c) => ({ ...c, fila: filaRef.current.length }));
+      } catch { /* segue */ }
+    };
+    const tick = async () => {
+      if (parar || enrollRef.current) return;
+      if (Date.now() - ultimoRef.current < 900) return; // não competir com reconhecimento recente
+      if (!filaRef.current.length) { await refil(); return; }
+      const m = filaRef.current.shift();
+      setCadastro((c) => ({ ...c, fila: filaRef.current.length }));
+      enrollRef.current = true;
+      try {
+        const desc = await descritorDaFoto(m.foto_url);
+        if (desc) { await face.enroll(m.id, desc, true); setCadastro((c) => ({ ...c, feitos: c.feitos + 1 })); }
+      } catch { /* foto sem rosto / erro · ignora */ }
+      finally { enrollRef.current = false; }
+    };
+    refil();
+    const id = setInterval(tick, 3000);
+    return () => { parar = true; clearInterval(id); };
+  }, [ativa, autoCadastro]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -144,6 +179,13 @@ function AbaReconhecer() {
           {auto ? 'A câmera reconhece sozinha, em tempo real (igual ao device da entrada).' : 'Clique em Escanear pra reconhecer.'}
         </span>
       </div>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input type="checkbox" checked={autoCadastro} onChange={(e) => setAutoCadastro(e.target.checked)} />
+        Cadastrar rostos de quem tem foto (app/membresia) em segundo plano — assim já são reconhecidos na entrada
+        {ativa && autoCadastro && (cadastro.feitos > 0 || cadastro.fila > 0) && (
+          <span className="text-foreground">· {cadastro.feitos} cadastrados · {cadastro.fila} na fila</span>
+        )}
+      </label>
       <div className="rounded-xl overflow-hidden bg-black relative" style={{ aspectRatio: '4/3', maxWidth: 520 }}>
         <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
