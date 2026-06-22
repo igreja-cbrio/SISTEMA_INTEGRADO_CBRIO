@@ -701,6 +701,19 @@ h2 .cnt { font-family: var(--mono); font-size: 13px; color: var(--ink-3); font-w
     else if (t.hasAttribute("data-ef")) { estFilter = t.getAttribute("data-ef"); viewAuditoria(); }
   });
 
+  // Navegação por hash robusta: alguns hosts (iframe srcdoc / about:srcdoc) não
+  // executam a navegação de fragmento ao clicar num <a href="#...">, mas atribuir
+  // location.hash funciona. Interceptamos o clique e setamos o hash na mão.
+  // Cobre links HTML e âncoras SVG (nós da espinha) via closest('a[href^="#"]').
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href^="#"]') : null;
+    if (!a) return;
+    var href = a.getAttribute("href");
+    if (!href || href.length < 2) return;
+    e.preventDefault();
+    if (location.hash === href) route(); else location.hash = href;
+  });
+
   // ---------- init ----------
   buildSidebar();
   el("search").addEventListener("input", function (e) { filterSidebar(e.target.value); });

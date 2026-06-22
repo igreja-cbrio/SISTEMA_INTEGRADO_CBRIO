@@ -27,7 +27,7 @@ export default function Atlas() {
     <iframe
       title="Atlas operacional CBRio"
       srcDoc={DOC}
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-same-origin"
       style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', border: 'none', background: '#eef2f1' }}
     />
   );
