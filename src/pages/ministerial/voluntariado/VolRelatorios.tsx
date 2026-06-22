@@ -26,6 +26,7 @@ export default function VolRelatorios() {
   const [teamFilter, setTeamFilter] = useState('__all__');
   const [inactiveMode, setInactiveMode] = useState<'checkin' | 'schedule'>('checkin');
   const [openServiceId, setOpenServiceId] = useState<string | null>(null);
+  const [printOpen, setPrintOpen] = useState(false);
   const teamFilterValue = teamFilter === '__all__' ? undefined : teamFilter;
   const { data: reportData } = useVolReportData(period as any);
   const { data: thermometerData = [] } = useVolunteerThermometer(period as any, teamFilterValue);
@@ -85,7 +86,10 @@ export default function VolRelatorios() {
     return { scheduled, checkedIn, rate, uniqueVol };
   }, [reportData]);
 
-  // Per-service breakdown
+  // Per-service breakdown · esconde serviços VAZIOS (0 escala e 0 check-in) —
+  // são os duplicados internos ("Domingo 08:30/10:00/11:30", "AMI", "Bridge")
+  // que nunca recebem escala (as escalas reais vão pros serviços do Planning
+  // Center: "Domingo - Manhã", "Culto AMI", etc.).
   const serviceBreakdown = useMemo(() => {
     if (!reportData) return [];
     return reportData.services
@@ -97,7 +101,8 @@ export default function VolRelatorios() {
         const present = svcCheckIns.length;
         const rate = total > 0 ? Math.round((present / total) * 100) : 0;
         return { ...svc, total, present, rate };
-      });
+      })
+      .filter(s => s.total > 0 || s.present > 0);
   }, [reportData]);
 
   // Detalhe de UM culto: quem dos escalados fez check-in (presente), quem não
@@ -126,8 +131,73 @@ export default function VolRelatorios() {
     return { svc, present, absent, extras };
   }, [openServiceId, reportData, isRealmenteSemEscala]);
 
+  // Imprime a chamada (presença) de UM culto numa janela própria.
+  const imprimirCulto = (svc: any) => {
+    if (!reportData) return;
+    const scheds = reportData.schedules.filter(s => s.service_id === svc.id);
+    const checks = reportData.checkIns.filter(c => c.service_id === svc.id);
+    const present = scheds.filter(s => checks.some(c => ciMatchesSched(c, s)));
+    const absent = scheds.filter(s => !checks.some(c => ciMatchesSched(c, s)));
+    const extras = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
+    const esc = (t: string) => (t || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m] as string));
+    const nomeSched = (s: any) => esc(s.volunteer_name || s.volunteer?.full_name || 'Voluntário');
+    const nomeCi = (c: any) => esc(c.volunteer?.full_name || c.schedule?.volunteer_name || 'Voluntário');
+    const equipe = (s: any) => s.team_name ? ` <span style="color:#888">· ${esc(s.team_name)}${s.position_name ? ' / ' + esc(s.position_name) : ''}</span>` : '';
+    const dt = (() => { try { return new Date(svc.scheduled_at).toLocaleString('pt-BR', { dateStyle: 'full', timeStyle: 'short' }); } catch { return ''; } })();
+    const liS = (arr: any[]) => arr.length ? arr.map(s => `<li>${nomeSched(s)}${equipe(s)}</li>`).join('') : '<li style="color:#999">—</li>';
+    const liC = (arr: any[]) => arr.length ? arr.map(c => `<li>${nomeCi(c)}</li>`).join('') : '<li style="color:#999">—</li>';
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Chamada · ${esc(svc.name)}</title>
+<style>body{font-family:system-ui,-apple-system,Arial,sans-serif;padding:28px;color:#111;max-width:760px;margin:0 auto}
+h1{font-size:20px;margin:0 0 2px} .meta{color:#555;font-size:13px;margin-bottom:14px}
+h2{font-size:14px;margin:20px 0 6px;border-bottom:1px solid #ddd;padding-bottom:4px}
+ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
+.stats{font-size:13px;color:#333;background:#f4f4f5;padding:8px 12px;border-radius:8px;display:inline-block}
+@media print{button{display:none}}</style></head><body>
+<h1>${esc(svc.name)}</h1>
+<div class="meta">${dt}</div>
+<div class="stats">Escalados: <b>${scheds.length}</b> · Presentes: <b>${present.length}</b> · Faltaram: <b>${absent.length}</b> · Sem escala: <b>${extras.length}</b></div>
+<h2>✓ Presentes (${present.length})</h2><ul>${liS(present)}</ul>
+<h2>✗ Faltaram (${absent.length})</h2><ul>${liS(absent)}</ul>
+<h2>Check-in sem escala (${extras.length})</h2><ul>${liC(extras)}</ul>
+<script>window.onload=function(){setTimeout(function(){window.print();},150);}</script>
+</body></html>`;
+    const w = window.open('', '_blank', 'width=820,height=920');
+    if (w) { w.document.write(html); w.document.close(); }
+    else { /* popup bloqueado */ alert('Permita pop-ups para imprimir.'); }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Diálogo · escolher de qual culto imprimir a chamada */}
+      <Dialog open={printOpen} onOpenChange={setPrintOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Imprimir chamada de qual culto?</DialogTitle></DialogHeader>
+          <div className="space-y-1.5 max-h-[60vh] overflow-y-auto -mx-1 px-1">
+            {serviceBreakdown.length === 0 && (
+              <p className="text-sm text-muted-foreground py-4 text-center">Nenhum culto com escala/check-in no período.</p>
+            )}
+            {serviceBreakdown.map(svc => (
+              <button
+                key={svc.id}
+                onClick={() => { imprimirCulto(svc); setPrintOpen(false); }}
+                className="w-full flex items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2 text-left hover:bg-accent transition"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{svc.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(() => { try { return new Date(svc.scheduled_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); } catch { return ''; } })()}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs text-muted-foreground">{svc.present}/{svc.total}</span>
+                  <Printer className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
@@ -135,7 +205,7 @@ export default function VolRelatorios() {
           <p className="text-sm text-muted-foreground">Analise de presença</p>
         </div>
         <div className="flex gap-2 items-center w-full sm:w-auto">
-          <Button variant="outline" size="sm" className="gap-1 hidden sm:flex" onClick={() => window.print()}>
+          <Button variant="outline" size="sm" className="gap-1 hidden sm:flex" onClick={() => setPrintOpen(true)}>
             <Printer className="h-4 w-4" /> Imprimir
           </Button>
           <Select value={teamFilter} onValueChange={setTeamFilter}>
