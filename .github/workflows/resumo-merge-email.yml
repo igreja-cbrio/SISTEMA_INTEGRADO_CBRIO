@@ -1,17 +1,22 @@
-name: Resumo do merge por e-mail (Eduardo)
+name: Resumo semanal por e-mail (Eduardo)
 
-# Em todo merge na main, gera um resumo em linguagem de leigo (Claude Haiku)
-# do que a PR fez e envia por e-mail (Microsoft Graph) para o Eduardo.
+# Toda sexta-feira gera UM resumo consolidado em linguagem de leigo (Claude
+# Haiku) de tudo que entrou no sistema durante a semana e envia por e-mail
+# (Microsoft Graph) para o Eduardo. Substitui o antigo e-mail a cada merge —
+# agora e um unico digest semanal, pra nao lotar a caixa de entrada.
 # Roda 100% no CI — nao toca no app nem no banco em producao.
 
 on:
-  pull_request:
-    types: [closed]
+  schedule:
+    # Sexta-feira 20:00 UTC = 17:00 BRT (fim do expediente).
+    # Cron do GitHub Actions e sempre em UTC; dia-da-semana 5 = sexta.
+    - cron: "0 20 * * 5"
   workflow_dispatch:
     inputs:
-      pr_number:
-        description: "Numero da PR para (re)enviar o resumo"
-        required: true
+      dias:
+        description: "Quantos dias olhar pra tras (padrao: 7)"
+        required: false
+        default: "7"
 
 permissions:
   contents: read
@@ -19,10 +24,6 @@ permissions:
 
 jobs:
   resumo:
-    # so quando a PR foi realmente mergeada na main (ou disparo manual)
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,11 +32,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Gerar resumo e enviar e-mail
+      - name: Gerar resumo da semana e enviar e-mail
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          DIAS: ${{ github.event.inputs.dias || '7' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID || secrets.AZURE_TENANT_ID }}
           MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
