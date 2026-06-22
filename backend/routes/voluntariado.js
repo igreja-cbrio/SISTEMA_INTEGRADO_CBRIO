@@ -318,7 +318,7 @@ router.get('/frequencia', async (req, res) => {
       if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
       return q.order('ativo', { ascending: false }).order('ultimo_servico', { ascending: false, nullsFirst: false });
     };
-    // Pagina pra contornar o cap de 1000 linhas do PostgREST (número real).
+    // Pagina pra contornar o cap de 1000 linhas do PostgREST (lista completa).
     let data = []; let offset = 0;
     while (true) {
       const { data: page, error } = await build().range(offset, offset + 999);
@@ -328,9 +328,12 @@ router.get('/frequencia', async (req, res) => {
       if (page.length < 1000) break;
       offset += 1000;
     }
-    const total = data.length;
-    const ativos = data.filter(r => r.ativo).length;
-    res.json({ resumo: { total, ativos, inativos: total - ativos }, itens: data });
+    // Resumo (cards) = SEMPRE o total geral · contagem real no banco, NÃO muda
+    // com o filtro da lista (antes recalculava do subconjunto capado → números
+    // divergentes entre "Todos" e "Ativos").
+    const { count: total } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true });
+    const { count: ativos } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true }).eq('ativo', true);
+    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens: data });
   } catch (e) {
     console.error('[vol] frequencia', e.message);
     res.status(500).json({ error: 'Erro ao carregar frequência' });
