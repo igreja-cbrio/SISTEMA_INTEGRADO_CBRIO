@@ -309,18 +309,31 @@ router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.s
 // GET /api/voluntariado/frequencia?status=ativos|inativos&vinculo=nao&busca=
 router.get('/frequencia', async (req, res) => {
   try {
-    let q = supabase.from('vw_vol_frequencia').select('*');
-    if (req.query.status === 'ativos') q = q.eq('ativo', true);
-    else if (req.query.status === 'inativos') q = q.eq('ativo', false);
-    if (req.query.vinculo === 'nao') q = q.is('vol_profile_id', null);
-    else if (req.query.vinculo === 'sim') q = q.not('vol_profile_id', 'is', null);
-    if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
-    q = q.order('ultimo_servico', { ascending: false }).limit(2000);
-    const { data, error } = await q;
-    if (error) return res.status(400).json({ error: error.message });
-    const total = (data || []).length;
-    const ativos = (data || []).filter(r => r.ativo).length;
-    res.json({ resumo: { total, ativos, inativos: total - ativos }, itens: data || [] });
+    const build = () => {
+      let q = supabase.from('vw_vol_frequencia').select('*');
+      if (req.query.status === 'ativos') q = q.eq('ativo', true);
+      else if (req.query.status === 'inativos') q = q.eq('ativo', false);
+      if (req.query.vinculo === 'nao') q = q.is('vol_profile_id', null);
+      else if (req.query.vinculo === 'sim') q = q.not('vol_profile_id', 'is', null);
+      if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
+      return q.order('ativo', { ascending: false }).order('ultimo_servico', { ascending: false, nullsFirst: false });
+    };
+    // Pagina pra contornar o cap de 1000 linhas do PostgREST (lista completa).
+    let data = []; let offset = 0;
+    while (true) {
+      const { data: page, error } = await build().range(offset, offset + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!page || !page.length) break;
+      data = data.concat(page);
+      if (page.length < 1000) break;
+      offset += 1000;
+    }
+    // Resumo (cards) = SEMPRE o total geral · contagem real no banco, NÃO muda
+    // com o filtro da lista (antes recalculava do subconjunto capado → números
+    // divergentes entre "Todos" e "Ativos").
+    const { count: total } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true });
+    const { count: ativos } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true }).eq('ativo', true);
+    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens: data });
   } catch (e) {
     console.error('[vol] frequencia', e.message);
     res.status(500).json({ error: 'Erro ao carregar frequência' });
@@ -377,6 +390,20 @@ router.post('/frequencia/revincular', authorizeModule('membresia', 2), async (re
     res.json({ nomes_vinculados: n });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao revincular' });
+  }
+});
+
+// POST /frequencia/sync-pco → traz as escalas recentes do Planning Center pra a
+// frequência (quem serviu nos últimos ~120 dias · ex.: o último domingo).
+router.post('/frequencia/sync-pco', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const { bridgeFrequenciaPCO } = require('../services/voluntariadoFreqPCO');
+    const desde = new Date(Date.now() - 120 * 864e5).toISOString();
+    const r = await bridgeFrequenciaPCO(desde);
+    res.json(r);
+  } catch (e) {
+    console.error('[vol] sync-pco frequencia', e.message);
+    res.status(500).json({ error: 'Erro ao trazer escalas do Planning Center' });
   }
 });
 
