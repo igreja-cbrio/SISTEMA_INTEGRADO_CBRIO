@@ -14,6 +14,7 @@ import {
   useVolunteersPool, useSyncPlanningCenter, useWaitingAllocation,
   useAllocateVolunteer, useVolTeamsManaged,
 } from './hooks';
+import VolDetalheDialog from './VolDetalheDialog';
 
 type Tab = 'todos' | 'fila';
 
@@ -58,6 +59,7 @@ function TodosList() {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ full_name: '', email: '', phone: '', cpf: '' });
+  const [detalheId, setDetalheId] = useState<string | null>(null);
 
   const createVol = useMutation({
     mutationFn: (data: typeof addForm) => voluntariado.profiles.create(data),
@@ -180,7 +182,7 @@ function TodosList() {
             const teamsOf = (vol.team_members || []) as any[];
             const hasPc = !!vol.planning_center_id;
             return (
-              <div key={vol.id} className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card hover:bg-accent/30 transition-colors">
+              <div key={vol.id} onClick={() => setDetalheId(vol.id)} className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card hover:bg-accent/40 transition-colors cursor-pointer">
                 <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden">
                   {vol.avatar_url ? <img data-foto-avatar="" src={vol.avatar_url} alt={vol.full_name} className="h-full w-full object-cover" /> : vol.full_name.charAt(0).toUpperCase()}
                 </div>
@@ -251,6 +253,8 @@ function TodosList() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <VolDetalheDialog id={detalheId} onClose={() => setDetalheId(null)} />
     </>
   );
 }
