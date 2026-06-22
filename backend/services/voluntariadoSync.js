@@ -65,12 +65,25 @@ async function executarSyncCompleto() {
   const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
   const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
+  // Materializa as escalas recentes do PCO na Frequência (quem serviu nos
+  // últimos ~100 dias) — assim cada culto reflete sozinho, sem a planilha.
+  let freqPco = 0;
+  try {
+    const { bridgeFrequenciaPCO } = require('./voluntariadoFreqPCO');
+    const desde = new Date(Date.now() - 100 * 864e5).toISOString();
+    const r = await bridgeFrequenciaPCO(desde);
+    freqPco = r.inseridos;
+  } catch (e) {
+    console.error('[VOL SYNC] bridgeFrequenciaPCO:', e.message);
+  }
+
   return {
     services: totalServices,
     schedules: totalSchedules,
     qrCodesGenerated: qrCount,
     volunteersSynced: profilesCount,
     servicesPeople,
+    freqPco,
     avatarsImported,
     totalMembersFound,
     totalMembersProcessed,
