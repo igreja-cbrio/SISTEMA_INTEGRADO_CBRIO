@@ -369,7 +369,7 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
             TERMOMETRO
         ═══════════════════════════════════════════════════════════════ */}
         <TabsContent value="thermometer">
-          <VolunteerThermometer data={thermometerData} />
+          <VolunteerThermometer data={thermometerData} period={period} />
         </TabsContent>
 
         {/* ═══════════════════════════════════════════════════════════════
