@@ -551,6 +551,24 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
   }
 
   const memberships = [...membershipByKey.values()];
+
+  // Resolve o volunteer_profile_id pelos perfis JÁ existentes (via
+  // planning_center_id) — sem isso a membership entra como "pc-only" e a pessoa
+  // aparece SEM EQUIPE no sistema mesmo tendo equipe no Planning Center.
+  const pcSemPerfil = [...new Set(memberships.filter(m => !m.volunteer_profile_id && m.planning_center_person_id).map(m => m.planning_center_person_id))];
+  if (pcSemPerfil.length) {
+    const profByPc = new Map();
+    for (let i = 0; i < pcSemPerfil.length; i += 200) {
+      const { data } = await supabase.from('vol_profiles').select('id, planning_center_id').in('planning_center_id', pcSemPerfil.slice(i, i + 200));
+      (data || []).forEach(p => p.planning_center_id && profByPc.set(p.planning_center_id, p.id));
+    }
+    for (const m of memberships) {
+      if (!m.volunteer_profile_id && m.planning_center_person_id && profByPc.has(m.planning_center_person_id)) {
+        m.volunteer_profile_id = profByPc.get(m.planning_center_person_id);
+      }
+    }
+  }
+
   const withProfile = memberships.filter(m => m.volunteer_profile_id);
   const pcOnly = memberships.filter(m => !m.volunteer_profile_id && m.planning_center_person_id);
 
