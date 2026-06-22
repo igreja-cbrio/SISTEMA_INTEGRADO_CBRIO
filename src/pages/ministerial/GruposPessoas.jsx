@@ -9,9 +9,9 @@
 //
 // Status de frequência = derivado da última presença em encontros de grupo
 // (fn_grupos_ultima_frequencia): 🟢 Frequenta ≤30d · 🟡 Atenção 31-60d ·
-// 🔴 Ausente >60d ou sem presença lançada. A função vem da `funcao` real (o
-// trigger fn_grupo_auto_membro mantém visitante→membro no 4º check-in) — sem
-// rebaixar por contagem de presenças.
+// 🔴 Ausente >60d (já frequentou e sumiu) · ⚪ Sem presença (nunca teve chamada
+// lançada · neutro). A função vem da `funcao` real (o trigger fn_grupo_auto_membro
+// mantém visitante→membro no 4º check-in) — sem rebaixar por contagem de presenças.
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -41,18 +41,19 @@ const PAPEIS = {
 
 // Status de frequência (derivado da última presença em grupo · bola colorida)
 const STATUS = {
-  frequenta: { label: 'Frequenta', cor: '#10b981' }, // 🟢 ≤30d
-  atencao: { label: 'Atenção', cor: '#f59e0b' },      // 🟡 31-60d
-  ausente: { label: 'Ausente', cor: '#ef4444' },      // 🔴 >60d ou sem presença lançada
+  frequenta: { label: 'Frequenta', cor: '#10b981' },        // 🟢 ≤30d
+  atencao: { label: 'Atenção', cor: '#f59e0b' },            // 🟡 31-60d
+  ausente: { label: 'Ausente', cor: '#ef4444' },            // 🔴 >60d (já frequentou e sumiu)
+  sem_presenca: { label: 'Sem presença', cor: '#94a3b8' },  // ⚪ nunca teve presença lançada (neutro)
 };
 
 const fmtData = (d) => { if (!d) return null; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } };
 
 function statusDe(p) {
-  if (!p.ultima_frequencia) return 'ausente'; // sem presença registrada = ausente
+  if (!p.ultima_frequencia) return 'sem_presenca'; // nunca teve presença lançada (neutro, não vermelho)
   let dias;
   try { dias = Math.floor((Date.now() - new Date(p.ultima_frequencia + 'T12:00:00').getTime()) / 86400000); }
-  catch { return 'ausente'; }
+  catch { return 'sem_presenca'; }
   if (dias <= 30) return 'frequenta';
   if (dias <= 60) return 'atencao';
   return 'ausente';
@@ -135,7 +136,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
         <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
         <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0' }}>
           Censo de quem está nos grupos — função, status de frequência, última presença e grupo.
-          O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Ausente").
+          O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Sem presença", em cinza).
         </p>
       </div>
 
