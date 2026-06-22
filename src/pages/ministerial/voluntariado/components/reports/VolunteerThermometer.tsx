@@ -17,11 +17,21 @@ const levelConfig = {
   inactive: { label: 'Inativo', color: '#ef4444', bgClass: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' },
 };
 
-export default function VolunteerThermometer({ data }: { data: ThermometerEntry[] }) {
+// Crítico / risco de sobrecarga: servir 8+ vezes no período (decisão Matheus).
+const LIMITE_SOBRECARGA = 8;
+
+export default function VolunteerThermometer({ data, period = 'month' }: { data: ThermometerEntry[]; period?: string }) {
   const sorted = [...data].sort((a, b) => b.rate - a.rate);
   const counts = { very_active: 0, regular: 0, low: 0, inactive: 0 };
   sorted.forEach(v => counts[v.level]++);
   const total = sorted.length;
+
+  // "Servindo demais": crítico = serviu 8+ vezes no período. Ranqueado por volume.
+  const limite = LIMITE_SOBRECARGA;
+  const sobrecarga = [...data]
+    .map(v => ({ ...v, servidos: v.checkedIn }))
+    .filter(v => v.servidos >= limite)
+    .sort((a, b) => b.servidos - a.servidos);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -39,6 +49,36 @@ export default function VolunteerThermometer({ data }: { data: ThermometerEntry[
             </div>
           );
         })}
+      </div>
+
+      {/* Servindo demais (risco de sobrecarga) */}
+      <div className="p-3 md:p-4 rounded-lg border bg-card space-y-3" style={{ borderColor: sobrecarga.length ? '#f59e0b66' : undefined }}>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h4 className="font-semibold text-sm md:text-base flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: '#f59e0b' }} />
+            Servindo demais
+            <span className="text-xs font-normal text-muted-foreground">· risco de sobrecarga</span>
+          </h4>
+          <span className="text-xs text-muted-foreground">{sobrecarga.length} acima de {limite} no período</span>
+        </div>
+        {sobrecarga.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">Ninguém servindo acima do limite ({limite}) no período. 👍</p>
+        ) : (
+          <div className="space-y-2 max-h-[320px] overflow-y-auto">
+            {sobrecarga.map(v => (
+              <div key={v.planningCenterId} className="flex items-center gap-2 md:gap-3 p-2.5 rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 min-h-[48px]">
+                <Badge variant="outline" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 shrink-0 text-[10px] md:text-xs">
+                  {v.servidos} serviços
+                </Badge>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-xs md:text-sm truncate">{v.name}</p>
+                  {v.team && <p className="text-[10px] md:text-xs text-muted-foreground truncate">{v.team}</p>}
+                </div>
+                <span className="text-[10px] md:text-xs text-muted-foreground shrink-0">{v.checkedIn}/{v.scheduled} presença</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Distribution bar */}

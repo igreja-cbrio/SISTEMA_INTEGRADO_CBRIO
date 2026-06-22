@@ -26,9 +26,9 @@ router.get('/cron/antecedentes', requireCron, async (req, res) => {
   }
 });
 
-// Cron diário (sem login · CRON_SECRET) · sincroniza o Planning Center 1x/dia
-// (vercel.json · 7h BRT) pra que no dia do culto as escalas/pessoas estejam
-// atualizadas na hora do check-in. Mesma lógica do botão manual /sync.
+// Cron (sem login · CRON_SECRET) · sincroniza o Planning Center DE HORA EM HORA
+// (vercel.json · 0 * * * *) por segurança, pra que as escalas/pessoas estejam
+// sempre atualizadas na hora do check-in. Mesma lógica do botão manual /sync.
 router.get('/cron/sync', requireCron, async (req, res) => {
   try {
     const r = await executarSyncCompleto();
@@ -1321,7 +1321,7 @@ router.get('/schedules', async (req, res) => {
 router.get('/check-ins', async (req, res) => {
   try {
     const { service_id, volunteer_id, is_unscheduled } = req.query;
-    let q = supabase.from('vol_check_ins').select('*, volunteer:vol_profiles(id, full_name, planning_center_id), service:vol_services(id, name, scheduled_at)')
+    let q = supabase.from('vol_check_ins').select('*, volunteer:vol_profiles(id, full_name, planning_center_id), schedule:vol_schedules(id, volunteer_name, volunteer_id, team_name, position_name), service:vol_services(id, name, scheduled_at)')
       .order('checked_in_at', { ascending: false });
     if (service_id) q = q.eq('service_id', service_id);
     if (volunteer_id) q = q.eq('volunteer_id', volunteer_id);
@@ -1360,32 +1360,77 @@ router.post('/check-ins', async (req, res) => {
     // palpite do cliente, que erra quando o totem não encontra a escala). Só fica
     // "sem escala" quando NÃO existe escala casável. Mantém o service_id (não
     // cruza serviço duplicado aqui — isso é tratado como dedup à parte).
+    const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
+    const periodoSP = (iso) => { try { const h = Number(new Date(iso).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2)); return h < 14 ? 'manha' : 'noite'; } catch { return 'noite'; } };
+
     let resolvedScheduleId = schedule_id || null;
     let resolvedUnscheduled = is_unscheduled;
-    if (!resolvedScheduleId && volunteer_id && service_id) {
-      const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-      const [{ data: vp }, { data: scheds }] = await Promise.all([
-        supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', volunteer_id).maybeSingle(),
-        supabase.from('vol_schedules').select('id, volunteer_id, planning_center_person_id, volunteer_name').eq('service_id', service_id),
-      ]);
-      const vpName = norm(vp?.full_name);
-      const match = (scheds || []).find(s =>
-        (s.volunteer_id && s.volunteer_id === volunteer_id) ||
-        (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
-        (vpName && norm(s.volunteer_name) === vpName)
-      );
-      if (match) {
-        resolvedScheduleId = match.id;
-        resolvedUnscheduled = false;
-      } else if (resolvedUnscheduled === undefined) {
-        resolvedUnscheduled = true;
+    let resolvedVolunteerId = volunteer_id || null;
+
+    // BLOCO/DIA (2026-06-22): o volunt\u00e1rio da manh\u00e3 serve a manh\u00e3 inteira
+    // (08:30/10:00/11:30 = 3 cultos) com UM check-in. Ent\u00e3o o match da escala
+    // olha TODOS os cultos do mesmo DIA (prioriza o mesmo bloco manh\u00e3/noite) e o
+    // dedup olha o BLOCO \u2014 sem isso, quem est\u00e1 escalado \u00e0s 08:30 e bate o QR \u00e0s
+    // 10:00 ca\u00eda como "sem escala" e aparecia como "volunt\u00e1rio" no relat\u00f3rio.
+    // Tamb\u00e9m resolve o volunteer_id pela escala quando o check-in n\u00e3o trouxe (PCO).
+    // N\u00c3O mexe em cultos/Integra\u00e7\u00e3o \u2014 \u00e9 s\u00f3 controle do voluntariado.
+    if (service_id) {
+      const { data: ciSvc } = await supabase.from('vol_services').select('scheduled_at').eq('id', service_id).maybeSingle();
+      const ciDate = ciSvc?.scheduled_at ? dateSP(ciSvc.scheduled_at) : null;
+      const ciPer = ciSvc?.scheduled_at ? periodoSP(ciSvc.scheduled_at) : null;
+
+      if (ciDate) {
+        const { data: svcsDia } = await supabase.from('vol_services')
+          .select('id, scheduled_at')
+          .gte('scheduled_at', `${ciDate}T00:00:00-03:00`).lt('scheduled_at', `${ciDate}T23:59:59-03:00`);
+        const idsDia = (svcsDia || []).map(s => s.id);
+        const idsBloco = (svcsDia || []).filter(s => periodoSP(s.scheduled_at) === ciPer).map(s => s.id);
+
+        // DEDUP por bloco: 1 check-in cobre a manh\u00e3 (ou a noite) inteira.
+        if (volunteer_id && idsBloco.length) {
+          const { data: jaTem } = await supabase.from('vol_check_ins')
+            .select('id, checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+            .eq('volunteer_id', volunteer_id).in('service_id', idsBloco)
+            .order('checked_in_at', { ascending: true }).limit(1);
+          if (jaTem && jaTem[0]) {
+            const ex = jaTem[0];
+            return res.status(409).json({
+              error: 'Check-in j\u00e1 foi realizado', alreadyCheckedIn: true,
+              volunteerName: ex.volunteer?.full_name || ex.schedule?.volunteer_name || null,
+              checkedInAt: ex.checked_in_at, method: ex.method,
+            });
+          }
+        }
+
+        // MATCH da escala no DIA inteiro (prioriza o mesmo bloco).
+        if (!resolvedScheduleId && idsDia.length) {
+          let vp = null;
+          if (volunteer_id) ({ data: vp } = await supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', volunteer_id).maybeSingle());
+          const vpName = norm(vp?.full_name);
+          const { data: scheds } = await supabase.from('vol_schedules')
+            .select('id, volunteer_id, planning_center_person_id, volunteer_name, service_id').in('service_id', idsDia);
+          const casa = (s) => (
+            (volunteer_id && s.volunteer_id && s.volunteer_id === volunteer_id) ||
+            (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
+            (vpName && norm(s.volunteer_name) === vpName)
+          );
+          const match = (scheds || []).filter(s => idsBloco.includes(s.service_id)).find(casa) || (scheds || []).find(casa);
+          if (match) {
+            resolvedScheduleId = match.id;
+            resolvedUnscheduled = false;
+            if (!resolvedVolunteerId && match.volunteer_id) resolvedVolunteerId = match.volunteer_id;
+          } else if (resolvedUnscheduled === undefined) {
+            resolvedUnscheduled = true;
+          }
+        }
       }
     }
 
     const { data, error } = await supabase.from('vol_check_ins')
       .insert({
         schedule_id: resolvedScheduleId,
-        volunteer_id: volunteer_id || null,
+        volunteer_id: resolvedVolunteerId,
         service_id: service_id || null,
         checked_in_by: req.user.userId,
         method,
@@ -1445,10 +1490,11 @@ router.post('/check-ins', async (req, res) => {
     // oferecer a captura logo após o check-in (frente 2 da unificacao).
     let needsCpf = false;
     let volProfileName = null;
-    let resolvedVolunteerId = volunteer_id || null;
-    if (!resolvedVolunteerId && schedule_id) {
+    // resolvedVolunteerId já resolvido acima (inclui o volunteer_id da escala
+    // casada por dia/bloco). Fallback final pela escala explícita do cliente.
+    if (!resolvedVolunteerId && (resolvedScheduleId || schedule_id)) {
       const { data: sch } = await supabase.from('vol_schedules')
-        .select('volunteer_id').eq('id', schedule_id).maybeSingle();
+        .select('volunteer_id').eq('id', resolvedScheduleId || schedule_id).maybeSingle();
       resolvedVolunteerId = sch?.volunteer_id || null;
     }
     if (resolvedVolunteerId) {
@@ -1473,6 +1519,184 @@ router.post('/check-ins', async (req, res) => {
 
     res.json({ ...data, isUnscheduled: !!resolvedUnscheduled, volunteer_id: resolvedVolunteerId, needs_cpf: needsCpf });
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar check-in' }); }
+});
+
+// Backfill: religa check-ins históricos que ficaram "sem escala" por causa do
+// match antigo (por culto exato em vez do dia/bloco). Reaplica o match por DIA
+// (volunteer_id / planning_center / nome) e, se achar a escala, marca como
+// escalado + vincula schedule_id + resolve volunteer_id. Idempotente; respeita
+// o unique de schedule_id (não rouba escala já usada). Só voluntariado.
+router.post('/check-ins/rematch', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const norm = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
+
+    const { data: cis } = await supabase.from('vol_check_ins')
+      .select('id, volunteer_id, service_id, schedule_id, is_unscheduled, volunteer:vol_profiles(planning_center_id, full_name), service:vol_services(scheduled_at)')
+      .or('is_unscheduled.eq.true,schedule_id.is.null')
+      .not('service_id', 'is', null)
+      .limit(5000);
+
+    // escalas já usadas (pra não violar o unique de schedule_id)
+    const schedTaken = new Set();
+    const { data: usados } = await supabase.from('vol_check_ins').select('schedule_id').eq('is_unscheduled', false).not('schedule_id', 'is', null).limit(20000);
+    (usados || []).forEach(u => u.schedule_id && schedTaken.add(u.schedule_id));
+
+    const porData = new Map();
+    for (const ci of cis || []) {
+      const d = ci.service?.scheduled_at ? dateSP(ci.service.scheduled_at) : null;
+      if (!d) continue;
+      if (!porData.has(d)) porData.set(d, []);
+      porData.get(d).push(ci);
+    }
+
+    let religados = 0, semMatch = 0;
+    for (const [d, lista] of porData) {
+      const { data: svcsDia } = await supabase.from('vol_services').select('id, scheduled_at')
+        .gte('scheduled_at', `${d}T00:00:00-03:00`).lt('scheduled_at', `${d}T23:59:59-03:00`);
+      const idsDia = (svcsDia || []).map(s => s.id);
+      if (!idsDia.length) { semMatch += lista.length; continue; }
+      const { data: scheds } = await supabase.from('vol_schedules')
+        .select('id, volunteer_id, planning_center_person_id, volunteer_name, service_id').in('service_id', idsDia);
+      for (const ci of lista) {
+        const vpName = norm(ci.volunteer?.full_name);
+        const pcid = ci.volunteer?.planning_center_id;
+        const match = (scheds || []).find(s => !schedTaken.has(s.id) && (
+          (ci.volunteer_id && s.volunteer_id && s.volunteer_id === ci.volunteer_id) ||
+          (pcid && s.planning_center_person_id && s.planning_center_person_id === pcid) ||
+          (vpName && norm(s.volunteer_name) === vpName)
+        ));
+        if (!match) { semMatch++; continue; }
+        const upd = { is_unscheduled: false, schedule_id: match.id };
+        if (!ci.volunteer_id && match.volunteer_id) upd.volunteer_id = match.volunteer_id;
+        const { error } = await supabase.from('vol_check_ins').update(upd).eq('id', ci.id);
+        if (error) { semMatch++; continue; }
+        schedTaken.add(match.id);
+        religados++;
+      }
+    }
+    res.json({ ok: true, analisados: (cis || []).length, religados, sem_match: semMatch });
+  } catch (e) {
+    console.error('[vol checkin rematch]', e.message);
+    res.status(500).json({ error: e.message || 'Erro no rematch' });
+  }
+});
+
+// Manutenção: apaga vol_services VAZIOS gerados a partir dos vol_service_types
+// (service_type_id NOT NULL · 0 escala · 0 check-in). São os duplicados do botão
+// "gerar serviços do ano" — as escalas reais vêm do Planning Center ("Domingo -
+// Manhã", "Culto AMI"...). NÃO toca em serviços com escala/check-in nem nos do
+// PCO (service_type_id NULL). ?dry=1 só conta. Idempotente.
+router.post('/services/limpar-vazios', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { data: alvos } = await supabase.from('vol_services').select('id').not('service_type_id', 'is', null).limit(5000);
+    const ids = [];
+    for (const s of alvos || []) {
+      const [{ count: ne }, { count: nc }] = await Promise.all([
+        supabase.from('vol_schedules').select('id', { count: 'exact', head: true }).eq('service_id', s.id),
+        supabase.from('vol_check_ins').select('id', { count: 'exact', head: true }).eq('service_id', s.id),
+      ]);
+      if (!ne && !nc) ids.push(s.id);
+    }
+    if (req.query.dry === '1') return res.json({ ok: true, dry: true, vazios: ids.length });
+    let apagados = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      // limpa indisponibilidades órfãs e apaga
+      await supabase.from('vol_availability').delete().in('service_id', lote);
+      const { error } = await supabase.from('vol_services').delete().in('id', lote);
+      if (!error) apagados += lote.length;
+    }
+    res.json({ ok: true, apagados });
+  } catch (e) {
+    console.error('[vol limpar-vazios]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao limpar serviços vazios' });
+  }
+});
+
+// Acha-ou-cria o vol_services de um vol_service_type numa data (BRT). Usado pra
+// materializar os cultos da manhã sob demanda (só quando alguém marca presença).
+async function ensureServiceDoTipo(typeId, dateStr) {
+  const ini = `${dateStr}T00:00:00-03:00`, fim = `${dateStr}T23:59:59-03:00`;
+  const { data: ex } = await supabase.from('vol_services').select('id')
+    .eq('service_type_id', typeId).gte('scheduled_at', ini).lte('scheduled_at', fim).limit(1);
+  if (ex && ex[0]) return ex[0].id;
+  const { data: t } = await supabase.from('vol_service_types').select('name, recurrence_time').eq('id', typeId).maybeSingle();
+  if (!t) return null;
+  const hhmm = String(t.recurrence_time || '08:00').slice(0, 5);
+  const { data: svc } = await supabase.from('vol_services')
+    .insert({ name: t.name, service_type_name: t.name, service_type_id: typeId, scheduled_at: `${dateStr}T${hhmm}:00-03:00` })
+    .select('id').single();
+  return svc?.id || null;
+}
+
+// GET /cultos-manha — os tipos de culto de DOMINGO de MANHÃ (08:30/10:00/11:30),
+// pro check-in oferecer como checkbox. (recurrence_day=0 · antes das 14h)
+router.get('/cultos-manha', async (req, res) => {
+  try {
+    const { data } = await supabase.from('vol_service_types')
+      .select('id, name, recurrence_time')
+      .eq('recurrence_day', 0).eq('is_active', true).lt('recurrence_time', '14:00:00')
+      .order('recurrence_time');
+    res.json((data || []).map(t => ({ id: t.id, name: t.name, recurrence_time: t.recurrence_time })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos da manhã' }); }
+});
+
+// POST /check-ins/manha — marca presença do voluntário em VÁRIOS cultos da manhã
+// de uma vez (o operador/voluntário escolhe os horários no checkbox). Cria o
+// vol_services sob demanda e 1 check-in por culto marcado, casando a escala do
+// dia ("Domingo - Manhã" do PCO). Idempotente por (volunteer, service).
+router.post('/check-ins/manha', async (req, res) => {
+  try {
+    const { volunteer_id, service_date, service_type_ids, method, checked_in_at } = req.body || {};
+    if (!method || !service_date || !Array.isArray(service_type_ids) || !service_type_ids.length) {
+      return res.status(400).json({ error: 'volunteer_id, service_date, service_type_ids[] e method obrigatórios' });
+    }
+    let checkedInAt = null;
+    if (checked_in_at) { const t = new Date(checked_in_at); if (!Number.isNaN(t.getTime())) { const now = Date.now(); if (t.getTime() <= now + 3e5 && t.getTime() >= now - 7 * 864e5) checkedInAt = t.toISOString(); } }
+
+    // materializa os serviços dos cultos marcados
+    const svcIds = [];
+    for (const tid of service_type_ids) { const id = await ensureServiceDoTipo(tid, service_date); if (id) svcIds.push(id); }
+    if (!svcIds.length) return res.status(400).json({ error: 'Nenhum culto válido' });
+
+    // casa a escala do voluntário no DIA (a escala do PCO é "Domingo - Manhã")
+    const norm = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    let resolvedScheduleId = null, resolvedVolunteerId = volunteer_id || null;
+    if (volunteer_id) {
+      const { data: svcsDia } = await supabase.from('vol_services').select('id')
+        .gte('scheduled_at', `${service_date}T00:00:00-03:00`).lt('scheduled_at', `${service_date}T23:59:59-03:00`);
+      const idsDia = (svcsDia || []).map(s => s.id);
+      const { data: vp } = await supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', volunteer_id).maybeSingle();
+      const vpName = norm(vp?.full_name);
+      if (idsDia.length) {
+        const { data: scheds } = await supabase.from('vol_schedules')
+          .select('id, volunteer_id, planning_center_person_id, volunteer_name').in('service_id', idsDia);
+        const match = (scheds || []).find(s =>
+          (s.volunteer_id && s.volunteer_id === volunteer_id) ||
+          (vp?.planning_center_id && s.planning_center_person_id === vp.planning_center_id) ||
+          (vpName && norm(s.volunteer_name) === vpName));
+        if (match) { resolvedScheduleId = match.id; if (!resolvedVolunteerId && match.volunteer_id) resolvedVolunteerId = match.volunteer_id; }
+      }
+    }
+
+    let criados = 0, jaTinha = 0;
+    for (const svcId of svcIds) {
+      const { data: ex } = await supabase.from('vol_check_ins').select('id')
+        .eq('service_id', svcId).eq('volunteer_id', resolvedVolunteerId).limit(1);
+      if (ex && ex[0]) { jaTinha++; continue; }
+      const { error } = await supabase.from('vol_check_ins').insert({
+        schedule_id: resolvedScheduleId, volunteer_id: resolvedVolunteerId, service_id: svcId,
+        checked_in_by: req.user.userId, method, is_unscheduled: !resolvedScheduleId,
+        ...(checkedInAt ? { checked_in_at: checkedInAt } : {}),
+      });
+      if (!error) criados++;
+    }
+    res.json({ ok: true, criados, ja_tinha: jaTinha, cultos: svcIds.length });
+  } catch (e) {
+    console.error('[vol checkin manha]', e.message);
+    res.status(500).json({ error: e.message || 'Erro no check-in da manhã' });
+  }
 });
 
 // Atualiza dados de contato de UM vol_profile (operador do check-in preenche
@@ -1996,10 +2220,13 @@ router.post('/service-types/:id/generate', async (req, res) => {
     const makeIfAbsent = async (y, m0, d) => {
       const scheduledAt = toBRTISO(y, m0, d);
       const { data: existing } = await supabase.from('vol_services')
-        .select('id').eq('service_type_id', sType.id)
+        .select('id, service_type_id')
         .gte('scheduled_at', dayStartBRT(y, m0, d))
         .lt('scheduled_at', dayEndBRT(y, m0, d));
-      if (existing && existing.length > 0) return;
+      // Não duplica: pula se já existe esse tipo no dia OU se já há serviço do
+      // Planning Center (service_type_id NULL) no dia — o PCO é a fonte das
+      // escalas; gerar a partir do vol_service_type criaria duplicado vazio.
+      if (existing && existing.some(s => s.service_type_id === sType.id || s.service_type_id === null)) return;
       const { data: svc, error: svcErr } = await supabase.from('vol_services')
         .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: scheduledAt })
         .select().single();

@@ -58,6 +58,7 @@ export interface VolCheckIn {
   method: 'qr_code' | 'manual' | 'facial' | 'self_service';
   is_unscheduled: boolean;
   volunteer?: { id: string; full_name: string; planning_center_id?: string | null } | null;
+  schedule?: { id: string; volunteer_name: string; volunteer_id: string | null; team_name?: string | null; position_name?: string | null } | null;
   service?: { id: string; name: string; scheduled_at: string } | null;
 }
 

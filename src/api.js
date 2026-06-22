@@ -1992,7 +1992,9 @@ export const voluntariado = {
   checkIns: {
     list: (params) => get('/voluntariado/check-ins' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/voluntariado/check-ins', data),
+    manha: (data) => post('/voluntariado/check-ins/manha', data),
   },
+  cultosManha: () => get('/voluntariado/cultos-manha'),
   updateProfileContact: (id, data) => put(`/voluntariado/profiles/${id}/contact`, data),
   // QR code lookup
   qrLookup: (qr_code) => post('/voluntariado/qr-lookup', { qr_code }),
