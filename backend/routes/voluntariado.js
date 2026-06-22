@@ -1521,6 +1521,67 @@ router.post('/check-ins', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar check-in' }); }
 });
 
+// Backfill: religa check-ins históricos que ficaram "sem escala" por causa do
+// match antigo (por culto exato em vez do dia/bloco). Reaplica o match por DIA
+// (volunteer_id / planning_center / nome) e, se achar a escala, marca como
+// escalado + vincula schedule_id + resolve volunteer_id. Idempotente; respeita
+// o unique de schedule_id (não rouba escala já usada). Só voluntariado.
+router.post('/check-ins/rematch', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const norm = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
+
+    const { data: cis } = await supabase.from('vol_check_ins')
+      .select('id, volunteer_id, service_id, schedule_id, is_unscheduled, volunteer:vol_profiles(planning_center_id, full_name), service:vol_services(scheduled_at)')
+      .or('is_unscheduled.eq.true,schedule_id.is.null')
+      .not('service_id', 'is', null)
+      .limit(5000);
+
+    // escalas já usadas (pra não violar o unique de schedule_id)
+    const schedTaken = new Set();
+    const { data: usados } = await supabase.from('vol_check_ins').select('schedule_id').eq('is_unscheduled', false).not('schedule_id', 'is', null).limit(20000);
+    (usados || []).forEach(u => u.schedule_id && schedTaken.add(u.schedule_id));
+
+    const porData = new Map();
+    for (const ci of cis || []) {
+      const d = ci.service?.scheduled_at ? dateSP(ci.service.scheduled_at) : null;
+      if (!d) continue;
+      if (!porData.has(d)) porData.set(d, []);
+      porData.get(d).push(ci);
+    }
+
+    let religados = 0, semMatch = 0;
+    for (const [d, lista] of porData) {
+      const { data: svcsDia } = await supabase.from('vol_services').select('id, scheduled_at')
+        .gte('scheduled_at', `${d}T00:00:00-03:00`).lt('scheduled_at', `${d}T23:59:59-03:00`);
+      const idsDia = (svcsDia || []).map(s => s.id);
+      if (!idsDia.length) { semMatch += lista.length; continue; }
+      const { data: scheds } = await supabase.from('vol_schedules')
+        .select('id, volunteer_id, planning_center_person_id, volunteer_name, service_id').in('service_id', idsDia);
+      for (const ci of lista) {
+        const vpName = norm(ci.volunteer?.full_name);
+        const pcid = ci.volunteer?.planning_center_id;
+        const match = (scheds || []).find(s => !schedTaken.has(s.id) && (
+          (ci.volunteer_id && s.volunteer_id && s.volunteer_id === ci.volunteer_id) ||
+          (pcid && s.planning_center_person_id && s.planning_center_person_id === pcid) ||
+          (vpName && norm(s.volunteer_name) === vpName)
+        ));
+        if (!match) { semMatch++; continue; }
+        const upd = { is_unscheduled: false, schedule_id: match.id };
+        if (!ci.volunteer_id && match.volunteer_id) upd.volunteer_id = match.volunteer_id;
+        const { error } = await supabase.from('vol_check_ins').update(upd).eq('id', ci.id);
+        if (error) { semMatch++; continue; }
+        schedTaken.add(match.id);
+        religados++;
+      }
+    }
+    res.json({ ok: true, analisados: (cis || []).length, religados, sem_match: semMatch });
+  } catch (e) {
+    console.error('[vol checkin rematch]', e.message);
+    res.status(500).json({ error: e.message || 'Erro no rematch' });
+  }
+});
+
 // Atualiza dados de contato de UM vol_profile (operador do check-in preenche
 // o CPF/telefone/email do voluntário que acabou de chegar). Update parcial:
 // so grava o que vier, nunca apaga valor existente. O trigger BEFORE UPDATE
