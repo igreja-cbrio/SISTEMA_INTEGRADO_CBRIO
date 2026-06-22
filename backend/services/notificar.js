@@ -1,5 +1,47 @@
 const { supabase } = require('../utils/supabase');
 const { enviarPushParaUsers } = require('./webpush');
+const { enviarEmail, isConfigured: emailConfigurado } = require('./email');
+
+function escapeHtmlNotif(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Dispara e-mail (best-effort · Resend) para os usuários notificados. No-op
+// gracioso se RESEND_API_KEY não estiver configurada. Resolve o e-mail de cada
+// destinatário em profiles.email.
+async function enviarEmailNotificacao(userIds, { titulo, mensagem, link }) {
+  if (!emailConfigurado() || !userIds?.length) return;
+  try {
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('email')
+      .in('id', userIds);
+    const tos = [...new Set((profs || []).map(p => p.email).filter(e => e && /@/.test(e)))];
+    if (!tos.length) return;
+    const base = process.env.FRONTEND_URL || '';
+    const url = link ? (/^https?:\/\//.test(link) ? link : base + link) : base;
+    const html = `
+      <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1a1a1a;line-height:1.5;max-width:600px">
+        <p style="margin:0 0 10px"><strong>${escapeHtmlNotif(titulo)}</strong></p>
+        <p style="margin:0 0 16px">${escapeHtmlNotif(mensagem || '')}</p>
+        ${url ? `<p style="margin:0 0 16px"><a href="${escapeHtmlNotif(url)}" style="background:#00B39D;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;display:inline-block">Abrir no sistema</a></p>` : ''}
+        <p style="margin:0;color:#999;font-size:12px">Mensagem automática do sistema CBRio.</p>
+      </div>`;
+    const r = await enviarEmail({
+      to: tos,
+      subject: titulo,
+      html,
+      text: `${titulo}\n\n${mensagem || ''}${url ? `\n\n${url}` : ''}`,
+    });
+    if (!r?.ok) console.warn('[notificar email] falhou:', r?.error);
+  } catch (e) {
+    console.warn('[notificar email] exceção:', e.message);
+  }
+}
 
 /**
  * Resolve quais usuários devem receber notificação de um módulo.
@@ -28,7 +70,7 @@ async function resolverDestinatarios(modulo) {
  * Cria notificação para múltiplos usuários, com deduplicação.
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
-async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds }) {
+async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false }) {
   let destinatarios = targetIds || await resolverDestinatarios(modulo);
   if (extraTargetIds?.length) {
     destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
@@ -85,6 +127,13 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       url: link || '/',
       tag: chaveDedup || `${modulo}-${Date.now()}`,
     }).catch(e => console.warn('[notificar push]', e.message));
+  }
+
+  // Dispara e-mail em background (no-op se Resend não configurado · só quando
+  // o chamador pede email:true). Usa usersInseridos pra herdar a dedup.
+  if (email && usersInseridos.length) {
+    enviarEmailNotificacao(usersInseridos, { titulo, mensagem, link })
+      .catch(e => console.warn('[notificar email bg]', e.message));
   }
 
   return inserted;

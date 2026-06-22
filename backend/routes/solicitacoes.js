@@ -135,6 +135,76 @@ function resolverSetorHint(user) {
   return null;
 }
 
+// ── Co-aprovadores de origem (setor_coaprovadores · migration 20260622) ───────
+// A vice-diretora (Juliana Leao) co-aprova o setor Gestao junto com o diretor
+// (Eduardo). Generalizado por setor. Tudo best-effort: se a tabela ainda nao
+// existir (deploy antes da migration), degrada pro comportamento antigo (so o
+// diretor aprova) sem quebrar.
+async function setoresQueCoaprova(userId) {
+  if (!userId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('setor_coaprovadores')
+      .select('setor')
+      .eq('profile_id', userId);
+    if (error) return [];
+    return [...new Set((data || []).map(r => r.setor).filter(Boolean))];
+  } catch { return []; }
+}
+
+// IDs de diretor cujas solicitacoes este usuario pode aprovar = ele mesmo (se
+// for diretor) + os diretores dos setores onde ele e co-aprovador.
+async function diretorIdsQuePodeAprovar(userId) {
+  const ids = new Set([userId]);
+  const setores = await setoresQueCoaprova(userId);
+  if (setores.length) {
+    try {
+      const { data } = await supabase
+        .from('setor_diretor')
+        .select('diretor_id')
+        .in('setor', setores);
+      (data || []).forEach(d => d.diretor_id && ids.add(d.diretor_id));
+    } catch { /* best-effort */ }
+  }
+  return [...ids];
+}
+
+// Este usuario pode aprovar/rejeitar a ORIGEM desta solicitacao? (e o diretor
+// alvo OU co-aprovador do setor do diretor alvo)
+async function podeAprovarOrigem(userId, sol) {
+  if (!sol?.aprovacao_origem_diretor_id) return false;
+  if (sol.aprovacao_origem_diretor_id === userId) return true;
+  const setores = await setoresQueCoaprova(userId);
+  if (!setores.length) return false;
+  try {
+    const { data } = await supabase
+      .from('setor_diretor')
+      .select('setor')
+      .eq('diretor_id', sol.aprovacao_origem_diretor_id)
+      .in('setor', setores)
+      .maybeSingle();
+    return !!data;
+  } catch { return false; }
+}
+
+// IDs dos co-aprovadores do setor de um diretor (pra notificar junto).
+async function coaprovadorIdsParaDiretor(diretorId) {
+  if (!diretorId) return [];
+  try {
+    const { data: sd } = await supabase
+      .from('setor_diretor')
+      .select('setor')
+      .eq('diretor_id', diretorId)
+      .maybeSingle();
+    if (!sd?.setor) return [];
+    const { data: co } = await supabase
+      .from('setor_coaprovadores')
+      .select('profile_id')
+      .eq('setor', sd.setor);
+    return (co || []).map(c => c.profile_id).filter(Boolean);
+  } catch { return []; }
+}
+
 // ── LIST (filtered by role) ─────────────────────────────────
 router.get('/', async (req, res) => {
   try {
@@ -163,14 +233,16 @@ router.get('/', async (req, res) => {
     }
 
     if (aba === 'aprovar') {
-      // Aba do diretor de origem · so o que o user precisa aprovar.
+      // Aba do diretor de origem · so o que o user precisa aprovar. Inclui os
+      // setores onde ele e CO-APROVADOR (ex.: Juliana co-aprova Gestao).
       // Super-admins tambem veem a fila de TRIAGEM (sem setor resolvido · Fase 0).
       const isSuper = await isAdminFallback(req);
+      const aprovarIds = await diretorIdsQuePodeAprovar(userId);
       if (isSuper) {
-        q = q.or(`and(aprovacao_origem_diretor_id.eq.${userId},aprovacao_origem_status.eq.pendente),aprovacao_origem_status.eq.triagem`)
+        q = q.or(`and(aprovacao_origem_diretor_id.in.(${aprovarIds.join(',')}),aprovacao_origem_status.eq.pendente),aprovacao_origem_status.eq.triagem`)
              .is('deleted_at', null);
       } else {
-        q = q.eq('aprovacao_origem_diretor_id', userId)
+        q = q.in('aprovacao_origem_diretor_id', aprovarIds)
              .eq('aprovacao_origem_status', 'pendente')
              .is('deleted_at', null);
       }
@@ -271,11 +343,40 @@ router.get('/', async (req, res) => {
       campanhaMap = Object.fromEntries((camps || []).map(c => [c.solicitacao_id, { ...c, entregaveis: entregMap[c.id] || [] }]));
     }
 
+    // Co-aprovadores por setor · pra mostrar "Aguardando aprovação de X ou Y".
+    // Best-effort (tabela pode não existir antes da migration).
+    const diretorIdsPg = [...new Set((data || []).map(d => d.aprovacao_origem_diretor_id).filter(Boolean))];
+    let setorPorDiretor = {};
+    let coapsPorSetor = {};
+    if (diretorIdsPg.length) {
+      try {
+        const { data: sd } = await supabase.from('setor_diretor').select('setor, diretor_id').in('diretor_id', diretorIdsPg);
+        setorPorDiretor = Object.fromEntries((sd || []).map(r => [r.diretor_id, r.setor]));
+        const setores = [...new Set(Object.values(setorPorDiretor))];
+        if (setores.length) {
+          const { data: co } = await supabase.from('setor_coaprovadores').select('setor, nome, profile_id').in('setor', setores);
+          for (const c of (co || [])) {
+            (coapsPorSetor[c.setor] = coapsPorSetor[c.setor] || []).push(c);
+          }
+        }
+      } catch { /* tabela ausente antes da migration · degrada pro diretor só */ }
+    }
+    const nomesAprovadores = (d) => {
+      const principal = profileMap[d.aprovacao_origem_diretor_id]?.name;
+      if (!principal) return [];
+      const setor = setorPorDiretor[d.aprovacao_origem_diretor_id];
+      const coaps = (coapsPorSetor[setor] || [])
+        .map(c => c.nome || profileMap[c.profile_id]?.name)
+        .filter(n => n && n !== principal);
+      return [principal, ...[...new Set(coaps)]];
+    };
+
     const enriched = (data || []).map(d => ({
       ...d,
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
+      aprovacao_origem_aprovadores: nomesAprovadores(d),
       marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
       marketing_destino: destinoMap[d.marketing_destino_id] || null,
       marketing_card: cardMap[d.id] || null,
@@ -298,20 +399,24 @@ router.get('/meu-papel', async (req, res) => {
     const userId = req.user.userId;
     const role = req.user.role;
 
-    // Aprovador de origem? Cargo de diretor de setor cadastrado em setor_diretor.
+    // Aprovador de origem? Diretor de setor (setor_diretor) OU co-aprovador
+    // (setor_coaprovadores · ex.: vice-diretora Juliana no setor Gestao).
     const { data: setorRow } = await supabase
       .from('setor_diretor')
       .select('setor, diretor_nome')
       .eq('diretor_id', userId)
       .maybeSingle();
+    const coSetores = await setoresQueCoaprova(userId);
+    const ehAprovadorOrigem = !!setorRow || coSetores.length > 0;
 
-    // Contador de pendentes na fila do diretor de origem
+    // Contador de pendentes na fila de aprovacao (diretor + setores co-aprovados)
     let pendentesOrigem = 0;
-    if (setorRow) {
+    if (ehAprovadorOrigem) {
+      const aprovarIds = await diretorIdsQuePodeAprovar(userId);
       const { count } = await supabase
         .from('solicitacoes')
         .select('id', { count: 'exact', head: true })
-        .eq('aprovacao_origem_diretor_id', userId)
+        .in('aprovacao_origem_diretor_id', aprovarIds)
         .eq('aprovacao_origem_status', 'pendente')
         .is('deleted_at', null);
       pendentesOrigem = count || 0;
@@ -351,8 +456,8 @@ router.get('/meu-papel', async (req, res) => {
       atende: areas.length > 0,
       admin: false,
       areas,
-      eh_diretor_origem: !!setorRow,
-      setor_origem: setorRow?.setor || null,
+      eh_diretor_origem: ehAprovadorOrigem,
+      setor_origem: setorRow?.setor || coSetores[0] || null,
       pendentes_origem: pendentesOrigem,
       eh_triagem_admin: isSuper,
       pendentes_triagem: pendentesTriagem,
@@ -547,6 +652,10 @@ router.post('/', async (req, res) => {
     // Aprovação hierarquica · se trigger marcou aguardando_aprovacao_origem,
     // notifica o diretor de origem em vez do responsável da área alvo.
     if (data.status === 'aguardando_aprovacao_origem' && data.aprovacao_origem_diretor_id) {
+      // Notifica o diretor de origem + os co-aprovadores do setor (ex.: Juliana
+      // em Gestao). E-mail também (no-op gracioso se Resend não configurado).
+      const coIds = await coaprovadorIdsParaDiretor(data.aprovacao_origem_diretor_id);
+      const alvosAprovacao = [...new Set([data.aprovacao_origem_diretor_id, ...coIds])];
       notificar({
         modulo: 'administrativo',
         tipo: 'solicitacao_aprovacao_origem',
@@ -555,7 +664,8 @@ router.post('/', async (req, res) => {
         link: '/solicitacoes?aba=aprovar',
         severidade: 'info',
         chaveDedup: `solicitacao_aprovacao_origem_${data.id}`,
-        targetIds: [data.aprovacao_origem_diretor_id],
+        targetIds: alvosAprovacao,
+        email: true,
       }).catch(err => console.error('[SOLICITACOES] notify diretor:', err.message));
     }
 
@@ -621,11 +731,13 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
       return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
     }
 
-    // Quem pode aprovar: o diretor de origem cadastrado, OU super-admin (fallback
-    // quando diretor_id não foi resolvido, OU intervencao manual).
+    // Quem pode aprovar: o diretor de origem cadastrado, um CO-APROVADOR do
+    // setor (ex.: vice-diretora Juliana no setor Gestao), OU super-admin
+    // (fallback quando diretor_id não foi resolvido, OU intervencao manual).
     const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
-    if (!isDiretorAlvo && !isSuperAdmin) {
-      return res.status(403).json({ error: 'Apenas o diretor de origem pode aprovar esta solicitação.' });
+    const isCoaprovador = !isDiretorAlvo && await podeAprovarOrigem(userId, atual);
+    if (!isDiretorAlvo && !isCoaprovador && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem ou um co-aprovador do setor pode aprovar esta solicitação.' });
     }
 
     const novoResponsavelId = atual.responsavel_id;
@@ -648,8 +760,10 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
       aprovacao_origem_em: new Date().toISOString(),
       status: proximoStatus,
     };
-    // Se super-admin esta aprovando como fallback, registra quem foi
-    if (!isDiretorAlvo && isSuperAdmin) {
+    // Registra quem aprovou quando NÃO foi o diretor principal (rastreio).
+    if (!isDiretorAlvo && isCoaprovador) {
+      update.aprovacao_origem_motivo = `Aprovada por ${userName || 'co-aprovador'} (co-aprovador do setor)`;
+    } else if (!isDiretorAlvo && isSuperAdmin) {
       update.aprovacao_origem_diretor_id = userId;
       update.aprovacao_origem_motivo = '[Fallback super-admin]';
     }
@@ -803,8 +917,9 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
       return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
     }
     const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
-    if (!isDiretorAlvo && !isSuperAdmin) {
-      return res.status(403).json({ error: 'Apenas o diretor de origem pode rejeitar esta solicitação.' });
+    const isCoaprovador = !isDiretorAlvo && await podeAprovarOrigem(userId, atual);
+    if (!isDiretorAlvo && !isCoaprovador && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem ou um co-aprovador do setor pode rejeitar esta solicitação.' });
     }
 
     const update = {
@@ -813,7 +928,7 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
       aprovacao_origem_motivo: motivo.trim(),
       status: 'rejeitado',
     };
-    if (!isDiretorAlvo && isSuperAdmin) {
+    if (!isDiretorAlvo && isSuperAdmin && !isCoaprovador) {
       update.aprovacao_origem_diretor_id = userId;
     }
 
