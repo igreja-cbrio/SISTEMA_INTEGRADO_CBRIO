@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { QrCode, Hand, Scan, Sun } from 'lucide-react';
 import { voluntariado } from '@/api';
-import { useTodaysServices, useServiceSchedules, useCheckIn, useScheduleByQrCode } from './hooks';
+import { useCheckinServices, useServiceSchedules, useCheckIn, useScheduleByQrCode } from './hooks';
 import QrScanner from './components/checkin/QrScanner';
 import ManualCheckin from './components/checkin/ManualCheckin';
 import FaceScanner from './components/checkin/FaceScanner';
@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 
 export default function VolCheckin() {
   const [searchParams] = useSearchParams();
-  const { data: todayServices = [] } = useTodaysServices();
+  const { data: todayServices = [] } = useCheckinServices();
   const [selectedServiceId, setSelectedServiceId] = useState(searchParams.get('serviceId') || '');
   const { data: schedules = [] } = useServiceSchedules(selectedServiceId || undefined);
   const checkIn = useCheckIn();
@@ -77,8 +77,8 @@ export default function VolCheckin() {
     setSalvandoManha(false);
   };
 
-  // Auto-select if only one service today
-  if (todayServices.length === 1 && !selectedServiceId) {
+  // Auto-seleciona o culto mais próximo de agora (a lista já vem ordenada).
+  if (todayServices.length > 0 && !selectedServiceId) {
     setSelectedServiceId(todayServices[0].id);
   }
 
@@ -159,14 +159,19 @@ export default function VolCheckin() {
       <Card>
         <CardContent className="p-3 md:p-4">
           <Select value={selectedServiceId} onValueChange={setSelectedServiceId}>
-            <SelectTrigger className="min-h-[44px]"><SelectValue placeholder="Selecione o culto de hoje" /></SelectTrigger>
+            <SelectTrigger className="min-h-[44px]"><SelectValue placeholder="Selecione o culto" /></SelectTrigger>
             <SelectContent>
-              {todayServices.map(svc => (
-                <SelectItem key={svc.id} value={svc.id}>{svc.name}{svc.service_type_name ? ` — ${svc.service_type_name}` : ''}</SelectItem>
-              ))}
+              {todayServices.map(svc => {
+                const dt = (() => { try { return new Date(svc.scheduled_at).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }); } catch { return ''; } })();
+                return (
+                  <SelectItem key={svc.id} value={svc.id}>
+                    {svc.name}{dt ? <span className="text-muted-foreground"> · {dt}</span> : ''}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
-          {todayServices.length === 0 && <p className="text-sm text-muted-foreground mt-2">Nenhum culto agendado para hoje. Sincronize com o Planning Center.</p>}
+          {todayServices.length === 0 && <p className="text-sm text-muted-foreground mt-2">Nenhum culto no período. Sincronize com o Planning Center.</p>}
         </CardContent>
       </Card>
 

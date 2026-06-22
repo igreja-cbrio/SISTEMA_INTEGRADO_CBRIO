@@ -26,9 +26,9 @@ router.get('/cron/antecedentes', requireCron, async (req, res) => {
   }
 });
 
-// Cron diário (sem login · CRON_SECRET) · sincroniza o Planning Center 1x/dia
-// (vercel.json · 7h BRT) pra que no dia do culto as escalas/pessoas estejam
-// atualizadas na hora do check-in. Mesma lógica do botão manual /sync.
+// Cron (sem login · CRON_SECRET) · sincroniza o Planning Center DE HORA EM HORA
+// (vercel.json · 0 * * * *) por segurança, pra que as escalas/pessoas estejam
+// sempre atualizadas na hora do check-in. Mesma lógica do botão manual /sync.
 router.get('/cron/sync', requireCron, async (req, res) => {
   try {
     const r = await executarSyncCompleto();
