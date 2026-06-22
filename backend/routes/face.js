@@ -228,21 +228,49 @@ router.delete('/membros/:id/enroll', authorizeModule('face', 3), async (req, res
 
 // ── Galeria de membros pra cadastro de rosto em lote ───────────────────────
 // O browser roda o face-api nas FOTOS já existentes e enrolla cada descriptor.
+// Fonte da foto: mem_membros.foto_url (membresia) OU profiles.avatar_url (foto
+// de perfil do APP) — assim quem se cadastra no app com foto também entra.
 router.get('/membros/galeria', authorizeModule('face', 3), async (req, res) => {
   try {
     const semRosto = req.query.sem_rosto === '1';
     const limit = Math.min(parseInt(req.query.limit, 10) || 1500, 3000);
-    let q = supabase.from('mem_membros')
+    const fotoPorMembro = new Map(); // membro_id -> { nome?, foto, ja }
+
+    // A) membros com foto na membresia
+    let qa = supabase.from('mem_membros')
       .select('id, nome, foto_url, face_cadastrado_em')
-      .is('deleted_at', null)
-      .not('foto_url', 'is', null)
-      .order('face_cadastrado_em', { ascending: true, nullsFirst: true })
-      .limit(limit);
-    if (semRosto) q = q.is('face_cadastrado_em', null);
-    const { data, error } = await q;
-    if (error) throw error;
-    const itens = (data || []).map((m) => ({ id: m.id, nome: m.nome, foto_url: m.foto_url, ja: !!m.face_cadastrado_em }));
-    // contagem total de membros com rosto cadastrado (galeria viva)
+      .is('deleted_at', null).not('foto_url', 'is', null)
+      .order('face_cadastrado_em', { ascending: true, nullsFirst: true }).limit(limit);
+    if (semRosto) qa = qa.is('face_cadastrado_em', null);
+    const { data: a, error: ea } = await qa;
+    if (ea) throw ea;
+    for (const m of a || []) fotoPorMembro.set(m.id, { nome: m.nome, foto: m.foto_url, ja: !!m.face_cadastrado_em });
+
+    // B) avatares do app (profiles.avatar_url → membro_id) — paginado
+    const avatarPorMembro = new Map();
+    let off = 0;
+    while (true) {
+      const { data: profs, error: ep } = await supabase.from('profiles')
+        .select('membro_id, avatar_url').not('avatar_url', 'is', null).not('membro_id', 'is', null)
+        .range(off, off + 999);
+      if (ep) break;
+      if (!profs || !profs.length) break;
+      for (const p of profs) if (!avatarPorMembro.has(p.membro_id)) avatarPorMembro.set(p.membro_id, p.avatar_url);
+      if (profs.length < 1000) break;
+      off += 1000;
+    }
+    const avMemIds = [...avatarPorMembro.keys()].filter((id) => !fotoPorMembro.has(id));
+    for (let i = 0; i < avMemIds.length; i += 300) {
+      const chunk = avMemIds.slice(i, i + 300);
+      let qb = supabase.from('mem_membros').select('id, nome, face_cadastrado_em').is('deleted_at', null).in('id', chunk);
+      if (semRosto) qb = qb.is('face_cadastrado_em', null);
+      const { data: b } = await qb;
+      for (const m of b || []) fotoPorMembro.set(m.id, { nome: m.nome, foto: avatarPorMembro.get(m.id), ja: !!m.face_cadastrado_em });
+    }
+
+    let itens = [...fotoPorMembro.entries()].map(([id, v]) => ({ id, nome: v.nome, foto_url: v.foto, ja: v.ja }));
+    itens.sort((x, y) => Number(x.ja) - Number(y.ja));
+    itens = itens.slice(0, limit);
     const { count: cadastrados } = await supabase.from('mem_membros')
       .select('id', { count: 'exact', head: true }).is('deleted_at', null).not('face_cadastrado_em', 'is', null);
     res.json({ itens, com_foto: itens.length, cadastrados: cadastrados || 0 });
