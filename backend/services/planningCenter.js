@@ -258,6 +258,41 @@ async function fetchAllTeamPersons(serviceTypeId, credentials) {
   return volunteers;
 }
 
+// Lista COMPLETA de people do Planning Center Services — inclui quem nunca foi
+// escalado e não está em nenhuma equipe. É o total do "Services" (ex.: 875).
+// Usada pra a galeria de voluntários espelhar o Planning Center inteiro.
+async function fetchAllServicesPeople(credentials) {
+  const headers = { Authorization: `Basic ${credentials}` };
+  const people = new Map();
+  const perPage = 100;
+  let offset = 0;
+  while (true) {
+    const url = `${PC_SERVICES_BASE}/people?per_page=${perPage}&offset=${offset}`;
+    const res = await fetchWithRetry(url, headers);
+    if (!res.ok) break;
+    const data = await res.json();
+    for (const p of (data.data || [])) {
+      const a = p.attributes || {};
+      const name = a.full_name || [a.first_name, a.last_name].filter(Boolean).join(' ').trim();
+      if (!p.id || !name) continue;
+      if (!people.has(p.id)) {
+        people.set(p.id, {
+          planning_center_person_id: p.id,
+          volunteer_name: name,
+          avatar_url: a.photo_thumbnail || a.photo_url || null,
+          email: null,
+        });
+      }
+    }
+    const total = data.meta?.total_count;
+    if (!data.data || data.data.length < perPage) break;
+    offset += perPage;
+    if (total && offset >= total) break;
+    if (offset > 20000) break; // safety
+  }
+  return people;
+}
+
 
 async function processServiceType(supabase, serviceType, plans, credentials) {
   const baseUrl = PC_SERVICES_BASE;
@@ -717,6 +752,7 @@ module.exports = {
   getVolunteerName,
   processServiceType,
   fetchAllTeamPersons,
+  fetchAllServicesPeople,
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
   assignVolunteersToTeams,
