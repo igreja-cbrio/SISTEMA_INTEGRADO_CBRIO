@@ -191,43 +191,62 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
         </div>
         {filtradas.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Ninguém nesse filtro.</div>
-        ) : filtradas.map(p => {
-          const pap = PAPEIS[p.papel] || PAPEIS.frequentador;
-          const st = STATUS[statusDe(p)];
-          const gs = gruposDe(p);
-          return (
-            <div key={p.membro_id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ width: 36, height: 36, borderRadius: '50%', background: p.foto_url ? `url(${p.foto_url}) center/cover` : `${pap.cor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: pap.cor }}>
-                {!p.foto_url && (p.nome?.charAt(0) || '?')}
-              </div>
-
-              <div style={{ flex: 1, minWidth: 220 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{p.nome}</span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${pap.cor}18`, color: pap.cor, fontWeight: 700 }}>
-                    <pap.Icon size={10} /> {pap.label}
-                  </span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11, color: C.t3, marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {gs.length > 0 ? (
-                    <span>{gs.map((g, i) => (
-                      <span key={g.id || i}>
-                        {i > 0 && ', '}
-                        <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>{g.nome}</button>
-                      </span>
-                    ))}</span>
-                  ) : <span>Sem grupo</span>}
-                  {p.entrou_em && <span> · desde {fmtData(p.entrou_em)}</span>}
-                  <span> · {p.ultima_frequencia ? `última freq. ${fmtData(p.ultima_frequencia)}` : 'sem presença registrada'}</span>
-                  {p.presencas_total > 0 && <span> · {p.presencas_total} presença{p.presencas_total !== 1 ? 's' : ''}</span>}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Presenças'].map((h, i) => (
+                    <th key={h} style={{ textAlign: i === 5 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtradas.map(p => {
+                  const pap = PAPEIS[p.papel] || PAPEIS.frequentador;
+                  const st = STATUS[statusDe(p)];
+                  const gs = gruposDe(p);
+                  return (
+                    <tr key={p.membro_id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: '10px 16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 32, height: 32, borderRadius: '50%', background: p.foto_url ? `url(${p.foto_url}) center/cover` : `${pap.cor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: pap.cor }}>
+                            {!p.foto_url && (p.nome?.charAt(0) || '?')}
+                          </div>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{p.nome}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${pap.cor}18`, color: pap.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          <pap.Icon size={10} /> {pap.label}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>
+                        {gs.length > 0 ? gs.map((g, i) => (
+                          <span key={g.id || i}>
+                            {i > 0 && ', '}
+                            <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{g.nome}</button>
+                          </span>
+                        )) : <span style={{ color: C.t3 }}>Sem grupo</span>}
+                      </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultima_frequencia ? C.t2 : C.t3, whiteSpace: 'nowrap' }}>
+                        {p.ultima_frequencia ? fmtData(p.ultima_frequencia) : '—'}
+                      </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2, textAlign: 'right' }}>
+                        {p.presencas_total || 0}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
