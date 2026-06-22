@@ -1321,7 +1321,7 @@ router.get('/schedules', async (req, res) => {
 router.get('/check-ins', async (req, res) => {
   try {
     const { service_id, volunteer_id, is_unscheduled } = req.query;
-    let q = supabase.from('vol_check_ins').select('*, volunteer:vol_profiles(id, full_name, planning_center_id), service:vol_services(id, name, scheduled_at)')
+    let q = supabase.from('vol_check_ins').select('*, volunteer:vol_profiles(id, full_name, planning_center_id), schedule:vol_schedules(id, volunteer_name, volunteer_id, team_name, position_name), service:vol_services(id, name, scheduled_at)')
       .order('checked_in_at', { ascending: false });
     if (service_id) q = q.eq('service_id', service_id);
     if (volunteer_id) q = q.eq('volunteer_id', volunteer_id);
@@ -1360,32 +1360,77 @@ router.post('/check-ins', async (req, res) => {
     // palpite do cliente, que erra quando o totem não encontra a escala). Só fica
     // "sem escala" quando NÃO existe escala casável. Mantém o service_id (não
     // cruza serviço duplicado aqui — isso é tratado como dedup à parte).
+    const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
+    const periodoSP = (iso) => { try { const h = Number(new Date(iso).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2)); return h < 14 ? 'manha' : 'noite'; } catch { return 'noite'; } };
+
     let resolvedScheduleId = schedule_id || null;
     let resolvedUnscheduled = is_unscheduled;
-    if (!resolvedScheduleId && volunteer_id && service_id) {
-      const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-      const [{ data: vp }, { data: scheds }] = await Promise.all([
-        supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', volunteer_id).maybeSingle(),
-        supabase.from('vol_schedules').select('id, volunteer_id, planning_center_person_id, volunteer_name').eq('service_id', service_id),
-      ]);
-      const vpName = norm(vp?.full_name);
-      const match = (scheds || []).find(s =>
-        (s.volunteer_id && s.volunteer_id === volunteer_id) ||
-        (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
-        (vpName && norm(s.volunteer_name) === vpName)
-      );
-      if (match) {
-        resolvedScheduleId = match.id;
-        resolvedUnscheduled = false;
-      } else if (resolvedUnscheduled === undefined) {
-        resolvedUnscheduled = true;
+    let resolvedVolunteerId = volunteer_id || null;
+
+    // BLOCO/DIA (2026-06-22): o volunt\u00e1rio da manh\u00e3 serve a manh\u00e3 inteira
+    // (08:30/10:00/11:30 = 3 cultos) com UM check-in. Ent\u00e3o o match da escala
+    // olha TODOS os cultos do mesmo DIA (prioriza o mesmo bloco manh\u00e3/noite) e o
+    // dedup olha o BLOCO \u2014 sem isso, quem est\u00e1 escalado \u00e0s 08:30 e bate o QR \u00e0s
+    // 10:00 ca\u00eda como "sem escala" e aparecia como "volunt\u00e1rio" no relat\u00f3rio.
+    // Tamb\u00e9m resolve o volunteer_id pela escala quando o check-in n\u00e3o trouxe (PCO).
+    // N\u00c3O mexe em cultos/Integra\u00e7\u00e3o \u2014 \u00e9 s\u00f3 controle do voluntariado.
+    if (service_id) {
+      const { data: ciSvc } = await supabase.from('vol_services').select('scheduled_at').eq('id', service_id).maybeSingle();
+      const ciDate = ciSvc?.scheduled_at ? dateSP(ciSvc.scheduled_at) : null;
+      const ciPer = ciSvc?.scheduled_at ? periodoSP(ciSvc.scheduled_at) : null;
+
+      if (ciDate) {
+        const { data: svcsDia } = await supabase.from('vol_services')
+          .select('id, scheduled_at')
+          .gte('scheduled_at', `${ciDate}T00:00:00-03:00`).lt('scheduled_at', `${ciDate}T23:59:59-03:00`);
+        const idsDia = (svcsDia || []).map(s => s.id);
+        const idsBloco = (svcsDia || []).filter(s => periodoSP(s.scheduled_at) === ciPer).map(s => s.id);
+
+        // DEDUP por bloco: 1 check-in cobre a manh\u00e3 (ou a noite) inteira.
+        if (volunteer_id && idsBloco.length) {
+          const { data: jaTem } = await supabase.from('vol_check_ins')
+            .select('id, checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+            .eq('volunteer_id', volunteer_id).in('service_id', idsBloco)
+            .order('checked_in_at', { ascending: true }).limit(1);
+          if (jaTem && jaTem[0]) {
+            const ex = jaTem[0];
+            return res.status(409).json({
+              error: 'Check-in j\u00e1 foi realizado', alreadyCheckedIn: true,
+              volunteerName: ex.volunteer?.full_name || ex.schedule?.volunteer_name || null,
+              checkedInAt: ex.checked_in_at, method: ex.method,
+            });
+          }
+        }
+
+        // MATCH da escala no DIA inteiro (prioriza o mesmo bloco).
+        if (!resolvedScheduleId && idsDia.length) {
+          let vp = null;
+          if (volunteer_id) ({ data: vp } = await supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', volunteer_id).maybeSingle());
+          const vpName = norm(vp?.full_name);
+          const { data: scheds } = await supabase.from('vol_schedules')
+            .select('id, volunteer_id, planning_center_person_id, volunteer_name, service_id').in('service_id', idsDia);
+          const casa = (s) => (
+            (volunteer_id && s.volunteer_id && s.volunteer_id === volunteer_id) ||
+            (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
+            (vpName && norm(s.volunteer_name) === vpName)
+          );
+          const match = (scheds || []).filter(s => idsBloco.includes(s.service_id)).find(casa) || (scheds || []).find(casa);
+          if (match) {
+            resolvedScheduleId = match.id;
+            resolvedUnscheduled = false;
+            if (!resolvedVolunteerId && match.volunteer_id) resolvedVolunteerId = match.volunteer_id;
+          } else if (resolvedUnscheduled === undefined) {
+            resolvedUnscheduled = true;
+          }
+        }
       }
     }
 
     const { data, error } = await supabase.from('vol_check_ins')
       .insert({
         schedule_id: resolvedScheduleId,
-        volunteer_id: volunteer_id || null,
+        volunteer_id: resolvedVolunteerId,
         service_id: service_id || null,
         checked_in_by: req.user.userId,
         method,
@@ -1445,10 +1490,11 @@ router.post('/check-ins', async (req, res) => {
     // oferecer a captura logo após o check-in (frente 2 da unificacao).
     let needsCpf = false;
     let volProfileName = null;
-    let resolvedVolunteerId = volunteer_id || null;
-    if (!resolvedVolunteerId && schedule_id) {
+    // resolvedVolunteerId já resolvido acima (inclui o volunteer_id da escala
+    // casada por dia/bloco). Fallback final pela escala explícita do cliente.
+    if (!resolvedVolunteerId && (resolvedScheduleId || schedule_id)) {
       const { data: sch } = await supabase.from('vol_schedules')
-        .select('volunteer_id').eq('id', schedule_id).maybeSingle();
+        .select('volunteer_id').eq('id', resolvedScheduleId || schedule_id).maybeSingle();
       resolvedVolunteerId = sch?.volunteer_id || null;
     }
     if (resolvedVolunteerId) {
