@@ -276,7 +276,7 @@ export default function VolRelatorios() {
                   {unscheduledCheckIns.map(ci => (
                     <div key={ci.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
                       <div className="min-w-0">
-                        <p className="font-medium text-sm">{ci.volunteer?.full_name || 'Voluntário não identificado'}</p>
+                        <p className="font-medium text-sm">{ci.volunteer?.full_name || ci.schedule?.volunteer_name || 'Voluntário não identificado'}</p>
                         <p className="text-xs text-muted-foreground">{ci.serviceName}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -455,7 +455,7 @@ export default function VolRelatorios() {
                   <div className="space-y-1.5">
                     {serviceDetail.extras.map(c => (
                       <div key={c.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
-                        <p className="text-sm font-medium truncate">{c.volunteer?.full_name || 'Voluntário'}</p>
+                        <p className="text-sm font-medium truncate">{c.volunteer?.full_name || c.schedule?.volunteer_name || 'Voluntário'}</p>
                         <Badge variant="outline" className="border-yellow-300 text-yellow-700 text-xs shrink-0">sem escala</Badge>
                       </div>
                     ))}
