@@ -189,6 +189,50 @@ async function voluntariosPorAreaMes(range) {
   return { porArea, semArea, total };
 }
 
+// Servir (decisão do Matheus · 2026-06-22): TODOS os voluntários que SERVIRAM
+// nos últimos 4 meses (não só os ligados a membro). Centro = distinto quem
+// serviu (vol_servicos_historico · planilha + PCO). Pétalas por área = via time
+// da escala do PCO (vol_schedules). Quem serviu sem time mapeável conta no
+// centro mas não nas pétalas (honesto · não chuta área).
+function _normServir(s) { return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+function _areaDoTeam(t) {
+  const n = _normServir(t); if (!n) return null;
+  if (n.includes('kid')) return 'kids';
+  if (n.includes('ami')) return 'ami';
+  if (n.includes('bridge')) return 'bridge';
+  if (n.includes('online')) return 'online';
+  return 'sede';
+}
+async function voluntariosAtivos4mPorArea(range) {
+  const fimISO = String(range.fim).slice(0, 10);
+  const iniD = new Date(fimISO + 'T00:00:00'); iniD.setMonth(iniD.getMonth() - 4);
+  const iniISO = iniD.toISOString().slice(0, 10);
+
+  // Centro: distinto quem serviu na janela (vol_servicos_historico)
+  const serv = await fetchAllPaginado('vol_servicos_historico', (q) => q
+    .select('nome_norm').is('deleted_at', null).gte('data', iniISO).lte('data', fimISO));
+  const totalSet = new Set();
+  (serv || []).forEach((s) => { if (s.nome_norm) totalSet.add(s.nome_norm); });
+
+  // Pétalas: área via time da escala do PCO na janela
+  const sch = await fetchAllPaginado('vol_schedules', (q) => q
+    .select('volunteer_name, team_name, confirmation_status, service:vol_services!inner(scheduled_at)')
+    .neq('confirmation_status', 'declined')
+    .gte('service.scheduled_at', iniISO).lte('service.scheduled_at', fimISO + 'T23:59:59'));
+  const setPorArea = { kids: new Set(), sede: new Set(), ami: new Set(), bridge: new Set(), online: new Set() };
+  const comArea = new Set();
+  (sch || []).forEach((s) => {
+    const nn = _normServir(s.volunteer_name); if (!nn) return;
+    const a = _areaDoTeam(s.team_name);
+    if (a && setPorArea[a]) { setPorArea[a].add(nn); comArea.add(nn); }
+  });
+  const porArea = {};
+  Object.keys(setPorArea).forEach((a) => { porArea[a] = setPorArea[a].size; });
+  let semArea = 0;
+  totalSet.forEach((nn) => { if (!comArea.has(nn)) semArea += 1; });
+  return { porArea, semArea, total: totalSet.size };
+}
+
 // Dizimistas do mês repartidos por área (mem_contribuicoes.area · estrutura
 // pronta pra unificação financeira — preenche quando a importação chegar).
 async function generosidadePorAreaMes(range) {
@@ -321,7 +365,7 @@ router.get('/mandalas', async (req, res) => {
     }
     let servirArea = { porArea: {}, semArea: 0, total: null };
     try {
-      servirArea = await voluntariosPorAreaMes(_range);
+      servirArea = await voluntariosAtivos4mPorArea(_range);
       indicadores.servir = { numero: servirArea.total, unidade: 'voluntários' };
     } catch (e) {
       console.error('voluntariosPorAreaMes:', e.message);
