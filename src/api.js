@@ -100,6 +100,14 @@ export const face = {
   cadastrar: (anonId, data) => post(`/face/anonimos/${anonId}/cadastrar`, data),
   descartar: (anonId) => post(`/face/anonimos/${anonId}/descartar`, {}),
   galeria: (params) => get('/face/membros/galeria' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Carrega a foto do membro pelo MESMO domínio (proxy) → blob → object URL.
+  // Evita CORS (foto do PCO/app cross-origin tornaria o canvas "tainted").
+  fotoBlobUrl: async (membroId) => {
+    const token = await getToken();
+    const res = await fetch(`${API}/face/membros/${membroId}/foto`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) throw new Error('Falha ao carregar a foto');
+    return URL.createObjectURL(await res.blob());
+  },
   enroll: (membroId, descriptor, consentimento) => post(`/face/membros/${membroId}/enroll`, { descriptor, consentimento }),
   removerEnroll: (membroId) => del(`/face/membros/${membroId}/enroll`),
 };

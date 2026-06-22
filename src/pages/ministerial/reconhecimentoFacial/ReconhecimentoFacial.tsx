@@ -40,6 +40,13 @@ async function descritorDaFoto(url: string): Promise<number[] | null> {
   const det = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
   return det ? Array.from(det.descriptor) : null;
 }
+// Gera o vetor a partir da foto do membro, carregada via PROXY (mesmo domínio /
+// blob) pra não esbarrar em CORS (foto do PCO/app é cross-origin).
+async function descritorDoMembro(id: string): Promise<number[] | null> {
+  const url = await face.fotoBlobUrl(id);
+  try { return await descritorDaFoto(url); }
+  finally { URL.revokeObjectURL(url); }
+}
 
 function capturarBestShot(video: HTMLVideoElement | null): string | null {
   if (!video || !video.videoWidth) return null;
@@ -52,6 +59,46 @@ function capturarBestShot(video: HTMLVideoElement | null): string | null {
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/jpeg', 0.7);
 }
+
+// ── Gate de qualidade · só reconhece ROSTO INTEIRO e DE FRENTE ──────────────
+// Evita poluir as análises com rosto parcial/de lado/cabeça baixa.
+function mean(pts: any[]) { const n = pts.length || 1; let x = 0, y = 0; for (const p of pts) { x += p.x; y += p.y; } return { x: x / n, y: y / n }; }
+function rostoFrontalOk(det: any, video: HTMLVideoElement): boolean {
+  const score = det?.detection?.score ?? 0;
+  if (score < 0.9) return false;                                   // confiança alta
+  const box = det.detection.box;
+  if (box.width < video.videoWidth * 0.16) return false;          // rosto grande o suficiente
+  const lm = det.landmarks;
+  const le = mean(lm.getLeftEye()), re = mean(lm.getRightEye());
+  const noseArr = lm.getNose(); const noseTip = noseArr[noseArr.length - 1] || mean(noseArr);
+  const jaw = lm.getJawOutline(); if (!jaw || jaw.length < 9) return false;
+  const chin = jaw[Math.floor(jaw.length / 2)];
+  const eyeDist = Math.hypot(re.x - le.x, re.y - le.y); if (!eyeDist) return false;
+  const roll = Math.abs(Math.atan2(re.y - le.y, re.x - le.x) * 180 / Math.PI);
+  if (roll > 12) return false;                                     // cabeça inclinada
+  const eyeMidX = (le.x + re.x) / 2;
+  if (Math.abs(noseTip.x - eyeMidX) / eyeDist > 0.35) return false; // virada de lado (yaw)
+  const eyeMidY = (le.y + re.y) / 2; const faceH = chin.y - eyeMidY; if (faceH <= 0) return false;
+  const r = (noseTip.y - eyeMidY) / faceH;
+  if (r < 0.28 || r > 0.62) return false;                          // cabeça baixa/erguida (pitch)
+  const dl = Math.hypot(noseTip.x - jaw[0].x, noseTip.y - jaw[0].y);
+  const dr = Math.hypot(noseTip.x - jaw[jaw.length - 1].x, noseTip.y - jaw[jaw.length - 1].y);
+  const sym = dr ? dl / dr : 0;
+  if (sym < 0.6 || sym > 1.66) return false;                       // assimetria (yaw)
+  return true;
+}
+function desenharBox(canvas: HTMLCanvasElement | null, video: HTMLVideoElement, det: any, ok: boolean) {
+  if (!canvas) return;
+  try {
+    const dims = faceapi.matchDimensions(canvas, video, true);
+    const resized = faceapi.resizeResults(det, dims);
+    const b = resized.detection.box; const ctx = canvas.getContext('2d'); if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 3; ctx.strokeStyle = ok ? '#00B39D' : '#f59e0b';
+    ctx.strokeRect(b.x, b.y, b.width, b.height);
+  } catch { /* ignore */ }
+}
+function limparCanvas(canvas: HTMLCanvasElement | null) { if (!canvas) return; const ctx = canvas.getContext('2d'); if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height); }
 
 function fmtData(s?: string) {
   if (!s) return '—';
@@ -77,7 +124,7 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
 // ── Aba 1 · Reconhecimento (automático ou manual) ───────────────────────────
 type LogItem = { id: number; tipo: string; nome?: string; visitas?: number; confianca?: number; hora: string };
 function AbaReconhecer() {
-  const { videoRef, canvasRef, isDetecting, startCamera, stopCamera, detectFace, switchCamera } = useFaceDetection();
+  const { videoRef, canvasRef, startCamera, stopCamera, switchCamera } = useFaceDetection();
   const [ativa, setAtiva] = useState(false);
   const [conectando, setConectando] = useState(false);
   const [auto, setAuto] = useState(true);
@@ -105,13 +152,20 @@ function AbaReconhecer() {
   }, []);
 
   const passo = useCallback(async (entrada: string) => {
-    const d = await detectFace();
-    if (!d) return false;
-    const best_shot = capturarBestShot(videoRef.current);
-    const r = await reconhecer.mutateAsync({ descriptor: Array.from(d), entrada, best_shot });
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return false;
+    // Detecção própria com landmarks → gate de ROSTO INTEIRO e DE FRENTE.
+    const det: any = await faceapi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
+    if (!det) { limparCanvas(canvasRef.current); return false; }
+    const ok = rostoFrontalOk(det, video);
+    desenharBox(canvasRef.current, video, det, ok);
+    if (!ok) { setStatus('Rosto parcial / de lado — mostre o rosto inteiro, de frente.'); return false; }
+    setStatus('');
+    const best_shot = capturarBestShot(video);
+    const r = await reconhecer.mutateAsync({ descriptor: Array.from(det.descriptor), entrada, best_shot });
     addLog(r);
     return true;
-  }, [detectFace, reconhecer, videoRef, addLog]);
+  }, [reconhecer, videoRef, canvasRef, addLog]);
 
   // Loop automático: detecta continuamente; ao achar rosto (respeitando cooldown), reconhece.
   useEffect(() => {
@@ -156,7 +210,7 @@ function AbaReconhecer() {
       setCadastro((c) => ({ ...c, fila: filaRef.current.length }));
       enrollRef.current = true;
       try {
-        const desc = await descritorDaFoto(m.foto_url);
+        const desc = await descritorDoMembro(m.id);
         if (desc) { await face.enroll(m.id, desc, true); setCadastro((c) => ({ ...c, feitos: c.feitos + 1 })); }
       } catch { /* foto sem rosto / erro · ignora */ }
       finally { enrollRef.current = false; }
@@ -204,8 +258,8 @@ function AbaReconhecer() {
         ) : (
           <>
             {!auto && (
-              <Button onClick={escanearManual} disabled={isDetecting || reconhecer.isPending} style={{ background: PRIMARY }}>
-                {(isDetecting || reconhecer.isPending) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Scan className="w-4 h-4 mr-1" />} Escanear
+              <Button onClick={escanearManual} disabled={reconhecer.isPending} style={{ background: PRIMARY }}>
+                {reconhecer.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Scan className="w-4 h-4 mr-1" />} Escanear
               </Button>
             )}
             <Button variant="outline" onClick={switchCamera}><SwitchCamera className="w-4 h-4 mr-1" /> Trocar</Button>
@@ -376,7 +430,7 @@ function AbaCadastrar() {
     for (const m of alvo) {
       if (pararRef.current) break;
       try {
-        const desc = await descritorDaFoto(m.foto_url);
+        const desc = await descritorDoMembro(m.id);
         if (!desc) { setProg((p) => ({ ...p, feitos: p.feitos + 1, semRosto: p.semRosto + 1 })); continue; }
         await face.enroll(m.id, desc, true);
         setProg((p) => ({ ...p, feitos: p.feitos + 1, ok: p.ok + 1 }));
