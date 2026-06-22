@@ -17,9 +17,8 @@ const levelConfig = {
   inactive: { label: 'Inativo', color: '#ef4444', bgClass: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' },
 };
 
-// Limite de "servindo demais" por período (nº de serviços efetivos = check-ins).
-// Acima disso, risco de sobrecarga — a liderança deve aliviar a escala.
-const OVERLOAD_BY_PERIOD: Record<string, number> = { week: 3, month: 8, quarter: 20, semester: 35, year: 60, all: 60 };
+// Crítico / risco de sobrecarga: servir 8+ vezes no período (decisão Matheus).
+const LIMITE_SOBRECARGA = 8;
 
 export default function VolunteerThermometer({ data, period = 'month' }: { data: ThermometerEntry[]; period?: string }) {
   const sorted = [...data].sort((a, b) => b.rate - a.rate);
@@ -27,8 +26,8 @@ export default function VolunteerThermometer({ data, period = 'month' }: { data:
   sorted.forEach(v => counts[v.level]++);
   const total = sorted.length;
 
-  // "Servindo demais": ranqueado por serviços efetivos (check-ins) no período.
-  const limite = OVERLOAD_BY_PERIOD[period] ?? 8;
+  // "Servindo demais": crítico = serviu 8+ vezes no período. Ranqueado por volume.
+  const limite = LIMITE_SOBRECARGA;
   const sobrecarga = [...data]
     .map(v => ({ ...v, servidos: v.checkedIn }))
     .filter(v => v.servidos >= limite)
