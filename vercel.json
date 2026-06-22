@@ -114,6 +114,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/face/cron/expurgo",
+      "schedule": "0 4 * * *"
+    },
+    {
       "path": "/api/notificacoes/cron/alerta-culto-dados",
       "schedule": "0 13 * * 1"
     }

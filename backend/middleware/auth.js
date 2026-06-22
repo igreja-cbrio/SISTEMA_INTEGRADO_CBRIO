@@ -34,6 +34,7 @@ const ROUTE_MODULE_MAP = {
   'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
+  'face':         ['face'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],
   'totem-kids':   ['kids'],

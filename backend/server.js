@@ -130,6 +130,7 @@ app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));
+app.use('/api/face', require('./routes/face'));
 app.use('/api/tutorial', require('./routes/tutorial'));
 app.use('/api/grupos', require('./routes/grupos'));
 app.use('/api/kpis/v2', require('./routes/kpisV2'));
