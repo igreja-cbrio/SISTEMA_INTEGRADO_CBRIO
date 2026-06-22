@@ -33,13 +33,19 @@ function fmtData(s?: string) {
 
 // ── Aba 1 · Reconhecimento (teste com webcam) ───────────────────────────────
 function AbaReconhecer() {
-  const { videoRef, canvasRef, isLoading, isDetecting, startCamera, stopCamera, detectFace, switchCamera } = useFaceDetection();
+  const { videoRef, canvasRef, isDetecting, startCamera, stopCamera, detectFace, switchCamera } = useFaceDetection();
   const [ativa, setAtiva] = useState(false);
+  const [conectando, setConectando] = useState(false);
   const [resultado, setResultado] = useState<any>(null);
   const [status, setStatus] = useState('');
   const reconhecer = useMutation({ mutationFn: (data: any) => face.reconhecer(data) });
 
-  const ligar = useCallback(async () => { await startCamera(); setAtiva(true); }, [startCamera]);
+  const ligar = useCallback(async () => {
+    setConectando(true); setStatus('');
+    try { await startCamera(); setAtiva(true); }
+    catch (e: any) { setStatus(e?.message || 'Não consegui acessar a câmera. Permita o acesso no navegador.'); }
+    finally { setConectando(false); }
+  }, [startCamera]);
   const desligar = useCallback(() => { stopCamera(); setAtiva(false); }, [stopCamera]);
 
   const escanear = useCallback(async () => {
@@ -66,8 +72,8 @@ function AbaReconhecer() {
       </div>
       <div className="flex flex-wrap gap-2">
         {!ativa ? (
-          <Button onClick={ligar} disabled={isLoading}>
-            {isLoading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Camera className="w-4 h-4 mr-1" />} Ligar câmera
+          <Button onClick={ligar} disabled={conectando} style={{ background: PRIMARY }}>
+            {conectando ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Camera className="w-4 h-4 mr-1" />} Ligar câmera
           </Button>
         ) : (
           <>
