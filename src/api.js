@@ -1534,6 +1534,7 @@ export const membresia = {
     remove: (id) => del(`/membresia/membros/${id}`),
     uploadFoto: (id, formData) => requestFile(`/membresia/membros/${id}/foto`, formData),
     wifi: (id) => get(`/membresia/membros/${id}/wifi`),
+    reconhecimentoFacial: (id) => get(`/membresia/membros/${id}/reconhecimento-facial`),
   },
   trilha: {
     create: (data) => post('/membresia/trilha', data),
