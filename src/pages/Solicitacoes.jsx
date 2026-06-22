@@ -1171,6 +1171,8 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg }) {
         const aguardandoOrigem = item.status === 'aguardando_aprovacao_origem' && ['pendente', 'triagem'].includes(item.aprovacao_origem_status);
         const emTriagem = item.aprovacao_origem_status === 'triagem';
         const diretorNome = item.aprovacao_origem_diretor?.name;
+        const aprovadoresLista = Array.isArray(item.aprovacao_origem_aprovadores) ? item.aprovacao_origem_aprovadores.filter(Boolean) : [];
+        const aprovadoresLabel = aprovadoresLista.length ? aprovadoresLista.join(' ou ') : (diretorNome || 'diretor de origem');
         const foiRejeitada = item.status === 'rejeitado' && item.aprovacao_origem_status === 'rejeitada';
         return (
           <Card
@@ -1210,7 +1212,7 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg }) {
               <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
                 {emTriagem
                   ? <>⏳ Em triagem · definindo o aprovador{item.eh_urgente ? ' · urgente' : ''}</>
-                  : <>⏳ Aguardando aprovação de <span className="font-medium">{diretorNome || 'diretor de origem'}</span>{item.eh_urgente ? ' · urgente' : ''}</>}
+                  : <>⏳ Aguardando aprovação de <span className="font-medium">{aprovadoresLabel}</span>{item.eh_urgente ? ' · urgente' : ''}</>}
               </p>
             )}
             {foiRejeitada && item.aprovacao_origem_motivo && (

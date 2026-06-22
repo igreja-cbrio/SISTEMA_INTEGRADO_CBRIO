@@ -1655,6 +1655,34 @@ specs e fases no legado. Estado vigente:
 
 ## Solicitações · backbone administrativo (estado consolidado)
 
+### Co-aprovadores de origem + e-mail das aprovações (2026-06-22)
+Pedido (gestão): a vice-diretora **Juliana Leão** (`juliana.leao@cbrio.org` ·
+cargo `diretor-rh` · solicitações nível 2) aprova as solicitações de origem do
+**setor Gestão JUNTO com o Eduardo Gnisci** — qualquer um dos dois (não os dois).
+- **Tabela `setor_coaprovadores`** (migration `20260622140000` · aditiva ·
+  `setor` FK `setor_diretor` + `profile_id` FK `profiles` + `nome` snapshot · RLS
+  catálogo: read autenticado / write super-admin / service). Seed: Gestão→Juliana.
+  Para outro setor, é só inserir uma linha.
+- **`solicitacoes.js`** (helpers `setoresQueCoaprova`/`diretorIdsQuePodeAprovar`/
+  `podeAprovarOrigem`/`coaprovadorIdsParaDiretor` · **best-effort**, degradam pro
+  diretor-só se a tabela faltar): aba `aprovar` e `meu-papel` (`eh_diretor_origem`
+  + contagem) incluem os setores co-aprovados; `aprovar-origem`/`rejeitar-origem`
+  aceitam co-aprovador (motivo registra quem foi · NÃO sobrescreve o diretor_id);
+  o GET lista devolve `aprovacao_origem_aprovadores` (nomes) e a UI mostra
+  "Aguardando aprovação de **Eduardo ou Juliana**". O alerta de origem no POST
+  notifica diretor + co-aprovadores.
+- **E-mail das aprovações**: `notificar({..., email:true})` (novo param) manda
+  e-mail pros mesmos destinatários do aviso in-app (herda a dedup). Hoje ligado
+  só no alerta "Aprovar solicitação" (vai pros aprovadores · ex.: Eduardo +
+  Juliana). Canal em `services/email.js`: **primário = Microsoft Graph** (mesma
+  config do SharePoint/Cérebro · `MICROSOFT_TENANT_ID/CLIENT_ID/CLIENT_SECRET` +
+  `getGraphToken`), **fallback = Resend**. Remetente Graph = `GRAPH_MAIL_SENDER ||
+  MERGE_MAIL_SENDER || noreply@cbrio.org` (caixa real do tenant · app Azure
+  precisa de `Mail.Send`). `FRONTEND_URL` vira o link "Abrir no sistema".
+  No-op gracioso se nenhum canal estiver configurado.
+- ⚠️ Aplicar a migration `20260622140000` antes do merge (backend tolera ausência,
+  mas o recurso só funciona com a tabela criada).
+
 Fonte única dos KPIs administrativos (SLA, NPS, throughput, urgência). Schema:
 `sla_definicoes` (prazos por área/subcategoria), `area_alcadas`,
 `solicitacoes_eventos` (audit), views `vw_solicitacoes_sla` (alimenta KPIs ADM
