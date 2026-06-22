@@ -326,6 +326,28 @@ router.get('/cultos', authorizeModule('face', 1), async (_req, res) => {
   }
 });
 
+// Proxy da foto do membro (mesmo domínio) → o navegador lê os pixels sem CORS
+// pra gerar o vetor facial. Fonte: mem_membros.foto_url OU profiles.avatar_url.
+router.get('/membros/:id/foto', authorizeModule('face', 3), async (req, res) => {
+  try {
+    const { data: m } = await supabase.from('mem_membros').select('id, foto_url').eq('id', req.params.id).maybeSingle();
+    let url = m?.foto_url || null;
+    if (!url) {
+      const { data: p } = await supabase.from('profiles').select('avatar_url').eq('membro_id', req.params.id).not('avatar_url', 'is', null).maybeSingle();
+      url = p?.avatar_url || null;
+    }
+    if (!url) return res.status(404).json({ error: 'sem foto' });
+    const r = await fetch(url);
+    if (!r.ok) return res.status(502).json({ error: 'falha ao buscar a foto' });
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch (e) {
+    console.error('[face] foto proxy:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar foto' });
+  }
+});
+
 // ── Analytics de presença ───────────────────────────────────────────────────
 router.get('/presencas/resumo', authorizeModule('face', 1), async (req, res) => {
   try {
