@@ -1,10 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { QrCode, Hand, Scan } from 'lucide-react';
-import { useTodaysServices, useServiceSchedules, useCheckIn, useScheduleByQrCode } from './hooks';
+import { useTodaysServices, useBlockSchedules, useCheckIn, useScheduleByQrCode } from './hooks';
 import QrScanner from './components/checkin/QrScanner';
 import ManualCheckin from './components/checkin/ManualCheckin';
 import FaceScanner from './components/checkin/FaceScanner';
@@ -16,7 +16,28 @@ export default function VolCheckin() {
   const [searchParams] = useSearchParams();
   const { data: todayServices = [] } = useTodaysServices();
   const [selectedServiceId, setSelectedServiceId] = useState(searchParams.get('serviceId') || '');
-  const { data: schedules = [] } = useServiceSchedules(selectedServiceId || undefined);
+
+  // Agrupa os cultos de hoje em BLOCOS: domingo vira "Culto Manhã" / "Culto
+  // Noite" (a manhã = 08:30/10:00/11:30); demais dias = o próprio culto. Um
+  // check-in cobre o bloco inteiro (o backend deduplica/casa a escala por bloco).
+  const blocos = useMemo(() => {
+    const periodo = (iso: string) => Number(new Date(iso).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2)) < 14 ? 'manha' : 'noite';
+    const isSun = (iso: string) => new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short' }) === 'Sun';
+    const map = new Map<string, { label: string; serviceIds: string[]; primary: string; at: string }>();
+    for (const s of todayServices) {
+      const sun = isSun(s.scheduled_at);
+      const per = periodo(s.scheduled_at);
+      const k = sun ? `dom-${per}` : s.id;
+      const label = sun ? (per === 'manha' ? 'Culto Manhã' : 'Culto Noite') : `${s.name}${s.service_type_name ? ' — ' + s.service_type_name : ''}`;
+      const b = map.get(k);
+      if (!b) map.set(k, { label, serviceIds: [s.id], primary: s.id, at: s.scheduled_at });
+      else { b.serviceIds.push(s.id); if (new Date(s.scheduled_at) < new Date(b.at)) { b.primary = s.id; b.at = s.scheduled_at; } }
+    }
+    return [...map.values()].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  }, [todayServices]);
+
+  const selectedBloco = useMemo(() => blocos.find(b => b.serviceIds.includes(selectedServiceId)) || null, [blocos, selectedServiceId]);
+  const { data: schedules = [] } = useBlockSchedules(selectedBloco?.serviceIds || []);
   const checkIn = useCheckIn();
   const qrLookup = useScheduleByQrCode();
   const [success, setSuccess] = useState<{ name: string; team?: string | null; position?: string | null; unscheduled?: boolean } | null>(null);
@@ -26,9 +47,9 @@ export default function VolCheckin() {
     if (resp?.needs_cpf && resp?.volunteer_id) setContactCapture({ id: resp.volunteer_id, name });
   };
 
-  // Auto-select if only one service today
-  if (todayServices.length === 1 && !selectedServiceId) {
-    setSelectedServiceId(todayServices[0].id);
+  // Auto-select if only one block today
+  if (blocos.length === 1 && !selectedServiceId) {
+    setSelectedServiceId(blocos[0].primary);
   }
 
   const handleCheckIn = useCallback(async (scheduleId: string) => {
@@ -103,15 +124,15 @@ export default function VolCheckin() {
       {/* Service selector */}
       <Card>
         <CardContent className="p-3 md:p-4">
-          <Select value={selectedServiceId} onValueChange={setSelectedServiceId}>
+          <Select value={selectedBloco?.primary || ''} onValueChange={setSelectedServiceId}>
             <SelectTrigger className="min-h-[44px]"><SelectValue placeholder="Selecione o culto de hoje" /></SelectTrigger>
             <SelectContent>
-              {todayServices.map(svc => (
-                <SelectItem key={svc.id} value={svc.id}>{svc.name} — {svc.service_type_name || ''}</SelectItem>
+              {blocos.map(b => (
+                <SelectItem key={b.primary} value={b.primary}>{b.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {todayServices.length === 0 && <p className="text-sm text-muted-foreground mt-2">Nenhum culto agendado para hoje. Sincronize com o Planning Center.</p>}
+          {blocos.length === 0 && <p className="text-sm text-muted-foreground mt-2">Nenhum culto agendado para hoje. Sincronize com o Planning Center.</p>}
         </CardContent>
       </Card>
 

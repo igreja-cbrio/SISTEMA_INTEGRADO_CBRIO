@@ -11,6 +11,31 @@ export function useServiceSchedules(serviceId: string | undefined) {
   });
 }
 
+// Escalas de um BLOCO (vários cultos do mesmo período, ex.: manhã = 08:30/10:00/
+// 11:30). Junta as escalas dos serviços e DEDUPLICA por pessoa, preservando o
+// check-in (se a pessoa marcou presença em qualquer culto do bloco, aparece como
+// "Presente"). Assim o operador vê cada voluntário UMA vez.
+export function useBlockSchedules(serviceIds: string[]) {
+  const key = [...serviceIds].sort().join(',');
+  return useQuery<VolSchedule[]>({
+    queryKey: ['vol', 'schedules', 'block', key],
+    enabled: serviceIds.length > 0,
+    queryFn: async () => {
+      const lists = await Promise.all(serviceIds.map(id => voluntariado.schedules.list({ service_id: id })));
+      const all = lists.flat() as VolSchedule[];
+      const norm = (s?: string | null) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+      const byPerson = new Map<string, VolSchedule>();
+      for (const s of all) {
+        const k = s.planning_center_person_id || s.volunteer_id || norm(s.volunteer_name) || s.id;
+        const ex = byPerson.get(k) as any;
+        if (!ex) byPerson.set(k, { ...s });
+        else if (!ex.check_in && (s as any).check_in) ex.check_in = (s as any).check_in;
+      }
+      return [...byPerson.values()];
+    },
+  });
+}
+
 export function useMySchedules(volunteerId: string | undefined) {
   return useQuery<VolSchedule[]>({
     queryKey: ['vol', 'schedules', 'my', volunteerId],
