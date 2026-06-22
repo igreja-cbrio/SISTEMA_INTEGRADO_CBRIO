@@ -239,6 +239,8 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 // Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
+// /atlas · atlas operacional do sistema (manual + auditoria) · standalone, autenticado, fora do menu.
+const Atlas = lazyWithRetry(() => import('./pages/atlas/Atlas'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
 const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
@@ -438,6 +440,9 @@ function AppRoutes() {
 
       {/* Preview de design (estilo Rondesignlab) · fullscreen isolado · não-produção */}
       <Route path="/design-preview" element={<ProtectedRoute><Suspense fallback={<Loading />}><DesignPreview /></Suspense></ProtectedRoute>} />
+
+      {/* /atlas · atlas operacional do sistema (manual + auditoria) · fullscreen isolado, autenticado, fora do menu */}
+      <Route path="/atlas" element={<ProtectedRoute><Suspense fallback={<Loading />}><Atlas /></Suspense></ProtectedRoute>} />
 
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
