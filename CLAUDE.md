@@ -1672,11 +1672,14 @@ cargo `diretor-rh` · solicitações nível 2) aprova as solicitações de orige
   "Aguardando aprovação de **Eduardo ou Juliana**". O alerta de origem no POST
   notifica diretor + co-aprovadores.
 - **E-mail das aprovações**: `notificar({..., email:true})` (novo param) manda
-  e-mail via `services/email.js` (**Resend**) pros mesmos destinatários do aviso
-  in-app (herda a dedup). Hoje ligado só no alerta "Aprovar solicitação" (vai pros
-  aprovadores). ⚠️ **No-op gracioso sem `RESEND_API_KEY`** — pra ligar de verdade:
-  setar `RESEND_API_KEY` + `RESEND_FROM` (ex.: `CBRio <avisos@cbrio.org>`, domínio
-  verificado no Resend) no Vercel. `FRONTEND_URL` vira o link "Abrir no sistema".
+  e-mail pros mesmos destinatários do aviso in-app (herda a dedup). Hoje ligado
+  só no alerta "Aprovar solicitação" (vai pros aprovadores · ex.: Eduardo +
+  Juliana). Canal em `services/email.js`: **primário = Microsoft Graph** (mesma
+  config do SharePoint/Cérebro · `MICROSOFT_TENANT_ID/CLIENT_ID/CLIENT_SECRET` +
+  `getGraphToken`), **fallback = Resend**. Remetente Graph = `GRAPH_MAIL_SENDER ||
+  MERGE_MAIL_SENDER || noreply@cbrio.org` (caixa real do tenant · app Azure
+  precisa de `Mail.Send`). `FRONTEND_URL` vira o link "Abrir no sistema".
+  No-op gracioso se nenhum canal estiver configurado.
 - ⚠️ Aplicar a migration `20260622140000` antes do merge (backend tolera ausência,
   mas o recurso só funciona com a tabela criada).
 
