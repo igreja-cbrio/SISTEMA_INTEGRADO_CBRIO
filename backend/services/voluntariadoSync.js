@@ -6,7 +6,8 @@
 const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchAllServiceTypes, fetchAllPlans, fetchAllTeamPersons,
-  processServiceType, PC_SERVICES_BASE, upsertVolunteerQrCodes, upsertVolunteerProfiles,
+  fetchAllServicesPeople, processServiceType, PC_SERVICES_BASE,
+  upsertVolunteerQrCodes, upsertVolunteerProfiles,
 } = require('./planningCenter');
 
 async function executarSyncCompleto() {
@@ -49,6 +50,17 @@ async function executarSyncCompleto() {
     }
   }
 
+  // Complementa com TODAS as people do Services (inclui quem nunca foi escalado
+  // e não está em nenhuma equipe) — pra o sistema espelhar o total do PCO.
+  let servicesPeople = 0;
+  try {
+    const allPeople = await fetchAllServicesPeople(credentials);
+    servicesPeople = allPeople.size;
+    for (const [k, v] of allPeople) if (!allVolunteers.has(k)) allVolunteers.set(k, v);
+  } catch (e) {
+    console.error('[VOL SYNC] fetchAllServicesPeople:', e.message);
+  }
+
   const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
   const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
   const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
@@ -58,6 +70,7 @@ async function executarSyncCompleto() {
     schedules: totalSchedules,
     qrCodesGenerated: qrCount,
     volunteersSynced: profilesCount,
+    servicesPeople,
     avatarsImported,
     totalMembersFound,
     totalMembersProcessed,
