@@ -1671,6 +1671,12 @@ cargo `diretor-rh` · solicitações nível 2) aprova as solicitações de orige
   o GET lista devolve `aprovacao_origem_aprovadores` (nomes) e a UI mostra
   "Aguardando aprovação de **Eduardo ou Juliana**". O alerta de origem no POST
   notifica diretor + co-aprovadores.
+- **Kanban · coluna "Aguardando aprovação" (2026-06-22)**: `aguardando_aprovacao_origem`
+  ganhou coluna PRÓPRIA no board da aba "Atender" (`KANBAN_COLUMNS` · `readOnly:true`,
+  match `aguardando_aprovacao_origem`). Antes sumia do quadro (aparecia só na Lista) —
+  o responsável da área (ex.: Amaury em compras) vê que a solicitação está vindo mas
+  **não pode movê-la** (card não-arrastável + coluna não aceita drop · quem aprova é o
+  diretor/co-aprovador na aba "Aprovar"). Grid do board foi pra 7 colunas.
 - **E-mail das aprovações**: `notificar({..., email:true})` (novo param) manda
   e-mail pros mesmos destinatários do aviso in-app (herda a dedup). Hoje ligado
   só no alerta "Aprovar solicitação" (vai pros aprovadores · ex.: Eduardo +
