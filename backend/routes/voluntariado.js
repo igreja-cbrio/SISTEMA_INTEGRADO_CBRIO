@@ -149,6 +149,44 @@ function extrairControleXlsx(buffer) {
   return registros;
 }
 
+// Extrai o CADASTRO de inscritos (coluna "Inscritos (fixo)" · col A, linhas 2+)
+// de cada aba da planilha de controle. Inclui quem serviu 0 vezes. Ignora o
+// layout CSV simples (cabeçalho nome,data,...).
+function extrairInscritosXlsx(buffer) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const nomes = new Set();
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName]; if (!ws) continue;
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    const head0 = (aoa[0] || []).map((c) => normNome(c));
+    if (head0.indexOf('nome') >= 0 && head0.indexOf('data') >= 0) continue;
+    for (let r = 2; r < aoa.length; r++) {
+      const nome = (aoa[r] && aoa[r][0] != null ? String(aoa[r][0]) : '').trim();
+      if (nome) nomes.add(nome);
+    }
+  }
+  return [...nomes];
+}
+
+// Vincula inscritos a vol_profiles por nome normalizado ÚNICO (e puxa o membro
+// pelo membresia_id do perfil). Ambíguo não casa.
+async function linkInscritos() {
+  const { data: profs } = await supabase.from('vol_profiles').select('id, full_name, membresia_id');
+  const map = new Map(); const dup = new Set();
+  for (const p of profs || []) { const k = normNome(p.full_name); if (!k) continue; if (map.has(k)) dup.add(k); else map.set(k, p); }
+  for (const k of dup) map.delete(k);
+  const { data: ins } = await supabase.from('vol_inscritos').select('id, nome_norm').is('vol_profile_id', null).is('deleted_at', null);
+  let n = 0;
+  for (const it of ins || []) {
+    const p = map.get(it.nome_norm);
+    if (!p) continue;
+    const { error } = await supabase.from('vol_inscritos').update({ vol_profile_id: p.id, membro_id: p.membresia_id || null, updated_at: new Date().toISOString() }).eq('id', it.id);
+    if (!error) n += 1;
+  }
+  return n;
+}
+
 // Casa nomes da planilha (não vinculados) com vol_profiles por nome normalizado.
 // Match só quando o nome normalizado é único entre os perfis (ambíguo não casa).
 async function rematchFrequencia() {
@@ -238,7 +276,30 @@ router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.s
       if (error) return res.status(400).json({ error: 'Falha ao gravar: ' + error.message });
     }
     const vinculadas = await rematchFrequencia();
-    res.json({ processadas: registros.length, nomes_vinculados: vinculadas, ignorados_nao_pessoa: ignoradosNaoPessoa });
+
+    // Captura o CADASTRO de inscritos (coluna A) — é o que faz quem serviu 0
+    // vezes aparecer na frequência como inativo.
+    let inscritos = 0;
+    if (ehXlsx) {
+      try {
+        const nomesIns = extrairInscritosXlsx(req.file.buffer);
+        let skip = new Set();
+        try { const { nomesNaoPessoa } = require('../services/volNomeFiltro'); skip = await nomesNaoPessoa(nomesIns); } catch (e) { /* segue */ }
+        const linhas = []; const vistosI = new Set();
+        for (const nome of nomesIns) {
+          const nn = normNome(nome);
+          if (!nn || skip.has(nn) || vistosI.has(nn)) continue;
+          vistosI.add(nn);
+          linhas.push({ nome_planilha: nome, nome_norm: nn, origem });
+        }
+        for (let i = 0; i < linhas.length; i += 500) {
+          await supabase.from('vol_inscritos').upsert(linhas.slice(i, i + 500), { onConflict: 'nome_norm,origem', ignoreDuplicates: true });
+        }
+        inscritos = linhas.length;
+        await linkInscritos();
+      } catch (e) { console.warn('[vol] inscritos:', e.message); }
+    }
+    res.json({ processadas: registros.length, nomes_vinculados: vinculadas, ignorados_nao_pessoa: ignoradosNaoPessoa, inscritos });
   } catch (e) {
     console.error('[vol] importar frequencia', e.message);
     res.status(500).json({ error: 'Erro ao importar o controle' });
