@@ -92,11 +92,14 @@ export const tutorial = {
 // Reconhecimento facial na entrada · membro-ou-anônimo + rostos a resolver
 export const face = {
   reconhecer: (data) => post('/face/reconhecer', data),
-  resumo: (dias) => get('/face/presencas/resumo' + (dias ? `?dias=${dias}` : '')),
+  resumo: (params) => get('/face/presencas/resumo' + (params ? '?' + new URLSearchParams(params) : '')),
+  presencaLista: (params) => get('/face/presencas/lista' + (params ? '?' + new URLSearchParams(params) : '')),
+  cultos: () => get('/face/cultos'),
   anonimos: (params) => get('/face/anonimos' + (params ? '?' + new URLSearchParams(params) : '')),
   vincular: (anonId, membro_id) => post(`/face/anonimos/${anonId}/vincular`, { membro_id }),
   cadastrar: (anonId, data) => post(`/face/anonimos/${anonId}/cadastrar`, data),
   descartar: (anonId) => post(`/face/anonimos/${anonId}/descartar`, {}),
+  galeria: (params) => get('/face/membros/galeria' + (params ? '?' + new URLSearchParams(params) : '')),
   enroll: (membroId, descriptor, consentimento) => post(`/face/membros/${membroId}/enroll`, { descriptor, consentimento }),
   removerEnroll: (membroId) => del(`/face/membros/${membroId}/enroll`),
 };

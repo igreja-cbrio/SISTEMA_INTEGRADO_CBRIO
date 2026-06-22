@@ -226,33 +226,91 @@ router.delete('/membros/:id/enroll', authorizeModule('face', 3), async (req, res
   }
 });
 
+// ── Galeria de membros pra cadastro de rosto em lote ───────────────────────
+// O browser roda o face-api nas FOTOS já existentes e enrolla cada descriptor.
+router.get('/membros/galeria', authorizeModule('face', 3), async (req, res) => {
+  try {
+    const semRosto = req.query.sem_rosto === '1';
+    const limit = Math.min(parseInt(req.query.limit, 10) || 1500, 3000);
+    let q = supabase.from('mem_membros')
+      .select('id, nome, foto_url, face_cadastrado_em')
+      .is('deleted_at', null)
+      .not('foto_url', 'is', null)
+      .order('face_cadastrado_em', { ascending: true, nullsFirst: true })
+      .limit(limit);
+    if (semRosto) q = q.is('face_cadastrado_em', null);
+    const { data, error } = await q;
+    if (error) throw error;
+    const itens = (data || []).map((m) => ({ id: m.id, nome: m.nome, foto_url: m.foto_url, ja: !!m.face_cadastrado_em }));
+    // contagem total de membros com rosto cadastrado (galeria viva)
+    const { count: cadastrados } = await supabase.from('mem_membros')
+      .select('id', { count: 'exact', head: true }).is('deleted_at', null).not('face_cadastrado_em', 'is', null);
+    res.json({ itens, com_foto: itens.length, cadastrados: cadastrados || 0 });
+  } catch (e) {
+    console.error('[face] galeria:', e.message);
+    res.status(500).json({ error: 'Erro ao listar galeria de membros' });
+  }
+});
+
+// ── Janela de presença (presets de dias OU um dia de culto específico) ──────
+function janelaPresenca(req) {
+  const dia = /^\d{4}-\d{2}-\d{2}$/.test(req.query.dia || '') ? req.query.dia : null;
+  if (dia) {
+    const base = new Date(dia + 'T00:00:00');
+    return { desde: base.toISOString(), ate: new Date(base.getTime() + 864e5).toISOString(), label: dia };
+  }
+  const dias = Math.min(parseInt(req.query.dias, 10) || 30, 365);
+  return { desde: new Date(Date.now() - dias * 864e5).toISOString(), ate: null, dias, label: `${dias} dias` };
+}
+
+async function fetchPresencas(desde, ate) {
+  let rows = []; let offset = 0;
+  while (true) {
+    let q = supabase.from('face_presencas').select('membro_id, anon_id, reconhecido_em, culto_id').gte('reconhecido_em', desde);
+    if (ate) q = q.lt('reconhecido_em', ate);
+    const { data, error } = await q.range(offset, offset + 999);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    rows = rows.concat(data);
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+  return rows;
+}
+
+// GET /cultos → cultos recentes pro filtro "dia de culto específico"
+router.get('/cultos', authorizeModule('face', 1), async (_req, res) => {
+  try {
+    const desde = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
+    const { data, error } = await supabase.from('cultos')
+      .select('id, data, service_type_id').gte('data', desde).order('data', { ascending: false }).limit(80);
+    if (error) throw error;
+    const stIds = [...new Set((data || []).map((c) => c.service_type_id).filter(Boolean))];
+    const nomes = new Map();
+    if (stIds.length) {
+      const { data: sts } = await supabase.from('vol_service_types').select('id, name').in('id', stIds);
+      (sts || []).forEach((s) => nomes.set(s.id, s.name));
+    }
+    res.json((data || []).map((c) => ({ id: c.id, data: c.data, nome: nomes.get(c.service_type_id) || 'Culto' })));
+  } catch (e) {
+    console.error('[face] cultos:', e.message);
+    res.status(500).json({ error: 'Erro ao listar cultos' });
+  }
+});
+
 // ── Analytics de presença ───────────────────────────────────────────────────
 router.get('/presencas/resumo', authorizeModule('face', 1), async (req, res) => {
   try {
-    const dias = Math.min(parseInt(req.query.dias, 10) || 30, 365);
-    const desde = new Date(Date.now() - dias * 864e5).toISOString();
-    // paginação (cap 1000 do PostgREST)
-    let presencas = []; let offset = 0;
-    while (true) {
-      const { data, error } = await supabase.from('face_presencas')
-        .select('membro_id, anon_id, reconhecido_em')
-        .gte('reconhecido_em', desde)
-        .range(offset, offset + 999);
-      if (error) throw error;
-      if (!data || !data.length) break;
-      presencas = presencas.concat(data);
-      if (data.length < 1000) break;
-      offset += 1000;
-    }
+    const j = janelaPresenca(req);
+    const presencas = await fetchPresencas(j.desde, j.ate);
     const membrosUnicos = new Set(presencas.filter((p) => p.membro_id).map((p) => p.membro_id));
     const anonUnicos = new Set(presencas.filter((p) => p.anon_id).map((p) => p.anon_id));
-    // anônimos recorrentes (visitas >= 2 · prováveis frequentadores a acolher)
     const { count: recorrentes } = await supabase.from('face_anonimos')
       .select('id', { count: 'exact', head: true }).eq('status', 'pendente').gte('visitas', 2);
     const { count: pendentes } = await supabase.from('face_anonimos')
       .select('id', { count: 'exact', head: true }).eq('status', 'pendente');
     res.json({
-      dias,
+      janela: j.label,
       total_reconhecimentos: presencas.length,
       membros_identificados: membrosUnicos.size,
       anonimos_distintos: anonUnicos.size,
@@ -262,6 +320,54 @@ router.get('/presencas/resumo', authorizeModule('face', 1), async (req, res) => 
   } catch (e) {
     console.error('[face] resumo:', e.message);
     res.status(500).json({ error: 'Erro no resumo de presença' });
+  }
+});
+
+// GET /presencas/lista?tipo=todos|membros|anonimos|recorrentes&dias=&dia=
+// Lista as PESSOAS dentro do filtro (1 linha por pessoa · membro ou anônimo).
+router.get('/presencas/lista', authorizeModule('face', 1), async (req, res) => {
+  try {
+    const j = janelaPresenca(req);
+    const tipo = ['todos', 'membros', 'anonimos', 'recorrentes'].includes(req.query.tipo) ? req.query.tipo : 'todos';
+    const presencas = await fetchPresencas(j.desde, j.ate);
+    // agrega por pessoa
+    const ag = new Map(); // key -> { tipo, id, n, ultima }
+    for (const p of presencas) {
+      const key = p.membro_id ? 'm:' + p.membro_id : (p.anon_id ? 'a:' + p.anon_id : null);
+      if (!key) continue;
+      const cur = ag.get(key) || { tipo: p.membro_id ? 'membro' : 'anonimo', id: p.membro_id || p.anon_id, n: 0, ultima: null };
+      cur.n += 1;
+      if (!cur.ultima || p.reconhecido_em > cur.ultima) cur.ultima = p.reconhecido_em;
+      ag.set(key, cur);
+    }
+    let itens = [...ag.values()];
+    // resolve nomes/fotos
+    const memIds = itens.filter((i) => i.tipo === 'membro').map((i) => i.id);
+    const anonIds = itens.filter((i) => i.tipo === 'anonimo').map((i) => i.id);
+    if (memIds.length) {
+      const { data: ms } = await supabase.from('mem_membros').select('id, nome, foto_url, telefone').in('id', memIds);
+      const map = new Map((ms || []).map((m) => [m.id, m]));
+      itens.forEach((i) => { if (i.tipo === 'membro') { const m = map.get(i.id); i.nome = m?.nome || 'Membro'; i.foto_url = m?.foto_url || null; i.telefone = m?.telefone || null; } });
+    }
+    if (anonIds.length) {
+      const { data: as } = await supabase.from('face_anonimos').select('id, visitas, best_shot_path').in('id', anonIds);
+      const map = new Map((as || []).map((a) => [a.id, a]));
+      for (const i of itens) {
+        if (i.tipo !== 'anonimo') continue;
+        const a = map.get(i.id);
+        i.visitas = a?.visitas || i.n;
+        i.nome = 'Anônimo';
+        if (a?.best_shot_path) { const { data: s } = await supabase.storage.from(BUCKET).createSignedUrl(a.best_shot_path, 900); i.best_shot_url = s?.signedUrl || null; }
+      }
+    }
+    if (tipo === 'membros') itens = itens.filter((i) => i.tipo === 'membro');
+    else if (tipo === 'anonimos') itens = itens.filter((i) => i.tipo === 'anonimo');
+    else if (tipo === 'recorrentes') itens = itens.filter((i) => i.tipo === 'anonimo' && (i.visitas || 0) >= 2);
+    itens.sort((a, b) => (b.ultima || '').localeCompare(a.ultima || ''));
+    res.json({ janela: j.label, total: itens.length, itens });
+  } catch (e) {
+    console.error('[face] lista presenças:', e.message);
+    res.status(500).json({ error: 'Erro na lista de presenças' });
   }
 });
 
