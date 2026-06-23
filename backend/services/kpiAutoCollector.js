@@ -210,6 +210,15 @@ const COLLECTORS = {
     return { valor: total };
   },
 
+  // Conversões/decisões do Kids · soma de cultos.decisoes_kids no período
+  // (mesma fonte do consolidado do totem/integração). Faltava o coletor kids
+  // (ami/bridge/sede/online já existiam) → KIDS-02 ficava sem dado.
+  'cultos.kids_conv': async ({ inicio, fim }) => {
+    const { data } = await supabase.from('cultos').select('decisoes_kids, data').gte('data', inicio).lt('data', fim);
+    const total = (data || []).reduce((s, c) => s + (c.decisoes_kids || 0), 0);
+    return { valor: total, observacao: `${total} decisão(ões) kids no período` };
+  },
+
   // ── Cultos: Sede (Domingos + Quarta com Deus) ──
   'cultos.sede_freq': async ({ inicio, fim }) => {
     const { data } = await supabase.from('vw_culto_stats').select('nome, service_type_name, presencial_adulto').gte('data', inicio).lt('data', fim);

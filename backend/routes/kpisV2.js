@@ -105,6 +105,49 @@ router.post('/coletar', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Backfill histórico (admin) · roda a coleta semana a semana pra trás, pra
+// popular kpi_registros/valores_calculados de TODOS os períodos passados (não
+// só o atual, que é o que o cron/coletar faz). Necessário quando um KPI passou
+// a ter fonte_auto só agora (ex.: KIDS-02/03) ou o histórico ficou vazio.
+// Idempotente (re-rodar não duplica · upsert por indicador+período).
+// Filtre por fontes/areas pra não estourar o tempo da function.
+// ----------------------------------------------------------------------------
+router.post('/coletar/backfill', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const meses = Math.min(Math.max(Number(req.body?.meses ?? req.query.meses) || 6, 1), 24);
+    const fontes = req.query.fontes ? String(req.query.fontes).split(',').filter(Boolean)
+      : (Array.isArray(req.body?.fontes) ? req.body.fontes : null);
+    const areas = req.query.areas ? String(req.query.areas).split(',').filter(Boolean)
+      : (Array.isArray(req.body?.areas) ? req.body.areas : null);
+
+    const hoje = new Date();
+    const cursor = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate()));
+    cursor.setUTCMonth(cursor.getUTCMonth() - meses);
+
+    let periodos = 0;
+    let okTotal = 0;
+    // Passo de 7 dias cobre semanal; KPIs mensais/trimestrais recoletam o mesmo
+    // período várias vezes (idempotente) conforme o referenceDate avança.
+    while (cursor <= hoje && periodos < 220) {
+      const resultados = await coletarTodos({ fontes, areas, referenceDate: cursor.toISOString() });
+      okTotal += resultados.filter(r => r.status === 'ok').length;
+      cursor.setUTCDate(cursor.getUTCDate() + 7);
+      periodos++;
+    }
+
+    let recalculo = null;
+    try {
+      const { data, error } = await supabase.rpc('kpi_recalcular_todos');
+      recalculo = error ? { error: error.message } : data;
+    } catch (e) { recalculo = { error: e.message }; }
+
+    res.json({ ok: true, meses, periodos, coletas_ok: okTotal, fontes, areas, recalculo });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Helpers de período
 // ----------------------------------------------------------------------------
 function periodoAtual(periodicidade, date = new Date()) {

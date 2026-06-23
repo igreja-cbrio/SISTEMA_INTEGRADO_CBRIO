@@ -2198,6 +2198,13 @@ export const kpis = {
       const qs = params.toString();
       return post(`/kpis/v2/coletar${qs ? `?${qs}` : ''}`, {});
     },
+    // Backfill histórico (admin) · roda a coleta dos últimos N meses semana a
+    // semana e recalcula. opts: { meses, fontes:['cultos.kids'], areas:['kids'] }
+    coletarBackfill: (opts = {}) => post('/kpis/v2/coletar/backfill', {
+      meses: opts.meses || 6,
+      fontes: opts.fontes || null,
+      areas: opts.areas || null,
+    }),
   },
 };
 

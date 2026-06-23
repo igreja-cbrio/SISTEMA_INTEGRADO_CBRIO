@@ -501,6 +501,7 @@ function AbaPainelAdm() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [recalculando, setRecalculando] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -525,6 +526,19 @@ function AbaPainelAdm() {
     } finally { setRecalculando(false); }
   };
 
+  // Backfill histórico dos KPIs automáticos (popula registros/valores dos
+  // períodos passados · ex.: KIDS-02/03 que passaram a ter fonte_auto agora).
+  const backfillKpis = async () => {
+    setBackfilling(true);
+    try {
+      const r = await kpisApi.v2.coletarBackfill({ meses: 6 });
+      toast.success(`Backfill concluído · ${r.periodos} períodos, ${r.coletas_ok} coletas`);
+      await carregar();
+    } catch (e) {
+      toast.error(formatErro(e));
+    } finally { setBackfilling(false); }
+  };
+
   if (loading) return <Loading />;
   if (!data) return null;
 
@@ -536,9 +550,14 @@ function AbaPainelAdm() {
           areas de culto (kids/ami/bridge/sede/online/cba). Click numa area pra ver
           detalhes. Periodo: <strong>{data.periodo_mes.inicio} a {data.periodo_mes.fim}</strong>
         </p>
-        <button onClick={recalcular} disabled={recalculando} style={{ ...btnPrimary, opacity: recalculando ? 0.5 : 1 }}>
-          <Zap size={11} /> {recalculando ? 'Recalculando...' : 'Recalcular KPIs'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={recalcular} disabled={recalculando} style={{ ...btnPrimary, opacity: recalculando ? 0.5 : 1 }}>
+            <Zap size={11} /> {recalculando ? 'Recalculando...' : 'Recalcular KPIs'}
+          </button>
+          <button onClick={backfillKpis} disabled={backfilling} style={{ ...btnPrimary, opacity: backfilling ? 0.5 : 1 }} title="Coleta os últimos 6 meses e recalcula (popula histórico dos KPIs automáticos)">
+            <Zap size={11} /> {backfilling ? 'Processando...' : 'Backfill KPIs (6 meses)'}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
