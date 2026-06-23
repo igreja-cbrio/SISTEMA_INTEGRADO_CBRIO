@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, Vibrate, Trash2, Send } from 'lucide-react';
+import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, Vibrate, Trash2, Send, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
 import { useNavigate } from 'react-router-dom';
@@ -725,6 +725,7 @@ function AbaCriancas() {
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
   const [modalImport, setModalImport] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
 
   async function carregar() {
     setCarregando(true);
@@ -732,6 +733,20 @@ function AbaCriancas() {
     finally { setCarregando(false); }
   }
   useEffect(() => { carregar(); }, []);
+
+  async function sincronizarPco() {
+    if (sincronizando) return;
+    setSincronizando(true);
+    try {
+      const r: any = await totemKids.criancas.syncPco();
+      toast.success(`Planning Center sincronizado · ${r.criadas} novas, ${r.atualizadas} atualizadas (${r.criancas_no_pco} crianças no PCO)`);
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao sincronizar com o Planning Center');
+    } finally {
+      setSincronizando(false);
+    }
+  }
 
   const filtradas = busca.trim().length >= 2
     ? criancas.filter(c => c.nome.toLowerCase().includes(busca.toLowerCase()))
@@ -746,6 +761,10 @@ function AbaCriancas() {
             {filtradas.length} de {criancas.length}
           </span>
           <div className="ml-auto flex gap-2">
+            <Button variant="outline" size="sm" onClick={sincronizarPco} disabled={sincronizando}>
+              {sincronizando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+              {sincronizando ? 'Sincronizando…' : 'Sincronizar Planning Center'}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setModalImport(true)}>
               <Upload className="h-4 w-4 mr-1" /> Importar XLSX
             </Button>

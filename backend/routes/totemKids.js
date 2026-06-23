@@ -24,6 +24,7 @@ const { safeEqual } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { syncCriancasPCO } = require('../services/planningCenterKids');
 
 // authenticate aplicado condicionalmente abaixo · rotas /display/* e
 // /chamadas com estacao_token bypassam pra display sem login
@@ -476,19 +477,30 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
 router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   try {
     const ativo = req.query.ativo !== 'false';
-    const { data, error } = await supabase
-      .from('kids_criancas')
-      .select(`
-        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-        visitante, ativo, familia_id,
-        familia:mem_familias(id, nome),
-        responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
-      `)
-      .eq('ativo', ativo)
-      .order('nome')
-      .limit(500);
-    if (error) throw error;
-    res.json(await Promise.all((data || []).map(async c => ({
+    // Paginado · a base de crianças (import XLSX + sync PCO) passa de 1000, e o
+    // PostgREST capa em 1000 por página. Loop até trazer todas (antes capava em 500).
+    const pageSize = 1000;
+    let from = 0;
+    let data = [];
+    while (true) {
+      const { data: page, error } = await supabase
+        .from('kids_criancas')
+        .select(`
+          id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+          visitante, ativo, familia_id,
+          familia:mem_familias(id, nome),
+          responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
+        `)
+        .eq('ativo', ativo)
+        .order('nome')
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!page || page.length === 0) break;
+      data = data.concat(page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+    res.json(await Promise.all(data.map(async c => ({
       ...c,
       foto_url: await fotoVisivelCrianca(c),
       idade_meses: calcIdadeMeses(c.data_nascimento),
@@ -496,6 +508,19 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
     }))));
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
+  }
+});
+
+// POST /api/totem-kids/sync-pco · puxa a base de crianças do Planning Center
+// Check-Ins e faz upsert por planning_center_id (idempotente). Nível 3 no módulo.
+router.post('/sync-pco', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const maxIdade = Number(req.body?.maxIdade) || 12;
+    const resumo = await syncCriancasPCO({ maxIdade });
+    res.json({ ok: true, ...resumo });
+  } catch (e) {
+    console.error('[totemKids/sync-pco]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao sincronizar com o Planning Center' });
   }
 });
 
