@@ -126,7 +126,25 @@ const BLOCOS = [
         taticos: [
           { ind: 'NPS de culto presencial', alvo: 'Nota ≥ 9', memoria: 'NPS mensal via QR Code ao final do culto, dados em planilha', precisa: 'as notas do NPS via QR no fim do culto (mesma fonte nps_culto por área)' },
           { ind: '% de assentos ocupados', alvo: '30% a 80% (base 1050)', memoria: 'Ação em conjunto com a Integração', live: 'assentos', alvoNum: 30, alvoMax: 80, cmp: 'range' },
-          { ind: 'Índice de atrasos (pontualidade final)', alvo: 'Até 5 minutos', memoria: 'Acompanhamento da pontualidade de encerramento do culto', precisa: 'o horário de término de cada culto — a aba Produção de Culto já tem o campo de duração; assim que começar a ser preenchida, puxo automático' },
+          {
+            ind: 'Índice de atrasos (pontualidade final)',
+            alvo: 'Até 5 minutos',
+            memoria: 'Acompanhamento da pontualidade de encerramento do culto',
+            alvoNum: 5, cmp: 'lte', casas: 1,
+            // Histórico jan–jun/2026 levantado com a Produção (tempo total dos cultos de
+            // domingo, ainda sem contagem por momento). Atraso = duração média − 60 min do
+            // roteiro. A partir de agora a aba Produção de Culto conta por momento e alimenta
+            // este indicador automaticamente.
+            hist: {
+              valor: 7, unidade: ' min', desde: 'jan–jun/2026',
+              serie: [
+                { mes: '2026-01', valor: 6.5 }, { mes: '2026-02', valor: 6.7 },
+                { mes: '2026-03', valor: 7.9 }, { mes: '2026-04', valor: 8.2 },
+                { mes: '2026-05', valor: 7.0 }, { mes: '2026-06', valor: 3.8 },
+              ],
+              detalhe: 'Histórico de jan–jun/2026 (cultos de domingo · 08:30, 10:00, 11:30 e 19:00): atraso médio de 7 min sobre o roteiro de 60 min (duração média de 67 min). A medição era do tempo total do culto, sem contagem por momento. A partir de agora a pontualidade é contada por momento na aba Produção de Culto e passa a alimentar este indicador automaticamente.',
+            },
+          },
         ],
       },
       {
@@ -384,7 +402,10 @@ function OkrCard({ okr, metricas }) {
 // ── Linha de indicador tático · clicável, expande pra visão mensal ──
 function TaticoRow({ tatico, metricas }) {
   const [aberto, setAberto] = useState(false);
-  const m = tatico.live ? metricas[tatico.live] : null;
+  // Fonte viva (backend) tem prioridade; sem ela, cai no histórico estático (se houver).
+  const mLive = tatico.live ? metricas[tatico.live] : null;
+  const m = mLive || tatico.hist || null;
+  const ehHist = !mLive && !!tatico.hist;
   const aval = m ? avaliar(m.valor, tatico) : null;
   const corNum = !m ? CINZA : (aval.ok == null ? C.primary : aval.cor);
   const temSerie = m && Array.isArray(m.serie) && m.serie.length > 0;
@@ -410,6 +431,11 @@ function TaticoRow({ tatico, metricas }) {
           <div style={{ fontSize: 18, fontWeight: 800, color: corNum, lineHeight: 1 }}>
             {m ? `${fmt(m.valor, tatico.casas)}${m.unidade}` : '—'}
           </div>
+          {ehHist && (
+            <div style={{ fontSize: 9, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 2 }}>
+              histórico{tatico.hist.desde ? ` · ${tatico.hist.desde}` : ''}
+            </div>
+          )}
         </div>
       </button>
 
