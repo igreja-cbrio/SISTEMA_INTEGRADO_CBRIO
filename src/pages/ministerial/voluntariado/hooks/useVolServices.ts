@@ -30,12 +30,11 @@ export function useCheckinServices() {
   return useQuery<VolService[]>({
     queryKey: ['vol', 'services', 'checkin-window'],
     queryFn: async () => {
-      const all = (await voluntariado.services.list()) as VolService[];
+      // Janela vem do backend (bounded · -3 semanas / +5 semanas), ordenada por
+      // proximidade de hoje pra o culto mais relevante ficar no topo.
+      const all = (await voluntariado.services.checkinWindow(21, 35)) as VolService[];
       const now = Date.now();
-      const from = now - 21 * 864e5, to = now + 35 * 864e5; // -3 semanas / +5 semanas
-      return all
-        .filter(s => { const t = new Date(s.scheduled_at).getTime(); return t >= from && t <= to; })
-        .sort((a, b) => Math.abs(new Date(a.scheduled_at).getTime() - now) - Math.abs(new Date(b.scheduled_at).getTime() - now));
+      return [...all].sort((a, b) => Math.abs(new Date(a.scheduled_at).getTime() - now) - Math.abs(new Date(b.scheduled_at).getTime() - now));
     },
     staleTime: 60 * 1000,
   });

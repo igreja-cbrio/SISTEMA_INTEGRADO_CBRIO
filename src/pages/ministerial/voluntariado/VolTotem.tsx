@@ -200,11 +200,14 @@ export default function VolTotem() {
     };
   }, [runSync, refreshPending]);
 
-  // Load today's services (rede → cache fallback offline)
+  // Carrega os cultos do PERÍODO (ontem → +4 semanas) pra permitir check-in fora
+  // do dia do culto (ex.: a Quarta de amanhã ou o próximo Domingo). Rede → cache
+  // fallback offline. Ordenado cronologicamente (o backend já ordena).
   useEffect(() => {
-    voluntariado.services.today()
+    voluntariado.services.checkinWindow(1, 28)
       .then((data: any) => {
-        const list = data || [];
+        const list = (data || []).slice().sort((a: any, b: any) =>
+          new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
         setServices(list);
         saveTodayServices(list);
         if (list.length === 1 && !selectedServiceId) setSelectedServiceId(list[0].id);
@@ -793,7 +796,7 @@ export default function VolTotem() {
             <QrCode className="h-20 w-20 mx-auto opacity-30" />
             <h2 className="text-2xl font-bold">Selecione o culto</h2>
             {services.length === 0 ? (
-              <p className={c.m50}>Nenhum culto agendado para hoje</p>
+              <p className={c.m50}>Nenhum culto disponível para check-in</p>
             ) : (
               <div className="space-y-3">
                 {services.map(svc => (
@@ -804,7 +807,14 @@ export default function VolTotem() {
                   >
                     <p className="font-semibold">{svc.name}</p>
                     {svc.service_type_name && <p className={`text-sm ${c.m50}`}>{svc.service_type_name}</p>}
-                    <p className={`text-sm ${c.m40}`}>{format(new Date(svc.scheduled_at), 'HH:mm', { locale: ptBR })}</p>
+                    <p className={`text-sm ${c.m40} capitalize`}>{(() => {
+                      try {
+                        return new Date(svc.scheduled_at).toLocaleString('pt-BR', {
+                          weekday: 'short', day: '2-digit', month: '2-digit',
+                          hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo',
+                        });
+                      } catch { return format(new Date(svc.scheduled_at), 'HH:mm', { locale: ptBR }); }
+                    })()}</p>
                   </button>
                 ))}
               </div>

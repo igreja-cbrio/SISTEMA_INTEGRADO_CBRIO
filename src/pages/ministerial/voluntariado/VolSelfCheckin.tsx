@@ -76,8 +76,8 @@ export default function VolSelfCheckin() {
   const maybeOfferManha = async (svcId: string, volId: string) => {
     if (cultosManha.length <= 1) return;
     try {
-      const today = (await voluntariado.services.today()) as any[];
-      const svc = (today || []).find(s => s.id === svcId);
+      const janela = (await voluntariado.services.checkinWindow()) as any[];
+      const svc = (janela || []).find(s => s.id === svcId);
       if (!svc) return;
       const wd = new Date(svc.scheduled_at).toLocaleDateString('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short' });
       const h = Number(new Date(svc.scheduled_at).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2));
