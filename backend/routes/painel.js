@@ -2001,6 +2001,42 @@ router.get('/monitoramento-okr', async (req, res) => {
         `pesquisa Q12 do Gallup${q12.label ? ` · ${q12.label}` : ''}`);
     }
 
+    // Pontualidade do culto (Produção) · tático "Índice de atrasos (pontualidade
+    // final)". Lê culto_producao.duracao_minutos vs a meta do tipo de culto
+    // (vol_service_types.meta_duracao_min, default 60) e devolve o ATRASO MÉDIO
+    // (min) sobre o roteiro + a série mensal. É o elo "preenche na Produção →
+    // aparece aqui": cada culto lançado (por momento, daqui pra frente; ou o
+    // tempo total histórico) atualiza duracao_minutos e recompõe este número.
+    // Janela de 18 meses · bem abaixo do cap de 1000 do PostgREST (paginar se
+    // a base de cultos preenchidos crescer).
+    try {
+      const desde = new Date();
+      desde.setMonth(desde.getMonth() - 18);
+      const { data: prod, error: prodErr } = await supabase
+        .from('culto_producao')
+        .select('duracao_minutos, cultos!inner(data, vol_service_types(meta_duracao_min))')
+        .not('duracao_minutos', 'is', null)
+        .gte('cultos.data', desde.toISOString().slice(0, 10))
+        .limit(1000);
+      if (prodErr) throw prodErr;
+      const linhas = (prod || []).map((row) => {
+        const data = row.cultos?.data;
+        const meta = num(row.cultos?.vol_service_types?.meta_duracao_min) ?? 60;
+        if (!data || row.duracao_minutos == null) return null;
+        return { mes: String(data).slice(0, 7), atraso: Number(row.duracao_minutos) - meta };
+      }).filter(Boolean);
+      if (linhas.length) {
+        const porMes = {};
+        for (const l of linhas) (porMes[l.mes] = porMes[l.mes] || []).push(l.atraso);
+        const media = (arr) => Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10;
+        const serie = Object.keys(porMes).sort().map((mes) => ({ mes, valor: media(porMes[mes]) }));
+        addM('atraso_culto', media(linhas.map((l) => l.atraso)), ' min',
+          `atraso médio sobre a meta de 60 min · ${linhas.length} culto(s) medido(s) na Produção`, serie);
+      }
+    } catch (e) {
+      console.error('painel/monitoramento-okr · atraso_culto:', e.message);
+    }
+
     const resp = { geradoEm: new Date().toISOString(), nsm, metricas };
     cacheSet(cacheKey, resp);
     res.json(resp);
