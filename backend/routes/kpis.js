@@ -1118,8 +1118,29 @@ router.get('/cultura', async (req, res) => {
       supabase.from('cultos')
         .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
-      // mem_grupo_membros (saiu_em IS NULL = ativo). Tabela pode não existir — tolerante.
-      supabase.from('mem_grupo_membros').select('id', { count: 'exact', head: true }).is('deleted_at', null).is('saiu_em', null),
+      // Conectar = PESSOAS distintas em grupos ativos (saiu_em IS NULL), NÃO o nº
+      // de vínculos: quem está em 2+ grupos conta 1x. Pagina pra escapar do cap de
+      // 1000 do PostgREST (há >1000 vínculos). Tabela pode não existir — tolerante.
+      (async () => {
+        try {
+          const ids = new Set();
+          const page = 1000;
+          for (let from = 0; ; from += page) {
+            const { data, error } = await supabase
+              .from('mem_grupo_membros')
+              .select('membro_id')
+              .is('deleted_at', null)
+              .is('saiu_em', null)
+              .range(from, from + page - 1);
+            if (error) return { count: null, error };
+            (data || []).forEach(r => { if (r.membro_id) ids.add(r.membro_id); });
+            if (!data || data.length < page) break;
+          }
+          return { count: ids.size, error: null };
+        } catch (error) {
+          return { count: null, error };
+        }
+      })(),
       // Investir Tempo com Deus = DEVOCIONAL feito no app (mem_devocionais ·
       // decisão Matheus 2026-06-20). Antes era views/dia dos vídeos PENSE.
       supabase.from('mem_devocionais')
