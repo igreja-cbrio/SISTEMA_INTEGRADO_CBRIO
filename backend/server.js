@@ -124,6 +124,8 @@ app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
 app.use('/api/whatsapp', require('./routes/whatsapp'));
 // Bot WhatsApp · grupos de conexão (cron estudo/lembretes + admin do estudo)
 app.use('/api/whatsapp-grupos', require('./routes/whatsappGrupos'));
+// Crons de disparo WhatsApp pra membros (aniversários etc · CRON_SECRET)
+app.use('/api/whatsapp-cron', require('./routes/whatsappCron'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/producao', require('./routes/producao'));
 app.use('/api/marketing', require('./routes/marketing'));

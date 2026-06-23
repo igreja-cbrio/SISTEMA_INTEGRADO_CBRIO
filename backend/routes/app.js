@@ -901,6 +901,9 @@ router.post('/kids/pre-checkin', authApp, limiterStrict, async (req, res) => {
       .single();
     if (error) throw error;
 
+    // Confirmação por WhatsApp com o código (template cbrio_kids_precheckin · {{1}})
+    wpp.notificarMembro(membro.id, 'kids_precheckin', [codigo]).catch(() => {});
+
     res.status(201).json(criado);
   } catch (e) {
     console.error('[APP] kids/pre-checkin:', e.message);
