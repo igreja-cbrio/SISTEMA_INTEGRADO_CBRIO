@@ -118,6 +118,10 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/whatsapp-cron/aniversarios",
+      "schedule": "0 12 * * *"
+    },
+    {
       "path": "/api/notificacoes/cron/alerta-culto-dados",
       "schedule": "0 13 * * 1"
     }
