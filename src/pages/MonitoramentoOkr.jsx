@@ -74,9 +74,10 @@ const BLOCOS = [
         objetivo: 'Analisar a eficácia do funil de engajamento do novo convertido',
         envolvida: 'Cuidados',
         taticos: [
-          { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', memoria: 'Planilha comparando o número de convertidos com o número de atendidos — semanal', precisa: 'registrar a data do 1º contato pastoral de cada convertido (hoje só temos a data da decisão)' },
-          { ind: '% de novos convertidos com primeiro contato feito', alvo: '70%', memoria: 'Contato feito (independe da resposta): respondeu + atendido e respondido + não respondeu + não compareceu + não atendido ÷ total. Exclui número errado (impossível) e não conta "sem retorno do responsável". Acompanhamento do Cuidados · 90 dias', live: 'cafe_atendidos', alvoNum: 70, cmp: 'gte' },
-          { ind: '% de pessoas do Acompanhamento "1º Encontro" que concluíram o Next', alvo: '50%', memoria: 'Planilha comparando convertidos com participantes no Next — mensal', precisa: 'marcar quem veio do Acompanhamento e concluiu o Next (as inscrições do Next já existem; falta ligar a origem)' },
+          // Valores estáticos (Pr. Juninho) · módulo-fim, não saem pro sistema.
+          { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', fixo: { valor: 24, unidade: 'h' }, alvoNum: 72, cmp: 'lte' },
+          { ind: '% de novos convertidos com primeiro contato feito', alvo: '70%', fixo: { valor: 100, unidade: '%' }, alvoNum: 70, cmp: 'gte' },
+          { ind: '% Pessoas com 1° contato que fizeram o Next', alvo: '50%', fixo: { valor: 17, unidade: '%', detalhe: 'Média anual até agora.' }, alvoNum: 50, cmp: 'gte' },
         ],
       },
       {
@@ -85,9 +86,10 @@ const BLOCOS = [
         objetivo: 'Avaliar engajamento dos membros no crescimento espiritual e no suporte ao crescimento da Igreja',
         envolvida: 'Grupos, Voluntariado e Generosidade',
         taticos: [
-          { ind: '% frequência em Grupos', alvo: '60%', live: 'freq_grupos', alvoNum: 60, cmp: 'gte' },
-          { ind: '% Voluntários ativos', alvo: '60%', live: 'volunt_ativos', alvoNum: 60, cmp: 'gte' },
-          { ind: '% dizimistas regulares', alvo: '60%', live: 'dizimistas', alvoNum: 60, cmp: 'gte' },
+          // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base 3.000 membros (módulo-fim, não sai dado daqui).
+          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 24.3, unidade: '%', detalhe: '729 em grupos ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 10, unidade: '%', detalhe: '299 voluntários ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 10.8, unidade: '%', detalhe: '324 dizimistas recorrentes · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
         ],
       },
       {
@@ -113,8 +115,9 @@ const BLOCOS = [
         objetivo: 'Ampliar o alcance da mensagem da igreja por meio do culto online, alcançando novas pessoas e fortalecendo a conexão com a comunidade digital.',
         envolvida: 'Online / Produção / Marketing',
         taticos: [
-          { ind: 'Nº DS online', alvo: '+20% YoY', memoria: 'Planilha mensal com número de decisões e comparativo ao ano anterior', live: 'ds_online' },
-          { ind: '% de decisões com follow up', alvo: '≥50% com follow up realizado', memoria: 'Planilha de acompanhamento das decisões com contato e status, e se a jornada se transformou em presencial', precisa: 'o status de follow-up por decisão online (contato feito? virou presencial?)' },
+          // Valores estáticos (Pr. Juninho) · módulo-fim, não saem pro sistema.
+          { ind: 'Nº DS online', alvo: '+20% YoY', fixo: { valor: 1821, unidade: '' } },
+          { ind: '% de decisões com follow up', alvo: '≥50% com follow up realizado', fixo: { valor: 17.5, unidade: '%', detalhe: '≈317 de 1.821 decisões online com follow-up · média anual.' }, alvoNum: 50, cmp: 'gte', casas: 1 },
           { ind: 'NPS de culto online', alvo: 'Nota ≥ 9', memoria: 'Pesquisa com os frequentadores Online, resultado em planilha — trimestral', precisa: 'as notas da pesquisa de NPS online — posso ligar no módulo NPS ou você lança em /dados-brutos (tipo nps_culto)' },
         ],
       },
@@ -387,7 +390,10 @@ function OkrCard({ okr, metricas }) {
 // ── Linha de indicador tático · clicável, expande pra visão mensal ──
 function TaticoRow({ tatico, metricas }) {
   const [aberto, setAberto] = useState(false);
-  const m = tatico.live ? metricas[tatico.live] : null;
+  // `live` = valor real vindo do backend (só nos táticos autorizados).
+  // `fixo` = valor estático definido aqui no frontend (números do Pr. Juninho ·
+  // este módulo é uma vitrine-fim, NÃO sai dado daqui pro resto do sistema).
+  const m = tatico.live ? metricas[tatico.live] : (tatico.fixo || null);
   const aval = m ? avaliar(m.valor, tatico) : null;
   const corNum = !m ? CINZA : (aval.ok == null ? C.primary : aval.cor);
   const temSerie = m && Array.isArray(m.serie) && m.serie.length > 0;
