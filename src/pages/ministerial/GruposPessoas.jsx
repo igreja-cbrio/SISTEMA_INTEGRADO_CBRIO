@@ -1,27 +1,25 @@
 // ============================================================================
-// Aba "Pessoas" do /grupos · quem é quem na hierarquia + promoção
+// Aba "Pessoas" do /grupos · CENSO de quem está nos grupos
 //
-// Marcos (2026-06-10): "criar uma aba de pessoas, filtrar quem são membros,
-// visitantes, líderes, supervisores e coordenadores e ter uma análise simples
-// de promover pessoas a líder, supervisor ou coordenador — por mais que
-// existam essas nomenclaturas, é difícil ver quem é o quê."
+// Marcos (2026-06-22): a aba deixou de ser "quem-é-quem na hierarquia" (com a
+// linha Lidera/Supervisiona + botão Promover — gestão de papel já vive no
+// detalhe do grupo, na Supervisão e no Organograma) e virou um CENSO pra
+// filtrar e achar gente: Função · Status de frequência · Última frequência ·
+// Grupo. Filtros: busca + grupo + status (+ os cards-contador por função).
 //
-// O papel vive em 3 lugares (funcao da participação · lider_id do grupo ·
-// supervisor_id do grupo); GET /grupos/pessoas/papeis unifica em 1 linha por
-// pessoa com o papel efetivo. Os cards de resumo são clicáveis e FILTRAM.
-// (2026-06-10 · Marcos: o card "Candidatos a promoção" saiu — o destaque é
-// "Líderes em treinamento"; a promoção fica no botão Promover.)
+// Status de frequência = derivado da última presença em encontros de grupo
+// (fn_grupos_ultima_frequencia): 🟢 Frequenta ≤30d · 🟡 Atenção 31-60d ·
+// 🔴 Ausente >60d (já frequentou e sumiu) · ⚪ Sem presença (nunca teve chamada
+// lançada · neutro). A função vem da `funcao` real (o trigger fn_grupo_auto_membro
+// mantém visitante→membro no 4º check-in) — sem rebaixar por contagem de presenças.
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { grupos as api } from '../../api';
-import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye, ArrowUpRight } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -30,7 +28,7 @@ const C = {
   green: '#10b981', red: '#ef4444', amber: '#f59e0b', blue: '#3b82f6', violet: '#8b5cf6',
 };
 
-// Papel efetivo → rótulo/cor/ícone (ordem = hierarquia, do topo pra base)
+// Função efetiva → rótulo/cor/ícone (ordem = hierarquia, do topo pra base)
 const PAPEIS = {
   coordenador: { label: 'Coordenador', plural: 'Coordenadores', cor: '#8b5cf6', Icon: Crown },
   supervisor: { label: 'Supervisor', plural: 'Supervisores', cor: '#3b82f6', Icon: Eye },
@@ -41,136 +39,44 @@ const PAPEIS = {
   visitante: { label: 'Visitante', plural: 'Visitantes', cor: '#94a3b8', Icon: Users },
 };
 
+// Status de frequência (derivado da última presença em grupo · bola colorida)
+const STATUS = {
+  frequenta: { label: 'Frequenta', cor: '#10b981' },        // 🟢 ≤30d
+  atencao: { label: 'Atenção', cor: '#f59e0b' },            // 🟡 31-60d
+  ausente: { label: 'Ausente', cor: '#ef4444' },            // 🔴 >60d (já frequentou e sumiu)
+  sem_presenca: { label: 'Sem presença', cor: '#94a3b8' },  // ⚪ nunca teve presença lançada (neutro)
+};
+
 const fmtData = (d) => { if (!d) return null; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } };
 
-// ============================================================================
-// Modal · promover / mudar função
-// ============================================================================
-function PromoverModal({ pessoa, gruposOptions, onClose, onSaved }) {
-  const [novaFuncao, setNovaFuncao] = useState('');
-  const [participacaoId, setParticipacaoId] = useState(pessoa?.grupos?.[0]?.participacao_id || '');
-  const [gruposSupervisao, setGruposSupervisao] = useState([]);
-  const [saving, setSaving] = useState(false);
+function statusDe(p) {
+  if (!p.ultima_frequencia) return 'sem_presenca'; // nunca teve presença lançada (neutro, não vermelho)
+  let dias;
+  try { dias = Math.floor((Date.now() - new Date(p.ultima_frequencia + 'T12:00:00').getTime()) / 86400000); }
+  catch { return 'sem_presenca'; }
+  if (dias <= 30) return 'frequenta';
+  if (dias <= 60) return 'atencao';
+  return 'ausente';
+}
 
-  const FUNCOES = [
-    { value: 'lider_treinamento', label: 'Líder em treinamento', desc: 'Entra na formação pra liderar um grupo no futuro.' },
-    { value: 'co_lider', label: 'Co-líder', desc: 'Lidera junto com o líder do grupo.' },
-    { value: 'lider', label: 'Líder', desc: 'Marca a função de líder. Pra trocar o líder responsável de um grupo, edite o grupo.' },
-    { value: 'supervisor', label: 'Supervisor', desc: 'Acompanha e visita grupos. Escolha abaixo quais grupos vai supervisionar.' },
-    { value: 'coordenador', label: 'Coordenador', desc: 'Vê todos os supervisores e grupos na supervisão.' },
-    { value: 'frequentador', label: 'Frequentador (papel base)', desc: 'Volta ao papel de membro comum do grupo.' },
-  ];
-  const funcaoSel = FUNCOES.find(f => f.value === novaFuncao);
-
-  const submit = async () => {
-    if (!novaFuncao) { toast.error('Escolha a nova função'); return; }
-    const temParticipacao = (pessoa.grupos || []).length > 0;
-    if (!temParticipacao && novaFuncao !== 'supervisor') {
-      toast.error('Essa pessoa não participa de nenhum grupo — adicione-a a um grupo primeiro');
-      return;
-    }
-    if (novaFuncao === 'supervisor' && !temParticipacao && gruposSupervisao.length === 0) {
-      toast.error('Escolha pelo menos um grupo pra essa pessoa supervisionar');
-      return;
-    }
-    setSaving(true);
-    try {
-      if (temParticipacao) {
-        await api.setFuncaoMembro(participacaoId || pessoa.grupos[0].participacao_id, novaFuncao);
-      }
-      if (novaFuncao === 'supervisor' && gruposSupervisao.length) {
-        for (const gid of gruposSupervisao) {
-          await api.setSupervisor(gid, pessoa.membro_id);
-        }
-      }
-      toast.success(`${pessoa.nome} agora é ${FUNCOES.find(f => f.value === novaFuncao)?.label || novaFuncao}`);
-      onSaved?.();
-      onClose();
-    } catch (e) {
-      toast.error(e?.response?.data?.error || e?.message || 'Erro ao promover');
-    } finally { setSaving(false); }
-  };
-
-  return (
-    <Dialog open={!!pessoa} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Promover — {pessoa?.nome}</DialogTitle></DialogHeader>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontSize: 12, color: C.t2 }}>
-            Papel atual: <strong style={{ color: PAPEIS[pessoa?.papel]?.cor || C.text }}>{PAPEIS[pessoa?.papel]?.label || pessoa?.papel}</strong>
-            {pessoa?.presencas_total > 0 && <> · {pessoa.presencas_total} presenças</>}
-          </div>
-
-          <div>
-            <Label style={{ fontSize: 12 }}>Nova função *</Label>
-            <ShadSelect value={novaFuncao} onValueChange={setNovaFuncao}>
-              <SelectTrigger><SelectValue placeholder="Escolha a função" /></SelectTrigger>
-              <SelectContent>
-                {FUNCOES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
-              </SelectContent>
-            </ShadSelect>
-            {funcaoSel && <p style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>{funcaoSel.desc}</p>}
-          </div>
-
-          {(pessoa?.grupos?.length || 0) > 1 && (
-            <div>
-              <Label style={{ fontSize: 12 }}>Em qual grupo a função vale?</Label>
-              <ShadSelect value={participacaoId} onValueChange={setParticipacaoId}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {pessoa.grupos.map(g => (
-                    <SelectItem key={g.participacao_id} value={g.participacao_id}>{g.grupo_nome || 'Grupo'}</SelectItem>
-                  ))}
-                </SelectContent>
-              </ShadSelect>
-            </div>
-          )}
-
-          {novaFuncao === 'supervisor' && (
-            <div>
-              <Label style={{ fontSize: 12 }}>Grupos que vai supervisionar</Label>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, maxHeight: 180, overflowY: 'auto' }}>
-                {gruposOptions.map(g => {
-                  const ativo = gruposSupervisao.includes(g.id);
-                  return (
-                    <button key={g.id} type="button"
-                      onClick={() => setGruposSupervisao(prev => ativo ? prev.filter(x => x !== g.id) : [...prev, g.id])}
-                      style={{
-                        padding: '4px 12px', borderRadius: 16, fontSize: 11, cursor: 'pointer',
-                        border: ativo ? `2px solid ${C.blue}` : `1px solid ${C.border}`,
-                        background: ativo ? '#3b82f618' : 'transparent',
-                        color: ativo ? C.blue : C.t3, fontWeight: ativo ? 600 : 400,
-                      }}>
-                      {g.nome}
-                    </button>
-                  );
-                })}
-              </div>
-              <p style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>
-                O supervisor passa a ver esses grupos na supervisão e a registrar visitas neles.
-              </p>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
-            <Button size="sm" onClick={submit} disabled={saving}>{saving ? 'Salvando...' : 'Confirmar'}</Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+// Grupos da pessoa pra exibir/filtrar: participações; se não tiver, cai pros
+// grupos que lidera/supervisiona (pra líder/supervisor não ficar sem grupo).
+function gruposDe(p) {
+  if (p.grupos?.length) return p.grupos.map(g => ({ id: g.grupo_id, nome: g.grupo_nome || 'Grupo' }));
+  const fallback = [...(p.lidera || []), ...(p.supervisiona || [])];
+  return fallback.map(g => ({ id: g.id, nome: g.nome || 'Grupo' }));
 }
 
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions = [] }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState('todos'); // todos | <papel>
+  const [filtro, setFiltro] = useState('todos');     // função: todos | <papel> | lideres
+  const [filtroGrupo, setFiltroGrupo] = useState('todos');
+  const [filtroStatus, setFiltroStatus] = useState('todos');
   const [busca, setBusca] = useState('');
-  const [promover, setPromover] = useState(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -188,10 +94,7 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
   const contagens = useMemo(() => {
     const c = {};
     Object.keys(PAPEIS).forEach(k => { c[k] = 0; });
-    for (const p of pessoas) {
-      c[p.papel] = (c[p.papel] || 0) + 1;
-    }
-    // Líderes + co-líderes num card só (visão do Marcos: líder é líder)
+    for (const p of pessoas) c[p.papel] = (c[p.papel] || 0) + 1;
     c.lideres_total = (c.lider || 0) + (c.co_lider || 0);
     return c;
   }, [pessoas]);
@@ -202,18 +105,18 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
       const s = busca.toLowerCase();
       lista = lista.filter(p =>
         p.nome?.toLowerCase().includes(s) ||
-        p.grupos.some(g => g.grupo_nome?.toLowerCase().includes(s)) ||
-        p.lidera.some(g => g.nome?.toLowerCase().includes(s)) ||
-        p.supervisiona.some(g => g.nome?.toLowerCase().includes(s)));
+        gruposDe(p).some(g => g.nome?.toLowerCase().includes(s)));
     }
     if (filtro === 'lideres') lista = lista.filter(p => p.papel === 'lider' || p.papel === 'co_lider');
     else if (filtro !== 'todos') lista = lista.filter(p => p.papel === filtro);
+    if (filtroGrupo !== 'todos') lista = lista.filter(p => gruposDe(p).some(g => g.id === filtroGrupo));
+    if (filtroStatus !== 'todos') lista = lista.filter(p => statusDe(p) === filtroStatus);
     return lista;
-  }, [pessoas, busca, filtro]);
+  }, [pessoas, busca, filtro, filtroGrupo, filtroStatus]);
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando pessoas...</div>;
 
-  // Cards clicáveis = o próprio filtro
+  // Cards-contador por função = também filtram
   const CARDS = [
     { key: 'todos', label: 'Todos', value: pessoas.length, cor: C.text },
     { key: 'coordenador', label: 'Coordenadores', value: contagens.coordenador || 0, cor: PAPEIS.coordenador.cor },
@@ -224,116 +127,127 @@ export default function GruposPessoas({ onOpenGrupo, podeEditar, gruposOptions =
     { key: 'visitante', label: 'Visitantes', value: contagens.visitante || 0, cor: PAPEIS.visitante.cor },
   ];
 
+  const opcoesGrupo = [...gruposOptions].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+  const temFiltro = filtro !== 'todos' || filtroGrupo !== 'todos' || filtroStatus !== 'todos' || !!busca;
+
   return (
     <div>
       <div style={{ marginBottom: 14 }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
         <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0' }}>
-          Quem é quem na hierarquia (coordenador → supervisor → líder → em treinamento → membro → visitante).
-          Clique num card pra filtrar. Visitante = menos de 3 presenças.
+          Censo de quem está nos grupos — função, status de frequência, última presença e grupo.
+          O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Sem presença", em cinza).
         </p>
       </div>
 
-      {/* Cards-filtro */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 10, marginBottom: 14 }}>
+      {/* Cards-filtro por função */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 10, marginBottom: 12 }}>
         {CARDS.map(k => {
           const ativo = filtro === k.key;
           return (
             <button key={k.key} onClick={() => setFiltro(k.key)} style={{
-              position: 'relative', overflow: 'hidden',
-              background: 'var(--panel)',
-              WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
-              borderRadius: 16, padding: 12, textAlign: 'left', cursor: 'pointer',
-              border: ativo ? `2px solid ${k.cor}` : '1px solid var(--hairline)',
-              boxShadow: 'var(--shadow), var(--hi)', transition: 'border-color 0.12s',
+              background: ativo ? `${k.cor}12` : C.card, borderRadius: 12, padding: 12, textAlign: 'left', cursor: 'pointer',
+              border: ativo ? `2px solid ${k.cor}` : `1px solid ${C.border}`, transition: 'border-color 0.12s',
             }}>
-              <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${k.cor}22, transparent 58%)`, pointerEvents: 'none' }} />
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: k.cor, opacity: 0.9 }} />
-              <div style={{ position: 'relative', zIndex: 1 }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: k.cor }}>{k.value}</div>
-                <div style={{ fontSize: 11, color: ativo ? k.cor : C.t3, fontWeight: ativo ? 600 : 400 }}>{k.label}</div>
-              </div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: k.cor }}>{k.value}</div>
+              <div style={{ fontSize: 11, color: ativo ? k.cor : C.t3, fontWeight: ativo ? 600 : 400 }}>{k.label}</div>
             </button>
           );
         })}
       </div>
 
-      {/* Busca */}
-      <div style={{ position: 'relative', marginBottom: 12 }}>
-        <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
-        <Input placeholder="Buscar por nome ou grupo..." value={busca} onChange={e => setBusca(e.target.value)} style={{ paddingLeft: 34 }} />
+      {/* Controles: busca + grupo + status */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: '1 1 220px', minWidth: 200 }}>
+          <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
+          <Input placeholder="Buscar por nome ou grupo..." value={busca} onChange={e => setBusca(e.target.value)} style={{ paddingLeft: 34 }} />
+        </div>
+        <ShadSelect value={filtroGrupo} onValueChange={setFiltroGrupo}>
+          <SelectTrigger style={{ width: 200 }}><SelectValue placeholder="Grupo" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os grupos</SelectItem>
+            {opcoesGrupo.map(g => <SelectItem key={g.id} value={g.id}>{g.nome}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
+        <ShadSelect value={filtroStatus} onValueChange={setFiltroStatus}>
+          <SelectTrigger style={{ width: 170 }}><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os status</SelectItem>
+            {Object.entries(STATUS).map(([k, s]) => <SelectItem key={k} value={k}>{s.label}</SelectItem>)}
+          </SelectContent>
+        </ShadSelect>
       </div>
 
       {/* Lista */}
-      <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
-        <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.t3 }}>
-          {filtradas.length} pessoa{filtradas.length !== 1 ? 's' : ''}
+      <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+        <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.t3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{filtradas.length} pessoa{filtradas.length !== 1 ? 's' : ''}</span>
+          {temFiltro && (
+            <button onClick={() => { setFiltro('todos'); setFiltroGrupo('todos'); setFiltroStatus('todos'); setBusca(''); }}
+              style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+              Limpar filtros
+            </button>
+          )}
         </div>
         {filtradas.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Ninguém nesse filtro.</div>
-        ) : filtradas.map(p => {
-          const pap = PAPEIS[p.papel] || PAPEIS.frequentador;
-          return (
-            <div key={p.membro_id} style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ width: 36, height: 36, borderRadius: '50%', background: p.foto_url ? `url(${p.foto_url}) center/cover` : `${pap.cor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: pap.cor }}>
-                {!p.foto_url && (p.nome?.charAt(0) || '?')}
-              </div>
-
-              <div style={{ flex: 1, minWidth: 220 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{p.nome}</span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${pap.cor}18`, color: pap.cor, fontWeight: 700 }}>
-                    <pap.Icon size={10} /> {pap.label}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11, color: C.t3, marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {p.supervisiona.length > 0 && (
-                    <span>Supervisiona: {p.supervisiona.map((g, i) => (
-                      <span key={g.id}>
-                        {i > 0 && ', '}
-                        <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.blue, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>{g.nome}</button>
-                      </span>
-                    ))}</span>
-                  )}
-                  {p.lidera.length > 0 && (
-                    <span>{p.supervisiona.length > 0 ? ' · ' : ''}Lidera: {p.lidera.map((g, i) => (
-                      <span key={g.id}>
-                        {i > 0 && ', '}
-                        <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>{g.nome}</button>
-                      </span>
-                    ))}</span>
-                  )}
-                  {p.lidera.length === 0 && p.supervisiona.length === 0 && p.grupos.length > 0 && (
-                    <span>{p.grupos.map((g, i) => (
-                      <span key={g.participacao_id}>
-                        {i > 0 && ', '}
-                        <button onClick={() => onOpenGrupo?.(g.grupo_id)} style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 11 }}>{g.grupo_nome || 'Grupo'}</button>
-                      </span>
-                    ))}</span>
-                  )}
-                  {p.entrou_em && <span> · desde {fmtData(p.entrou_em)}</span>}
-                  {p.presencas_total > 0 && <span> · {p.presencas_total} presença{p.presencas_total !== 1 ? 's' : ''}</span>}
-                </div>
-              </div>
-
-              {podeEditar && (
-                <Button size="sm" variant="outline" onClick={() => setPromover(p)} style={{ flexShrink: 0 }}>
-                  <ArrowUpRight size={13} style={{ marginRight: 4 }} /> Promover
-                </Button>
-              )}
-            </div>
-          );
-        })}
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Presenças'].map((h, i) => (
+                    <th key={h} style={{ textAlign: i === 5 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtradas.map(p => {
+                  const pap = PAPEIS[p.papel] || PAPEIS.frequentador;
+                  const st = STATUS[statusDe(p)];
+                  const gs = gruposDe(p);
+                  return (
+                    <tr key={p.membro_id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: '10px 16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 32, height: 32, borderRadius: '50%', background: p.foto_url ? `url(${p.foto_url}) center/cover` : `${pap.cor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: pap.cor }}>
+                            {!p.foto_url && (p.nome?.charAt(0) || '?')}
+                          </div>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{p.nome}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${pap.cor}18`, color: pap.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          <pap.Icon size={10} /> {pap.label}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>
+                        {gs.length > 0 ? gs.map((g, i) => (
+                          <span key={g.id || i}>
+                            {i > 0 && ', '}
+                            <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{g.nome}</button>
+                          </span>
+                        )) : <span style={{ color: C.t3 }}>Sem grupo</span>}
+                      </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultima_frequencia ? C.t2 : C.t3, whiteSpace: 'nowrap' }}>
+                        {p.ultima_frequencia ? fmtData(p.ultima_frequencia) : '—'}
+                      </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2, textAlign: 'right' }}>
+                        {p.presencas_total || 0}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
-
-      {promover && (
-        <PromoverModal
-          pessoa={promover}
-          gruposOptions={gruposOptions}
-          onClose={() => setPromover(null)}
-          onSaved={carregar}
-        />
-      )}
     </div>
   );
 }

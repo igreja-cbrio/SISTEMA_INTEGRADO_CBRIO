@@ -34,6 +34,7 @@ const ROUTE_MODULE_MAP = {
   'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
+  'face':         ['face'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],
   'totem-kids':   ['kids'],
@@ -657,5 +658,6 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
 }
 
 module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
-  // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias)
-  resolveEffectivePerms, getCargoMatrix, getModulos };
+  // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias,
+  // grade de acesso efetivo por módulo na tela de Permissões > Usuários)
+  resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea };

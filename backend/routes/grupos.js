@@ -1689,6 +1689,7 @@ router.get('/pessoas/papeis', async (req, res) => {
           supervisiona: [],
           presencas_total: 0,
           entrou_em: null,
+          ultima_frequencia: null,
         };
       }
       return pessoas[mid];
@@ -1722,11 +1723,22 @@ router.get('/pessoas/papeis', async (req, res) => {
         if (RANK.supervisor > pe.rank) { pe.rank = RANK.supervisor; pe.papel = 'supervisor'; }
       }
     }
-    // Mesma régua do detalhe do grupo: frequentador com <3 presenças = visitante
-    Object.values(pessoas).forEach(pe => {
-      if (!pe.papel) pe.papel = 'frequentador';
-      if (pe.papel === 'frequentador' && pe.presencas_total < 3) pe.papel = 'visitante';
-    });
+    // Confia na função real (o trigger fn_grupo_auto_membro mantém visitante →
+    // frequentador no 4º check-in). NÃO rebaixa por contagem de presenças: os
+    // membros atuais são Membro por decisão do Marcos; visitante é só pro novo
+    // entrante. Alinha com o Tipo do detalhe do grupo (#1200) e o default #1207.
+    Object.values(pessoas).forEach(pe => { if (!pe.papel) pe.papel = 'frequentador'; });
+
+    // Data da última presença em grupo (status de frequência da aba Pessoas)
+    try {
+      const { data: freqRows, error: eF } = await supabase.rpc('fn_grupos_ultima_frequencia');
+      if (eF) throw eF;
+      (freqRows || []).forEach(f => {
+        if (pessoas[f.membro_id]) pessoas[f.membro_id].ultima_frequencia = f.ultima_data || null;
+      });
+    } catch (eFreq) {
+      console.error('[grupos] ultima_frequencia:', eFreq.message); // best-effort · não derruba a lista
+    }
 
     const lista = Object.values(pessoas)
       .sort((a, b) => b.rank - a.rank || (a.nome || '').localeCompare(b.nome || ''));

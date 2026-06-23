@@ -149,6 +149,44 @@ function extrairControleXlsx(buffer) {
   return registros;
 }
 
+// Extrai o CADASTRO de inscritos (coluna "Inscritos (fixo)" · col A, linhas 2+)
+// de cada aba da planilha de controle. Inclui quem serviu 0 vezes. Ignora o
+// layout CSV simples (cabeçalho nome,data,...).
+function extrairInscritosXlsx(buffer) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const nomes = new Set();
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName]; if (!ws) continue;
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    const head0 = (aoa[0] || []).map((c) => normNome(c));
+    if (head0.indexOf('nome') >= 0 && head0.indexOf('data') >= 0) continue;
+    for (let r = 2; r < aoa.length; r++) {
+      const nome = (aoa[r] && aoa[r][0] != null ? String(aoa[r][0]) : '').trim();
+      if (nome) nomes.add(nome);
+    }
+  }
+  return [...nomes];
+}
+
+// Vincula inscritos a vol_profiles por nome normalizado ÚNICO (e puxa o membro
+// pelo membresia_id do perfil). Ambíguo não casa.
+async function linkInscritos() {
+  const { data: profs } = await supabase.from('vol_profiles').select('id, full_name, membresia_id');
+  const map = new Map(); const dup = new Set();
+  for (const p of profs || []) { const k = normNome(p.full_name); if (!k) continue; if (map.has(k)) dup.add(k); else map.set(k, p); }
+  for (const k of dup) map.delete(k);
+  const { data: ins } = await supabase.from('vol_inscritos').select('id, nome_norm').is('vol_profile_id', null).is('deleted_at', null);
+  let n = 0;
+  for (const it of ins || []) {
+    const p = map.get(it.nome_norm);
+    if (!p) continue;
+    const { error } = await supabase.from('vol_inscritos').update({ vol_profile_id: p.id, membro_id: p.membresia_id || null, updated_at: new Date().toISOString() }).eq('id', it.id);
+    if (!error) n += 1;
+  }
+  return n;
+}
+
 // Casa nomes da planilha (não vinculados) com vol_profiles por nome normalizado.
 // Match só quando o nome normalizado é único entre os perfis (ambíguo não casa).
 async function rematchFrequencia() {
@@ -238,7 +276,30 @@ router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.s
       if (error) return res.status(400).json({ error: 'Falha ao gravar: ' + error.message });
     }
     const vinculadas = await rematchFrequencia();
-    res.json({ processadas: registros.length, nomes_vinculados: vinculadas, ignorados_nao_pessoa: ignoradosNaoPessoa });
+
+    // Captura o CADASTRO de inscritos (coluna A) — é o que faz quem serviu 0
+    // vezes aparecer na frequência como inativo.
+    let inscritos = 0;
+    if (ehXlsx) {
+      try {
+        const nomesIns = extrairInscritosXlsx(req.file.buffer);
+        let skip = new Set();
+        try { const { nomesNaoPessoa } = require('../services/volNomeFiltro'); skip = await nomesNaoPessoa(nomesIns); } catch (e) { /* segue */ }
+        const linhas = []; const vistosI = new Set();
+        for (const nome of nomesIns) {
+          const nn = normNome(nome);
+          if (!nn || skip.has(nn) || vistosI.has(nn)) continue;
+          vistosI.add(nn);
+          linhas.push({ nome_planilha: nome, nome_norm: nn, origem });
+        }
+        for (let i = 0; i < linhas.length; i += 500) {
+          await supabase.from('vol_inscritos').upsert(linhas.slice(i, i + 500), { onConflict: 'nome_norm,origem', ignoreDuplicates: true });
+        }
+        inscritos = linhas.length;
+        await linkInscritos();
+      } catch (e) { console.warn('[vol] inscritos:', e.message); }
+    }
+    res.json({ processadas: registros.length, nomes_vinculados: vinculadas, ignorados_nao_pessoa: ignoradosNaoPessoa, inscritos });
   } catch (e) {
     console.error('[vol] importar frequencia', e.message);
     res.status(500).json({ error: 'Erro ao importar o controle' });
@@ -248,18 +309,31 @@ router.post('/frequencia/importar', authorizeModule('membresia', 2), uploadCsv.s
 // GET /api/voluntariado/frequencia?status=ativos|inativos&vinculo=nao&busca=
 router.get('/frequencia', async (req, res) => {
   try {
-    let q = supabase.from('vw_vol_frequencia').select('*');
-    if (req.query.status === 'ativos') q = q.eq('ativo', true);
-    else if (req.query.status === 'inativos') q = q.eq('ativo', false);
-    if (req.query.vinculo === 'nao') q = q.is('vol_profile_id', null);
-    else if (req.query.vinculo === 'sim') q = q.not('vol_profile_id', 'is', null);
-    if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
-    q = q.order('ultimo_servico', { ascending: false }).limit(2000);
-    const { data, error } = await q;
-    if (error) return res.status(400).json({ error: error.message });
-    const total = (data || []).length;
-    const ativos = (data || []).filter(r => r.ativo).length;
-    res.json({ resumo: { total, ativos, inativos: total - ativos }, itens: data || [] });
+    const build = () => {
+      let q = supabase.from('vw_vol_frequencia').select('*');
+      if (req.query.status === 'ativos') q = q.eq('ativo', true);
+      else if (req.query.status === 'inativos') q = q.eq('ativo', false);
+      if (req.query.vinculo === 'nao') q = q.is('vol_profile_id', null);
+      else if (req.query.vinculo === 'sim') q = q.not('vol_profile_id', 'is', null);
+      if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
+      return q.order('ativo', { ascending: false }).order('ultimo_servico', { ascending: false, nullsFirst: false });
+    };
+    // Pagina pra contornar o cap de 1000 linhas do PostgREST (lista completa).
+    let data = []; let offset = 0;
+    while (true) {
+      const { data: page, error } = await build().range(offset, offset + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!page || !page.length) break;
+      data = data.concat(page);
+      if (page.length < 1000) break;
+      offset += 1000;
+    }
+    // Resumo (cards) = SEMPRE o total geral · contagem real no banco, NÃO muda
+    // com o filtro da lista (antes recalculava do subconjunto capado → números
+    // divergentes entre "Todos" e "Ativos").
+    const { count: total } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true });
+    const { count: ativos } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true }).eq('ativo', true);
+    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens: data });
   } catch (e) {
     console.error('[vol] frequencia', e.message);
     res.status(500).json({ error: 'Erro ao carregar frequência' });
@@ -316,6 +390,20 @@ router.post('/frequencia/revincular', authorizeModule('membresia', 2), async (re
     res.json({ nomes_vinculados: n });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao revincular' });
+  }
+});
+
+// POST /frequencia/sync-pco → traz as escalas recentes do Planning Center pra a
+// frequência (quem serviu nos últimos ~120 dias · ex.: o último domingo).
+router.post('/frequencia/sync-pco', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const { bridgeFrequenciaPCO } = require('../services/voluntariadoFreqPCO');
+    const desde = new Date(Date.now() - 120 * 864e5).toISOString();
+    const r = await bridgeFrequenciaPCO(desde);
+    res.json(r);
+  } catch (e) {
+    console.error('[vol] sync-pco frequencia', e.message);
+    res.status(500).json({ error: 'Erro ao trazer escalas do Planning Center' });
   }
 });
 
@@ -894,6 +982,58 @@ router.get('/profiles/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar perfil' }); }
 });
 
+// GET /profiles/:id/detalhe → detalhamento completo: serviços (frequência),
+// check-ins, escalas e totais. Tudo desse voluntário.
+router.get('/profiles/:id/detalhe', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { data: profile, error: ep } = await supabase.from('vol_profiles').select('*').eq('id', id).single();
+    if (ep || !profile) return res.status(404).json({ error: 'Perfil não encontrado' });
+
+    // serviços (histórico de frequência · planilha + PCO)
+    const { data: servicos } = await supabase.from('vol_servicos_historico')
+      .select('data, culto_label, mes, origem').eq('vol_profile_id', id).is('deleted_at', null)
+      .order('data', { ascending: false }).limit(1000);
+
+    // check-ins (totem · inclui não escalados)
+    const { data: checkins } = await supabase.from('vol_check_ins')
+      .select('id, checked_in_at, method, is_unscheduled, service:vol_services(scheduled_at, service_type_name, name)')
+      .eq('volunteer_id', id).order('checked_in_at', { ascending: false }).limit(500);
+
+    // escalas (por volunteer_id OU planning_center_person_id)
+    let escq = supabase.from('vol_schedules')
+      .select('id, team_name, position_name, confirmation_status, service:vol_services(scheduled_at, service_type_name, name)');
+    const pcid = /^\d+$/.test(String(profile.planning_center_id || '')) ? profile.planning_center_id : null;
+    if (pcid) escq = escq.or(`volunteer_id.eq.${id},planning_center_person_id.eq.${pcid}`);
+    else escq = escq.eq('volunteer_id', id);
+    const { data: escalas } = await escq.limit(500);
+
+    const norm1 = (x) => (Array.isArray(x) ? x[0] : x) || null;
+    const servArr = servicos || [];
+    const porCulto = {};
+    for (const s of servArr) porCulto[s.culto_label] = (porCulto[s.culto_label] || 0) + 1;
+    const d4 = new Date(); d4.setMonth(d4.getMonth() - 4);
+    const desde4m = d4.toISOString().slice(0, 10);
+
+    res.json({
+      profile,
+      servicos: servArr,
+      checkins: (checkins || []).map((c) => ({ ...c, service: norm1(c.service) })),
+      escalas: (escalas || []).map((e) => ({ ...e, service: norm1(e.service) })),
+      totais: {
+        total_servicos: servArr.length,
+        servicos_4m: servArr.filter((s) => s.data >= desde4m).length,
+        total_checkins: (checkins || []).length,
+        ultimo_servico: servArr[0]?.data || null,
+        por_culto: porCulto,
+      },
+    });
+  } catch (e) {
+    console.error('[vol] profile detalhe', e.message);
+    res.status(500).json({ error: 'Erro ao carregar detalhe do voluntário' });
+  }
+});
+
 router.post('/profiles', async (req, res) => {
   try {
     const { full_name, email, phone, cpf } = req.body;
@@ -1220,19 +1360,27 @@ router.post('/allocate/:id', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 router.get('/volunteers-pool', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('vol_profiles')
-      .select(`
-        id, full_name, email, avatar_url, planning_center_id, qr_code,
-        team_members:vol_team_members(
-          id, team_id, position_id,
-          team:vol_teams(id, name, color),
-          position:vol_positions(id, name)
-        )
-      `)
-      .order('full_name');
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    // Pagina pra contornar o cap de 1000 do PostgREST (número real · 1 a 1).
+    let all = []; let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('vol_profiles')
+        .select(`
+          id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf,
+          team_members:vol_team_members(
+            id, team_id, position_id,
+            team:vol_teams(id, name, color),
+            position:vol_positions(id, name)
+          )
+        `)
+        .order('full_name').range(offset, offset + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || !data.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    res.json(all);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntários' }); }
 });
 

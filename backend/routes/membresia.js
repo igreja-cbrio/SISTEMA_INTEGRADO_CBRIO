@@ -965,6 +965,28 @@ router.get('/membros/:id/wifi', async (req, res) => {
   }
 });
 
+// GET /membros/:id/reconhecimento-facial — cada vez que o membro foi reconhecido
+// pela câmera (data + hora), pra ver a frequência por reconhecimento facial.
+router.get('/membros/:id/reconhecimento-facial', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('face_presencas')
+      .select('reconhecido_em, entrada, confianca, culto_id')
+      .eq('membro_id', req.params.id)
+      .order('reconhecido_em', { ascending: false })
+      .limit(1000);
+    if (error) throw error;
+    const itens = data || [];
+    res.json({
+      total: itens.length,
+      ultima: itens[0]?.reconhecido_em || null,
+      itens,
+    });
+  } catch (e) {
+    console.error('[membresia/membros/:id/reconhecimento-facial]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar reconhecimento facial' });
+  }
+});
+
 // ── Histórico ──
 
 // POST /api/membresia/historico

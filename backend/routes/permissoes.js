@@ -1,5 +1,9 @@
 const router = require('express').Router();
-const { authenticate, authorize, bustPermissionCaches } = require('../middleware/auth');
+const {
+  authenticate, authorize, bustPermissionCaches,
+  resolveEffectivePerms, getCargoMatrix, getModulos,
+  AREA_MODULO_BOOST, _normalizarArea,
+} = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
@@ -418,11 +422,87 @@ router.get('/usuario/:id', async (req, res) => {
     const { data: extraScopes } = await supabase.from('permissoes_escopo_extra')
       .select('*, modulos(nome), areas(nome), setores(nome)').eq('usuario_id', userId);
 
+    // ── Grade de acesso EFETIVO por módulo (cargo + área + override) ──
+    // Espelha a resolução do middleware (resolveEffectivePerms) e expõe, por
+    // módulo, o nível efetivo + a ORIGEM (cargo / área / override / bloqueio),
+    // pra a tela ajustar "ver/mexer" por módulo de qualquer pessoa.
+    let grade = [];
+    try {
+      const cargoId = usuario?.cargo_id ?? null;
+      const modulos = await getModulos();
+      const cargoMatrix = cargoId != null ? await getCargoMatrix(cargoId) : [];
+      const areaNames = (userAreas || []).map(a => a.areas?.nome).filter(Boolean);
+
+      // Slugs elevados pela área (mesma lógica do resolveEffectivePerms)
+      const slugsComBoost = new Set();
+      for (const a of areaNames) {
+        const slug = AREA_MODULO_BOOST[_normalizarArea(a)];
+        if (slug) slugsComBoost.add(slug);
+      }
+
+      const efetivas = resolveEffectivePerms({
+        overrides: overrides || [],
+        cargoMatrix,
+        cargoId,
+        modulos,
+        areas: areaNames,
+      });
+      const overrideByMod = new Map((overrides || []).map(o => [o.modulo_id, o]));
+      const cargoByMod = new Map();
+      for (const r of cargoMatrix || []) {
+        if (r.cargo_id === cargoId) cargoByMod.set(r.modulo_id, r);
+      }
+
+      grade = (modulos || []).map(m => {
+        const ov = overrideByMod.get(m.id) || null;
+        const cargoCell = cargoByMod.get(m.id) || null;
+        const boost = !!(m.slug && slugsComBoost.has(m.slug));
+        // Bloqueio explícito = override com nivel_leitura 0 (mesma regra que o
+        // middleware usa pra montar modulosBloqueados · vence boost de área e admin).
+        const blocked = !!ov && (ov.nivel_leitura ?? 1) === 0;
+        const eff = (m.slug && efetivas[m.slug]) || (m.nome && efetivas[m.nome]) || { leitura: 0, escrita: 0 };
+        let origem;
+        if (blocked) origem = 'bloqueio';
+        else if (boost) origem = 'area';
+        else if (ov) origem = 'override';
+        else if (cargoCell && (cargoCell.nivel ?? 0) > 0) origem = 'cargo';
+        else origem = 'nenhum';
+        return {
+          modulo_id: m.id,
+          slug: m.slug,
+          nome: m.nome,
+          categoria: m.categoria || 'outros',
+          ordem: m.ordem ?? 0,
+          rota: m.rota || null,
+          leitura: blocked ? 0 : (eff.leitura ?? 0),
+          escrita: blocked ? 0 : (eff.escrita ?? 0),
+          origem,
+          area_boost: boost,
+          blocked,
+          cargo_nivel: cargoCell?.nivel ?? 0,
+          // modificadores efetivos (override > cargo) · preserva ao gravar o nível
+          pode_exportar: ov?.pode_exportar ?? cargoCell?.pode_exportar ?? false,
+          pode_aprovar: ov?.pode_aprovar ?? cargoCell?.pode_aprovar ?? false,
+          escopo_proprio: ov?.escopo_proprio ?? cargoCell?.escopo_proprio ?? false,
+          override: ov ? {
+            nivel_leitura: ov.nivel_leitura,
+            nivel_escrita: ov.nivel_escrita,
+            motivo: ov.motivo || null,
+            expira_em: ov.expira_em || null,
+          } : null,
+        };
+      }).sort((a, b) => (a.ordem - b.ordem) || (a.nome || '').localeCompare(b.nome || ''));
+    } catch (gradeErr) {
+      console.error('[permissoes/usuario grade]', gradeErr.message);
+      grade = [];
+    }
+
     res.json({
       usuario: usuario || null,
       areas: userAreas || [],
       overrides: overrides || [],
       extraScopes: extraScopes || [],
+      grade,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -5,8 +5,15 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Activity, Upload, RefreshCw, Search, Link2, Loader2, CheckCircle2, Sparkles } from 'lucide-react';
+import { Activity, Upload, RefreshCw, Search, Link2, Loader2, CheckCircle2, Sparkles, Phone } from 'lucide-react';
 import { toast } from 'sonner';
+
+function waLink(tel?: string | null) {
+  if (!tel) return null;
+  const d = tel.replace(/\D/g, '');
+  if (d.length < 10) return null;
+  return `https://wa.me/${d.length <= 11 ? '55' + d : d}`;
+}
 
 type Sugestao = {
   nome_norm: string; nome: string; total_servicos: number;
@@ -17,7 +24,8 @@ type Sugestao = {
 
 type Row = {
   chave: string; vol_profile_id: string | null; nome_norm: string; nome: string;
-  total_servicos: number; ultimo_servico: string | null; ativo: boolean;
+  total_servicos: number; servicos_4m: number; ultimo_servico: string | null; ativo: boolean;
+  telefone: string | null; membro_id: string | null;
 };
 
 function fmt(d: string | null) {
@@ -60,7 +68,8 @@ export default function VolFrequencia() {
     try {
       const r = await api.frequencia.importar(file);
       const ign = r.ignorados_nao_pessoa ? ` · ${r.ignorados_nao_pessoa} ignorados (posição/equipe)` : '';
-      toast.success(`Importado: ${r.processadas} registros · ${r.nomes_vinculados} nomes vinculados automaticamente${ign}`);
+      const ins = r.inscritos ? ` · ${r.inscritos} inscritos no cadastro` : '';
+      toast.success(`Importado: ${r.processadas} registros · ${r.nomes_vinculados} nomes vinculados${ins}${ign}`);
       carregar();
     } catch (e: any) { toast.error(e.message || 'Erro ao importar'); }
     finally { setImportando(false); }
@@ -83,7 +92,7 @@ export default function VolFrequencia() {
           <Activity className="h-5 w-5 text-primary" />
           <div>
             <h2 className="text-lg font-semibold text-foreground">Controle de frequência</h2>
-            <p className="text-xs text-muted-foreground">Quantas vezes cada um serviu e em qual culto · ativos × inativos (90 dias sem servir = inativo)</p>
+            <p className="text-xs text-muted-foreground">Inclui quem serviu <b>0 vezes</b> · inativo = <b>4 meses sem servir</b> (candidato a contato)</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -105,9 +114,9 @@ export default function VolFrequencia() {
 
       {resumo && (
         <div className="grid grid-cols-3 gap-3">
-          <Card className="p-3"><div className="text-xs text-muted-foreground">Pessoas</div><div className="text-xl font-bold text-foreground">{resumo.total}</div></Card>
-          <Card className="p-3"><div className="text-xs text-muted-foreground">Ativos (90d)</div><div className="text-xl font-bold text-emerald-600">{resumo.ativos}</div></Card>
-          <Card className="p-3"><div className="text-xs text-muted-foreground">Inativos</div><div className="text-xl font-bold text-muted-foreground">{resumo.inativos}</div></Card>
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Inscritos</div><div className="text-xl font-bold text-foreground">{resumo.total}</div></Card>
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Ativos (4 meses)</div><div className="text-xl font-bold text-emerald-600">{resumo.ativos}</div></Card>
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Inativos (0 em 4 meses)</div><div className="text-xl font-bold text-amber-600">{resumo.inativos}</div></Card>
         </div>
       )}
 
@@ -137,9 +146,10 @@ export default function VolFrequencia() {
             <thead className="sticky top-0 bg-muted/80 backdrop-blur">
               <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2 font-semibold">Nome</th>
-                <th className="px-4 py-2 font-semibold">Serviços</th>
+                <th className="px-4 py-2 font-semibold">Serviços (4 meses)</th>
                 <th className="px-4 py-2 font-semibold">Último</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
+                <th className="px-4 py-2 font-semibold">Contato</th>
                 <th className="px-4 py-2 font-semibold">Vínculo</th>
               </tr>
             </thead>
@@ -147,16 +157,21 @@ export default function VolFrequencia() {
               {loading ? (
                 <tr><td colSpan={5} className="py-8 text-center text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline" /> carregando…</td></tr>
               ) : itens.length === 0 ? (
-                <tr><td colSpan={5} className="py-10 text-center text-sm text-muted-foreground">Nada por aqui. Importe a planilha (CSV) pra começar.</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-sm text-muted-foreground">Nada por aqui. Importe a planilha de controle (.xlsx) pra começar.</td></tr>
               ) : itens.map(r => (
                 <tr key={r.chave} className="border-t border-border/60 hover:bg-accent/40 cursor-pointer" onClick={() => setDetalhe(r)}>
                   <td className="px-4 py-2 font-medium text-foreground">{r.nome}</td>
-                  <td className="px-4 py-2">{r.total_servicos}</td>
+                  <td className="px-4 py-2"><span className={r.servicos_4m === 0 ? 'text-amber-600 font-semibold' : ''}>{r.servicos_4m}</span><span className="text-xs text-muted-foreground"> / {r.total_servicos} total</span></td>
                   <td className="px-4 py-2 text-muted-foreground">{fmt(r.ultimo_servico)}</td>
                   <td className="px-4 py-2">
                     {r.ativo
                       ? <Badge className="bg-emerald-100 text-emerald-700">Ativo</Badge>
-                      : <Badge className="bg-slate-100 text-slate-600">Inativo</Badge>}
+                      : <Badge className="bg-amber-100 text-amber-700">Inativo</Badge>}
+                  </td>
+                  <td className="px-4 py-2">
+                    {waLink(r.telefone)
+                      ? <a href={waLink(r.telefone)!} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline"><Phone className="h-3 w-3" /> WhatsApp</a>
+                      : <span className="text-xs text-muted-foreground">—</span>}
                   </td>
                   <td className="px-4 py-2">
                     {r.vol_profile_id
@@ -312,7 +327,7 @@ function DetalheModal({ row, onClose }: { row: Row; onClose: () => void }) {
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{row.nome}</DialogTitle>
-          <DialogDescription>{row.total_servicos} serviços · {row.ativo ? 'Ativo' : 'Inativo'} · último em {fmt(row.ultimo_servico)}</DialogDescription>
+          <DialogDescription>{row.servicos_4m} em 4 meses · {row.total_servicos} no total · {row.ativo ? 'Ativo' : 'Inativo'} · último em {fmt(row.ultimo_servico)}</DialogDescription>
         </DialogHeader>
         {Object.keys(porCulto).length > 0 && (
           <div className="flex flex-wrap gap-2">

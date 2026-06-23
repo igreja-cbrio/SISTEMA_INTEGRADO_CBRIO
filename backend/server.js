@@ -124,12 +124,15 @@ app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
 app.use('/api/whatsapp', require('./routes/whatsapp'));
 // Bot WhatsApp · grupos de conexão (cron estudo/lembretes + admin do estudo)
 app.use('/api/whatsapp-grupos', require('./routes/whatsappGrupos'));
+// Crons de disparo WhatsApp pra membros (aniversários etc · CRON_SECRET)
+app.use('/api/whatsapp-cron', require('./routes/whatsappCron'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/producao', require('./routes/producao'));
 app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));
 app.use('/api/voluntariado', require('./routes/voluntariado-sync'));
+app.use('/api/face', require('./routes/face'));
 app.use('/api/tutorial', require('./routes/tutorial'));
 app.use('/api/grupos', require('./routes/grupos'));
 app.use('/api/kpis/v2', require('./routes/kpisV2'));

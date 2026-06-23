@@ -12,10 +12,39 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
 import { Checkbox } from '../../components/ui/checkbox';
-import { Search, X, Plus, Trash2, Pencil } from 'lucide-react';
+import { Search, X, Plus, Pencil, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const NIVEIS = [0, 1, 2, 3, 4, 5];
+
+// Categorias dos módulos (espelha a aba Matriz) · agrupa a grade por seção.
+const CATEGORIA_LABELS = {
+  estrategica:    'Estratégica',
+  ministerial:    'Ministerial',
+  operacional:    'Operacional',
+  dados_ia_admin: 'Dados · IA · Admin',
+  outros:         'Outros',
+};
+const CATEGORIA_ORDEM = ['estrategica', 'ministerial', 'operacional', 'dados_ia_admin', 'outros'];
+
+// Níveis 0-5 com "Ver" (1) e "Mexer" (3) em destaque · usados no seletor da grade.
+const NIVEL_OPCOES = [
+  { v: 0, l: 'Sem acesso' },
+  { v: 1, l: 'Ver' },
+  { v: 2, l: 'Ver + lançar dado' },
+  { v: 3, l: 'Mexer (editar)' },
+  { v: 4, l: 'Mexer + excluir' },
+  { v: 5, l: 'Admin do módulo' },
+];
+
+// De onde vem o nível efetivo da pessoa naquele módulo.
+const ORIGEM_META = {
+  cargo:    { label: 'do cargo',      cls: 'bg-muted text-muted-foreground' },
+  area:     { label: 'da área',       cls: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
+  override: { label: 'definido aqui', cls: 'bg-primary/15 text-primary' },
+  bloqueio: { label: 'bloqueado',     cls: 'bg-red-500/15 text-red-700 dark:text-red-400' },
+  nenhum:   { label: 'sem acesso',    cls: 'bg-muted text-muted-foreground' },
+};
 
 function iniciais(name) {
   if (!name) return '?';
@@ -232,7 +261,7 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
   const carregando = !dadosUsuario;
   const usuario = dadosUsuario?.usuario;
   const areasUsuario = dadosUsuario?.areas || [];
-  const overrides = dadosUsuario?.overrides || [];
+  const grade = dadosUsuario?.grade || [];
 
   const [cargoId, setCargoId] = useState(usuario?.cargo_id || '');
   const [role, setRole] = useState(colaborador.role || '');
@@ -293,19 +322,6 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
       await onSaved();
     } catch (e) {
       toast.error(e.message || 'Erro ao salvar áreas');
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  async function removerOverride(moduloId) {
-    setSalvando(true);
-    try {
-      await api.removerOverride(colaborador.id, moduloId);
-      toast.success('Override removido');
-      await onSaved();
-    } catch (e) {
-      toast.error(e.message || 'Erro ao remover');
     } finally {
       setSalvando(false);
     }
@@ -412,18 +428,29 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
               </div>
             </section>
 
-            {/* Overrides */}
+            {/* Acesso por módulo · grade efetiva (cargo + área + override) */}
+            <section>
+              <h3 className="text-sm font-semibold text-foreground mb-1">Acesso por módulo</h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                O que a pessoa pode <strong>ver</strong> ou <strong>mexer</strong> em cada módulo. O nível vem
+                do cargo; mude aqui pra criar uma exceção só pra ela (o ↺ volta ao padrão do cargo).{' '}
+                <strong>Ver</strong> = só leitura · <strong>Mexer</strong> = criar/editar.
+              </p>
+              <GradeModulos grade={grade} usuarioId={colaborador.id} onSaved={onSaved} />
+            </section>
+
+            {/* Override temporário / avançado */}
             <section>
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-foreground">Overrides individuais</h3>
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setMostrarNovoOverride(true)}>
-                  <Plus className="h-3.5 w-3.5" /> Adicionar
+                <h3 className="text-sm font-semibold text-foreground">Override temporário</h3>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setMostrarNovoOverride(v => !v)}>
+                  <Plus className="h-3.5 w-3.5" /> {mostrarNovoOverride ? 'Fechar' : 'Adicionar'}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground mb-3">
-                Exceções por pessoa · ganha (ou perde) acesso fora do cargo. Ideal com data de expiração.
+                Exceção com <strong>data de expiração</strong> ou modificadores (+E exportar · +A aprovar ·
+                <span className="whitespace-nowrap"> * escopo próprio</span>). Pra acesso permanente, use a grade acima.
               </p>
-
               {mostrarNovoOverride && (
                 <NovoOverrideForm
                   modulos={estrutura.modulos || []}
@@ -432,46 +459,6 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
                   usuarioId={colaborador.id}
                 />
               )}
-
-              <div className="space-y-2">
-                {overrides.length === 0 && !mostrarNovoOverride && (
-                  <p className="text-xs text-muted-foreground italic">Sem overrides · pessoa usa só a matriz do cargo.</p>
-                )}
-                {overrides.map(o => {
-                  const expirado = o.expira_em && new Date(o.expira_em) < new Date();
-                  const nivelExibir = o.nivel_escrita ?? o.nivel_leitura ?? o.nivel ?? 0;
-                  return (
-                    <Card key={`${o.usuario_id}-${o.modulo_id}`} className="p-3 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">{o.modulos?.nome || o.modulo_id}</p>
-                        <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-muted-foreground">
-                          <span>Nível {nivelExibir}</span>
-                          {o.pode_exportar && <Badge variant="secondary" className="text-[10px] h-4">+E</Badge>}
-                          {o.pode_aprovar && <Badge variant="secondary" className="text-[10px] h-4">+A</Badge>}
-                          {o.escopo_proprio && <Badge variant="secondary" className="text-[10px] h-4">*</Badge>}
-                          {o.expira_em && (
-                            <span className={expirado ? 'text-red-600 font-medium' : ''}>
-                              · {expirado ? 'expirou' : 'expira'} {formatDataExpiracao(o.expira_em)}
-                            </span>
-                          )}
-                        </div>
-                        {o.motivo && (
-                          <p className="text-xs text-muted-foreground mt-1 italic">"{o.motivo}"</p>
-                        )}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => removerOverride(o.modulo_id)}
-                        disabled={salvando}
-                        title="Remover override"
-                      >
-                        <Trash2 className="h-4 w-4 text-red-600" />
-                      </Button>
-                    </Card>
-                  );
-                })}
-              </div>
             </section>
           </div>
         )}
@@ -483,6 +470,165 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Grade de acesso EFETIVO por módulo · 1 linha por módulo, agrupada por categoria.
+// Mostra o nível atual + de onde vem (cargo/área/override/bloqueio) e deixa
+// ajustar "ver/mexer" por pessoa. Grava via override (o backend apaga o override
+// quando o nível volta a bater com o padrão do cargo).
+function GradeModulos({ grade, usuarioId, onSaved }) {
+  const [salvandoMod, setSalvandoMod] = useState(null);
+
+  async function aplicarNivel(row, novoNivel) {
+    setSalvandoMod(row.modulo_id);
+    try {
+      // Modelo do sistema: 1 nível por módulo (leitura = escrita), igual à matriz
+      // do cargo. Modificadores (E/A/*) e expiração/motivo são preservados.
+      await api.setModulo(usuarioId, {
+        modulo_id: row.modulo_id,
+        nivel_leitura: novoNivel,
+        nivel_escrita: novoNivel,
+        pode_exportar: row.pode_exportar,
+        pode_aprovar: row.pode_aprovar,
+        escopo_proprio: row.escopo_proprio,
+        motivo: row.override?.motivo || null,
+        expira_em: row.override?.expira_em || null,
+      });
+      await onSaved();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar o módulo');
+    } finally {
+      setSalvandoMod(null);
+    }
+  }
+
+  async function resetarModulo(row) {
+    setSalvandoMod(row.modulo_id);
+    try {
+      await api.removerOverride(usuarioId, row.modulo_id);
+      await onSaved();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao remover a exceção');
+    } finally {
+      setSalvandoMod(null);
+    }
+  }
+
+  const porCategoria = useMemo(() => {
+    const buckets = {};
+    for (const r of grade || []) {
+      const cat = r.categoria || 'outros';
+      (buckets[cat] = buckets[cat] || []).push(r);
+    }
+    return buckets;
+  }, [grade]);
+
+  const cats = useMemo(() => {
+    const presentes = Object.keys(porCategoria);
+    return CATEGORIA_ORDEM.filter(c => porCategoria[c]?.length)
+      .concat(presentes.filter(c => !CATEGORIA_ORDEM.includes(c)));
+  }, [porCategoria]);
+
+  if (!grade?.length) {
+    return (
+      <p className="text-xs text-muted-foreground italic">
+        Sem módulos pra exibir · atribua um cargo acima pra ver a grade.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {cats.map(cat => (
+        <div key={cat}>
+          <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+            {CATEGORIA_LABELS[cat] || cat}
+          </h4>
+          <Card className="divide-y divide-border">
+            {porCategoria[cat].map(row => {
+              const om = ORIGEM_META[row.origem] || ORIGEM_META.nenhum;
+              const saving = salvandoMod === row.modulo_id;
+              const temOverride = row.origem === 'override' || row.origem === 'bloqueio';
+              return (
+                <div key={row.modulo_id} className={`p-2.5 flex items-center gap-2 ${saving ? 'opacity-50' : ''}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{row.nome}</p>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                      <Badge className={`text-[10px] h-4 ${om.cls}`}>{om.label}</Badge>
+                      {row.override?.expira_em && (
+                        <span className="text-[10px] text-muted-foreground">
+                          expira {formatDataExpiracao(row.override.expira_em)}
+                        </span>
+                      )}
+                      {row.pode_exportar && <Badge variant="secondary" className="text-[10px] h-4">+E</Badge>}
+                      {row.pode_aprovar && <Badge variant="secondary" className="text-[10px] h-4">+A</Badge>}
+                      {row.escopo_proprio && <Badge variant="secondary" className="text-[10px] h-4">*</Badge>}
+                    </div>
+                  </div>
+
+                  {row.area_boost && !row.blocked ? (
+                    // Elevado pela área (boost) · um nível < 5 não rebaixa; só "bloquear" tem efeito.
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-blue-700 dark:text-blue-400 font-medium">Admin · via área</span>
+                      <Button
+                        size="sm" variant="ghost" disabled={saving}
+                        className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
+                        onClick={() => aplicarNivel(row, 0)}
+                        title="Bloquear este módulo mesmo a pessoa tendo a área"
+                      >
+                        Bloquear
+                      </Button>
+                    </div>
+                  ) : row.area_boost && row.blocked ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-red-600 font-medium">Bloqueado</span>
+                      <Button
+                        size="sm" variant="ghost" disabled={saving}
+                        className="h-7 px-2 text-xs"
+                        onClick={() => resetarModulo(row)}
+                        title="Voltar ao acesso que a área concede"
+                      >
+                        Desbloquear
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Select
+                        value={String(row.leitura)}
+                        onValueChange={v => aplicarNivel(row, parseInt(v, 10))}
+                        disabled={saving}
+                      >
+                        <SelectTrigger className="w-[176px] h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {NIVEL_OPCOES.map(n => (
+                            <SelectItem key={n.v} value={String(n.v)} className="text-xs">
+                              {n.v} · {n.l}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {temOverride && (
+                        <Button
+                          size="sm" variant="ghost" disabled={saving}
+                          className="h-8 w-8 p-0"
+                          onClick={() => resetarModulo(row)}
+                          title="Voltar ao padrão do cargo"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </Card>
+        </div>
+      ))}
+    </div>
   );
 }
 

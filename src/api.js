@@ -89,6 +89,29 @@ export const tutorial = {
   reset: (tour_id) => del('/tutorial/progress' + (tour_id ? `?tour_id=${encodeURIComponent(tour_id)}` : '')),
 };
 
+// Reconhecimento facial na entrada · membro-ou-anônimo + rostos a resolver
+export const face = {
+  reconhecer: (data) => post('/face/reconhecer', data),
+  resumo: (params) => get('/face/presencas/resumo' + (params ? '?' + new URLSearchParams(params) : '')),
+  presencaLista: (params) => get('/face/presencas/lista' + (params ? '?' + new URLSearchParams(params) : '')),
+  cultos: () => get('/face/cultos'),
+  anonimos: (params) => get('/face/anonimos' + (params ? '?' + new URLSearchParams(params) : '')),
+  vincular: (anonId, membro_id) => post(`/face/anonimos/${anonId}/vincular`, { membro_id }),
+  cadastrar: (anonId, data) => post(`/face/anonimos/${anonId}/cadastrar`, data),
+  descartar: (anonId) => post(`/face/anonimos/${anonId}/descartar`, {}),
+  galeria: (params) => get('/face/membros/galeria' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Carrega a foto do membro pelo MESMO domínio (proxy) → blob → object URL.
+  // Evita CORS (foto do PCO/app cross-origin tornaria o canvas "tainted").
+  fotoBlobUrl: async (membroId) => {
+    const token = await getToken();
+    const res = await fetch(`${API}/face/membros/${membroId}/foto`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) throw new Error('Falha ao carregar a foto');
+    return URL.createObjectURL(await res.blob());
+  },
+  enroll: (membroId, descriptor, consentimento) => post(`/face/membros/${membroId}/enroll`, { descriptor, consentimento }),
+  removerEnroll: (membroId) => del(`/face/membros/${membroId}/enroll`),
+};
+
 // Onda 0 · loop de feedback do piloto
 export const feedback = {
   enviar: (data) => post('/feedback', data),
@@ -1511,6 +1534,7 @@ export const membresia = {
     remove: (id) => del(`/membresia/membros/${id}`),
     uploadFoto: (id, formData) => requestFile(`/membresia/membros/${id}/foto`, formData),
     wifi: (id) => get(`/membresia/membros/${id}/wifi`),
+    reconhecimentoFacial: (id) => get(`/membresia/membros/${id}/reconhecimento-facial`),
   },
   trilha: {
     create: (data) => post('/membresia/trilha', data),
@@ -1952,6 +1976,7 @@ export const voluntariado = {
   profiles: {
     list: () => get('/voluntariado/profiles'),
     get: (id) => get(`/voluntariado/profiles/${id}`),
+    detalhe: (id) => get(`/voluntariado/profiles/${id}/detalhe`),
     create: (data) => post('/voluntariado/profiles', data),
     update: (id, data) => put(`/voluntariado/profiles/${id}`, data),
   },

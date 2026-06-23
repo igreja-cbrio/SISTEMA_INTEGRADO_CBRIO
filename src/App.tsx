@@ -188,6 +188,7 @@ const DashboardSemanal = lazyWithRetry(() => import('./pages/DashboardSemanal'))
 const MonitoramentoOkr = lazyWithRetry(() => import('./pages/MonitoramentoOkr'));
 const Membresia = lazyWithRetry(() => import('./pages/ministerial/Membresia'));
 const MemberScan = lazyWithRetry(() => import('./pages/ministerial/membresia/MemberScan'));
+const ReconhecimentoFacial = lazyWithRetry(() => import('./pages/ministerial/reconhecimentoFacial/ReconhecimentoFacial'));
 const Online = lazyWithRetry(() => import('./pages/ministerial/Online'));
 const PainelKids = lazyWithRetry(() => import('./pages/ministerial/PainelKids'));
 const PainelAmi = lazyWithRetry(() => import('./pages/ministerial/PainelAmi'));
@@ -238,6 +239,8 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 // Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
+// /atlas · atlas operacional do sistema (manual + auditoria) · standalone, autenticado, fora do menu.
+const Atlas = lazyWithRetry(() => import('./pages/atlas/Atlas'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
 const VolTotem = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolTotem'));
 const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
@@ -438,6 +441,9 @@ function AppRoutes() {
       {/* Preview de design (estilo Rondesignlab) · fullscreen isolado · não-produção */}
       <Route path="/design-preview" element={<ProtectedRoute><Suspense fallback={<Loading />}><DesignPreview /></Suspense></ProtectedRoute>} />
 
+      {/* /atlas · atlas operacional do sistema (manual + auditoria) · fullscreen isolado, autenticado, fora do menu */}
+      <Route path="/atlas" element={<ProtectedRoute><Suspense fallback={<Loading />}><Atlas /></Suspense></ProtectedRoute>} />
+
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
       <Route path="/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><TotemMembro /></Suspense></ProtectedRoute>} />
@@ -489,6 +495,7 @@ function AppRoutes() {
         <Route path="/admin/patrimonio" element={<ModuleGuard permKey="canPatrimonio"><Suspense fallback={<Loading />}><Patrimonio /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Membresia /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia/scan" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><MemberScan /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/reconhecimento-facial" element={<ModuleGuard moduleSlug="face"><Suspense fallback={<Loading />}><ReconhecimentoFacial /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         {/* Totem Kids · check-in/checkout/painel · 2026-05-21 */}
         <Route path="/ministerial/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckin /></Suspense></ModuleGuard>} />
@@ -501,14 +508,14 @@ function AppRoutes() {
         {/* Redirects das URLs antigas (admin separado) · 2026-05-21 */}
         <Route path="/admin/totem-kids" element={<Navigate to="/ministerial/totem-kids/configuracoes" replace />} />
         <Route path="/admin/totem-kids/sessoes" element={<Navigate to="/ministerial/totem-kids/configuracoes?aba=sessoes" replace />} />
-        <Route path="/grupos" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
-        <Route path="/grupos/supervisao" element={<Suspense fallback={<Loading />}><GruposSupervisao /></Suspense>} />
-        <Route path="/grupos/pedidos" element={<Suspense fallback={<Loading />}><PedidosGrupo /></Suspense>} />
+        <Route path="/grupos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
+        <Route path="/grupos/supervisao" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><GruposSupervisao /></Suspense></ModuleGuard>} />
+        <Route path="/grupos/pedidos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><PedidosGrupo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
-        <Route path="/ministerial/integracao" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/integracao" element={<ModuleGuard moduleSlug="integracao"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
