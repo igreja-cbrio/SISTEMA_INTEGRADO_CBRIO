@@ -7,6 +7,25 @@ const mlTracker = require('../services/solicitacoesMlTracker');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
+const wpp = require('../services/whatsappService');
+
+// Dispara o WhatsApp pro solicitante quando a solicitação muda de status
+// (template pedido_atualizado · 5 params). No-op se sem env / sem membro / sem
+// telefone. Fire-and-forget · nunca quebra o fluxo.
+async function notificarPedidoWhatsapp(solicitacaoId, statusLabel, detalhe) {
+  try {
+    const { data: sol } = await supabase.from('solicitacoes').select('titulo, solicitante_id').eq('id', solicitacaoId).maybeSingle();
+    if (!sol?.solicitante_id) return;
+    const { data: prof } = await supabase.from('profiles').select('name, membro_id').eq('id', sol.solicitante_id).maybeSingle();
+    if (!prof?.membro_id) return;
+    const primeiroNome = (prof.name || '').trim().split(/\s+/)[0] || 'Olá';
+    const link = `${process.env.FRONTEND_URL || 'https://cbrio.org'}/solicitacoes`;
+    await wpp.notificarMembro(prof.membro_id, 'pedido_atualizado', [
+      primeiroNome, sol.titulo || 'sua solicitação', String(statusLabel || '').replace(/_/g, ' '),
+      detalhe ? String(detalhe).slice(0, 200) : 'Sem detalhes adicionais.', link,
+    ]);
+  } catch (e) { console.error('[SOLICITACOES] wpp pedido:', e.message); }
+}
 
 // ── CRON · ATUALIZAR STATUS DE PEDIDOS ML VINCULADOS ───────────────────
 // Montado ANTES do authenticate · auth via CRON_SECRET (Vercel/GitHub Actions).
@@ -776,6 +795,9 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
       .single();
     if (error) throw error;
 
+    // WhatsApp pro solicitante: aprovação de origem concluída.
+    notificarPedidoWhatsapp(data.id, 'aprovada na origem', null);
+
     // Notifica solicitante + responsável da área alvo
     const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
     notificar({
@@ -1051,22 +1073,8 @@ router.patch('/:id', async (req, res) => {
         targetIds: [data.solicitante_id],
       }).catch(err => console.error('[SOLICITACOES] notify solicitante error:', err.message));
 
-      // 1b. WhatsApp pro solicitante (template pedido_atualizado · 5 params) ·
-      // só dispara se o env do template estiver setado e o solicitante for um
-      // membro com telefone (no-op gracioso senão).
-      (async () => {
-        try {
-          const { data: prof } = await supabase.from('profiles').select('name, membro_id').eq('id', data.solicitante_id).maybeSingle();
-          if (!prof?.membro_id) return;
-          const wpp = require('../services/whatsappService');
-          const primeiroNome = (prof.name || '').trim().split(/\s+/)[0] || 'Olá';
-          const link = `${process.env.FRONTEND_URL || 'https://cbrio.org'}/solicitacoes`;
-          await wpp.notificarMembro(prof.membro_id, 'pedido_atualizado', [
-            primeiroNome, data.titulo || 'sua solicitação', statusLabel,
-            observacoes ? String(observacoes).slice(0, 200) : 'Sem detalhes adicionais.', link,
-          ]);
-        } catch (e) { console.error('[SOLICITACOES] wpp pedido:', e.message); }
-      })();
+      // 1b. WhatsApp pro solicitante (template pedido_atualizado).
+      notificarPedidoWhatsapp(data.id, statusLabel, observacoes);
 
       // 2. Notify área managers (excluding the requester to avoid duplicate)
       resolverDestinatarios(modulo).then(managers => {
@@ -1665,6 +1673,9 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       chaveDedup: `solicitacao_aprovada_fin_${data.id}`,
       extraTargetIds: [atual.solicitante_id].filter(Boolean),
     }).catch(err => console.error('[SOLICITACOES] notify:', err.message));
+
+    // WhatsApp pro solicitante: aprovação financeira concluída.
+    notificarPedidoWhatsapp(data.id, 'aprovada no financeiro', acaoMsg);
 
     res.json(data);
   } catch (e) {

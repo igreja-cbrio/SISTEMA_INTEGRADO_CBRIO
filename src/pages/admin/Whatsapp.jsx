@@ -566,6 +566,26 @@ function AbaConfig() {
   const [cfg, setCfg] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testChave, setTestChave] = useState('pedido_atualizado');
+  const [testando, setTestando] = useState(false);
+
+  async function testarDisparo() {
+    setTestando(true);
+    try {
+      const r = await api.testDisparo(testChave);
+      if (r?.ok) toast.success('Enviado! Confira seu WhatsApp.');
+      else {
+        const motivo = r?.motivo || ({
+          template_nao_configurado: 'Env do template não setado na Vercel (ou sem redeploy).',
+          sem_telefone: 'Seu membro está sem telefone.',
+          sem_optin: 'Você não está com opt-in (template de Marketing).',
+          wpp_nao_configurado: 'Token/número do WhatsApp não configurado.',
+        }[r?.resultado?.skipped] || JSON.stringify(r?.resultado || {}));
+        toast.error(`Não enviou: ${motivo}`);
+      }
+    } catch (e) { toast.error(e.message || 'Erro no teste'); }
+    finally { setTestando(false); }
+  }
 
   useEffect(() => {
     api.getConfig().then(d => {
@@ -617,6 +637,26 @@ function AbaConfig() {
           <p className="text-xs text-muted-foreground">Desligue pra pausar o bot sem mexer no webhook.</p>
         </div>
         <Switch checked={cfg.ia_ativa} onCheckedChange={v => set('ia_ativa', v)} />
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div>
+          <p className="font-medium text-foreground">Testar disparo de template</p>
+          <p className="text-xs text-muted-foreground">Envia o template escolhido pra você (seu WhatsApp) e mostra o motivo se não enviar — pra validar o env do template e o redeploy.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={testChave} onChange={e => setTestChave(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm">
+            <option value="pedido_atualizado">pedido_atualizado (solicitação)</option>
+            <option value="inscricao_confirmada">inscricao_confirmada</option>
+            <option value="kids_precheckin">kids_precheckin</option>
+            <option value="kids_vinculo">kids_vinculo</option>
+            <option value="batismo_lembrete">batismo_lembrete</option>
+            <option value="aniversario">aniversario (Marketing · opt-in)</option>
+          </select>
+          <Button size="sm" onClick={testarDisparo} disabled={testando} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
+            {testando ? 'Enviando…' : 'Enviar teste pra mim'}
+          </Button>
+        </div>
       </Card>
 
       <Card className="p-4 space-y-4">
