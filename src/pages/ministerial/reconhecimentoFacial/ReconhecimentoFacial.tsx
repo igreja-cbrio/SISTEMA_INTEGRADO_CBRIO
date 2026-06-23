@@ -60,6 +60,27 @@ function capturarBestShot(video: HTMLVideoElement | null): string | null {
   return canvas.toDataURL('image/jpeg', 0.7);
 }
 
+// Best-shot a partir de um arquivo de imagem (pra importar pasta de rostos).
+function arquivoParaBestShot(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const w = Math.min(img.naturalWidth, 480);
+      const scale = w / (img.naturalWidth || 1);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = Math.round(img.naturalHeight * scale);
+      const ctx = canvas.getContext('2d');
+      URL.revokeObjectURL(url);
+      if (!ctx) return resolve(null);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
 // ── Gate de qualidade · só reconhece ROSTO INTEIRO e DE FRENTE ──────────────
 // Evita poluir as análises com rosto parcial/de lado/cabeça baixa.
 function mean(pts: any[]) { const n = pts.length || 1; let x = 0, y = 0; for (const p of pts) { x += p.x; y += p.y; } return { x: x / n, y: y / n }; }
@@ -366,14 +387,44 @@ function AbaResolver() {
     mutationFn: (id: string) => face.descartar(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['face-anonimos'] }),
   });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [imp, setImp] = useState<{ total: number; feitos: number; semRosto: number; erro: number } | null>(null);
   const lista = Array.isArray(data) ? data : [];
+
+  const importar = useCallback(async (files: FileList) => {
+    const arr = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (!arr.length) return;
+    setImp({ total: arr.length, feitos: 0, semRosto: 0, erro: 0 });
+    for (const f of arr) {
+      try {
+        const url = URL.createObjectURL(f);
+        let desc: number[] | null = null;
+        try { desc = await descritorDaFoto(url); } finally { URL.revokeObjectURL(url); }
+        if (!desc) { setImp((p) => p && { ...p, feitos: p.feitos + 1, semRosto: p.semRosto + 1 }); continue; }
+        const best_shot = await arquivoParaBestShot(f);
+        const rotulo = f.name.replace(/\.[^.]+$/, '');
+        await face.importarAnonimo({ descriptor: desc, best_shot, rotulo });
+        setImp((p) => p && { ...p, feitos: p.feitos + 1 });
+      } catch { setImp((p) => p && { ...p, feitos: p.feitos + 1, erro: p.erro + 1 }); }
+    }
+    setImp(null);
+    setSoRecorrentes(false); // importados têm 1 visita → aparecem em "Todos"
+    qc.invalidateQueries({ queryKey: ['face-anonimos'] });
+  }, [qc]);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant={soRecorrentes ? 'default' : 'outline'} onClick={() => setSoRecorrentes(true)} style={soRecorrentes ? { background: PRIMARY } : {}}>Recorrentes (2+ visitas)</Button>
         <Button size="sm" variant={!soRecorrentes ? 'default' : 'outline'} onClick={() => setSoRecorrentes(false)} style={!soRecorrentes ? { background: PRIMARY } : {}}>Todos</Button>
+        <span className="flex-1" />
+        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { if (e.target.files) importar(e.target.files); e.currentTarget.value = ''; }} />
+        <Button size="sm" variant="outline" disabled={!!imp} onClick={() => fileRef.current?.click()}>
+          {imp ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <UserPlus className="w-3.5 h-3.5 mr-1" />}
+          {imp ? `Importando ${imp.feitos}/${imp.total}…` : 'Importar rostos (fotos)'}
+        </Button>
       </div>
+      {imp && <p className="text-xs text-muted-foreground">{imp.feitos}/{imp.total} · {imp.semRosto} sem rosto · {imp.erro} erros</p>}
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
       {!isLoading && lista.length === 0 && (
         <Card><CardContent className="p-6 text-center text-muted-foreground">Nenhum rosto anônimo a resolver.</CardContent></Card>
@@ -389,7 +440,10 @@ function AbaResolver() {
                   <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 flex items-center justify-center transition"><Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100" /></span>
                 </> : <Users className="w-8 h-8 text-muted-foreground" />}
               </button>
-              <div className="text-sm space-y-1">
+              <div className="text-sm space-y-1 min-w-0">
+                {a.entrada && a.entrada !== 'importado' && !String(a.entrada).startsWith('entrada') && !String(a.entrada).startsWith('teste') && (
+                  <p className="font-medium truncate" title={a.entrada}>{a.entrada}</p>
+                )}
                 <Badge variant="secondary">{a.visitas} {a.visitas > 1 ? 'visitas' : 'visita'}</Badge>
                 <p className="text-muted-foreground text-xs">1ª vez: {fmtData(a.primeira_vez)}</p>
                 <p className="text-muted-foreground text-xs">Última: {fmtData(a.ultima_vez)}</p>

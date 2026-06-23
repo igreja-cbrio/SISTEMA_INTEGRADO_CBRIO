@@ -99,6 +99,7 @@ export const face = {
   vincular: (anonId, membro_id) => post(`/face/anonimos/${anonId}/vincular`, { membro_id }),
   cadastrar: (anonId, data) => post(`/face/anonimos/${anonId}/cadastrar`, data),
   descartar: (anonId) => post(`/face/anonimos/${anonId}/descartar`, {}),
+  importarAnonimo: (data) => post('/face/anonimos/importar', data),
   galeria: (params) => get('/face/membros/galeria' + (params ? '?' + new URLSearchParams(params) : '')),
   // Carrega a foto do membro pelo MESMO domínio (proxy) → blob → object URL.
   // Evita CORS (foto do PCO/app cross-origin tornaria o canvas "tainted").

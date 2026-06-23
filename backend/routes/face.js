@@ -195,6 +195,24 @@ router.post('/anonimos/:id/descartar', authorizeModule('face', 3), async (req, r
   }
 });
 
+// Importa um rosto como ANÔNIMO pendente (lote de fotos · o browser gera o
+// vetor). Sempre cria (não tenta match) · rotulo = dica (ex.: nome do arquivo).
+router.post('/anonimos/importar', authorizeModule('face', 3), async (req, res) => {
+  try {
+    const { descriptor, best_shot, rotulo } = req.body || {};
+    if (!isDescriptor(descriptor)) return res.status(400).json({ error: 'descriptor (128 números) obrigatório' });
+    const best_shot_path = best_shot ? await uploadBestShot(best_shot, 'import') : null;
+    const { data, error } = await supabase.from('face_anonimos')
+      .insert({ embedding: vecLiteral(descriptor), best_shot_path, entrada: rotulo ? String(rotulo).slice(0, 60) : 'importado' })
+      .select('id').single();
+    if (error) throw error;
+    res.json({ ok: true, anon_id: data.id });
+  } catch (e) {
+    console.error('[face] importar:', e.message);
+    res.status(500).json({ error: 'Erro ao importar rosto' });
+  }
+});
+
 // ── Enroll de membro (consentimento) ────────────────────────────────────────
 // Usado pela galeria/cadastro: salva o descriptor do membro com consentimento.
 router.post('/membros/:id/enroll', authorizeModule('face', 3), async (req, res) => {
