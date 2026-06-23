@@ -400,6 +400,8 @@ export const grupos = {
 };
 
 export const whatsapp = {
+  // Teste de disparo de template pra si mesmo (valida env + template)
+  testDisparo: (chave) => post('/whatsapp/test-disparo', { chave }),
   // Líderes · vinculo telefone -> profile
   listLideres: () => get('/whatsapp/lideres'),
   vincularLider: (data) => post('/whatsapp/lideres', data),
