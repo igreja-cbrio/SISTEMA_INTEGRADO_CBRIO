@@ -26,16 +26,12 @@ ALTER TABLE public.cui_convertidos
   ADD COLUMN IF NOT EXISTS direcionamento          text,
   ADD COLUMN IF NOT EXISTS direcionamento_em        timestamptz;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'cui_convertidos_direcionamento_check'
-  ) THEN
-    ALTER TABLE public.cui_convertidos
-      ADD CONSTRAINT cui_convertidos_direcionamento_check
-      CHECK (direcionamento IS NULL OR direcionamento IN ('grupos', 'devocionais', 'voluntarios'));
-  END IF;
-END $$;
+-- CHECK do direcionamento (idempotente · recria pra não duplicar)
+ALTER TABLE public.cui_convertidos
+  DROP CONSTRAINT IF EXISTS cui_convertidos_direcionamento_check;
+ALTER TABLE public.cui_convertidos
+  ADD CONSTRAINT cui_convertidos_direcionamento_check
+  CHECK (direcionamento IS NULL OR direcionamento IN ('grupos', 'devocionais', 'voluntarios'));
 
 COMMENT ON COLUMN public.cui_convertidos.responsavel_atendimento IS
   'Nome de quem ficou responsável pelo atendimento do convertido (lista fixa na UI · ex.: Arthur Cecconi). Texto livre porque essas pessoas não logam no Cuidados.';
@@ -72,21 +68,28 @@ COMMENT ON TABLE public.cui_visitas IS
 -- RLS · scoped ao módulo Cuidados (read≥1 · write≥3 · delete super-admin · service_role bypassa)
 ALTER TABLE public.cui_visitas ENABLE ROW LEVEL SECURITY;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='cui_visitas' AND policyname='cui_visitas_select') THEN
-    EXECUTE 'CREATE POLICY cui_visitas_select ON public.cui_visitas FOR SELECT TO authenticated USING (public.current_user_module_level(''cuidados'') >= 1)';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='cui_visitas' AND policyname='cui_visitas_insert') THEN
-    EXECUTE 'CREATE POLICY cui_visitas_insert ON public.cui_visitas FOR INSERT TO authenticated WITH CHECK (public.current_user_module_level(''cuidados'') >= 3)';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='cui_visitas' AND policyname='cui_visitas_update') THEN
-    EXECUTE 'CREATE POLICY cui_visitas_update ON public.cui_visitas FOR UPDATE TO authenticated USING (public.current_user_module_level(''cuidados'') >= 3) WITH CHECK (public.current_user_module_level(''cuidados'') >= 3)';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='cui_visitas' AND policyname='cui_visitas_delete') THEN
-    EXECUTE 'CREATE POLICY cui_visitas_delete ON public.cui_visitas FOR DELETE TO authenticated USING (public.is_super_admin())';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='cui_visitas' AND policyname='cui_visitas_service') THEN
-    EXECUTE 'CREATE POLICY cui_visitas_service ON public.cui_visitas FOR ALL TO service_role USING (true) WITH CHECK (true)';
-  END IF;
-END $$;
+DROP POLICY IF EXISTS cui_visitas_select  ON public.cui_visitas;
+CREATE POLICY cui_visitas_select  ON public.cui_visitas
+  FOR SELECT TO authenticated
+  USING (public.current_user_module_level('cuidados') >= 1);
+
+DROP POLICY IF EXISTS cui_visitas_insert  ON public.cui_visitas;
+CREATE POLICY cui_visitas_insert  ON public.cui_visitas
+  FOR INSERT TO authenticated
+  WITH CHECK (public.current_user_module_level('cuidados') >= 3);
+
+DROP POLICY IF EXISTS cui_visitas_update  ON public.cui_visitas;
+CREATE POLICY cui_visitas_update  ON public.cui_visitas
+  FOR UPDATE TO authenticated
+  USING (public.current_user_module_level('cuidados') >= 3)
+  WITH CHECK (public.current_user_module_level('cuidados') >= 3);
+
+DROP POLICY IF EXISTS cui_visitas_delete  ON public.cui_visitas;
+CREATE POLICY cui_visitas_delete  ON public.cui_visitas
+  FOR DELETE TO authenticated
+  USING (public.is_super_admin());
+
+DROP POLICY IF EXISTS cui_visitas_service ON public.cui_visitas;
+CREATE POLICY cui_visitas_service ON public.cui_visitas
+  FOR ALL TO service_role
+  USING (true) WITH CHECK (true);
