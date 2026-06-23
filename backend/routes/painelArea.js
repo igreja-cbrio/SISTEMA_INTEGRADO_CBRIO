@@ -96,10 +96,15 @@ router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
     let lideresMap = {};
 
     if (kpiIds.length > 0) {
-      const { data: traj } = await supabase
+      // ⚠️ NÃO selecionar colunas inexistentes: a view vw_kpi_trajetoria_atual
+      // não tem 'gap' (removida na 20260515520000). Pedir 'gap' fazia a query
+      // FALHAR INTEIRA no PostgREST → trajByKpi vazio → TODOS os KPIs de TODAS
+      // as áreas (kids/ami/bridge/online/sede) apareciam "sem dado".
+      const { data: traj, error: trajErr } = await supabase
         .from('vw_kpi_trajetoria_atual')
-        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta, gap')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
         .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[painelArea] trajetoria query falhou:', trajErr.message);
       (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
 
       const liderIds = kpis.map(k => k.lider_funcionario_id).filter(Boolean);
