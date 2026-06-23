@@ -122,6 +122,10 @@
       "schedule": "0 12 * * *"
     },
     {
+      "path": "/api/whatsapp-cron/batismos-lembrete",
+      "schedule": "0 21 * * *"
+    },
+    {
       "path": "/api/notificacoes/cron/alerta-culto-dados",
       "schedule": "0 13 * * 1"
     }
