@@ -2004,6 +2004,8 @@ export const voluntariado = {
     list: () => get('/voluntariado/services'),
     upcoming: () => get('/voluntariado/services/upcoming'),
     today: () => get('/voluntariado/services/today'),
+    // Janela de check-in (passado recente + futuros) · permite check-in fora do dia
+    checkinWindow: (back, ahead) => get(`/voluntariado/services/checkin-window?back=${back ?? 21}&ahead=${ahead ?? 35}`),
     create: (data) => post('/voluntariado/services', data),
     update: (id, data) => put(`/voluntariado/services/${id}`, data),
     remove: (id) => del(`/voluntariado/services/${id}`),

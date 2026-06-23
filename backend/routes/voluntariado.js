@@ -1439,6 +1439,23 @@ router.get('/services/today', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos de hoje' }); }
 });
 
+// Janela de check-in · cultos do período (passado recente + próximos) pra
+// permitir check-in FORA do dia do culto — totem e self check-in usam isto pra
+// listar cultos futuros (ex.: a Quarta de amanhã ou o Domingo que vem). Janela
+// limitada (bounded) pra não estourar o cap do PostgREST no attachScheduledCount.
+router.get('/services/checkin-window', async (req, res) => {
+  try {
+    const back = Math.min(Math.max(Number(req.query.back) || 21, 0), 120);
+    const ahead = Math.min(Math.max(Number(req.query.ahead) || 35, 1), 120);
+    const from = new Date(Date.now() - back * 864e5).toISOString();
+    const to = new Date(Date.now() + ahead * 864e5).toISOString();
+    const { data, error } = await supabase.from('vol_services').select('*')
+      .gte('scheduled_at', from).lte('scheduled_at', to).order('scheduled_at');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(await attachScheduledCount(data));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos do período' }); }
+});
+
 // ══════════════════════════════════════════════════════════════
 // SCHEDULES
 // ══════════════════════════════════════════════════════════════
