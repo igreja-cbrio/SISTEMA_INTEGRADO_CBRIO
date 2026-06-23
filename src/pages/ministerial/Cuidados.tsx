@@ -1,8 +1,7 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { cuidados as cuidadosApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
-import ProcessosTarefas from '../../components/ProcessosTarefas';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
@@ -17,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ClipboardCheck, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
+import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
@@ -267,12 +266,20 @@ const TAG_COLORS: Record<string, string> = {
   outro: '#94a3b8',
 };
 
-const ENCONTRO_STATUS: Record<string, { label: string; color: string }> = {
-  agendado:  { label: 'Agendado',  color: '#3b82f6' },
-  realizado: { label: 'Realizado', color: '#10b981' },
-  faltou:    { label: 'Faltou',    color: '#ef4444' },
-  cancelado: { label: 'Cancelado', color: '#6b7280' },
-};
+// Lista fixa de quem faz o atendimento do convertido. Essas pessoas NÃO logam no
+// Cuidados — o Marcelo registra quem ficou responsável. Editável aqui se a equipe mudar.
+const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Paiva', 'Wesley Ramos'];
+
+// Pra onde o responsável direcionou a pessoa. Grupos/Voluntários geram o handoff na
+// caixa da área (que o líder daquele módulo acessa); Devocionais fica só registrado.
+// NÃO conta engajamento — isso vem do sinal real (entrar no grupo / virar voluntário /
+// ler a 1ª devocional), que o NSM mede sozinho.
+const DIRECIONAMENTOS: { v: string; l: string }[] = [
+  { v: 'grupos',      l: 'Grupos' },
+  { v: 'devocionais', l: 'Devocionais' },
+  { v: 'voluntarios', l: 'Voluntários' },
+];
+const DIRECIONAMENTO_LABEL: Record<string, string> = Object.fromEntries(DIRECIONAMENTOS.map(d => [d.v, d.l]));
 
 // Status do PRIMEIRO CONTATO (ex-planilha do Marcelo). Primeiro contato FEITO =
 // o contato foi realizado, independente da resposta da pessoa → respondeu,
@@ -313,13 +320,6 @@ function JornadaPill({ label, m }: { label: string; m: any }) {
     </span>
   );
 }
-
-// destinos do encaminhamento da jornada · mapeiam pros próximos valores
-const DESTINOS_ENC = [
-  { v: 'jornada180',  l: 'Jornada 180', sub: 'firmar na fé (Investir)' },
-  { v: 'grupos',      l: 'Grupos',      sub: 'conectar / comunidade' },
-  { v: 'voluntarios', l: 'Voluntários', sub: 'servir' },
-];
 
 function emptyConvertidoForm() {
   return {
@@ -417,8 +417,8 @@ function ConvertidoModal({
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.cadastrado} onChange={e => setForm({ ...form, cadastrado: e.target.checked })} />Cadastrado</label>
           </div>
           <p className="text-xs text-muted-foreground rounded-md border border-border p-2.5" style={{ background: 'var(--cbrio-input-bg)' }}>
-            <CalendarPlus className="h-3.5 w-3.5 text-primary inline mr-1" />
-            O encontro pastoral (data, hora e quem vai atender) é agendado pelo botão <strong>Agendar encontro</strong> na lista ou na ficha da pessoa.
+            <HeartHandshake className="h-3.5 w-3.5 text-primary inline mr-1" />
+            O responsável pelo atendimento e o direcionamento (Grupos / Devocionais / Voluntários) são definidos direto na lista de Próximos passos.
           </p>
           <div>
             <Label>Tags pastorais</Label>
@@ -466,14 +466,12 @@ function ConvertidoModal({
 }
 
 function ConvertidoDetailDialog({
-  convertido, onClose, onEdit, onRemove, onAgendar, onDesfecho, canEdit,
+  convertido, onClose, onEdit, onRemove, canEdit,
 }: {
   convertido: any | null;
   onClose: () => void;
   onEdit: () => void;
   onRemove: () => void;
-  onAgendar: () => void;
-  onDesfecho: () => void;
   canEdit: boolean;
 }) {
   if (!convertido) return null;
@@ -501,8 +499,8 @@ function ConvertidoDetailDialog({
               ) : (
                 <Badge className="bg-warning/15 text-warning border-warning/30">Pendente</Badge>
               )}
-              {c.encontro_marcado && (
-                <Badge className="bg-info/15 text-info border-info/30">Encontro marcado</Badge>
+              {c.direcionamento && (
+                <Badge className="bg-info/15 text-info border-info/30">{DIRECIONAMENTO_LABEL[c.direcionamento] || c.direcionamento}</Badge>
               )}
               {c.cadastrado && (
                 <Badge className="bg-purple-500/15 text-purple-500 border-purple-500/30">Cadastrado</Badge>
@@ -533,36 +531,18 @@ function ConvertidoDetailDialog({
             </dl>
           </section>
 
-          <section className="rounded-md border border-border p-3 space-y-2" style={{ background: 'var(--cbrio-input-bg)' }}>
+          <section className="rounded-md border border-border p-3 space-y-1.5" style={{ background: 'var(--cbrio-input-bg)' }}>
             <h3 className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
-              <CalendarCheck className="h-3.5 w-3.5 text-primary" />
-              Encontro pastoral
+              <HeartHandshake className="h-3.5 w-3.5 text-primary" />
+              Atendimento
             </h3>
-            {c.encontro_marcado ? (
-              <div className="text-sm space-y-0.5">
-                <div>Quando: <strong className="text-primary">{fmtData(c.data_encontro)}{c.encontro_hora ? ' · ' + String(c.encontro_hora).slice(0, 5) : ''}</strong></div>
-                {c.encontro_responsavel_nome && <div>Quem atende: <strong>{c.encontro_responsavel_nome}</strong></div>}
-                {c.encontro_status && (
-                  <div>Status: <span style={{ color: ENCONTRO_STATUS[c.encontro_status]?.color }} className="font-medium">{ENCONTRO_STATUS[c.encontro_status]?.label || c.encontro_status}</span>
-                    {c.encontro_status === 'realizado' && c.encontro_compareceu === false && ' · não compareceu'}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">Nenhum encontro agendado ainda.</div>
-            )}
-            {canEdit && (
-              <div className="flex gap-2 pt-1 flex-wrap">
-                <Button size="sm" variant="outline" onClick={onAgendar}>
-                  <CalendarPlus className="h-3.5 w-3.5 mr-1" />{c.encontro_marcado ? 'Reagendar' : 'Agendar encontro'}
-                </Button>
-                {c.encontro_status === 'agendado' && (
-                  <Button size="sm" onClick={onDesfecho}>
-                    <ClipboardCheck className="h-3.5 w-3.5 mr-1" />Registrar desfecho
-                  </Button>
-                )}
-              </div>
-            )}
+            <dl className="grid grid-cols-2 gap-y-1.5 text-sm">
+              <dt className="text-muted-foreground">Responsável</dt>
+              <dd>{c.responsavel_atendimento || <span className="text-muted-foreground">A definir</span>}</dd>
+              <dt className="text-muted-foreground">Direcionamento</dt>
+              <dd>{c.direcionamento ? (DIRECIONAMENTO_LABEL[c.direcionamento] || c.direcionamento) : <span className="text-muted-foreground">—</span>}</dd>
+            </dl>
+            <p className="text-[11px] text-muted-foreground pt-0.5">O responsável e o direcionamento são definidos direto na lista de Próximos passos.</p>
           </section>
 
           <section>
@@ -609,298 +589,200 @@ function ConvertidoDetailDialog({
   );
 }
 
-// Agendar visita pastoral · data + hora + quem vai atender (notifica o líder).
-// É o "primeiro contato", o diferencial pedido pelo Marcos. A visita aparece
-// no calendário da aba "Visitas agendadas". Só líderes de culto e de
-// ministérios podem atender (lista vem filtrada por cargo do backend).
-function AgendarEncontroModal({ open, convertido, atendentes, onClose, onSaved }: {
-  open: boolean; convertido: any | null; atendentes: any[]; onClose: () => void; onSaved: () => void;
-}) {
-  const [form, setForm] = useState({ data_encontro: '', encontro_hora: '', responsavel_id: '' });
-  const [saving, setSaving] = useState(false);
+// Visitas e atendimentos avulsos · tipos/status/labels da lista da aba homônima.
+const VISITA_TIPOS_UI: { v: string; l: string }[] = [
+  { v: 'visita',      l: 'Visita' },
+  { v: 'atendimento', l: 'Atendimento' },
+  { v: 'hospital',    l: 'Hospital' },
+  { v: 'luto',        l: 'Luto' },
+  { v: 'oracao',      l: 'Oração' },
+  { v: 'outro',       l: 'Outro' },
+];
+const VISITA_TIPO_LABEL: Record<string, string> = Object.fromEntries(VISITA_TIPOS_UI.map(t => [t.v, t.l]));
+const VISITA_STATUS_UI: { v: string; l: string; color: string }[] = [
+  { v: 'agendada',  l: 'Agendada',  color: '#3b82f6' },
+  { v: 'realizada', l: 'Realizada', color: '#10b981' },
+  { v: 'cancelada', l: 'Cancelada', color: '#6b7280' },
+];
 
-  // Snapshot tirado sobre o MESMO objeto que popula o form ao abrir/reabrir
-  // com outro convertido · baseline = form já populado.
-  const snapRef = useRef<string>(JSON.stringify({ data_encontro: '', encontro_hora: '', responsavel_id: '' }));
+function emptyVisitaForm() {
+  return { nome: '', telefone: '', data_visita: new Date().toISOString().slice(0, 10), tipo: 'visita', responsavel: '', status: 'realizada', observacao: '' };
+}
+
+// Registrar/editar uma visita pastoral ou atendimento avulso (fora dos convertidos).
+function VisitaModal({ open, onClose, onSaved, initial }: {
+  open: boolean; onClose: () => void; onSaved: () => void; initial?: any | null;
+}) {
+  const [form, setForm] = useState(emptyVisitaForm());
+  const [saving, setSaving] = useState(false);
+  const editing = !!initial?.id;
+  const snapRef = useRef<string>(JSON.stringify(emptyVisitaForm()));
 
   useEffect(() => {
-    if (open && convertido) {
-      const next = {
-        data_encontro: convertido.data_encontro || new Date().toISOString().slice(0, 10),
-        encontro_hora: convertido.encontro_hora ? String(convertido.encontro_hora).slice(0, 5) : '',
-        responsavel_id: convertido.encontro_responsavel_id || '',
-      };
-      setForm(next);
-      snapRef.current = JSON.stringify(next);
-    }
-  }, [open, convertido]);
+    if (!open) return;
+    const next = initial ? {
+      nome: initial.nome || '',
+      telefone: initial.telefone || '',
+      data_visita: initial.data_visita || new Date().toISOString().slice(0, 10),
+      tipo: initial.tipo || 'visita',
+      responsavel: initial.responsavel || '',
+      status: initial.status || 'realizada',
+      observacao: initial.observacao || '',
+    } : emptyVisitaForm();
+    setForm(next);
+    snapRef.current = JSON.stringify(next);
+  }, [open, initial]);
 
   const temAlteracoes = JSON.stringify(form) !== snapRef.current;
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
 
-  // Visita antiga pode ter responsável fora da lista atual de atendentes ·
-  // mantém a opção visível pra não perder o vínculo ao reagendar.
-  const responsavelForaDaLista =
-    !!form.responsavel_id && !atendentes.some((u: any) => u.id === form.responsavel_id);
-
   async function save() {
-    if (!form.data_encontro) return toast.error('Escolha a data da visita');
+    if (!form.nome.trim()) return toast.error('Nome obrigatório');
+    if (!form.data_visita) return toast.error('Escolha a data');
     setSaving(true);
     try {
-      const u = atendentes.find((x: any) => x.id === form.responsavel_id);
-      const nomeAtual = form.responsavel_id === convertido.encontro_responsavel_id
-        ? convertido.encontro_responsavel_nome : null;
-      await cuidadosApi.convertidos.agendarEncontro(convertido.id, {
-        data_encontro: form.data_encontro,
-        encontro_hora: form.encontro_hora || null,
-        encontro_responsavel_id: form.responsavel_id || null,
-        encontro_responsavel_nome: u?.name || nomeAtual || null,
-      });
-      toast.success('Visita agendada');
+      if (editing) {
+        await cuidadosApi.visitas.update(initial.id, form);
+        toast.success('Visita atualizada');
+      } else {
+        await cuidadosApi.visitas.create(form);
+        toast.success('Visita registrada');
+      }
       onSaved(); onClose();
     } catch (e: any) { toast.error(e.message); }
     finally { setSaving(false); }
   }
 
-  if (!convertido) return null;
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Agendar visita — {convertido.nome}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{editing ? 'Editar visita / atendimento' : 'Registrar visita / atendimento'}</DialogTitle></DialogHeader>
         <div className="space-y-3">
+          <div><Label>Pessoa *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Quem foi visitado / atendido" /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>Data *</Label><Input type="date" value={form.data_encontro} onChange={e => setForm({ ...form, data_encontro: e.target.value })} /></div>
-            <div><Label>Hora</Label><Input type="time" value={form.encontro_hora} onChange={e => setForm({ ...form, encontro_hora: e.target.value })} /></div>
+            <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
+            <div><Label>Data *</Label><Input type="date" value={form.data_visita} onChange={e => setForm({ ...form, data_visita: e.target.value })} /></div>
           </div>
-          <div>
-            <Label>Quem vai atender</Label>
-            <Select value={form.responsavel_id || '__none'} onValueChange={(v) => setForm({ ...form, responsavel_id: v === '__none' ? '' : v })}>
-              <SelectTrigger><SelectValue placeholder="Selecione o líder" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none">A definir</SelectItem>
-                {responsavelForaDaLista && (
-                  <SelectItem value={form.responsavel_id}>{convertido.encontro_responsavel_nome || 'Responsável atual'}</SelectItem>
-                )}
-                {atendentes.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground mt-1">Só líderes de culto e de ministérios podem atender convertidos.</p>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Agendar'}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// Desfecho da visita · compareceu? + tags pastorais + encaminhamento + observações,
-// tudo num modal só (decisão do Marcos 2026-06-10: o líder preenche tudo ali).
-// Sem "não converteu": ninguém é interrompido · toda pessoa sai com uma indicação.
-function DesfechoModal({ open, convertido, allTags, onClose, onSaved }: {
-  open: boolean; convertido: any | null; allTags: string[]; onClose: () => void; onSaved: () => void;
-}) {
-  const [compareceu, setCompareceu] = useState(true);
-  const [destinos, setDestinos] = useState<Record<string, boolean>>({});
-  const [notas, setNotas] = useState<Record<string, string>>({});
-  const [tags, setTags] = useState<string[]>([]);
-  const [obs, setObs] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  // Snapshot = exatamente os valores do reset feito ao abrir (effect abaixo).
-  const snapRef = useRef<string>(
-    JSON.stringify({ compareceu: true, destinos: {}, notas: {}, tags: [], obs: '' })
-  );
-
-  useEffect(() => {
-    if (open) {
-      // Tags já marcadas na ficha + encaminhamentos já feitos entram pré-preenchidos
-      // (reabrir pra completar pendência não some com o que já existe).
-      const tagsIniciais: string[] = Array.isArray(convertido?.tags) ? convertido.tags : [];
-      const destinosIniciais: Record<string, boolean> = {};
-      (Array.isArray(convertido?.destinos_existentes) ? convertido.destinos_existentes : [])
-        .forEach((d: string) => { destinosIniciais[d] = true; });
-      setCompareceu(true); setDestinos(destinosIniciais); setNotas({}); setTags(tagsIniciais); setObs('');
-      snapRef.current = JSON.stringify({ compareceu: true, destinos: destinosIniciais, notas: {}, tags: tagsIniciais, obs: '' });
-    }
-  }, [open, convertido]);
-
-  const temAlteracoes = JSON.stringify({ compareceu, destinos, notas, tags, obs }) !== snapRef.current;
-  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
-
-  function toggleTag(t: string) {
-    setTags(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
-  }
-
-  async function save() {
-    if (compareceu && !DESTINOS_ENC.some(d => destinos[d.v])) {
-      return toast.error('Toda pessoa sai com uma indicação · escolha ao menos um próximo passo');
-    }
-    if (compareceu && tags.length === 0) {
-      return toast.error('Marque ao menos uma tag pastoral · ela orienta a triagem do cuidado');
-    }
-    setSaving(true);
-    try {
-      const encaminhamentos = compareceu
-        ? DESTINOS_ENC.filter(d => destinos[d.v]).map(d => ({ destino: d.v, observacao: notas[d.v]?.trim() || null }))
-        : [];
-      await cuidadosApi.convertidos.desfecho(convertido.id, { compareceu, encaminhamentos, observacoes: obs.trim() || null, tags });
-      toast.success('Desfecho registrado');
-      onSaved(); onClose();
-    } catch (e: any) { toast.error(e.message); }
-    finally { setSaving(false); }
-  }
-
-  if (!convertido) return null;
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) tentarFechar(); }}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>Desfecho da visita — {convertido.nome}</DialogTitle></DialogHeader>
-        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-          <div>
-            <Label>A pessoa compareceu?</Label>
-            <div className="flex gap-2 mt-1">
-              <Button type="button" variant={compareceu ? 'default' : 'outline'} size="sm" onClick={() => setCompareceu(true)}>Compareceu</Button>
-              <Button type="button" variant={!compareceu ? 'default' : 'outline'} size="sm" onClick={() => setCompareceu(false)}>Faltou</Button>
-            </div>
-            {!compareceu && <p className="text-xs text-muted-foreground mt-1">Faltou · você pode reagendar depois pela ficha.</p>}
-          </div>
-
-          {compareceu && (
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Tags pastorais <span className="text-muted-foreground font-normal">(o que apareceu na conversa · mínimo 1)</span></Label>
-              <div className="flex flex-wrap gap-1.5 mt-1.5">
-                {allTags.map(t => {
-                  const active = tags.includes(t);
-                  const color = TAG_COLORS[t] || '#94a3b8';
-                  return (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => toggleTag(t)}
-                      className="text-xs px-2.5 py-1 rounded-full border transition-colors"
-                      style={{
-                        borderColor: color,
-                        background: active ? color : 'transparent',
-                        color: active ? '#fff' : color,
-                      }}
-                    >
-                      {TAG_LABELS[t] || t}
-                    </button>
-                  );
-                })}
-              </div>
+              <Label>Tipo</Label>
+              <Select value={form.tipo} onValueChange={v => setForm({ ...form, tipo: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{VISITA_TIPOS_UI.map(t => <SelectItem key={t.v} value={t.v}>{t.l}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
-          )}
-
-          {compareceu && (
-            <div className="space-y-2">
-              <Label>Pra onde encaminhar? <span className="text-muted-foreground font-normal">(toda pessoa sai com uma indicação)</span></Label>
-              {DESTINOS_ENC.map(d => (
-                <div key={d.v} className="rounded-md border border-border p-2.5" style={{ background: 'var(--cbrio-input-bg)' }}>
-                  <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                    <input type="checkbox" checked={!!destinos[d.v]} onChange={e => setDestinos(s => ({ ...s, [d.v]: e.target.checked }))} />
-                    <ArrowRight className="h-3.5 w-3.5 text-primary" />{d.l}
-                    <span className="text-xs text-muted-foreground font-normal">· {d.sub}</span>
-                  </label>
-                  {destinos[d.v] && (
-                    <Input className="mt-2" placeholder="Observação discreta (opcional)" value={notas[d.v] || ''} onChange={e => setNotas(s => ({ ...s, [d.v]: e.target.value }))} />
-                  )}
-                </div>
-              ))}
+            <div>
+              <Label>Status</Label>
+              <Select value={form.status} onValueChange={v => setForm({ ...form, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{VISITA_STATUS_UI.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
-          )}
-
+          </div>
+          <div><Label>Quem visitou / atendeu</Label><Input value={form.responsavel} onChange={e => setForm({ ...form, responsavel: e.target.value })} placeholder="Pastor / líder" /></div>
           <div>
-            <Label>Observações <span className="text-muted-foreground font-normal">(ficam na ficha · opcional)</span></Label>
-            <textarea className="w-full min-h-[64px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
-              value={obs} onChange={e => setObs(e.target.value)} placeholder="Resumo da visita, contexto, próximos passos..." />
+            <Label>Observação</Label>
+            <textarea className="w-full min-h-[80px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
+              value={form.observacao} onChange={e => setForm({ ...form, observacao: e.target.value })} placeholder="Contexto, motivo, desfecho..." />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar desfecho'}</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Registrar'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-// Visitas passadas com pendência: toda pessoa visitada precisa sair com
-// desfecho + ≥1 tag pastoral + ≥1 encaminhamento. Aparece abaixo do calendário
-// da aba "Visitas agendadas".
-const PENDENCIA_LABELS: Record<string, string> = {
-  desfecho: 'Sem desfecho',
-  tag: 'Sem tag pastoral',
-  encaminhamento: 'Sem encaminhamento',
-};
-
-function VisitasPendentesSection({ itens, canEdit, onResolver, onFicha }: {
-  itens: any[]; canEdit: boolean; onResolver: (c: any) => void; onFicha: (c: any) => void;
+// Lista da aba "Visitas e atendimentos" · visitas pastorais e atendimentos avulsos
+// (cui_visitas), fora do funil de novos convertidos. Substituiu o calendário.
+function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
+  itens: any[]; loading: boolean; canEdit: boolean; onNova: () => void; onEdit: (v: any) => void; onRemove: (v: any) => void;
 }) {
+  const [busca, setBusca] = useState('');
+  const [statusF, setStatusF] = useState('todos');
+  const fmtData = (d: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return itens.filter((v: any) => {
+      if (statusF !== 'todos' && v.status !== statusF) return false;
+      if (q && !(`${v.nome || ''} ${v.responsavel || ''} ${v.observacao || ''}`.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [itens, busca, statusF]);
+
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center gap-2 mb-1">
-        <AlertTriangle className="h-4 w-4 text-warning" />
-        <h3 className="font-semibold text-sm">Visitas passadas sem encaminhamento</h3>
-        {itens.length > 0 && (
-          <Badge variant="destructive" className="ml-1">{itens.length}</Badge>
-        )}
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <CalendarCheck className="h-4 w-4 text-primary" />
+          <h3 className="font-semibold text-sm">Visitas e atendimentos</h3>
+        </div>
+        <p className="text-xs text-muted-foreground">Visitas pastorais e atendimentos avulsos — fora do funil de novos convertidos.</p>
       </div>
-      <p className="text-xs text-muted-foreground mb-3">
-        Toda pessoa visitada precisa sair com desfecho registrado, ao menos uma tag pastoral e um encaminhamento. Estas visitas já aconteceram e ainda têm pendência.
-      </p>
-      {itens.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nenhuma pendência · todas as visitas passadas foram encaminhadas.</p>
-      ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Pessoa</TableHead>
-                <TableHead>Visita</TableHead>
-                <TableHead>Quem atendeu</TableHead>
-                <TableHead>Pendências</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {itens.map((c: any) => (
-                <TableRow key={c.id}>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input placeholder="Buscar por pessoa, responsável ou observação..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8" />
+        </div>
+        <Select value={statusF} onValueChange={setStatusF}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os status</SelectItem>
+            {VISITA_STATUS_UI.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {canEdit && <Button onClick={onNova}><Plus className="h-4 w-4 mr-2" />Registrar visita</Button>}
+      </div>
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Pessoa</TableHead>
+              <TableHead>Data</TableHead>
+              <TableHead>Tipo</TableHead>
+              <TableHead>Quem atendeu</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Observação</TableHead>
+              <TableHead></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow><TableCell colSpan={7} className="text-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></TableCell></TableRow>
+            ) : filtrados.length === 0 ? (
+              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">{itens.length === 0 ? 'Nenhuma visita registrada ainda.' : 'Nenhum resultado nos filtros.'}</TableCell></TableRow>
+            ) : filtrados.map((v: any) => {
+              const st = VISITA_STATUS_UI.find(s => s.v === v.status);
+              const cor = st?.color || '#94a3b8';
+              return (
+                <TableRow key={v.id}>
                   <TableCell className="font-medium">
-                    <button type="button" onClick={() => onFicha(c)} className="text-left hover:text-primary transition-colors">
-                      <div className="underline-offset-2 hover:underline">{c.nome}</div>
-                      {c.telefone && <div className="text-xs text-muted-foreground">{c.telefone}</div>}
-                    </button>
+                    {v.nome}
+                    {v.telefone && <div className="text-xs text-muted-foreground">{v.telefone}</div>}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-sm">
-                    {c.data_encontro ? new Date(c.data_encontro + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
-                    {c.encontro_hora ? ' · ' + String(c.encontro_hora).slice(0, 5) : ''}
-                  </TableCell>
-                  <TableCell className="text-sm">{c.encontro_responsavel_nome || '—'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">{fmtData(v.data_visita)}</TableCell>
+                  <TableCell className="text-sm">{VISITA_TIPO_LABEL[v.tipo] || v.tipo}</TableCell>
+                  <TableCell className="text-sm">{v.responsavel || '—'}</TableCell>
                   <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {(c.pendencias || []).map((p: string) => (
-                        <Badge key={p} className="bg-warning/15 text-warning border-warning/30">{PENDENCIA_LABELS[p] || p}</Badge>
-                      ))}
-                    </div>
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap" style={{ background: cor + '22', color: cor, border: `1px solid ${cor}40` }}>{st?.l || v.status}</span>
                   </TableCell>
+                  <TableCell className="max-w-[260px]"><span className="text-sm text-muted-foreground line-clamp-2">{v.observacao || '—'}</span></TableCell>
                   <TableCell className="text-right whitespace-nowrap">
                     {canEdit && (
-                      <Button size="sm" variant="outline" onClick={() => onResolver(c)}>
-                        <ClipboardCheck className="h-3.5 w-3.5 mr-1" />
-                        {c.encontro_status === 'agendado' ? 'Registrar desfecho' : 'Completar'}
-                      </Button>
+                      <>
+                        <Button variant="ghost" size="sm" onClick={() => onEdit(v)}>Editar</Button>
+                        <Button variant="ghost" size="sm" onClick={() => onRemove(v)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      </>
                     )}
                   </TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -939,14 +821,15 @@ export default function Cuidados() {
   const [modalConvert, setModalConvert] = useState(false);
   const [editConvert, setEditConvert] = useState<any | null>(null);
   const [detailConvert, setDetailConvert] = useState<any | null>(null);
-  const [agendarConv, setAgendarConv] = useState<any | null>(null);
-  const [desfechoConv, setDesfechoConv] = useState<any | null>(null);
   const [atendentes, setAtendentes] = useState<any[]>([]);
-  const [visitasPendentes, setVisitasPendentes] = useState<any[]>([]);
+  const [visitas, setVisitas] = useState<any[]>([]);
+  const [visitasLoading, setVisitasLoading] = useState(true);
+  const [modalVisita, setModalVisita] = useState(false);
+  const [editVisita, setEditVisita] = useState<any | null>(null);
   const [visitasVersion, setVisitasVersion] = useState(0);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
-  const [convertFilter, setConvertFilter] = useState<'todos' | 'pendentes' | 'atendidos' | 'encontro_marcado' | 'sem_encontro' | 'aguardando_desfecho' | 'atrasados'>('todos');
+  const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados'>('todos');
   const [convertFilterStatus, setConvertFilterStatus] = useState<string>(''); // primeiro_contato_status ('' = todos · 'sem' = sem status)
   const [convertPeriodo, setConvertPeriodo] = useState<string>('tudo'); // 30/60/90/180/365/tudo (por data_culto)
   const [search, setSearch] = useState('');
@@ -959,12 +842,17 @@ export default function Cuidados() {
       cuidadosApi.jornadaConvertidos().catch(() => null),
     ]);
     setAcomp(a); setPedidosApp(pa); setConvertidos(c); setJornadaData(jd);
-    // Sinaliza o calendário de visitas + recarrega as pendências
+    // Recarrega as séries do dashboard após mudanças nos dados
     setVisitasVersion(v => v + 1);
-    cuidadosApi.convertidos.visitasPendentes().then(setVisitasPendentes).catch(() => {});
   }
 
-  useEffect(() => { loadAll(); }, []);
+  // Lista de visitas/atendimentos avulsos (aba "Visitas e atendimentos")
+  function loadVisitas() {
+    setVisitasLoading(true);
+    cuidadosApi.visitas.list().then(setVisitas).catch(() => setVisitas([])).finally(() => setVisitasLoading(false));
+  }
+
+  useEffect(() => { loadAll(); loadVisitas(); }, []);
 
   // Catalogo de tags pastorais · fonte de verdade no backend
   useEffect(() => {
@@ -972,7 +860,8 @@ export default function Cuidados() {
   }, []);
 
   // Atendentes elegíveis (líderes de culto e de ministérios · filtrado por
-  // cargo no backend) · select de "quem vai atender" no agendamento da visita
+  // cargo no backend) · select de "quem vai atender" no agendamento da sessão
+  // de aconselhamento (aba Aconselhamento).
   useEffect(() => {
     cuidadosApi.convertidos.atendentes().then(setAtendentes).catch(() => {});
   }, []);
@@ -983,34 +872,6 @@ export default function Cuidados() {
     cuidadosApi.dashboardSeries({ dias: dashDias })
       .then(setDashSeries).catch(() => setDashSeries(null)).finally(() => setDashLoading(false));
   }, [dashDias, visitasVersion]);
-
-  // Visitas agendadas da semana · une os encontros de convertido + as sessões de
-  // aconselhamento/capelania agendadas no mesmo calendário.
-  const fetchVisitasSemana = useCallback(async (di: string, df: string) => {
-    const [convs, acomps] = await Promise.all([
-      cuidadosApi.convertidos.list({ encontro_from: di, encontro_to: df }).catch(() => []),
-      cuidadosApi.acompanhamentos.list({ agendamento_from: di, agendamento_to: df }).catch(() => []),
-    ]);
-    const evConv = (convs || []).map((c: any) => ({
-      id: c.id, tipoEvento: 'convertido',
-      data: c.data_encontro, horario: c.encontro_hora,
-      titulo: c.nome,
-      subtitulo: c.encontro_responsavel_nome || 'Atendente a definir',
-      cor: ENCONTRO_STATUS[c.encontro_status]?.color || C.info,
-      statusLabel: ENCONTRO_STATUS[c.encontro_status]?.label || c.encontro_status,
-      raw: c,
-    }));
-    const evAcomp = (acomps || []).map((a: any) => ({
-      id: a.id, tipoEvento: 'acompanhamento',
-      data: a.agendamento_data, horario: a.agendamento_hora,
-      titulo: a.nome,
-      subtitulo: a.agendamento_responsavel_nome || (a.tipo === 'capelania' ? 'Capelania' : 'Aconselhamento'),
-      cor: C.purple,
-      statusLabel: a.tipo === 'capelania' ? 'Capelania' : 'Aconselhamento',
-      raw: a,
-    }));
-    return [...evConv, ...evAcomp];
-  }, []);
 
   // Checkbox "Atendido" otimista: responde na hora · rollback + toast se falhar.
   // (Antes esperava o PATCH + recarga completa da página sem feedback — parecia travado.)
@@ -1035,7 +896,7 @@ export default function Cuidados() {
   // Status do primeiro contato (otimista). O 1º contato NÃO se marca à mão — se FAZ:
   // ao selecionar uma opção de contato feito, carimba primeiro_contato_em (balão verde
   // em todas as telas + KPI). "Sem retorno"/"Número errado"/vazio limpam (não-feito).
-  // O atendimento é registrado à parte (Agendar encontro → visitas agendadas).
+  // O responsável e o direcionamento são definidos nas colunas ao lado.
   async function setPcStatus(id: string, value: string) {
     const v = value || null;
     const anterior = convertidos;
@@ -1056,6 +917,35 @@ export default function Cuidados() {
     }
   }
 
+  // Responsável do atendimento (otimista · texto · lista fixa na UI)
+  async function setResponsavel(id: string, value: string) {
+    const v = value || null;
+    const anterior = convertidos;
+    setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, responsavel_atendimento: v } : x));
+    try {
+      await cuidadosApi.convertidos.update(id, { responsavel_atendimento: v });
+    } catch (e: any) {
+      setConvertidos(anterior);
+      toast.error(`Não foi possível salvar o responsável: ${e.message}`);
+    }
+  }
+
+  // Direcionamento (otimista). Grupos/Voluntários criam o encaminhamento na caixa da
+  // área (handoff) · NÃO marca engajamento (o NSM lê o sinal real). Devocionais = só registro.
+  async function setDirecionamento(id: string, value: string) {
+    const v = value || null;
+    const anterior = convertidos;
+    setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, direcionamento: v } : x));
+    try {
+      await cuidadosApi.convertidos.direcionar(id, v);
+      if (v === 'grupos') toast.success('Encaminhado para Grupos');
+      else if (v === 'voluntarios') toast.success('Encaminhado para Voluntários');
+    } catch (e: any) {
+      setConvertidos(anterior);
+      toast.error(`Não foi possível direcionar: ${e.message}`);
+    }
+  }
+
   // Corte por período (data_culto >= hoje - N dias) · 'tudo' = sem corte
   const convertPeriodoCorte = useMemo(() => {
     if (convertPeriodo === 'tudo') return null;
@@ -1067,11 +957,8 @@ export default function Cuidados() {
   const convertidosFiltrados = useMemo(() => {
     const q = convertSearch.trim().toLowerCase();
     return convertidos.filter((c: any) => {
-      if (convertFilter === 'pendentes' && c.atendido_apos_culto) return false;
-      if (convertFilter === 'atendidos' && !c.atendido_apos_culto) return false;
-      if (convertFilter === 'encontro_marcado' && !c.encontro_marcado) return false;
-      if (convertFilter === 'sem_encontro' && c.encontro_marcado) return false;
-      if (convertFilter === 'aguardando_desfecho' && c.encontro_status !== 'agendado') return false;
+      if (convertFilter === 'sem_responsavel' && c.responsavel_atendimento) return false;
+      if (convertFilter === 'sem_direcionamento' && c.direcionamento) return false;
       if (convertFilter === 'atrasados') {
         const j = jMap.get(c.id);
         if (!(j && [j.contato, j.batismo, j.next].some((m: any) => m?.status === 'atrasado'))) return false;
@@ -1148,7 +1035,7 @@ export default function Cuidados() {
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
           <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
-          <TabsTrigger value="visitas">Visitas agendadas</TabsTrigger>
+          <TabsTrigger value="visitas">Visitas e atendimentos</TabsTrigger>
         </TabsList>
 
         {/* Dashboard */}
@@ -1382,7 +1269,7 @@ export default function Cuidados() {
         <TabsContent value="convertidos" className="space-y-4">
           <div>
             <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Acompanhamento dos novos convertidos</h3>
-            <p className="text-xs text-muted-foreground">Quem a Integração registrou neste período inicial · marque o atendimento, agende a visita e acompanhe a jornada (contato em 3d · batismo e Next em 90d · atrasados em vermelho).</p>
+            <p className="text-xs text-muted-foreground">Quem a Integração registrou neste período inicial · marque o 1º contato, defina o responsável e o direcionamento, e acompanhe a jornada (contato em 3d · batismo e Next em 90d · atrasados em vermelho).</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
@@ -1442,9 +1329,8 @@ export default function Cuidados() {
               <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
-                <SelectItem value="encontro_marcado">Com encontro marcado</SelectItem>
-                <SelectItem value="sem_encontro">Sem encontro marcado</SelectItem>
-                <SelectItem value="aguardando_desfecho">Aguardando desfecho</SelectItem>
+                <SelectItem value="sem_responsavel">Sem responsável</SelectItem>
+                <SelectItem value="sem_direcionamento">Sem direcionamento</SelectItem>
                 <SelectItem value="atrasados">Atrasados na jornada</SelectItem>
               </SelectContent>
             </Select>
@@ -1482,7 +1368,8 @@ export default function Cuidados() {
                   <TableHead>Nome</TableHead>
                   <TableHead>Data culto</TableHead>
                   <TableHead>1º contato</TableHead>
-                  <TableHead>Encontro</TableHead>
+                  <TableHead>Responsável</TableHead>
+                  <TableHead>Direcionamento</TableHead>
                   <TableHead>Jornada</TableHead>
                   <TableHead>Tags</TableHead>
                   <TableHead></TableHead>
@@ -1490,7 +1377,7 @@ export default function Cuidados() {
               </TableHeader>
               <TableBody>
                 {convertidosFiltrados.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                     {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
                   </TableCell></TableRow>
                 ) : convertidosFiltrados.map(c => {
@@ -1529,15 +1416,39 @@ export default function Cuidados() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {c.encontro_marcado ? (
-                          <div className="flex items-center gap-1.5 text-primary text-xs">
-                            <CalendarCheck className="h-3.5 w-3.5" />
-                            {c.data_encontro
-                              ? new Date(c.data_encontro + 'T12:00:00').toLocaleDateString('pt-BR')
-                              : 'marcado'}
-                          </div>
+                        {podeEditarCuidados ? (
+                          <select
+                            value={c.responsavel_atendimento || ''}
+                            onChange={e => setResponsavel(c.id, e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[150px]"
+                            title="Responsável do atendimento"
+                          >
+                            <option value="">A definir</option>
+                            {RESPONSAVEIS_ATENDIMENTO.map(n => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-xs">{c.responsavel_atendimento || <span className="text-muted-foreground">—</span>}</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {podeEditarCuidados ? (
+                          <select
+                            value={c.direcionamento || ''}
+                            onChange={e => setDirecionamento(c.id, e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[140px]"
+                            title="Direcionamento do responsável"
+                          >
+                            <option value="">—</option>
+                            {DIRECIONAMENTOS.map(d => (
+                              <option key={d.v} value={d.v}>{d.l}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-xs">{c.direcionamento ? (DIRECIONAMENTO_LABEL[c.direcionamento] || c.direcionamento) : <span className="text-muted-foreground">—</span>}</span>
                         )}
                       </TableCell>
                       <TableCell>
@@ -1589,12 +1500,6 @@ export default function Cuidados() {
                         })()}
                         {podeEditarCuidados && (
                           <>
-                            {!c.encontro_marcado && (
-                              <Button variant="ghost" size="sm" title="Agendar encontro" onClick={() => setAgendarConv(c)}><CalendarPlus className="h-3.5 w-3.5 text-primary" /></Button>
-                            )}
-                            {c.encontro_status === 'agendado' && (
-                              <Button variant="ghost" size="sm" title="Registrar desfecho" onClick={() => setDesfechoConv(c)}><ClipboardCheck className="h-3.5 w-3.5 text-primary" /></Button>
-                            )}
                             <Button variant="ghost" size="sm" onClick={() => { setEditConvert(c); setModalConvert(true); }}>Editar</Button>
                             <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
                           </>
@@ -1612,23 +1517,15 @@ export default function Cuidados() {
           <DevocionalAdmin />
         </TabsContent>
 
-        {/* Visitas agendadas · calendário semanal + pendências de encaminhamento */}
+        {/* Visitas e atendimentos · lista de visitas pastorais e atendimentos avulsos */}
         <TabsContent value="visitas" className="space-y-4">
-          <ProcessosTarefas
-            area="Cuidados"
-            titulo="Visitas agendadas - Cuidados"
-            fetchEventos={fetchVisitasSemana}
-            onEventoClick={(ev: any) => {
-              if (ev.tipoEvento === 'acompanhamento') { setEditAcomp(ev.raw); setModalAcomp(true); }
-              else setDetailConvert(ev.raw);
-            }}
-            eventosKey={visitasVersion}
-          />
-          <VisitasPendentesSection
-            itens={visitasPendentes}
+          <VisitasList
+            itens={visitas}
+            loading={visitasLoading}
             canEdit={podeEditarCuidados}
-            onResolver={(c: any) => setDesfechoConv(c)}
-            onFicha={(c: any) => setDetailConvert(c)}
+            onNova={() => { setEditVisita(null); setModalVisita(true); }}
+            onEdit={(v: any) => { setEditVisita(v); setModalVisita(true); }}
+            onRemove={async (v: any) => { if (confirm(`Remover a visita de ${v.nome}?`)) { await cuidadosApi.visitas.remove(v.id); loadVisitas(); } }}
           />
         </TabsContent>
       </Tabs>
@@ -1656,8 +1553,6 @@ export default function Cuidados() {
           setDetailConvert(null);
           setModalConvert(true);
         }}
-        onAgendar={() => { setAgendarConv(detailConvert); setDetailConvert(null); }}
-        onDesfecho={() => { setDesfechoConv(detailConvert); setDetailConvert(null); }}
         onRemove={async () => {
           if (!detailConvert) return;
           if (!confirm(`Remover ${detailConvert.nome}?`)) return;
@@ -1666,19 +1561,11 @@ export default function Cuidados() {
           loadAll();
         }}
       />
-      <AgendarEncontroModal
-        open={!!agendarConv}
-        convertido={agendarConv}
-        atendentes={atendentes}
-        onClose={() => setAgendarConv(null)}
-        onSaved={loadAll}
-      />
-      <DesfechoModal
-        open={!!desfechoConv}
-        convertido={desfechoConv}
-        allTags={convertTags}
-        onClose={() => setDesfechoConv(null)}
-        onSaved={loadAll}
+      <VisitaModal
+        open={modalVisita}
+        onClose={() => { setModalVisita(false); setEditVisita(null); }}
+        onSaved={loadVisitas}
+        initial={editVisita}
       />
     </div>
   );

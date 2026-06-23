@@ -1115,6 +1115,154 @@ router.post('/convertidos/:id/desfecho', async (req, res) => {
   }
 });
 
+// POST /api/cuidados/convertidos/:id/direcionar
+// O Marcelo registra PRA ONDE o responsável direcionou o convertido (grupos /
+// devocionais / voluntarios). Grupos/Voluntários criam o encaminhamento (handoff)
+// na caixa de entrada da área — que o líder DAQUELE módulo acessa. NÃO marca
+// engajamento: o engajamento só vem do sinal real (entrar no grupo, virar
+// voluntário, ler a 1ª devocional), que o NSM mede sozinho. Devocionais não tem
+// caixa de entrada → fica só registrado (engajamento = 1ª leitura no app).
+const DIRECIONAMENTO_DESTINO = { grupos: 'grupos', voluntarios: 'voluntarios' }; // devocionais = sem caixa
+router.post('/convertidos/:id/direcionar', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { direcionamento } = req.body || {};
+    if (direcionamento != null && !['grupos', 'devocionais', 'voluntarios'].includes(direcionamento)) {
+      return res.status(400).json({ error: 'Direcionamento inválido' });
+    }
+    const userId = req.user.userId || req.user.id;
+
+    // 1) Salva o direcionamento no convertido
+    const { data: conv, error: e1 } = await supabase
+      .from('cui_convertidos')
+      .update({
+        direcionamento: direcionamento || null,
+        direcionamento_em: direcionamento ? new Date().toISOString() : null,
+      })
+      .eq('id', req.params.id).select().single();
+    if (e1) throw e1;
+
+    // 2) Handoff pra caixa da área (grupos/voluntários) · dedup por (convertido, destino).
+    //    Status default (pendente) · NÃO é "engajou" → não conta no NSM.
+    let encaminhamento = null;
+    const destino = DIRECIONAMENTO_DESTINO[direcionamento];
+    if (destino) {
+      const meta = DESTINO_META[destino];
+      const { data: jaExiste } = await supabase
+        .from('jornada_encaminhamentos')
+        .select('id')
+        .eq('convertido_id', conv.id)
+        .eq('destino', destino)
+        .is('deleted_at', null)
+        .limit(1).maybeSingle();
+      if (jaExiste) {
+        encaminhamento = jaExiste;
+      } else {
+        const { data: row, error: e2 } = await supabase
+          .from('jornada_encaminhamentos')
+          .insert({
+            origem: 'cuidados',
+            convertido_id: conv.id,
+            membro_id: conv.membro_id || null,
+            nome: conv.nome,
+            telefone: conv.telefone || null,
+            destino,
+            valor_alvo: meta.valor,
+            encaminhado_por: userId,
+          })
+          .select().single();
+        if (e2) throw e2;
+        encaminhamento = row;
+        notificar({
+          modulo: meta.modulo,
+          tipo: 'novo_encaminhamento',
+          titulo: `Encaminhado: ${conv.nome} → ${meta.label}`,
+          mensagem: `${conv.nome} foi encaminhado(a) pelo cuidado pastoral. Faça o primeiro contato e registre a devolutiva.`,
+          link: meta.link,
+          severidade: 'info',
+          chaveDedup: `enc_${row.id}`,
+        }).catch(() => {});
+      }
+    }
+    res.json({ convertido: conv, encaminhamento });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Visitas e atendimentos avulsos (cui_visitas)
+// Lista da aba "Visitas e atendimentos" · visitas pastorais e atendimentos FORA
+// do funil de novos convertidos (substituiu o calendário da aba "Visitas agendadas").
+// ─────────────────────────────────────────────────────────────
+const VISITA_TIPOS = ['visita', 'atendimento', 'hospital', 'luto', 'oracao', 'outro'];
+const VISITA_STATUS = ['agendada', 'realizada', 'cancelada'];
+
+router.get('/visitas', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { status, tipo, search } = req.query;
+    let q = supabase.from('cui_visitas').select('*').is('deleted_at', null)
+      .order('data_visita', { ascending: false }).limit(1000);
+    if (status) q = q.eq('status', status);
+    if (tipo) q = q.eq('tipo', tipo);
+    if (search) q = q.ilike('nome', `%${String(search).replace(/[%,()]/g, ' ')}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/visitas', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.nome) return res.status(400).json({ error: 'Nome obrigatório' });
+    const payload = {
+      nome: b.nome,
+      membro_id: b.membro_id || null,
+      telefone: b.telefone || null,
+      data_visita: b.data_visita || new Date().toISOString().slice(0, 10),
+      tipo: VISITA_TIPOS.includes(b.tipo) ? b.tipo : 'visita',
+      responsavel: b.responsavel || null,
+      status: VISITA_STATUS.includes(b.status) ? b.status : 'realizada',
+      observacao: b.observacao || null,
+      created_by: req.user.userId || req.user.id || null,
+    };
+    if (!payload.membro_id && b.cpf) {
+      const m = await findMembroByCpf(b.cpf);
+      if (m) payload.membro_id = m.id;
+    }
+    const { data, error } = await supabase.from('cui_visitas').insert(payload).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = {};
+    for (const k of ['nome', 'telefone', 'data_visita', 'tipo', 'responsavel', 'status', 'observacao', 'membro_id']) {
+      if (k in b) patch[k] = b[k];
+    }
+    if (patch.tipo && !VISITA_TIPOS.includes(patch.tipo)) delete patch.tipo;
+    if (patch.status && !VISITA_STATUS.includes(patch.status)) delete patch.status;
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('cui_visitas')
+      .update(patch).eq('id', req.params.id).is('deleted_at', null).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('cui_visitas')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/cuidados/visitas-pendentes
 // Visitas passadas (data_encontro < hoje) cuja pessoa ainda não saiu "completa":
 // toda pessoa visitada precisa ter desfecho registrado, ≥1 tag pastoral e
