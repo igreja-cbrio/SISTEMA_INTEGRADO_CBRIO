@@ -32,7 +32,18 @@ export default function ManualCheckin({ schedules, onCheckIn, onUnscheduledCheck
     <div className="space-y-4">
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="Buscar voluntario..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        <Input
+          placeholder="Buscar voluntario..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="pl-9"
+          name="busca-voluntario"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          inputMode="search"
+        />
       </div>
 
       <div className="space-y-2 max-h-[400px] overflow-y-auto">
@@ -60,7 +71,7 @@ export default function ManualCheckin({ schedules, onCheckIn, onUnscheduledCheck
         <div className="text-center py-4">
           <p className="text-muted-foreground mb-3">Nenhum voluntário escalado encontrado</p>
           <div className="flex gap-2 justify-center">
-            <Input placeholder="Nome do voluntário" value={unscheduledName} onChange={e => setUnscheduledName(e.target.value)} className="max-w-xs" />
+            <Input placeholder="Nome do voluntário" value={unscheduledName} onChange={e => setUnscheduledName(e.target.value)} className="max-w-xs" name="nome-voluntario" autoComplete="off" autoCorrect="off" spellCheck={false} />
             <Button onClick={() => { if (unscheduledName.trim()) { onUnscheduledCheckIn(unscheduledName.trim()); setUnscheduledName(''); } }} disabled={!unscheduledName.trim() || isLoading}>
               <UserPlus className="h-4 w-4 mr-1" /> Check-in sem escala
             </Button>

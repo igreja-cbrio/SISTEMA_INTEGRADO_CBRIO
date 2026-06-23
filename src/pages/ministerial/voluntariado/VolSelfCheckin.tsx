@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import { voluntariado, publicVoluntariado } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -7,8 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
-  CheckCircle2, XCircle, Loader2, ArrowLeft, MailCheck, UserPlus, IdCard, AlertTriangle, Wallet,
+  CheckCircle2, XCircle, Loader2, ArrowLeft, MailCheck, UserPlus, IdCard, AlertTriangle, Wallet, Sun,
 } from 'lucide-react';
 import { playCheckinSound } from '@/lib/sounds';
 import MemberWalletDialog from '@/components/membresia/MemberWalletDialog';
@@ -54,6 +57,54 @@ export default function VolSelfCheckin() {
   const [busy, setBusy] = useState(false);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
 
+  // Cultos da manhã (domingo · 08:30/10:00/11:30): após o self check-in num
+  // culto de domingo de manhã, pergunta em quais cultos da manhã vai servir.
+  // Reusa o mesmo backend da tela de check-in (cultos-manha + check-ins/manha).
+  const { data: cultosManha = [] } = useQuery<{ id: string; name: string; recurrence_time: string }[]>({
+    queryKey: ['vol', 'cultos-manha'],
+    queryFn: () => voluntariado.cultosManha(),
+    staleTime: 60 * 60 * 1000,
+  });
+  const [manhaDialog, setManhaDialog] = useState<{ volunteerId: string; serviceDate: string } | null>(null);
+  const [selCultos, setSelCultos] = useState<Set<string>>(new Set());
+  const [salvandoManha, setSalvandoManha] = useState(false);
+  const [manhaCriados, setManhaCriados] = useState(0);
+
+  // Decide se o culto do check-in é domingo de manhã e, se for, abre o diálogo
+  // dos cultos da manhã (todos pré-marcados). Usa o serviço de hoje pra pegar a
+  // data/dia exatos (não o relógio do aparelho).
+  const maybeOfferManha = async (svcId: string, volId: string) => {
+    if (cultosManha.length <= 1) return;
+    try {
+      const today = (await voluntariado.services.today()) as any[];
+      const svc = (today || []).find(s => s.id === svcId);
+      if (!svc) return;
+      const wd = new Date(svc.scheduled_at).toLocaleDateString('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short' });
+      const h = Number(new Date(svc.scheduled_at).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2));
+      if (wd !== 'Sun' || h >= 14) return;
+      const serviceDate = new Date(svc.scheduled_at).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      setSelCultos(new Set(cultosManha.map(c => c.id)));
+      setManhaDialog({ volunteerId: volId, serviceDate });
+    } catch { /* sem cultos da manhã · segue só com o culto atual */ }
+  };
+
+  const confirmarManha = async () => {
+    if (!manhaDialog) return;
+    const ids = cultosManha.filter(c => selCultos.has(c.id)).map(c => c.id);
+    if (!ids.length) return;
+    setSalvandoManha(true);
+    try {
+      const r: any = await voluntariado.checkIns.manha({
+        volunteer_id: manhaDialog.volunteerId,
+        service_date: manhaDialog.serviceDate,
+        service_type_ids: ids,
+        method: 'self_service',
+      });
+      setManhaCriados(typeof r?.criados === 'number' ? r.criados : ids.length);
+    } catch { /* idempotente · segue */ }
+    finally { setSalvandoManha(false); setManhaDialog(null); }
+  };
+
   useEffect(() => {
     if (authLoading) return;
     if (!serviceId) {
@@ -97,6 +148,7 @@ export default function VolSelfCheckin() {
               });
               setWasUnscheduled(!!r?.isUnscheduled);
               playCheckinSound();
+              void maybeOfferManha(serviceId, profile.id);
               setState('success');
               return;
             } catch (ciErr: any) {
@@ -124,6 +176,7 @@ export default function VolSelfCheckin() {
         });
         setWasUnscheduled(true);
         playCheckinSound();
+        void maybeOfferManha(serviceId, profile.id);
         setState('success');
       } catch (ciErr: any) {
         if (ciErr.alreadyCheckedIn || ciErr.status === 409) {
@@ -222,6 +275,11 @@ export default function VolSelfCheckin() {
               <CheckCircle2 className="h-20 w-20 text-green-400 mb-4" />
               <h2 className="text-2xl font-bold text-white">Check-in realizado!</h2>
               <p className="text-lg text-white/80 mt-2">{resultName}</p>
+              {manhaCriados > 0 && (
+                <p className="mt-2 inline-flex items-center gap-1.5 text-sm text-amber-200">
+                  <Sun className="h-4 w-4" /> Check-in em {manhaCriados} culto(s) da manhã
+                </p>
+              )}
               {wasUnscheduled && (
                 <div className="mt-5 w-full rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-left">
                   <div className="flex items-start gap-2">
@@ -411,6 +469,42 @@ export default function VolSelfCheckin() {
         onOpenChange={setWalletDialogOpen}
         initialCpf={cpf.replace(/\D+/g, '')}
       />
+
+      {/* Domingo de manhã · em quais cultos a pessoa vai servir? */}
+      <Dialog open={!!manhaDialog} onOpenChange={(o) => !o && setManhaDialog(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sun className="h-5 w-5 text-amber-500" /> Cultos da manhã</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Em quais cultos da manhã você vai servir hoje?
+            </p>
+            <div className="space-y-1.5">
+              {cultosManha.map(c => {
+                const marcado = selCultos.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setSelCultos(prev => { const n = new Set(prev); if (n.has(c.id)) n.delete(c.id); else n.add(c.id); return n; })}
+                    className={`w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${marcado ? 'border-primary bg-primary/5' : 'bg-card hover:bg-muted/40'}`}
+                  >
+                    <Checkbox checked={marcado} className="pointer-events-none" />
+                    <span className="text-sm font-medium">{c.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setManhaDialog(null)} disabled={salvandoManha}>Só esse</Button>
+            <Button onClick={confirmarManha} disabled={salvandoManha || selCultos.size === 0}>
+              {salvandoManha ? 'Salvando…' : `Fazer check-in (${selCultos.size})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
