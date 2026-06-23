@@ -726,6 +726,7 @@ function AbaCriancas() {
   const [busca, setBusca] = useState('');
   const [modalImport, setModalImport] = useState(false);
   const [sincronizando, setSincronizando] = useState(false);
+  const [detalheId, setDetalheId] = useState<string | null>(null);
 
   async function carregar() {
     setCarregando(true);
@@ -774,7 +775,12 @@ function AbaCriancas() {
         {carregando ? <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" /> : (
           <div className="space-y-2 max-h-[600px] overflow-y-auto">
             {filtradas.map(c => (
-              <div key={c.id} className="flex items-center gap-3 p-3 border rounded-lg">
+              <button
+                type="button"
+                key={c.id}
+                onClick={() => setDetalheId(c.id)}
+                className="w-full flex items-center gap-3 p-3 border rounded-lg text-left hover:bg-muted/40 transition cursor-pointer"
+              >
                 {c.foto_url ? (
                   <img data-foto-avatar="" src={c.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
                 ) : (
@@ -790,15 +796,117 @@ function AbaCriancas() {
                     {c.observacoes_medicas && ' · ⚠ obs médica'}
                   </div>
                 </div>
-              </div>
+              </button>
             ))}
             {filtradas.length === 0 && (
               <p className="text-muted-foreground text-center py-6">Nenhuma criança</p>
             )}
           </div>
         )}
+        <DetalheCriancaModal id={detalheId} onClose={() => setDetalheId(null)} />
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Modal de detalhe da criança (dados + responsáveis + histórico) ──────────
+function DetalheCriancaModal({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const [crianca, setCrianca] = useState<any>(null);
+  const [historico, setHistorico] = useState<any[]>([]);
+  const [carregando, setCarregando] = useState(false);
+
+  useEffect(() => {
+    if (!id) { setCrianca(null); setHistorico([]); return; }
+    let vivo = true;
+    setCarregando(true);
+    Promise.all([
+      totemKids.criancas.get(id).catch(() => null),
+      totemKids.criancas.historico(id).catch(() => []),
+    ]).then(([c, h]) => {
+      if (!vivo) return;
+      setCrianca(c);
+      setHistorico(Array.isArray(h) ? h : []);
+    }).finally(() => { if (vivo) setCarregando(false); });
+    return () => { vivo = false; };
+  }, [id]);
+
+  const fmtData = (d?: string | null) => {
+    if (!d) return '—';
+    try { return new Date(d.length <= 10 ? d + 'T00:00:00' : d).toLocaleDateString('pt-BR'); } catch { return d; }
+  };
+
+  return (
+    <Dialog open={!!id} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Baby className="h-5 w-5 text-pink-500" />
+            {crianca?.nome || 'Detalhe da criança'}
+            {crianca?.visitante && <Badge variant="secondary" className="text-xs">visitante</Badge>}
+          </DialogTitle>
+        </DialogHeader>
+
+        {carregando ? (
+          <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-8" />
+        ) : !crianca ? (
+          <p className="text-muted-foreground text-center py-6">Não foi possível carregar.</p>
+        ) : (
+          <div className="space-y-4 text-sm">
+            {/* Dados */}
+            <div className="grid grid-cols-2 gap-2">
+              <div><span className="text-muted-foreground">Idade:</span> {crianca.idade_label || '—'}</div>
+              <div><span className="text-muted-foreground">Nascimento:</span> {fmtData(crianca.data_nascimento)}</div>
+              <div><span className="text-muted-foreground">Sexo:</span> {crianca.sexo || '—'}</div>
+              <div><span className="text-muted-foreground">Família:</span> {crianca.familia?.nome || '—'}</div>
+            </div>
+            {crianca.observacoes_medicas && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3">
+                <div className="font-medium text-amber-700 dark:text-amber-400">⚠ Observações médicas</div>
+                <div>{crianca.observacoes_medicas}</div>
+              </div>
+            )}
+            {crianca.necessidades_especiais && (
+              <div><span className="text-muted-foreground">Necessidades especiais:</span> {crianca.necessidades_especiais}</div>
+            )}
+
+            {/* Responsáveis */}
+            <div>
+              <div className="font-medium mb-1">Responsáveis ({crianca.responsaveis?.length || 0})</div>
+              {crianca.responsaveis?.length ? (
+                <div className="space-y-1.5">
+                  {crianca.responsaveis.map((r: any) => (
+                    <div key={r.id || r.membro_id} className="rounded-lg border p-2.5">
+                      <div className="font-medium">{r.membro?.nome || '—'} {r.parentesco && <span className="text-xs text-muted-foreground">· {r.parentesco}</span>}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {r.membro?.telefone || 'sem telefone'}
+                        {r.autorizado_buscar && ' · autorizado a buscar'}
+                        {r.contato_emergencia && ' · contato de emergência'}
+                      </div>
+                      {r.observacao && <div className="text-xs mt-0.5">{r.observacao}</div>}
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-muted-foreground">Sem responsável vinculado.</p>}
+            </div>
+
+            {/* Histórico de check-in */}
+            <div>
+              <div className="font-medium mb-1">Histórico de check-in ({historico.length})</div>
+              {historico.length ? (
+                <div className="space-y-1 max-h-60 overflow-y-auto">
+                  {historico.map((h: any, i: number) => (
+                    <div key={h.id || i} className="flex items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs">
+                      <span>{fmtData(h.data_culto || h.data)} {h.sala_nome && <span className="text-muted-foreground">· {h.sala_nome}</span>}</span>
+                      <span className="text-muted-foreground">{h.culto_nome || h.sessao_nome || ''}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-muted-foreground">Nenhum check-in registrado.</p>}
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
