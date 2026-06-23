@@ -281,21 +281,28 @@ const DIRECIONAMENTOS: { v: string; l: string }[] = [
 ];
 const DIRECIONAMENTO_LABEL: Record<string, string> = Object.fromEntries(DIRECIONAMENTOS.map(d => [d.v, d.l]));
 
-// Status do PRIMEIRO CONTATO (ex-planilha do Marcelo). Primeiro contato FEITO =
-// o contato foi realizado, independente da resposta da pessoa → respondeu,
-// atendido e respondido, não respondeu, não compareceu e não atendido. NÃO conta:
-// "sem retorno do responsável" (o responsável não retornou · fica no denominador)
-// e "número errado" (impossível contatar · sai do denominador).
-// Ordem = fluxo que o acompanhamento segue (do pior desfecho ao melhor).
-const PCONTATO_STATUS: { v: string; label: string; positivo?: boolean }[] = [
-  { v: 'numero_errado',       label: 'Número errado' },
+// Status do PRIMEIRO CONTATO. O Marcelo simplificou pra 3 (decisão Marcos · 2026-06-23):
+// Não respondeu · Não atendido · Atendido e respondido — os 3 contam como 1º CONTATO
+// FEITO (o contato foi realizado; a pessoa só não respondeu/atendeu). A meta é 100%
+// contatado → o que falta pra 100% é quem está SEM marcação. "Atendeu e respondeu"
+// (conversa com o pastor) = só "Atendido e respondido". Número errado o Marcelo marca
+// como "Não respondeu" (entra como tentativa). Ordem do pior desfecho ao melhor.
+const PCONTATO_OPCOES: { v: string; label: string; positivo?: boolean }[] = [
   { v: 'nao_respondeu',       label: 'Não respondeu' },
-  { v: 'respondeu',           label: 'Respondeu',                  positivo: true },
-  { v: 'sem_retorno',         label: 'Sem retorno do responsável' },
-  { v: 'nao_compareceu',      label: 'Não compareceu' },
   { v: 'nao_atendido',        label: 'Não atendido' },
-  { v: 'atendido_respondido', label: 'Atendido e respondido',      positivo: true },
+  { v: 'atendido_respondido', label: 'Atendido e respondido', positivo: true },
 ];
+// Labels de TODOS os status (inclui os legados da planilha antiga já importada) ·
+// usado só pra EXIBIR registros que vieram com esses valores (não são mais oferecidos).
+const PCONTATO_LABEL: Record<string, string> = {
+  nao_respondeu: 'Não respondeu',
+  nao_atendido: 'Não atendido',
+  atendido_respondido: 'Atendido e respondido',
+  respondeu: 'Respondeu',
+  nao_compareceu: 'Não compareceu',
+  sem_retorno: 'Sem retorno do responsável',
+  numero_errado: 'Número errado',
+};
 // Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
 // independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
 // (e vazio) NÃO contam como contato feito.
@@ -1338,7 +1345,7 @@ export default function Cuidados() {
               <SelectTrigger className="w-52"><SelectValue placeholder="Filtrar por status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all">Todos os status</SelectItem>
-                {PCONTATO_STATUS.map(s => (
+                {PCONTATO_OPCOES.map(s => (
                   <SelectItem key={s.v} value={s.v}>{s.label}</SelectItem>
                 ))}
                 <SelectItem value="sem">Sem status</SelectItem>
@@ -1405,13 +1412,16 @@ export default function Cuidados() {
                             title="Status do primeiro contato"
                           >
                             <option value="">—</option>
-                            {PCONTATO_STATUS.map(s => (
+                            {PCONTATO_OPCOES.map(s => (
                               <option key={s.v} value={s.v}>{s.label}</option>
                             ))}
+                            {c.primeiro_contato_status && !PCONTATO_OPCOES.some(s => s.v === c.primeiro_contato_status) && (
+                              <option value={c.primeiro_contato_status}>{(PCONTATO_LABEL[c.primeiro_contato_status] || c.primeiro_contato_status) + ' (antigo)'}</option>
+                            )}
                           </select>
                         ) : (
                           <span className="text-xs text-muted-foreground">
-                            {PCONTATO_STATUS.find(s => s.v === c.primeiro_contato_status)?.label || '—'}
+                            {PCONTATO_LABEL[c.primeiro_contato_status] || '—'}
                           </span>
                         )}
                       </TableCell>
