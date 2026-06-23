@@ -2263,6 +2263,16 @@ export const cuidados = {
     cancelarEncontro: (id) => post(`/cuidados/convertidos/${id}/cancelar-encontro`, {}),
     registrarContato: (id) => post(`/cuidados/convertidos/${id}/registrar-contato`, {}),
     desfecho: (id, data) => post(`/cuidados/convertidos/${id}/desfecho`, data),
+    // Direciona o convertido (grupos/devocionais/voluntarios) · grupos/voluntários
+    // criam o handoff na caixa da área · NÃO marca engajamento.
+    direcionar: (id, direcionamento) => post(`/cuidados/convertidos/${id}/direcionar`, { direcionamento }),
+  },
+  // Visitas pastorais e atendimentos avulsos (fora do funil de convertidos)
+  visitas: {
+    list: (params) => get('/cuidados/visitas' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/visitas', data),
+    update: (id, data) => patch(`/cuidados/visitas/${id}`, data),
+    remove: (id) => del(`/cuidados/visitas/${id}`),
   },
   agregado: {
     list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),
