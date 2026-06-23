@@ -8,6 +8,7 @@ const { acharOuCriarGuardado } = require('../services/membroMatch');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
+const { importarParticipantes } = require('../services/gruposImporter');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -25,6 +26,22 @@ const uploadMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1
 const sanitizePath = (s) => (s || '').replace(/[^a-zA-Z0-9\-_ ]/g, '').trim();
 
 router.use(authenticate);
+
+// POST /api/grupos/importar-participantes · importa o consolidado (XLSX) de
+// pessoas × grupos. ?dry_run=1 (ou body dry_run) devolve a prévia sem gravar.
+// Regras: cria quem não existe, ignora quem existe, atualiza CPF/telefone
+// faltantes, find-or-create de grupos, vínculos deduplicados. Nível 3 no módulo.
+router.post('/importar-participantes', authorizeModule('grupos', 3), uploadMw.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie o arquivo .xlsx no campo "arquivo".' });
+    const dryRun = req.query.dry_run === '1' || req.query.dry_run === 'true' || req.body?.dry_run === 'true' || req.body?.dry_run === true;
+    const rep = await importarParticipantes(req.file.buffer, { dryRun });
+    res.json(rep);
+  } catch (e) {
+    console.error('[grupos/importar-participantes]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao importar participantes' });
+  }
+});
 
 // ── Temporada de inscrições · flag GLOBAL (linha única em app_grupos_temporada) ──
 // O app de membros lê esta flag pra liberar a auto-inscrição em grupos. Leitura

@@ -77,6 +77,36 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
   const [filtroGrupo, setFiltroGrupo] = useState('todos');
   const [filtroStatus, setFiltroStatus] = useState('todos');
   const [busca, setBusca] = useState('');
+  // Import do consolidado de participantes (pessoas × grupos)
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importResult, setImportResult] = useState(null);
+
+  async function importAnalisar() {
+    if (!importFile) return;
+    setImportBusy(true); setImportResult(null);
+    try {
+      const r = await api.importarParticipantes(importFile, { dryRun: true });
+      setImportPreview(r);
+    } catch (e) {
+      toast.error(e?.message || 'Erro ao analisar a planilha');
+    } finally { setImportBusy(false); }
+  }
+  async function importAplicar() {
+    if (!importFile) return;
+    if (!window.confirm(`Confirma aplicar? Vai criar ${importPreview?.criar ?? '?'} pessoas, atualizar ${importPreview?.atualizar ?? '?'}, criar ${importPreview?.grupos_criar ?? '?'} grupos e ${importPreview?.vinculos_criar ?? '?'} vínculos.`)) return;
+    setImportBusy(true);
+    try {
+      const r = await api.importarParticipantes(importFile, { dryRun: false });
+      setImportResult(r);
+      toast.success(`Importado · ${r.criar} criadas, ${r.atualizar} atualizadas, ${r.vinculos_criar} vínculos`);
+      carregar();
+    } catch (e) {
+      toast.error(e?.message || 'Erro ao importar');
+    } finally { setImportBusy(false); }
+  }
 
   const carregar = useCallback(async () => {
     try {
@@ -132,13 +162,68 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
 
   return (
     <div>
-      <div style={{ marginBottom: 14 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
-        <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0' }}>
-          Censo de quem está nos grupos — função, status de frequência, última presença e grupo.
-          O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Sem presença", em cinza).
-        </p>
+      <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
+          <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 620 }}>
+            Censo de quem está nos grupos — função, status de frequência, última presença e grupo.
+            O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Sem presença", em cinza).
+          </p>
+        </div>
+        <button onClick={() => { setImportOpen(true); setImportPreview(null); setImportResult(null); setImportFile(null); }}
+          style={{ background: C.primary, color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          Importar participantes
+        </button>
       </div>
+
+      {/* Modal · importar consolidado de participantes (dry-run → aplicar) */}
+      {importOpen && (
+        <div onClick={() => !importBusy && setImportOpen(false)} style={{ position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 14, padding: 20, width: 560, maxWidth: '100%', maxHeight: '85vh', overflowY: 'auto', border: `1px solid ${C.border}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text }}>Importar participantes (XLSX)</h3>
+              <button onClick={() => !importBusy && setImportOpen(false)} style={{ background: 'none', border: 'none', fontSize: 20, color: C.t3, cursor: 'pointer' }}>×</button>
+            </div>
+            <p style={{ fontSize: 12, color: C.t3, marginTop: 0 }}>
+              Cria quem não existe, ignora quem já existe e completa CPF/telefone faltantes. Não duplica pessoas nem vínculos.
+              <strong> Rode "Analisar" primeiro</strong> pra ver a prévia antes de aplicar.
+            </p>
+            <input type="file" accept=".xlsx,.xls" onChange={e => { setImportFile(e.target.files?.[0] || null); setImportPreview(null); setImportResult(null); }} style={{ fontSize: 13, marginBottom: 12 }} />
+
+            {(importPreview || importResult) && (
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, fontSize: 13, color: C.text, marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>{importResult ? '✅ Resultado' : 'Prévia (nada gravado ainda)'}</div>
+                {(() => { const r = importResult || importPreview; return (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                    <span>Pessoas na planilha: <strong>{r.pessoas_planilha}</strong></span>
+                    <span>Criar pessoas: <strong>{r.criar}</strong></span>
+                    <span>Atualizar (CPF/tel): <strong>{r.atualizar}</strong></span>
+                    <span>Ignorar (já existem): <strong>{r.ignorar}</strong></span>
+                    <span>Ambíguos (revisar): <strong style={{ color: r.ambiguos ? C.amber : C.text }}>{r.ambiguos}</strong></span>
+                    <span>Grupos: <strong>{r.grupos_existentes}</strong> existem / <strong>{r.grupos_criar}</strong> criar</span>
+                    <span>Vínculos criar: <strong>{r.vinculos_criar}</strong></span>
+                    <span>Vínculos já existem: <strong>{r.vinculos_existentes}</strong></span>
+                  </div>
+                ); })()}
+                {!importResult && importPreview?.ambiguos > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: C.t3 }}>
+                    Ambíguos (mesmo nome de +1 pessoa no sistema · não serão criados/fundidos): {(importPreview.exemplos?.ambiguos || []).slice(0, 8).join(' · ')}…
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={importAnalisar} disabled={!importFile || importBusy} style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 10, padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: importFile && !importBusy ? 'pointer' : 'not-allowed', opacity: !importFile || importBusy ? 0.6 : 1 }}>
+                {importBusy && !importResult ? 'Analisando…' : 'Analisar (prévia)'}
+              </button>
+              <button onClick={importAplicar} disabled={!importPreview || importBusy || importResult} style={{ background: C.primary, color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: importPreview && !importBusy && !importResult ? 'pointer' : 'not-allowed', opacity: !importPreview || importBusy || importResult ? 0.6 : 1 }}>
+                {importBusy && importPreview ? 'Aplicando…' : 'Aplicar import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Cards-filtro por função */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 10, marginBottom: 12 }}>
