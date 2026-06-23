@@ -988,6 +988,16 @@ export default function VolTotem() {
               value={manualSearch}
               onChange={(e) => setManualSearch(e.target.value)}
               placeholder="Digite seu nome..."
+              // Opta o campo fora do Autofill do Android (senhas/cartões/endereços):
+              // sem isto o WebView desenha a barra de autofill como uma tarja preta
+              // flutuante sobre a lista do totem.
+              name="busca-voluntario"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              inputMode="search"
+              enterKeyHint="search"
               className={`w-full h-14 pl-12 pr-4 rounded-2xl border-2 text-lg focus:outline-none focus:border-[#00B39D] transition-colors ${c.input}`}
             />
           </div>
