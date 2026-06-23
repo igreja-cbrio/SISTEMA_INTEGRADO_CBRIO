@@ -234,7 +234,7 @@ router.get('/', async (req, res) => {
     const { categoria, status, mine, aba, periodo } = req.query;
     let q = supabase
       .from('solicitacoes')
-      .select('*')
+      .select('*, solicitacao_itens(*)')
       .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
@@ -503,12 +503,44 @@ router.post('/', async (req, res) => {
             // Compras / Pagamentos / Serviços (campos estruturados compartilhados)
             itens, link_referencia, favorecido_nome, favorecido_documento,
             recorrente, recorrencia,
+            // Pedido em massa (compras/serviço) · lista de itens estruturados
+            itens_lista,
             // Marketing · Spec 010 (etiquetas) + intake por DOR (Redesenho 2026-05-30)
             marketing_tipo_id, marketing_destino_id,
             mkt_publico_alvo, mkt_ideia_inicial } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
+    }
+
+    // Pedido em massa · normaliza a lista de itens e deriva o resumo de texto
+    // (backward-compat com `solicitacoes.itens`) + soma do valor estimado.
+    const itensListaNorm = (Array.isArray(itens_lista) ? itens_lista : [])
+      .filter(it => it && String(it.descricao || '').trim())
+      .map((it, i) => {
+        const qNum = Number(it.quantidade);
+        const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
+        const vNum = Number(it.valor_estimado);
+        return {
+          descricao: String(it.descricao).trim().slice(0, 500),
+          quantidade,
+          unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
+          link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
+          valor_estimado: (it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum)) ? vNum : null,
+          imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
+          ordem: i,
+        };
+      });
+    let itensTexto = itens;
+    let valorEstimadoFinal = valor_estimado;
+    if (itensListaNorm.length) {
+      itensTexto = itensListaNorm
+        .map(it => `${it.quantidade}x ${it.descricao}`)
+        .join('\n');
+      const soma = itensListaNorm.reduce(
+        (acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado * it.quantidade : 0), 0);
+      const semTotal = valorEstimadoFinal == null || valorEstimadoFinal === '' || Number(valorEstimadoFinal) === 0;
+      if (semTotal && soma > 0) valorEstimadoFinal = soma;
     }
 
     // Auto-mapeia area_responsavel + subcategoria
@@ -552,7 +584,7 @@ router.post('/', async (req, res) => {
         justificativa,
         categoria,
         urgencia: urgencia || 'normal',
-        valor_estimado,
+        valor_estimado: valorEstimadoFinal,
         solicitante_id: userId,
         area_solicitante,
         cargo_solicitante: req.user.granular?.cargoNome || null,
@@ -592,9 +624,10 @@ router.post('/', async (req, res) => {
           conta: conta || null,
           documento_url: documento_url || null,
         }),
-        // Compras · itens + link de referência + fornecedor sugerido
+        // Compras · resumo dos itens (texto) + link de referência + fornecedor.
+        // Os itens estruturados (com foto) vão em solicitacao_itens logo abaixo.
         ...(categoria === 'compras' && {
-          itens: itens || null,
+          itens: itensTexto || null,
           link_referencia: link_referencia || null,
           favorecido_nome: favorecido_nome || null,
         }),
@@ -614,7 +647,7 @@ router.post('/', async (req, res) => {
         }),
         // Serviço · o que (itens) + fornecedor sugerido + proposta + recorrencia
         ...(categoria === 'servico' && {
-          itens: itens || null,
+          itens: itensTexto || null,
           favorecido_nome: favorecido_nome || null,
           favorecido_documento: favorecido_documento || null,
           link_referencia: link_referencia || null,
@@ -634,6 +667,15 @@ router.post('/', async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
+
+    // Pedido em massa · grava os itens estruturados (com foto) vinculados.
+    // Best-effort: a solicitação + o resumo de texto já estão salvos; se a
+    // gravação dos itens falhar, não derruba o pedido (loga só).
+    if (itensListaNorm.length && (categoria === 'compras' || categoria === 'servico')) {
+      const rows = itensListaNorm.map(it => ({ ...it, solicitacao_id: data.id }));
+      const { error: itErr } = await supabase.from('solicitacao_itens').insert(rows);
+      if (itErr) console.error('[SOLICITAÇÕES] falha ao gravar itens do pedido:', itErr.message);
+    }
 
     // Auto-vincula responsavel_id se houver uma única pessoa cadastrada para
     // a área · se houver mais, deixa nulo (qualquer um da fila pode pegar)

@@ -11,7 +11,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -135,6 +135,37 @@ function DocDropzone({ file, onFile, onClear }) {
   );
 }
 
+// Foto compacta por item do pedido em massa · thumbnail + selecionar/remover.
+// `file` = arquivo recém-escolhido (preview local) · `url` = já enviado (edição).
+function ItemFotoMini({ file, url, onFile, onClear }) {
+  const inputRef = useRef(null);
+  const preview = file ? URL.createObjectURL(file) : url;
+  return (
+    <div className="shrink-0">
+      {preview ? (
+        <div className="relative h-12 w-12">
+          <img src={preview} alt="" className="h-12 w-12 rounded-md object-cover border border-border" />
+          <button type="button"
+            className="absolute -right-1.5 -top-1.5 rounded-full bg-background border border-border p-0.5 text-muted-foreground hover:text-red-500"
+            onClick={() => { onClear(); if (inputRef.current) inputRef.current.value = ''; }}
+            title="Remover foto">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => inputRef.current?.click()}
+          className="h-12 w-12 rounded-md border-2 border-dashed border-border hover:border-primary/40 flex flex-col items-center justify-center text-muted-foreground"
+          title="Adicionar foto do item">
+          <ImageIcon className="h-4 w-4" />
+          <span className="text-[9px] leading-none mt-0.5">foto</span>
+        </button>
+      )}
+      <input ref={inputRef} type="file" className="hidden" accept=".jpg,.jpeg,.png,.webp"
+        onChange={e => { const f = e.target.files[0]; if (f) onFile(f); }} />
+    </div>
+  );
+}
+
 // Toggle "é recorrente" + frequência · pagamento e serviço (aluguel, mensalidade)
 function RecorrenteToggle({ form, setForm }) {
   return (
@@ -250,10 +281,27 @@ export default function Solicitacoes() {
     // Compras / Pagamentos / Serviços (campos estruturados compartilhados)
     itens: '', link_referencia: '', favorecido_nome: '', favorecido_documento: '',
     recorrente: false, recorrencia: '',
+    // Pedido em massa (compras) · lista de itens · cada um: descrição + qtd +
+    // link + valor estimado + foto (imagem_file no client → imagem_url no envio)
+    itens_lista: [],
     // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
   };
   const [form, setForm] = useState(FORM_INITIAL);
   const [slaDefs, setSlaDefs] = useState([]);
+
+  // Pedido em massa · helpers da lista de itens (compras)
+  const addItem = () => setForm(f => ({
+    ...f,
+    itens_lista: [...f.itens_lista, { descricao: '', quantidade: '1', link_referencia: '', valor_estimado: '', imagem_file: null, imagem_url: '' }],
+  }));
+  const updateItem = (idx, patch) => setForm(f => ({
+    ...f,
+    itens_lista: f.itens_lista.map((it, i) => i === idx ? { ...it, ...patch } : it),
+  }));
+  const removeItem = (idx) => setForm(f => ({
+    ...f,
+    itens_lista: f.itens_lista.filter((_, i) => i !== idx),
+  }));
   // Carrega SLAs pra mostrar prazo expected no form
   useEffect(() => {
     api.slaDefs?.().then(setSlaDefs).catch(() => setSlaDefs([]));
@@ -469,6 +517,37 @@ export default function Solicitacoes() {
         payload.documento_url = publicUrl;
       }
 
+      // Pedido em massa (compras) · sobe as fotos de cada item e monta a lista
+      // estruturada (sem o File local) que o backend grava em solicitacao_itens.
+      if (isCompras && Array.isArray(form.itens_lista) && form.itens_lista.length) {
+        const lista = [];
+        for (const it of form.itens_lista) {
+          if (!(it.descricao || '').trim()) continue;
+          let imagem_url = it.imagem_url || '';
+          if (it.imagem_file && supabase) {
+            const ext = (it.imagem_file.name.split('.').pop() || 'jpg').toLowerCase();
+            const path = `itens/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+            const { error: upErr } = await supabase.storage
+              .from('solicitacoes')
+              .upload(path, it.imagem_file, { upsert: false });
+            if (upErr) throw new Error('Erro ao enviar foto do item: ' + upErr.message);
+            imagem_url = supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl;
+          }
+          const qtd = parseFloat(it.quantidade);
+          const valor = parseFloat(it.valor_estimado);
+          lista.push({
+            descricao: it.descricao.trim(),
+            quantidade: qtd > 0 ? qtd : 1,
+            link_referencia: (it.link_referencia || '').trim() || null,
+            valor_estimado: isFinite(valor) ? valor : null,
+            imagem_url: imagem_url || null,
+          });
+        }
+        payload.itens_lista = lista;
+      } else {
+        delete payload.itens_lista;
+      }
+
       await api.create(payload);
       toast.success('Solicitação criada com sucesso!');
       setDialogOpen(false);
@@ -538,8 +617,8 @@ export default function Solicitacoes() {
     dadosBancariosValid(form.forma_pagamento)
   );
   const reservaEspacoValid = !isReservaEspaco || (form.espaco_solicitado.trim() && form.data_uso);
-  // Compras · descrição do que se precisa (itens) é o campo-chave
-  const comprasValid = !isCompras || form.itens.trim().length >= 3;
+  // Compras · pelo menos um item com descrição preenchida
+  const comprasValid = !isCompras || form.itens_lista.some(it => (it.descricao || '').trim().length >= 2);
   // Pagamento · favorecido + vencimento (data_necessaria) + forma/destino do dinheiro.
   // Boleto não exige PIX/banco (o documento carrega a linha de pagamento).
   const pagamentoValid = !isPagamento || (
@@ -690,33 +769,85 @@ export default function Solicitacoes() {
                   </div>
                 )}
 
-                {/* Compras · itens + referência + fornecedor sugerido */}
+                {/* Compras · pedido em massa · lista de itens (descrição + qtd +
+                    link + valor + foto por item) + fornecedor sugerido */}
                 {isCompras && (
                   <div className="space-y-3 rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
-                    <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Detalhes da compra</p>
-                    <div className="space-y-2">
-                      <Label className="text-xs">O que comprar (itens + quantidade) *</Label>
-                      <Textarea
-                        value={form.itens}
-                        onChange={e => setForm(f => ({ ...f, itens: e.target.value }))}
-                        rows={2}
-                        placeholder="Ex: 2 caixas de som JBL · 10 cabos P10 · 1 mesa dobrável"
-                      />
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Itens da compra *</p>
+                      <span className="text-xs text-muted-foreground">
+                        {form.itens_lista.length} {form.itens_lista.length === 1 ? 'item' : 'itens'}
+                      </span>
                     </div>
-                    <div className="space-y-2">
-                      <Label className="text-xs">Link / referência do produto (opcional)</Label>
-                      <Input
-                        value={form.link_referencia}
-                        onChange={e => setForm(f => ({ ...f, link_referencia: e.target.value }))}
-                        placeholder="Cole o link do Mercado Livre / site, se tiver"
-                      />
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Adicione tudo que precisa num só pedido — uma linha por item. Anexe uma foto pra facilitar a identificação.
+                    </p>
+
+                    {form.itens_lista.length === 0 && (
+                      <p className="text-xs text-muted-foreground italic py-2 text-center">
+                        Nenhum item ainda. Clique em "Adicionar item" abaixo.
+                      </p>
+                    )}
+
+                    {form.itens_lista.map((it, idx) => (
+                      <div key={idx} className="rounded-md border border-border bg-background/60 p-2.5">
+                        <div className="flex items-start gap-2">
+                          <ItemFotoMini
+                            file={it.imagem_file}
+                            url={it.imagem_url}
+                            onFile={f => updateItem(idx, { imagem_file: f })}
+                            onClear={() => updateItem(idx, { imagem_file: null, imagem_url: '' })}
+                          />
+                          <div className="flex-1 space-y-2 min-w-0">
+                            <div className="flex gap-2">
+                              <Input
+                                className="flex-1"
+                                placeholder="O que é? Ex: Peruca loira"
+                                value={it.descricao}
+                                onChange={e => updateItem(idx, { descricao: e.target.value })}
+                              />
+                              <Input
+                                className="w-16 shrink-0"
+                                type="number" min="1"
+                                placeholder="Qtd"
+                                value={it.quantidade}
+                                onChange={e => updateItem(idx, { quantidade: e.target.value })}
+                              />
+                              <button type="button" onClick={() => removeItem(idx)}
+                                className="text-muted-foreground hover:text-red-500 px-1 shrink-0" title="Remover item">
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <div className="flex gap-2">
+                              <Input
+                                className="flex-1"
+                                placeholder="Link de referência (opcional)"
+                                value={it.link_referencia}
+                                onChange={e => updateItem(idx, { link_referencia: e.target.value })}
+                              />
+                              <Input
+                                className="w-28 shrink-0"
+                                type="number" min="0" step="0.01"
+                                placeholder="R$ estim."
+                                value={it.valor_estimado}
+                                onChange={e => updateItem(idx, { valor_estimado: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    <Button type="button" variant="outline" size="sm" className="w-full" onClick={addItem}>
+                      <Plus className="h-4 w-4 mr-1" /> Adicionar item
+                    </Button>
+
                     <div className="space-y-2">
                       <Label className="text-xs">Fornecedor sugerido (opcional)</Label>
                       <Input
                         value={form.favorecido_nome}
                         onChange={e => setForm(f => ({ ...f, favorecido_nome: e.target.value }))}
-                        placeholder="Se já sabe de onde comprar"
+                        placeholder="Se já sabe de onde comprar (vale pro pedido todo)"
                       />
                     </div>
                   </div>
@@ -1901,17 +2032,49 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
-          {/* Detalhes da compra */}
-          {item.categoria === 'compras' && (item.itens || item.link_referencia || item.favorecido_nome) && (
+          {/* Detalhes da compra · itens estruturados (com foto) ou texto legado */}
+          {item.categoria === 'compras' && ((item.solicitacao_itens?.length) || item.itens || item.link_referencia || item.favorecido_nome) && (
             <div className="space-y-2 pt-3 border-t border-border">
               <p className="text-sm font-semibold text-foreground">Detalhes da compra</p>
-              {item.itens && (
-                <div><span className="text-xs text-muted-foreground">Itens</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
+              {item.solicitacao_itens?.length ? (
+                <div className="space-y-1.5">
+                  <span className="text-xs text-muted-foreground">{item.solicitacao_itens.length} {item.solicitacao_itens.length === 1 ? 'item' : 'itens'}</span>
+                  {[...item.solicitacao_itens].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)).map(it => (
+                    <div key={it.id} className="flex items-center gap-2.5 rounded-md border border-border bg-muted/30 p-2">
+                      {it.imagem_url ? (
+                        <a href={it.imagem_url} target="_blank" rel="noopener noreferrer" className="shrink-0">
+                          <img src={it.imagem_url} alt="" className="h-12 w-12 rounded object-cover border border-border" />
+                        </a>
+                      ) : (
+                        <div className="h-12 w-12 rounded bg-muted flex items-center justify-center shrink-0">
+                          <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          <span className="text-muted-foreground">{Number(it.quantidade) || 1}x</span> {it.descricao}
+                        </p>
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                          {it.valor_estimado != null && (
+                            <span>R$ {Number(it.valor_estimado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          )}
+                          {it.link_referencia && it.link_referencia.startsWith('http') && (
+                            <a href={it.link_referencia} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Ver referência →</a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                item.itens && (
+                  <div><span className="text-xs text-muted-foreground">Itens</span><p className="text-sm whitespace-pre-wrap">{item.itens}</p></div>
+                )
               )}
               {item.favorecido_nome && (
                 <div><span className="text-xs text-muted-foreground">Fornecedor sugerido</span><p className="text-sm">{item.favorecido_nome}</p></div>
               )}
-              {item.link_referencia && (
+              {!item.solicitacao_itens?.length && item.link_referencia && (
                 item.link_referencia.startsWith('http')
                   ? <a href={item.link_referencia} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">Ver referência →</a>
                   : <div><span className="text-xs text-muted-foreground">Referência</span><p className="text-sm">{item.link_referencia}</p></div>
