@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { voluntariado } from '@/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFaceDetection, useFaceMatch } from './hooks/useVolFace';
@@ -90,6 +93,18 @@ export default function VolTotem() {
   const face = useFaceDetection();
   const faceMatch = useFaceMatch();
   const faceLoopRef = useRef(false);
+
+  // ── Cultos da manhã (domingo) · pergunta em quais a pessoa vai servir ──
+  // Reusa o mesmo backend da tela /voluntariado/checkin (cultos-manha +
+  // check-ins/manha). Só dispara em culto de domingo de manhã e online.
+  const { data: cultosManha = [] } = useQuery<{ id: string; name: string; recurrence_time: string }[]>({
+    queryKey: ['vol', 'cultos-manha'],
+    queryFn: () => voluntariado.cultosManha(),
+    staleTime: 60 * 60 * 1000,
+  });
+  const [manhaDialog, setManhaDialog] = useState<{ volunteerId?: string; name: string; method: string; afterReset: () => void } | null>(null);
+  const [selCultos, setSelCultos] = useState<Set<string>>(new Set());
+  const [salvandoManha, setSalvandoManha] = useState(false);
 
   // ── Tema (claro/escuro) ──
   const dark = theme === 'dark';
@@ -402,6 +417,9 @@ export default function VolTotem() {
       // ONLINE: resolve no servidor (cobre QR legado e cartão de membro).
       const lookupResult = await voluntariado.qrLookup(qrCode);
 
+      // Domingo de manhã: pergunta em quais cultos vai servir (checkbox).
+      if (perguntarCultosManha(lookupResult.profile?.id || undefined, lookupResult.volunteerName, 'qr_code', afterReset)) return;
+
       if (lookupResult.isUnscheduled) {
         await submitCheckin(
           { volunteer_id: lookupResult.profile?.id || undefined, service_id: selectedServiceId, method: 'qr_code', is_unscheduled: true },
@@ -476,10 +494,14 @@ export default function VolTotem() {
           const profileId = matchResult.profile_id || matchResult.volunteer_id;
           const volunteerName = matchResult.volunteer_name || matchResult.name || 'Voluntario';
 
+          const afterFacial = () => { processingRef.current = false; if (faceLoopRef.current) runFaceLoop(); };
+          // Domingo de manhã: pergunta em quais cultos vai servir (checkbox).
+          if (perguntarCultosManha(profileId, volunteerName, 'facial', afterFacial)) return;
+
           await submitCheckin(
             { volunteer_id: profileId, service_id: selectedServiceId, method: 'facial', is_unscheduled: true },
             { name: volunteerName, unscheduled: true },
-            () => { processingRef.current = false; if (faceLoopRef.current) runFaceLoop(); }
+            afterFacial
           );
         } catch (err: any) {
           handleCheckinError(err, () => {
@@ -585,6 +607,62 @@ export default function VolTotem() {
     } finally {
       setRegistering(false);
     }
+  };
+
+  // ── Cultos da manhã · interceptação do check-in ──
+  //
+  // Em culto de domingo de manhã, antes de gravar 1 check-in, abre o diálogo
+  // pra escolher em quais cultos (08:30/10:00/11:30) a pessoa vai servir.
+  // Retorna true se interceptou (o chamador deve parar o fluxo normal).
+  // Só online — materializar os vol_services da manhã exige o servidor.
+  const perguntarCultosManha = (
+    volunteerId: string | undefined,
+    name: string,
+    method: string,
+    afterReset: () => void,
+  ) => {
+    const selSvc = services.find(s => s.id === selectedServiceId);
+    if (!selSvc || !navigator.onLine || cultosManha.length < 2) return false;
+    try {
+      const wd = new Date(selSvc.scheduled_at).toLocaleDateString('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short' });
+      const h = Number(new Date(selSvc.scheduled_at).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2));
+      if (wd !== 'Sun' || h >= 14) return false;
+    } catch { return false; }
+    setSelCultos(new Set(cultosManha.map(c => c.id)));
+    setManhaDialog({ volunteerId, name, method, afterReset });
+    return true;
+  };
+
+  const confirmarManha = async () => {
+    if (!manhaDialog) return;
+    const ids = cultosManha.filter(c => selCultos.has(c.id)).map(c => c.id);
+    if (!ids.length) return;
+    const selSvc = services.find(s => s.id === selectedServiceId);
+    const serviceDate = selSvc ? new Date(selSvc.scheduled_at).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) : '';
+    const after = manhaDialog.afterReset;
+    setSalvandoManha(true);
+    try {
+      await voluntariado.checkIns.manha({ volunteer_id: manhaDialog.volunteerId, service_date: serviceDate, service_type_ids: ids, method: manhaDialog.method });
+      setResult({ name: manhaDialog.name });
+      setState('success');
+      setManhaDialog(null);
+      refreshLocalDone();
+      autoReset(after);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Erro no check-in');
+      setState('error');
+      setManhaDialog(null);
+      resetAfter(3000, after);
+    } finally {
+      setSalvandoManha(false);
+    }
+  };
+
+  const cancelarManha = () => {
+    const after = manhaDialog?.afterReset;
+    setManhaDialog(null);
+    processingRef.current = false;
+    if (after) after();
   };
 
   // ── Shared helpers ──
@@ -1090,6 +1168,44 @@ export default function VolTotem() {
           </div>
         </div>
       )}
+
+      {/* ═══ Domingo de manhã · em quais cultos a pessoa vai servir? ═══ */}
+      <Dialog open={!!manhaDialog} onOpenChange={(o) => { if (!o) cancelarManha(); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sun className="h-5 w-5 text-amber-500" /> Cultos da manhã</DialogTitle>
+          </DialogHeader>
+          {manhaDialog && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <strong className="text-foreground">{manhaDialog.name}</strong> — em quais cultos da manhã vai servir?
+              </p>
+              <div className="space-y-1.5">
+                {cultosManha.map(cm => {
+                  const marcado = selCultos.has(cm.id);
+                  return (
+                    <button
+                      key={cm.id}
+                      type="button"
+                      onClick={() => setSelCultos(prev => { const n = new Set(prev); n.has(cm.id) ? n.delete(cm.id) : n.add(cm.id); return n; })}
+                      className={`w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${marcado ? 'border-primary bg-primary/5' : 'bg-card hover:bg-muted/40'}`}
+                    >
+                      <Checkbox checked={marcado} className="pointer-events-none" />
+                      <span className="text-sm font-medium">{cm.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={cancelarManha} disabled={salvandoManha}>Cancelar</Button>
+            <Button onClick={confirmarManha} disabled={salvandoManha || selCultos.size === 0}>
+              {salvandoManha ? 'Salvando…' : `Fazer check-in (${selCultos.size})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
