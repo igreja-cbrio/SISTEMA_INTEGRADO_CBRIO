@@ -441,8 +441,10 @@ function AppRoutes() {
       {/* Preview de design (estilo Rondesignlab) · fullscreen isolado · não-produção */}
       <Route path="/design-preview" element={<ProtectedRoute><Suspense fallback={<Loading />}><DesignPreview /></Suspense></ProtectedRoute>} />
 
-      {/* /atlas · atlas operacional do sistema (manual + auditoria) · fullscreen isolado, autenticado, fora do menu */}
+      {/* /atlas · atlas operacional do sistema (manual + auditoria + fluxograma) · fullscreen isolado, autenticado, fora do menu */}
       <Route path="/atlas" element={<ProtectedRoute><Suspense fallback={<Loading />}><Atlas /></Suspense></ProtectedRoute>} />
+      {/* /atlas/fluxograma · abre direto no canvas de fluxo do sistema */}
+      <Route path="/atlas/fluxograma" element={<ProtectedRoute><Suspense fallback={<Loading />}><Atlas initialHash="#fluxograma" /></Suspense></ProtectedRoute>} />
 
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
