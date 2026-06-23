@@ -312,10 +312,30 @@ router.post('/pedidos', async (req, res) => {
 router.put('/pedidos/:id', async (req, res) => {
   try {
     const { descricao, valor_total, data_prevista, status, codigo_rastreio, transportadora } = req.body;
+    const { data: antigo } = await supabase.from('log_pedidos').select('status, solicitacao_id').eq('id', req.params.id).maybeSingle();
     const { data, error } = await supabase.from('log_pedidos')
       .update({ descricao, valor_total, data_prevista, status, codigo_rastreio, transportadora })
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
+    // WhatsApp pro solicitante quando o status de ENTREGA muda (template
+    // pedido_atualizado · {{4}} = rastreio). No-op se sem env/sem telefone.
+    if (status && antigo && status !== antigo.status && data.solicitacao_id) {
+      (async () => {
+        try {
+          const { data: sol } = await supabase.from('solicitacoes').select('titulo, solicitante_id').eq('id', data.solicitacao_id).maybeSingle();
+          if (!sol?.solicitante_id) return;
+          const { data: prof } = await supabase.from('profiles').select('name, membro_id').eq('id', sol.solicitante_id).maybeSingle();
+          if (!prof?.membro_id) return;
+          const wpp = require('../services/whatsappService');
+          const primeiroNome = (prof.name || '').trim().split(/\s+/)[0] || 'Olá';
+          const rastreio = [data.codigo_rastreio, data.transportadora].filter(Boolean).join(' · ') || 'Sem código de rastreio.';
+          const link = `${process.env.FRONTEND_URL || 'https://cbrio.org'}/solicitacoes`;
+          await wpp.notificarMembro(prof.membro_id, 'pedido_atualizado', [
+            primeiroNome, sol.titulo || data.descricao || 'seu pedido', String(status).replace('_', ' '), rastreio, link,
+          ]);
+        } catch (e) { console.error('[LOGISTICA] wpp pedido:', e.message); }
+      })();
+    }
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar pedido' }); }
 });
