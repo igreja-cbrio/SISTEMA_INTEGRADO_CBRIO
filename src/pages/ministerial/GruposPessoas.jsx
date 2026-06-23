@@ -83,12 +83,13 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
   const [importBusy, setImportBusy] = useState(false);
   const [importPreview, setImportPreview] = useState(null);
   const [importResult, setImportResult] = useState(null);
+  const [importReconciliar, setImportReconciliar] = useState(false);
 
   async function importAnalisar() {
     if (!importFile) return;
     setImportBusy(true); setImportResult(null);
     try {
-      const r = await api.importarParticipantes(importFile, { dryRun: true });
+      const r = await api.importarParticipantes(importFile, { dryRun: true, reconciliar: importReconciliar });
       setImportPreview(r);
     } catch (e) {
       toast.error(e?.message || 'Erro ao analisar a planilha');
@@ -96,12 +97,13 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
   }
   async function importAplicar() {
     if (!importFile) return;
-    if (!window.confirm(`Confirma aplicar? Vai criar ${importPreview?.criar ?? '?'} pessoas, atualizar ${importPreview?.atualizar ?? '?'}, criar ${importPreview?.grupos_criar ?? '?'} grupos e ${importPreview?.vinculos_criar ?? '?'} vínculos.`)) return;
+    const extra = importReconciliar ? ` Vai DESATIVAR ${importPreview?.desativar_vinculos ?? '?'} vínculos e ${importPreview?.desativar_grupos ?? '?'} grupos fora do consolidado.` : '';
+    if (!window.confirm(`Confirma aplicar? Vai criar ${importPreview?.criar ?? '?'} pessoas, atualizar ${importPreview?.atualizar ?? '?'}, criar ${importPreview?.grupos_criar ?? '?'} grupos e ${importPreview?.vinculos_criar ?? '?'} vínculos.${extra}`)) return;
     setImportBusy(true);
     try {
-      const r = await api.importarParticipantes(importFile, { dryRun: false });
+      const r = await api.importarParticipantes(importFile, { dryRun: false, reconciliar: importReconciliar });
       setImportResult(r);
-      toast.success(`Importado · ${r.criar} criadas, ${r.atualizar} atualizadas, ${r.vinculos_criar} vínculos`);
+      toast.success(`Importado · ${r.criar} criadas, ${r.vinculos_criar} vínculos${importReconciliar ? `, ${r.desativar_vinculos} desativados` : ''}`);
       carregar();
     } catch (e) {
       toast.error(e?.message || 'Erro ao importar');
@@ -188,7 +190,12 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
               Cria quem não existe, ignora quem já existe e completa CPF/telefone faltantes. Não duplica pessoas nem vínculos.
               <strong> Rode "Analisar" primeiro</strong> pra ver a prévia antes de aplicar.
             </p>
-            <input type="file" accept=".xlsx,.xls" onChange={e => { setImportFile(e.target.files?.[0] || null); setImportPreview(null); setImportResult(null); }} style={{ fontSize: 13, marginBottom: 12 }} />
+            <input type="file" accept=".xlsx,.xls" onChange={e => { setImportFile(e.target.files?.[0] || null); setImportPreview(null); setImportResult(null); }} style={{ fontSize: 13, marginBottom: 10, display: 'block' }} />
+
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: C.text, marginBottom: 12, cursor: 'pointer' }}>
+              <input type="checkbox" checked={importReconciliar} onChange={e => { setImportReconciliar(e.target.checked); setImportPreview(null); setImportResult(null); }} style={{ marginTop: 2 }} />
+              <span><strong>Reconciliar (substituir pela temporada)</strong> — desativa os vínculos e grupos que <u>não estão</u> no consolidado, pra a contagem/mandala bater exatamente o arquivo. Reversível. Deixe a prévia mostrar quantos antes de aplicar.</span>
+            </label>
 
             {(importPreview || importResult) && (
               <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, fontSize: 13, color: C.text, marginBottom: 12 }}>
@@ -203,6 +210,8 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
                     <span>Grupos: <strong>{r.grupos_existentes}</strong> existem / <strong>{r.grupos_criar}</strong> criar</span>
                     <span>Vínculos criar: <strong>{r.vinculos_criar}</strong></span>
                     <span>Vínculos já existem: <strong>{r.vinculos_existentes}</strong></span>
+                    {r.desativar_vinculos != null && <span style={{ color: C.red }}>Desativar vínculos: <strong>{r.desativar_vinculos}</strong></span>}
+                    {r.desativar_grupos != null && <span style={{ color: C.red }}>Desativar grupos: <strong>{r.desativar_grupos}</strong></span>}
                   </div>
                 ); })()}
                 {!importResult && importPreview?.ambiguos > 0 && (

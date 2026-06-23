@@ -355,7 +355,7 @@ export const grupos = {
   uploadMaterial: (formData) => requestFile('/grupos/materiais', formData),
   importarLideresAnalisar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/grupos/importar-lideres/analisar', fd, { timeoutMs: 120_000 }); },
   // Importa o consolidado de participantes (pessoas × grupos). dryRun=true só prévia.
-  importarParticipantes: (file, { dryRun = true } = {}) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile(`/grupos/importar-participantes${dryRun ? '?dry_run=1' : ''}`, fd, { timeoutMs: 300_000 }); },
+  importarParticipantes: (file, { dryRun = true, reconciliar = false } = {}) => { const fd = new FormData(); fd.append('arquivo', file); const qs = [dryRun ? 'dry_run=1' : '', reconciliar ? 'reconciliar=1' : ''].filter(Boolean).join('&'); return requestFile(`/grupos/importar-participantes${qs ? `?${qs}` : ''}`, fd, { timeoutMs: 300_000 }); },
   importarLideresAplicar: (vinculos) => post('/grupos/importar-lideres/aplicar', { vinculos }),
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),

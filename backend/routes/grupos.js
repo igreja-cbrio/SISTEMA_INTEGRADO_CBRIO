@@ -35,7 +35,8 @@ router.post('/importar-participantes', authorizeModule('grupos', 3), uploadMw.si
   try {
     if (!req.file) return res.status(400).json({ error: 'Envie o arquivo .xlsx no campo "arquivo".' });
     const dryRun = req.query.dry_run === '1' || req.query.dry_run === 'true' || req.body?.dry_run === 'true' || req.body?.dry_run === true;
-    const rep = await importarParticipantes(req.file.buffer, { dryRun });
+    const reconciliar = req.query.reconciliar === '1' || req.query.reconciliar === 'true' || req.body?.reconciliar === 'true' || req.body?.reconciliar === true;
+    const rep = await importarParticipantes(req.file.buffer, { dryRun, reconciliar });
     res.json(rep);
   } catch (e) {
     console.error('[grupos/importar-participantes]', e.message);
