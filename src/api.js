@@ -1219,6 +1219,8 @@ export const totemKids = {
     },
     // URL pra abrir e baixar modelo (browser cuida da auth via cookie/header)
     modeloImportacaoUrl: () => `${API}/totem-kids/criancas/modelo-importacao`,
+    // Sync com a API do Planning Center Check-Ins (upsert idempotente)
+    syncPco: (data = {}) => post('/totem-kids/sync-pco', data),
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
