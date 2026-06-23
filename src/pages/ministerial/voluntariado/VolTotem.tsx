@@ -560,6 +560,8 @@ export default function VolTotem() {
   const handleManualCheckin = async (sch: VolSchedule) => {
     if (processingRef.current) return;
     processingRef.current = true;
+    // Domingo de manhã: pergunta em quais cultos (08:30/10:00/11:30) vai servir.
+    if (perguntarCultosManha(sch.volunteer_id || undefined, sch.volunteer_name, 'manual', () => loadSchedules())) return;
     await submitCheckin(
       { schedule_id: sch.id, volunteer_id: sch.volunteer_id || undefined, service_id: selectedServiceId, method: 'manual' },
       { name: sch.volunteer_name, team: sch.team_name, position: sch.position_name },
@@ -570,6 +572,8 @@ export default function VolTotem() {
   const handleUnscheduledCheckin = async (profile: any) => {
     if (processingRef.current) return;
     processingRef.current = true;
+    // Domingo de manhã: pergunta em quais cultos (08:30/10:00/11:30) vai servir.
+    if (perguntarCultosManha(profile.id, profile.full_name, 'manual', () => loadSchedules())) return;
     await submitCheckin(
       { volunteer_id: profile.id, service_id: selectedServiceId, method: 'manual', is_unscheduled: true },
       { name: profile.full_name, unscheduled: true },
@@ -598,6 +602,8 @@ export default function VolTotem() {
       saveProfiles([...allProfiles, profile]);
       processingRef.current = true;
       setManualSearch('');
+      // Domingo de manhã: pergunta em quais cultos (08:30/10:00/11:30) vai servir.
+      if (perguntarCultosManha(profile.id, profile.full_name, 'manual', () => loadSchedules())) return;
       await submitCheckin(
         { volunteer_id: profile.id, service_id: selectedServiceId, method: 'manual', is_unscheduled: true, novo_cadastro: true },
         { name: profile.full_name, unscheduled: true },
