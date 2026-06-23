@@ -67,7 +67,7 @@ function parsePlanilha(buffer) {
   return pessoas;
 }
 
-async function importarParticipantes(buffer, { dryRun = true } = {}) {
+async function importarParticipantes(buffer, { dryRun = true, reconciliar = false } = {}) {
   const pessoas = parsePlanilha(buffer);
 
   // ── Base atual em memória (rápido + sem N+1) ──
@@ -86,7 +86,7 @@ async function importarParticipantes(buffer, { dryRun = true } = {}) {
   const byGrupo = new Map(); // normNome -> grupo
   for (const g of grupos) { const nn = normNome(g.nome); if (nn && !byGrupo.has(nn)) byGrupo.set(nn, g); }
 
-  const vinculos = await carregarTodos('mem_grupo_membros', 'membro_id, grupo_id, saiu_em');
+  const vinculos = await carregarTodos('mem_grupo_membros', 'id, membro_id, grupo_id, saiu_em');
   const vinculoAtivo = new Set(vinculos.filter((v) => !v.saiu_em).map((v) => `${v.membro_id}|${v.grupo_id}`));
 
   const rep = {
@@ -202,6 +202,38 @@ async function importarParticipantes(buffer, { dryRun = true } = {}) {
     for (const lote of chunk(novosVinculos, 500)) {
       const { error } = await supabase.from('mem_grupo_membros').insert(lote);
       if (error) throw new Error('criar vínculos: ' + error.message);
+    }
+  }
+
+  // ── 4. (opcional) Reconciliar: desativar o legado fora do consolidado ──
+  // Deixa a temporada = exatamente o consolidado: vínculos ativos cujo par
+  // (pessoa, grupo) não está na planilha viram saiu_em; grupos ativos fora dos
+  // grupos da planilha viram ativo=false. Reversível.
+  if (reconciliar) {
+    const keepPairs = new Set();
+    const keepGrupos = new Set([...grupoIdPorNN.values()]);
+    for (const r of resolvidos) {
+      if (!r.membroId) continue;
+      for (const g of r.p.grupos) {
+        const gid = grupoIdPorNN.get(normNome(g));
+        if (gid) keepPairs.add(`${r.membroId}|${gid}`);
+      }
+    }
+    const aDesativarVinc = vinculos.filter((v) => !v.saiu_em && v.id && !keepPairs.has(`${v.membro_id}|${v.grupo_id}`));
+    const aDesativarGrupos = grupos.filter((g) => g.ativo && !keepGrupos.has(g.id));
+    rep.desativar_vinculos = aDesativarVinc.length;
+    rep.desativar_grupos = aDesativarGrupos.length;
+    if (!dryRun) {
+      const hoje = new Date().toISOString().slice(0, 10);
+      for (const lote of chunk(aDesativarVinc.map((v) => v.id), 500)) {
+        const { error } = await supabase.from('mem_grupo_membros')
+          .update({ saiu_em: hoje, motivo_saida: 'reconciliação consolidado' }).in('id', lote);
+        if (error) throw new Error('desativar vínculos: ' + error.message);
+      }
+      for (const lote of chunk(aDesativarGrupos.map((g) => g.id), 500)) {
+        const { error } = await supabase.from('mem_grupos').update({ ativo: false }).in('id', lote);
+        if (error) throw new Error('desativar grupos: ' + error.message);
+      }
     }
   }
 
