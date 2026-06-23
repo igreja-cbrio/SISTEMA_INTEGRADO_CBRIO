@@ -389,6 +389,12 @@ h2 .cnt { font-family: var(--mono); font-size: 13px; color: var(--ink-3); font-w
 .fx-abas-modal .a .dir { font-family: var(--mono); font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--line-2); color: var(--ink-3); margin-right: 6px; text-transform: uppercase; }
 @media (prefers-reduced-motion: reduce) { .fx-node { transition: none; } }
 
+/* tela cheia: esconde menu lateral + topbar do atlas enquanto o fluxograma está ativo */
+body.fx-full .side { display: none; }
+body.fx-full .topbar { display: none; }
+body.fx-full .app { grid-template-columns: 1fr; }
+.fx-btn.fx-back { font-weight: 600; }
+
 </style>
 <div class="topbar"><button id="menuBtn" class="mb" aria-label="Abrir índice">☰</button><span class="tt" id="topTitle">Visão geral</span></div>
 <div class="scrim" id="scrim"></div>
@@ -454,6 +460,7 @@ h2 .cnt { font-family: var(--mono); font-size: 13px; color: var(--ink-3); font-w
     var root = document.createElement("div"); root.className = "fx-root";
     root.innerHTML =
       '<div class="fx-bar">' +
+        '<button class="fx-btn fx-back" data-act="voltar" title="Voltar ao Atlas">← Atlas</button>' +
         '<span class="fx-title"><b>Atlas · Fluxograma</b>Como o dado caminha até a NSM</span>' +
         '<button class="fx-btn" data-act="fit">Ajustar à tela</button>' +
         '<button class="fx-btn" data-act="reset">Resetar layout</button>' +
@@ -645,7 +652,8 @@ h2 .cnt { font-family: var(--mono); font-size: 13px; color: var(--ink-3); font-w
     root.querySelector(".fx-bar").addEventListener("click", function (e) {
       var b = e.target.closest ? e.target.closest("[data-act]") : null; if (!b) return;
       var act = b.getAttribute("data-act");
-      if (act === "fit") fit();
+      if (act === "voltar") { location.hash = "#geral"; }
+      else if (act === "fit") fit();
       else if (act === "reset") { try { localStorage.removeItem(STORE_KEY); } catch (x) {} defaultLayout(); NODES.forEach(function (n) { els[n.id].classList.remove("expanded"); els[n.id].style.left = pos[n.id].x + "px"; els[n.id].style.top = pos[n.id].y + "px"; pos[n.id].h = els[n.id].offsetHeight; }); drawEdges(); fit(); }
       else if (act === "zin") { zoom = Math.min(2, zoom * 1.2); applyT(); }
       else if (act === "zout") { zoom = Math.max(0.3, zoom / 1.2); applyT(); }
@@ -1071,6 +1079,7 @@ h2 .cnt { font-family: var(--mono); font-size: 13px; color: var(--ink-3); font-w
 
   // ---------- fluxograma ----------
   function viewFluxograma() {
+    document.body.classList.add("fx-full");
     var mp = el("mainpane"); if (mp) { mp.style.height = "100vh"; mp.style.overflow = "hidden"; }
     var m = el("main"); m.style.position = "relative"; m.style.height = "100%"; m.innerHTML = "";
     if (FLOW && window.renderFluxograma) window.renderFluxograma(m, FLOW);
@@ -1090,6 +1099,7 @@ h2 .cnt { font-family: var(--mono); font-size: 13px; color: var(--ink-3); font-w
     var _mp = el("mainpane"), _m0 = el("main");
     if (_mp) { _mp.style.height = ""; _mp.style.overflow = ""; }
     if (_m0) { _m0.style.position = ""; _m0.style.height = ""; }
+    document.body.classList.remove("fx-full");
     if (hash === "fluxograma") { markActive("fluxograma", null); el("topTitle").textContent = "Fluxograma"; viewFluxograma(); return; }
     if (hash.indexOf("mod/") === 0) {
       var slug = hash.slice(4); markActive(null, slug); el("topTitle").textContent = (BY[slug] ? BY[slug].nome : "Módulo"); viewModule(slug); return;
