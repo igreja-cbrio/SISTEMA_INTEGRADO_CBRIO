@@ -89,7 +89,7 @@ const BLOCOS = [
           // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base 3.000 membros (módulo-fim, não sai dado daqui).
           { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 24.3, unidade: '%', detalhe: '729 em grupos ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
           { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 10, unidade: '%', detalhe: '299 voluntários ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
-          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 10.8, unidade: '%', detalhe: '324 dizimistas recorrentes · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
         ],
       },
       {
