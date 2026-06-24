@@ -142,6 +142,87 @@ const labelMes = (ym: string) => {
   return `${MESES_PT[parseInt(m, 10) - 1]}/${y.slice(2)}`;
 };
 
+// Gestão dos horários do batismo · abrir/fechar (controla o que aparece no
+// formulário público) + limite de vagas por horário (fecha sozinho ao lotar).
+function BatismoHorarios() {
+  const [info, setInfo] = useState<{ data_batismo?: string; horarios: any[] }>({ horarios: [] });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const r = await kpisApi.batismos.horarios.list(); setInfo(r || { horarios: [] }); }
+    catch { toast.error('Erro ao carregar horários'); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const salvar = async (id: string, body: any) => {
+    setBusy(id);
+    try { await kpisApi.batismos.horarios.update(id, body); await load(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
+    finally { setBusy(null); }
+  };
+
+  const dataFmt = info.data_batismo
+    ? new Date(info.data_batismo + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })
+    : '';
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Clock className="h-4 w-4 text-primary" /> Horários do batismo
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Próximo batismo: <strong>{dataFmt || '—'}</strong>. Abra/feche os horários que aparecem no formulário público e defina o limite de vagas de cada um (vazio = sem limite). Ao lotar, o horário some do formulário sozinho.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {loading ? (
+          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
+        ) : info.horarios.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">Nenhum horário cadastrado.</p>
+        ) : info.horarios.map((h) => {
+          const lotado = h.limite != null && h.inscritos >= h.limite;
+          return (
+            <div key={h.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3">
+              <div className="flex-1 min-w-[180px]">
+                <p className="font-medium text-sm">{h.label}</p>
+                <p className="text-xs text-muted-foreground">
+                  {h.inscritos} inscrito{h.inscritos === 1 ? '' : 's'}
+                  {h.limite != null ? ` / ${h.limite}` : ' · sem limite'}
+                  {lotado && <span className="ml-1 font-medium text-red-600">· lotado</span>}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs text-muted-foreground">Limite</Label>
+                <Input
+                  type="number" min="0" className="w-20 h-8"
+                  defaultValue={h.limite ?? ''}
+                  placeholder="—"
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    const novo = v === '' ? null : Math.max(0, parseInt(v, 10) || 0);
+                    if (novo !== (h.limite ?? null)) salvar(h.id, { limite: novo });
+                  }}
+                />
+              </div>
+              <Badge variant={h.aberto ? 'default' : 'secondary'}>{h.aberto ? 'Aberto' : 'Fechado'}</Badge>
+              <Button
+                size="sm" variant="outline" disabled={busy === h.id}
+                onClick={() => salvar(h.id, { aberto: !h.aberto })}
+              >
+                {busy === h.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : (h.aberto ? 'Fechar' : 'Abrir')}
+              </Button>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Batismos() {
   const [list, setList] = useState<BatismoInscricao[]>([]);
   const [loading, setLoading] = useState(true);
@@ -472,6 +553,8 @@ export default function Batismos() {
           </div>
         </CardContent>
       </Card>
+
+      <BatismoHorarios />
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
