@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { totemKids as api } from '../../../api';
+import { MeshGradient } from '../../../components/ui/mesh-gradient-shader';
 import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
 import {
@@ -54,10 +55,12 @@ export default function KidsHub() {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+    <div className="relative min-h-[calc(100vh-4rem)]">
+      <MeshGradient speed={6} intensity={1.6} grain={0.5} className="!fixed inset-0" style={{ zIndex: 0 }} />
+      <div className="relative z-10 max-w-6xl mx-auto px-4 py-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Baby className="h-6 w-6 text-pink-500" /> Kids</h1>
-        <p className="text-sm text-muted-foreground">Dashboard do ministério infantil — tudo num lugar só.</p>
+        <h1 className="text-3xl font-extrabold flex items-center gap-2 text-white drop-shadow-lg"><Baby className="h-7 w-7 text-pink-200" /> Kids</h1>
+        <p className="text-sm text-white/85 drop-shadow">Dashboard do ministério infantil — tudo num lugar só.</p>
       </div>
 
       {/* Cards de resumo */}
@@ -66,7 +69,7 @@ export default function KidsHub() {
           <Card
             key={s.label}
             onClick={() => s.path && navigate(s.path)}
-            className={`p-3 ${s.path ? 'cursor-pointer hover:border-primary/40' : ''} transition-colors ${s.destaque ? 'ring-1 ring-blue-400/50' : ''}`}
+            className={`glass-solid p-3 ${s.path ? 'cursor-pointer hover:border-primary/40' : ''} transition-colors ${s.destaque ? 'ring-1 ring-blue-400/50' : ''}`}
           >
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${s.cor}1a` }}>
@@ -81,7 +84,7 @@ export default function KidsHub() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Novas solicitações de vínculo */}
-        <Card className="p-4">
+        <Card className="glass-solid p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="font-semibold text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-blue-500" /> Novas solicitações de vínculo</div>
             <button onClick={() => navigate('/ministerial/totem-kids/vinculos')} className="text-xs text-primary inline-flex items-center gap-1">ver todas <ArrowRight className="h-3 w-3" /></button>
@@ -107,7 +110,7 @@ export default function KidsHub() {
         </Card>
 
         {/* Aniversariantes da semana */}
-        <Card className="p-4">
+        <Card className="glass-solid p-4">
           <div className="font-semibold text-sm flex items-center gap-2 mb-3"><Cake className="h-4 w-4 text-pink-500" /> Aniversariantes da semana</div>
           {loading ? (
             <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
@@ -134,10 +137,10 @@ export default function KidsHub() {
 
       {/* Acessos */}
       <div>
-        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Acessos</div>
+        <div className="text-xs font-semibold text-white/80 uppercase tracking-wide mb-2 drop-shadow">Acessos</div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {ACESSOS.map((it) => (
-            <Card key={it.path} onClick={() => navigate(it.path)} className="p-4 cursor-pointer hover:border-primary/40 transition-colors flex items-start gap-3">
+            <Card key={it.path} onClick={() => navigate(it.path)} className="glass-solid p-4 cursor-pointer hover:border-primary/40 transition-colors flex items-start gap-3">
               <div className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${it.cor}1a` }}>
                 <it.icon className="h-5 w-5" style={{ color: it.cor }} />
               </div>
@@ -148,6 +151,7 @@ export default function KidsHub() {
             </Card>
           ))}
         </div>
+      </div>
       </div>
     </div>
   );
