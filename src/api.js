@@ -1192,6 +1192,7 @@ export const painelArea = {
 export const totemKids = {
   dashboard: () => get('/totem-kids/dashboard'),
   batismos: () => get('/totem-kids/batismos'),
+  resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
   kidsEquipe: {
     list: () => get('/totem-kids/kids-equipe'),
     buscar: (q) => get(`/totem-kids/kids-equipe/buscar?q=${encodeURIComponent(q)}`),

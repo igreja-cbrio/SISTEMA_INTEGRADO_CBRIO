@@ -7,9 +7,10 @@ import { totemKids as api } from '../../../api';
 import { MeshGradient } from '../../../components/ui/mesh-gradient-shader';
 import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
+import { toast } from 'sonner';
 import {
   Baby, ScanLine, Users, ShieldCheck, Sparkles, Settings, Monitor, BarChart3, Printer,
-  Cake, DoorOpen, Loader2, ArrowRight, UserCheck, Boxes, Droplets,
+  Cake, DoorOpen, Loader2, ArrowRight, UserCheck, Boxes, Droplets, MessageCircle,
 } from 'lucide-react';
 
 const ACESSOS = [
@@ -41,6 +42,16 @@ export default function KidsHub() {
   const navigate = useNavigate();
   const [d, setD] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [enviandoResumo, setEnviandoResumo] = useState(false);
+  async function testarResumo() {
+    setEnviandoResumo(true);
+    try {
+      const r: any = await api.resumoExemplo();
+      toast.success(`Exemplo enviado pro seu WhatsApp${r?.telefone ? ` (${r.telefone})` : ''}.`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível enviar o exemplo.');
+    } finally { setEnviandoResumo(false); }
+  }
 
   useEffect(() => {
     api.dashboard().then(setD).catch(() => {}).finally(() => setLoading(false));
@@ -60,9 +71,14 @@ export default function KidsHub() {
     <div className="relative min-h-[calc(100vh-4rem)]">
       <MeshGradient speed={6} intensity={1.6} grain={0.5} className="!fixed inset-0" style={{ zIndex: 0 }} />
       <div className="relative z-10 max-w-6xl mx-auto px-4 py-8 space-y-6">
-      <div>
-        <h1 className="text-3xl font-extrabold flex items-center gap-2 text-white drop-shadow-lg"><Baby className="h-7 w-7 text-pink-200" /> Kids</h1>
-        <p className="text-sm text-white/85 drop-shadow">Dashboard do ministério infantil — tudo num lugar só.</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-extrabold flex items-center gap-2 text-white drop-shadow-lg"><Baby className="h-7 w-7 text-pink-200" /> Kids</h1>
+          <p className="text-sm text-white/85 drop-shadow">Dashboard do ministério infantil — tudo num lugar só.</p>
+        </div>
+        <button onClick={testarResumo} disabled={enviandoResumo} className="glass-solid text-xs px-3 py-2 rounded-lg border border-border inline-flex items-center gap-1.5 hover:border-primary/40 disabled:opacity-60">
+          {enviandoResumo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5 text-emerald-500" />} Testar resumo no WhatsApp
+        </button>
       </div>
 
       {/* Cards de resumo */}
