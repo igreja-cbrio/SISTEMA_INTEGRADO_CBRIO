@@ -27,6 +27,7 @@ const ROUTE_MODULE_MAP = {
   'solicitacoes': ['solicitacoes'],
   // ministeriais
   'integracao':   ['integracao'],
+  'relatorios':   ['relatorios'],
   'cuidados':     ['cuidados'],
   'online':       ['online'],
   'wifi':         ['wifi'],
