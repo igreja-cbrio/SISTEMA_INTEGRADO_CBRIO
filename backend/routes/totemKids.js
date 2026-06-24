@@ -457,6 +457,7 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
     const allowed = ['nome', 'data_nascimento', 'sexo', 'familia_id', 'observacoes_medicas',
                      'necessidades_especiais', 'foto_url', 'visitante', 'ativo', 'observacoes_internas',
+                     'serie', 'data_conversao', 'data_batismo',
                      'tem_espectro', 'espectro_qual', 'tem_alergia', 'alergia_qual',
                      'tem_limitacao_fisica', 'limitacao_fisica_qual'];
     const update = {};
@@ -491,7 +492,7 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         .from('kids_criancas')
         .select(`
           id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-          necessidades_especiais, serie, consent_marketing, visitante, ativo, inativado_em, familia_id,
+          necessidades_especiais, serie, consent_marketing, data_conversao, data_batismo, visitante, ativo, inativado_em, familia_id,
           familia:mem_familias(id, nome),
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
@@ -573,6 +574,44 @@ router.patch('/criancas/:id/inativar', authorizeModule('kids', 3), async (req, r
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar status' }); }
+});
+
+// GET /criancas/:id/jornada · família (membros) + frequência (check-ins por mês)
+// + conversão sugerida (1ª decisão de fé no check-in). Frequência fica vazia até
+// os check-ins do totem rodarem.
+router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { data: crianca } = await supabase.from('kids_criancas').select('familia_id').eq('id', id).maybeSingle();
+    let familia_membros = [];
+    if (crianca?.familia_id) {
+      const { data: ms } = await supabase.from('mem_membros')
+        .select('id, nome, telefone').eq('familia_id', crianca.familia_id).is('deleted_at', null).order('nome');
+      familia_membros = ms || [];
+    }
+    const { data: cis } = await supabase.from('kids_checkins')
+      .select('checkin_at, fez_decisao_jesus, decisao_jesus_em')
+      .eq('crianca_id', id).is('deleted_at', null).order('checkin_at');
+    const lista = cis || [];
+    const porMesMap = {};
+    let ultima = null;
+    lista.forEach((c) => {
+      if (!c.checkin_at) return;
+      const mes = String(c.checkin_at).slice(0, 7);
+      porMesMap[mes] = (porMesMap[mes] || 0) + 1;
+      if (!ultima || c.checkin_at > ultima) ultima = c.checkin_at;
+    });
+    const porMes = Object.entries(porMesMap).map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes));
+    const dec = lista.filter((c) => c.fez_decisao_jesus).map((c) => c.decisao_jesus_em || c.checkin_at).filter(Boolean).sort();
+    res.json({
+      familia_membros,
+      frequencia: { porMes, ultima, total: lista.length },
+      conversao_sugerida: dec.length ? String(dec[0]).slice(0, 10) : null,
+    });
+  } catch (e) {
+    console.error('[totemKids] jornada:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar jornada' });
+  }
 });
 
 // GET /cron/age-out · desativa crianças que completaram 13 anos (12a+12m) ·
