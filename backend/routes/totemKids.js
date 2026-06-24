@@ -383,64 +383,81 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 //     responsável: { nome, telefone, cpf, parentesco, email? } }
 router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
   try {
-    const { crianca, responsavel } = req.body || {};
+    const { crianca, responsavel, amigo_de_crianca_id } = req.body || {};
     if (!crianca?.nome) return res.status(400).json({ error: 'crianca.nome obrigatorio' });
+
+    const txt = (cond, v) => (cond && v ? String(v).trim().slice(0, 500) : null);
+    const bool = (v) => (v === true ? true : (v === false ? false : null));
+    // Base da criança (+ saúde) compartilhada entre os fluxos. Sempre visitante=true.
+    const camposCrianca = {
+      nome: crianca.nome,
+      data_nascimento: crianca.data_nascimento || null,
+      sexo: crianca.sexo || null,
+      observacoes_medicas: crianca.observacoes_medicas || null,
+      necessidades_especiais: crianca.necessidades_especiais || null,
+      serie: crianca.serie || null,
+      foto_url: crianca.foto_url || null,
+      foto_consentimento_em: crianca.foto_url ? new Date().toISOString() : null,
+      tem_alergia: bool(crianca.tem_alergia),
+      alergia_qual: txt(crianca.tem_alergia === true, crianca.alergia_qual),
+      tem_espectro: bool(crianca.tem_espectro),
+      espectro_qual: txt(crianca.tem_espectro === true, crianca.espectro_qual),
+      tem_limitacao_fisica: bool(crianca.tem_limitacao_fisica),
+      limitacao_fisica_qual: txt(crianca.tem_limitacao_fisica === true, crianca.limitacao_fisica_qual),
+      visitante: true,
+      created_by: req.user.userId,
+    };
+
+    // ── Fluxo "amigo de X": herda família + responsáveis de uma criança cadastrada ──
+    if (amigo_de_crianca_id) {
+      const { data: amigo } = await supabase.from('kids_criancas')
+        .select('id, nome, familia_id').eq('id', amigo_de_crianca_id).is('deleted_at', null).maybeSingle();
+      if (!amigo) return res.status(404).json({ error: 'Criança de referência não encontrada' });
+      const { data: criancaCriada, error: errC } = await supabase.from('kids_criancas')
+        .insert({ ...camposCrianca, familia_id: amigo.familia_id || null,
+          observacoes_internas: `Visitante · amigo(a) de ${amigo.nome}` })
+        .select('*, familia:mem_familias(id, nome)').single();
+      if (errC) throw errC;
+      const { data: resps } = await supabase.from('kids_responsaveis')
+        .select('membro_id, parentesco, autorizado_buscar, contato_emergencia').eq('crianca_id', amigo.id);
+      const aut = (resps || []).filter((r) => r.autorizado_buscar);
+      if (aut.length) {
+        await supabase.from('kids_responsaveis').insert(aut.map((r) => ({
+          crianca_id: criancaCriada.id, membro_id: r.membro_id,
+          parentesco: r.parentesco || 'responsavel', autorizado_buscar: true,
+          contato_emergencia: r.contato_emergencia || false,
+        })));
+      }
+      return res.status(201).json({ crianca: criancaCriada, amigo_de: { id: amigo.id, nome: amigo.nome }, familia_id: amigo.familia_id });
+    }
+
+    // ── Fluxo normal: exige responsável (nome + telefone) ──
     if (!responsavel?.nome || !responsavel?.telefone) {
       return res.status(400).json({ error: 'responsavel.nome e responsavel.telefone obrigatórios' });
     }
-
     const tel = normalizarTelefone(responsavel.telefone);
     const cpf = normalizarCpf(responsavel.cpf);
-
-    // 1. Resolve responsável · guarda na origem (CPF→e-mail→telefone+nome→cria ·
-    //    NÃO liga por telefone sozinho, que família compartilha · colisão sem
-    //    nome batendo vira stub e cai na aba Duplicados / fila do Kevyn).
     const r = await acharOuCriarGuardado({
       cpf, email: responsavel.email || null, telefone: tel, nome: responsavel.nome, status: 'visitante',
     });
     const { data: membro } = await supabase.from('mem_membros')
       .select('id, nome, familia_id').eq('id', r.membro_id).single();
-
-    // 2. Garante família (se responsável não tem, cria)
     let familiaId = membro.familia_id;
     if (!familiaId) {
       const { data: f, error: fe } = await supabase.from('mem_familias')
-        .insert({ nome: `Familia ${membro.nome.split(' ')[0]}` })
-        .select('id')
-        .single();
+        .insert({ nome: `Familia ${membro.nome.split(' ')[0]}` }).select('id').single();
       if (fe) throw fe;
       familiaId = f.id;
       await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', membro.id);
     }
-
-    // 3. Cria criança
-    const { data: criancaCriada, error: errCrianca } = await supabase
-      .from('kids_criancas')
-      .insert({
-        nome: crianca.nome,
-        data_nascimento: crianca.data_nascimento || null,
-        sexo: crianca.sexo || null,
-        familia_id: familiaId,
-        observacoes_medicas: crianca.observacoes_medicas || null,
-        necessidades_especiais: crianca.necessidades_especiais || null,
-        serie: crianca.serie || null,
-        foto_url: crianca.foto_url || null,
-        foto_consentimento_em: crianca.foto_url ? new Date().toISOString() : null,
-        visitante: true,
-        created_by: req.user.userId,
-      })
-      .select('*, familia:mem_familias(id, nome)')
-      .single();
+    const { data: criancaCriada, error: errCrianca } = await supabase.from('kids_criancas')
+      .insert({ ...camposCrianca, familia_id: familiaId })
+      .select('*, familia:mem_familias(id, nome)').single();
     if (errCrianca) throw errCrianca;
-
-    // 4. Liga responsável <-> criança
     await supabase.from('kids_responsaveis').insert({
-      crianca_id: criancaCriada.id,
-      membro_id: membro.id,
-      parentesco: responsavel.parentesco || 'outro',
-      autorizado_buscar: true,
+      crianca_id: criancaCriada.id, membro_id: membro.id,
+      parentesco: responsavel.parentesco || 'outro', autorizado_buscar: true,
     });
-
     res.status(201).json({
       crianca: criancaCriada,
       responsavel: { id: membro.id, nome: membro.nome, telefone: tel, cpf },
