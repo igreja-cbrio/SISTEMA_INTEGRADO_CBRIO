@@ -279,6 +279,25 @@ export default function TotemKidsCheckin() {
 
       const r = await totemKids.checkin.criar(payload);
 
+      // Saúde em destaque na etiqueta
+      const alergiaLabel = crianca.tem_alergia ? (crianca.alergia_qual || 'sim') : null;
+      const necessidadeLabel = [
+        crianca.tem_espectro ? `Espectro${crianca.espectro_qual ? `: ${crianca.espectro_qual}` : ''}` : '',
+        crianca.tem_limitacao_fisica ? `Limitação${crianca.limitacao_fisica_qual ? `: ${crianca.limitacao_fisica_qual}` : ''}` : '',
+      ].filter(Boolean).join(' · ') || null;
+      // Aniversário na semana (próximos 7 dias) → etiqueta personalizada
+      const aniversarioSemana = (() => {
+        if (!crianca.data_nascimento) return false;
+        const mmdd = (dt: Date) => `${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+        const hoje = new Date();
+        const dias: string[] = [];
+        for (let i = 0; i < 7; i++) { const dt = new Date(hoje); dt.setDate(hoje.getDate() + i); dias.push(mmdd(dt)); }
+        return dias.includes(String(crianca.data_nascimento).slice(5, 10));
+      })();
+      const cultoDiaHora = r.sessao.culto?.nome
+        ? `${r.sessao.culto.nome}${r.sessao.culto.data ? ` · ${format(new Date(r.sessao.culto.data + 'T00:00:00'), 'dd/MM', { locale: ptBR })}` : ''}`
+        : undefined;
+
       // Dispara impressão
       await imprimirEtiquetas({
         checkinId: r.checkin.id,
@@ -289,12 +308,17 @@ export default function TotemKidsCheckin() {
           salaNome: r.sala.nome,
           salaCor: r.sala.cor,
           observacoesMedicas: r.crianca.observacoes_medicas,
+          alergia: alergiaLabel,
+          necessidade: necessidadeLabel,
+          fotoAutorizada: !!crianca.foto_url,
+          aniversarioSemana,
         },
         responsavel: { nome: r.responsavel.nome },
         codigoSeguranca: r.codigo_seguranca,
         codigoBarras: r.codigo_barras,
         dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
         cultoNome: r.sessao.culto?.nome,
+        cultoDiaHora,
       });
 
       toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });

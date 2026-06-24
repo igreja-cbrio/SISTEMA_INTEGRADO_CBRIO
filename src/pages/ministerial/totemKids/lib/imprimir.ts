@@ -23,14 +23,19 @@ export interface DadosImpressao {
     salaNome: string;
     salaCor?: string;
     observacoesMedicas?: string | null;
+    alergia?: string | null;          // alergia em destaque (vermelho/preto)
+    necessidade?: string | null;      // espectro/limitação/necessidade
+    fotoAutorizada?: boolean;         // ícone de câmera (com X se não autorizada)
+    aniversarioSemana?: boolean;      // personaliza a etiqueta no aniversário
   };
   responsavel: {
     nome: string;
   };
-  codigoSeguranca: string;
-  codigoBarras: string;       // mesmo do código, codificado pra Code128
-  dataHora: string;            // ISO ou label pronto
+  codigoSeguranca: string;            // código alfanumérico · MESMO nas duas etiquetas
+  codigoBarras: string;               // mesmo do código, codificado pra Code128
+  dataHora: string;                   // ISO ou label pronto
   cultoNome?: string;
+  cultoDiaHora?: string;              // dia + horário do culto (etiqueta do responsável)
 }
 
 // CSS comum das etiquetas · 90mm x 29mm (Brother DK-1201, paisagem)
@@ -153,6 +158,32 @@ const CSS_ETIQUETA = `
     margin-bottom: 1mm;
     line-height: 1.1;
   }
+  .topo {
+    display: flex;
+    align-items: center;
+    gap: 1.5mm;
+    margin-bottom: 0.5mm;
+  }
+  .foto-badge {
+    border: 1.2px solid #000;
+    border-radius: 1mm;
+    padding: 0 1mm;
+    font-size: 7pt;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .foto-no { background: #000; color: #fff; }
+  .aniversario {
+    background: #000;
+    color: #fff;
+    text-align: center;
+    font-size: 7.5pt;
+    font-weight: 800;
+    padding: 0.6mm 1mm;
+    margin-top: 1mm;
+    border-radius: 0.5mm;
+  }
+  .cod-label { font-size: 6.5pt; color: #555; text-align: center; margin-top: 0.5mm; }
 `;
 
 function gerarBarcodeSvg(codigo: string): Promise<string> {
@@ -180,22 +211,36 @@ function gerarBarcodeSvg(codigo: string): Promise<string> {
 }
 
 function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
-  const alertaMedico = d.crianca.observacoesMedicas
-    ? `<div class="alerta">⚠ ${escapeHtml(d.crianca.observacoesMedicas)}</div>`
+  // Alergia/necessidade em destaque (barra preta). Junta alergia + necessidade.
+  const saude = [
+    d.crianca.alergia ? `ALERGIA: ${d.crianca.alergia}` : '',
+    d.crianca.necessidade || '',
+    !d.crianca.alergia && !d.crianca.necessidade ? (d.crianca.observacoesMedicas || '') : '',
+  ].filter(Boolean).join(' · ');
+  const alerta = saude ? `<div class="alerta">⚠ ${escapeHtml(saude)}</div>` : '';
+  // Ícone de câmera (com X se a foto não é autorizada).
+  const foto = d.crianca.fotoAutorizada
+    ? `<span class="foto-badge">📷 OK</span>`
+    : `<span class="foto-badge foto-no">📷 ✕</span>`;
+  const aniversario = d.crianca.aniversarioSemana
+    ? `<div class="aniversario">🎂 Feliz aniversário, ${escapeHtml((d.crianca.nome || '').split(' ')[0])}!</div>`
     : '';
   return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS_ETIQUETA}</style></head>
 <body>
   <div class="etiqueta" style="--cor: ${d.crianca.salaCor || '#EC4899'}">
     <div class="faixa-cor"></div>
     <div class="col-esq">
-      <div class="nome-grande">${escapeHtml(d.crianca.nome)}</div>
-      <div class="sala">${escapeHtml(d.crianca.salaNome)}</div>
-      <div class="info-sec">${escapeHtml(d.crianca.idadeLabel)} · ${escapeHtml(d.dataHora)}</div>
-      ${alertaMedico}
+      <div class="topo">
+        <div class="nome-grande" style="margin:0">${escapeHtml(d.crianca.nome)}</div>
+        ${foto}
+      </div>
+      <div class="sala">${escapeHtml(d.crianca.salaNome)} · ${escapeHtml(d.crianca.idadeLabel)}</div>
+      ${aniversario}
+      ${alerta}
     </div>
     <div class="col-dir">
       <div class="codigo">${d.codigoSeguranca}</div>
-      <div class="data-hora">Cód de segurança</div>
+      <div class="cod-label">Código</div>
     </div>
   </div>
 </body></html>`;
@@ -208,9 +253,9 @@ function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string 
     <div class="col-esq" style="padding-left:0">
       <div class="header-resp">⛪ CB Rio · Recibo Kids</div>
       <div class="nome-grande" style="font-size:11pt">${escapeHtml(d.crianca.nome)}</div>
-      <div class="sala" style="font-size:8pt;color:#555">${escapeHtml(d.crianca.salaNome)}</div>
+      <div class="sala" style="font-size:8pt;color:#555">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
       <div class="data-hora" style="text-align:left;margin-top:auto">
-        ${escapeHtml(d.dataHora)} · Apresente para buscar
+        ${escapeHtml(d.dataHora)} · Apresente este código para buscar
       </div>
     </div>
     <div class="col-dir">
