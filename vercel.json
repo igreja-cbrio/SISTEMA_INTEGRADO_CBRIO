@@ -10,6 +10,10 @@
   },
   "crons": [
     {
+      "path": "/api/totem-kids/cron/age-out",
+      "schedule": "0 5 * * *"
+    },
+    {
       "path": "/api/cerebro/processar",
       "schedule": "0 3 * * *"
     },

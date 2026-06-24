@@ -20,7 +20,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { safeEqual } = require('../utils/cronAuth');
+const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
@@ -282,6 +282,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
       .from('kids_criancas')
       .select(`
         id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+        tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
         visitante, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
@@ -422,6 +423,7 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
         familia_id: familiaId,
         observacoes_medicas: crianca.observacoes_medicas || null,
         necessidades_especiais: crianca.necessidades_especiais || null,
+        serie: crianca.serie || null,
         foto_url: crianca.foto_url || null,
         foto_consentimento_em: crianca.foto_url ? new Date().toISOString() : null,
         visitante: true,
@@ -454,7 +456,9 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
 router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
     const allowed = ['nome', 'data_nascimento', 'sexo', 'familia_id', 'observacoes_medicas',
-                     'necessidades_especiais', 'foto_url', 'visitante', 'ativo', 'observacoes_internas'];
+                     'necessidades_especiais', 'foto_url', 'visitante', 'ativo', 'observacoes_internas',
+                     'tem_espectro', 'espectro_qual', 'tem_alergia', 'alergia_qual',
+                     'tem_limitacao_fisica', 'limitacao_fisica_qual'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
     if (req.body.foto_url && !req.body.foto_consentimento_em) {
@@ -487,7 +491,7 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         .from('kids_criancas')
         .select(`
           id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-          visitante, ativo, familia_id,
+          necessidades_especiais, serie, consent_marketing, visitante, ativo, inativado_em, familia_id,
           familia:mem_familias(id, nome),
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
@@ -509,6 +513,84 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
   }
+});
+
+// ── Atendimentos por criança (histórico de contatos/cuidados da equipe) ──────
+// GET /criancas/:id/atendimentos
+router.get('/criancas/:id/atendimentos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('kids_atendimentos')
+      .select('*')
+      .eq('crianca_id', req.params.id)
+      .is('deleted_at', null)
+      .order('data', { ascending: false }).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar atendimentos' }); }
+});
+
+// POST /criancas/:id/atendimentos  { tipo, descricao, data }
+router.post('/criancas/:id/atendimentos', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const descricao = String(req.body?.descricao || '').trim();
+    if (!descricao) return res.status(400).json({ error: 'Descreva o atendimento' });
+    const tiposOk = ['contato', 'ausencia', 'saude', 'observacao', 'outro'];
+    const tipo = tiposOk.includes(req.body?.tipo) ? req.body.tipo : 'contato';
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.data || '') ? req.body.data : new Date().toISOString().slice(0, 10);
+    const { data: criado, error } = await supabase
+      .from('kids_atendimentos')
+      .insert({
+        crianca_id: req.params.id, tipo, descricao: descricao.slice(0, 2000), data,
+        registrado_por: req.user?.userId || null,
+        registrado_por_nome: req.user?.name || req.user?.email || null,
+      })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(criado);
+  } catch (e) { res.status(500).json({ error: 'Erro ao registrar atendimento' }); }
+});
+
+// DELETE /atendimentos/:id (soft)
+router.delete('/atendimentos/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('kids_atendimentos')
+      .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover atendimento' }); }
+});
+
+// PATCH /criancas/:id/inativar  { motivo }  ·  reativar com { ativo: true }
+router.patch('/criancas/:id/inativar', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const reativar = req.body?.ativo === true;
+    const upd = reativar
+      ? { ativo: true, inativado_em: null, motivo_inativacao: null }
+      : { ativo: false, inativado_em: new Date().toISOString(), motivo_inativacao: String(req.body?.motivo || 'Desativado manualmente').slice(0, 300) };
+    const { data, error } = await supabase.from('kids_criancas')
+      .update(upd).eq('id', req.params.id).select('id, ativo').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar status' }); }
+});
+
+// GET /cron/age-out · desativa crianças que completaram 13 anos (12a+12m) ·
+// vira adolescente, sai do Kids (preserva histórico). Cron diário OU admin.
+router.get('/cron/age-out', async (req, res) => {
+  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
+  if (!isAuthorizedCron(req) && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const limite = new Date(); limite.setFullYear(limite.getFullYear() - 13);
+    const limiteISO = limite.toISOString().slice(0, 10); // nasceu até esta data = 13+
+    const { data, error } = await supabase.from('kids_criancas')
+      .update({ ativo: false, inativado_em: new Date().toISOString(), motivo_inativacao: 'Completou 13 anos · graduou para adolescente' })
+      .eq('ativo', true).is('deleted_at', null)
+      .not('data_nascimento', 'is', null).lte('data_nascimento', limiteISO)
+      .select('id');
+    if (error) throw error;
+    res.json({ ok: true, graduados: (data || []).length });
+  } catch (e) { console.error('[totemKids] age-out:', e.message); res.status(500).json({ error: 'Erro no age-out' }); }
 });
 
 // POST /api/totem-kids/sync-pco · puxa a base de crianças do Planning Center
@@ -761,7 +843,7 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
       .from('kids_checkins')
       .select(`
         *,
-        crianca:kids_criancas(id, nome, data_nascimento, foto_url, observacoes_medicas),
+        crianca:kids_criancas(id, nome, data_nascimento, foto_url, observacoes_medicas, tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual),
         sala:kids_salas(id, nome, cor),
         sessao:kids_sessoes(id, status, culto:cultos(id, nome, data))
       `)
@@ -898,7 +980,7 @@ router.get('/painel/sala/:id', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         id, checkin_at, checkout_at, codigo_seguranca, crianca_id,
         responsavel_checkin_nome, fez_decisao_jesus, observacoes_no_dia,
-        crianca:kids_criancas(id, nome, data_nascimento, foto_url, observacoes_medicas)
+        crianca:kids_criancas(id, nome, data_nascimento, foto_url, observacoes_medicas, tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual)
       `)
       .eq('sala_id', req.params.id)
       .order('checkin_at', { ascending: false });
@@ -2236,6 +2318,13 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
           consent_marketing: s.consent_marketing ?? null,
           consent_marketing_em: s.consent_marketing_em || null,
           consent_marketing_versao: s.consent_marketing_versao || null,
+          tem_espectro: s.tem_espectro ?? null,
+          espectro_qual: s.espectro_qual || null,
+          tem_alergia: s.tem_alergia ?? null,
+          alergia_qual: s.alergia_qual || null,
+          tem_limitacao_fisica: s.tem_limitacao_fisica ?? null,
+          limitacao_fisica_qual: s.limitacao_fisica_qual || null,
+          observacoes_medicas: s.observacoes_medicas || null,
           familia_id: familiaId,
           visitante: true,
           created_by: req.user?.id || null,

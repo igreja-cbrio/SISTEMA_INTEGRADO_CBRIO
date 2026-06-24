@@ -28,6 +28,12 @@ type Crianca = {
   data_nascimento: string | null;
   foto_url: string | null;
   observacoes_medicas: string | null;
+  tem_espectro: boolean | null;
+  espectro_qual: string | null;
+  tem_alergia: boolean | null;
+  alergia_qual: string | null;
+  tem_limitacao_fisica: boolean | null;
+  limitacao_fisica_qual: string | null;
   visitante: boolean;
   idade_meses: number | null;
   idade_label: string;
@@ -395,6 +401,9 @@ export default function TotemKidsCheckin() {
               <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/vinculos')}>
                 <ShieldCheck className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Vínculos</span>
               </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/criancas')}>
+                <Baby className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Crianças</span>
+              </Button>
               <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
                 <span className="md:inline">Painel</span>
               </Button>
@@ -491,6 +500,9 @@ export default function TotemKidsCheckin() {
                     <div className="flex items-center gap-2">
                       <span className="font-medium truncate">{c.nome}</span>
                       {c.visitante && <Badge variant="secondary" className="text-xs">visitante</Badge>}
+                      {(c.tem_alergia || c.tem_espectro || c.tem_limitacao_fisica) && (
+                        <AlertTriangle className="h-4 w-4 text-red-500" aria-label="Atenção · saúde" />
+                      )}
                       {c.observacoes_medicas && (
                         <AlertTriangle className="h-4 w-4 text-amber-500" aria-label="Observação médica" />
                       )}
@@ -671,6 +683,17 @@ function CheckinSelecao(props: {
           </Button>
         </div>
 
+        {(crianca.tem_alergia || crianca.tem_espectro || crianca.tem_limitacao_fisica) && (
+          <div className="bg-red-100 dark:bg-red-900/40 border border-red-300 dark:border-red-700 rounded-lg p-3 flex gap-2">
+            <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0" />
+            <div className="space-y-0.5">
+              <div className="font-semibold text-red-700 dark:text-red-300">ATENÇÃO · SAÚDE</div>
+              {crianca.tem_alergia && <div className="text-sm"><b>Alergia:</b> {crianca.alergia_qual || 'sim'}</div>}
+              {crianca.tem_espectro && <div className="text-sm"><b>Espectro autista:</b> {crianca.espectro_qual || 'sim'}</div>}
+              {crianca.tem_limitacao_fisica && <div className="text-sm"><b>Limitação física:</b> {crianca.limitacao_fisica_qual || 'sim'}</div>}
+            </div>
+          </div>
+        )}
         {crianca.observacoes_medicas && (
           <div className="bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 rounded-lg p-3 flex gap-2">
             <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
