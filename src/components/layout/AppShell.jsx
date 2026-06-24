@@ -115,6 +115,7 @@ const NAV_ITEMS = [
         title: 'Áreas ministeriais',
         items: [
           { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao', perm: 'canMembresia' },
+          { label: 'Relatórios', description: 'Frequência, decisões, batismos e mais — em Excel ou PDF', icon: BarChart2, path: '/ministerial/relatorios', module: 'relatorios', moduleMin: 1 },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Reconhecimento Facial', description: 'Presença na entrada · membros identificados + rostos anônimos a resolver', icon: Camera, path: '/ministerial/reconhecimento-facial', module: 'face' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },

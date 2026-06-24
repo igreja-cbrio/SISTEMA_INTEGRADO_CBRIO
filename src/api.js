@@ -1692,6 +1692,31 @@ export const batismoPublico = {
   },
 };
 
+// Módulo Relatórios · catálogo, dados (preview/PDF) e download do Excel (.xlsx).
+export const relatorios = {
+  tipos: () => get('/relatorios/tipos'),
+  dados: ({ tipo, inicio, fim }) =>
+    get(`/relatorios/dados?tipo=${encodeURIComponent(tipo)}&inicio=${inicio}&fim=${fim}`),
+  baixarXlsx: async ({ tipo, inicio, fim, colunas }) => {
+    const qs = new URLSearchParams({ tipo, inicio, fim });
+    if (colunas?.length) qs.set('colunas', colunas.join(','));
+    const h = await headers();
+    const res = await fetch(`${API}/relatorios/xlsx?${qs.toString()}`, { headers: h });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || 'Erro ao baixar a planilha');
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const m = cd.match(/filename="([^"]+)"/);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : `${tipo}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
+};
+
 export const cadastroPublico = {
   uploadFoto: async (file) => {
     const fd = new FormData();
@@ -2394,6 +2419,11 @@ export const devocionalPlanos = {
   update: (id, body) => put(`/devocional-planos/${id}`, body),
   remove: (id) => del(`/devocional-planos/${id}`),
   gerarIA: (id, body) => post(`/devocional-planos/${id}/gerar-ia`, body || {}),
+  carregarDocx: (id, file, { sobrescrever = false } = {}) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    return requestFile(`/devocional-planos/${id}/carregar-docx${sobrescrever ? '?sobrescrever=1' : ''}`, fd, { timeoutMs: 120_000 });
+  },
   createItem: (id, body) => post(`/devocional-planos/${id}/itens`, body),
   updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
   removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
