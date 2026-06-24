@@ -117,6 +117,8 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
     'online_ds', 'online_ddus',
     'voluntarios_escalados', 'voluntarios_checkin',
     'observacoes',
+    // Flags de lançamento (boolean) · marcam seção preenchida incl. 0 explícito.
+    'frequencia_lancada', 'decisoes_lancadas',
   ];
   const camposNumericos = [
     'presencial_adulto', 'presencial_kids',

@@ -13,7 +13,7 @@ const ColetaPendentes        = lazy(() => import('./coleta/ColetaPendentes'));
 const NextTurmas             = lazy(() => import('./NextTurmas'));
 import CalendarioCultos from '../../components/CalendarioCultos';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Calendar, CheckCircle2, Heart, Smartphone, ClipboardCheck } from 'lucide-react';
+import { Calendar, CheckCircle2, Heart, Smartphone, ClipboardCheck, AlertTriangle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f', gray: '#737373' };
@@ -33,6 +33,16 @@ export default function Integracao() {
   const [dashboard, setDashboard] = useState<any>(null);
   const [loadingDash, setLoadingDash] = useState(true);
   const [pendentesCount, setPendentesCount] = useState<number>(0);
+  // Sinaliza pro CalendarioCultos abrir a vista de Pendências já filtrada quando
+  // o card é clicado. O nonce (incrementa a cada clique) reabre mesmo na mesma aba.
+  const [cultosPendSignal, setCultosPendSignal] = useState(0);
+  const [cultosPendFiltro, setCultosPendFiltro] = useState<'pendentes' | 'incompletos'>('pendentes');
+
+  const abrirPendencias = (filtro: 'pendentes' | 'incompletos') => {
+    setTab('frequencia');
+    setCultosPendFiltro(filtro);
+    setCultosPendSignal(s => s + 1);
+  };
 
   const reloadDashboard = useCallback(async () => {
     setLoadingDash(true);
@@ -69,13 +79,21 @@ export default function Integracao() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <button onClick={() => setTab('frequencia')} className="text-left hover:scale-[1.02] transition-transform">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <button onClick={() => abrirPendencias('pendentes')} className="text-left hover:scale-[1.02] transition-transform">
           <StatisticsCard
             title={dashboard?.cultos_pendentes > 0 ? 'Cultos pendentes' : 'Cultos · em dia'}
             value={loadingDash ? '…' : String(dashboard?.cultos_pendentes ?? 0)}
             icon={Calendar}
             iconColor={dashboard?.cultos_pendentes > 0 ? C.warn : C.primary}
+          />
+        </button>
+        <button onClick={() => abrirPendencias('incompletos')} className="text-left hover:scale-[1.02] transition-transform">
+          <StatisticsCard
+            title={dashboard?.cultos_incompletos > 0 ? 'Cultos incompletos' : 'Cultos · completos'}
+            value={loadingDash ? '…' : String(dashboard?.cultos_incompletos ?? 0)}
+            icon={AlertTriangle}
+            iconColor={dashboard?.cultos_incompletos > 0 ? '#F97316' : C.primary}
           />
         </button>
         <button onClick={() => setTab('vis_decisoes')} className="text-left hover:scale-[1.02] transition-transform">
@@ -125,7 +143,7 @@ export default function Integracao() {
               10:00 / 11:30 / 19:00 · AMI · Bridge · Quarta com Deus) · relatórios saem por culto
               automaticamente.
             </p>
-            <CalendarioCultos />
+            <CalendarioCultos pendenciaSignal={cultosPendSignal} pendenciaFiltro={cultosPendFiltro} />
           </div>
         </TabsContent>
         <TabsContent value="vis_frequencia" className="mt-4">
