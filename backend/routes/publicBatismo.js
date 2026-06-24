@@ -152,11 +152,16 @@ router.post('/', limiter, async (req, res) => {
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
-    // Deficiencia: aceita o flag novo OU o campo legado limitacao_mobilidade
-    const defDescricao = (deficiencia_descricao && String(deficiencia_descricao).trim())
-      || (limitacao_mobilidade && String(limitacao_mobilidade).trim())
-      || null;
-    const possuiDef = possui_deficiencia === true || !!defDescricao;
+    // Deficiencia/acessibilidade: flag explícito OU resposta "Sim" à pergunta de
+    // limitação de mobilidade. ⚠️ BUG ANTERIOR: tratava QUALQUER resposta como
+    // "descrição" — então "Não" (string não-vazia) marcava deficiência em todo
+    // mundo que respondia a pergunta. Agora só "Sim" (ou descrição real) marca.
+    const limitacaoSim = /^sim$/i.test(
+      limitacao_mobilidade != null ? String(limitacao_mobilidade).trim() : ''
+    );
+    const descReal = (deficiencia_descricao && String(deficiencia_descricao).trim()) || null;
+    const possuiDef = possui_deficiencia === true || limitacaoSim || !!descReal;
+    const defDescricao = descReal || (limitacaoSim ? 'Limitação de mobilidade' : null);
 
     const payload = {
       nome: nomeT,
