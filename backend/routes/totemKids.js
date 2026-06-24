@@ -23,7 +23,7 @@ const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
-const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
+const { enviarTexto: enviarTextoWpp, enviarTemplate: enviarTemplateWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { syncCriancasPCO } = require('../services/planningCenterKids');
 
@@ -837,14 +837,32 @@ async function gerarResumoKids(sessaoId, { exemplo = false } = {}) {
   if (porSala.length) { linhas.push('', '*Por sala:*'); porSala.forEach((s) => linhas.push(`• ${s.sala}: ${s.n}`)); }
   if (voluntarios.length) { linhas.push('', '*Voluntários:*'); voluntarios.forEach((v) => linhas.push(`• ${v}`)); }
   linhas.push('', '_CBRio · enviado ao fim de cada culto com Kids._');
-  return linhas.join('\n');
+  const detalheParts = [];
+  if (porSala.length) detalheParts.push(porSala.map((s) => `${s.sala} ${s.n}`).join(', '));
+  if (voluntarios.length) detalheParts.push(`Voluntários: ${voluntarios.join(', ')}`);
+  const params = [
+    `${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`,
+    String(totalCriancas),
+    String(decisoes),
+    detalheParts.join(' · ') || 'sem registros',
+  ];
+  return { texto: linhas.join('\n'), params };
+}
+
+// Envia o resumo por TEMPLATE aprovado (WHATSAPP_TEMPLATE_KIDS_RESUMO) quando a
+// env existe (chega fora da janela de 24h); senão cai no texto livre (dentro da
+// janela de 24h). pt_BR por padrão (configurável por WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG).
+async function enviarResumoWpp(telefone, { texto, params }) {
+  const tpl = process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO;
+  if (tpl) return enviarTemplateWpp(telefone, tpl, process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG || 'pt_BR', params);
+  return enviarTextoWpp(telefone, texto);
 }
 
 async function enviarResumoKids(sessaoId) {
   try {
-    const texto = await gerarResumoKids(sessaoId);
+    const { texto, params } = await gerarResumoKids(sessaoId);
     const lideres = await lideresKidsComTelefone();
-    for (const l of lideres) { await enviarTextoWpp(l.telefone, texto).catch(() => {}); }
+    for (const l of lideres) { await enviarResumoWpp(l.telefone, { texto, params }).catch(() => {}); }
     notificar({ modulo: 'kids', tipo: 'resumo_kids', titulo: 'Resumo do Kids (fim de culto)', mensagem: texto.replace(/\*/g, ''), severidade: 'info', link: '/ministerial/kids', email: true }).catch(() => {});
   } catch (e) { console.error('[totemKids] enviarResumoKids:', e.message); }
 }
@@ -852,7 +870,7 @@ async function enviarResumoKids(sessaoId) {
 // POST /resumo/exemplo · envia um exemplo do resumo pro WhatsApp do solicitante
 router.post('/resumo/exemplo', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const texto = await gerarResumoKids(null, { exemplo: true });
+    const { texto, params } = await gerarResumoKids(null, { exemplo: true });
     let telefone = req.body?.telefone || null;
     if (!telefone && req.user?.userId) {
       const { data: prof } = await supabase.from('profiles').select('email, membro_id').eq('id', req.user.userId).maybeSingle();
@@ -860,7 +878,7 @@ router.post('/resumo/exemplo', authorizeModule('kids', 1), async (req, res) => {
       if (!telefone && prof?.email) { const { data: m } = await supabase.from('mem_membros').select('telefone').ilike('email', prof.email).is('deleted_at', null).not('telefone', 'is', null).limit(1).maybeSingle(); telefone = m?.telefone || null; }
     }
     if (!telefone) return res.status(400).json({ error: 'Você não tem telefone cadastrado na Membresia.' });
-    const r = await enviarTextoWpp(telefone, texto);
+    const r = await enviarResumoWpp(telefone, { texto, params });
     if (!r?.ok) return res.status(502).json({ error: 'O WhatsApp não enviou — a janela de 24h pode ter fechado. Mande qualquer mensagem pro bot (21 99907-9031) e tente de novo.', preview: texto });
     res.json({ ok: true, telefone, preview: texto });
   } catch (e) { console.error('[totemKids] resumo exemplo:', e.message); res.status(500).json({ error: 'Erro ao enviar exemplo' }); }
