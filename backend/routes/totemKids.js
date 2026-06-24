@@ -23,6 +23,7 @@ const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
+const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { syncCriancasPCO } = require('../services/planningCenterKids');
 
@@ -260,6 +261,8 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
       .select('id, status, encerrada_at')
       .single();
     if (error) throw error;
+    // Resumo do Kids pros líderes (WhatsApp + in-app/e-mail) · best-effort
+    enviarResumoKids(req.params.id).catch(() => {});
     res.json(data);
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar]', e.message);
@@ -785,6 +788,82 @@ router.post('/estoque/:id/patrimonio', authorizeModule('kids', 3), async (req, r
     await supabase.from('kids_estoque').update({ pat_bem_id: bem.id, updated_at: new Date().toISOString() }).eq('id', item.id);
     res.json({ ok: true, pat_bem_id: bem.id });
   } catch (e) { console.error('[totemKids] estoque->patrimonio:', e.message); res.status(500).json({ error: 'Erro ao registrar no patrimônio' }); }
+});
+
+// ── Resumo do Kids no fim do culto (WhatsApp + in-app/e-mail) ─────────────────
+// Líderes: Matheus, Milena, Mariane (Mariane sem telefone → só in-app/e-mail).
+async function lideresKidsComTelefone() {
+  const { data } = await supabase.from('mem_membros')
+    .select('id, nome, telefone')
+    .or('nome.ilike.*milena*rochet*,nome.ilike.*mariane*gaia*,nome.ilike.*matheus*toscano*')
+    .not('telefone', 'is', null).is('deleted_at', null);
+  const seen = new Set(); const out = [];
+  (data || []).forEach((m) => {
+    const n = (m.nome || '').toLowerCase();
+    const key = n.includes('milena') ? 'milena' : n.includes('mariane') ? 'mariane' : 'matheus';
+    if (!seen.has(key)) { seen.add(key); out.push(m); }
+  });
+  return out;
+}
+
+async function gerarResumoKids(sessaoId, { exemplo = false } = {}) {
+  let culto = { nome: 'Domingo 10:00', data: null };
+  let totalCriancas = 0, decisoes = 0, porSala = [], voluntarios = [];
+  if (exemplo) {
+    culto = { nome: 'Domingo 10:00', data: new Date().toISOString().slice(0, 10) };
+    totalCriancas = 23; decisoes = 2;
+    porSala = [{ sala: 'Berçário', n: 4 }, { sala: 'Maternal', n: 6 }, { sala: 'Infantil 1', n: 8 }, { sala: 'Infantil 2', n: 5 }];
+    voluntarios = ['Mariane Gaia · Coordenação', 'Milena Rochet · Recepção', 'Ana · Berçário'];
+  } else if (sessaoId) {
+    const { data: sessao } = await supabase.from('kids_sessoes').select('id, culto:cultos(nome, data)').eq('id', sessaoId).maybeSingle();
+    if (sessao?.culto) culto = sessao.culto;
+    const { data: cis } = await supabase.from('kids_checkins').select('sala_id, fez_decisao_jesus').eq('sessao_id', sessaoId).is('deleted_at', null);
+    totalCriancas = (cis || []).length;
+    decisoes = (cis || []).filter((c) => c.fez_decisao_jesus).length;
+    const salaCount = {};
+    (cis || []).forEach((c) => { if (c.sala_id) salaCount[c.sala_id] = (salaCount[c.sala_id] || 0) + 1; });
+    const { data: salas } = await supabase.from('kids_salas').select('id, nome');
+    const nomeSala = Object.fromEntries((salas || []).map((s) => [s.id, s.nome]));
+    porSala = Object.entries(salaCount).map(([id, n]) => ({ sala: nomeSala[id] || 'Sala', n }));
+  }
+  const dataFmt = culto.data ? new Date(culto.data + 'T00:00:00').toLocaleDateString('pt-BR') : '';
+  const linhas = [
+    `🧒 *Resumo do Kids*${exemplo ? ' (exemplo)' : ''}`,
+    `${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`,
+    '',
+    `👶 Crianças no check-in: *${totalCriancas}*`,
+    `✝️ Decisões de fé: *${decisoes}*`,
+  ];
+  if (porSala.length) { linhas.push('', '*Por sala:*'); porSala.forEach((s) => linhas.push(`• ${s.sala}: ${s.n}`)); }
+  if (voluntarios.length) { linhas.push('', '*Voluntários:*'); voluntarios.forEach((v) => linhas.push(`• ${v}`)); }
+  linhas.push('', '_CBRio · enviado ao fim de cada culto com Kids._');
+  return linhas.join('\n');
+}
+
+async function enviarResumoKids(sessaoId) {
+  try {
+    const texto = await gerarResumoKids(sessaoId);
+    const lideres = await lideresKidsComTelefone();
+    for (const l of lideres) { await enviarTextoWpp(l.telefone, texto).catch(() => {}); }
+    notificar({ modulo: 'kids', tipo: 'resumo_kids', titulo: 'Resumo do Kids (fim de culto)', mensagem: texto.replace(/\*/g, ''), severidade: 'info', link: '/ministerial/kids', email: true }).catch(() => {});
+  } catch (e) { console.error('[totemKids] enviarResumoKids:', e.message); }
+}
+
+// POST /resumo/exemplo · envia um exemplo do resumo pro WhatsApp do solicitante
+router.post('/resumo/exemplo', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const texto = await gerarResumoKids(null, { exemplo: true });
+    let telefone = req.body?.telefone || null;
+    if (!telefone && req.user?.userId) {
+      const { data: prof } = await supabase.from('profiles').select('email, membro_id').eq('id', req.user.userId).maybeSingle();
+      if (prof?.membro_id) { const { data: m } = await supabase.from('mem_membros').select('telefone').eq('id', prof.membro_id).maybeSingle(); telefone = m?.telefone || null; }
+      if (!telefone && prof?.email) { const { data: m } = await supabase.from('mem_membros').select('telefone').ilike('email', prof.email).is('deleted_at', null).not('telefone', 'is', null).limit(1).maybeSingle(); telefone = m?.telefone || null; }
+    }
+    if (!telefone) return res.status(400).json({ error: 'Você não tem telefone cadastrado na Membresia.' });
+    const r = await enviarTextoWpp(telefone, texto);
+    if (!r?.ok) return res.status(502).json({ error: 'O WhatsApp não enviou — a janela de 24h pode ter fechado. Mande qualquer mensagem pro bot (21 99907-9031) e tente de novo.', preview: texto });
+    res.json({ ok: true, telefone, preview: texto });
+  } catch (e) { console.error('[totemKids] resumo exemplo:', e.message); res.status(500).json({ error: 'Erro ao enviar exemplo' }); }
 });
 
 // GET /batismos · crianças inscritas pra batismo (eh_crianca ou <13 anos) · a
