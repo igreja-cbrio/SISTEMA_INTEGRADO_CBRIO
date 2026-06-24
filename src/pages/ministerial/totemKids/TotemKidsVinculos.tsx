@@ -127,8 +127,8 @@ export default function TotemKidsVinculos() {
   return (
     <div className="max-w-4xl mx-auto p-3 md:p-4 space-y-3 md:space-y-4">
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids')}>
-          <ArrowLeft className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Check-in</span>
+        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/kids')}>
+          <ArrowLeft className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Kids</span>
         </Button>
         <div>
           <h1 className="text-xl md:text-2xl font-bold text-pink-700 dark:text-pink-300 flex items-center gap-2">

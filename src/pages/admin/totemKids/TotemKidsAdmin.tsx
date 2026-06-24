@@ -17,13 +17,17 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, Vibrate, Trash2, Send, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { formatIdadeShort } from '@/pages/ministerial/totemKids/lib/idade';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function TotemKidsAdmin() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const ABAS = ['sessoes', 'salas', 'estacoes', 'pagers', 'auditoria'];
+  const abaParam = searchParams.get('aba') || '';
+  const aba = ABAS.includes(abaParam) ? abaParam : 'sessoes';
   return (
     <div className="max-w-6xl mx-auto p-4 space-y-4">
       <div className="flex items-start justify-between flex-wrap gap-2">
@@ -32,8 +36,8 @@ export default function TotemKidsAdmin() {
           <p className="text-sm text-muted-foreground">Sessões, salas, estações, crianças e auditoria de overrides.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="default" size="sm" onClick={() => navigate('/ministerial/totem-kids')} className="bg-pink-600 hover:bg-pink-700">
-            <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Totem
+          <Button variant="default" size="sm" onClick={() => navigate('/ministerial/kids')} className="bg-pink-600 hover:bg-pink-700">
+            <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Kids
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/decisoes')}>
             <Sparkles className="h-4 w-4 mr-1" /> Decisões
@@ -50,7 +54,7 @@ export default function TotemKidsAdmin() {
         </div>
       </div>
 
-      <Tabs defaultValue="sessoes">
+      <Tabs value={aba} onValueChange={(v) => setSearchParams({ aba: v })}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>
           <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>

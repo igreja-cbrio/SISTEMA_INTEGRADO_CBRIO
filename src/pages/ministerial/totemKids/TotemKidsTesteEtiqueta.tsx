@@ -86,8 +86,8 @@ export default function TotemKidsTesteEtiqueta() {
             Calibre a impressora antes do culto · gera dados fake, NÃO cria check-in real
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids')}>
-          <ArrowLeft className="h-4 w-4 mr-1" /> Voltar
+        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/kids')}>
+          <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Kids
         </Button>
       </div>
 
