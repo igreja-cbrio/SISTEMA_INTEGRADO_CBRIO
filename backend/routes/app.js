@@ -822,7 +822,7 @@ router.get('/kids/meus-filhos', authApp, async (req, res) => {
 
     const { data: vinculos } = await supabase
       .from('kids_responsaveis')
-      .select('crianca_id, parentesco, kids_criancas!inner(id, nome, data_nascimento, observacoes_medicas, ativo)')
+      .select('crianca_id, parentesco, kids_criancas!inner(id, nome, data_nascimento, observacoes_medicas, tem_espectro, tem_alergia, tem_limitacao_fisica, ativo)')
       .eq('membro_id', membro.id)
       .eq('autorizado_buscar', true);
 
@@ -834,6 +834,9 @@ router.get('/kids/meus-filhos', authApp, async (req, res) => {
         nome: c.nome,
         data_nascimento: c.data_nascimento,
         observacoes_medicas: c.observacoes_medicas || null,
+        tem_espectro: c.tem_espectro ?? null,
+        tem_alergia: c.tem_alergia ?? null,
+        tem_limitacao_fisica: c.tem_limitacao_fisica ?? null,
       }));
 
     // pré-check-in pendente e não expirado
@@ -929,7 +932,7 @@ router.get('/kids/filho/:id', authApp, async (req, res) => {
 
     const { data: c } = await supabase
       .from('kids_criancas')
-      .select('id, nome, data_nascimento, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, necessidades_especiais')
+      .select('id, nome, data_nascimento, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas, necessidades_especiais, tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual')
       .eq('id', req.params.id)
       .eq('ativo', true)
       .maybeSingle();
@@ -993,6 +996,12 @@ router.get('/kids/filho/:id', authApp, async (req, res) => {
         idade_meses: idadeMeses,
         observacoes_medicas: c.observacoes_medicas || null,
         necessidades_especiais: c.necessidades_especiais || null,
+        tem_espectro: c.tem_espectro ?? null,
+        espectro_qual: c.espectro_qual || null,
+        tem_alergia: c.tem_alergia ?? null,
+        alergia_qual: c.alergia_qual || null,
+        tem_limitacao_fisica: c.tem_limitacao_fisica ?? null,
+        limitacao_fisica_qual: c.limitacao_fisica_qual || null,
         parentesco: vinc.parentesco || null,
         foto_url: fotoUrl, // só com consentimento (signed URL se foto do app)
         foto_consentida: !!c.foto_consentimento_em,
@@ -1085,6 +1094,42 @@ router.post('/kids/filho/:id/foto/remover', authApp, async (req, res) => {
   }
 });
 
+// POST /api/app/kids/filho/:id/saude — responsável atualiza as informações de
+// saúde da criança (espectro, alergia, limitação física + "mais informações").
+// A equipe Kids vê isso no check-in. Só o responsável autorizado pode editar.
+router.post('/kids/filho/:id/saude', authApp, limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(400).json({ error: 'Cadastro não encontrado' });
+    if (!(await ehResponsavelAutorizado(membro.id, req.params.id))) {
+      return res.status(403).json({ error: 'Você não é responsável autorizado desta criança.' });
+    }
+    const {
+      tem_espectro, espectro_qual, tem_alergia, alergia_qual,
+      tem_limitacao_fisica, limitacao_fisica_qual, observacoes_medicas,
+    } = req.body || {};
+
+    const bool = (v) => (v === true ? true : (v === false ? false : null));
+    const txt = (cond, v) => (cond && v ? String(v).trim().slice(0, 500) : null);
+
+    const { error } = await supabase.from('kids_criancas').update({
+      tem_espectro: bool(tem_espectro),
+      espectro_qual: txt(tem_espectro === true, espectro_qual),
+      tem_alergia: bool(tem_alergia),
+      alergia_qual: txt(tem_alergia === true, alergia_qual),
+      tem_limitacao_fisica: bool(tem_limitacao_fisica),
+      limitacao_fisica_qual: txt(tem_limitacao_fisica === true, limitacao_fisica_qual),
+      observacoes_medicas: observacoes_medicas ? String(observacoes_medicas).trim().slice(0, 1000) : null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id).eq('ativo', true);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] kids/saude:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar as informações de saúde' });
+  }
+});
+
 // POST /api/app/kids/solicitar-vinculo — o responsável pede pra ser vinculado a
 // uma criança informando o nome da criança + o nome dos pais (mãe e/ou pai), e
 // opcionalmente uma foto da criança (com consentimento ECA/LGPD). NÃO vincula
@@ -1099,6 +1144,9 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
       consent_marketing, consent_marketing_versao,
       crianca_foto_path, foto_consentimento, foto_consentimento_versao,
       foto_mae_path, foto_pai_path,
+      // saúde da criança (estruturado) + "mais informações"
+      tem_espectro, espectro_qual, tem_alergia, alergia_qual,
+      tem_limitacao_fisica, limitacao_fisica_qual, observacoes_medicas,
       // legado (versões antigas do app)
       crianca_doc_path, doc_pai_path, doc_mae_path,
     } = req.body || {};
@@ -1154,6 +1202,13 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
         crianca_doc_path: crianca_doc_path || null,
         doc_pai_path: doc_pai_path || null,
         doc_mae_path: doc_mae_path || null,
+        tem_espectro: tem_espectro === true ? true : (tem_espectro === false ? false : null),
+        espectro_qual: tem_espectro === true && espectro_qual ? String(espectro_qual).trim().slice(0, 500) : null,
+        tem_alergia: tem_alergia === true ? true : (tem_alergia === false ? false : null),
+        alergia_qual: tem_alergia === true && alergia_qual ? String(alergia_qual).trim().slice(0, 500) : null,
+        tem_limitacao_fisica: tem_limitacao_fisica === true ? true : (tem_limitacao_fisica === false ? false : null),
+        limitacao_fisica_qual: tem_limitacao_fisica === true && limitacao_fisica_qual ? String(limitacao_fisica_qual).trim().slice(0, 500) : null,
+        observacoes_medicas: observacoes_medicas ? String(observacoes_medicas).trim().slice(0, 1000) : null,
         observacao: observacao ? String(observacao).trim() : null,
       })
       .select('id, status, created_at')
