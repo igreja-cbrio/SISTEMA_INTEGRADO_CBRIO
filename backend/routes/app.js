@@ -1095,8 +1095,10 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
   try {
     const {
       crianca_nome, crianca_data_nascimento, parentesco, observacao,
-      mae_nome, pai_nome,
+      mae_nome, pai_nome, serie, necessidade_especial,
+      consent_marketing, consent_marketing_versao,
       crianca_foto_path, foto_consentimento, foto_consentimento_versao,
+      foto_mae_path, foto_pai_path,
       // legado (versões antigas do app)
       crianca_doc_path, doc_pai_path, doc_mae_path,
     } = req.body || {};
@@ -1113,13 +1115,16 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
     // Segurança: qualquer arquivo apontado tem que estar na pasta do próprio
     // usuário ({auth.uid}/...). Impede apontar arquivo de outra pessoa.
     const prefixo = `${req.user.id}/`;
-    const paths = [crianca_foto_path, crianca_doc_path, doc_pai_path, doc_mae_path].filter(Boolean);
+    const paths = [crianca_foto_path, crianca_doc_path, doc_pai_path, doc_mae_path, foto_mae_path, foto_pai_path].filter(Boolean);
     if (paths.some((p) => !String(p).startsWith(prefixo))) {
       return res.status(403).json({ error: 'Arquivo inválido.' });
     }
 
     const membro = await resolveMembroApp(req);
     if (!membro) return res.status(400).json({ error: 'Complete seu cadastro de membro antes de solicitar.' });
+    // Responsável precisa ter nome + telefone (segurança da retirada).
+    if (!membro.nome || !String(membro.nome).trim()) return res.status(400).json({ error: 'Complete seu nome no perfil antes de cadastrar a criança.' });
+    if (!membro.telefone || !String(membro.telefone).trim()) return res.status(400).json({ error: 'Cadastre seu telefone no perfil antes de cadastrar a criança.' });
 
     const parentescosOk = ['mae', 'pai', 'avo_a', 'tio_a', 'tutor', 'outro'];
     const parent = parentescosOk.includes(parentesco) ? parentesco : 'outro';
@@ -1136,6 +1141,13 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
         crianca_data_nascimento: crianca_data_nascimento || null,
         mae_nome: mae_nome ? String(mae_nome).trim() : null,
         pai_nome: pai_nome ? String(pai_nome).trim() : null,
+        serie: serie ? String(serie).trim().slice(0, 80) : null,
+        necessidade_especial: necessidade_especial ? String(necessidade_especial).trim().slice(0, 500) : null,
+        consent_marketing: consent_marketing === true ? true : (consent_marketing === false ? false : null),
+        consent_marketing_em: (consent_marketing === true || consent_marketing === false) ? new Date().toISOString() : null,
+        consent_marketing_versao: (consent_marketing === true || consent_marketing === false) ? (consent_marketing_versao || 'felca-eca-digital-v1') : null,
+        foto_mae_path: foto_mae_path || null,
+        foto_pai_path: foto_pai_path || null,
         crianca_foto_path: comFoto ? crianca_foto_path : null,
         foto_consentimento_em: comFoto ? new Date().toISOString() : null,
         foto_consentimento_versao: comFoto ? (foto_consentimento_versao || 'eca-lgpd-v1') : null,

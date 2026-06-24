@@ -2186,12 +2186,13 @@ router.get('/vinculo-solicitacoes/:id', authorizeModule('kids', 2), async (req, 
     };
     // Foto da criança só é exibida com consentimento registrado. Docs legados
     // (versões antigas do app) seguem assinados pra triagem das pendentes.
-    const [crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url] = await Promise.all([
+    const [crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url, foto_mae_url, foto_pai_url] = await Promise.all([
       s.foto_consentimento_em ? signed(s.crianca_foto_path) : null,
       signed(s.crianca_doc_path), signed(s.doc_pai_path), signed(s.doc_mae_path),
+      signed(s.foto_mae_path), signed(s.foto_pai_path),
     ]);
 
-    res.json({ ...s, crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url });
+    res.json({ ...s, crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url, foto_mae_url, foto_pai_url });
   } catch (e) {
     console.error('[TOTEM-KIDS] vinculo-solicitacoes detalhe:', e.message);
     res.status(500).json({ error: 'Erro ao abrir solicitação' });
@@ -2230,6 +2231,11 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
         .insert({
           nome: s.crianca_nome,
           data_nascimento: s.crianca_data_nascimento || null,
+          serie: s.serie || null,
+          necessidades_especiais: s.necessidade_especial || null,
+          consent_marketing: s.consent_marketing ?? null,
+          consent_marketing_em: s.consent_marketing_em || null,
+          consent_marketing_versao: s.consent_marketing_versao || null,
           familia_id: familiaId,
           visitante: true,
           created_by: req.user?.id || null,
@@ -2238,6 +2244,18 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
         .single();
       if (ce) throw ce;
       criancaId = criada.id;
+    }
+    // Dados informados no pedido acompanham a criança (cria ou atualiza).
+    {
+      const upd = {};
+      if (s.serie) upd.serie = s.serie;
+      if (s.necessidade_especial) upd.necessidades_especiais = s.necessidade_especial;
+      if (s.consent_marketing != null) {
+        upd.consent_marketing = s.consent_marketing;
+        upd.consent_marketing_em = s.consent_marketing_em || null;
+        upd.consent_marketing_versao = s.consent_marketing_versao || null;
+      }
+      if (Object.keys(upd).length) await supabase.from('kids_criancas').update(upd).eq('id', criancaId);
     }
 
     // 2. Cria/garante o vínculo do solicitante como responsável autorizado.
