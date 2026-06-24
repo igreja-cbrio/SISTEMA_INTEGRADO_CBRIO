@@ -576,6 +576,111 @@ router.patch('/criancas/:id/inativar', authorizeModule('kids', 3), async (req, r
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar status' }); }
 });
 
+// ── Voluntários por sala (Mari Gaia define responsáveis de cada sala) ──────────
+// GET /salas-voluntarios · salas ativas + seus voluntários
+router.get('/salas-voluntarios', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: salas } = await supabase.from('kids_salas')
+      .select('id, nome, cor, faixa_etaria_min_meses, faixa_etaria_max_meses, capacidade, ordem')
+      .eq('ativo', true).order('ordem', { ascending: true });
+    const { data: vols } = await supabase.from('kids_sala_voluntarios')
+      .select('id, sala_id, vol_profile_id, membro_id, nome, telefone, papel, observacao, ativo')
+      .is('deleted_at', null).order('papel', { ascending: true });
+    const porSala = {};
+    (vols || []).forEach((v) => { (porSala[v.sala_id] = porSala[v.sala_id] || []).push(v); });
+    res.json((salas || []).map((s) => ({ ...s, voluntarios: porSala[s.id] || [] })));
+  } catch (e) { console.error('[totemKids] salas-voluntarios:', e.message); res.status(500).json({ error: 'Erro ao carregar' }); }
+});
+
+// GET /voluntarios/buscar?q= · busca voluntários (vol_profiles) pra atribuir
+router.get('/voluntarios/buscar', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (q.length < 2) return res.json([]);
+    const { data } = await supabase.from('vol_profiles')
+      .select('id, full_name, phone, email, avatar_url, membresia_id')
+      .ilike('full_name', `%${q.replace(/[%_,]/g, '')}%`).limit(12);
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro na busca' }); }
+});
+
+// POST /salas/:salaId/voluntarios · atribui voluntário à sala
+router.post('/salas/:salaId/voluntarios', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { vol_profile_id, membro_id, nome, telefone, papel, observacao } = req.body || {};
+    if (!nome) return res.status(400).json({ error: 'Nome do voluntário é obrigatório' });
+    const { data, error } = await supabase.from('kids_sala_voluntarios').insert({
+      sala_id: req.params.salaId,
+      vol_profile_id: vol_profile_id || null,
+      membro_id: membro_id || null,
+      nome: String(nome).trim(),
+      telefone: telefone || null,
+      papel: ['responsavel', 'voluntario', 'auxiliar'].includes(papel) ? papel : 'voluntario',
+      observacao: observacao || null,
+      created_by: req.user?.userId || null,
+    }).select().single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Voluntário já está nessa sala' });
+      throw error;
+    }
+    res.status(201).json(data);
+  } catch (e) { console.error('[totemKids] add sala vol:', e.message); res.status(500).json({ error: 'Erro ao atribuir' }); }
+});
+
+// PATCH /sala-voluntarios/:id · editar papel/observação/ativo
+router.patch('/sala-voluntarios/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const upd = {};
+    for (const k of ['papel', 'observacao', 'ativo']) if (k in req.body) upd[k] = req.body[k];
+    upd.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('kids_sala_voluntarios').update(upd).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao editar' }); }
+});
+
+// DELETE /sala-voluntarios/:id · soft delete
+router.delete('/sala-voluntarios/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('kids_sala_voluntarios').update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover' }); }
+});
+
+// GET /sala-voluntarios/:id/ficha · ficha do voluntário (perfil + antecedentes + salas)
+router.get('/sala-voluntarios/:id/ficha', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: reg } = await supabase.from('kids_sala_voluntarios')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!reg) return res.status(404).json({ error: 'Não encontrado' });
+    let perfil = null, antecedentes = null, salas = [];
+    if (reg.vol_profile_id) {
+      const { data: p } = await supabase.from('vol_profiles')
+        .select('id, full_name, email, phone, cpf, avatar_url, membresia_id, profile_complete')
+        .eq('id', reg.vol_profile_id).maybeSingle();
+      perfil = p || null;
+    }
+    const membroId = reg.membro_id || perfil?.membresia_id;
+    if (membroId) {
+      const { data: bc } = await supabase.from('vol_background_checks')
+        .select('status, resultado, consulta_em, revisado_em, area').eq('membro_id', membroId).is('deleted_at', null)
+        .order('created_at', { ascending: false }).limit(1);
+      antecedentes = (bc || [])[0] || null;
+    }
+    const orFilter = [
+      reg.vol_profile_id ? `vol_profile_id.eq.${reg.vol_profile_id}` : null,
+      membroId ? `membro_id.eq.${membroId}` : null,
+    ].filter(Boolean).join(',');
+    if (orFilter) {
+      const { data: outras } = await supabase.from('kids_sala_voluntarios')
+        .select('papel, sala:kids_salas(id, nome)').or(orFilter).is('deleted_at', null);
+      salas = (outras || []).map((o) => ({ nome: o.sala?.nome, papel: o.papel })).filter((s) => s.nome);
+    }
+    res.json({ registro: reg, perfil, antecedentes, salas });
+  } catch (e) { console.error('[totemKids] ficha vol:', e.message); res.status(500).json({ error: 'Erro ao carregar ficha' }); }
+});
+
 // GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
 // aniversariantes da semana. Alimenta o hub/dashboard do módulo.
 router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
