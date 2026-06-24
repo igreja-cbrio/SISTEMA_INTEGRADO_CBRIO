@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
 import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 const FAIXAS = [
   { key: 'todas', label: 'Todas as idades', min: 0, max: 9999 },
@@ -31,6 +32,7 @@ export default function GestaoCriancas() {
   const [busca, setBusca] = useState('');
   const [faixa, setFaixa] = useState('todas');
   const [status, setStatus] = useState('ativos'); // ativos | inativos
+  const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
 
@@ -53,9 +55,11 @@ export default function GestaoCriancas() {
         const resp = (c.responsaveis || []).map((r: any) => r.membro?.nome || '').join(' ');
         if (!(`${c.nome} ${resp}`.toLowerCase().includes(t))) return false;
       }
+      if (jornadaF === 'convertidos' && !c.data_conversao) return false;
+      if (jornadaF === 'batizados' && !c.data_batismo) return false;
       return true;
     });
-  }, [lista, faixa, busca, status]);
+  }, [lista, faixa, busca, status, jornadaF]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
@@ -82,6 +86,14 @@ export default function GestaoCriancas() {
           <SelectContent>
             <SelectItem value="ativos">Ativos</SelectItem>
             <SelectItem value="inativos">Inativos</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={jornadaF} onValueChange={setJornadaF}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Toda a jornada</SelectItem>
+            <SelectItem value="convertidos">Convertidos</SelectItem>
+            <SelectItem value="batizados">Batizados</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -128,7 +140,7 @@ export default function GestaoCriancas() {
 // ── Ficha da criança (Dados + Atendimentos) ──────────────────────────────────
 function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; onClose: () => void; onChanged: () => void }) {
   const [c, setC] = useState<any>(null);
-  const [aba, setAba] = useState<'dados' | 'atendimentos'>('dados');
+  const [aba, setAba] = useState<'dados' | 'frequencia' | 'atendimentos'>('dados');
   const [atend, setAtend] = useState<any[]>([]);
   const [novoTipo, setNovoTipo] = useState('contato');
   const [novoDesc, setNovoDesc] = useState('');
@@ -177,9 +189,9 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
 
         {/* Abas */}
         <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 text-xs">
-          {(['dados', 'atendimentos'] as const).map(a => (
+          {(['dados', 'frequencia', 'atendimentos'] as const).map(a => (
             <button key={a} onClick={() => setAba(a)} className={`px-3 py-1.5 rounded-md transition-colors ${aba === a ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>
-              {a === 'dados' ? 'Dados' : `Atendimentos (${atend.length})`}
+              {a === 'dados' ? 'Dados' : a === 'frequencia' ? 'Frequência' : `Atendimentos (${atend.length})`}
             </button>
           ))}
         </div>
@@ -188,6 +200,8 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
           <div className="space-y-3 text-sm">
             <Campo label="Nascimento" v={`${fmt(c.data_nascimento)}${c.idade_label ? ` · ${c.idade_label}` : ''}`} />
             <Campo label="Série" v={c.serie} />
+            <Campo label="Conversão" v={c.data_conversao ? fmt(c.data_conversao) : null} />
+            <Campo label="Batismo" v={c.data_batismo ? fmt(c.data_batismo) : null} />
             {c.necessidades_especiais && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
                 <span className="text-amber-700 dark:text-amber-400 text-xs font-semibold">⚠ Necessidade / alergia: </span>{c.necessidades_especiais}
@@ -227,6 +241,8 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               {!c.ativo && c.motivo_inativacao && <p className="text-xs text-muted-foreground mt-1">Motivo: {c.motivo_inativacao}</p>}
             </div>
           </div>
+        ) : aba === 'frequencia' ? (
+          <JornadaTab criancaId={criancaId} c={c} onChanged={() => { load(); onChanged(); }} />
         ) : (
           <div className="space-y-3">
             {/* Novo atendimento */}
@@ -334,5 +350,80 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+// ── Aba Frequência e jornada (gráfico + conversão/batismo + família) ──────────
+function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; onChanged: () => void }) {
+  const [j, setJ] = useState<any>(null);
+  const [conv, setConv] = useState<string>(c?.data_conversao || '');
+  const [bat, setBat] = useState<string>(c?.data_batismo || '');
+  const [salvando, setSalvando] = useState(false);
+  useEffect(() => { api.criancas.jornada(criancaId).then(setJ).catch(() => {}); }, [criancaId]);
+
+  async function salvar() {
+    setSalvando(true);
+    try { await api.criancas.update(criancaId, { data_conversao: conv || null, data_batismo: bat || null }); toast.success('Jornada salva'); onChanged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); } finally { setSalvando(false); }
+  }
+
+  const dados = (j?.frequencia?.porMes || []).map((p: any) => ({ mes: `${p.mes.slice(5)}/${p.mes.slice(2, 4)}`, total: p.total }));
+  const freq = j?.frequencia;
+
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-xs">Data de conversão</Label>
+          <Input type="date" value={conv} onChange={e => setConv(e.target.value)} />
+          {!conv && j?.conversao_sugerida && (
+            <button className="text-[11px] text-primary mt-0.5" onClick={() => setConv(j.conversao_sugerida)}>usar 1ª decisão ({fmt(j.conversao_sugerida)})</button>
+          )}
+        </div>
+        <div>
+          <Label className="text-xs">Data de batismo</Label>
+          <Input type="date" value={bat} onChange={e => setBat(e.target.value)} />
+        </div>
+      </div>
+      <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar jornada'}</Button>
+
+      <div>
+        <div className="text-xs text-muted-foreground mb-1">
+          Frequência (check-ins){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
+        </div>
+        {dados.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">Sem check-ins ainda. O gráfico liga quando o totem começar a registrar presença.</p>
+        ) : (
+          <div style={{ height: 180 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dados}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" />
+                <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Line type="monotone" dataKey="total" stroke="#00B39D" strokeWidth={2} dot />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="text-xs text-muted-foreground mb-1">Família (membros)</div>
+        {(j?.familia_membros || []).length === 0 ? (
+          <div className="text-xs text-muted-foreground">Sem membros vinculados à família.</div>
+        ) : (
+          <div className="space-y-1">
+            {j.familia_membros.map((m: any) => (
+              <div key={m.id} className="flex items-center gap-2 rounded-md border border-border p-1.5 text-xs">
+                <span className="flex-1 truncate">{m.nome}</span>
+                {m.telefone && <a href={`https://wa.me/55${String(m.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-3.5 w-3.5" /></a>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
