@@ -67,12 +67,34 @@ function gruposDe(p) {
   return fallback.map(g => ({ id: g.id, nome: g.nome || 'Grupo' }));
 }
 
+// Detalhe de CADA grupo da pessoa (participações + grupos que lidera/supervisiona),
+// com a função, presenças e entrada — pro modal "ver grupos da pessoa".
+function gruposDetalhados(p) {
+  const map = new Map();
+  (p.grupos || []).forEach(g => map.set(g.grupo_id, {
+    id: g.grupo_id, nome: g.grupo_nome || 'Grupo', funcao: g.funcao || 'frequentador',
+    presencas: g.presencas || 0, entrou_em: g.entrou_em || null, supervisiona: false,
+  }));
+  (p.lidera || []).forEach(g => {
+    const e = map.get(g.id);
+    if (e) e.funcao = 'lider';
+    else map.set(g.id, { id: g.id, nome: g.nome || 'Grupo', funcao: 'lider', presencas: 0, entrou_em: null, supervisiona: false });
+  });
+  (p.supervisiona || []).forEach(g => {
+    const e = map.get(g.id);
+    if (e) e.supervisiona = true;
+    else map.set(g.id, { id: g.id, nome: g.nome || 'Grupo', funcao: 'supervisor', presencas: 0, entrou_em: null, supervisiona: true });
+  });
+  return [...map.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+}
+
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
 export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null); // pessoa aberta no modal de grupos
   const [filtro, setFiltro] = useState('todos');     // função: todos | <papel> | lideres
   const [filtroGrupo, setFiltroGrupo] = useState('todos');
   const [filtroStatus, setFiltroStatus] = useState('todos');
@@ -303,12 +325,17 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
                   return (
                     <tr key={p.membro_id} style={{ borderBottom: `1px solid ${C.border}` }}>
                       <td style={{ padding: '10px 16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <button
+                          type="button"
+                          onClick={() => setSelected(p)}
+                          title="Ver grupos da pessoa"
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+                        >
                           <div style={{ width: 32, height: 32, borderRadius: '50%', background: p.foto_url ? `url(${p.foto_url}) center/cover` : `${pap.cor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: pap.cor }}>
                             {!p.foto_url && (p.nome?.charAt(0) || '?')}
                           </div>
                           <span style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{p.nome}</span>
-                        </div>
+                        </button>
                       </td>
                       <td style={{ padding: '10px 16px' }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${pap.cor}18`, color: pap.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
@@ -342,6 +369,66 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
           </div>
         )}
       </div>
+
+      {/* Modal · grupos da pessoa */}
+      {selected && (() => {
+        const pap = PAPEIS[selected.papel] || PAPEIS.frequentador;
+        const gs = gruposDetalhados(selected);
+        return (
+          <div onClick={() => setSelected(null)} style={{ position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--cbrio-modal-bg)', borderRadius: 14, width: 520, maxWidth: '100%', maxHeight: '85vh', overflowY: 'auto', border: `1px solid ${C.border}` }}>
+              {/* Cabeçalho */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 20, borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: selected.foto_url ? `url(${selected.foto_url}) center/cover` : `${pap.cor}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 16, fontWeight: 700, color: pap.cor }}>
+                  {!selected.foto_url && (selected.nome?.charAt(0) || '?')}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{selected.nome}</div>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: pap.cor, fontWeight: 700 }}>
+                    <pap.Icon size={11} /> {pap.label}
+                  </div>
+                </div>
+                <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', fontSize: 22, lineHeight: 1, color: C.t3, cursor: 'pointer' }}>×</button>
+              </div>
+              {/* Lista de grupos */}
+              <div style={{ padding: 16 }}>
+                <div style={{ fontSize: 11, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
+                  {gs.length} grupo{gs.length !== 1 ? 's' : ''}
+                </div>
+                {gs.length === 0 ? (
+                  <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não participa de nenhum grupo.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {gs.map(g => {
+                      const fp = PAPEIS[g.funcao] || { label: g.funcao || 'Membro', cor: C.t2, Icon: Users };
+                      return (
+                        <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <button
+                              onClick={() => { setSelected(null); onOpenGrupo?.(g.id); }}
+                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: C.text, textAlign: 'left' }}
+                            >
+                              {g.nome}
+                            </button>
+                            <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                              {g.entrou_em ? `desde ${fmtData(g.entrou_em)}` : 'participante'}
+                              {g.presencas ? ` · ${g.presencas} presença${g.presencas !== 1 ? 's' : ''}` : ''}
+                              {g.supervisiona ? ' · supervisiona' : ''}
+                            </div>
+                          </div>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${fp.cor}18`, color: fp.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            <fp.Icon size={10} /> {fp.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
