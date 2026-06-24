@@ -831,6 +831,52 @@ router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// POST /criancas/:id/foto · equipe Kids adiciona/troca a foto da criança (no
+// sistema). Recebe dataURL base64, sobe pro bucket privado kids-documentos via
+// service_role; a foto só aparece resolvida por signed URL (fotoVisivelCrianca).
+router.post('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { dataUrl } = req.body || {};
+    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+    const mime = m[1];
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 5 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 5MB)' });
+    const path = `foto-crianca/${req.params.id}-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('kids-documentos').upload(path, buffer, { contentType: mime, upsert: true });
+    if (upErr) throw upErr;
+    // apaga a foto anterior (se houver)
+    const { data: prev } = await supabase.from('kids_criancas').select('foto_storage_path').eq('id', req.params.id).maybeSingle();
+    if (prev?.foto_storage_path && prev.foto_storage_path !== path) {
+      await supabase.storage.from('kids-documentos').remove([prev.foto_storage_path]).catch(() => {});
+    }
+    await supabase.from('kids_criancas').update({
+      foto_storage_path: path, foto_url: null,
+      foto_consentimento_em: new Date().toISOString(), foto_consentimento_por: req.user?.userId || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    const { data: signed } = await supabase.storage.from('kids-documentos').createSignedUrl(path, 60 * 30);
+    res.json({ foto_url: signed?.signedUrl || null });
+  } catch (e) {
+    console.error('[totemKids] foto upload:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a foto' });
+  }
+});
+
+// DELETE /criancas/:id/foto · remove a foto
+router.delete('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { data: c } = await supabase.from('kids_criancas').select('foto_storage_path').eq('id', req.params.id).maybeSingle();
+    if (c?.foto_storage_path) await supabase.storage.from('kids-documentos').remove([c.foto_storage_path]).catch(() => {});
+    await supabase.from('kids_criancas').update({ foto_storage_path: null, foto_url: null, foto_consentimento_em: null, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] foto remove:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a foto' });
+  }
+});
+
 // GET /criancas/:id/jornada · família (membros) + frequência (check-ins por mês)
 // + conversão sugerida (1ª decisão de fé no check-in). Frequência fica vazia até
 // os check-ins do totem rodarem.
