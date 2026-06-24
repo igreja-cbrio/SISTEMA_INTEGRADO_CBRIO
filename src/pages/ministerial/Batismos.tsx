@@ -148,10 +148,12 @@ function BatismoHorarios() {
   const [info, setInfo] = useState<{ data_batismo?: string; horarios: any[] }>({ horarios: [] });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [grupoUrl, setGrupoUrl] = useState('');
+  const [savingGrupo, setSavingGrupo] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { const r = await kpisApi.batismos.horarios.list(); setInfo(r || { horarios: [] }); }
+    try { const r = await kpisApi.batismos.horarios.list(); setInfo(r || { horarios: [] }); const c: any = await kpisApi.batismos.config(); setGrupoUrl(c?.grupo_url || ''); }
     catch { toast.error('Erro ao carregar horários'); }
     finally { setLoading(false); }
   }, []);
@@ -176,6 +178,11 @@ function BatismoHorarios() {
     const novo = v === '' ? null : Math.max(0, parseInt(v, 10) || 0);
     if (novo === (h.limite ?? null)) return;
     aplicar(h, { limite: novo }, { limite: h.limite });
+  };
+  const salvarGrupo = async () => {
+    setSavingGrupo(true);
+    try { await kpisApi.batismos.salvarConfig({ grupo_url: grupoUrl.trim() || null }); toast.success('Link do grupo salvo'); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao salvar o link'); } finally { setSavingGrupo(false); }
   };
 
   const dataFmt = info.data_batismo
@@ -228,6 +235,14 @@ function BatismoHorarios() {
             </div>
           );
         })}
+        <div className="rounded-lg border border-border p-3 space-y-2 mt-1">
+          <Label className="text-sm font-medium flex items-center gap-1.5">💬 Link do grupo do WhatsApp do batismo</Label>
+          <p className="text-xs text-muted-foreground">Quem se inscrever (link externo ou app) vê este link no fim pra entrar no grupo. Atualize a cada mês com o grupo novo.</p>
+          <div className="flex gap-2">
+            <Input value={grupoUrl} onChange={(e) => setGrupoUrl(e.target.value)} placeholder="https://chat.whatsapp.com/..." className="flex-1" />
+            <Button size="sm" onClick={salvarGrupo} disabled={savingGrupo}>{savingGrupo ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}</Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

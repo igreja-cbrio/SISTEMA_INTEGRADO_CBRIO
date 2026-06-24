@@ -747,6 +747,28 @@ router.delete('/batismos/horarios/:id', authorizeIntegracao, async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao remover horário' }); }
 });
 
+// Config do batismo · link do grupo de WhatsApp (Lorena atualiza a cada mês)
+router.get('/batismos/config', authorizeIntegracao, async (_req, res) => {
+  try {
+    const { data } = await supabase.from('batismo_config').select('grupo_url, updated_at').eq('id', 1).maybeSingle();
+    res.json(data || { grupo_url: null });
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao carregar config' }); }
+});
+
+router.patch('/batismos/config', authorizeIntegracao, async (req, res) => {
+  try {
+    const grupo_url = req.body?.grupo_url ? String(req.body.grupo_url).trim().slice(0, 500) : null;
+    if (grupo_url && !/^https:\/\/chat\.whatsapp\.com\//.test(grupo_url)) {
+      return res.status(400).json({ error: 'O link precisa ser de um grupo do WhatsApp (chat.whatsapp.com).' });
+    }
+    const { data, error } = await supabase.from('batismo_config')
+      .update({ grupo_url, updated_by: req.user?.id || null, updated_at: new Date().toISOString() })
+      .eq('id', 1).select('grupo_url, updated_at').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao salvar o link do grupo' }); }
+});
+
 router.post('/batismos', authorizeIntegracao, async (req, res) => {
   const {
     cpf, nome, sobrenome, data_nascimento, telefone, email,

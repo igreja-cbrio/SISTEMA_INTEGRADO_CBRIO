@@ -91,7 +91,12 @@ router.get('/horarios', async (_req, res) => {
         return { horario: h.horario, label: h.label, vagas_restantes: vagas };
       })
       .filter(h => h.vagas_restantes === null || h.vagas_restantes > 0); // esconde lotados
-    res.json({ data_batismo: dataBatismo, horarios: lista });
+    let grupoUrl = null;
+    try {
+      const { data: cfg } = await supabase.from('batismo_config').select('grupo_url').eq('id', 1).maybeSingle();
+      grupoUrl = cfg?.grupo_url || null;
+    } catch { /* sem grupo */ }
+    res.json({ data_batismo: dataBatismo, horarios: lista, grupo_url: grupoUrl });
   } catch (e) {
     console.error('[publicBatismo] horarios:', e.message);
     res.status(500).json({ error: 'Erro ao listar horários' });
@@ -287,11 +292,19 @@ router.post('/', limiter, async (req, res) => {
       }).catch(err => console.error('[publicBatismo] notificacao kids falhou:', err.message));
     }
 
+    // Link do grupo de WhatsApp do batismo (Lorena atualiza a cada mês)
+    let grupoUrl = null;
+    try {
+      const { data: cfg } = await supabase.from('batismo_config').select('grupo_url').eq('id', 1).maybeSingle();
+      grupoUrl = cfg?.grupo_url || null;
+    } catch { /* sem grupo configurado */ }
+
     res.status(201).json({
       ok: true,
       id: data.id,
       data_batismo: dataBatismo,
       membro_vinculado: !!membroId,
+      grupo_url: grupoUrl,
     });
   } catch (e) {
     console.error('[publicBatismo] erro:', e.message);

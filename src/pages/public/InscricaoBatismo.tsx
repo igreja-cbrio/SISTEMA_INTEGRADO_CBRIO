@@ -183,6 +183,7 @@ export default function InscricaoBatismo() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const [grupoUrl, setGrupoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     batismoPublico.horarios()
@@ -220,7 +221,7 @@ export default function InscricaoBatismo() {
 
     setLoading(true);
     try {
-      await batismoPublico.inscrever({
+      const resp: any = await batismoPublico.inscrever({
         nome: form.nome.trim(),
         sobrenome: form.sobrenome.trim(),
         cpf: form.cpf || null,
@@ -236,6 +237,7 @@ export default function InscricaoBatismo() {
         horario_culto: form.horario_culto || null,
         area_kpi: form.area_kpi || null,
       });
+      setGrupoUrl(resp?.grupo_url || null);
       setSent(true);
     } catch (err: any) {
       setError(err?.message || 'Erro ao enviar inscrição.');
@@ -298,8 +300,22 @@ export default function InscricaoBatismo() {
               Você está inscrito(a) para o batismo de <strong>{formatDataLonga(proximaData)}</strong>.
               Em breve nossa equipe de Integração entrará em contato com mais detalhes.
             </p>
+            {grupoUrl && (
+              <a
+                href={grupoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 18,
+                  background: '#25D366', color: '#fff', fontWeight: 700, fontSize: 14,
+                  padding: '12px 22px', borderRadius: 10, textDecoration: 'none',
+                }}
+              >
+                💬 Entrar no grupo do batismo
+              </a>
+            )}
             <p style={{ fontSize: 12, color: C.textDim, marginTop: 16 }}>
-              Deus te abençoe nessa nova etapa.
+              {grupoUrl ? 'Entre no grupo pra receber os próximos passos e avisos.' : 'Deus te abençoe nessa nova etapa.'}
             </p>
           </div>
         ) : (

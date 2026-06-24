@@ -2214,6 +2214,8 @@ export const kpis = {
       update: (id, data) => patch(`/kpis/batismos/horarios/${id}`, data),
       remove: (id) => del(`/kpis/batismos/horarios/${id}`),
     },
+    config: () => get('/kpis/batismos/config'),
+    salvarConfig: (data) => patch('/kpis/batismos/config', data),
     // Check-in do quiosque (Fase 1): lista do dia, registra check-in, sobe selfie.
     checkin: {
       doDia: (params) => get('/kpis/batismos/checkin/do-dia' + (params ? '?' + new URLSearchParams(params) : '')),
