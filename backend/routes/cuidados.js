@@ -4,6 +4,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 
 router.use(authenticate);
 
@@ -1116,74 +1117,158 @@ router.post('/convertidos/:id/desfecho', async (req, res) => {
 });
 
 // POST /api/cuidados/convertidos/:id/direcionar
-// O Marcelo registra PRA ONDE o responsável direcionou o convertido (grupos /
-// devocionais / voluntarios). Grupos/Voluntários criam o encaminhamento (handoff)
-// na caixa de entrada da área — que o líder DAQUELE módulo acessa. NÃO marca
-// engajamento: o engajamento só vem do sinal real (entrar no grupo, virar
-// voluntário, ler a 1ª devocional), que o NSM mede sozinho. Devocionais não tem
-// caixa de entrada → fica só registrado (engajamento = 1ª leitura no app).
-const DIRECIONAMENTO_DESTINO = { grupos: 'grupos', voluntarios: 'voluntarios' }; // devocionais = sem caixa
+// Registra PRA ONDE o responsável direcionou o convertido. 5 destinos:
+//   grupos / voluntarios → handoff (encaminhamento) na caixa da área (o líder de lá acessa).
+//   devocionais          → só registro (sem caixa · engajamento = 1ª leitura no app).
+//   next / batismo       → INSCREVE a pessoa (matrícula Next em fila de espera · inscrição
+//                          de batismo pendente) REUSANDO o membro_id → sem duplicar cadastro.
+//                          Aparece como pendente "vindo de Cuidados" pra Integração confirmar
+//                          (ou linkar via QR · a dedup por membro_id evita duplicata).
+// NÃO marca engajamento: o NSM conta batismo só quando 'realizado' e Next só quando 'formado'.
+// Misclick: voltar pra "—" (ou trocar de destino) RETRAI o que o Cuidados criou, mas só se
+// ainda estiver intocado (a área/Integração não mexeu).
+const DIRECIONAMENTOS_VALIDOS = ['grupos', 'devocionais', 'voluntarios', 'next', 'batismo'];
+
+// Desfaz o registro que o direcionamento anterior criou — só se ainda intocado.
+async function retrairDirecionamento(tipo, id, convertidoId) {
+  if (!tipo) return;
+  const agora = new Date().toISOString();
+  if (tipo === 'grupos' || tipo === 'voluntarios') {
+    let q = supabase.from('jornada_encaminhamentos')
+      .update({ deleted_at: agora })
+      .eq('status', 'pendente').is('recebido_em', null).is('deleted_at', null);
+    if (id) q = q.eq('id', id);
+    else q = q.eq('convertido_id', convertidoId).eq('destino', tipo).eq('origem', 'cuidados'); // legado sem ref
+    await q;
+  } else if (tipo === 'next' && id) {
+    await supabase.from('next_matriculas')
+      .update({ deleted_at: agora })
+      .eq('id', id).eq('status', 'matriculado').is('turma_id', null).is('deleted_at', null);
+  } else if (tipo === 'batismo' && id) {
+    await supabase.from('batismo_inscricoes')
+      .update({ status: 'cancelado' })
+      .eq('id', id).eq('status', 'pendente').is('data_batismo', null);
+  }
+}
+
 router.post('/convertidos/:id/direcionar', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { direcionamento } = req.body || {};
-    if (direcionamento != null && !['grupos', 'devocionais', 'voluntarios'].includes(direcionamento)) {
+    if (direcionamento != null && !DIRECIONAMENTOS_VALIDOS.includes(direcionamento)) {
       return res.status(400).json({ error: 'Direcionamento inválido' });
     }
     const userId = req.user.userId || req.user.id;
+    const novo = direcionamento || null;
 
-    // 1) Salva o direcionamento no convertido
-    const { data: conv, error: e1 } = await supabase
+    // Estado atual (pra retrair o anterior se o destino mudou)
+    const { data: atual, error: e0 } = await supabase
       .from('cui_convertidos')
-      .update({
-        direcionamento: direcionamento || null,
-        direcionamento_em: direcionamento ? new Date().toISOString() : null,
-      })
-      .eq('id', req.params.id).select().single();
-    if (e1) throw e1;
+      .select('id, nome, telefone, cpf, area, membro_id, direcionamento, direcionamento_ref_tipo, direcionamento_ref_id')
+      .eq('id', req.params.id).single();
+    if (e0) throw e0;
 
-    // 2) Handoff pra caixa da área (grupos/voluntários) · dedup por (convertido, destino).
-    //    Status default (pendente) · NÃO é "engajou" → não conta no NSM.
-    let encaminhamento = null;
-    const destino = DIRECIONAMENTO_DESTINO[direcionamento];
-    if (destino) {
-      const meta = DESTINO_META[destino];
+    // 1) Retrai o que o direcionamento ANTERIOR criou (se mudou). Usa o ref; cai no
+    //    direcionamento antigo como tipo quando não há ref (registros pré-feature).
+    const tipoAntigo = atual.direcionamento_ref_tipo || atual.direcionamento;
+    if (tipoAntigo && atual.direcionamento !== novo) {
+      await retrairDirecionamento(tipoAntigo, atual.direcionamento_ref_id, atual.id);
+    }
+
+    // Resolve membro_id (pra Next/Batismo não duplicarem cadastro)
+    let membroId = atual.membro_id || null;
+    async function garantirMembro() {
+      if (membroId) return membroId;
+      try {
+        const r = await acharOuCriarGuardado({
+          cpf: atual.cpf || null, telefone: atual.telefone || null, nome: atual.nome, status: 'visitante',
+        });
+        membroId = r?.membro_id || null;
+        if (membroId) await supabase.from('cui_convertidos').update({ membro_id: membroId }).eq('id', atual.id);
+      } catch (_) { /* segue sem membro_id */ }
+      return membroId;
+    }
+
+    // nome / sobrenome (batismo exige os 2)
+    const partes = String(atual.nome || '').trim().split(/\s+/);
+    const primeiroNome = partes[0] || (atual.nome || 'Convertido');
+    const sobrenome = partes.slice(1).join(' ');
+
+    let refTipo = null, refId = null, encaminhamento = null;
+    const extra = {};
+
+    if (novo === 'grupos' || novo === 'voluntarios') {
+      const meta = DESTINO_META[novo];
       const { data: jaExiste } = await supabase
-        .from('jornada_encaminhamentos')
-        .select('id')
-        .eq('convertido_id', conv.id)
-        .eq('destino', destino)
-        .is('deleted_at', null)
+        .from('jornada_encaminhamentos').select('id')
+        .eq('convertido_id', atual.id).eq('destino', novo).is('deleted_at', null)
         .limit(1).maybeSingle();
-      if (jaExiste) {
-        encaminhamento = jaExiste;
-      } else {
-        const { data: row, error: e2 } = await supabase
-          .from('jornada_encaminhamentos')
-          .insert({
-            origem: 'cuidados',
-            convertido_id: conv.id,
-            membro_id: conv.membro_id || null,
-            nome: conv.nome,
-            telefone: conv.telefone || null,
-            destino,
-            valor_alvo: meta.valor,
-            encaminhado_por: userId,
-          })
-          .select().single();
+      if (jaExiste) { encaminhamento = jaExiste; refTipo = novo; refId = jaExiste.id; }
+      else {
+        const { data: row, error: e2 } = await supabase.from('jornada_encaminhamentos').insert({
+          origem: 'cuidados', convertido_id: atual.id, membro_id: atual.membro_id || null,
+          nome: atual.nome, telefone: atual.telefone || null, destino: novo,
+          valor_alvo: meta.valor, encaminhado_por: userId,
+        }).select().single();
         if (e2) throw e2;
-        encaminhamento = row;
+        encaminhamento = row; refTipo = novo; refId = row.id;
         notificar({
-          modulo: meta.modulo,
-          tipo: 'novo_encaminhamento',
-          titulo: `Encaminhado: ${conv.nome} → ${meta.label}`,
-          mensagem: `${conv.nome} foi encaminhado(a) pelo cuidado pastoral. Faça o primeiro contato e registre a devolutiva.`,
-          link: meta.link,
-          severidade: 'info',
-          chaveDedup: `enc_${row.id}`,
+          modulo: meta.modulo, tipo: 'novo_encaminhamento',
+          titulo: `Encaminhado: ${atual.nome} → ${meta.label}`,
+          mensagem: `${atual.nome} foi encaminhado(a) pelo cuidado pastoral. Faça o primeiro contato e registre a devolutiva.`,
+          link: meta.link, severidade: 'info', chaveDedup: `enc_${row.id}`,
         }).catch(() => {});
       }
+    } else if (novo === 'next') {
+      await garantirMembro();
+      let ja = null;
+      if (membroId) {
+        const { data } = await supabase.from('next_matriculas').select('id')
+          .eq('membro_id', membroId).is('deleted_at', null)
+          .in('status', ['matriculado', 'formado']).limit(1).maybeSingle();
+        ja = data;
+      }
+      if (ja) { refTipo = 'next'; refId = null; extra.ja_inscrito = true; } // já no Next · não duplica
+      else {
+        const { data: row, error: en } = await supabase.from('next_matriculas').insert({
+          turma_id: null, nome: primeiroNome, sobrenome: sobrenome || null,
+          cpf: atual.cpf || null, telefone: atual.telefone || null, membro_id: membroId || null,
+          status: 'matriculado', origem: 'manual', observacoes: 'Direcionado pelo Cuidados', registered_by: userId,
+        }).select().single();
+        if (en) throw en;
+        refTipo = 'next'; refId = row.id; extra.matricula_id = row.id;
+      }
+    } else if (novo === 'batismo') {
+      await garantirMembro();
+      let ja = null;
+      if (membroId) {
+        const { data } = await supabase.from('batismo_inscricoes').select('id')
+          .eq('membro_id', membroId).in('status', ['pendente', 'confirmado']).limit(1).maybeSingle();
+        ja = data;
+      }
+      if (ja) { refTipo = 'batismo'; refId = null; extra.ja_inscrito = true; } // já inscrito · não duplica
+      else {
+        const areaKpi = ['kids', 'sede', 'bridge', 'ami', 'online'].includes(atual.area) ? atual.area : null;
+        const { data: row, error: eb } = await supabase.from('batismo_inscricoes').insert({
+          nome: primeiroNome, sobrenome: sobrenome || '', cpf: atual.cpf || null,
+          telefone: atual.telefone || null, membro_id: membroId || null,
+          status: 'pendente', origem: 'manual', area_kpi: areaKpi,
+          observacoes: 'Direcionado pelo Cuidados', inscrito_por: userId,
+        }).select().single();
+        if (eb) throw eb;
+        refTipo = 'batismo'; refId = row.id; extra.inscricao_id = row.id;
+      }
     }
-    res.json({ convertido: conv, encaminhamento });
+
+    // 2) Salva o direcionamento + a referência (pro retract) no convertido
+    const { data: conv, error: e1 } = await supabase.from('cui_convertidos').update({
+      direcionamento: novo,
+      direcionamento_em: novo ? new Date().toISOString() : null,
+      direcionamento_ref_tipo: refTipo,
+      direcionamento_ref_id: refId,
+    }).eq('id', atual.id).select().single();
+    if (e1) throw e1;
+
+    res.json({ convertido: conv, encaminhamento, ...extra });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

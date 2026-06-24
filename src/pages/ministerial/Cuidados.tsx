@@ -272,12 +272,16 @@ const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Pa
 
 // Pra onde o responsável direcionou a pessoa. Grupos/Voluntários geram o handoff na
 // caixa da área (que o líder daquele módulo acessa); Devocionais fica só registrado.
-// NÃO conta engajamento — isso vem do sinal real (entrar no grupo / virar voluntário /
-// ler a 1ª devocional), que o NSM mede sozinho.
+// Next/Batismo INSCREVEM a pessoa (pendente · reusam o membro_id, sem duplicar) e ela
+// aparece "vinda de Cuidados" pra Integração confirmar. NÃO conta engajamento — isso vem
+// do sinal real (entrar no grupo, virar voluntário, ler a 1ª devocional, se batizar de
+// fato, concluir o Next), que o NSM mede sozinho.
 const DIRECIONAMENTOS: { v: string; l: string }[] = [
   { v: 'grupos',      l: 'Grupos' },
   { v: 'devocionais', l: 'Devocionais' },
   { v: 'voluntarios', l: 'Voluntários' },
+  { v: 'next',        l: 'Next' },
+  { v: 'batismo',     l: 'Batismo' },
 ];
 const DIRECIONAMENTO_LABEL: Record<string, string> = Object.fromEntries(DIRECIONAMENTOS.map(d => [d.v, d.l]));
 
@@ -947,6 +951,8 @@ export default function Cuidados() {
       await cuidadosApi.convertidos.direcionar(id, v);
       if (v === 'grupos') toast.success('Encaminhado para Grupos');
       else if (v === 'voluntarios') toast.success('Encaminhado para Voluntários');
+      else if (v === 'next') toast.success('Inscrito no Next (pendente · fila de espera)');
+      else if (v === 'batismo') toast.success('Inscrito no Batismo (pendente)');
     } catch (e: any) {
       setConvertidos(anterior);
       toast.error(`Não foi possível direcionar: ${e.message}`);
