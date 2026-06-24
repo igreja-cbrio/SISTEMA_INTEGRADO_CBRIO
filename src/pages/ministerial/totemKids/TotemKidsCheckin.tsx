@@ -387,31 +387,21 @@ export default function TotemKidsCheckin() {
         </div>
         <div className="flex gap-2 flex-wrap">
           {totemMode ? (
-            <Button variant="destructive" size="sm" onClick={pedirSairTotem}>
-              <Lock className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Sair do modo totem</span>
-            </Button>
-          ) : (
             <>
               <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
                 <LogOut className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Checkout</span>
               </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/decisoes')}>
-                <Sparkles className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Decisões</span>
+              <Button variant="destructive" size="sm" onClick={pedirSairTotem}>
+                <Lock className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Sair do modo totem</span>
               </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/vinculos')}>
-                <ShieldCheck className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Vínculos</span>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/kids')}>
+                <ArrowLeft className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Kids</span>
               </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/criancas')}>
-                <Baby className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Crianças</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/painel')}>
-                <span className="md:inline">Painel</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/teste-etiqueta')}>
-                <Printer className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Etiqueta</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/configuracoes')}>
-                <Settings className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Config</span>
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
+                <LogOut className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Checkout</span>
               </Button>
               <Button variant="default" size="sm" className="bg-pink-600 hover:bg-pink-700" onClick={iniciarModoTotem}>
                 <Maximize className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Modo totem</span>
@@ -588,7 +578,7 @@ export default function TotemKidsCheckin() {
 
       {/* Modo totem · cria/pede PIN */}
       <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
-        <DialogContent className="max-w-xs">
+        <DialogContent className="max-w-xs z-[80]">
           <DialogHeader>
             <DialogTitle>{pinSetup ? 'Ativar modo totem' : 'Sair do modo totem'}</DialogTitle>
             <DialogDescription>
