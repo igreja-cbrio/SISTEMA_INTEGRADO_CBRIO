@@ -1,7 +1,7 @@
 // Kids · Crianças para batizar — as inscrições de batismo de crianças (que já
 // aparecem na Integração) também aparecem aqui pra a equipe Kids contatar a
 // família. Quando chega uma nova, o Kids recebe notificação.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
@@ -29,6 +29,16 @@ export default function BatismosKids() {
 
   const t = busca.trim().toLowerCase();
   const filtradas = lista.filter((b) => !t || `${b.nome} ${b.sobrenome || ''}`.toLowerCase().includes(t));
+  // Agrupa por turma de batismo (data_batismo) · mais recente primeiro
+  const grupos = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    filtradas.forEach((b) => { const k = b.data_batismo || 'sem-data'; (map[k] = map[k] || []).push(b); });
+    return Object.entries(map).sort((a, b) => {
+      if (a[0] === 'sem-data') return 1;
+      if (b[0] === 'sem-data') return -1;
+      return b[0].localeCompare(a[0]);
+    });
+  }, [filtradas]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
@@ -49,8 +59,14 @@ export default function BatismosKids() {
         <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma criança inscrita para batismo no momento.</Card>
       ) : (
         <div className="space-y-2">
-          <div className="text-xs text-muted-foreground">{filtradas.length} criança{filtradas.length !== 1 ? 's' : ''}</div>
-          {filtradas.map((b) => (
+          <div className="text-xs text-muted-foreground">{filtradas.length} criança{filtradas.length !== 1 ? 's' : ''} · {grupos.length} turma{grupos.length !== 1 ? 's' : ''}</div>
+          {grupos.map(([data, items]) => (
+            <div key={data} className="space-y-2">
+              <div className="flex items-center gap-2 pt-2">
+                <div className="text-sm font-semibold">{data === 'sem-data' ? 'Sem data definida' : `Turma · ${fmt(data)}`}</div>
+                <Badge variant="secondary" className="text-[10px]">{items.length}</Badge>
+              </div>
+              {items.map((b) => (
             <Card key={b.id} className="p-3 flex items-center gap-3">
               <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0"><Droplets className="h-5 w-5 text-blue-500" /></div>
               <div className="flex-1 min-w-0">
@@ -69,6 +85,8 @@ export default function BatismosKids() {
                 {b.telefone && <a href={`https://wa.me/55${String(b.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary" title="Falar com a família"><Phone className="h-4 w-4" /></a>}
               </div>
             </Card>
+              ))}
+            </div>
           ))}
         </div>
       )}
