@@ -1581,6 +1581,11 @@ export const membresia = {
     vincular: (membroId, data) => patch(`/membresia/membros/${membroId}/familia`, data),
     mesmaFamilia: (membroId, data) => post(`/membresia/membros/${membroId}/mesma-familia`, data),
   },
+  vinculos: {
+    list: (membroId) => get(`/membresia/membros/${membroId}/vinculos`),
+    create: (membroId, data) => post(`/membresia/membros/${membroId}/vinculos`, data),
+    remove: (id) => del(`/membresia/vinculos/${id}`),
+  },
   historico: {
     create: (data) => post('/membresia/historico', data),
   },

@@ -614,6 +614,103 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     </Dialog>
   );
 }
+const VINC_TIPOS = {
+  filho: 'Filho(a) de', pai_mae: 'Pai/Mãe de', irmao: 'Irmão(ã) de', conjuge: 'Cônjuge de',
+  avo: 'Avô/Avó de', neto: 'Neto(a) de', tio: 'Tio(a) de', sobrinho: 'Sobrinho(a) de',
+  primo: 'Primo(a) de', responsavel: 'Responsável por', dependente: 'Dependente de', outro: 'Parente de',
+};
+
+// Vínculos familiares (grafo de parentesco) · "esta pessoa é filho/irmão de X".
+function VinculosFamiliares({ membroId, onAbrirPessoa }) {
+  const [lista, setLista] = useState([]);
+  const [aberto, setAberto] = useState(false);
+  const [tipo, setTipo] = useState('filho');
+  const [q, setQ] = useState('');
+  const [resultados, setResultados] = useState([]);
+  const [sel, setSel] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+
+  function carregar() {
+    membresia.vinculos.list(membroId).then(r => setLista(Array.isArray(r) ? r : [])).catch(() => {});
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, [membroId]);
+
+  useEffect(() => {
+    if (!aberto || sel || q.trim().length < 2) { setResultados([]); return; }
+    let cancel = false;
+    const t = setTimeout(async () => {
+      try { const r = await membresia.membros.list({ busca: q.trim() }); if (!cancel) setResultados((r || []).filter(m => m.id !== membroId).slice(0, 8)); }
+      catch { if (!cancel) setResultados([]); }
+    }, 300);
+    return () => { cancel = true; clearTimeout(t); };
+  }, [q, aberto, sel, membroId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function salvar() {
+    if (!sel) return;
+    setSalvando(true);
+    try {
+      await membresia.vinculos.create(membroId, { relacionado_id: sel.id, tipo });
+      toast.success('Vínculo criado');
+      setAberto(false); setSel(null); setQ(''); setTipo('filho'); carregar();
+    } catch (e) { toast.error(e?.message || 'Erro ao criar vínculo'); } finally { setSalvando(false); }
+  }
+  async function remover(id) {
+    if (!window.confirm('Remover este vínculo?')) return;
+    try { await membresia.vinculos.remove(id); carregar(); } catch (e) { toast.error(e?.message || 'Erro'); }
+  }
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <h3 style={{ fontSize: 13, fontWeight: 600, color: C.text2, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>Vínculos familiares</h3>
+      {lista.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {lista.map(v => (
+            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8 }}>
+              <button onClick={() => v.relacionado?.id && onAbrirPessoa?.(v.relacionado.id)} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}>
+                <span style={{ fontSize: 11, color: C.text3 }}>{VINC_TIPOS[v.tipo] || 'Parente de'} </span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{v.relacionado?.nome || '—'}</span>
+              </button>
+              <button onClick={() => remover(v.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.text3 }} title="Remover"><X style={{ width: 14, height: 14 }} /></button>
+            </div>
+          ))}
+        </div>
+      ) : <div style={{ fontSize: 12, color: C.text3, marginBottom: 8 }}>Nenhum vínculo familiar registrado.</div>}
+      {!aberto ? (
+        <Button variant="outline" size="sm" onClick={() => setAberto(true)}><Plus style={{ width: 14, height: 14 }} /> Adicionar vínculo</Button>
+      ) : (
+        <div style={{ padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Label style={{ fontSize: 11 }}>Esta pessoa é...</Label>
+          <Select value={tipo} onValueChange={setTipo}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{Object.entries(VINC_TIPOS).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}</SelectContent>
+          </Select>
+          {sel ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 12px', background: 'var(--cbrio-card)', borderRadius: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{sel.nome}</span>
+              <button onClick={() => { setSel(null); setQ(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.text3 }}><X style={{ width: 14, height: 14 }} /></button>
+            </div>
+          ) : (
+            <div>
+              <Input autoFocus placeholder="Buscar pessoa por nome..." value={q} onChange={e => setQ(e.target.value)} />
+              {resultados.length > 0 && (
+                <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 180, overflowY: 'auto' }}>
+                  {resultados.map(m => (
+                    <button key={m.id} onClick={() => setSel(m)} style={{ textAlign: 'left', padding: '8px 12px', background: 'var(--cbrio-card)', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, color: C.text }}>{m.nome}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button variant="outline" size="sm" onClick={() => { setAberto(false); setSel(null); setQ(''); }}>Cancelar</Button>
+            <Button size="sm" onClick={salvar} disabled={!sel || salvando}>Salvar vínculo</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // "Essa pessoa é da mesma família que..." · busca uma pessoa e vincula os dois
 // na mesma família (cria a família se nenhum tiver). Usado no detalhe do membro.
 function MesmaFamiliaInline({ membroId, excluirIds = [], onDone }) {
@@ -1777,6 +1874,9 @@ export default function Membresia() {
                         onDone={() => openDetail(selectedMembro.id)}
                       />
                     </div>
+                  )}
+                  {isDiretor && (
+                    <VinculosFamiliares membroId={selectedMembro.id} onAbrirPessoa={openDetail} />
                   )}
                 </TabsContent>
 
