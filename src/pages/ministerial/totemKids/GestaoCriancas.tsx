@@ -207,28 +207,25 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
 
         {!c ? <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div> : aba === 'dados' ? (
           <div className="space-y-3 text-sm">
-            <Campo label="Nascimento" v={`${fmt(c.data_nascimento)}${c.idade_label ? ` · ${c.idade_label}` : ''}`} />
-            <Campo label="Série" v={c.serie} />
-            <Campo label="Conversão" v={c.data_conversao ? fmt(c.data_conversao) : null} />
-            <Campo label="Batismo" v={c.data_batismo ? fmt(c.data_batismo) : null} />
-            {c.necessidades_especiais && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
-                <span className="text-amber-700 dark:text-amber-400 text-xs font-semibold">⚠ Necessidade / alergia: </span>{c.necessidades_especiais}
-              </div>
-            )}
-            {(c.tem_espectro || c.tem_alergia || c.tem_limitacao_fisica) && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2 space-y-1">
-                <div className="text-amber-700 dark:text-amber-400 text-xs font-semibold">⚠ Saúde da criança</div>
-                {c.tem_alergia && <div className="text-sm"><b>Alergia:</b> {c.alergia_qual || 'sim'}</div>}
-                {c.tem_espectro && <div className="text-sm"><b>Espectro autista:</b> {c.espectro_qual || 'sim'}</div>}
-                {c.tem_limitacao_fisica && <div className="text-sm"><b>Limitação física:</b> {c.limitacao_fisica_qual || 'sim'}</div>}
-              </div>
-            )}
-            {c.observacoes_medicas && <Campo label="Mais informações" v={c.observacoes_medicas} />}
-            {c.consent_marketing != null && (
-              <Campo label="Uso de imagem (marketing)" v={c.consent_marketing ? 'Autorizado' : 'Não autorizado'} />
-            )}
-            <div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+              <CampoSempre label="Nascimento" v={c.data_nascimento ? fmt(c.data_nascimento) : ''} />
+              <CampoSempre label="Idade" v={c.idade_label} />
+              <CampoSempre label="Sexo" v={c.sexo === 'M' ? 'Menino' : c.sexo === 'F' ? 'Menina' : c.sexo || ''} />
+              <CampoSempre label="Série" v={c.serie} />
+              <CampoSempre label="Conversão" v={c.data_conversao ? fmt(c.data_conversao) : ''} />
+              <CampoSempre label="Batismo" v={c.data_batismo ? fmt(c.data_batismo) : ''} />
+              <CampoSempre label="Tipo" v={c.visitante ? 'Visitante' : 'Membro'} />
+              <CampoSempre label="Uso de imagem" v={c.consent_marketing == null ? '' : (c.consent_marketing ? 'Autorizado' : 'Não autorizado')} />
+            </div>
+            <div className="rounded-md border border-border p-2 space-y-1">
+              <div className="text-xs font-semibold text-muted-foreground">Saúde</div>
+              <LinhaSaude label="Alergia" tem={c.tem_alergia} qual={c.alergia_qual} />
+              <LinhaSaude label="Espectro autista" tem={c.tem_espectro} qual={c.espectro_qual} />
+              <LinhaSaude label="Limitação física / deficiência" tem={c.tem_limitacao_fisica} qual={c.limitacao_fisica_qual} />
+              <div className="text-xs"><span className="text-muted-foreground">Necessidades específicas: </span>{c.necessidades_especiais || <span className="italic text-muted-foreground">— a preencher</span>}</div>
+              <div className="text-xs"><span className="text-muted-foreground">Mais informações: </span>{c.observacoes_medicas || <span className="italic text-muted-foreground">— a preencher</span>}</div>
+            </div>
+                        <div>
               <div className="text-xs text-muted-foreground mb-1">Responsáveis</div>
               <div className="space-y-1.5">
                 {(c.responsaveis || []).length === 0 && <div className="text-xs text-muted-foreground">Nenhum responsável vinculado.</div>}
@@ -289,6 +286,17 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
   );
 }
 
+function CampoSempre({ label, v }: { label: string; v?: string | null }) {
+  return <div><span className="text-xs text-muted-foreground">{label}: </span>{v ? <span>{v}</span> : <span className="italic text-muted-foreground">—</span>}</div>;
+}
+function LinhaSaude({ label, tem, qual }: { label: string; tem?: boolean | null; qual?: string | null }) {
+  return (
+    <div className="text-xs flex gap-1">
+      <span className="text-muted-foreground">{label}:</span>
+      {tem == null ? <span className="italic text-muted-foreground">— a preencher</span> : tem ? <span className="text-amber-600 font-medium">Sim{qual ? ` · ${qual}` : ''}</span> : <span>Não</span>}
+    </div>
+  );
+}
 function Campo({ label, v }: { label: string; v?: string | null }) {
   if (!v) return null;
   return <div><span className="text-xs text-muted-foreground">{label}: </span><span>{v}</span></div>;
