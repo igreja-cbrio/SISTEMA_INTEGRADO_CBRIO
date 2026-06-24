@@ -274,6 +274,19 @@ router.post('/', limiter, async (req, res) => {
       emailsExtra: ['lorena@cbrio.com.br'], // 2o e-mail da Lorena (sem conta no sistema)
     }).catch(err => console.error('[publicBatismo] notificacao falhou:', err.message));
 
+    // Se for criança, avisa também a equipe Kids (pra contatar a família)
+    if (payload.eh_crianca) {
+      notificar({
+        modulo: 'kids',
+        tipo: 'crianca_batismo',
+        titulo: 'Criança para batizar',
+        mensagem: `${nomeT} ${sobrenomeT} (criança) se inscreveu para o batismo de ${dataBatismo}. Entrar em contato com a família.`,
+        link: '/ministerial/totem-kids/batismos',
+        severidade: 'info',
+        chaveDedup: `kids_batismo_${data.id}`,
+      }).catch(err => console.error('[publicBatismo] notificacao kids falhou:', err.message));
+    }
+
     res.status(201).json({
       ok: true,
       id: data.id,

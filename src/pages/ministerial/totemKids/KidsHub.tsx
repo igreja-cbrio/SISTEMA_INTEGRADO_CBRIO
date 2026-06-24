@@ -9,7 +9,7 @@ import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
 import {
   Baby, ScanLine, Users, ShieldCheck, Sparkles, Settings, Monitor, BarChart3, Printer,
-  Cake, DoorOpen, Loader2, ArrowRight, UserCheck, Boxes,
+  Cake, DoorOpen, Loader2, ArrowRight, UserCheck, Boxes, Droplets,
 } from 'lucide-react';
 
 const ACESSOS = [
@@ -18,6 +18,7 @@ const ACESSOS = [
   { titulo: 'Vínculos', desc: 'Pedidos de vínculo criança ↔ responsável', icon: ShieldCheck, path: '/ministerial/totem-kids/vinculos', cor: '#3b82f6' },
   { titulo: 'Equipe do Kids', desc: 'Voluntários por posição (salas, recepção...) + ficha', icon: UserCheck, path: '/ministerial/totem-kids/voluntarios', cor: '#14b8a6' },
   { titulo: 'Estoque por sala', desc: 'O que tem e o que deve ter em cada sala (Patrimônio)', icon: Boxes, path: '/ministerial/totem-kids/estoque', cor: '#f97316' },
+  { titulo: 'Batismos (crianças)', desc: 'Crianças pra batizar · contatar a família', icon: Droplets, path: '/ministerial/totem-kids/batismos', cor: '#0ea5e9' },
   { titulo: 'Decisões', desc: 'Decisões de fé registradas no Kids', icon: Sparkles, path: '/ministerial/totem-kids/decisoes', cor: '#8b5cf6' },
   { titulo: 'Painel ao vivo', desc: 'Quem está em cada sala agora', icon: Monitor, path: '/ministerial/totem-kids/painel', cor: '#f59e0b' },
   { titulo: 'Etiqueta (teste)', desc: 'Testar impressão da etiqueta', icon: Printer, path: '/ministerial/totem-kids/teste-etiqueta', cor: '#64748b' },
@@ -52,6 +53,7 @@ export default function KidsHub() {
     { label: 'Aniversariantes (semana)', valor: r.aniversariantes_semana, icon: Cake, cor: '#ec4899' },
     { label: 'Salas', valor: r.salas, icon: DoorOpen, cor: '#f59e0b', path: '/ministerial/totem-kids/configuracoes?aba=salas' },
     { label: 'Sessões abertas', valor: r.sessoes_abertas, icon: ScanLine, cor: '#8b5cf6', path: '/ministerial/totem-kids' },
+    { label: 'Crianças pra batizar', valor: r.batismos_criancas, icon: Droplets, cor: '#0ea5e9', path: '/ministerial/totem-kids/batismos', destaque: r.batismos_criancas > 0 },
   ];
 
   return (
@@ -64,7 +66,7 @@ export default function KidsHub() {
       </div>
 
       {/* Cards de resumo */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {STATS.map((s) => (
           <Card
             key={s.label}

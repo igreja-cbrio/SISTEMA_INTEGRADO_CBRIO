@@ -198,6 +198,7 @@ const GestaoCriancas = lazyWithRetry(() => import('./pages/ministerial/totemKids
 const KidsHub = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsHub'));
 const VoluntariosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariosKids'));
 const EstoqueKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/EstoqueKids'));
+const BatismosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/BatismosKids'));
 const TotemKidsCheckout = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsCheckout'));
 const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPainel'));
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
@@ -510,6 +511,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/criancas" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><GestaoCriancas /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/voluntarios" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariosKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/estoque" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><EstoqueKids /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/batismos" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><BatismosKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/checkout" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckout /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
