@@ -576,6 +576,50 @@ router.patch('/criancas/:id/inativar', authorizeModule('kids', 3), async (req, r
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar status' }); }
 });
 
+// GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
+// aniversariantes da semana. Alimenta o hub/dashboard do módulo.
+router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const [ativas, pend, salas, sess] = await Promise.all([
+      supabase.from('kids_criancas').select('id', { count: 'exact', head: true }).eq('ativo', true).is('deleted_at', null),
+      supabase.from('kids_vinculo_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'pendente').is('deleted_at', null),
+      supabase.from('kids_salas').select('id', { count: 'exact', head: true }),
+      supabase.from('kids_sessoes').select('id', { count: 'exact', head: true }).eq('status', 'aberta').is('deleted_at', null),
+    ]);
+    const { data: vinc } = await supabase.from('kids_vinculo_solicitacoes')
+      .select('id, crianca_nome, solicitante_nome, solicitante_parentesco, created_at')
+      .eq('status', 'pendente').is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(8);
+    const { data: kids } = await supabase.from('kids_criancas')
+      .select('id, nome, data_nascimento, foto_url')
+      .eq('ativo', true).is('deleted_at', null).not('data_nascimento', 'is', null).range(0, 999);
+    const hoje = new Date();
+    const dias = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(hoje); d.setDate(hoje.getDate() + i);
+      dias.push(`${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    }
+    const aniversariantes = (kids || [])
+      .filter((k) => dias.includes(String(k.data_nascimento).slice(5, 10)))
+      .map((k) => ({ id: k.id, nome: k.nome, data_nascimento: k.data_nascimento, foto_url: k.foto_url }))
+      .sort((a, b) => String(a.data_nascimento).slice(5).localeCompare(String(b.data_nascimento).slice(5)));
+    res.json({
+      resumo: {
+        criancas_ativas: ativas.count || 0,
+        vinculos_pendentes: pend.count || 0,
+        salas: salas.count || 0,
+        sessoes_abertas: sess.count || 0,
+        aniversariantes_semana: aniversariantes.length,
+      },
+      vinculos: vinc || [],
+      aniversariantes,
+    });
+  } catch (e) {
+    console.error('[totemKids] dashboard:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar dashboard' });
+  }
+});
+
 // GET /criancas/:id/jornada · família (membros) + frequência (check-ins por mês)
 // + conversão sugerida (1ª decisão de fé no check-in). Frequência fica vazia até
 // os check-ins do totem rodarem.

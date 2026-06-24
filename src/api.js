@@ -1190,6 +1190,7 @@ export const painelArea = {
 
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
 export const totemKids = {
+  dashboard: () => get('/totem-kids/dashboard'),
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),
     list: (params = {}) => {
