@@ -53,12 +53,16 @@ export default function TotemKidsTesteEtiqueta() {
           salaNome,
           salaCor,
           observacoesMedicas: obsMedica || null,
+          alergia: obsMedica || 'Amendoim',
+          fotoAutorizada: true,
+          aniversarioSemana: true,
         },
         responsavel: { nome: responsavelNome },
         codigoSeguranca,
         codigoBarras: codigoSeguranca,
         dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
         cultoNome,
+        cultoDiaHora: cultoNome,
       }, preview);
 
       if (preview) {
