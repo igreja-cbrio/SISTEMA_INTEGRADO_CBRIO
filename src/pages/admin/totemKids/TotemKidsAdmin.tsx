@@ -56,14 +56,12 @@ export default function TotemKidsAdmin() {
           <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>
           <TabsTrigger value="estacoes"><Printer className="h-4 w-4 mr-1" /> Estações</TabsTrigger>
           <TabsTrigger value="pagers"><Vibrate className="h-4 w-4 mr-1" /> Pagers</TabsTrigger>
-          <TabsTrigger value="criancas"><Baby className="h-4 w-4 mr-1" /> Crianças</TabsTrigger>
           <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>
         </TabsList>
         <TabsContent value="sessoes"><AbaSessoes /></TabsContent>
         <TabsContent value="salas"><AbaSalas /></TabsContent>
         <TabsContent value="estacoes"><AbaEstacoes /></TabsContent>
         <TabsContent value="pagers"><AbaPagers /></TabsContent>
-        <TabsContent value="criancas"><AbaCriancas /></TabsContent>
         <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>
       </Tabs>
     </div>

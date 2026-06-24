@@ -128,8 +128,7 @@ const NAV_ITEMS = [
         title: 'Ferramentas',
         items: [
           { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', perm: 'isAdmin' },
-          { label: 'Totem Kids', description: 'Check-in das crianças · sessões, salas, configuração tudo aqui', icon: Baby, path: '/ministerial/totem-kids', module: 'kids' },
-          { label: 'Crianças (Kids)', description: 'Gestão das crianças · ficha, atendimentos, frequência', icon: Baby, path: '/ministerial/totem-kids/criancas', module: 'kids' },
+          { label: 'Kids', description: 'Hub do ministério infantil · check-in, crianças, vínculos, config', icon: Baby, path: '/ministerial/kids', module: 'kids' },
         ],
       },
     ],
@@ -142,7 +141,7 @@ const NAV_ITEMS = [
         title: 'Visualização por culto',
         items: [
           { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/online', perm: 'canMembresia' },
-          { label: 'Kids', description: 'Indicadores do ministério infantil', icon: Baby, path: '/kids', module: 'kids' },
+          { label: 'Kids · Indicadores', description: 'KPIs e saúde do ministério infantil', icon: Baby, path: '/kids', module: 'kids' },
           { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ami', module: 'ami' },
           { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/bridge', module: 'bridge' },
         ],

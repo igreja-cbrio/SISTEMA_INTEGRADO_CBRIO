@@ -195,6 +195,7 @@ const PainelAmi = lazyWithRetry(() => import('./pages/ministerial/PainelAmi'));
 const PainelBridge = lazyWithRetry(() => import('./pages/ministerial/PainelBridge'));
 const TotemKidsCheckin = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsCheckin'));
 const GestaoCriancas = lazyWithRetry(() => import('./pages/ministerial/totemKids/GestaoCriancas'));
+const KidsHub = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsHub'));
 const TotemKidsCheckout = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsCheckout'));
 const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPainel'));
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
@@ -503,6 +504,7 @@ function AppRoutes() {
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         {/* Totem Kids · check-in/checkout/painel · 2026-05-21 */}
         <Route path="/ministerial/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckin /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsHub /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/criancas" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><GestaoCriancas /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/checkout" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckout /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
@@ -544,7 +546,6 @@ function AppRoutes() {
         <Route path="/marketing/triagem" element={<Navigate to="/marketing" replace />} />
         {/* Redirects das rotas antigas pra não quebrar bookmarks */}
         <Route path="/ministerial/online" element={<Navigate to="/online" replace />} />
-        <Route path="/ministerial/kids" element={<Navigate to="/kids" replace />} />
         <Route path="/ministerial/ami" element={<Navigate to="/ami" replace />} />
         <Route path="/ministerial/bridge" element={<Navigate to="/bridge" replace />} />
         <Route path="/ministerial/next" element={<Navigate to="/ministerial/integracao?tab=next" replace />} />
