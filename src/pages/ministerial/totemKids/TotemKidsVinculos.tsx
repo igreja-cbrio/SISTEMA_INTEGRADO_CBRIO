@@ -30,6 +30,9 @@ type Solicitacao = {
   crianca_data_nascimento: string | null;
   mae_nome: string | null;
   pai_nome: string | null;
+  serie: string | null;
+  necessidade_especial: string | null;
+  consent_marketing: boolean | null;
   status: string;
   motivo_rejeicao: string | null;
   observacao: string | null;
@@ -40,6 +43,8 @@ type Solicitacao = {
 
 type Detalhe = Solicitacao & {
   crianca_foto_url: string | null;
+  foto_mae_url: string | null;
+  foto_pai_url: string | null;
   // legado (solicitações antigas com documentos)
   crianca_doc_url: string | null;
   doc_pai_url: string | null;
@@ -233,6 +238,50 @@ export default function TotemKidsVinculos() {
                   <div>
                     <div className="text-muted-foreground text-xs">Pai</div>
                     <div className="font-medium">{detalhe.pai_nome || '—'}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Série + necessidade + consentimento de marketing */}
+              {(detalhe.serie || detalhe.necessidade_especial || detalhe.consent_marketing != null) && (
+                <div className="space-y-1.5 text-sm">
+                  {detalhe.serie && (
+                    <div><span className="text-muted-foreground text-xs">Série: </span>{detalhe.serie}</div>
+                  )}
+                  {detalhe.necessidade_especial && (
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
+                      <span className="text-amber-700 dark:text-amber-400 text-xs font-semibold">⚠ Necessidade / alergia: </span>
+                      {detalhe.necessidade_especial}
+                    </div>
+                  )}
+                  {detalhe.consent_marketing != null && (
+                    <div className="text-xs">
+                      <span className="text-muted-foreground">Uso de imagem em divulgação: </span>
+                      <span className={detalhe.consent_marketing ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
+                        {detalhe.consent_marketing ? 'Autorizado' : 'Não autorizado'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Fotos dos responsáveis (identificação na retirada) */}
+              {(detalhe.foto_mae_url || detalhe.foto_pai_url) && (
+                <div className="space-y-1.5">
+                  <div className="text-xs text-muted-foreground font-medium">Fotos dos responsáveis</div>
+                  <div className="flex gap-3">
+                    {detalhe.foto_mae_url && (
+                      <a href={detalhe.foto_mae_url} target="_blank" rel="noopener noreferrer" className="text-center">
+                        <img src={detalhe.foto_mae_url} alt="Mãe" className="h-20 w-20 rounded-lg object-cover border border-border" />
+                        <div className="text-[11px] text-muted-foreground mt-0.5">Mãe</div>
+                      </a>
+                    )}
+                    {detalhe.foto_pai_url && (
+                      <a href={detalhe.foto_pai_url} target="_blank" rel="noopener noreferrer" className="text-center">
+                        <img src={detalhe.foto_pai_url} alt="Pai" className="h-20 w-20 rounded-lg object-cover border border-border" />
+                        <div className="text-[11px] text-muted-foreground mt-0.5">Pai</div>
+                      </a>
+                    )}
                   </div>
                 </div>
               )}
