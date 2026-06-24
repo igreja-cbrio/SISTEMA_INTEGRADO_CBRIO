@@ -576,24 +576,48 @@ router.patch('/criancas/:id/inativar', authorizeModule('kids', 3), async (req, r
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar status' }); }
 });
 
-// ── Voluntários por sala (Mari Gaia define responsáveis de cada sala) ──────────
-// GET /salas-voluntarios · salas ativas + seus voluntários
-router.get('/salas-voluntarios', authorizeModule('kids', 1), async (req, res) => {
+// ── Equipe do Kids por posição (usa os times/posições do voluntariado · PCO) ──
+// As posições já existem no voluntariado (vol_teams "Kids"/"Apoio Kids"/"Vocal
+// Kids" → vol_positions: Baby, Little 3-4, Recepção, Coordenação...). Os
+// responsáveis do Kids alocam voluntários nessas posições gravando em
+// vol_team_members — 1 fonte de verdade, integrada com o voluntariado.
+async function kidsTeamsList() {
+  const { data } = await supabase.from('vol_teams')
+    .select('id, name, color, sort_order').ilike('name', '%kid%').eq('is_active', true);
+  return data || [];
+}
+const limparTime = (n) => String(n || '').replace(/^[-\s]+/, '');
+
+// GET /kids-equipe · times do Kids + posições + voluntários alocados
+router.get('/kids-equipe', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const { data: salas } = await supabase.from('kids_salas')
-      .select('id, nome, cor, faixa_etaria_min_meses, faixa_etaria_max_meses, capacidade, ordem')
-      .eq('ativo', true).order('ordem', { ascending: true });
-    const { data: vols } = await supabase.from('kids_sala_voluntarios')
-      .select('id, sala_id, vol_profile_id, membro_id, nome, telefone, papel, observacao, ativo')
-      .is('deleted_at', null).order('papel', { ascending: true });
-    const porSala = {};
-    (vols || []).forEach((v) => { (porSala[v.sala_id] = porSala[v.sala_id] || []).push(v); });
-    res.json((salas || []).map((s) => ({ ...s, voluntarios: porSala[s.id] || [] })));
-  } catch (e) { console.error('[totemKids] salas-voluntarios:', e.message); res.status(500).json({ error: 'Erro ao carregar' }); }
+    const teams = await kidsTeamsList();
+    if (!teams.length) return res.json([]);
+    const teamIds = teams.map((t) => t.id);
+    const [{ data: positions }, { data: membros }] = await Promise.all([
+      supabase.from('vol_positions').select('id, team_id, name, sort_order').in('team_id', teamIds).eq('is_active', true),
+      supabase.from('vol_team_members').select('id, team_id, position_id, volunteer_profile_id, volunteer_name').in('team_id', teamIds).eq('is_active', true),
+    ]);
+    const porPos = {}, semPos = {};
+    (membros || []).forEach((m) => {
+      if (m.position_id) (porPos[m.position_id] = porPos[m.position_id] || []).push(m);
+      else (semPos[m.team_id] = semPos[m.team_id] || []).push(m);
+    });
+    const out = teams
+      .sort((a, b) => (a.sort_order ?? 99) - (b.sort_order ?? 99) || a.name.localeCompare(b.name))
+      .map((t) => ({
+        team_id: t.id, team_nome: limparTime(t.name), cor: t.color,
+        posicoes: (positions || []).filter((p) => p.team_id === t.id)
+          .sort((a, b) => (a.sort_order ?? 99) - (b.sort_order ?? 99))
+          .map((p) => ({ position_id: p.id, nome: p.name, membros: porPos[p.id] || [] })),
+        sem_posicao: semPos[t.id] || [],
+      }));
+    res.json(out);
+  } catch (e) { console.error('[totemKids] kids-equipe:', e.message); res.status(500).json({ error: 'Erro ao carregar equipe' }); }
 });
 
-// GET /voluntarios/buscar?q= · busca voluntários (vol_profiles) pra atribuir
-router.get('/voluntarios/buscar', authorizeModule('kids', 1), async (req, res) => {
+// GET /kids-equipe/buscar?q= · busca voluntários (vol_profiles)
+router.get('/kids-equipe/buscar', authorizeModule('kids', 1), async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
     if (q.length < 2) return res.json([]);
@@ -604,81 +628,62 @@ router.get('/voluntarios/buscar', authorizeModule('kids', 1), async (req, res) =
   } catch (e) { res.status(500).json({ error: 'Erro na busca' }); }
 });
 
-// POST /salas/:salaId/voluntarios · atribui voluntário à sala
-router.post('/salas/:salaId/voluntarios', authorizeModule('kids', 3), async (req, res) => {
+// POST /kids-equipe/membro · aloca voluntário numa posição (ou no time)
+router.post('/kids-equipe/membro', authorizeModule('kids', 3), async (req, res) => {
   try {
-    const { vol_profile_id, membro_id, nome, telefone, papel, observacao } = req.body || {};
-    if (!nome) return res.status(400).json({ error: 'Nome do voluntário é obrigatório' });
-    const { data, error } = await supabase.from('kids_sala_voluntarios').insert({
-      sala_id: req.params.salaId,
-      vol_profile_id: vol_profile_id || null,
-      membro_id: membro_id || null,
-      nome: String(nome).trim(),
-      telefone: telefone || null,
-      papel: ['responsavel', 'voluntario', 'auxiliar'].includes(papel) ? papel : 'voluntario',
-      observacao: observacao || null,
-      created_by: req.user?.userId || null,
+    const { team_id, position_id, vol_profile_id, nome } = req.body || {};
+    if (!team_id || !vol_profile_id || !nome) return res.status(400).json({ error: 'Dados incompletos' });
+    let dup = supabase.from('vol_team_members').select('id').eq('team_id', team_id).eq('volunteer_profile_id', vol_profile_id).eq('is_active', true);
+    dup = position_id ? dup.eq('position_id', position_id) : dup.is('position_id', null);
+    const { data: existe } = await dup.maybeSingle();
+    if (existe) return res.status(409).json({ error: 'Voluntário já está nessa posição' });
+    const { data, error } = await supabase.from('vol_team_members').insert({
+      team_id, position_id: position_id || null, volunteer_profile_id: vol_profile_id,
+      volunteer_name: String(nome).trim(), is_active: true,
     }).select().single();
-    if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Voluntário já está nessa sala' });
-      throw error;
-    }
-    res.status(201).json(data);
-  } catch (e) { console.error('[totemKids] add sala vol:', e.message); res.status(500).json({ error: 'Erro ao atribuir' }); }
-});
-
-// PATCH /sala-voluntarios/:id · editar papel/observação/ativo
-router.patch('/sala-voluntarios/:id', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const upd = {};
-    for (const k of ['papel', 'observacao', 'ativo']) if (k in req.body) upd[k] = req.body[k];
-    upd.updated_at = new Date().toISOString();
-    const { data, error } = await supabase.from('kids_sala_voluntarios').update(upd).eq('id', req.params.id).select().single();
     if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao editar' }); }
+    res.status(201).json(data);
+  } catch (e) { console.error('[totemKids] kids-equipe add:', e.message); res.status(500).json({ error: 'Erro ao alocar' }); }
 });
 
-// DELETE /sala-voluntarios/:id · soft delete
-router.delete('/sala-voluntarios/:id', authorizeModule('kids', 3), async (req, res) => {
+// DELETE /kids-equipe/membro/:id · remove (desativa o vínculo)
+router.delete('/kids-equipe/membro/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
-    const { error } = await supabase.from('kids_sala_voluntarios').update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    const { error } = await supabase.from('vol_team_members').update({ is_active: false }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao remover' }); }
 });
 
-// GET /sala-voluntarios/:id/ficha · ficha do voluntário (perfil + antecedentes + salas)
-router.get('/sala-voluntarios/:id/ficha', authorizeModule('kids', 1), async (req, res) => {
+// GET /kids-equipe/membro/:volProfileId/ficha · ficha do voluntário
+router.get('/kids-equipe/membro/:volProfileId/ficha', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const { data: reg } = await supabase.from('kids_sala_voluntarios')
-      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
-    if (!reg) return res.status(404).json({ error: 'Não encontrado' });
-    let perfil = null, antecedentes = null, salas = [];
-    if (reg.vol_profile_id) {
-      const { data: p } = await supabase.from('vol_profiles')
-        .select('id, full_name, email, phone, cpf, avatar_url, membresia_id, profile_complete')
-        .eq('id', reg.vol_profile_id).maybeSingle();
-      perfil = p || null;
-    }
-    const membroId = reg.membro_id || perfil?.membresia_id;
-    if (membroId) {
+    const { data: p } = await supabase.from('vol_profiles')
+      .select('id, full_name, email, phone, cpf, avatar_url, membresia_id, profile_complete').eq('id', req.params.volProfileId).maybeSingle();
+    if (!p) return res.status(404).json({ error: 'Voluntário não encontrado' });
+    let antecedentes = null;
+    if (p.membresia_id) {
       const { data: bc } = await supabase.from('vol_background_checks')
-        .select('status, resultado, consulta_em, revisado_em, area').eq('membro_id', membroId).is('deleted_at', null)
+        .select('status, resultado, consulta_em, revisado_em, area').eq('membro_id', p.membresia_id).is('deleted_at', null)
         .order('created_at', { ascending: false }).limit(1);
       antecedentes = (bc || [])[0] || null;
     }
-    const orFilter = [
-      reg.vol_profile_id ? `vol_profile_id.eq.${reg.vol_profile_id}` : null,
-      membroId ? `membro_id.eq.${membroId}` : null,
-    ].filter(Boolean).join(',');
-    if (orFilter) {
-      const { data: outras } = await supabase.from('kids_sala_voluntarios')
-        .select('papel, sala:kids_salas(id, nome)').or(orFilter).is('deleted_at', null);
-      salas = (outras || []).map((o) => ({ nome: o.sala?.nome, papel: o.papel })).filter((s) => s.nome);
+    const teams = await kidsTeamsList();
+    const teamIds = teams.map((t) => t.id);
+    let posicoes = [];
+    if (teamIds.length) {
+      const { data: tm } = await supabase.from('vol_team_members')
+        .select('team_id, position_id').eq('volunteer_profile_id', p.id).eq('is_active', true).in('team_id', teamIds);
+      const posIds = (tm || []).map((m) => m.position_id).filter(Boolean);
+      const { data: posRows } = posIds.length
+        ? await supabase.from('vol_positions').select('id, name').in('id', posIds)
+        : { data: [] };
+      const posMap = Object.fromEntries((posRows || []).map((r) => [r.id, r.name]));
+      const teamMap = Object.fromEntries(teams.map((t) => [t.id, limparTime(t.name)]));
+      posicoes = (tm || []).map((m) => ({ time: teamMap[m.team_id], posicao: m.position_id ? posMap[m.position_id] : null }));
     }
-    res.json({ registro: reg, perfil, antecedentes, salas });
-  } catch (e) { console.error('[totemKids] ficha vol:', e.message); res.status(500).json({ error: 'Erro ao carregar ficha' }); }
+    res.json({ perfil: p, antecedentes, posicoes });
+  } catch (e) { console.error('[totemKids] ficha equipe:', e.message); res.status(500).json({ error: 'Erro na ficha' }); }
 });
 
 // GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
