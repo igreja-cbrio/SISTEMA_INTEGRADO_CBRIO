@@ -2,6 +2,7 @@
 // desativar, e ficha completa com aba de Atendimentos (histórico de contatos).
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { totemKids as api } from '../../../api';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -11,7 +12,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 const FAIXAS = [
@@ -35,6 +36,7 @@ export default function GestaoCriancas() {
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
+  const navigate = useNavigate();
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -63,6 +65,7 @@ export default function GestaoCriancas() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
+      <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao hub do Kids</button>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2"><Baby className="h-5 w-5 text-primary" /> Crianças do Kids</h1>
@@ -139,6 +142,7 @@ export default function GestaoCriancas() {
 
 // ── Ficha da criança (Dados + Atendimentos) ──────────────────────────────────
 function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; onClose: () => void; onChanged: () => void }) {
+  const navigate = useNavigate();
   const [c, setC] = useState<any>(null);
   const [aba, setAba] = useState<'dados' | 'frequencia' | 'atendimentos'>('dados');
   const [atend, setAtend] = useState<any[]>([]);
@@ -174,7 +178,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
@@ -226,7 +230,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                 {(c.responsaveis || []).map((r: any) => (
                   <div key={r.id} className="flex items-center gap-2 rounded-md border border-border p-2">
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{r.membro?.nome || '—'}</div>
+                      {r.membro?.id ? <button onClick={() => navigate(`/ministerial/membresia?membro=${r.membro.id}`)} className="font-medium truncate text-left text-primary hover:underline">{r.membro?.nome || '—'}</button> : <div className="font-medium truncate">{r.membro?.nome || '—'}</div>}
                       <div className="text-xs text-muted-foreground">{r.parentesco}{r.autorizado_buscar ? ' · autorizado a buscar' : ''}</div>
                     </div>
                     {r.membro?.telefone && <a href={`https://wa.me/55${String(r.membro.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-4 w-4" /></a>}
@@ -356,6 +360,7 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
 // ── Aba Frequência e jornada (gráfico + conversão/batismo + família) ──────────
 function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; onChanged: () => void }) {
+  const navigate = useNavigate();
   const [j, setJ] = useState<any>(null);
   const [conv, setConv] = useState<string>(c?.data_conversao || '');
   const [bat, setBat] = useState<string>(c?.data_batismo || '');
@@ -417,7 +422,7 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
           <div className="space-y-1">
             {j.familia_membros.map((m: any) => (
               <div key={m.id} className="flex items-center gap-2 rounded-md border border-border p-1.5 text-xs">
-                <span className="flex-1 truncate">{m.nome}</span>
+                <button onClick={() => navigate(`/ministerial/membresia?membro=${m.id}`)} className="flex-1 truncate text-left text-primary hover:underline">{m.nome}</button>
                 {m.telefone && <a href={`https://wa.me/55${String(m.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-3.5 w-3.5" /></a>}
               </div>
             ))}
