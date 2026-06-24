@@ -1086,33 +1086,36 @@ router.post('/kids/filho/:id/foto/remover', authApp, async (req, res) => {
 });
 
 // POST /api/app/kids/solicitar-vinculo — o responsável pede pra ser vinculado a
-// uma criança e envia os documentos (criança + pai e/ou mãe). NÃO vincula
+// uma criança informando o nome da criança + o nome dos pais (mãe e/ou pai), e
+// opcionalmente uma foto da criança (com consentimento ECA/LGPD). NÃO vincula
 // automaticamente: vira solicitação pendente que a equipe Kids confere e aprova.
-// Os documentos já foram enviados pelo app pro bucket privado kids-documentos;
-// aqui recebemos só os PATHS (que precisam estar na pasta do próprio usuário).
+// (Documentos de identidade foram descontinuados; campos legados doc_* seguem
+// aceitos pra não quebrar versões antigas do app durante a transição.)
 router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) => {
   try {
     const {
       crianca_nome, crianca_data_nascimento, parentesco, observacao,
+      mae_nome, pai_nome,
+      crianca_foto_path, foto_consentimento, foto_consentimento_versao,
+      // legado (versões antigas do app)
       crianca_doc_path, doc_pai_path, doc_mae_path,
     } = req.body || {};
 
     if (!crianca_nome || !String(crianca_nome).trim()) {
       return res.status(400).json({ error: 'Informe o nome da criança' });
     }
-    if (!crianca_doc_path) {
-      return res.status(400).json({ error: 'Envie o documento da criança' });
-    }
-    if (!doc_pai_path && !doc_mae_path) {
-      return res.status(400).json({ error: 'Envie o documento do pai e/ou da mãe' });
+    const temNomePais = (mae_nome && String(mae_nome).trim()) || (pai_nome && String(pai_nome).trim());
+    const temDocLegado = doc_pai_path || doc_mae_path;
+    if (!temNomePais && !temDocLegado) {
+      return res.status(400).json({ error: 'Informe o nome da mãe e/ou do pai' });
     }
 
-    // Segurança: cada documento tem que estar na pasta do próprio usuário
-    // ({auth.uid}/...). Impede apontar arquivo de outra pessoa.
+    // Segurança: qualquer arquivo apontado tem que estar na pasta do próprio
+    // usuário ({auth.uid}/...). Impede apontar arquivo de outra pessoa.
     const prefixo = `${req.user.id}/`;
-    const paths = [crianca_doc_path, doc_pai_path, doc_mae_path].filter(Boolean);
+    const paths = [crianca_foto_path, crianca_doc_path, doc_pai_path, doc_mae_path].filter(Boolean);
     if (paths.some((p) => !String(p).startsWith(prefixo))) {
-      return res.status(403).json({ error: 'Documento inválido.' });
+      return res.status(403).json({ error: 'Arquivo inválido.' });
     }
 
     const membro = await resolveMembroApp(req);
@@ -1120,6 +1123,7 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
 
     const parentescosOk = ['mae', 'pai', 'avo_a', 'tio_a', 'tutor', 'outro'];
     const parent = parentescosOk.includes(parentesco) ? parentesco : 'outro';
+    const comFoto = !!(crianca_foto_path && foto_consentimento);
 
     const { data: criado, error } = await supabase
       .from('kids_vinculo_solicitacoes')
@@ -1130,7 +1134,12 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
         solicitante_parentesco: parent,
         crianca_nome: String(crianca_nome).trim(),
         crianca_data_nascimento: crianca_data_nascimento || null,
-        crianca_doc_path,
+        mae_nome: mae_nome ? String(mae_nome).trim() : null,
+        pai_nome: pai_nome ? String(pai_nome).trim() : null,
+        crianca_foto_path: comFoto ? crianca_foto_path : null,
+        foto_consentimento_em: comFoto ? new Date().toISOString() : null,
+        foto_consentimento_versao: comFoto ? (foto_consentimento_versao || 'eca-lgpd-v1') : null,
+        crianca_doc_path: crianca_doc_path || null,
         doc_pai_path: doc_pai_path || null,
         doc_mae_path: doc_mae_path || null,
         observacao: observacao ? String(observacao).trim() : null,
@@ -1143,7 +1152,7 @@ router.post('/kids/solicitar-vinculo', authApp, limiterStrict, async (req, res) 
       modulo: 'kids',
       tipo: 'kids_vinculo_solicitacao',
       titulo: 'Nova solicitação de vínculo Kids',
-      mensagem: `${membro.nome} pediu vínculo com ${String(crianca_nome).trim()}. Confira os documentos e aprove.`,
+      mensagem: `${membro.nome} pediu vínculo com ${String(crianca_nome).trim()}. Confira e aprove.`,
       link: '/ministerial/totem-kids/vinculos',
       severidade: 'aviso',
       chaveDedup: `kids_vinculo_${criado.id}`,

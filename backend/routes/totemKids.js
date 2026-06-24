@@ -2184,11 +2184,14 @@ router.get('/vinculo-solicitacoes/:id', authorizeModule('kids', 2), async (req, 
       const { data } = await supabase.storage.from('kids-documentos').createSignedUrl(path, 900);
       return data?.signedUrl || null;
     };
-    const [crianca_doc_url, doc_pai_url, doc_mae_url] = await Promise.all([
+    // Foto da criança só é exibida com consentimento registrado. Docs legados
+    // (versões antigas do app) seguem assinados pra triagem das pendentes.
+    const [crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url] = await Promise.all([
+      s.foto_consentimento_em ? signed(s.crianca_foto_path) : null,
       signed(s.crianca_doc_path), signed(s.doc_pai_path), signed(s.doc_mae_path),
     ]);
 
-    res.json({ ...s, crianca_doc_url, doc_pai_url, doc_mae_url });
+    res.json({ ...s, crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url });
   } catch (e) {
     console.error('[TOTEM-KIDS] vinculo-solicitacoes detalhe:', e.message);
     res.status(500).json({ error: 'Erro ao abrir solicitação' });
