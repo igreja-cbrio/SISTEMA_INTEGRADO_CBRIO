@@ -753,6 +753,33 @@ export default function Membresia() {
   const [loadingWifi, setLoadingWifi] = useState(false);
   const [faceHist, setFaceHist] = useState(null); // { total, ultima, itens: [] }
   const [loadingFace, setLoadingFace] = useState(false);
+  const [possiveisDup, setPossiveisDup] = useState([]);
+  const [fundindo, setFundindo] = useState(false);
+
+  // Possíveis duplicados desta pessoa (mesmo nome/telefone/email/cpf)
+  useEffect(() => {
+    if (!selectedMembro?.id) { setPossiveisDup([]); return; }
+    let cancelado = false;
+    membresia.duplicados.doMembro(selectedMembro.id)
+      .then(r => { if (!cancelado) setPossiveisDup(Array.isArray(r) ? r : []); })
+      .catch(() => { if (!cancelado) setPossiveisDup([]); });
+    return () => { cancelado = true; };
+  }, [selectedMembro?.id]);
+
+  async function fundirDuplicado(d) {
+    if (!selectedMembro?.id) return;
+    if (!window.confirm(`Fundir "${d.nome}" nesta pessoa? Os dados do duplicado migram pra cá e o duplicado é removido.`)) return;
+    setFundindo(true);
+    try {
+      await membresia.duplicados.merge({ keep_id: selectedMembro.id, merge_ids: [d.id], observacao: 'Fundido pelo detalhe da pessoa' });
+      setPossiveisDup(prev => prev.filter(x => x.id !== d.id));
+      openDetail(selectedMembro.id);
+    } catch (e) {
+      window.alert(e?.message || 'Erro ao fundir');
+    } finally {
+      setFundindo(false);
+    }
+  }
 
   // Histórico de devocionais (check-ins do app) · carrega ao abrir a aba
   useEffect(() => {
@@ -1523,6 +1550,27 @@ export default function Membresia() {
             </div>
 
             <div style={{ padding: '20px 32px 28px' }}>
+              {possiveisDup.length > 0 && (
+                <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 14 }}>⚠️</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{possiveisDup.length} possível(is) duplicado(s) desta pessoa</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {possiveisDup.map(d => (
+                      <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--cbrio-card)', borderRadius: 8 }}>
+                        <button type="button" onClick={() => openDetail(d.id)} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{d.nome}</div>
+                          <div style={{ fontSize: 11, color: C.text3 }}>{(d.motivos || []).join(' · ')}{d.familia?.nome ? ` · ${d.familia.nome}` : ''}</div>
+                        </button>
+                        {isDiretor && (
+                          <Button variant="outline" size="sm" onClick={() => fundirDuplicado(d)} disabled={fundindo}>Fundir nesta</Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <Tabs value={activeTab} onValueChange={setActiveTab}>
                 {/* flex-wrap: todas as categorias visíveis (sem arrastar pro lado) */}
                 <TabsList className="flex h-auto w-full flex-wrap justify-start bg-transparent p-0 gap-1 border-b border-border rounded-none mb-4">

@@ -1549,6 +1549,7 @@ export const membresia = {
     },
     ignorar: (data) => post('/membresia/duplicados/ignorar', data),
     merge: (data) => post('/membresia/membros/merge', data),
+    doMembro: (id) => get(`/membresia/membros/${id}/possiveis-duplicados`),
     log: (params = {}) => {
       const qs = new URLSearchParams(params).toString();
       return get('/membresia/merge-log' + (qs ? '?' + qs : ''));
