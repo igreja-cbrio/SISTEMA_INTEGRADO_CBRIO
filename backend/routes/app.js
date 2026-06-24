@@ -1317,6 +1317,58 @@ router.get('/videos', authApp, async (req, res) => {
   }
 });
 
+// GET /api/app/pense-ultimo — último vídeo do canal Pense (Pr. Pedrão ·
+// @CanalPense), pro atalho na aba Devocional. Resolve o handle → playlist de
+// uploads → vídeo mais recente, via YouTube Data API. Cache em memória (3h)
+// pra poupar quota. Sem chave/erro → { video: null } (o app esconde o card).
+const PENSE_HANDLE = process.env.YOUTUBE_PENSE_HANDLE || 'CanalPense';
+let _penseCache = { at: 0, uploads: null, video: null };
+router.get('/pense-ultimo', authApp, async (req, res) => {
+  try {
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) return res.json({ video: null });
+
+    const TTL = 3 * 60 * 60 * 1000; // 3h
+    if (_penseCache.video && Date.now() - _penseCache.at < TTL) {
+      return res.json({ video: _penseCache.video });
+    }
+
+    const yt = async (path) => {
+      const r = await fetch(`https://www.googleapis.com/youtube/v3/${path}&key=${apiKey}`);
+      if (!r.ok) throw new Error(`YouTube ${r.status}`);
+      return r.json();
+    };
+
+    // 1) handle → playlist de uploads (resolve 1x, fica em cache)
+    let uploads = _penseCache.uploads;
+    if (!uploads) {
+      const ch = await yt(`channels?part=contentDetails&forHandle=${encodeURIComponent(PENSE_HANDLE)}`);
+      uploads = ch?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || null;
+      _penseCache.uploads = uploads;
+    }
+    if (!uploads) return res.json({ video: null });
+
+    // 2) item mais recente da playlist de uploads
+    const pl = await yt(`playlistItems?part=snippet&maxResults=1&playlistId=${uploads}`);
+    const sn = pl?.items?.[0]?.snippet;
+    const videoId = sn?.resourceId?.videoId;
+    if (!videoId) return res.json({ video: null });
+
+    const th = sn.thumbnails || {};
+    const video = {
+      video_id: videoId,
+      titulo: sn.title || 'Pense',
+      thumbnail_url: (th.maxres || th.high || th.medium || th.default)?.url || null,
+      publicado_em: sn.publishedAt || null,
+    };
+    _penseCache = { at: Date.now(), uploads, video };
+    res.json({ video });
+  } catch (e) {
+    console.error('[APP] pense-ultimo:', e.message);
+    res.json({ video: _penseCache.video || null });
+  }
+});
+
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
 router.get('/culto/agora', authApp, async (req, res) => {
   try {

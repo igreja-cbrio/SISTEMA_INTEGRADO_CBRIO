@@ -4,10 +4,15 @@
 
 const router = require('express').Router();
 const Anthropic = require('@anthropic-ai/sdk');
+const multer = require('multer');
+const mammoth = require('mammoth');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const devSender = require('../services/devocionalSender');
 const { isAuthorizedCron } = require('../utils/cronAuth');
+
+// Upload do .docx do devocional da semana (em memória · 10MB)
+const uploadDocx = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ─────────────────────────────────────────────────────────────
 // GET|POST /api/devocional-planos/cron/enviar-diario
@@ -322,6 +327,58 @@ Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAl
   return rows;
 }
 
+// Estrutura o TEXTO BRUTO de um .docx (devocionais da semana escritos pelo
+// pastor) em itens. NÃO gera conteúdo — apenas SEGMENTA e EXTRAI fielmente
+// (Haiku). Retorna array na ordem do documento: { passagem, titulo,
+// passagem_texto, reflexao, aplicacao, autor }.
+async function estruturarDocxViaIA(texto) {
+  const client = new Anthropic();
+  const systemPrompt = `Você recebe o TEXTO BRUTO de um documento (.docx) com devocionais diários escritos por um pastor — normalmente um por dia da semana. Sua tarefa é SEGMENTAR o documento em devocionais e EXTRAIR os campos de cada um.
+
+REGRA DE OURO: copie o texto FIELMENTE, exatamente como está. NÃO reescreva, NÃO resuma, NÃO corrija, NÃO complete, NÃO invente nada. Se um campo não existir, retorne null.
+
+Cada devocional do documento costuma ter:
+- Uma LINHA DE TÍTULO no formato "<Livro Cap-Cap> – <Tema>" (ex.: "Jó 1-6 – Bancando o forte").
+- Um VERSÍCULO em destaque entre aspas, com a referência entre parênteses, logo abaixo do título.
+- O CORPO da reflexão (um ou mais parágrafos de meditação).
+- Uma linha de APLICAÇÃO que costuma começar com "Viva esta mensagem", "Pratique esta mensagem" ou equivalente.
+- O AUTOR, normalmente após "Escrito por".
+
+Para cada devocional, extraia:
+- "passagem": a referência de leitura do título (ex.: "Jó 1-6"). Sem o tema.
+- "titulo": o tema do título, depois do travessão (ex.: "Bancando o forte").
+- "passagem_texto": o versículo em destaque, copiado na íntegra COM a referência entre parênteses, exatamente como no documento.
+- "reflexao": o corpo da reflexão, com todos os parágrafos, exatamente como escrito.
+- "aplicacao": o parágrafo de aplicação (linha "Viva/Pratique esta mensagem..."), exatamente como escrito, ou null.
+- "autor": o nome do autor (após "Escrito por"), ou null.`;
+
+  const userPrompt = `Segmente e extraia os devocionais do documento abaixo. Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON), na ORDEM em que aparecem, no formato:
+[
+  { "passagem": "...", "titulo": "...", "passagem_texto": "...", "reflexao": "...", "aplicacao": "...", "autor": "..." }
+]
+
+=== DOCUMENTO ===
+${texto}`;
+
+  const resp = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 8000,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+
+  const text = resp.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
+  const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+  let arr;
+  try { arr = JSON.parse(cleaned); }
+  catch (err) {
+    console.error('docx IA JSON parse error:', err.message, 'raw:', text.slice(0, 500));
+    throw new Error('Não consegui ler o formato do documento. Confira se ele segue o modelo.');
+  }
+  if (!Array.isArray(arr)) throw new Error('Estrutura inesperada do documento');
+  return arr.filter(o => o && o.titulo && o.reflexao);
+}
+
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-planos/:id/gerar-ia
 // body: { tema?, tom?, sobrescrever?, apenas_datas?: string[] }
@@ -408,6 +465,107 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
 // ─────────────────────────────────────────────────────────────
 // PUT /api/devocional-planos/itens/:id — editar item
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// POST /api/devocional-planos/:id/carregar-docx — upload do .docx da semana
+// (campo "arquivo") · extrai o texto, segmenta em itens (1 por dia) e
+// preenche os dias do plano em ordem. ?sobrescrever=1 substitui itens
+// existentes nas mesmas datas. O pastor sobe 1 arquivo com a semana toda.
+// ─────────────────────────────────────────────────────────────
+router.post('/:id/carregar-docx', authorize('admin', 'diretor'), uploadDocx.single('arquivo'), async (req, res) => {
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY não configurada' });
+    }
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'Envie o arquivo .docx em "arquivo"' });
+    }
+    const nome = String(req.file.originalname || '').toLowerCase();
+    if (!nome.endsWith('.docx')) {
+      return res.status(400).json({ error: 'Apenas arquivos .docx são aceitos' });
+    }
+
+    const { data: plano, error: ePlano } = await supabase
+      .from('devocional_planos')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (ePlano || !plano) return res.status(404).json({ error: 'Plano não encontrado' });
+
+    // 1) extrai o texto bruto do .docx
+    const { value: texto } = await mammoth.extractRawText({ buffer: req.file.buffer });
+    if (!texto || texto.trim().length < 40) {
+      return res.status(400).json({ error: 'Não consegui ler texto no documento.' });
+    }
+
+    // 2) segmenta/estrutura fielmente (sem gerar conteúdo)
+    const extraidos = await estruturarDocxViaIA(texto);
+    if (extraidos.length === 0) {
+      return res.status(422).json({ error: 'Nenhum devocional reconhecido no documento.' });
+    }
+
+    // 3) distribui nos dias do plano, em ordem (1 por dia). Se o documento
+    //    tiver mais dias que o plano (ex.: semana de 7 dias num plano de 5),
+    //    estende a data_fim do plano pra caber tudo (cap 14 dias).
+    let dias = eachDay(plano.data_inicio, plano.data_fim);
+    const alvo = Math.min(extraidos.length, 14);
+    if (alvo > dias.length) {
+      const ultimo = parseDate(plano.data_inicio);
+      ultimo.setUTCDate(ultimo.getUTCDate() + (alvo - 1));
+      const dataFimNova = fmtDate(ultimo);
+      await supabase.from('devocional_planos').update({ data_fim: dataFimNova }).eq('id', plano.id);
+      plano.data_fim = dataFimNova;
+      dias = eachDay(plano.data_inicio, plano.data_fim);
+    }
+    const usados = Math.min(extraidos.length, dias.length);
+    const rows = [];
+    for (let i = 0; i < usados; i++) {
+      const o = extraidos[i];
+      const reflexao = o.autor
+        ? `${String(o.reflexao).trim()}\n\n— Escrito por ${String(o.autor).trim()}`
+        : String(o.reflexao).trim();
+      rows.push({
+        plano_id: plano.id,
+        data: dias[i],
+        titulo: String(o.titulo).slice(0, 200),
+        passagem: o.passagem ? String(o.passagem).slice(0, 100) : null,
+        passagem_texto: o.passagem_texto ? String(o.passagem_texto) : null,
+        reflexao,
+        aplicacao: o.aplicacao ? String(o.aplicacao) : null,
+        oracao: null,
+        gerado_por_ia: false, // conteúdo é do pastor; IA só segmentou
+      });
+    }
+
+    // 4) sobrescrever: limpa os itens dessas datas antes de inserir
+    const sobrescrever = req.query.sobrescrever === '1' || req.query.sobrescrever === 'true';
+    if (sobrescrever) {
+      await supabase
+        .from('devocional_itens')
+        .delete()
+        .eq('plano_id', plano.id)
+        .in('data', rows.map(r => r.data));
+    }
+
+    const { error: eIns } = await supabase.from('devocional_itens').insert(rows);
+    if (eIns) {
+      if (eIns.code === '23505') {
+        return res.status(409).json({ error: 'Já existem itens em algumas datas. Use "substituir" para regravar.' });
+      }
+      throw eIns;
+    }
+
+    res.status(201).json({
+      criados: rows.length,
+      reconhecidos: extraidos.length,
+      dias_do_plano: dias.length,
+      ignorados: Math.max(0, extraidos.length - usados),
+    });
+  } catch (e) {
+    console.error('devocional-planos carregar-docx:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao carregar o documento' });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // POST /api/devocional-planos/:id/itens — criar item manualmente
 // body: { data, título, passagem?, reflexao, aplicação?, oração? }
