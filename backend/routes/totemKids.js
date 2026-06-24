@@ -787,15 +787,36 @@ router.post('/estoque/:id/patrimonio', authorizeModule('kids', 3), async (req, r
   } catch (e) { console.error('[totemKids] estoque->patrimonio:', e.message); res.status(500).json({ error: 'Erro ao registrar no patrimônio' }); }
 });
 
+// GET /batismos · crianças inscritas pra batismo (eh_crianca ou <13 anos) · a
+// equipe Kids contata a família. Aparece também na Integração (não duplica dado).
+router.get('/batismos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const corte = new Date(); corte.setFullYear(corte.getFullYear() - 13);
+    const corteISO = corte.toISOString().slice(0, 10);
+    const { data } = await supabase.from('batismo_inscricoes')
+      .select('id, nome, sobrenome, data_nascimento, telefone, email, status, data_batismo, horario_culto, possui_deficiencia, deficiencia_descricao, observacoes, created_at, membro_id')
+      .is('deleted_at', null)
+      .or(`eh_crianca.eq.true,data_nascimento.gte.${corteISO}`)
+      .order('data_batismo', { ascending: true, nullsFirst: false })
+      .limit(500);
+    res.json(data || []);
+  } catch (e) {
+    console.error('[totemKids] batismos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar batismos' });
+  }
+});
+
 // GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
 // aniversariantes da semana. Alimenta o hub/dashboard do módulo.
 router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const [ativas, pend, salas, sess] = await Promise.all([
+    const corteBat = new Date(); corteBat.setFullYear(corteBat.getFullYear() - 13);
+    const [ativas, pend, salas, sess, bat] = await Promise.all([
       supabase.from('kids_criancas').select('id', { count: 'exact', head: true }).eq('ativo', true).is('deleted_at', null),
       supabase.from('kids_vinculo_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'pendente').is('deleted_at', null),
       supabase.from('kids_salas').select('id', { count: 'exact', head: true }),
       supabase.from('kids_sessoes').select('id', { count: 'exact', head: true }).eq('status', 'aberta').is('deleted_at', null),
+      supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true }).is('deleted_at', null).neq('status', 'realizado').or(`eh_crianca.eq.true,data_nascimento.gte.${corteBat.toISOString().slice(0, 10)}`),
     ]);
     const { data: vinc } = await supabase.from('kids_vinculo_solicitacoes')
       .select('id, crianca_nome, solicitante_nome, solicitante_parentesco, created_at')
@@ -821,6 +842,7 @@ router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
         salas: salas.count || 0,
         sessoes_abertas: sess.count || 0,
         aniversariantes_semana: aniversariantes.length,
+        batismos_criancas: bat.count || 0,
       },
       vinculos: vinc || [],
       aniversariantes,
