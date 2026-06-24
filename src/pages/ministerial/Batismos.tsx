@@ -157,11 +157,25 @@ function BatismoHorarios() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const salvar = async (id: string, body: any) => {
-    setBusy(id);
-    try { await kpisApi.batismos.horarios.update(id, body); await load(); }
-    catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
+  // Atualização OTIMISTA: a UI muda na hora; persiste em background e reverte se
+  // falhar. Sem re-fetch bloqueante (era o que deixava o painel "atrasado").
+  const patchLocal = (id: string, patch: any) =>
+    setInfo(prev => ({ ...prev, horarios: prev.horarios.map(h => h.id === id ? { ...h, ...patch } : h) }));
+
+  const aplicar = async (h: any, body: any, anterior: any) => {
+    setBusy(h.id);
+    patchLocal(h.id, body);
+    try { await kpisApi.batismos.horarios.update(h.id, body); }
+    catch (e: any) { patchLocal(h.id, anterior); toast.error(e?.message || 'Não foi possível atualizar'); }
     finally { setBusy(null); }
+  };
+
+  const toggleAberto = (h: any) => aplicar(h, { aberto: !h.aberto }, { aberto: h.aberto });
+  const salvarLimite = (h: any, raw: string) => {
+    const v = String(raw).trim();
+    const novo = v === '' ? null : Math.max(0, parseInt(v, 10) || 0);
+    if (novo === (h.limite ?? null)) return;
+    aplicar(h, { limite: novo }, { limite: h.limite });
   };
 
   const dataFmt = info.data_batismo
@@ -201,17 +215,13 @@ function BatismoHorarios() {
                   type="number" min="0" className="w-20 h-8"
                   defaultValue={h.limite ?? ''}
                   placeholder="—"
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    const novo = v === '' ? null : Math.max(0, parseInt(v, 10) || 0);
-                    if (novo !== (h.limite ?? null)) salvar(h.id, { limite: novo });
-                  }}
+                  onBlur={(e) => salvarLimite(h, e.target.value)}
                 />
               </div>
               <Badge variant={h.aberto ? 'default' : 'secondary'}>{h.aberto ? 'Aberto' : 'Fechado'}</Badge>
               <Button
-                size="sm" variant="outline" disabled={busy === h.id}
-                onClick={() => salvar(h.id, { aberto: !h.aberto })}
+                size="sm" variant={h.aberto ? 'outline' : 'default'} disabled={busy === h.id}
+                onClick={() => toggleAberto(h)}
               >
                 {busy === h.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : (h.aberto ? 'Fechar' : 'Abrir')}
               </Button>
