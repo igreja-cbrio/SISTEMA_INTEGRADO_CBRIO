@@ -860,53 +860,82 @@ function ModalNovaCrianca(props: {
   nomeInicial: string;
   onCadastrado: (c: Crianca) => void;
 }) {
+  const [modo, setModo] = useState<'novo' | 'amigo'>('novo');
   const [criancaNome, setCriancaNome] = useState('');
   const [criancaNasc, setCriancaNasc] = useState('');
   const [criancaSexo, setCriancaSexo] = useState('');
-  const [criancaObsMed, setCriancaObsMed] = useState('');
+  // Saúde
+  const [temAlergia, setTemAlergia] = useState(false);
+  const [alergiaQual, setAlergiaQual] = useState('');
+  const [temEspectro, setTemEspectro] = useState(false);
+  const [espectroQual, setEspectroQual] = useState('');
+  const [temLimitacao, setTemLimitacao] = useState(false);
+  const [limitacaoQual, setLimitacaoQual] = useState('');
+  const [obsMed, setObsMed] = useState('');
+  // Responsável (modo novo)
   const [respNome, setRespNome] = useState('');
   const [respTel, setRespTel] = useState('');
   const [respCpf, setRespCpf] = useState('');
   const [respParentesco, setRespParentesco] = useState('mae');
+  // Amigo de (modo amigo)
+  const [amigoBusca, setAmigoBusca] = useState('');
+  const [amigoResultados, setAmigoResultados] = useState<any[]>([]);
+  const [amigoBuscando, setAmigoBuscando] = useState(false);
+  const [amigoSel, setAmigoSel] = useState<any>(null);
   const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
     if (props.open) {
-      setCriancaNome(props.nomeInicial);
-      setCriancaNasc('');
-      setCriancaSexo('');
-      setCriancaObsMed('');
-      setRespNome('');
-      setRespTel('');
-      setRespCpf('');
-      setRespParentesco('mae');
+      setModo('novo'); setCriancaNome(props.nomeInicial); setCriancaNasc(''); setCriancaSexo('');
+      setTemAlergia(false); setAlergiaQual(''); setTemEspectro(false); setEspectroQual('');
+      setTemLimitacao(false); setLimitacaoQual(''); setObsMed('');
+      setRespNome(''); setRespTel(''); setRespCpf(''); setRespParentesco('mae');
+      setAmigoBusca(''); setAmigoResultados([]); setAmigoSel(null);
     }
   }, [props.open, props.nomeInicial]);
 
+  useEffect(() => {
+    if (modo !== 'amigo' || amigoBusca.trim().length < 2) { setAmigoResultados([]); return; }
+    setAmigoBuscando(true);
+    const t = setTimeout(() => {
+      totemKids.criancas.buscar(amigoBusca.trim())
+        .then((d: any) => setAmigoResultados(Array.isArray(d) ? d : []))
+        .finally(() => setAmigoBuscando(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [amigoBusca, modo]);
+
+  const Toggle = ({ on, set, label }: { on: boolean; set: (b: boolean) => void; label: string }) => (
+    <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+      <span className="text-sm">{label}</span>
+      <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
+        <button type="button" onClick={() => set(false)} className={`px-3 py-1 ${!on ? 'bg-muted font-medium' : ''}`}>Não</button>
+        <button type="button" onClick={() => set(true)} className={`px-3 py-1 ${on ? 'bg-pink-600 text-white font-medium' : ''}`}>Sim</button>
+      </div>
+    </div>
+  );
+
   async function salvar() {
-    if (!criancaNome.trim() || !respNome.trim() || !respTel.trim()) {
-      toast.error('Nome da criança, nome do responsável e telefone são obrigatórios');
-      return;
+    if (!criancaNome.trim()) { toast.error('Informe o nome da criança'); return; }
+    const crianca: any = {
+      nome: criancaNome.trim(), data_nascimento: criancaNasc || null, sexo: criancaSexo || null,
+      observacoes_medicas: obsMed.trim() || null,
+      tem_alergia: temAlergia, alergia_qual: temAlergia ? alergiaQual.trim() || null : null,
+      tem_espectro: temEspectro, espectro_qual: temEspectro ? espectroQual.trim() || null : null,
+      tem_limitacao_fisica: temLimitacao, limitacao_fisica_qual: temLimitacao ? limitacaoQual.trim() || null : null,
+    };
+    let body: any;
+    if (modo === 'amigo') {
+      if (!amigoSel) { toast.error('Escolha a criança de quem o visitante é amigo'); return; }
+      body = { crianca, amigo_de_crianca_id: amigoSel.id };
+    } else {
+      if (!respNome.trim() || !respTel.trim()) { toast.error('Nome e telefone do responsável são obrigatórios'); return; }
+      body = { crianca, responsavel: { nome: respNome.trim(), telefone: respTel.trim(), cpf: respCpf.trim() || null, parentesco: respParentesco } };
     }
     setSalvando(true);
     try {
-      const r = await totemKids.criancas.create({
-        crianca: {
-          nome: criancaNome.trim(),
-          data_nascimento: criancaNasc || null,
-          sexo: criancaSexo || null,
-          observacoes_medicas: criancaObsMed.trim() || null,
-        },
-        responsavel: {
-          nome: respNome.trim(),
-          telefone: respTel.trim(),
-          cpf: respCpf.trim() || null,
-          parentesco: respParentesco,
-        },
-      });
+      const r = await totemKids.criancas.create(body);
       toast.success(`${r.crianca.nome} cadastrada · pronto pra check-in`);
-
-      // Recarrega completo pra entrar no fluxo
       const detalhe = await totemKids.criancas.buscar(criancaNome.trim());
       const found = detalhe.find((c: { id: string }) => c.id === r.crianca.id) || r.crianca;
       props.onCadastrado(found as Crianca);
@@ -921,17 +950,22 @@ function ModalNovaCrianca(props: {
     <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Cadastrar criança nova</DialogTitle>
-          <DialogDescription>
-            Dados mínimos · LGPD com menores. Sem CPF da criança.
-          </DialogDescription>
+          <DialogTitle>Cadastrar criança · visitante</DialogTitle>
+          <DialogDescription>Dados mínimos · LGPD com menores. Sem CPF da criança.</DialogDescription>
         </DialogHeader>
+
+        {/* Modo */}
+        <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 text-xs">
+          <button type="button" onClick={() => setModo('novo')} className={`px-3 py-1.5 rounded-md ${modo === 'novo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Novo cadastro</button>
+          <button type="button" onClick={() => setModo('amigo')} className={`px-3 py-1.5 rounded-md ${modo === 'amigo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Amigo de uma criança</button>
+        </div>
+
         <div className="space-y-4">
           <div className="border-b pb-3 space-y-2">
             <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Criança</div>
             <Input placeholder="Nome da criança *" value={criancaNome} onChange={e => setCriancaNome(e.target.value)} />
             <div className="grid grid-cols-2 gap-2">
-              <Input type="date" placeholder="Data nasc (opcional)" value={criancaNasc} onChange={e => setCriancaNasc(e.target.value)} />
+              <Input type="date" value={criancaNasc} onChange={e => setCriancaNasc(e.target.value)} />
               <Select value={criancaSexo} onValueChange={setCriancaSexo}>
                 <SelectTrigger><SelectValue placeholder="Sexo (opcional)" /></SelectTrigger>
                 <SelectContent>
@@ -941,30 +975,76 @@ function ModalNovaCrianca(props: {
                 </SelectContent>
               </Select>
             </div>
-            <Input placeholder="Alergia / médicação (opcional)" value={criancaObsMed} onChange={e => setCriancaObsMed(e.target.value)} />
           </div>
+
+          {/* Saúde */}
           <div className="space-y-2">
-            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Responsável</div>
-            <Input placeholder="Nome do responsável *" value={respNome} onChange={e => setRespNome(e.target.value)} />
-            <div className="grid grid-cols-2 gap-2">
-              <Input placeholder="Telefone *" value={respTel} onChange={e => setRespTel(e.target.value)} />
-              <Input placeholder="CPF (opcional)" value={respCpf} onChange={e => setRespCpf(e.target.value)} />
-            </div>
-            <Select value={respParentesco} onValueChange={setRespParentesco}>
-              <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="mae">Mãe</SelectItem>
-                <SelectItem value="pai">Pai</SelectItem>
-                <SelectItem value="padrasto">Padrasto</SelectItem>
-                <SelectItem value="madrasta">Madrasta</SelectItem>
-                <SelectItem value="avo_a">Avô/Avó</SelectItem>
-                <SelectItem value="tio_a">Tio/Tia</SelectItem>
-                <SelectItem value="irmao_a">Irmão/Irmã</SelectItem>
-                <SelectItem value="tutor">Tutor</SelectItem>
-                <SelectItem value="outro">Outro</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Saúde</div>
+            <Toggle on={temAlergia} set={setTemAlergia} label="Tem alergia" />
+            {temAlergia && <Input placeholder="Qual alergia?" value={alergiaQual} onChange={e => setAlergiaQual(e.target.value)} />}
+            <Toggle on={temEspectro} set={setTemEspectro} label="Está no espectro autista" />
+            {temEspectro && <Input placeholder="Qual? (nível, observações)" value={espectroQual} onChange={e => setEspectroQual(e.target.value)} />}
+            <Toggle on={temLimitacao} set={setTemLimitacao} label="Tem limitação física / deficiência" />
+            {temLimitacao && <Input placeholder="Qual limitação?" value={limitacaoQual} onChange={e => setLimitacaoQual(e.target.value)} />}
+            <Input placeholder="Mais informações (medicação, cuidados...)" value={obsMed} onChange={e => setObsMed(e.target.value)} />
           </div>
+
+          {/* Responsável OU amigo */}
+          {modo === 'novo' ? (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Responsável</div>
+              <Input placeholder="Nome do responsável *" value={respNome} onChange={e => setRespNome(e.target.value)} />
+              <div className="grid grid-cols-2 gap-2">
+                <Input placeholder="Telefone *" value={respTel} onChange={e => setRespTel(e.target.value)} />
+                <Input placeholder="CPF (opcional)" value={respCpf} onChange={e => setRespCpf(e.target.value)} />
+              </div>
+              <Select value={respParentesco} onValueChange={setRespParentesco}>
+                <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mae">Mãe</SelectItem>
+                  <SelectItem value="pai">Pai</SelectItem>
+                  <SelectItem value="padrasto">Padrasto</SelectItem>
+                  <SelectItem value="madrasta">Madrasta</SelectItem>
+                  <SelectItem value="avo_a">Avô/Avó</SelectItem>
+                  <SelectItem value="tio_a">Tio/Tia</SelectItem>
+                  <SelectItem value="irmao_a">Irmão/Irmã</SelectItem>
+                  <SelectItem value="tutor">Tutor</SelectItem>
+                  <SelectItem value="outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Amigo de quem?</div>
+              <p className="text-xs text-muted-foreground">O visitante será liberado pelos mesmos responsáveis da criança escolhida (quem traz, retira os dois).</p>
+              {amigoSel ? (
+                <div className="flex items-center gap-2 rounded-lg border border-pink-400/40 p-2">
+                  <Baby className="h-4 w-4 text-pink-600" />
+                  <div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{amigoSel.nome}</div>{amigoSel.idade_label && <div className="text-xs text-muted-foreground">{amigoSel.idade_label}</div>}</div>
+                  <Button variant="ghost" size="sm" onClick={() => setAmigoSel(null)}>trocar</Button>
+                </div>
+              ) : (
+                <>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input className="pl-9" placeholder="Buscar criança cadastrada (ex.: Benjamin)..." value={amigoBusca} onChange={e => setAmigoBusca(e.target.value)} />
+                  </div>
+                  {amigoBuscando && <div className="flex justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-pink-500" /></div>}
+                  {!amigoBuscando && amigoResultados.length > 0 && (
+                    <div className="max-h-44 overflow-y-auto space-y-1">
+                      {amigoResultados.map((c: any) => (
+                        <button key={c.id} type="button" onClick={() => setAmigoSel(c)} className="w-full flex items-center gap-2 rounded-md border border-border p-2 text-left hover:border-pink-400/50">
+                          <Baby className="h-4 w-4 text-pink-500" />
+                          <div className="flex-1 min-w-0"><div className="text-sm truncate">{c.nome}</div>{c.idade_label && <div className="text-xs text-muted-foreground">{c.idade_label}</div>}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={props.onClose}>Cancelar</Button>
             <Button onClick={salvar} disabled={salvando} className="bg-pink-600 hover:bg-pink-700">
@@ -976,7 +1056,6 @@ function ModalNovaCrianca(props: {
     </Dialog>
   );
 }
-
 // ── Modal: cadastrar responsável rápido (auto-abre se criança sem responsável) ──
 function ModalCadastrarResponsavel(props: {
   open: boolean;
