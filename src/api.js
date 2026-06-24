@@ -1671,6 +1671,11 @@ export const batismoPublico = {
     if (!res.ok) throw new Error('Erro ao buscar próxima data');
     return res.json();
   },
+  horarios: async () => {
+    const res = await fetch(`${API}/public/batismo/horarios`);
+    if (!res.ok) throw new Error('Erro ao buscar horários');
+    return res.json();
+  },
   inscrever: async (data) => {
     const res = await fetch(`${API}/public/batismo`, {
       method: 'POST',
@@ -2144,6 +2149,13 @@ export const kpis = {
     create: (data) => post('/kpis/batismos', data),
     update: (id, data) => put(`/kpis/batismos/${id}`, data),
     coberturaConvertidos: () => get('/kpis/batismos/cobertura-convertidos'),
+    // Horários do batismo (abrir/fechar + limite de vagas)
+    horarios: {
+      list: () => get('/kpis/batismos/horarios'),
+      create: (data) => post('/kpis/batismos/horarios', data),
+      update: (id, data) => patch(`/kpis/batismos/horarios/${id}`, data),
+      remove: (id) => del(`/kpis/batismos/horarios/${id}`),
+    },
     // Check-in do quiosque (Fase 1): lista do dia, registra check-in, sobe selfie.
     checkin: {
       doDia: (params) => get('/kpis/batismos/checkin/do-dia' + (params ? '?' + new URLSearchParams(params) : '')),

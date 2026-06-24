@@ -59,6 +59,45 @@ router.get('/proxima-data', (_req, res) => {
   res.json({ data_batismo: proximoQuartoDomingoISO() });
 });
 
+// Conta inscrições ativas por horário numa data (pra calcular vagas restantes).
+async function ocupacaoPorHorario(dataBatismo) {
+  const { data } = await supabase
+    .from('batismo_inscricoes')
+    .select('horario_culto')
+    .eq('data_batismo', dataBatismo)
+    .is('deleted_at', null)
+    .not('status', 'in', '(cancelado,rejeitado)');
+  const c = {};
+  (data || []).forEach(i => { if (i.horario_culto) c[i.horario_culto] = (c[i.horario_culto] || 0) + 1; });
+  return c;
+}
+
+// GET /api/public/batismo/horarios
+// Horários ABERTOS e COM VAGA pro próximo batismo · alimenta o seletor do form.
+router.get('/horarios', async (_req, res) => {
+  try {
+    const dataBatismo = proximoQuartoDomingoISO();
+    const { data: horarios, error } = await supabase
+      .from('batismo_horarios')
+      .select('horario, label, limite')
+      .is('deleted_at', null)
+      .eq('aberto', true)
+      .order('ordem');
+    if (error) throw error;
+    const ocup = await ocupacaoPorHorario(dataBatismo);
+    const lista = (horarios || [])
+      .map(h => {
+        const vagas = h.limite != null ? Math.max(0, h.limite - (ocup[h.horario] || 0)) : null;
+        return { horario: h.horario, label: h.label, vagas_restantes: vagas };
+      })
+      .filter(h => h.vagas_restantes === null || h.vagas_restantes > 0); // esconde lotados
+    res.json({ data_batismo: dataBatismo, horarios: lista });
+  } catch (e) {
+    console.error('[publicBatismo] horarios:', e.message);
+    res.status(500).json({ error: 'Erro ao listar horários' });
+  }
+});
+
 // POST /api/public/batismo
 // Endpoint público (sem autenticação) que recebe inscrição do formulário.
 router.post('/', limiter, async (req, res) => {
@@ -142,6 +181,29 @@ router.post('/', limiter, async (req, res) => {
 
     const dataBatismo = proximoQuartoDomingoISO();
 
+    // Valida o horário escolhido contra os horários configurados (aberto + vaga).
+    // Tolerante: se a tabela ainda não existe ou nada foi enviado, segue sem travar.
+    let horarioEscolhido = horario_culto ? String(horario_culto).trim().slice(0, 80) : null;
+    if (horarioEscolhido) {
+      const { data: hConf, error: hErr } = await supabase
+        .from('batismo_horarios')
+        .select('horario, label, aberto, limite')
+        .eq('horario', horarioEscolhido)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (!hErr) {
+        if (!hConf || !hConf.aberto) {
+          return res.status(409).json({ error: 'Esse horário não está mais disponível. Escolha outro.' });
+        }
+        if (hConf.limite != null) {
+          const ocup = await ocupacaoPorHorario(dataBatismo);
+          if ((ocup[horarioEscolhido] || 0) >= hConf.limite) {
+            return res.status(409).json({ error: 'Esse horário lotou. Por favor, escolha outro.' });
+          }
+        }
+      }
+    }
+
     // Observações agora so guarda o que não tem coluna própria
     const obsParts = [];
     if (cep) obsParts.push(`CEP: ${String(cep).trim().slice(0, 20)}`);
@@ -183,6 +245,7 @@ router.post('/', limiter, async (req, res) => {
         return v && validos.includes(v) ? v : null;
       })(),
       endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
+      horario_culto: horarioEscolhido,
       eh_crianca: !!eh_crianca,
       possui_deficiencia: possuiDef,
       deficiencia_descricao: possuiDef && defDescricao ? defDescricao.slice(0, 500) : null,

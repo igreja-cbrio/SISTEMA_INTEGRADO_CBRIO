@@ -166,6 +166,7 @@ function formatDataLonga(iso: string) {
 export default function InscricaoBatismo() {
   const { C } = usePublicTheme();
   const [proximaData, setProximaData] = useState<string>('');
+  const [horarios, setHorarios] = useState<{ horario: string; label: string; vagas_restantes: number | null }[]>([]);
   const [form, setForm] = useState({
     nome: '', sobrenome: '',
     cpf: '', telefone: '', email: '',
@@ -175,7 +176,7 @@ export default function InscricaoBatismo() {
     limitacao_mobilidade: '',
     motivo: '',
     observacoes: '',
-    horario_culto: '10h',
+    horario_culto: '',
     area_kpi: '', // opcional · 'sede' (default) | 'ami' | 'bridge' | 'online'
     website: '', // honeypot
   });
@@ -184,9 +185,19 @@ export default function InscricaoBatismo() {
   const [sent, setSent] = useState(false);
 
   useEffect(() => {
-    batismoPublico.proximaData()
-      .then((r: { data_batismo: string }) => setProximaData(r.data_batismo))
-      .catch(() => {});
+    batismoPublico.horarios()
+      .then((r: { data_batismo: string; horarios: typeof horarios }) => {
+        setProximaData(r.data_batismo);
+        const hs = Array.isArray(r.horarios) ? r.horarios : [];
+        setHorarios(hs);
+        // pré-seleciona o 1º horário aberto (se a pessoa ainda não escolheu)
+        if (hs.length) setForm(f => (f.horario_culto ? f : { ...f, horario_culto: hs[0].horario }));
+      })
+      .catch(() => {
+        batismoPublico.proximaData()
+          .then((r: { data_batismo: string }) => setProximaData(r.data_batismo))
+          .catch(() => {});
+      });
   }, []);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -345,9 +356,16 @@ export default function InscricaoBatismo() {
                   id="horario_culto" label="Horário do batismo"
                   value={form.horario_culto}
                   onChange={set('horario_culto') as any}
-                  options={[
-                    { value: '10h', label: 'Domingo · 10h (2º culto da manhã)' },
-                  ]}
+                  options={
+                    horarios.length
+                      ? horarios.map(h => ({
+                          value: h.horario,
+                          label: h.vagas_restantes != null
+                            ? `${h.label} · ${h.vagas_restantes} vaga${h.vagas_restantes === 1 ? '' : 's'}`
+                            : h.label,
+                        }))
+                      : [{ value: '', label: 'Nenhum horário disponível no momento' }]
+                  }
                 />
               </Row>
               <SelectField

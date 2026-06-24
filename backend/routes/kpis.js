@@ -671,6 +671,82 @@ router.get('/batismos/cobertura-convertidos', async (req, res) => {
   }
 });
 
+// ── Horários de batismo (abrir/fechar + limite) ──────────────────────────────
+// Próximo 4º domingo (mesma lógica de publicBatismo) · base da contagem de vagas.
+function _proximo4Domingo() {
+  const q = (y, m) => { const p = new Date(y, m, 1); const off = (7 - p.getDay()) % 7; return new Date(y, m, 1 + off + 21); };
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  let y = hoje.getFullYear(), m = hoje.getMonth();
+  let d = q(y, m);
+  if (d < hoje) { m += 1; if (m > 11) { y += 1; m = 0; } d = q(y, m); }
+  return d.toISOString().slice(0, 10);
+}
+
+// GET /api/kpis/batismos/horarios — todos os horários (incl. fechados) + ocupação
+router.get('/batismos/horarios', authorizeIntegracao, async (_req, res) => {
+  try {
+    const dataBatismo = _proximo4Domingo();
+    const { data: horarios, error } = await supabase
+      .from('batismo_horarios').select('*').is('deleted_at', null).order('ordem');
+    if (error) throw error;
+    const { data: insc } = await supabase
+      .from('batismo_inscricoes').select('horario_culto')
+      .eq('data_batismo', dataBatismo).is('deleted_at', null)
+      .not('status', 'in', '(cancelado,rejeitado)');
+    const ocup = {};
+    (insc || []).forEach(i => { if (i.horario_culto) ocup[i.horario_culto] = (ocup[i.horario_culto] || 0) + 1; });
+    res.json({
+      data_batismo: dataBatismo,
+      horarios: (horarios || []).map(h => ({ ...h, inscritos: ocup[h.horario] || 0 })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao listar horários' }); }
+});
+
+// POST /api/kpis/batismos/horarios — adiciona um horário
+router.post('/batismos/horarios', authorizeIntegracao, async (req, res) => {
+  try {
+    const horario = String(req.body?.horario || '').trim().slice(0, 40);
+    if (!horario) return res.status(400).json({ error: 'horário é obrigatório' });
+    const label = String(req.body?.label || horario).trim().slice(0, 120);
+    const limite = req.body?.limite != null && req.body.limite !== '' ? parseInt(req.body.limite, 10) : null;
+    const aberto = req.body?.aberto !== false;
+    const ordem = Number.isFinite(+req.body?.ordem) ? +req.body.ordem : 99;
+    const { data, error } = await supabase.from('batismo_horarios')
+      .insert({ horario, label, limite: Number.isFinite(limite) ? limite : null, aberto, ordem })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao criar horário' }); }
+});
+
+// PATCH /api/kpis/batismos/horarios/:id — abrir/fechar, limite, label
+router.patch('/batismos/horarios/:id', authorizeIntegracao, async (req, res) => {
+  try {
+    const upd = { updated_at: new Date().toISOString() };
+    if (typeof req.body?.aberto === 'boolean') upd.aberto = req.body.aberto;
+    if (req.body?.label != null) upd.label = String(req.body.label).trim().slice(0, 120);
+    if ('limite' in (req.body || {})) {
+      const l = req.body.limite;
+      upd.limite = (l === null || l === '' ) ? null : (Number.isFinite(+l) ? Math.max(0, parseInt(l, 10)) : null);
+    }
+    if (Number.isFinite(+req.body?.ordem)) upd.ordem = +req.body.ordem;
+    const { data, error } = await supabase.from('batismo_horarios')
+      .update(upd).eq('id', req.params.id).is('deleted_at', null).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao atualizar horário' }); }
+});
+
+// DELETE /api/kpis/batismos/horarios/:id — remove (soft)
+router.delete('/batismos/horarios/:id', authorizeIntegracao, async (req, res) => {
+  try {
+    const { error } = await supabase.from('batismo_horarios')
+      .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao remover horário' }); }
+});
+
 router.post('/batismos', authorizeIntegracao, async (req, res) => {
   const {
     cpf, nome, sobrenome, data_nascimento, telefone, email,
