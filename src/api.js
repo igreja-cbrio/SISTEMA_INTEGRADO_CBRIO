@@ -1672,7 +1672,9 @@ export const batismoPublico = {
     return res.json();
   },
   horarios: async () => {
-    const res = await fetch(`${API}/public/batismo/horarios`);
+    // no-store: o seletor do form sempre reflete o estado atual (aberto/fechado/
+    // lotado) que a Integração acabou de mudar — sem cache do navegador.
+    const res = await fetch(`${API}/public/batismo/horarios?t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Erro ao buscar horários');
     return res.json();
   },
