@@ -203,6 +203,7 @@ router.post('/', limiter, async (req, res) => {
       severidade: 'info',
       chaveDedup: `batismo_inscricao_${data.id}`,
       email: true, // responsável da Integração (Lorena) recebe também por e-mail
+      emailsExtra: ['lorena@cbrio.com.br'], // 2o e-mail da Lorena (sem conta no sistema)
     }).catch(err => console.error('[publicBatismo] notificacao falhou:', err.message));
 
     res.status(201).json({

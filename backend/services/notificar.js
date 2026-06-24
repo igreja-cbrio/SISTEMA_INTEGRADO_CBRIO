@@ -13,14 +13,20 @@ function escapeHtmlNotif(s) {
 // Dispara e-mail (best-effort · Resend) para os usuários notificados. No-op
 // gracioso se RESEND_API_KEY não estiver configurada. Resolve o e-mail de cada
 // destinatário em profiles.email.
-async function enviarEmailNotificacao(userIds, { titulo, mensagem, link }) {
-  if (!emailConfigurado() || !userIds?.length) return;
+async function enviarEmailNotificacao(userIds, { titulo, mensagem, link, emailsExtra }) {
+  const extra = (emailsExtra || []).filter(e => e && /@/.test(e));
+  if (!emailConfigurado() || (!userIds?.length && !extra.length)) return;
   try {
-    const { data: profs } = await supabase
-      .from('profiles')
-      .select('email')
-      .in('id', userIds);
-    const tos = [...new Set((profs || []).map(p => p.email).filter(e => e && /@/.test(e)))];
+    let emailsProfiles = [];
+    if (userIds?.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('email')
+        .in('id', userIds);
+      emailsProfiles = (profs || []).map(p => p.email);
+    }
+    // E-mails dos profiles + e-mails extras avulsos (não ligados a conta).
+    const tos = [...new Set([...emailsProfiles, ...extra].filter(e => e && /@/.test(e)))];
     if (!tos.length) return;
     const base = process.env.FRONTEND_URL || '';
     const url = link ? (/^https?:\/\//.test(link) ? link : base + link) : base;
@@ -70,7 +76,7 @@ async function resolverDestinatarios(modulo) {
  * Cria notificação para múltiplos usuários, com deduplicação.
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
-async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false }) {
+async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false, emailsExtra }) {
   let destinatarios = targetIds || await resolverDestinatarios(modulo);
   if (extraTargetIds?.length) {
     destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
@@ -131,8 +137,8 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
 
   // Dispara e-mail em background (no-op se Resend não configurado · só quando
   // o chamador pede email:true). Usa usersInseridos pra herdar a dedup.
-  if (email && usersInseridos.length) {
-    enviarEmailNotificacao(usersInseridos, { titulo, mensagem, link })
+  if (email && (usersInseridos.length || emailsExtra?.length)) {
+    enviarEmailNotificacao(usersInseridos, { titulo, mensagem, link, emailsExtra })
       .catch(e => console.warn('[notificar email bg]', e.message));
   }
 
