@@ -1,9 +1,11 @@
 // ============================================================================
 // Totem Kids · Solicitações de vínculo (criança↔responsável) feitas pelo app
 // ============================================================================
-// O responsável pede pelo app e envia documentos (criança + pai e/ou mãe).
-// Aqui a equipe Kids confere os documentos e APROVA (cria o vínculo) ou
-// REJEITA. Segurança de menor: nada de vínculo automático.
+// O responsável pede pelo app informando o nome da criança + o nome dos pais
+// (mãe e/ou pai) e, opcionalmente, uma foto da criança (com consentimento).
+// Aqui a equipe Kids confere e APROVA (cria o vínculo) ou REJEITA. Segurança
+// de menor: nada de vínculo automático. (Docs legados aparecem nas pendentes
+// antigas, quando houver.)
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -26,6 +28,8 @@ type Solicitacao = {
   solicitante_parentesco: string;
   crianca_nome: string;
   crianca_data_nascimento: string | null;
+  mae_nome: string | null;
+  pai_nome: string | null;
   status: string;
   motivo_rejeicao: string | null;
   observacao: string | null;
@@ -35,6 +39,8 @@ type Solicitacao = {
 };
 
 type Detalhe = Solicitacao & {
+  crianca_foto_url: string | null;
+  // legado (solicitações antigas com documentos)
   crianca_doc_url: string | null;
   doc_pai_url: string | null;
   doc_mae_url: string | null;
@@ -124,7 +130,7 @@ export default function TotemKidsVinculos() {
             <ShieldCheck className="h-5 w-5" /> Vínculos · solicitações do app
           </h1>
           <p className="text-xs md:text-sm text-muted-foreground">
-            Confira os documentos antes de aprovar. O vínculo libera o pré-check-in pelo app.
+            Confira os dados antes de aprovar. O vínculo libera o pré-check-in pelo app.
           </p>
         </div>
       </div>
@@ -181,13 +187,23 @@ export default function TotemKidsVinculos() {
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Conferir solicitação de vínculo</DialogTitle>
-            <DialogDescription>Valide os documentos antes de decidir. Documentos são confidenciais.</DialogDescription>
+            <DialogDescription>Confira os dados antes de decidir. Informações confidenciais.</DialogDescription>
           </DialogHeader>
 
           {carregandoDetalhe || !detalhe ? (
             <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-pink-500" /></div>
           ) : (
             <div className="space-y-4">
+              {detalhe.crianca_foto_url && (
+                <div className="flex justify-center">
+                  <img
+                    src={detalhe.crianca_foto_url}
+                    alt={`Foto de ${detalhe.crianca_nome}`}
+                    className="h-28 w-28 rounded-lg object-cover border"
+                  />
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-muted-foreground text-xs">Criança</div>
@@ -207,21 +223,37 @@ export default function TotemKidsVinculos() {
                 </div>
               </div>
 
+              {/* Nome dos pais informados pelo responsável */}
+              {(detalhe.mae_nome || detalhe.pai_nome) && (
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-muted-foreground text-xs">Mãe</div>
+                    <div className="font-medium">{detalhe.mae_nome || '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground text-xs">Pai</div>
+                    <div className="font-medium">{detalhe.pai_nome || '—'}</div>
+                  </div>
+                </div>
+              )}
+
               {detalhe.observacao && (
                 <div className="text-sm bg-muted/50 rounded-md p-2">
                   <span className="text-muted-foreground text-xs">Observação: </span>{detalhe.observacao}
                 </div>
               )}
 
-              {/* Documentos */}
-              <div className="space-y-2">
-                <div className="text-xs text-muted-foreground font-medium">Documentos enviados</div>
-                <div className="grid grid-cols-1 gap-2">
-                  <DocLink label="Documento da criança" url={detalhe.crianca_doc_url} />
-                  <DocLink label="Documento do pai" url={detalhe.doc_pai_url} />
-                  <DocLink label="Documento da mãe" url={detalhe.doc_mae_url} />
+              {/* Documentos legados (solicitações antigas) */}
+              {(detalhe.crianca_doc_url || detalhe.doc_pai_url || detalhe.doc_mae_url) && (
+                <div className="space-y-2">
+                  <div className="text-xs text-muted-foreground font-medium">Documentos enviados (solicitação antiga)</div>
+                  <div className="grid grid-cols-1 gap-2">
+                    {detalhe.crianca_doc_url && <DocLink label="Documento da criança" url={detalhe.crianca_doc_url} />}
+                    {detalhe.doc_pai_url && <DocLink label="Documento do pai" url={detalhe.doc_pai_url} />}
+                    {detalhe.doc_mae_url && <DocLink label="Documento da mãe" url={detalhe.doc_mae_url} />}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {detalhe.status === 'pendente' ? (
                 modoRejeitar ? (
