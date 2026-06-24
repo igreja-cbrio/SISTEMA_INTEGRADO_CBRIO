@@ -2277,6 +2277,13 @@ export const kpis = {
   },
 };
 
+// Agente de Primeiro Contato (piloto) · fila de revisão
+export const agentePrimeiroContato = {
+  fila: (status = 'pendente') => get(`/agente-primeiro-contato?status=${encodeURIComponent(status)}`),
+  enviado: (id, editou = false) => post(`/agente-primeiro-contato/${id}/enviado`, { editou }),
+  ignorar: (id, motivo) => post(`/agente-primeiro-contato/${id}/ignorar`, { motivo }),
+};
+
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),

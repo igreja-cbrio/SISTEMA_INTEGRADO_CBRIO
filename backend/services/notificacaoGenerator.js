@@ -29,6 +29,12 @@ async function gerarTodasNotificacoes() {
   total += await safe('Kpis', gerarNotificacoesKpis);
   total += await safe('Cuidados', gerarNotificacoesCuidados);
   total += await safe('JornadaConvertidos', gerarNotificacoesJornadaConvertidos);
+  // Agente de Primeiro Contato (piloto): enfileira convertidos sem contato com
+  // mensagem rascunhada p/ o líder revisar e enviar (não gera notificação aqui).
+  await safe('AgentePrimeiroContato', async () => {
+    const { enfileirarPrimeiroContato } = require('./agentePrimeiroContato');
+    return enfileirarPrimeiroContato();
+  });
   total += await safe('Grupos', gerarNotificacoesGrupos);
   total += await safe('Ritual', gerarNotificacoesRitual);
   total += await safe('Solicitacoes', gerarNotificacoesSolicitacoes);
