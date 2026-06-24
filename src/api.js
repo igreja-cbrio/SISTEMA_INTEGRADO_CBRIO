@@ -1213,6 +1213,11 @@ export const totemKids = {
     addResponsavel: (id, data) => post(`/totem-kids/criancas/${id}/responsaveis`, data),
     addResponsavelRapido: (id, data) => post(`/totem-kids/criancas/${id}/responsavel-rapido`, data),
     removeResponsavel: (responsavelId) => del(`/totem-kids/responsaveis/${responsavelId}`),
+    inativar: (id, body) => patch(`/totem-kids/criancas/${id}/inativar`, body),
+    // Atendimentos (histórico de contatos da equipe Kids com a criança)
+    atendimentos: (id) => get(`/totem-kids/criancas/${id}/atendimentos`),
+    addAtendimento: (id, data) => post(`/totem-kids/criancas/${id}/atendimentos`, data),
+    removeAtendimento: (atendimentoId) => del(`/totem-kids/atendimentos/${atendimentoId}`),
     // Importação XLSX · dryRun=true valida sem gravar
     importar: (file, { dryRun = false } = {}) => {
       const fd = new FormData();
