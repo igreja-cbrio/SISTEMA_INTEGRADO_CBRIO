@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { totemKids } from '@/api';
 import { formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas } from './lib/imprimir';
+import confetti from 'canvas-confetti';
 import { getEstacaoPareada } from './lib/estacaoPareada';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -48,6 +49,16 @@ type Crianca = {
 
 type Sala = { id: string; nome: string; cor: string; capacidade: number; faixa_etaria_min_meses: number; faixa_etaria_max_meses: number };
 type Sessao = { id: string; culto: { id: string; nome: string; data: string } | null };
+
+// Confete comemorativo ao concluir o check-in da criança.
+function dispararConfete() {
+  const cores = ['#ec4899', '#00B39D', '#f59e0b', '#8b5cf6', '#3b82f6'];
+  try {
+    confetti({ particleCount: 90, spread: 72, startVelocity: 42, origin: { y: 0.65 }, colors: cores });
+    setTimeout(() => confetti({ particleCount: 45, angle: 60, spread: 60, origin: { x: 0, y: 0.7 }, colors: cores }), 120);
+    setTimeout(() => confetti({ particleCount: 45, angle: 120, spread: 60, origin: { x: 1, y: 0.7 }, colors: cores }), 120);
+  } catch { /* sem-op se WebGL/canvas indisponível */ }
+}
 
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
@@ -322,6 +333,7 @@ export default function TotemKidsCheckin() {
       });
 
       toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
+      dispararConfete();
 
       // Reset
       setCrianca(null);
