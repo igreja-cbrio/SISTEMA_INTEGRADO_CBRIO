@@ -2388,6 +2388,69 @@ router.get('/membros/:id/possiveis-duplicados', async (req, res) => {
   }
 });
 
+// ── Vínculos familiares (grafo de parentesco · X é filho/irmão de Y) ──────────
+const VINC_INVERSO = {
+  filho: 'pai_mae', pai_mae: 'filho', irmao: 'irmao', conjuge: 'conjuge',
+  avo: 'neto', neto: 'avo', tio: 'sobrinho', sobrinho: 'tio', primo: 'primo',
+  responsavel: 'dependente', dependente: 'responsavel', outro: 'outro',
+};
+
+// GET /membros/:id/vinculos — relações da pessoa (com a pessoa relacionada)
+router.get('/membros/:id/vinculos', async (req, res) => {
+  try {
+    const { data } = await supabase.from('mem_vinculos_familiares')
+      .select('id, tipo, relacionado:mem_membros!mem_vinculos_familiares_relacionado_id_fkey(id, nome, status, foto_url)')
+      .eq('pessoa_id', req.params.id).is('deleted_at', null);
+    res.json(data || []);
+  } catch (e) {
+    console.error('[membresia/vinculos GET]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar vínculos' });
+  }
+});
+
+// POST /membros/:id/vinculos — { relacionado_id, tipo } · grava nos 2 sentidos
+router.post('/membros/:id/vinculos', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const pessoa_id = req.params.id;
+    const { relacionado_id, tipo } = req.body || {};
+    if (!relacionado_id || !tipo) return res.status(400).json({ error: 'relacionado_id e tipo obrigatórios' });
+    if (relacionado_id === pessoa_id) return res.status(400).json({ error: 'Selecione outra pessoa' });
+    if (!VINC_INVERSO[tipo]) return res.status(400).json({ error: 'Tipo de vínculo inválido' });
+    // já existe?
+    const { data: existe } = await supabase.from('mem_vinculos_familiares')
+      .select('id').eq('pessoa_id', pessoa_id).eq('relacionado_id', relacionado_id).is('deleted_at', null).maybeSingle();
+    if (existe) return res.status(409).json({ error: 'Esse vínculo já existe' });
+    // cria A→B
+    const { data: a, error: ea } = await supabase.from('mem_vinculos_familiares')
+      .insert({ pessoa_id, relacionado_id, tipo, created_by: req.user?.id || null }).select('id').single();
+    if (ea) throw ea;
+    // cria B→A (inverso) e liga par_id dos dois
+    const { data: b } = await supabase.from('mem_vinculos_familiares')
+      .insert({ pessoa_id: relacionado_id, relacionado_id: pessoa_id, tipo: VINC_INVERSO[tipo], par_id: a.id, created_by: req.user?.id || null })
+      .select('id').single();
+    if (b) await supabase.from('mem_vinculos_familiares').update({ par_id: b.id }).eq('id', a.id);
+    res.status(201).json({ ok: true, id: a.id });
+  } catch (e) {
+    console.error('[membresia/vinculos POST]', e.message);
+    res.status(500).json({ error: 'Erro ao criar vínculo' });
+  }
+});
+
+// DELETE /vinculos/:id — soft-delete o vínculo + o recíproco
+router.delete('/vinculos/:id', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const now = new Date().toISOString();
+    const { data: v } = await supabase.from('mem_vinculos_familiares').select('id, par_id').eq('id', req.params.id).maybeSingle();
+    const ids = [req.params.id];
+    if (v?.par_id) ids.push(v.par_id);
+    await supabase.from('mem_vinculos_familiares').update({ deleted_at: now }).in('id', ids);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[membresia/vinculos DELETE]', e.message);
+    res.status(500).json({ error: 'Erro ao remover vínculo' });
+  }
+});
+
 router.post('/membros/merge', authorize('admin', 'diretor'), async (req, res) => {
   const { keep_id, merge_ids, observacao } = req.body || {};
   if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatorio' });
