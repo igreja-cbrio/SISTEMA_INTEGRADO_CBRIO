@@ -1191,13 +1191,12 @@ export const painelArea = {
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
 export const totemKids = {
   dashboard: () => get('/totem-kids/dashboard'),
-  salasVoluntarios: () => get('/totem-kids/salas-voluntarios'),
-  voluntarios: {
-    buscar: (q) => get(`/totem-kids/voluntarios/buscar?q=${encodeURIComponent(q)}`),
-    add: (salaId, body) => post(`/totem-kids/salas/${salaId}/voluntarios`, body),
-    update: (id, body) => patch(`/totem-kids/sala-voluntarios/${id}`, body),
-    remove: (id) => del(`/totem-kids/sala-voluntarios/${id}`),
-    ficha: (id) => get(`/totem-kids/sala-voluntarios/${id}/ficha`),
+  kidsEquipe: {
+    list: () => get('/totem-kids/kids-equipe'),
+    buscar: (q) => get(`/totem-kids/kids-equipe/buscar?q=${encodeURIComponent(q)}`),
+    alocar: (body) => post('/totem-kids/kids-equipe/membro', body),
+    remover: (id) => del(`/totem-kids/kids-equipe/membro/${id}`),
+    ficha: (volProfileId) => get(`/totem-kids/kids-equipe/membro/${volProfileId}/ficha`),
   },
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),
