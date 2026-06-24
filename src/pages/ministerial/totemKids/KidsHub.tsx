@@ -116,7 +116,7 @@ export default function KidsHub() {
           ) : (
             <div className="space-y-2 max-h-72 overflow-y-auto">
               {d.aniversariantes.map((a: any) => (
-                <button key={a.id} onClick={() => navigate('/ministerial/totem-kids/criancas')} className="w-full flex items-center gap-3 rounded-lg border border-border p-2 text-left hover:border-primary/40 transition-colors">
+                <button key={a.id} onClick={() => navigate(`/ministerial/totem-kids/criancas?crianca=${a.id}`)} className="w-full flex items-center gap-3 rounded-lg border border-border p-2 text-left hover:border-primary/40 transition-colors">
                   <div className="h-8 w-8 rounded-full bg-pink-500/10 flex items-center justify-center overflow-hidden shrink-0">
                     {a.foto_url ? <img src={a.foto_url} alt="" className="h-full w-full object-cover" /> : <Cake className="h-4 w-4 text-pink-500" />}
                   </div>

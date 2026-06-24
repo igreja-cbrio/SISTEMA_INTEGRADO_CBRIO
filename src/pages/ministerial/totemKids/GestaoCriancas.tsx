@@ -2,7 +2,7 @@
 // desativar, e ficha completa com aba de Atendimentos (histórico de contatos).
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { totemKids as api } from '../../../api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -37,6 +37,11 @@ export default function GestaoCriancas() {
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const cid = searchParams.get('crianca');
+    if (cid) setSel({ id: cid });
+  }, [searchParams]);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -134,7 +139,7 @@ export default function GestaoCriancas() {
         </CardContent>
       </Card>
 
-      {sel && <FichaCrianca criancaId={sel.id} onClose={() => setSel(null)} onChanged={carregar} />}
+      {sel && <FichaCrianca criancaId={sel.id} onClose={() => { setSel(null); if (searchParams.get('crianca')) setSearchParams({}, { replace: true }); }} onChanged={carregar} />}
       {novoOpen && <NovaCrianca onClose={() => setNovoOpen(false)} onCreated={() => { setNovoOpen(false); carregar(); }} />}
     </div>
   );
