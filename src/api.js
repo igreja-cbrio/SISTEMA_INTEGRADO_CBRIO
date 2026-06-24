@@ -1191,6 +1191,14 @@ export const painelArea = {
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
 export const totemKids = {
   dashboard: () => get('/totem-kids/dashboard'),
+  salasVoluntarios: () => get('/totem-kids/salas-voluntarios'),
+  voluntarios: {
+    buscar: (q) => get(`/totem-kids/voluntarios/buscar?q=${encodeURIComponent(q)}`),
+    add: (salaId, body) => post(`/totem-kids/salas/${salaId}/voluntarios`, body),
+    update: (id, body) => patch(`/totem-kids/sala-voluntarios/${id}`, body),
+    remove: (id) => del(`/totem-kids/sala-voluntarios/${id}`),
+    ficha: (id) => get(`/totem-kids/sala-voluntarios/${id}/ficha`),
+  },
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),
     list: (params = {}) => {
