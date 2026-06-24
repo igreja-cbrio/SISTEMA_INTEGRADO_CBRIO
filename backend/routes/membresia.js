@@ -2341,6 +2341,53 @@ router.post('/duplicados/ignorar', authorize('admin', 'diretor'), async (req, re
   res.json({ ok: true, registro: data });
 });
 
+// GET /api/membresia/membros/:id/possiveis-duplicados — duplicados PROVÁVEIS da
+// pessoa aberta (mesmo nome/telefone/email/cpf), pra fundir direto no detalhe.
+router.get('/membros/:id/possiveis-duplicados', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome, telefone, email, cpf').eq('id', id).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'Cadastro não encontrado' });
+    const digits = (v) => String(v || '').replace(/\D/g, '');
+    const tel = digits(m.telefone), cpf = digits(m.cpf);
+    const sel = 'id, nome, telefone, email, cpf, status, foto_url, parentesco, familia:mem_familias(id, nome)';
+    const queries = [];
+    if (m.nome && m.nome.trim().length >= 3) queries.push(supabase.from('mem_membros').select(sel).ilike('nome', m.nome.trim()).neq('id', id).is('deleted_at', null).limit(25));
+    if (tel.length >= 8) queries.push(supabase.from('mem_membros').select(sel).ilike('telefone', `%${tel}%`).neq('id', id).is('deleted_at', null).limit(25));
+    if (m.email) queries.push(supabase.from('mem_membros').select(sel).ilike('email', m.email.trim()).neq('id', id).is('deleted_at', null).limit(25));
+    if (cpf.length === 11) queries.push(supabase.from('mem_membros').select(sel).ilike('cpf', `%${cpf}%`).neq('id', id).is('deleted_at', null).limit(25));
+    const results = await Promise.all(queries);
+    // dedup + motivo
+    const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+    const mapa = new Map();
+    results.forEach((r) => (r.data || []).forEach((c) => {
+      const motivos = [];
+      if (m.nome && norm(c.nome) === norm(m.nome)) motivos.push('mesmo nome');
+      if (tel.length >= 8 && digits(c.telefone) && digits(c.telefone) === tel) motivos.push('mesmo telefone');
+      if (m.email && c.email && norm(c.email) === norm(m.email)) motivos.push('mesmo e-mail');
+      if (cpf.length === 11 && digits(c.cpf) === cpf) motivos.push('mesmo CPF');
+      if (!motivos.length) return;
+      const prev = mapa.get(c.id);
+      if (prev) prev.motivos = Array.from(new Set([...prev.motivos, ...motivos]));
+      else mapa.set(c.id, { ...c, motivos });
+    }));
+    // remove pares já ignorados
+    let lista = Array.from(mapa.values());
+    if (lista.length) {
+      const { data: ign } = await supabase.from('mem_duplicados_ignorados')
+        .select('membro_a_id, membro_b_id').or(`membro_a_id.eq.${id},membro_b_id.eq.${id}`);
+      const ignSet = new Set();
+      (ign || []).forEach((p) => { ignSet.add(p.membro_a_id === id ? p.membro_b_id : p.membro_a_id); });
+      lista = lista.filter((c) => !ignSet.has(c.id));
+    }
+    res.json(lista);
+  } catch (e) {
+    console.error('[membresia/possiveis-duplicados]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar duplicados' });
+  }
+});
+
 router.post('/membros/merge', authorize('admin', 'diretor'), async (req, res) => {
   const { keep_id, merge_ids, observacao } = req.body || {};
   if (!keep_id) return res.status(400).json({ error: 'keep_id obrigatorio' });
