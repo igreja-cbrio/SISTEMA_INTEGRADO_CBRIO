@@ -1218,6 +1218,8 @@ export const totemKids = {
   criancas: {
     buscar: (q) => get(`/totem-kids/criancas/buscar?q=${encodeURIComponent(q)}`),
     get: (id) => get(`/totem-kids/criancas/${id}`),
+    uploadFoto: (id, dataUrl) => post(`/totem-kids/criancas/${id}/foto`, { dataUrl }),
+    removeFoto: (id) => del(`/totem-kids/criancas/${id}/foto`),
     list: (params = {}) => {
       const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
       return get(`/totem-kids/criancas${qs ? `?${qs}` : ''}`);

@@ -1,6 +1,6 @@
 // Kids · Gestão de crianças — lista com filtro por idade/status, cadastro manual,
 // desativar, e ficha completa com aba de Atendimentos (histórico de contatos).
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { totemKids as api } from '../../../api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '../../../components/ui/button';
@@ -12,7 +12,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 const FAIXAS = [
@@ -186,9 +186,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
       <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
-              {c?.foto_url ? <img src={c.foto_url} alt="" className="h-full w-full object-cover" /> : <Baby className="h-5 w-5 text-primary" />}
-            </div>
+            <FotoAvatar crianca={c} onChanged={load} />
             <div className="min-w-0">
               <div className="truncate">{c?.nome || '...'}</div>
               <div className="text-xs font-normal text-muted-foreground">{c?.idade_label || ''}{c?.sala_sugerida ? ` · ${c.sala_sugerida.nome || ''}` : ''}{c && !c.ativo ? ' · inativo' : ''}</div>
@@ -286,6 +284,41 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
   );
 }
 
+function FotoAvatar({ crianca, onChanged }: { crianca: any; onChanged: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  async function onFile(e: any) {
+    const file = e.target.files?.[0]; if (!file || !crianca?.id) return;
+    if (file.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
+    setBusy(true);
+    try {
+      const dataUrl: string = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file); });
+      await api.criancas.uploadFoto(crianca.id, dataUrl);
+      toast.success('Foto atualizada'); onChanged();
+    } catch (err: any) { toast.error(err?.message || 'Erro ao enviar a foto'); }
+    finally { setBusy(false); if (inputRef.current) inputRef.current.value = ''; }
+  }
+  async function remover() {
+    if (!crianca?.id || !window.confirm('Remover a foto da criança?')) return;
+    setBusy(true);
+    try { await api.criancas.removeFoto(crianca.id); toast.success('Foto removida'); onChanged(); }
+    catch (err: any) { toast.error(err?.message || 'Erro ao remover'); } finally { setBusy(false); }
+  }
+  return (
+    <div className="relative h-11 w-11 shrink-0">
+      <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : crianca?.foto_url ? <img src={crianca.foto_url} alt="" className="h-full w-full object-cover" /> : <Baby className="h-5 w-5 text-primary" />}
+      </div>
+      {crianca?.id && (
+        <button type="button" onClick={() => inputRef.current?.click()} className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-primary text-white flex items-center justify-center shadow" title="Adicionar/trocar foto"><Camera className="h-3 w-3" /></button>
+      )}
+      {crianca?.foto_url && (
+        <button type="button" onClick={remover} className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center shadow" title="Remover foto"><X className="h-2.5 w-2.5" /></button>
+      )}
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+    </div>
+  );
+}
 function CampoSempre({ label, v }: { label: string; v?: string | null }) {
   return <div><span className="text-xs text-muted-foreground">{label}: </span>{v ? <span>{v}</span> : <span className="italic text-muted-foreground">—</span>}</div>;
 }
