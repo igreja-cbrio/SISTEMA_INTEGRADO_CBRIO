@@ -32,7 +32,7 @@ const idade = (d?: string | null) => {
     const n = new Date(); const b = new Date(d + 'T00:00:00');
     let a = n.getFullYear() - b.getFullYear();
     if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--;
-    return `${a}a`;
+    return `${a} ano${a === 1 ? '' : 's'}`;
   } catch { return ''; }
 };
 

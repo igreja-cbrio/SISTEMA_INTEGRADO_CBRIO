@@ -85,9 +85,9 @@ function calcIdadeMeses(dataNascimento) {
 
 function formatIdade(meses) {
   if (meses == null) return '';
-  if (meses < 24) return `${meses}m`;
+  if (meses < 24) return `${meses} ${meses === 1 ? 'mês' : 'meses'}`;
   const anos = Math.floor(meses / 12);
-  return `${anos}a`;
+  return `${anos} ${anos === 1 ? 'ano' : 'anos'}`;
 }
 
 function normalizarTelefone(t) {

@@ -22,6 +22,7 @@ export function formatIdade(meses: number | null | undefined): string {
 
 export function formatIdadeShort(meses: number | null | undefined): string {
   if (meses == null) return '?';
-  if (meses < 24) return `${meses}m`;
-  return `${Math.floor(meses / 12)}a`;
+  if (meses < 24) return `${meses} ${meses === 1 ? 'mês' : 'meses'}`;
+  const anos = Math.floor(meses / 12);
+  return `${anos} ${anos === 1 ? 'ano' : 'anos'}`;
 }
