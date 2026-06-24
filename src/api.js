@@ -1198,6 +1198,13 @@ export const totemKids = {
     remover: (id) => del(`/totem-kids/kids-equipe/membro/${id}`),
     ficha: (volProfileId) => get(`/totem-kids/kids-equipe/membro/${volProfileId}/ficha`),
   },
+  estoque: {
+    list: () => get('/totem-kids/estoque'),
+    add: (salaId, body) => post(`/totem-kids/salas/${salaId}/estoque`, body),
+    update: (id, body) => patch(`/totem-kids/estoque/${id}`, body),
+    remove: (id) => del(`/totem-kids/estoque/${id}`),
+    registrarPatrimonio: (id) => post(`/totem-kids/estoque/${id}/patrimonio`, {}),
+  },
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),
     list: (params = {}) => {

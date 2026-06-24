@@ -686,6 +686,90 @@ router.get('/kids-equipe/membro/:volProfileId/ficha', authorizeModule('kids', 1)
   } catch (e) { console.error('[totemKids] ficha equipe:', e.message); res.status(500).json({ error: 'Erro na ficha' }); }
 });
 
+// ── Estoque por sala (qtd esperada vs atual · liga ao Patrimônio com tag Kids) ─
+// GET /estoque · salas + itens + resumo (quantos faltando)
+router.get('/estoque', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: salas } = await supabase.from('kids_salas')
+      .select('id, nome, cor, ordem').eq('ativo', true).order('ordem', { ascending: true });
+    const { data: itens } = await supabase.from('kids_estoque')
+      .select('id, sala_id, nome, categoria, unidade, qtd_esperada, qtd_atual, pat_bem_id, observacao')
+      .is('deleted_at', null).order('categoria', { ascending: true });
+    const porSala = {};
+    (itens || []).forEach((i) => { (porSala[i.sala_id] = porSala[i.sala_id] || []).push(i); });
+    res.json((salas || []).map((s) => {
+      const list = porSala[s.id] || [];
+      const faltando = list.filter((i) => (i.qtd_atual || 0) < (i.qtd_esperada || 0)).length;
+      return { ...s, itens: list, faltando, total_itens: list.length };
+    }));
+  } catch (e) { console.error('[totemKids] estoque:', e.message); res.status(500).json({ error: 'Erro ao carregar estoque' }); }
+});
+
+// POST /salas/:salaId/estoque · novo item de estoque
+router.post('/salas/:salaId/estoque', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { nome, categoria, unidade, qtd_esperada, qtd_atual, observacao } = req.body || {};
+    if (!nome) return res.status(400).json({ error: 'Nome do item é obrigatório' });
+    const { data, error } = await supabase.from('kids_estoque').insert({
+      sala_id: req.params.salaId, nome: String(nome).trim(),
+      categoria: categoria || null, unidade: unidade || 'un',
+      qtd_esperada: Number(qtd_esperada) || 0, qtd_atual: Number(qtd_atual) || 0,
+      observacao: observacao || null, created_by: req.user?.userId || null,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { console.error('[totemKids] estoque add:', e.message); res.status(500).json({ error: 'Erro ao adicionar item' }); }
+});
+
+// PATCH /estoque/:id · editar (quantidades, nome, categoria...)
+router.patch('/estoque/:id', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const upd = {};
+    for (const k of ['nome', 'categoria', 'unidade', 'qtd_esperada', 'qtd_atual', 'observacao', 'ativo']) if (k in req.body) upd[k] = req.body[k];
+    upd.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('kids_estoque').update(upd).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao editar item' }); }
+});
+
+// DELETE /estoque/:id · soft delete
+router.delete('/estoque/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('kids_estoque').update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover item' }); }
+});
+
+// POST /estoque/:id/patrimonio · registra o item no Patrimônio (tag Kids + sala)
+router.post('/estoque/:id/patrimonio', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: item } = await supabase.from('kids_estoque')
+      .select('id, nome, observacao, pat_bem_id, sala_id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!item) return res.status(404).json({ error: 'Item não encontrado' });
+    if (item.pat_bem_id) return res.status(409).json({ error: 'Item já está no patrimônio' });
+    const { data: sala } = await supabase.from('kids_salas').select('nome').eq('id', item.sala_id).maybeSingle();
+    const salaNome = sala?.nome || 'Kids';
+    // categoria "Kids" (tag)
+    const { data: cat } = await supabase.from('pat_categorias').select('id').ilike('nome', 'kids').limit(1).maybeSingle();
+    // localização "Kids · <sala>" (find-or-create sob o nó "Kids")
+    let { data: parent } = await supabase.from('pat_localizacoes').select('id').ilike('nome', 'Kids').is('pai_id', null).limit(1).maybeSingle();
+    if (!parent) { const r = await supabase.from('pat_localizacoes').insert({ nome: 'Kids' }).select('id').single(); parent = r.data; }
+    const locNome = `Kids · ${salaNome}`;
+    let { data: loc } = await supabase.from('pat_localizacoes').select('id').ilike('nome', locNome).limit(1).maybeSingle();
+    if (!loc) { const r = await supabase.from('pat_localizacoes').insert({ nome: locNome, pai_id: parent?.id || null }).select('id').single(); loc = r.data; }
+    const { data: bem, error } = await supabase.from('pat_bens').insert({
+      nome: item.nome, categoria_id: cat?.id || null, localizacao_id: loc?.id || null,
+      status: 'ativo', observacoes: item.observacao || `Item do Kids · sala ${salaNome}`,
+      created_by: req.user?.userId || null,
+    }).select('id').single();
+    if (error) throw error;
+    await supabase.from('kids_estoque').update({ pat_bem_id: bem.id, updated_at: new Date().toISOString() }).eq('id', item.id);
+    res.json({ ok: true, pat_bem_id: bem.id });
+  } catch (e) { console.error('[totemKids] estoque->patrimonio:', e.message); res.status(500).json({ error: 'Erro ao registrar no patrimônio' }); }
+});
+
 // GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
 // aniversariantes da semana. Alimenta o hub/dashboard do módulo.
 router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
