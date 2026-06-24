@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { devocionalPlanos as planosApi, devocionais as devocionaisApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
@@ -10,7 +10,7 @@ import { Badge } from './ui/badge';
 import { Skeleton } from './ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
-import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen, Send, CheckCircle2, AlertTriangle, Link2, Copy, TrendingUp, TrendingDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen, Send, CheckCircle2, AlertTriangle, Link2, Copy, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import DevocionalPanel from './DevocionalPanel';
 
@@ -367,6 +367,24 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
   const [modalNovoItem, setModalNovoItem] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [tab, setTab] = useState('itens');
+  const [importando, setImportando] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function importarDocx(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !plano) return;
+    const jaTem = itens.length > 0;
+    if (jaTem && !confirm('Já há itens neste plano. Os dias presentes no documento serão substituídos. Continuar?')) return;
+    setImportando(true);
+    try {
+      const r: any = await planosApi.carregarDocx(plano.id, file, { sobrescrever: jaTem });
+      toast.success(`${r.criados} dia(s) importados do documento.`);
+      if (r.ignorados > 0) toast.warning(`${r.ignorados} devocional(is) além dos ${r.dias_do_plano} dias do plano foram ignorados. Ajuste as datas do plano se precisar de mais dias.`);
+      load();
+    } catch (err: any) { toast.error(err.message); }
+    finally { setImportando(false); }
+  }
 
   const load = useCallback(() => {
     setLoading(true);
@@ -436,7 +454,11 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
 
         <TabsContent value="itens" className="space-y-3">
           {podeEditar && (
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-2 flex-wrap">
+              <input ref={fileRef} type="file" accept=".docx" hidden onChange={importarDocx} />
+              <Button onClick={() => fileRef.current?.click()} variant="outline" disabled={importando} title="Suba o .docx do pastor com a semana toda (1 devocional por dia)">
+                {importando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />} Importar .docx
+              </Button>
               <Button onClick={() => setModalNovoItem(true)} variant="outline">
                 <Plus className="h-4 w-4 mr-2" /> Novo item
               </Button>
