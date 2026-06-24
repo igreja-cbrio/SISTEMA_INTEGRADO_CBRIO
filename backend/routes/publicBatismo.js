@@ -202,6 +202,7 @@ router.post('/', limiter, async (req, res) => {
       link: '/ministerial/integracao?tab=batismos',
       severidade: 'info',
       chaveDedup: `batismo_inscricao_${data.id}`,
+      email: true, // responsável da Integração (Lorena) recebe também por e-mail
     }).catch(err => console.error('[publicBatismo] notificacao falhou:', err.message));
 
     res.status(201).json({
