@@ -40,6 +40,12 @@ async function gerarTodasNotificacoes() {
   total += await safe('Solicitacoes', gerarNotificacoesSolicitacoes);
   total += await safe('Marketing', gerarNotificacoesMarketing);
   total += await safe('Online', gerarNotificacoesOnline);
+  // Monitor de Automações: alerta pipelines (sync financeiro/WiFi/YouTube/etc.)
+  // que pararam de atualizar. Read-only (só alerta).
+  total += await safe('MonitorAutomacoes', async () => {
+    const { checarEAlertar } = require('./monitorAutomacoes');
+    return checarEAlertar();
+  });
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
