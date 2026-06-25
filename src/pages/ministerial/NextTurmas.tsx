@@ -184,6 +184,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [det, setDet] = useState<TurmaDetalhe | null>(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     try { setDet(await nextApi.turmas.get(turmaId)); } catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -278,13 +279,17 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               <span className="flex items-center gap-1"><X className="h-3.5 w-3.5" style={{ color: C.danger }} /> Não foi: {det.matriculas.filter(m => presCount(m.id) === 0).length}</span>
             </div>
             <DialogFooter className="flex-wrap gap-2 sm:justify-between">
-              <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
+              <div className="flex gap-2 flex-wrap">
+                <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
+                <Button variant="outline" onClick={() => setQrOpen(true)} className="gap-2"><Share2 className="h-4 w-4" /> QR de direcionamento</Button>
+              </div>
               <div className="flex gap-2">
                 {det.status === 'aberta' && <Button variant="outline" onClick={encerrar}>Encerrar turma</Button>}
                 <Button onClick={onClose}>Fechar</Button>
               </div>
             </DialogFooter>
             {addOpen && <AddMatriculaModal turmaId={turmaId} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); onChanged(); }} />}
+            {qrOpen && <QrDirecionarModal turmaId={turmaId} turmaNome={det.nome} onClose={() => setQrOpen(false)} />}
           </>
         )}
       </DialogContent>
@@ -640,6 +645,43 @@ function Pill({ label, v, color }: { label: string; v: number; color?: string })
 }
 
 // Compartilhar a inscrição pública do Next — MESMO link e QR que o módulo antigo usava.
+// QR de direcionamento da turma (Fase 2a): mostra no fim do encontro · a pessoa escaneia,
+// acha o nome e escolhe pra onde vai. Link público com token assinado da turma.
+function QrDirecionarModal({ turmaId, turmaNome, onClose }: { turmaId: string; turmaNome: string; onClose: () => void }) {
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [url, setUrl] = useState('');
+  const [erro, setErro] = useState('');
+  useEffect(() => {
+    nextApi.turmas.direcionarQr(turmaId)
+      .then((r: any) => {
+        const link = `${window.location.origin}/next/direcionar/${r.token}`;
+        setUrl(link);
+        QRCode.toDataURL(link, { width: 320, margin: 2, color: { dark: '#000000', light: '#ffffff' } }).then(setQrDataUrl).catch(() => {});
+      })
+      .catch((e: any) => setErro(e?.message || 'Não foi possível gerar o QR'));
+  }, [turmaId]);
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle className="flex items-center gap-2"><Share2 className="h-5 w-5" /> QR de direcionamento — {turmaNome}</DialogTitle></DialogHeader>
+        <p className="text-xs text-muted-foreground">Mostre na tela no fim do encontro. A pessoa escaneia, acha o nome dela e escolhe pra onde quer ir (Grupos/Voluntários/Batismo).</p>
+        {erro ? <p className="text-sm text-destructive text-center py-6">{erro}</p> : (
+          <div className="space-y-3">
+            {qrDataUrl && <img src={qrDataUrl} alt="QR" className="mx-auto rounded-lg border border-border" style={{ width: 240, height: 240 }} />}
+            {url && (
+              <div className="flex gap-2">
+                <Input value={url} readOnly className="font-mono text-xs" />
+                <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(url); toast.success('Link copiado!'); }} className="shrink-0"><Copy className="h-3.5 w-3.5" /></Button>
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ModalCompartilhar({ onClose }: { onClose: () => void }) {
   const url = `${window.location.origin}/next/inscrever`;
   const [qrDataUrl, setQrDataUrl] = useState<string>('');

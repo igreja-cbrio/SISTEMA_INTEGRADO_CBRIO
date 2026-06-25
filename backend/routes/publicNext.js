@@ -10,6 +10,7 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { verifyTurmaToken, direcionarMatricula } = require('../services/nextDirecionar');
 
 // Rate limit dedicado para inscrições (anti-spam)
 const limiter = rateLimit({
@@ -211,6 +212,52 @@ router.post('/inscrever', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Direcionamento self-service pelo QR no fim do Next (Fase 2a) ──────────────
+// O QR carrega um token assinado da turma. A pessoa abre, acha o nome dela e escolhe
+// pra onde vai (Grupos/Voluntários/Batismo · Devocional é Fase 2b). Escreve na matrícula
+// (mesmo motor do líder). Token turma-scoped + assinado (HMAC CRON_SECRET) + validade.
+
+// GET /api/public/next/direcionar/:token — turma + pessoas da turma pra escolher o nome
+router.get('/direcionar/:token', async (req, res) => {
+  try {
+    const turmaId = verifyTurmaToken(req.params.token);
+    if (!turmaId) return res.status(403).json({ error: 'Link inválido ou expirado' });
+    const { data: turma } = await supabase.from('next_turmas')
+      .select('id, nome').eq('id', turmaId).is('deleted_at', null).maybeSingle();
+    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
+    const { data: pessoas } = await supabase.from('next_matriculas')
+      .select('id, nome, sobrenome, indicou_grupo, indicou_servir, indicou_batismo')
+      .eq('turma_id', turmaId).is('deleted_at', null).order('nome');
+    res.json({
+      turma: { nome: turma.nome },
+      pessoas: (pessoas || []).map(p => ({
+        id: p.id,
+        nome: `${p.nome || ''}${p.sobrenome ? ' ' + p.sobrenome : ''}`.trim(),
+        ja: { grupos: !!p.indicou_grupo, voluntarios: !!p.indicou_servir, batismo: !!p.indicou_batismo },
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/public/next/direcionar/:token — { matricula_id, destinos: ['grupos','voluntarios','batismo'] }
+router.post('/direcionar/:token', async (req, res) => {
+  try {
+    const turmaId = verifyTurmaToken(req.params.token);
+    if (!turmaId) return res.status(403).json({ error: 'Link inválido ou expirado' });
+    const { matricula_id, destinos } = req.body || {};
+    if (!matricula_id) return res.status(400).json({ error: 'Selecione a pessoa' });
+    // Segurança: a matrícula PRECISA ser desta turma (o token só vale pra ela)
+    const { data: m } = await supabase.from('next_matriculas')
+      .select('id, turma_id').eq('id', matricula_id).is('deleted_at', null).maybeSingle();
+    if (!m || m.turma_id !== turmaId) return res.status(403).json({ error: 'Pessoa não pertence a esta turma' });
+    const r = await direcionarMatricula({
+      matriculaId: matricula_id, destinos, userId: null,
+      permitir: ['grupos', 'voluntarios', 'batismo'], // Devocional = Fase 2b (com o app do Matheus)
+    });
+    res.json(r);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 module.exports = router;
