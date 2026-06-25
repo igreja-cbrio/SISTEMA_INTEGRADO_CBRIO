@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link } from 'react-router-dom';
 import { cuidados as cuidadosApi } from '../../api';
+import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
@@ -723,6 +724,8 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
     });
   }, [itens, busca, statusF]);
 
+  const { pageItems: filtradosPag, paginacaoProps: visitasPagProps } = usePaginacaoLocal(filtrados, 25);
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-border bg-card p-4">
@@ -764,7 +767,7 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
               <TableRow><TableCell colSpan={7} className="text-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></TableCell></TableRow>
             ) : filtrados.length === 0 ? (
               <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">{itens.length === 0 ? 'Nenhuma visita registrada ainda.' : 'Nenhum resultado nos filtros.'}</TableCell></TableRow>
-            ) : filtrados.map((v: any) => {
+            ) : filtradosPag.map((v: any) => {
               const st = VISITA_STATUS_UI.find(s => s.v === v.status);
               const cor = st?.color || '#94a3b8';
               return (
@@ -794,6 +797,7 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
           </TableBody>
         </Table>
       </div>
+      <Paginacao {...visitasPagProps} itemLabel="visitas" />
     </div>
   );
 }
