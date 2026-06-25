@@ -12,13 +12,14 @@
 // Read-only · não toca a lógica do sistema OKR existente (decisão do Marcos).
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { painel as painelApi } from '../api';
-import { Compass, Target, ListChecks, RefreshCw, Info, ChevronDown } from 'lucide-react';
+import { Compass, Target, ListChecks, RefreshCw, Info, ChevronDown, FileDown, Presentation } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
+import { exportarMonitoramentoPdf, exportarMonitoramentoSlides } from '../lib/exportMonitoramentoOkr';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -73,6 +74,8 @@ const BLOCOS = [
         alvo: '≥70% dos convertidos',
         objetivo: 'Analisar a eficácia do funil de engajamento do novo convertido',
         envolvida: 'Cuidados',
+        // Número oficial no topo do card (Pr. Juninho · módulo-fim, não sai dado daqui).
+        fixo: { valor: 73, unidade: '%' }, alvoNum: 70, cmp: 'gte',
         taticos: [
           // Valores estáticos (Pr. Juninho) · módulo-fim, não saem pro sistema.
           { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', fixo: { valor: 24, unidade: 'h' }, alvoNum: 72, cmp: 'lte' },
@@ -81,13 +84,15 @@ const BLOCOS = [
         ],
       },
       {
-        nome: 'Engajamento nos Valores',
-        alvo: '≥75% de toda igreja (2 ou + valores)',
+        nome: 'Engajamento médio nos valores',
+        alvo: '≥ 50%',
         objetivo: 'Avaliar engajamento dos membros no crescimento espiritual e no suporte ao crescimento da Igreja',
         envolvida: 'Grupos, Voluntariado e Generosidade',
+        // Topo do card = média das 3 porcentagens abaixo (soma ÷ 3) · meta 50%.
+        media: true, alvoNum: 50, cmp: 'gte',
         taticos: [
           // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base definida pelo Juninho (módulo-fim, não sai dado daqui).
-          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 50.9, unidade: '%', detalhe: '729 em grupos ativos · base 1.431.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 48, unidade: '%', detalhe: '1.431 em grupos ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
           { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 29.8, unidade: '%', detalhe: '893 voluntários cadastrados · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
           { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
         ],
@@ -200,6 +205,9 @@ const CAMADAS = [
 export default function MonitoramentoOkr() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [exportando, setExportando] = useState(null); // 'pdf' | 'slides' | null
+  const rootRef = useRef(null);
+  const blocoRefs = useRef([]);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -217,8 +225,34 @@ export default function MonitoramentoOkr() {
   const metricas = data?.metricas || {};
   const totalAuto = Object.keys(metricas).length + (data?.nsm ? 1 : 0);
 
+  const handlePdf = useCallback(async () => {
+    if (!rootRef.current) return;
+    setExportando('pdf');
+    try {
+      await exportarMonitoramentoPdf(rootRef.current);
+      toast.success('PDF gerado');
+    } catch (e) {
+      toast.error(formatErro(e, 'Exportar PDF'));
+    } finally {
+      setExportando(null);
+    }
+  }, []);
+
+  const handleSlides = useCallback(async () => {
+    setExportando('slides');
+    try {
+      const blocos = blocoRefs.current.filter(Boolean);
+      await exportarMonitoramentoSlides(blocos, ['Ministerial', 'Criativo', 'Gestão']);
+      toast.success('Slides gerados');
+    } catch (e) {
+      toast.error(formatErro(e, 'Exportar slides'));
+    } finally {
+      setExportando(null);
+    }
+  }, []);
+
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1240, margin: '0 auto' }}>
+    <div ref={rootRef} style={{ padding: '24px 32px', maxWidth: 1240, margin: '0 auto' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -232,17 +266,43 @@ export default function MonitoramentoOkr() {
             assim que a fonte de dado existir.
           </p>
         </div>
-        <button
-          onClick={carregar}
-          disabled={loading}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px',
-            background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
-            color: C.t2, fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: loading ? 0.5 : 1,
-          }}
-        >
-          <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} /> Atualizar
-        </button>
+        <div data-export-ignore="1" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            onClick={handlePdf}
+            disabled={loading || !!exportando}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+              background: C.primary, border: `1px solid ${C.primary}`, borderRadius: 8,
+              color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: (loading || exportando) ? 0.6 : 1,
+            }}
+          >
+            <FileDown size={13} style={{ animation: exportando === 'pdf' ? 'spin 1s linear infinite' : 'none' }} />
+            {exportando === 'pdf' ? 'Gerando…' : 'Exportar PDF'}
+          </button>
+          <button
+            onClick={handleSlides}
+            disabled={loading || !!exportando}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+              background: C.card, border: `1px solid ${C.primary}`, borderRadius: 8,
+              color: C.primaryDark, fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: (loading || exportando) ? 0.6 : 1,
+            }}
+          >
+            <Presentation size={13} style={{ animation: exportando === 'slides' ? 'spin 1s linear infinite' : 'none' }} />
+            {exportando === 'slides' ? 'Gerando…' : 'Exportar slides'}
+          </button>
+          <button
+            onClick={carregar}
+            disabled={loading || !!exportando}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px',
+              background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
+              color: C.t2, fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: (loading || exportando) ? 0.5 : 1,
+            }}
+          >
+            <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} /> Atualizar
+          </button>
+        </div>
       </header>
 
       {/* Legenda das 3 camadas */}
@@ -266,8 +326,13 @@ export default function MonitoramentoOkr() {
       <NsmHero nsm={data?.nsm} loading={loading} />
 
       {/* Blocos por Área Responsável */}
-      {BLOCOS.map((bloco) => (
-        <BlocoArea key={bloco.area} bloco={bloco} metricas={metricas} />
+      {BLOCOS.map((bloco, i) => (
+        <BlocoArea
+          key={bloco.area}
+          bloco={bloco}
+          metricas={metricas}
+          registrar={(el) => { blocoRefs.current[i] = el; }}
+        />
       ))}
 
       <footer style={{ marginTop: 22, paddingTop: 14, borderTop: `1px solid ${C.border}`, fontSize: 11, color: C.t3, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
@@ -323,9 +388,9 @@ function NsmHero({ nsm, loading }) {
 }
 
 // ── Bloco de Área Responsável ──
-function BlocoArea({ bloco, metricas }) {
+function BlocoArea({ bloco, metricas, registrar }) {
   return (
-    <div style={{ marginBottom: 24 }}>
+    <div ref={registrar} style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <h2 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: 0 }}>{bloco.area}</h2>
         <span style={{ fontSize: 10.5, color: C.primaryDark, background: C.primaryBg, padding: '2px 9px', borderRadius: 99, fontWeight: 700 }}>
@@ -348,10 +413,36 @@ function BlocoArea({ bloco, metricas }) {
   );
 }
 
+// ── Valor exibido no topo do card de OKR ──
+//   fixo → número oficial · media → média das porcentagens dos táticos · live → automático
+function valorTopoOkr(okr, metricas) {
+  if (okr.fixo) {
+    const aval = avaliar(okr.fixo.valor, okr);
+    return { valor: okr.fixo.valor, unidade: okr.fixo.unidade || '%', cor: aval.cor, casas: okr.casas, label: 'oficial' };
+  }
+  if (okr.media) {
+    const vals = (okr.taticos || [])
+      .map((t) => (t.fixo ? Number(t.fixo.valor) : Number(metricas[t.live]?.valor)))
+      .filter((v) => Number.isFinite(v));
+    if (vals.length) {
+      const media = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const aval = avaliar(media, okr);
+      return { valor: media, unidade: '%', cor: aval.cor, casas: 1, label: 'média' };
+    }
+  }
+  if (okr.live) {
+    const m = metricas[okr.live];
+    if (m) {
+      const aval = avaliar(m.valor, okr);
+      return { valor: m.valor, unidade: m.unidade, cor: aval.cor, casas: okr.casas, label: 'automático' };
+    }
+  }
+  return null;
+}
+
 // ── Card de OKR + seus táticos ──
 function OkrCard({ okr, metricas }) {
-  const m = okr.live ? metricas[okr.live] : null;
-  const aval = m ? avaliar(m.valor, okr) : null;
+  const topo = valorTopoOkr(okr, metricas);
 
   return (
     <section style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, overflow: 'hidden', boxShadow: 'var(--shadow)' }}>
@@ -364,12 +455,12 @@ function OkrCard({ okr, metricas }) {
               Alvo: <strong style={{ color: C.t2 }}>{okr.alvo}</strong>
             </div>
           </div>
-          {m && (
+          {topo && (
             <div style={{ textAlign: 'right', flexShrink: 0 }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: aval.cor, lineHeight: 1 }}>
-                {fmt(m.valor)}{m.unidade}
+              <div style={{ fontSize: 24, fontWeight: 800, color: topo.cor, lineHeight: 1 }}>
+                {fmt(topo.valor, topo.casas)}{topo.unidade}
               </div>
-              <div style={{ fontSize: 9, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 2 }}>automático</div>
+              <div style={{ fontSize: 9, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 2 }}>{topo.label}</div>
             </div>
           )}
         </div>
