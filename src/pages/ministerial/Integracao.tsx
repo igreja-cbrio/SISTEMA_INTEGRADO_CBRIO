@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { integracao as intApi } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -59,15 +60,16 @@ export default function Integracao() {
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Integração</h1>
-          <p className="text-sm text-muted-foreground">Acompanhamento de cultos, decisões e batismos</p>
-        </div>
-        <Button onClick={() => navigate('/integracao/coleta')} className="gap-2">
-          <Smartphone className="h-4 w-4" /> Coleta mobile
-        </Button>
-      </div>
+      <ModuleHeader
+        icon={Calendar}
+        title="Integração"
+        subtitle="Acompanhamento de cultos, decisões e batismos"
+        actions={
+          <Button onClick={() => navigate('/integracao/coleta')} className="gap-2">
+            <Smartphone className="h-4 w-4" /> Coleta mobile
+          </Button>
+        }
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <button onClick={() => setTab('frequencia')} className="text-left hover:scale-[1.02] transition-transform">

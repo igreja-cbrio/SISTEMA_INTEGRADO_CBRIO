@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { StatisticsCard } from '../../components/ui/statistics-card';
@@ -1344,15 +1345,12 @@ export default function Membresia() {
   return (
     <div style={{ maxWidth: 1600, margin: '0 auto', padding: '0 24px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Users style={{ width: 28, height: 28, color: C.primary }} />
-            <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0, lineHeight: 1.25 }}>Membresia</h1>
-          </div>
-          <p style={{ fontSize: 14, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>Membros, famílias, generosidade e trilha dos valores</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <ModuleHeader
+        icon={Users}
+        title="Membresia"
+        subtitle="Membros, famílias, generosidade e trilha dos valores"
+        accent={C.primary}
+        actions={<>
           <Button variant="outline" onClick={() => navigate('/ministerial/membresia/scan')}>
             <ScanLine style={{ width: 16, height: 16 }} /> Escanear QR
           </Button>
@@ -1364,8 +1362,8 @@ export default function Membresia() {
               <UserPlus style={{ width: 16, height: 16 }} /> Novo Membro
             </Button>
           )}
-        </div>
-      </div>
+        </>}
+      />
 
       {error && (
         <div style={{ background: C.redBg, border: `1px solid ${C.red}30`, color: C.red, borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
