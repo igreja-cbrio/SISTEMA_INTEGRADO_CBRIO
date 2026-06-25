@@ -19,6 +19,10 @@ const limiter = rateLimit({
 });
 router.use(limiter);
 
+// Motivos válidos da inscrição (slugs · espelham MOTIVO_OPTIONS do form)
+const MOTIVOS_VALIDOS = ['recem_convertido', 'prestes_batizar', 'conhecer_cbrio', 'servir_voluntario'];
+function motivoValido(m) { return MOTIVOS_VALIDOS.includes(String(m || '')) ? String(m) : null; }
+
 function soDigitos(s) { return String(s || '').replace(/\D/g, ''); }
 function ehEmailValido(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || '')); }
 function ehCpfValido(cpf) {
@@ -60,11 +64,13 @@ router.post('/inscrever', async (req, res) => {
   try {
     const {
       evento_id,
-      nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes,
+      nome, sobrenome, cpf, telefone, email, data_nascimento, motivo, observacoes,
       website, // honeypot
     } = req.body || {};
 
     if (website) return res.status(200).json({ ok: true }); // honeypot
+
+    const cleanMotivo = motivoValido(motivo);
 
     if (!nome || nome.trim().length < 2) {
       return res.status(400).json({ error: 'Nome obrigatorio' });
@@ -141,6 +147,7 @@ router.post('/inscrever', async (req, res) => {
         telefone: telefone ? soDigitos(telefone) : null,
         email: cleanEmail,
         data_nascimento: data_nascimento || null,
+        motivo: cleanMotivo,
         observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
         membro_id: membroId,
         ja_batizado: jaBatizado,
@@ -179,7 +186,7 @@ router.post('/inscrever', async (req, res) => {
           turma_id: turma.id,
           nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
           cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
-          data_nascimento: data_nascimento || null, membro_id: membroId,
+          data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
           ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
           origem: 'formulario',
         });

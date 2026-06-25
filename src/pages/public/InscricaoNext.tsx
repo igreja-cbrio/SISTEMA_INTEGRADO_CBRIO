@@ -171,6 +171,15 @@ function Row({ children }: { children: React.ReactNode }) {
 
 type Evento = { id: string; data: string; titulo?: string };
 
+// Motivo da inscrição · value = slug estável (identificador · sem acento),
+// label = texto exibido. O backend persiste o slug em next_inscricoes.motivo.
+const MOTIVO_OPTIONS = [
+  { value: 'recem_convertido', label: 'Sou recém convertido(a)' },
+  { value: 'prestes_batizar', label: 'Estou prestes a me batizar' },
+  { value: 'conhecer_cbrio', label: 'Quero conhecer a CBRio mais de perto' },
+  { value: 'servir_voluntario', label: 'Desejo servir como voluntário' },
+];
+
 export default function InscricaoNext() {
   const { C } = usePublicTheme();
   const [eventos, setEventos] = useState<Evento[]>([]);
@@ -179,6 +188,7 @@ export default function InscricaoNext() {
     nome: '', sobrenome: '',
     cpf: '', telefone: '', email: '',
     data_nascimento: '',
+    motivo: '',
     observacoes: '',
     website: '', // honeypot
   });
@@ -204,9 +214,10 @@ export default function InscricaoNext() {
     e.preventDefault();
     setError('');
     if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email invalido');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone invalido');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF invalido');
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('Email inválido');
+    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
+    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido');
+    if (!form.motivo) return setError('Selecione por que você quer participar do NEXT');
 
     setLoading(true);
     try {
@@ -218,6 +229,7 @@ export default function InscricaoNext() {
         telefone: form.telefone,
         email: form.email,
         data_nascimento: form.data_nascimento || null,
+        motivo: form.motivo || null,
         observacoes: form.observacoes || null,
         website: form.website,
       });
@@ -258,8 +270,10 @@ export default function InscricaoNext() {
           />
           <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Inscrição no NEXT</h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
-            O NEXT e a porta de entrada da CBRio — onde voce conhece nossa cultura,
-            como funciona cada area e descobre os proximos passos.
+            O NEXT é o seu próximo passo dentro da Igreja CBRio! É onde conhecemos
+            sua história, apresentamos nossa igreja e compartilhamos nossa visão!
+            <br />
+            São apenas 2 encontros, domingo às 10h.
           </p>
         </div>
 
@@ -275,10 +289,10 @@ export default function InscricaoNext() {
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
-              Inscricao confirmada!
+              Inscrição confirmada!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Voce esta inscrito(a) no NEXT. Em breve nossa equipe entrara em contato com mais detalhes.
+              Você está inscrito(a) no NEXT. Em breve nossa equipe entrará em contato com mais detalhes.
               Nos vemos no domingo!
             </p>
           </div>
@@ -327,6 +341,16 @@ export default function InscricaoNext() {
               </Row>
               <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
 
+              <SectionTitle>Por que o NEXT?</SectionTitle>
+              <SelectField
+                id="motivo"
+                label="Por que você quer participar do NEXT?"
+                value={form.motivo}
+                onChange={set('motivo') as any}
+                options={MOTIVO_OPTIONS}
+                required
+              />
+
               <SectionTitle>Observações</SectionTitle>
               <Field
                 id="observacoes"
@@ -349,13 +373,13 @@ export default function InscricaoNext() {
                   marginTop: 12, transition: 'background 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Confirmar inscricao'}
+                {loading ? 'Enviando...' : 'Confirmar inscrição'}
               </button>
 
               <p style={{
                 fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 16, lineHeight: 1.5,
               }}>
-                Ao se inscrever, voce concorda em receber contato da equipe da CBRio sobre o NEXT.
+                Ao se inscrever, você concorda em receber contato da equipe da CBRio sobre o NEXT.
               </p>
             </form>
           </>
