@@ -86,8 +86,8 @@ const BLOCOS = [
         objetivo: 'Avaliar engajamento dos membros no crescimento espiritual e no suporte ao crescimento da Igreja',
         envolvida: 'Grupos, Voluntariado e Generosidade',
         taticos: [
-          // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base 3.000 membros (módulo-fim, não sai dado daqui).
-          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 24.3, unidade: '%', detalhe: '729 em grupos ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
+          // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base definida pelo Juninho (módulo-fim, não sai dado daqui).
+          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 50.9, unidade: '%', detalhe: '729 em grupos ativos · base 1.431.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
           { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 29.8, unidade: '%', detalhe: '893 voluntários cadastrados · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
           { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
         ],
@@ -99,7 +99,8 @@ const BLOCOS = [
         envolvida: 'Integração',
         live: 'okr_batismos', alvoNum: 30, cmp: 'gte',
         taticos: [
-          { ind: 'Nº batismos mensais', alvo: '30% da média dos convertidos dos últimos 90 dias', memoria: 'Nº de batizandos x convertidos nos últimos 90 dias — mensal', live: 'batismos_mes' },
+          // Trimestral (90d) · % de convertidos que foram batizados (coorte cruzada). Vermelho < 30%, verde ≥ 30%.
+          { ind: '% de convertidos batizados (90 dias)', alvo: '≥30% dos convertidos', live: 'bat_cohort', alvoNum: 30, cmp: 'gte', casas: 1 },
           { ind: 'Tempo médio de decisão até o batismo', alvo: '90 dias', memoria: 'Nº de batizandos x convertidos nos últimos 90 dias — mensal', live: 'tempo_batismo', alvoNum: 90, cmp: 'lte' },
         ],
       },
@@ -116,7 +117,7 @@ const BLOCOS = [
         envolvida: 'Online / Produção / Marketing',
         taticos: [
           // Valores estáticos (Pr. Juninho) · módulo-fim, não saem pro sistema.
-          { ind: 'Nº DS online', alvo: '+20% YoY', fixo: { valor: 1821, unidade: '' } },
+          { ind: 'Nº DS online', alvo: '+20% YoY', live: 'ds_online' },
           { ind: '% de decisões com follow up', alvo: '≥50% com follow up realizado', fixo: { valor: 17.5, unidade: '%', detalhe: '≈317 de 1.821 decisões online com follow-up · média anual.' }, alvoNum: 50, cmp: 'gte', casas: 1 },
           { ind: 'NPS de culto online', alvo: 'Nota ≥ 9', memoria: 'Pesquisa com os frequentadores Online, resultado em planilha — trimestral', precisa: 'as notas da pesquisa de NPS online — posso ligar no módulo NPS ou você lança em /dados-brutos (tipo nps_culto)' },
         ],
@@ -143,7 +144,8 @@ const BLOCOS = [
         taticos: [
           { ind: 'Retenção média em vídeos', alvo: '≥40%', live: 'eng_retencao', alvoNum: 40, cmp: 'gte' },
           { ind: 'Taxa de compartilhamento', alvo: '≥5%', live: 'eng_compartilhamento', alvoNum: 5, cmp: 'gte' },
-          { ind: 'Cliques em séries de mensagens no YouTube', alvo: '≥15%', live: 'eng_cliques_series', alvoNum: 15, cmp: 'gte' },
+          // Taxa de engajamento real do YouTube (curtidas + comentários ÷ views). Alvo provisório · ajustar.
+          { ind: 'Taxa de engajamento no YouTube', alvo: '≥4%', live: 'eng_interacao', alvoNum: 4, cmp: 'gte', casas: 1 },
         ],
       },
     ],

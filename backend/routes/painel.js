@@ -2037,6 +2037,101 @@ router.get('/monitoramento-okr', async (req, res) => {
       console.error('painel/monitoramento-okr · atraso_culto:', e.message);
     }
 
+    // ── Métricas reais autorizadas pelo Marcos pra este módulo (override sobre o
+    //    RPC). O OKR continua read-only: só LÊ do sistema, nada volta. ──
+    const fetchPaged = async (table, cols, applyFilter) => {
+      const out = []; let from = 0; const page = 1000;
+      while (true) {
+        let q = supabase.from(table).select(cols).range(from, from + page - 1);
+        if (applyFilter) q = applyFilter(q);
+        const { data, error } = await q;
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return out;
+    };
+    const _hoje = new Date();
+    const _diasAtras = (d) => { const x = new Date(_hoje); x.setDate(x.getDate() - d); return x.toISOString().slice(0, 10); };
+    const _h90 = _diasAtras(90), _h365 = _diasAtras(365);
+    const _avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+    const _d10 = (v) => String(v || '').slice(0, 10);
+
+    // 1) Nº DS online = média de views do "Dia Seguinte" (cultos.online_ds · 90d)
+    try {
+      const cs = await fetchPaged('cultos', 'online_ds',
+        (q) => q.gte('data', _h90).gt('online_ds', 0).is('deleted_at', null));
+      const m = _avg(cs.map((c) => Number(c.online_ds)));
+      if (m != null) addM('ds_online', Math.round(m), '',
+        `média de views do Dia Seguinte ao culto · ${cs.length} cultos (90 dias)`);
+    } catch (e) { console.error('okr · ds_online:', e.message); }
+
+    // 2) % assentos ocupados · SÓ domingos (exclui AMI/Quarta/Bridge) ÷ 1.050
+    try {
+      const cs = await fetchPaged('cultos', 'presencial_adulto, vol_service_types!inner(recurrence_day, name)',
+        (q) => q.gte('data', _h90).gt('presencial_adulto', 0).is('deleted_at', null).eq('vol_service_types.recurrence_day', 0));
+      const pres = cs
+        .filter((c) => !String(c.vol_service_types?.name || '').toLowerCase().includes('bridge'))
+        .map((c) => Number(c.presencial_adulto));
+      const mp = _avg(pres);
+      if (mp != null) addM('assentos', Math.round(mp / 1050 * 1000) / 10, '%',
+        `${Math.round(mp)} de 1.050 lugares · média dos cultos de domingo (90 dias)`);
+    } catch (e) { console.error('okr · assentos:', e.message); }
+
+    // 3) Rotatividade = (admissões + demissões) / 2 ÷ ativos × 100 (12 meses)
+    try {
+      const fs = await fetchPaged('rh_funcionarios', 'data_admissao, data_demissao, status',
+        (q) => q.is('deleted_at', null));
+      const adm = fs.filter((f) => f.data_admissao && _d10(f.data_admissao) >= _h365).length;
+      const dem = fs.filter((f) => f.data_demissao && _d10(f.data_demissao) >= _h365).length;
+      const ativos = fs.filter((f) => f.status === 'ativo').length;
+      if (ativos > 0) addM('rotatividade', Math.round(((adm + dem) / 2 / ativos * 100) * 10) / 10, '%',
+        `(${adm} admissões + ${dem} demissões) ÷ 2 ÷ ${ativos} ativos (12 meses)`);
+    } catch (e) { console.error('okr · rotatividade:', e.message); }
+
+    // 4) % de convertidos batizados em ≤90 dias (coorte · cruza membro/cpf/nome)
+    try {
+      const dig = (v) => String(v || '').replace(/\D/g, '');
+      const convs = await fetchPaged('cui_convertidos', 'nome, cpf, membro_id, data_culto',
+        (q) => q.is('deleted_at', null).gte('data_culto', _h90));
+      if (convs.length) {
+        const bat = await fetchPaged('batismo_inscricoes', 'membro_id, cpf, nome, data_batismo',
+          (q) => q.eq('status', 'realizado').is('deleted_at', null).not('data_batismo', 'is', null));
+        const byM = new Map(), byC = new Map(), byN = new Map();
+        const put = (m, k, d) => { if (!k || !d) return; const c = m.get(k); if (!c || d < c) m.set(k, d); };
+        for (const b of bat) {
+          const d = _d10(b.data_batismo);
+          put(byM, b.membro_id, d);
+          put(byC, dig(b.cpf).length === 11 ? dig(b.cpf) : null, d);
+          put(byN, String(b.nome || '').trim().toLowerCase() || null, d);
+        }
+        let ok = 0;
+        for (const c of convs) {
+          const cands = [c.membro_id ? byM.get(c.membro_id) : null,
+            dig(c.cpf).length === 11 ? byC.get(dig(c.cpf)) : null,
+            byN.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
+          const d = cands.length ? cands.sort()[0] : null;
+          if (!d) continue;
+          const dias = Math.floor((new Date(d + 'T12:00:00') - new Date(_d10(c.data_culto) + 'T12:00:00')) / 86400000);
+          if (dias >= 0 && dias <= 90) ok++;
+        }
+        addM('bat_cohort', Math.round(ok / convs.length * 1000) / 10, '%',
+          `${ok} de ${convs.length} convertidos batizados em ≤90 dias (trimestre)`);
+      }
+    } catch (e) { console.error('okr · bat_cohort:', e.message); }
+
+    // 5) Taxa de engajamento YouTube = (curtidas + comentários) ÷ views × 100 (ano)
+    try {
+      const vids = await fetchPaged('online_videos', 'view_count, like_count, comment_count',
+        (q) => q.gte('publicado_em', `${_hoje.getFullYear()}-01-01`));
+      const sv = vids.reduce((a, v) => a + Number(v.view_count || 0), 0);
+      const sl = vids.reduce((a, v) => a + Number(v.like_count || 0), 0);
+      const sc = vids.reduce((a, v) => a + Number(v.comment_count || 0), 0);
+      if (sv > 0) addM('eng_interacao', Math.round((sl + sc) / sv * 1000) / 10, '%',
+        `(${sl} curtidas + ${sc} comentários) ÷ ${sv} views · ${vids.length} vídeos do ano`);
+    } catch (e) { console.error('okr · eng_interacao:', e.message); }
+
     const resp = { geradoEm: new Date().toISOString(), nsm, metricas };
     cacheSet(cacheKey, resp);
     res.json(resp);
