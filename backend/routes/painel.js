@@ -2058,14 +2058,24 @@ router.get('/monitoramento-okr', async (req, res) => {
     const _avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
     const _d10 = (v) => String(v || '').slice(0, 10);
 
-    // 1) Nº DS online = média de views do "Dia Seguinte" (cultos.online_ds · 90d)
+    // 1) DS online · crescimento YoY (views do Dia Seguinte · YTD vs mesmo período do ano anterior)
     try {
-      const cs = await fetchPaged('cultos', 'online_ds',
-        (q) => q.gte('data', _h90).gt('online_ds', 0).is('deleted_at', null));
-      const m = _avg(cs.map((c) => Number(c.online_ds)));
-      if (m != null) addM('ds_online', Math.round(m), '',
-        `média de views do Dia Seguinte ao culto · ${cs.length} cultos (90 dias)`);
-    } catch (e) { console.error('okr · ds_online:', e.message); }
+      const anoAtual = _hoje.getFullYear();
+      const hojeStr = _hoje.toISOString().slice(0, 10);
+      const iniAtual = `${anoAtual}-01-01`;
+      const iniAnt = `${anoAtual - 1}-01-01`;
+      const fimAnt = (() => { const x = new Date(_hoje); x.setFullYear(x.getFullYear() - 1); return x.toISOString().slice(0, 10); })();
+      const cs = await fetchPaged('cultos', 'data, online_ds',
+        (q) => q.gte('data', iniAnt).lte('data', hojeStr).gt('online_ds', 0).is('deleted_at', null));
+      let atual = 0, ant = 0;
+      for (const c of cs) {
+        const d = _d10(c.data), v = Number(c.online_ds) || 0;
+        if (d >= iniAtual && d <= hojeStr) atual += v;
+        else if (d >= iniAnt && d <= fimAnt) ant += v;
+      }
+      if (ant > 0) addM('ds_online', Math.round((atual - ant) / ant * 1000) / 10, '%',
+        `${atual.toLocaleString('pt-BR')} views em ${anoAtual} vs ${ant.toLocaleString('pt-BR')} em ${anoAtual - 1} (mesmo período do ano)`);
+    } catch (e) { console.error('okr · ds_online yoy:', e.message); }
 
     // 2) % assentos ocupados · SÓ domingos (exclui AMI/Quarta/Bridge) ÷ 1.050
     try {
@@ -2089,37 +2099,6 @@ router.get('/monitoramento-okr', async (req, res) => {
       if (ativos > 0) addM('rotatividade', Math.round(((adm + dem) / 2 / ativos * 100) * 10) / 10, '%',
         `(${adm} admissões + ${dem} demissões) ÷ 2 ÷ ${ativos} ativos (12 meses)`);
     } catch (e) { console.error('okr · rotatividade:', e.message); }
-
-    // 4) % de convertidos batizados em ≤90 dias (coorte · cruza membro/cpf/nome)
-    try {
-      const dig = (v) => String(v || '').replace(/\D/g, '');
-      const convs = await fetchPaged('cui_convertidos', 'nome, cpf, membro_id, data_culto',
-        (q) => q.is('deleted_at', null).gte('data_culto', _h90));
-      if (convs.length) {
-        const bat = await fetchPaged('batismo_inscricoes', 'membro_id, cpf, nome, data_batismo',
-          (q) => q.eq('status', 'realizado').is('deleted_at', null).not('data_batismo', 'is', null));
-        const byM = new Map(), byC = new Map(), byN = new Map();
-        const put = (m, k, d) => { if (!k || !d) return; const c = m.get(k); if (!c || d < c) m.set(k, d); };
-        for (const b of bat) {
-          const d = _d10(b.data_batismo);
-          put(byM, b.membro_id, d);
-          put(byC, dig(b.cpf).length === 11 ? dig(b.cpf) : null, d);
-          put(byN, String(b.nome || '').trim().toLowerCase() || null, d);
-        }
-        let ok = 0;
-        for (const c of convs) {
-          const cands = [c.membro_id ? byM.get(c.membro_id) : null,
-            dig(c.cpf).length === 11 ? byC.get(dig(c.cpf)) : null,
-            byN.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
-          const d = cands.length ? cands.sort()[0] : null;
-          if (!d) continue;
-          const dias = Math.floor((new Date(d + 'T12:00:00') - new Date(_d10(c.data_culto) + 'T12:00:00')) / 86400000);
-          if (dias >= 0 && dias <= 90) ok++;
-        }
-        addM('bat_cohort', Math.round(ok / convs.length * 1000) / 10, '%',
-          `${ok} de ${convs.length} convertidos batizados em ≤90 dias (trimestre)`);
-      }
-    } catch (e) { console.error('okr · bat_cohort:', e.message); }
 
     // 5) Taxa de engajamento YouTube = (curtidas + comentários) ÷ views × 100 (ano)
     try {
