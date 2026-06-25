@@ -350,6 +350,50 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// GET /criancas/duplicados · grupos de crianças provavelmente duplicadas (mesmo
+// nome normalizado). Declarado ANTES de /criancas/:id (senão casaria como :id).
+router.get('/criancas/duplicados', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    let from = 0; const page = 1000; let all = [];
+    while (true) {
+      const { data, error } = await supabase.from('kids_criancas')
+        .select('id, nome, data_nascimento, ativo, foto_url, familia:mem_familias(nome), responsaveis:kids_responsaveis(membro:mem_membros(nome))')
+        .is('deleted_at', null).range(from, from + page - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      all = all.concat(data);
+      if (data.length < page) break;
+      from += page;
+    }
+    const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const grupos = {};
+    all.forEach((c) => { const k = norm(c.nome); if (k.length < 3) return; (grupos[k] = grupos[k] || []).push(c); });
+    const dups = Object.values(grupos).filter((g) => g.length > 1).map((g) => g.map((c) => ({
+      id: c.id, nome: c.nome, data_nascimento: c.data_nascimento, ativo: c.ativo, foto_url: c.foto_url,
+      familia: c.familia?.nome || null,
+      responsaveis: (c.responsaveis || []).map((r) => r.membro?.nome).filter(Boolean),
+    })));
+    // mesmo nascimento no grupo = mais provável → primeiro
+    dups.sort((a, b) => {
+      const mesma = (g) => { const ds = g.map((x) => x.data_nascimento).filter(Boolean); return ds.length > 1 && new Set(ds).size === 1; };
+      return (mesma(b) ? 1 : 0) - (mesma(a) ? 1 : 0);
+    });
+    res.json(dups);
+  } catch (e) { console.error('[totemKids] duplicados:', e.message); res.status(500).json({ error: 'Erro ao detectar duplicados' }); }
+});
+
+// POST /criancas/merge { keep_id, merge_ids } · funde duplicadas na mantida
+router.post('/criancas/merge', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { keep_id, merge_ids } = req.body || {};
+    if (!keep_id || !Array.isArray(merge_ids) || !merge_ids.length) return res.status(400).json({ error: 'keep_id e merge_ids obrigatórios' });
+    if (merge_ids.includes(keep_id)) return res.status(400).json({ error: 'A criança mantida não pode estar na lista de fundidas' });
+    const { error } = await supabase.rpc('merge_kids_criancas', { p_keep: keep_id, p_merge: merge_ids });
+    if (error) throw error;
+    res.json({ ok: true, fundidas: merge_ids.length });
+  } catch (e) { console.error('[totemKids] merge criancas:', e.message); res.status(500).json({ error: e.message || 'Erro ao fundir' }); }
+});
+
 // GET /api/totem-kids/criancas/:id · detalhe completo
 router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
   try {
@@ -2745,7 +2789,8 @@ router.get('/vinculo-solicitacoes/:id', authorizeModule('kids', 2), async (req, 
         id: c.id, nome: c.nome, data_nascimento: c.data_nascimento, ativo: c.ativo,
         familia: c.familia?.nome || null,
         responsaveis: (c.responsaveis || []).map((r) => r.membro?.nome).filter(Boolean),
-      }));
+        match_forte: !!(s.crianca_data_nascimento && c.data_nascimento && c.data_nascimento === s.crianca_data_nascimento),
+      })).sort((a, b) => (b.match_forte ? 1 : 0) - (a.match_forte ? 1 : 0));
     }
 
     res.json({ ...s, crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url, foto_mae_url, foto_pai_url, possiveis_criancas });

@@ -12,7 +12,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 const FAIXAS = [
@@ -36,6 +36,7 @@ export default function GestaoCriancas() {
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -76,7 +77,10 @@ export default function GestaoCriancas() {
           <h1 className="text-xl font-bold flex items-center gap-2"><Baby className="h-5 w-5 text-primary" /> Crianças do Kids</h1>
           <p className="text-sm text-muted-foreground">Gerencie cada criança · ficha, atendimentos, desativar.</p>
         </div>
-        <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setDupOpen(true)}><Copy className="h-4 w-4 mr-1" /> Duplicados</Button>
+          <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -141,6 +145,7 @@ export default function GestaoCriancas() {
 
       {sel && <FichaCrianca criancaId={sel.id} onClose={() => { setSel(null); if (searchParams.get('crianca')) setSearchParams({}, { replace: true }); }} onChanged={carregar} />}
       {novoOpen && <NovaCrianca onClose={() => setNovoOpen(false)} onCreated={() => { setNovoOpen(false); carregar(); }} />}
+      {dupOpen && <DuplicadosModal onClose={() => setDupOpen(false)} onMerged={carregar} />}
     </div>
   );
 }
@@ -319,6 +324,60 @@ function FotoAvatar({ crianca, onChanged }: { crianca: any; onChanged: () => voi
     </div>
   );
 }
+function DuplicadosModal({ onClose, onMerged }: { onClose: () => void; onMerged: () => void }) {
+  const [grupos, setGrupos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [keep, setKeep] = useState<Record<number, string>>({});
+  const [merging, setMerging] = useState(false);
+  const carregar = useCallback(() => {
+    setLoading(true);
+    api.criancas.duplicados().then((d: any) => setGrupos(Array.isArray(d) ? d : [])).catch(() => toast.error('Erro ao carregar')).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function fundir(gi: number, grupo: any[]) {
+    const k = keep[gi] || grupo[0].id;
+    const outros = grupo.filter((c) => c.id !== k).map((c) => c.id);
+    if (!outros.length) return;
+    if (!window.confirm(`Fundir ${outros.length} criança(s) em "${grupo.find((c) => c.id === k)?.nome}"? Responsáveis, check-ins, atendimentos e decisões migram pra ela. Não dá pra desfazer facilmente.`)) return;
+    setMerging(true);
+    try { await api.criancas.merge(k, outros); toast.success('Crianças fundidas'); carregar(); onMerged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao fundir'); } finally { setMerging(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Crianças duplicadas</DialogTitle></DialogHeader>
+        {loading ? (
+          <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : grupos.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">Nenhuma criança duplicada encontrada.</p>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{grupos.length} grupo{grupos.length !== 1 ? 's' : ''} com nome igual. Escolha qual <b>manter</b> e funda as outras nela.</p>
+            {grupos.map((grupo, gi) => (
+              <Card key={gi} className="p-3 space-y-2">
+                <div className="text-sm font-semibold">{grupo[0].nome} · {grupo.length}</div>
+                {grupo.map((c: any) => (
+                  <label key={c.id} className="flex items-start gap-2 rounded-md border border-border p-2 text-sm cursor-pointer">
+                    <input type="radio" className="mt-1" checked={(keep[gi] || grupo[0].id) === c.id} onChange={() => setKeep({ ...keep, [gi]: c.id })} />
+                    <span className="flex-1 min-w-0">
+                      <span className="font-medium">{c.nome}</span>{!c.ativo && <span className="text-[10px] text-muted-foreground"> · inativa</span>}
+                      <span className="block text-[11px] text-muted-foreground">{c.familia ? `${c.familia} · ` : ''}{(c.responsaveis || []).join(', ') || 'sem responsável'}{c.data_nascimento ? ` · ${fmt(c.data_nascimento)}` : ''}</span>
+                    </span>
+                  </label>
+                ))}
+                <Button size="sm" onClick={() => fundir(gi, grupo)} disabled={merging}>Manter a selecionada e fundir as outras</Button>
+              </Card>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CampoSempre({ label, v }: { label: string; v?: string | null }) {
   return <div><span className="text-xs text-muted-foreground">{label}: </span>{v ? <span>{v}</span> : <span className="italic text-muted-foreground">—</span>}</div>;
 }

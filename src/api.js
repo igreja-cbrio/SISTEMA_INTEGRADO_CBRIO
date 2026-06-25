@@ -1222,6 +1222,8 @@ export const totemKids = {
     get: (id) => get(`/totem-kids/criancas/${id}`),
     uploadFoto: (id, dataUrl) => post(`/totem-kids/criancas/${id}/foto`, { dataUrl }),
     removeFoto: (id) => del(`/totem-kids/criancas/${id}/foto`),
+    duplicados: () => get('/totem-kids/criancas/duplicados'),
+    merge: (keep_id, merge_ids) => post('/totem-kids/criancas/merge', { keep_id, merge_ids }),
     list: (params = {}) => {
       const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
       return get(`/totem-kids/criancas${qs ? `?${qs}` : ''}`);
