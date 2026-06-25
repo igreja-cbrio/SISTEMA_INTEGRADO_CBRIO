@@ -29,11 +29,29 @@ async function gerarTodasNotificacoes() {
   total += await safe('Kpis', gerarNotificacoesKpis);
   total += await safe('Cuidados', gerarNotificacoesCuidados);
   total += await safe('JornadaConvertidos', gerarNotificacoesJornadaConvertidos);
+  // Agente de Primeiro Contato (piloto): enfileira convertidos sem contato com
+  // mensagem rascunhada p/ o líder revisar e enviar (não gera notificação aqui).
+  await safe('AgentePrimeiroContato', async () => {
+    const { enfileirarPrimeiroContato } = require('./agentePrimeiroContato');
+    return enfileirarPrimeiroContato();
+  });
   total += await safe('Grupos', gerarNotificacoesGrupos);
   total += await safe('Ritual', gerarNotificacoesRitual);
   total += await safe('Solicitacoes', gerarNotificacoesSolicitacoes);
   total += await safe('Marketing', gerarNotificacoesMarketing);
   total += await safe('Online', gerarNotificacoesOnline);
+  // Monitor de Automações: alerta pipelines (sync financeiro/WiFi/YouTube/etc.)
+  // que pararam de atualizar. Read-only (só alerta).
+  total += await safe('MonitorAutomacoes', async () => {
+    const { checarEAlertar } = require('./monitorAutomacoes');
+    return checarEAlertar();
+  });
+  // Agente de Voluntariado: escalas pendentes/recusadas dos próximos cultos +
+  // no-show do último culto (só sugere/alerta).
+  total += await safe('AgenteVoluntariado', async () => {
+    const { alertar } = require('./agenteVoluntariado');
+    return alertar();
+  });
   // Agente Batismo/Next 90d: enfileira convertidos perto do prazo sem batismo/
   // Next com convite rascunhado p/ o líder revisar e enviar (não notifica aqui).
   await safe('AgenteBatismoNext', async () => {

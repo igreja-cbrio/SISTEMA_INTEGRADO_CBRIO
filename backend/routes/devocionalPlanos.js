@@ -273,42 +273,37 @@ Cada devocional deve ter:
 
 Use linguagem acessivel e contemporanea. NUNCA cite mais de uma passagem central por devocional.`;
 
-  const userPrompt = `Gere ${diasAlvo.length} devocionais diarios para o plano "${plano.titulo}".
-${tema ? `Tema/serie: ${tema}\n` : ''}${plano.descricao ? `Contexto: ${plano.descricao}\n` : ''}
-Datas (uma por devocional, na ordem):
-${diasAlvo.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+  // Gera 1 devocional por chamada, TODAS em paralelo · corta o tempo de espera
+  // (antes era 1 chamada longa gerando os N dias em sequência interna do modelo).
+  async function gerarUmDia(data, idx) {
+    const userPrompt = `Gere 1 devocional diario para o plano "${plano.titulo}" (dia ${idx + 1} de ${diasAlvo.length}).
+${tema ? `Tema/serie: ${tema}\n` : ''}${plano.descricao ? `Contexto: ${plano.descricao}\n` : ''}Data: ${data}
 
-Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAlvo.length} objetos no formato:
-[
-  {
-    "data": "yyyy-mm-dd",
-    "titulo": "...",
-    "passagem": "Livro Cap:Vers",
-    "passagem_texto": "Texto biblico completo aqui, em portugues",
-    "reflexao": "...",
-    "aplicacao": "...",
-    "oracao": "..."
+Retorne APENAS um objeto JSON (sem markdown, sem texto fora do JSON) no formato:
+{
+  "data": "${data}",
+  "titulo": "...",
+  "passagem": "Livro Cap:Vers",
+  "passagem_texto": "Texto biblico completo aqui, em portugues",
+  "reflexao": "...",
+  "aplicacao": "...",
+  "oracao": "..."
+}`;
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    const text = resp.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    try { return { ...JSON.parse(cleaned), data }; }
+    catch (err) { console.error('IA JSON parse error (dia ' + data + '):', err.message); return null; }
   }
-]`;
 
-  const resp = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 8000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
-  });
-
-  const text = resp.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
-  const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-  let arr;
-  try { arr = JSON.parse(cleaned); }
-  catch (err) {
-    console.error('IA JSON parse error:', err.message, 'raw:', text.slice(0, 500));
-    const e = new Error('IA retornou JSON invalido');
-    e.preview = text.slice(0, 300);
-    throw e;
-  }
-  if (!Array.isArray(arr)) throw new Error('IA não retornou array');
+  const resultados = await Promise.all(diasAlvo.map((d, i) => gerarUmDia(d, i).catch(() => null)));
+  const arr = resultados.filter(Boolean);
+  if (arr.length === 0) throw new Error('IA retornou JSON invalido');
 
   const rows = arr
     .filter(o => o && o.data && o.titulo && o.reflexao)
@@ -466,10 +461,93 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
 // PUT /api/devocional-planos/itens/:id — editar item
 // ─────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────
-// POST /api/devocional-planos/:id/carregar-docx — upload do .docx da semana
-// (campo "arquivo") · extrai o texto, segmenta em itens (1 por dia) e
-// preenche os dias do plano em ordem. ?sobrescrever=1 substitui itens
-// existentes nas mesmas datas. O pastor sobe 1 arquivo com a semana toda.
+// POST /api/devocional-planos/preview-docx — SÓ extrai/segmenta o .docx e
+// devolve os itens p/ revisão (NÃO grava nada). O front mostra a prévia; depois
+// o admin confirma via /:id/itens-lote. (Não publica direto no app.)
+// ─────────────────────────────────────────────────────────────
+router.post('/preview-docx', authorize('admin', 'diretor'), uploadDocx.single('arquivo'), async (req, res) => {
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY não configurada' });
+    if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'Envie o arquivo .docx em "arquivo"' });
+    if (!String(req.file.originalname || '').toLowerCase().endsWith('.docx')) {
+      return res.status(400).json({ error: 'Apenas arquivos .docx são aceitos' });
+    }
+    const { value: texto } = await mammoth.extractRawText({ buffer: req.file.buffer });
+    if (!texto || texto.trim().length < 40) return res.status(400).json({ error: 'Não consegui ler texto no documento.' });
+    const extraidos = await estruturarDocxViaIA(texto);
+    if (extraidos.length === 0) return res.status(422).json({ error: 'Nenhum devocional reconhecido no documento.' });
+    const itens = extraidos.map((o) => ({
+      titulo: String(o.titulo || '').slice(0, 200),
+      passagem: o.passagem ? String(o.passagem).slice(0, 100) : '',
+      passagem_texto: o.passagem_texto ? String(o.passagem_texto) : '',
+      reflexao: o.autor ? `${String(o.reflexao || '').trim()}\n\n— Escrito por ${String(o.autor).trim()}` : String(o.reflexao || '').trim(),
+      aplicacao: o.aplicacao ? String(o.aplicacao) : '',
+    }));
+    res.json({ itens, reconhecidos: itens.length });
+  } catch (e) {
+    console.error('devocional-planos preview-docx:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao ler o documento' });
+  }
+});
+
+// POST /api/devocional-planos/:id/itens-lote — publica os itens JÁ REVISADOS
+// (vindos da prévia, possivelmente editados) nos dias do plano. ?/body
+// sobrescrever regrava datas existentes. Estende o plano se precisar.
+// ─────────────────────────────────────────────────────────────
+router.post('/:id/itens-lote', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { itens, sobrescrever } = req.body || {};
+    if (!Array.isArray(itens) || itens.length === 0) return res.status(400).json({ error: 'Nenhum item para publicar' });
+    const { data: plano, error: ePlano } = await supabase
+      .from('devocional_planos').select('*').eq('id', req.params.id).single();
+    if (ePlano || !plano) return res.status(404).json({ error: 'Plano não encontrado' });
+
+    let dias = eachDay(plano.data_inicio, plano.data_fim);
+    const alvo = Math.min(itens.length, 14);
+    if (alvo > dias.length) {
+      const ultimo = parseDate(plano.data_inicio);
+      ultimo.setUTCDate(ultimo.getUTCDate() + (alvo - 1));
+      const dataFimNova = fmtDate(ultimo);
+      await supabase.from('devocional_planos').update({ data_fim: dataFimNova }).eq('id', plano.id);
+      plano.data_fim = dataFimNova;
+      dias = eachDay(plano.data_inicio, plano.data_fim);
+    }
+    const usados = Math.min(itens.length, dias.length);
+    const rows = [];
+    for (let i = 0; i < usados; i++) {
+      const o = itens[i] || {};
+      if (!o.titulo || !o.reflexao) continue;
+      rows.push({
+        plano_id: plano.id,
+        data: dias[i],
+        titulo: String(o.titulo).slice(0, 200),
+        passagem: o.passagem ? String(o.passagem).slice(0, 100) : null,
+        passagem_texto: o.passagem_texto ? String(o.passagem_texto) : null,
+        reflexao: String(o.reflexao),
+        aplicacao: o.aplicacao ? String(o.aplicacao) : null,
+        oracao: o.oracao ? String(o.oracao) : null,
+        gerado_por_ia: false,
+      });
+    }
+    if (rows.length === 0) return res.status(400).json({ error: 'Itens inválidos (faltou título ou reflexão)' });
+
+    if (sobrescrever) {
+      await supabase.from('devocional_itens').delete().eq('plano_id', plano.id).in('data', rows.map(r => r.data));
+    }
+    const { error: eIns } = await supabase.from('devocional_itens').insert(rows);
+    if (eIns) {
+      if (eIns.code === '23505') return res.status(409).json({ error: 'Já existem itens em algumas datas. Marque "substituir".' });
+      throw eIns;
+    }
+    res.status(201).json({ criados: rows.length, dias_do_plano: dias.length, ignorados: Math.max(0, itens.length - usados) });
+  } catch (e) {
+    console.error('devocional-planos itens-lote:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao publicar os itens' });
+  }
+});
+
+// POST /api/devocional-planos/:id/carregar-docx — (legado · import direto sem
+// prévia) extrai + grava de uma vez. O front novo usa preview-docx + itens-lote.
 // ─────────────────────────────────────────────────────────────
 router.post('/:id/carregar-docx', authorize('admin', 'diretor'), uploadDocx.single('arquivo'), async (req, res) => {
   try {
