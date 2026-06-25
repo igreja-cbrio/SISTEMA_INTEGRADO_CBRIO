@@ -751,7 +751,33 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
       })).sort((a, b) => b.ocorrencias - a.ocorrencias),
     };
 
-    res.json({ periodo: { desde, ate }, totais, detalhado, por_etapa, especiais });
+    // Acumulado da tabela "Estouro por etapa" = o culto inteiro (previsto × executado),
+    // sobre os cultos com AMBOS lançados. exec − prev == desvio (internamente consistente).
+    const por_etapa_total = comAmbos.length ? {
+      ocorrencias: comAmbos.length,
+      previsto_medio_seg: Math.round(mediaSeg(comAmbos, p => p.duracao_prevista_seg)),
+      executado_medio_seg: Math.round(mediaSeg(comAmbos, p => p.duracao_segundos)),
+      desvio_medio_seg: Math.round(mediaSeg(comAmbos, p => p.duracao_segundos - p.duracao_prevista_seg)),
+      estouro_pct: Math.round(100 * comAmbos.filter(p => p.duracao_segundos > p.duracao_prevista_seg).length / comAmbos.length),
+    } : null;
+
+    // Série pro gráfico de tempos de culto · 1 ponto por culto preenchido (min).
+    const serie = prod
+      .filter(p => p.duracao_minutos != null)
+      .map(p => {
+        const c = cultoById[p.culto_id];
+        if (!c) return null;
+        return {
+          data: c.data,
+          tipo: c.service_type_name || 'Outros',
+          duracao_min: p.duracao_minutos,
+          previsto_min: p.duracao_prevista_seg != null ? Math.round(p.duracao_prevista_seg / 60) : null,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.data.localeCompare(b.data));
+
+    res.json({ periodo: { desde, ate }, totais, detalhado, por_etapa, por_etapa_total, serie, especiais });
   } catch (e) {
     console.error('producao/acumulado:', e.message);
     res.status(500).json({ error: 'Erro ao agregar dados' });

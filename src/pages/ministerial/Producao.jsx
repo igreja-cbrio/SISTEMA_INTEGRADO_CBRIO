@@ -21,6 +21,9 @@ import {
   Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2,
   Inbox, Gauge, Activity,
 } from 'lucide-react';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
+} from 'recharts';
 import { toast } from 'sonner';
 import { producao as prodApi, solicitacoes as solicApi } from '../../api';
 import { formatErro } from '../../lib/formatErro';
@@ -665,6 +668,12 @@ function AbaDetalhado() {
     return () => { alive = false; };
   }, [periodo]);
 
+  // Série pro gráfico de tempo de culto (executado × previsto) · label = dd/mm
+  const serieChart = useMemo(() => (data?.serie || []).map(s => {
+    const [, m, d] = String(s.data).split('-');
+    return { ...s, label: `${d}/${m}` };
+  }), [data]);
+
   const aderCor = (v) => v == null ? C.primary : v >= 90 ? '#10B981' : v >= 75 ? '#F59E0B' : '#EF4444';
 
   return (
@@ -676,6 +685,34 @@ function AbaDetalhado() {
       </div>
       {loading ? <div style={loadingBox}>Carregando…</div> : !data ? null : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          {serieChart.length > 0 && (
+            <div>
+              <h3 style={subTit}>Tempo de culto · executado × previsto</h3>
+              <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
+                Duração de cada culto preenchido no período (min), comparada ao previsto do cronograma. A linha pontilhada marca o alvo de 60 min.
+              </p>
+              <div style={{ width: '100%', height: 280 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={serieChart} margin={{ top: 8, right: 16, bottom: 4, left: -8 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={22} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={32} />
+                    <Tooltip
+                      formatter={(v, n) => [v == null ? '—' : `${v} min`, n]}
+                      labelFormatter={(label, payload) => {
+                        const t = payload && payload[0] && payload[0].payload && payload[0].payload.tipo;
+                        return t ? `${label} · ${t}` : label;
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                    <ReferenceLine y={60} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth={1} />
+                    <Line type="monotone" dataKey="previsto_min" name="Previsto" stroke="#94A3B8" strokeWidth={1.5} strokeDasharray="5 4" dot={false} connectNulls />
+                    <Line type="monotone" dataKey="duracao_min" name="Executado" stroke={C.primary} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <h3 style={subTit}>Por tipo de culto</h3>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -721,6 +758,15 @@ function AbaDetalhado() {
           <div style={{ overflowX: 'auto' }}>
             <h3 style={subTit}>Estouro por etapa (previsto × executado)</h3>
             <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>Onde o tempo mais foge do cronograma. Ordenado pelo maior estouro médio.</p>
+            {data.por_etapa_total && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'baseline', padding: '10px 12px', marginBottom: 10, background: C.inputBg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}>
+                <span style={{ color: C.t2 }}>Culto inteiro ({data.por_etapa_total.ocorrencias} {data.por_etapa_total.ocorrencias === 1 ? 'culto' : 'cultos'}):</span>
+                <span style={{ color: C.text }}>previsto <strong>{fmtMMSSdash(data.por_etapa_total.previsto_medio_seg)}</strong></span>
+                <span style={{ color: C.text }}>executado <strong>{fmtMMSSdash(data.por_etapa_total.executado_medio_seg)}</strong></span>
+                <span style={{ color: data.por_etapa_total.desvio_medio_seg > 0 ? '#EF4444' : data.por_etapa_total.desvio_medio_seg < 0 ? '#10B981' : C.t2, fontWeight: 600 }}>desvio {fmtDesvio(data.por_etapa_total.desvio_medio_seg)}</span>
+                <span style={{ color: C.t2 }}>estourou em <strong>{data.por_etapa_total.estouro_pct}%</strong> dos cultos</span>
+              </div>
+            )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
