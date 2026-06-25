@@ -279,19 +279,9 @@ export const next = {
 };
 
 export const integracao = {
-  visitantes: {
-    list: (params) => get('/integracao/visitantes' + (params ? '?' + new URLSearchParams(params) : '')),
-    get: (id) => get(`/integracao/visitantes/${id}`),
-    create: (data) => post('/integracao/visitantes', data),
-    update: (id, data) => put(`/integracao/visitantes/${id}`, data),
-    remove: (id) => del(`/integracao/visitantes/${id}`),
-    changeStatus: (id, status) => post(`/integracao/visitantes/${id}/status`, { status }),
-    addAcompanhamento: (id, data) => post(`/integracao/visitantes/${id}/acompanhamentos`, data),
-  },
-  acompanhamentos: {
-    pendentes: () => get('/integracao/acompanhamentos/pendentes'),
-    remove: (id) => del(`/integracao/acompanhamentos/${id}`),
-  },
+  // visitantes/acompanhamentos removidos (2026-06-25) · superfície órfã do
+  // redesenho de mai/26 (PR #399) · nenhuma tela consumia. Dados de visitante
+  // hoje vivem em Cuidados/Membresia.
   dashboard: () => get('/integracao/dashboard'),
   historicoAnual: () => get('/integracao/historico-anual'),
   historicoBatismos: () => get('/integracao/historico-batismos'),
