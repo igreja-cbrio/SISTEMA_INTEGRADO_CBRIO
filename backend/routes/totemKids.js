@@ -2733,7 +2733,22 @@ router.get('/vinculo-solicitacoes/:id', authorizeModule('kids', 2), async (req, 
       signed(s.foto_mae_path), signed(s.foto_pai_path),
     ]);
 
-    res.json({ ...s, crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url, foto_mae_url, foto_pai_url });
+    // Anti-duplicata: se o pedido não aponta uma criança existente, sugere
+    // crianças com nome parecido (a equipe vincula a uma em vez de criar nova).
+    let possiveis_criancas = [];
+    if (!s.crianca_id && s.crianca_nome && String(s.crianca_nome).trim().length >= 3) {
+      const termo = String(s.crianca_nome).trim().replace(/[%_,]/g, '');
+      const { data: cands } = await supabase.from('kids_criancas')
+        .select('id, nome, data_nascimento, ativo, familia:mem_familias(nome), responsaveis:kids_responsaveis(membro:mem_membros(nome))')
+        .ilike('nome', `%${termo}%`).is('deleted_at', null).limit(10);
+      possiveis_criancas = (cands || []).map((c) => ({
+        id: c.id, nome: c.nome, data_nascimento: c.data_nascimento, ativo: c.ativo,
+        familia: c.familia?.nome || null,
+        responsaveis: (c.responsaveis || []).map((r) => r.membro?.nome).filter(Boolean),
+      }));
+    }
+
+    res.json({ ...s, crianca_foto_url, crianca_doc_url, doc_pai_url, doc_mae_url, foto_mae_url, foto_pai_url, possiveis_criancas });
   } catch (e) {
     console.error('[TOTEM-KIDS] vinculo-solicitacoes detalhe:', e.message);
     res.status(500).json({ error: 'Erro ao abrir solicitação' });
@@ -2752,8 +2767,9 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
     if (!s) return res.status(404).json({ error: 'Solicitação não encontrada' });
     if (s.status !== 'pendente') return res.status(409).json({ error: 'Solicitação já decidida' });
 
-    // 1. Resolve a criança: usa a apontada, ou cria nova na família do solicitante.
-    let criancaId = s.crianca_id;
+    // 1. Resolve a criança: criança escolhida na triagem (anti-duplicata) >
+    //    a apontada no pedido > cria nova na família do solicitante.
+    let criancaId = req.body?.crianca_id || s.crianca_id;
     if (!criancaId) {
       // garante família do solicitante
       const { data: membro } = await supabase

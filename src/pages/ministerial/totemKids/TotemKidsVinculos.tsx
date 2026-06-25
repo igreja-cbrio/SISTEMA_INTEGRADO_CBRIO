@@ -61,6 +61,7 @@ export default function TotemKidsVinculos() {
   const [lista, setLista] = useState<Solicitacao[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [detalhe, setDetalhe] = useState<Detalhe | null>(null);
+  const [criancaEscolhida, setCriancaEscolhida] = useState<string | null>(null);
   const [carregandoDetalhe, setCarregandoDetalhe] = useState(false);
   const [processando, setProcessando] = useState(false);
   const [motivoRejeicao, setMotivoRejeicao] = useState('');
@@ -94,11 +95,13 @@ export default function TotemKidsVinculos() {
     }
   }
 
+  useEffect(() => { setCriancaEscolhida(null); }, [detalhe?.id]);
+
   async function aprovar() {
     if (!detalhe) return;
     setProcessando(true);
     try {
-      await totemKids.vinculos.aprovar(detalhe.id);
+      await totemKids.vinculos.aprovar(detalhe.id, criancaEscolhida || undefined);
       toast.success(`Vínculo aprovado · ${detalhe.crianca_nome} ↔ ${detalhe.solicitante_nome}`);
       setDetalhe(null);
       carregar();
@@ -228,6 +231,27 @@ export default function TotemKidsVinculos() {
                 </div>
               </div>
 
+              {/* Anti-duplicata: já existe criança parecida? */}
+              {detalhe.status === 'pendente' && !detalhe.crianca_id && (((detalhe as any).possiveis_criancas || []).length > 0) && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 space-y-2">
+                  <div className="text-xs font-semibold text-amber-700 dark:text-amber-400">⚠ Já existe criança com nome parecido — evite duplicar</div>
+                  <p className="text-[11px] text-muted-foreground">Se for a mesma criança, vincule à existente. Só crie nova se for outra criança.</p>
+                  <label className="flex items-center gap-2 text-sm rounded-md border border-border p-2 cursor-pointer">
+                    <input type="radio" checked={!criancaEscolhida} onChange={() => setCriancaEscolhida(null)} />
+                    <span>Criar nova criança "{detalhe.crianca_nome}"</span>
+                  </label>
+                  {((detalhe as any).possiveis_criancas).map((c: any) => (
+                    <label key={c.id} className="flex items-start gap-2 text-sm rounded-md border border-border p-2 cursor-pointer">
+                      <input type="radio" checked={criancaEscolhida === c.id} onChange={() => setCriancaEscolhida(c.id)} className="mt-0.5" />
+                      <span className="min-w-0">
+                        <span className="font-medium">{c.nome}</span>{!c.ativo && <span className="text-[10px] text-muted-foreground"> · inativa</span>}
+                        <span className="block text-[11px] text-muted-foreground">{c.familia ? `${c.familia} · ` : ''}{(c.responsaveis || []).join(', ') || 'sem responsável'}{c.data_nascimento ? ` · ${new Date(c.data_nascimento + 'T00:00:00').toLocaleDateString('pt-BR')}` : ''}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
               {/* Nome dos pais informados pelo responsável */}
               {(detalhe.mae_nome || detalhe.pai_nome) && (
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -326,7 +350,7 @@ export default function TotemKidsVinculos() {
                       <X className="h-4 w-4 mr-1" /> Recusar
                     </Button>
                     <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={aprovar} disabled={processando}>
-                      {processando ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Check className="h-4 w-4 mr-1" /> Aprovar vínculo</>}
+                      {processando ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Check className="h-4 w-4 mr-1" /> {criancaEscolhida ? 'Vincular à existente' : 'Aprovar vínculo'}</>}
                     </Button>
                   </div>
                 )
