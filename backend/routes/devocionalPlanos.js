@@ -273,42 +273,37 @@ Cada devocional deve ter:
 
 Use linguagem acessivel e contemporanea. NUNCA cite mais de uma passagem central por devocional.`;
 
-  const userPrompt = `Gere ${diasAlvo.length} devocionais diarios para o plano "${plano.titulo}".
-${tema ? `Tema/serie: ${tema}\n` : ''}${plano.descricao ? `Contexto: ${plano.descricao}\n` : ''}
-Datas (uma por devocional, na ordem):
-${diasAlvo.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+  // Gera 1 devocional por chamada, TODAS em paralelo · corta o tempo de espera
+  // (antes era 1 chamada longa gerando os N dias em sequência interna do modelo).
+  async function gerarUmDia(data, idx) {
+    const userPrompt = `Gere 1 devocional diario para o plano "${plano.titulo}" (dia ${idx + 1} de ${diasAlvo.length}).
+${tema ? `Tema/serie: ${tema}\n` : ''}${plano.descricao ? `Contexto: ${plano.descricao}\n` : ''}Data: ${data}
 
-Retorne APENAS um JSON array (sem markdown, sem texto fora do JSON) com ${diasAlvo.length} objetos no formato:
-[
-  {
-    "data": "yyyy-mm-dd",
-    "titulo": "...",
-    "passagem": "Livro Cap:Vers",
-    "passagem_texto": "Texto biblico completo aqui, em portugues",
-    "reflexao": "...",
-    "aplicacao": "...",
-    "oracao": "..."
+Retorne APENAS um objeto JSON (sem markdown, sem texto fora do JSON) no formato:
+{
+  "data": "${data}",
+  "titulo": "...",
+  "passagem": "Livro Cap:Vers",
+  "passagem_texto": "Texto biblico completo aqui, em portugues",
+  "reflexao": "...",
+  "aplicacao": "...",
+  "oracao": "..."
+}`;
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    const text = resp.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    try { return { ...JSON.parse(cleaned), data }; }
+    catch (err) { console.error('IA JSON parse error (dia ' + data + '):', err.message); return null; }
   }
-]`;
 
-  const resp = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 8000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
-  });
-
-  const text = resp.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
-  const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-  let arr;
-  try { arr = JSON.parse(cleaned); }
-  catch (err) {
-    console.error('IA JSON parse error:', err.message, 'raw:', text.slice(0, 500));
-    const e = new Error('IA retornou JSON invalido');
-    e.preview = text.slice(0, 300);
-    throw e;
-  }
-  if (!Array.isArray(arr)) throw new Error('IA não retornou array');
+  const resultados = await Promise.all(diasAlvo.map((d, i) => gerarUmDia(d, i).catch(() => null)));
+  const arr = resultados.filter(Boolean);
+  if (arr.length === 0) throw new Error('IA retornou JSON invalido');
 
   const rows = arr
     .filter(o => o && o.data && o.titulo && o.reflexao)
