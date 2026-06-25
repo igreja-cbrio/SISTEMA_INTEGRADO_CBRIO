@@ -140,6 +140,7 @@ app.use('/api/kpis', require('./routes/kpis'));
 app.use('/api/online', require('./routes/online'));
 app.use('/api/wifi', require('./routes/wifi'));
 app.use('/api/cuidados', require('./routes/cuidados'));
+app.use('/api/agente-batismo-next', require('./routes/agenteBatismoNext'));
 app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/relatorios', require('./routes/relatorios'));
 app.use('/api/next', require('./routes/next'));
