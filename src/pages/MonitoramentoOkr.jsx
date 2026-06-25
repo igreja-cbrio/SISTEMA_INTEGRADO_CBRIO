@@ -116,8 +116,8 @@ const BLOCOS = [
         objetivo: 'Ampliar o alcance da mensagem da igreja por meio do culto online, alcançando novas pessoas e fortalecendo a conexão com a comunidade digital.',
         envolvida: 'Online / Produção / Marketing',
         taticos: [
-          // Valores estáticos (Pr. Juninho) · módulo-fim, não saem pro sistema.
-          { ind: 'Nº DS online', alvo: '+20% YoY', live: 'ds_online' },
+          // DS online (views do Dia Seguinte) · crescimento YoY real · verde ≥ +20%.
+          { ind: 'DS online · crescimento YoY', alvo: '+20% YoY', live: 'ds_online', alvoNum: 20, cmp: 'gte', casas: 1 },
           { ind: '% de decisões com follow up', alvo: '≥50% com follow up realizado', fixo: { valor: 17.5, unidade: '%', detalhe: '≈317 de 1.821 decisões online com follow-up · média anual.' }, alvoNum: 50, cmp: 'gte', casas: 1 },
           { ind: 'NPS de culto online', alvo: 'Nota ≥ 9', memoria: 'Pesquisa com os frequentadores Online, resultado em planilha — trimestral', precisa: 'as notas da pesquisa de NPS online — posso ligar no módulo NPS ou você lança em /dados-brutos (tipo nps_culto)' },
         ],
