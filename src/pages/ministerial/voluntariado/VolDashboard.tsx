@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import AgenteVoluntariadoPainel from '@/components/AgenteVoluntariadoPainel';
 
 export default function VolDashboard() {
   const navigate = useNavigate();
@@ -35,6 +36,7 @@ export default function VolDashboard() {
 
   return (
     <div className="space-y-6">
+      <AgenteVoluntariadoPainel />
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Voluntariado</h1>

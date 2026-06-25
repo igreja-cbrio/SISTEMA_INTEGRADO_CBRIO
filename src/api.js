@@ -2293,6 +2293,20 @@ export const agentePrimeiroContato = {
   ignorar: (id, motivo) => post(`/agente-primeiro-contato/${id}/ignorar`, { motivo }),
 };
 
+export const agenteBatismoNext = {
+  fila: (status = 'pendente') => get(`/agente-batismo-next?status=${encodeURIComponent(status)}`),
+  enviado: (id, editou = false) => post(`/agente-batismo-next/${id}/enviado`, { editou }),
+  ignorar: (id, motivo) => post(`/agente-batismo-next/${id}/ignorar`, { motivo }),
+};
+
+export const agenteVoluntariado = {
+  analisar: () => get('/agente-voluntariado'),
+};
+
+export const monitorAutomacoes = {
+  status: () => get('/monitor-automacoes/status'),
+};
+
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
