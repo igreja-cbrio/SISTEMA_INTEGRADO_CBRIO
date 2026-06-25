@@ -52,6 +52,12 @@ async function gerarTodasNotificacoes() {
     const { alertar } = require('./agenteVoluntariado');
     return alertar();
   });
+  // Agente Batismo/Next 90d: enfileira convertidos perto do prazo sem batismo/
+  // Next com convite rascunhado p/ o líder revisar e enviar (não notifica aqui).
+  await safe('AgenteBatismoNext', async () => {
+    const { enfileirar } = require('./agenteBatismoNext');
+    return enfileirar();
+  });
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
