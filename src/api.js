@@ -1196,6 +1196,9 @@ export const totemKids = {
     update: (id, body) => patch(`/totem-kids/estoque/${id}`, body),
     remove: (id) => del(`/totem-kids/estoque/${id}`),
     registrarPatrimonio: (id) => post(`/totem-kids/estoque/${id}/patrimonio`, {}),
+    localizacoesKids: () => get('/totem-kids/salas/localizacoes-kids'),
+    sincronizarPatrimonio: () => post('/totem-kids/salas/sincronizar-patrimonio', {}),
+    vincularLocalizacao: (salaId, localizacao_id) => patch(`/totem-kids/salas/${salaId}/localizacao`, { localizacao_id }),
   },
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),
