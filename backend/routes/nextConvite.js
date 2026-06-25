@@ -122,7 +122,9 @@ router.post('/enviar', authorizeModule('cuidados', 2), async (req, res) => {
       if (!tel) { sem_telefone++; continue; }
       if (!templateName) continue; // sem template aprovado: não envia (no-op)
       const primeiro = (c.nome || '').trim().split(/\s+/)[0] || '';
-      const r = await wpp.sendTemplate(c.telefone, templateName, 'pt_BR', [primeiro, link]);
+      // Template tem só {{1}} = nome no corpo; o link do NEXT é um BOTÃO de URL
+      // (estático) no template, então não vai como variável.
+      const r = await wpp.sendTemplate(c.telefone, templateName, 'pt_BR', [primeiro]);
       if (r?.sent) enviados++; else falhas++;
     }
 
