@@ -14,6 +14,7 @@
 // ============================================================================
 
 import { useState, useMemo } from 'react';
+import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { kpis as kpisApi } from '../api';
@@ -275,18 +276,16 @@ export default function MinhaArea() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
-      <header className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Activity className="h-5 w-5 text-[#00B39D]" /> Minha Área
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            Visualização dos KPIs · metas e estrutura editáveis em <a href="/gestao?aba=configurar" className="text-[#00B39D] hover:underline">/gestao</a>.
-            {kpiAreas.length > 0 && <> Líder de <strong className="capitalize">{kpiAreas.join(', ')}</strong>.</>}
-            {ministerioId && <> {ministerioPapel === 'lider' ? 'Líder' : 'Assistente'} de <strong>{ministerioId}</strong>.</>}
-          </p>
-        </div>
-      </header>
+      <ModuleHeader
+        icon={Activity}
+        title="Minha Área"
+        accent="#00B39D"
+        subtitle={<>
+          Visualização dos KPIs · metas e estrutura editáveis em <a href="/gestao?aba=configurar" className="text-[#00B39D] hover:underline">/gestao</a>.
+          {kpiAreas.length > 0 && <> Líder de <strong className="capitalize">{kpiAreas.join(', ')}</strong>.</>}
+          {ministerioId && <> {ministerioPapel === 'lider' ? 'Líder' : 'Assistente'} de <strong>{ministerioId}</strong>.</>}
+        </>}
+      />
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">

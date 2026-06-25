@@ -5,7 +5,7 @@ interface ModuleHeaderProps {
   /** Ícone do módulo (lucide). Renderiza num chip colorido pelo accent. */
   icon?: LucideIcon;
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   /** Botões/ações à direita. */
   actions?: React.ReactNode;
   /** Cor de acento do chip do ícone (default = teal da marca). */
