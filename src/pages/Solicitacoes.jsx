@@ -2131,14 +2131,18 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
 
           {isAdmin && !actionPending && (
             <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
-              {item.status === 'pendente' && <Button size="sm" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
-              {item.status === 'em_analise' && (
-                <>
-                  <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
-                  <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
-                </>
+              {item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
+              {/* Aprovação/Rejeição definitiva da área · sempre disponível enquanto a
+                  solicitação está com ela e ativa (não quando está com o solicitante em
+                  ajuste, nem antes do diretor de origem aprovar). Aprovar mantém o passo
+                  seguinte de Concluir; Rejeitar é terminal (sem Concluir). */}
+              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', 'aguardando_aprovacao_origem'].includes(item.status) && (
+                <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
               )}
-              {item.status === 'aprovado' && <Button size="sm" onClick={() => setActionPending('concluido')}>Concluir</Button>}
+              {item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
+              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', 'aguardando_aprovacao_origem'].includes(item.status) && (
+                <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
+              )}
               {/* Ponte estoque · só faz sentido em pedidos de material (logística) ativos */}
               {['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
                 && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem'].includes(item.status)
@@ -2186,11 +2190,11 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                 Confirmar ação: <span className="text-primary">{ACTION_LABELS[actionPending]}</span>
               </p>
               <div className="space-y-2">
-                <Label className="text-sm">Observações (opcional)</Label>
+                <Label className="text-sm">Comentário (opcional · fica no histórico)</Label>
                 <Textarea
                   value={obsText}
                   onChange={e => setObsText(e.target.value)}
-                  placeholder="Adicione observações sobre esta decisão..."
+                  placeholder="Comentário sobre esta decisão (aparece na linha do tempo)..."
                   rows={3}
                 />
               </div>
@@ -2573,7 +2577,7 @@ const MOTIVOS_PROBLEMA = [
   { value: 'data', label: 'Data' },
   { value: 'cancelamento', label: 'Cancelamento' },
 ];
-const MOTIVO_LABEL = { descricao: 'Descrição', escopo: 'Escopo', data: 'Data', cancelamento: 'Cancelamento' };
+const MOTIVO_LABEL = { descricao: 'Descrição', escopo: 'Escopo', data: 'Data', cancelamento: 'Cancelamento', resposta: 'Resposta' };
 
 // Termômetro "pedimos bem?" · % das solicitações que precisaram de ajuste (90d).
 // Diagnóstico NÃO punitivo (decisão do Marcos) · só na aba "Para Atender" (gestão/responsável).
@@ -2686,6 +2690,7 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
   const [aberto, setAberto] = useState(false);
   const [motivo, setMotivo] = useState('descricao');
   const [comentario, setComentario] = useState('');
+  const [resposta, setResposta] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [edit, setEdit] = useState({
     titulo: item.titulo || '', descricao: item.descricao || '',
@@ -2720,19 +2725,24 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
 
   async function reenviar() {
     if (!edit.titulo.trim()) { toast.error('O título não pode ficar vazio.'); return; }
+    if (resposta.trim().length < 3) { toast.error('Descreva sua resposta ao ajuste pedido.'); return; }
     setSubmitting(true);
     try {
       await api.reenviar(item.id, {
         titulo: edit.titulo.trim(), descricao: edit.descricao,
         justificativa: edit.justificativa, data_necessaria: edit.data_necessaria || null,
+        resposta: resposta.trim(),
       });
       toast.success('Reenviada · voltou para a fila.');
+      setResposta('');
       onChanged?.();
     } catch (e) { toast.error(e.message || 'Erro ao reenviar'); }
     finally { setSubmitting(false); }
   }
 
-  const ultimoAjuste = [...linha].reverse().find(l => l.tipo === 'ajuste' && l.motivo !== 'cancelamento');
+  // Último problema relatado (devolução da área ou alteração pedida) · ignora a
+  // tréplica do solicitante ('resposta') e os cancelamentos.
+  const ultimoAjuste = [...linha].reverse().find(l => l.tipo === 'ajuste' && !['cancelamento', 'resposta'].includes(l.motivo));
 
   return (
     <div className="space-y-3 pt-3 border-t border-border">
@@ -2766,6 +2776,11 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
             <Label className="text-xs">Data necessária</Label>
             <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
               onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Sua resposta <span className="text-red-500">*</span></Label>
+            <Textarea rows={2} value={resposta} onChange={e => setResposta(e.target.value)}
+              placeholder="Responda ao que a área pediu (fica registrado na linha do tempo)" />
           </div>
           <Button size="sm" onClick={reenviar} disabled={submitting} className="w-full">
             {submitting ? 'Reenviando...' : 'Reenviar solicitação'}
@@ -2816,14 +2831,16 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium">
                       {l.tipo === 'ajuste'
-                        ? `${l.lado === 'responsavel' ? 'Devolução' : 'Ajuste pedido'} · ${MOTIVO_LABEL[l.motivo] || l.motivo}`
+                        ? (l.motivo === 'resposta'
+                            ? 'Resposta do solicitante'
+                            : `${l.lado === 'responsavel' ? 'Devolução' : 'Ajuste pedido'} · ${MOTIVO_LABEL[l.motivo] || l.motivo}`)
                         : getStatusMeta(l.status_novo).label}
                     </span>
                     <span className="text-muted-foreground text-[10px] whitespace-nowrap">
                       {new Date(l.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
-                  {l.comentario && <p className="text-muted-foreground">{l.comentario}</p>}
+                  {(l.comentario || l.observacao) && <p className="text-muted-foreground">{l.comentario || l.observacao}</p>}
                   {l.ator && <p className="text-muted-foreground text-[10px]">por {l.ator}</p>}
                 </div>
               </li>
