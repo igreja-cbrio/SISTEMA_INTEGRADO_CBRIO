@@ -1263,7 +1263,7 @@ export const totemKids = {
   vinculos: {
     list: (status = 'pendente') => get(`/totem-kids/vinculo-solicitacoes?status=${encodeURIComponent(status)}`),
     get: (id) => get(`/totem-kids/vinculo-solicitacoes/${id}`),
-    aprovar: (id) => post(`/totem-kids/vinculo-solicitacoes/${id}/aprovar`, {}),
+    aprovar: (id, criancaId) => post(`/totem-kids/vinculo-solicitacoes/${id}/aprovar`, criancaId ? { crianca_id: criancaId } : {}),
     rejeitar: (id, motivo) => post(`/totem-kids/vinculo-solicitacoes/${id}/rejeitar`, { motivo }),
   },
   checkout: {
