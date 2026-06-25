@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { kpis as kpisApi } from '../api';
 
 const cultosApi = kpisApi.cultos;
-import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
+import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
 
@@ -75,14 +75,39 @@ function preenchido(c) {
   );
 }
 
+// Status de preenchimento por seção · usa as flags do banco (lançar 0 conta como
+// lançado · pedido do Marcos), não os números (0 default ≠ "intocado").
+//   'completo'   = frequência E decisões lançadas
+//   'incompleto' = só uma das duas lançada
+//   'pendente'   = nada lançado
+function statusCulto(c) {
+  const freq = !!c.frequencia_lancada;
+  const dec = !!c.decisoes_lancadas;
+  if (freq && dec) return 'completo';
+  if (freq || dec) return 'incompleto';
+  return 'pendente';
+}
+
 function formataDataCurta(dataStr) {
   const [y, m, d] = dataStr.split('-').map(Number);
   const dt = new Date(y, m - 1, d);
   return { dia: dt.getDate(), diaSemana: DIAS[dt.getDay()] };
 }
 
-export default function CalendarioCultos() {
+// Botão do seletor de vista (Semana | Pendências)
+function vistaBtn(active) {
+  return {
+    padding: '6px 14px', fontSize: 12, fontWeight: 700, borderRadius: 8, cursor: 'pointer',
+    border: `1px solid ${active ? C.primary : C.border}`,
+    background: active ? C.primaryBg : 'transparent',
+    color: active ? C.primary : C.t2,
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+  };
+}
+
+export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro = 'pendentes' } = {}) {
   const hoje = new Date();
+  const [vista, setVista] = useState('semana'); // 'semana' | 'pendencias'
   // Abre na SEMANA ATUAL por padrão (pedido do Marcos · 2026-06-16). As setas
   // navegam pra semanas anteriores quando precisar preencher o que já passou.
   const [semanaInicio, setSemanaInicio] = useState(() => inicioSemana(hoje));
@@ -90,6 +115,11 @@ export default function CalendarioCultos() {
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
   const [filtroTipo, setFiltroTipo] = useState('todos');
+
+  // ── Pendências · cultos a preencher/completar nos últimos 60 dias ──────────
+  const [cultosPend, setCultosPend] = useState([]);
+  const [loadingPend, setLoadingPend] = useState(false);
+  const [filtroPend, setFiltroPend] = useState('pendentes'); // 'pendentes'|'incompletos'|'todas'
 
   const dias = useMemo(() => diasDaSemana(semanaInicio), [semanaInicio]);
   const ehSemanaAtual = mesmoDia(semanaInicio, inicioSemana(hoje));
@@ -110,12 +140,41 @@ export default function CalendarioCultos() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Carrega os cultos passados (60 dias) pra lista de pendências. Sem deps —
+  // calcula a janela na hora · estável (não recria a cada render).
+  const carregarPend = useCallback(async () => {
+    setLoadingPend(true);
+    try {
+      const ate = new Date();
+      const desde = new Date(); desde.setDate(desde.getDate() - 60);
+      const data = await cultosApi.list({ data_inicio: toISO(desde), data_fim: toISO(ate), limit: 300 });
+      setCultosPend(Array.isArray(data) ? data : []);
+    } catch (e) {
+      toast.error(formatErro(e, 'cultos'));
+      setCultosPend([]);
+    } finally {
+      setLoadingPend(false);
+    }
+  }, []);
+
+  // Sinal vindo dos cards de /integracao: abre direto na vista de pendências,
+  // já filtrada (pendentes ou incompletos). Recarrega a cada clique (nonce).
+  useEffect(() => {
+    if (pendenciaSignal > 0) {
+      setVista('pendencias');
+      setFiltroPend(pendenciaFiltro === 'incompletos' ? 'incompletos' : 'pendentes');
+      carregarPend();
+    }
+  }, [pendenciaSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const irSemana = (delta) => {
     const novo = new Date(semanaInicio);
     novo.setDate(novo.getDate() + delta * 7);
     setSemanaInicio(novo);
   };
   const voltarHoje = () => setSemanaInicio(inicioSemana(new Date()));
+
+  const abrirPendencias = () => { setVista('pendencias'); carregarPend(); };
 
   // Tipos únicos pro filtro (a partir dos cultos do mês)
   const tiposDisponiveis = useMemo(() => {
@@ -133,11 +192,38 @@ export default function CalendarioCultos() {
     return cultos.filter(c => c.service_type_name === filtroTipo);
   }, [cultos, filtroTipo]);
 
-  const { totalPreenchidos, totalPendentes } = useMemo(() => {
-    let p = 0, n = 0;
-    cultosFiltrados.forEach(c => { preenchido(c) ? p++ : n++; });
-    return { totalPreenchidos: p, totalPendentes: n };
+  const contagemSemana = useMemo(() => {
+    let completos = 0, incompletos = 0, pendentes = 0;
+    cultosFiltrados.forEach(c => {
+      const s = statusCulto(c);
+      if (s === 'completo') completos++;
+      else if (s === 'incompleto') incompletos++;
+      else pendentes++;
+    });
+    return { completos, incompletos, pendentes };
   }, [cultosFiltrados]);
+
+  // Pendências (60d) já com status, filtradas e ordenadas (mais recente em cima)
+  const pendenciasFiltradas = useMemo(() => {
+    const base = cultosPend
+      .map(c => ({ c, st: statusCulto(c) }))
+      .filter(x => x.st !== 'completo');
+    const f = filtroPend === 'incompletos' ? base.filter(x => x.st === 'incompleto')
+            : filtroPend === 'pendentes'   ? base.filter(x => x.st === 'pendente')
+            : base;
+    return f.sort((a, b) =>
+      (b.c.data || '').localeCompare(a.c.data || '') || (b.c.hora || '').localeCompare(a.c.hora || ''));
+  }, [cultosPend, filtroPend]);
+
+  const contPend = useMemo(() => {
+    let pend = 0, inc = 0;
+    cultosPend.forEach(c => {
+      const s = statusCulto(c);
+      if (s === 'pendente') pend++;
+      else if (s === 'incompleto') inc++;
+    });
+    return { pend, inc };
+  }, [cultosPend]);
 
   const ultimoDiaSemana = dias[6];
   const numSemana = getISOWeek(semanaInicio);
@@ -149,74 +235,103 @@ export default function CalendarioCultos() {
 
   return (
     <section style={{ marginBottom: 20 }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          <Calendar size={11} style={{ color: C.primary }} /> Cultos da semana
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button onClick={() => irSemana(-1)} title="Semana anterior" style={btnNav}>
-            <ChevronLeft size={14} />
-          </button>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, minWidth: 180, textAlign: 'center' }}>
-            {labelSemana}
-          </div>
-          <button onClick={() => irSemana(1)} title="Próxima semana" style={btnNav}>
-            <ChevronRight size={14} />
-          </button>
-          {!ehSemanaAtual && (
-            <button onClick={voltarHoje} style={{ ...btnNav, padding: '6px 12px', fontSize: 11, fontWeight: 600, color: C.primary, borderColor: C.primary }}>
-              Hoje
-            </button>
+      {/* Seletor de vista · Semana (calendário) | Pendências (a completar) */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        <button onClick={() => setVista('semana')} style={vistaBtn(vista === 'semana')}>
+          <Calendar size={13} /> Semana
+        </button>
+        <button onClick={abrirPendencias} style={vistaBtn(vista === 'pendencias')}>
+          <CalendarClock size={13} /> Pendências
+          {vista === 'pendencias' && (contPend.pend + contPend.inc) > 0 && (
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: '#F59E0B', color: '#fff' }}>
+              {contPend.pend + contPend.inc}
+            </span>
           )}
-        </div>
-      </header>
+        </button>
+      </div>
 
-      {!loading && cultos.length > 0 && (
+      {vista === 'semana' ? (
         <>
-          {/* Filtro por tipo de culto · chips clicaveis */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-            <button
-              onClick={() => setFiltroTipo('todos')}
-              style={{
-                padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
-                border: `1px solid ${filtroTipo === 'todos' ? C.primary : C.border}`,
-                background: filtroTipo === 'todos' ? C.primaryBg : 'transparent',
-                color: filtroTipo === 'todos' ? C.primary : C.t2,
-              }}
-            >Todos ({cultos.length})</button>
-            {tiposDisponiveis.map(t => {
-              const sel = filtroTipo === t.nome;
-              const count = cultos.filter(c => c.service_type_name === t.nome).length;
-              return (
-                <button key={t.nome} onClick={() => setFiltroTipo(t.nome)} style={{
-                  padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
-                  border: `1px solid ${sel ? t.cor : C.border}`,
-                  background: sel ? `${t.cor}18` : 'transparent',
-                  color: sel ? t.cor : C.t2,
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: t.cor }} />
-                  {t.nome} ({count})
+          <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+              <Calendar size={11} style={{ color: C.primary }} /> Cultos da semana
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={() => irSemana(-1)} title="Semana anterior" style={btnNav}>
+                <ChevronLeft size={14} />
+              </button>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, minWidth: 180, textAlign: 'center' }}>
+                {labelSemana}
+              </div>
+              <button onClick={() => irSemana(1)} title="Próxima semana" style={btnNav}>
+                <ChevronRight size={14} />
+              </button>
+              {!ehSemanaAtual && (
+                <button onClick={voltarHoje} style={{ ...btnNav, padding: '6px 12px', fontSize: 11, fontWeight: 600, color: C.primary, borderColor: C.primary }}>
+                  Hoje
                 </button>
-              );
-            })}
-          </div>
-          <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, color: C.t3 }}>
-            <span><strong style={{ color: '#10B981' }}>{totalPreenchidos}</strong> preenchidos</span>
-            <span><strong style={{ color: '#F59E0B' }}>{totalPendentes}</strong> pendentes</span>
-          </div>
-        </>
-      )}
+              )}
+            </div>
+          </header>
 
-      {loading ? (
-        <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}` }}>
-          Carregando cultos da semana...
-        </div>
+          {!loading && cultos.length > 0 && (
+            <>
+              {/* Filtro por tipo de culto · chips clicaveis */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                <button
+                  onClick={() => setFiltroTipo('todos')}
+                  style={{
+                    padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+                    border: `1px solid ${filtroTipo === 'todos' ? C.primary : C.border}`,
+                    background: filtroTipo === 'todos' ? C.primaryBg : 'transparent',
+                    color: filtroTipo === 'todos' ? C.primary : C.t2,
+                  }}
+                >Todos ({cultos.length})</button>
+                {tiposDisponiveis.map(t => {
+                  const sel = filtroTipo === t.nome;
+                  const count = cultos.filter(c => c.service_type_name === t.nome).length;
+                  return (
+                    <button key={t.nome} onClick={() => setFiltroTipo(t.nome)} style={{
+                      padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+                      border: `1px solid ${sel ? t.cor : C.border}`,
+                      background: sel ? `${t.cor}18` : 'transparent',
+                      color: sel ? t.cor : C.t2,
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                    }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: t.cor }} />
+                      {t.nome} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, color: C.t3, flexWrap: 'wrap' }}>
+                <span><strong style={{ color: '#10B981' }}>{contagemSemana.completos}</strong> completos</span>
+                <span><strong style={{ color: '#F97316' }}>{contagemSemana.incompletos}</strong> incompletos</span>
+                <span><strong style={{ color: '#F59E0B' }}>{contagemSemana.pendentes}</strong> pendentes</span>
+              </div>
+            </>
+          )}
+
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}` }}>
+              Carregando cultos da semana...
+            </div>
+          ) : (
+            <GradeSemanal
+              dias={dias}
+              cultos={cultosFiltrados}
+              hoje={hoje}
+              onClickCulto={setEditando}
+            />
+          )}
+        </>
       ) : (
-        <GradeSemanal
-          dias={dias}
-          cultos={cultosFiltrados}
-          hoje={hoje}
+        <ListaPendencias
+          loading={loadingPend}
+          lista={pendenciasFiltradas}
+          filtro={filtroPend}
+          setFiltro={setFiltroPend}
+          cont={contPend}
           onClickCulto={setEditando}
         />
       )}
@@ -225,10 +340,95 @@ export default function CalendarioCultos() {
         <ModalCulto
           culto={editando}
           onClose={() => setEditando(null)}
-          onSaved={() => { setEditando(null); carregar(); }}
+          onSaved={() => { setEditando(null); carregar(); if (vista === 'pendencias') carregarPend(); }}
         />
       )}
     </section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// ListaPendencias — cultos dos últimos 60 dias a preencher (pendente/incompleto)
+// ----------------------------------------------------------------------------
+function ListaPendencias({ loading, lista, filtro, setFiltro, cont, onClickCulto }) {
+  const opcoes = [
+    { k: 'pendentes',   label: `Pendentes (${cont.pend})`,            cor: '#F59E0B' },
+    { k: 'incompletos', label: `Incompletos (${cont.inc})`,          cor: '#F97316' },
+    { k: 'todas',       label: `Todos (${cont.pend + cont.inc})`,     cor: C.primary },
+  ];
+  const vazioLabel = filtro === 'incompletos' ? 'incompleto'
+                   : filtro === 'pendentes'   ? 'pendente'
+                   : 'a completar';
+  return (
+    <div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        {opcoes.map(o => {
+          const sel = filtro === o.k;
+          return (
+            <button key={o.k} onClick={() => setFiltro(o.k)} style={{
+              padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+              border: `1px solid ${sel ? o.cor : C.border}`,
+              background: sel ? `${o.cor}18` : 'transparent',
+              color: sel ? o.cor : C.t2,
+            }}>{o.label}</button>
+          );
+        })}
+      </div>
+      <p style={{ fontSize: 11, color: C.t3, marginBottom: 12, lineHeight: 1.5 }}>
+        Cultos dos últimos 60 dias que ainda precisam de dados. <strong style={{ color: '#F59E0B' }}>Pendente</strong> = nada
+        lançado · <strong style={{ color: '#F97316' }}>Incompleto</strong> = só a frequência ou só a decisão foi lançada.
+        Se não houve decisões, digite <strong>0</strong> pra concluir.
+      </p>
+      {loading ? (
+        <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}` }}>
+          Carregando pendências...
+        </div>
+      ) : lista.length === 0 ? (
+        <div style={{ padding: 24, textAlign: 'center', color: C.t3, background: C.card, borderRadius: 10, border: `1px solid ${C.border}` }}>
+          Nenhum culto {vazioLabel} nos últimos 60 dias. 🎉
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {lista.map(({ c, st }) => (
+            <LinhaPendencia key={c.id} culto={c} status={st} onClick={() => onClickCulto(c)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// LinhaPendencia · 1 culto a completar · clicável (abre o ModalCulto)
+function LinhaPendencia({ culto, status, onClick }) {
+  const cor = culto.service_type_color || C.primary;
+  const { dia, diaSemana } = formataDataCurta(culto.data);
+  const meta = status === 'pendente'
+    ? { label: 'Pendente', cor: '#F59E0B', desc: 'Nada lançado' }
+    : {
+        label: 'Incompleto', cor: '#F97316',
+        desc: culto.frequencia_lancada ? 'Falta lançar as decisões' : 'Falta lançar a frequência',
+      };
+  return (
+    <button onClick={onClick} style={{
+      textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+      borderRadius: 8, cursor: 'pointer', background: C.card,
+      border: `1px solid ${C.border}`, borderLeft: `3px solid ${cor}`,
+      transition: 'transform 0.1s, box-shadow 0.1s',
+    }}
+    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.08)'; }}
+    onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
+      <div style={{ minWidth: 46, textAlign: 'center' }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{diaSemana}</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, lineHeight: 1 }}>{dia}</div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{culto.service_type_name || culto.nome}</div>
+        <div style={{ fontSize: 11, color: C.t3 }}>{culto.hora?.slice(0, 5) || '--:--'} · {meta.desc}</div>
+      </div>
+      <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: `${meta.cor}1F`, color: meta.cor, whiteSpace: 'nowrap' }}>
+        {meta.label}
+      </span>
+    </button>
   );
 }
 
@@ -291,15 +491,17 @@ function GradeSemanal({ dias, cultos, hoje, onClickCulto }) {
 
 // MiniCardCulto · compacto pra caber na coluna da semana
 function MiniCardCulto({ culto, onClick }) {
-  const ok = preenchido(culto);
+  const st = statusCulto(culto);          // 'completo' | 'incompleto' | 'pendente'
+  const completo = st === 'completo';
+  const temNumeros = preenchido(culto);   // mostra os números quando há algum > 0
   const cor = culto.service_type_color || C.primary;
   const tipo = culto.service_type_name || culto.nome;
 
   return (
     <button onClick={onClick} style={{
       textAlign: 'left', padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
-      background: ok ? `${cor}10` : C.inputBg,
-      border: `1px solid ${ok ? cor : C.border}`,
+      background: completo ? `${cor}10` : C.inputBg,
+      border: `1px solid ${completo ? cor : C.border}`,
       borderLeft: `3px solid ${cor}`,
       display: 'flex', flexDirection: 'column', gap: 2,
       transition: 'transform 0.1s, box-shadow 0.1s',
@@ -308,16 +510,18 @@ function MiniCardCulto({ culto, onClick }) {
     onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
         <span style={{ fontSize: 10, fontWeight: 700, color: cor }}>{culto.hora?.slice(0, 5) || '--:--'}</span>
-        {ok ? (
+        {completo ? (
           <CheckCircle2 size={11} style={{ color: '#10B981' }} />
+        ) : st === 'incompleto' ? (
+          <AlertTriangle size={11} style={{ color: '#F97316' }} title="Incompleto" />
         ) : (
-          <AlertCircle size={11} style={{ color: '#F59E0B' }} />
+          <AlertCircle size={11} style={{ color: '#F59E0B' }} title="Pendente" />
         )}
       </div>
       <span style={{ fontSize: 10, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>
         {tipo}
       </span>
-      {ok && (
+      {temNumeros && (
         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 1 }}>
           {((culto.presencial_adulto || 0) + (culto.presencial_kids || 0)) > 0 && (
             <span style={{ fontSize: 9, color: C.t3 }}>
@@ -495,6 +699,19 @@ function ModalCulto({ culto, onClose, onSaved }) {
       // (cron do Matheus). Mexer aqui sobrescreve o que vem automatizado.
       // Voluntariado não entra no payload · alimentado direto do módulo
       // Voluntariado (Planning Center). Integração não deve preencher isso.
+      // Flags de lançamento · uma seção foi "lançada" se o usuário pôs algum
+      // valor (incl. 0 digitado · campo não vazio). É MONOTÔNICO: quem já estava
+      // lançado continua lançado mesmo se o campo aparece vazio na reabertura
+      // (0 é exibido como '' pela UX) · evita um culto completo virar incompleto
+      // num re-save sem retocar a seção. Pra concluir um culto pendente, basta
+      // digitar o número (ou 0) de cada seção.
+      const freqLancada = !!culto.frequencia_lancada
+        || form.presencial_adulto !== '' || (hasKids && form.presencial_kids !== '');
+      const decisoesLancadas = !!culto.decisoes_lancadas
+        || form.decisoes_presenciais !== ''
+        || (hasOnline && form.decisoes_online !== '')
+        || (hasKids && form.decisoes_kids !== '');
+
       const payload = {
         presencial_adulto:    Number(form.presencial_adulto) || 0,
         presencial_kids:      hasKids ? (Number(form.presencial_kids) || 0) : 0,
@@ -502,6 +719,8 @@ function ModalCulto({ culto, onClose, onSaved }) {
         decisoes_online:      hasOnline ? (Number(form.decisoes_online) || 0) : 0,
         decisoes_kids:        hasKids ? (Number(form.decisoes_kids) || 0) : 0,
         observacoes:          (form.observacoes ?? '').trim() || null,
+        frequencia_lancada:   freqLancada,
+        decisoes_lancadas:    decisoesLancadas,
       };
       await cultosApi.update(culto.id, payload);
       toast.success('Culto atualizado');

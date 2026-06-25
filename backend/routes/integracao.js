@@ -242,15 +242,24 @@ router.get('/dashboard', async (req, res) => {
     const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
     const sessentaDiasAtrasStr = new Date(hoje.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    // 1. Cultos pendentes · passados nos últimos 60 dias sem preenchimento
+    // 1. Cultos pendentes / incompletos · passados nos últimos 60 dias.
+    //    pendente   = nem frequência nem decisões lançadas (nada preenchido)
+    //    incompleto = só a frequência OU só a decisão foi lançada
+    //    Usa as flags frequencia_lancada/decisoes_lancadas (lançar 0 conta como
+    //    lançado · pedido do Marcos), não os números (0 default ≠ "intocado").
     const { data: cultosRecentes } = await supabase
       .from('cultos')
-      .select('id, data, presencial_adulto, presencial_kids')
+      .select('id, data, frequencia_lancada, decisoes_lancadas')
       .gte('data', sessentaDiasAtrasStr)
       .lte('data', hojeStr);
-    const cultosPendentes = (cultosRecentes || []).filter(
-      c => (c.presencial_adulto || 0) === 0 && (c.presencial_kids || 0) === 0
-    ).length;
+    let cultosPendentes = 0;
+    let cultosIncompletos = 0;
+    for (const c of cultosRecentes || []) {
+      const freq = !!c.frequencia_lancada;
+      const dec = !!c.decisoes_lancadas;
+      if (!freq && !dec) cultosPendentes++;
+      else if (freq !== dec) cultosIncompletos++;
+    }
 
     // 2. Frequência + decisões do mês corrente
     const { data: cultosMes } = await supabase
@@ -293,6 +302,7 @@ router.get('/dashboard', async (req, res) => {
 
     res.json({
       cultos_pendentes: cultosPendentes,
+      cultos_incompletos: cultosIncompletos,
       frequencia_mes: frequenciaMes,
       decisoes_mes: decisoesMes,
       batismos_aguardando: batismosAguardando,
@@ -531,9 +541,11 @@ router.post('/coleta/:id/aprovar', async (req, res) => {
       return res.status(409).json({ error: `Submissao já esta ${sub.status}` });
     }
 
+    // A submissão mobile traz presencial + decisões do ambiente · marca as duas
+    // seções como lançadas (incl. 0) pro culto não cair em "incompleto".
     const updateCulto = sub.ambiente === 'templo'
-      ? { presencial_adulto: sub.presencial, decisoes_presenciais: sub.decisoes }
-      : { presencial_kids: sub.presencial, decisoes_kids: sub.decisoes };
+      ? { presencial_adulto: sub.presencial, decisoes_presenciais: sub.decisoes, frequencia_lancada: true, decisoes_lancadas: true }
+      : { presencial_kids: sub.presencial, decisoes_kids: sub.decisoes, frequencia_lancada: true, decisoes_lancadas: true };
 
     const { error: errCulto } = await supabase
       .from('cultos')
