@@ -25,12 +25,15 @@ SELECT 'batismo', 'Batismo', '/batismo', 'ministerial', 999,
 WHERE NOT EXISTS (SELECT 1 FROM public.modulos WHERE slug = 'batismo');
 
 -- 2. Cargo dedicado · responsável de batismo (escopo mínimo)
+-- nivel_padrao_* = 1 porque o CHECK proíbe 0 — mas NÃO é piso de acesso:
+-- resolveEffectivePerms ignora nivel_padrao; o acesso vem só da matriz
+-- (cargo_modulo_permissao). Matriz com só a linha batismo=3 → 0 no resto.
 INSERT INTO public.cargos (slug, nome, nome_completo, categoria, descricao, ativo, ordem,
                            nivel_padrao_leitura, nivel_padrao_escrita)
 SELECT 'responsavel-batismo', 'Responsável de Batismo', 'Responsável de Batismo',
        'ministerial',
        'Acesso restrito à gestão de batismo · nenhum outro módulo',
-       true, 999, 0, 0
+       true, 999, 1, 1
 WHERE NOT EXISTS (SELECT 1 FROM public.cargos WHERE slug = 'responsavel-batismo');
 
 -- 3. Matriz · o cargo responsavel-batismo recebe nível 3 (CRUD) SÓ no módulo
