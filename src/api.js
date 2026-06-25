@@ -231,6 +231,15 @@ export const next = {
     if (!r.ok) throw new Error(j.error || 'Erro');
     return j;
   }),
+  // Direcionamento self-service pelo QR no fim do Next (Fase 2a) · token assinado da turma
+  publicDirecionarInfo: (token) => fetch(`${API}/public/next/direcionar/${token}`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
+  publicDirecionar: (token, data) => fetch(`${API}/public/next/direcionar/${token}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
+  direcionarQr: () => get('/next/direcionar-qr'),
   // Admin
   dashboard: () => get('/next/dashboard'),
   eventos: {
@@ -2290,10 +2299,11 @@ export const kpis = {
 
 // Convite do NEXT · convidar convertidos sem NEXT
 export const nextConvite = {
-  pendentes: () => get('/next-convite/pendentes'),
+  pendentes: (contato) => get('/next-convite/pendentes' + (contato ? `?contato=${encodeURIComponent(contato)}` : '')),
   getConfig: () => get('/next-convite/config'),
   saveConfig: (body) => put('/next-convite/config', body),
-  enviar: (convertido_ids) => post('/next-convite/enviar', { convertido_ids }),
+  enviar: (convertido_ids, tipo = 'next') => post('/next-convite/enviar', { convertido_ids, tipo }),
+  marcar: (convertido_ids, tipo = 'next') => post('/next-convite/marcar', { convertido_ids, tipo }),
 };
 
 // Agente de Primeiro Contato (piloto) · fila de revisão
@@ -2371,7 +2381,7 @@ export const cuidados = {
   },
   convertidos: {
     list: (params) => get('/cuidados/convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
-    create: (data) => post('/cuidados/convertidos', data),
+    // create removido (2026-06-25) · convertido só nasce via Integração (decisão de culto)
     update: (id, data) => patch(`/cuidados/convertidos/${id}`, data),
     remove: (id) => del(`/cuidados/convertidos/${id}`),
     tags: () => get('/cuidados/convertidos/tags'),

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { cuidados as cuidadosApi } from '../../api';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -275,16 +275,22 @@ const TAG_COLORS: Record<string, string> = {
 // Cuidados — o Marcelo registra quem ficou responsável. Editável aqui se a equipe mudar.
 const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Paiva', 'Wesley Ramos'];
 
-// Pra onde o responsável direcionou a pessoa. Grupos/Voluntários geram o handoff na
-// caixa da área (que o líder daquele módulo acessa); Devocionais fica só registrado.
-// NÃO conta engajamento — isso vem do sinal real (entrar no grupo / virar voluntário /
-// ler a 1ª devocional), que o NSM mede sozinho.
+// Pra NOVO CONVERTIDO o único próximo passo direcionável no Cuidados é o NEXT (decisão
+// Marcos · 2026-06-25 · o direcionamento pros valores — Grupos/Voluntários/Batismo/Devocional —
+// migrou pra DENTRO do Next). Direcionar "Next" INSCREVE a pessoa numa matrícula em fila,
+// reusando o membro_id (sem duplicar). NÃO conta engajamento (NSM conta Next só quando 'formado').
 const DIRECIONAMENTOS: { v: string; l: string }[] = [
-  { v: 'grupos',      l: 'Grupos' },
-  { v: 'devocionais', l: 'Devocionais' },
-  { v: 'voluntarios', l: 'Voluntários' },
+  { v: 'next', l: 'Next' },
 ];
-const DIRECIONAMENTO_LABEL: Record<string, string> = Object.fromEntries(DIRECIONAMENTOS.map(d => [d.v, d.l]));
+// Labels de TODOS os destinos (inclui os LEGADOS grupos/devocionais/voluntarios/batismo, de
+// registros criados antes da inversão · só pra EXIBIR · não são mais oferecidos).
+const DIRECIONAMENTO_LABEL: Record<string, string> = {
+  next: 'Next',
+  grupos: 'Grupos',
+  devocionais: 'Devocionais',
+  voluntarios: 'Voluntários',
+  batismo: 'Batismo',
+};
 
 // Status do PRIMEIRO CONTATO. O Marcelo simplificou pra 3 (decisão Marcos · 2026-06-23):
 // Não respondeu · Não atendido · Atendido e respondido — os 3 contam como 1º CONTATO
@@ -395,17 +401,13 @@ function ConvertidoModal({
 
   async function save() {
     if (!form.nome) return toast.error('Nome obrigatório');
+    // Modal é EDIT-only · convertido nasce no culto (Integração), não aqui.
+    if (!editing) return;
     setSaving(true);
     try {
       const payload: any = { ...form };
-      if (editing) {
-        await cuidadosApi.convertidos.update(initial.id, payload);
-        toast.success('Convertido atualizado');
-      } else {
-        if (membro) { payload.membro_id = membro.id; payload.nome = membro.nome; payload.cadastrado = true; }
-        await cuidadosApi.convertidos.create(payload);
-        toast.success('Convertido registrado');
-      }
+      await cuidadosApi.convertidos.update(initial.id, payload);
+      toast.success('Convertido atualizado');
       onSaved();
       onClose();
     } catch (e: any) { toast.error(e.message); }
@@ -830,6 +832,7 @@ export default function Cuidados() {
   const [pedidosApp, setPedidosApp] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
   const [jornadaData, setJornadaData] = useState<any>(null); // /jornada-convertidos · status contato/batismo/Next por pessoa
+  const navigate = useNavigate();
 
   const [modalAcomp, setModalAcomp] = useState(false);
   const [editAcomp, setEditAcomp] = useState<any | null>(null);
@@ -945,16 +948,15 @@ export default function Cuidados() {
     }
   }
 
-  // Direcionamento (otimista). Grupos/Voluntários criam o encaminhamento na caixa da
-  // área (handoff) · NÃO marca engajamento (o NSM lê o sinal real). Devocionais = só registro.
+  // Direcionamento (otimista). Único destino do Cuidados = Next (inscreve em fila reusando
+  // membro_id, sem duplicar) · NÃO marca engajamento (o NSM conta Next só quando 'formado').
   async function setDirecionamento(id: string, value: string) {
     const v = value || null;
     const anterior = convertidos;
     setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, direcionamento: v } : x));
     try {
       await cuidadosApi.convertidos.direcionar(id, v);
-      if (v === 'grupos') toast.success('Encaminhado para Grupos');
-      else if (v === 'voluntarios') toast.success('Encaminhado para Voluntários');
+      if (v === 'next') toast.success('Inscrito no Next (pendente · fila de espera)');
     } catch (e: any) {
       setConvertidos(anterior);
       toast.error(`Não foi possível direcionar: ${e.message}`);
@@ -1283,9 +1285,19 @@ export default function Cuidados() {
 
         {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}
         <TabsContent value="convertidos" className="space-y-4">
-          <AgentePrimeiroContato />
-          <AgenteBatismoNext />
-          <NextConvite />
+          <Tabs defaultValue="acompanhamento" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="acompanhamento">Acompanhamento</TabsTrigger>
+              <TabsTrigger value="disparos">Disparos de mensagem</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="disparos" className="space-y-4">
+              <AgentePrimeiroContato />
+              <AgenteBatismoNext />
+              <NextConvite />
+            </TabsContent>
+
+            <TabsContent value="acompanhamento" className="space-y-4">
           <div>
             <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Acompanhamento dos novos convertidos</h3>
             <p className="text-xs text-muted-foreground">Quem a Integração registrou neste período inicial · marque o 1º contato, defina o responsável e o direcionamento, e acompanhe a jornada (contato em 3d · batismo e Next em 90d · atrasados em vermelho).</p>
@@ -1328,8 +1340,14 @@ export default function Cuidados() {
             <div className="text-sm text-muted-foreground">
               <strong className="text-foreground">{convertidos.length}</strong> convertidos
             </div>
+            {/* Convertido nasce SEMPRE do culto (princípio · 25/06): "Novo
+                convertido" leva pra Integração registrar a decisão no culto —
+                Cuidados acompanha/direciona, não origina. */}
             {podeEditarCuidados && (
-              <Button onClick={() => { setEditConvert(null); setModalConvert(true); }}>
+              <Button
+                onClick={() => navigate('/ministerial/integracao')}
+                title="Registrar pela Integração (decisão de culto)"
+              >
                 <Plus className="h-4 w-4 mr-2" />Novo convertido
               </Button>
             )}
@@ -1468,6 +1486,9 @@ export default function Cuidados() {
                             {DIRECIONAMENTOS.map(d => (
                               <option key={d.v} value={d.v}>{d.l}</option>
                             ))}
+                            {c.direcionamento && !DIRECIONAMENTOS.some(d => d.v === c.direcionamento) && (
+                              <option value={c.direcionamento}>{(DIRECIONAMENTO_LABEL[c.direcionamento] || c.direcionamento) + ' (antigo)'}</option>
+                            )}
                           </select>
                         ) : (
                           <span className="text-xs">{c.direcionamento ? (DIRECIONAMENTO_LABEL[c.direcionamento] || c.direcionamento) : <span className="text-muted-foreground">—</span>}</span>
@@ -1533,6 +1554,8 @@ export default function Cuidados() {
               </TableBody>
             </Table>
           </div>
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
         <TabsContent value="devocional" className="space-y-4">

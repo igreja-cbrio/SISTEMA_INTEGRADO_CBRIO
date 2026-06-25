@@ -30,38 +30,37 @@ como numerador (≥1 sinal de engajamento, ±60d) e denominador (coorte 90d). �
 | # | Caminho | Origem | Veredito |
 |---|---------|--------|----------|
 | A | Trigger `tg_cultos_dec_pessoas_to_cuidados` (migration `20260603160000`): `cultos_decisoes_pessoas` → `cui_convertidos`, com `area` derivada do culto | **culto** | ✅ caminho nativo correto |
-| B | `POST /cuidados/convertidos` (`backend/routes/cuidados.js:916`) → `insert` direto · botão **"Novo convertido"** (`src/pages/ministerial/Cuidados.tsx:1333` → `cuidadosApi.convertidos.create`) | **Cuidados** | ❌ viola "nunca nasce no Cuidados" |
+| B | ~~`POST /cuidados/convertidos` + botão "Novo convertido"~~ | ~~**Cuidados**~~ | ✅ FECHADO 25/06: botão redireciona pra Integração; **endpoint + `api.create` REMOVIDOS**. Cuidados só edita/acompanha. |
 | C | Import da planilha (`backend/scripts/_import_acompanhamento_jornada.js`) | planilha | ⚠️ ENCERRADO (sem mais imports); linhas existem **sem `culto_id`** |
 
 ## Gaps vs o princípio
 
-### Gap 1 — fechar a criação direta no Cuidados (caminho B) · **prioridade alta**
-Hoje o botão "Novo convertido" cria um `cui_convertidos` sem passar por um culto.
-Pelo princípio, o convertido só deve nascer de uma **decisão de culto**.
+### Gap 1 — fechar a criação direta no Cuidados (caminho B) · ✅ **RESOLVIDO (25/06)**
+Decisão do Marcos: o botão **"Novo convertido"** do Cuidados **redireciona pra
+Integração** (`/ministerial/integracao`), onde a pessoa registra a decisão no culto —
+em vez de criar um `cui_convertidos` direto. Assim o convertido só nasce de uma decisão
+de culto (cai no trigger A, com `culto_id`/`area` corretos); o Cuidados volta a só
+acompanhar/direcionar.
 
-**Recomendado:** redirecionar o `POST /cuidados/convertidos` para criar uma
-**decisão de culto** (`cultos_decisoes_pessoas`) — que aí cai no trigger A e
-materializa o `cui_convertidos` com `culto_id`/`area` corretos. Aceitar **data/horário
-vazios** nesse caminho cobre o caso "história posterior" do princípio (entra na jornada,
-fica fora da NSM). Alternativa mais dura: remover o endpoint/botão e obrigar o registro
-pela Integração (aba Decisões). A redireção é melhor: mantém a conveniência do Cuidados,
-mas pela porta certa.
+**Feito:** `Cuidados.tsx` — botão `onClick` → `navigate('/ministerial/integracao')`; o
+modal segue só pra **editar** convertido existente (`save()` virou edit-only). **O
+endpoint `POST /cuidados/convertidos` + `api.cuidados.convertidos.create` FORAM REMOVIDOS**
+(2026-06-25) — entrada única de convertido = Integração (decisão de culto). O caso raro de
+"história posterior" (sem culto) é vinculado **direto no banco**, sem botão no sistema
+(decisão do Marcos · não facilitar a informalidade).
 
-⚠️ **Colisão:** `cuidados.js` e `Cuidados.tsx` estão sendo mexidos pela sessão
-`claude/cuidados-j180-kpi-realtime`. Coordenar / fazer depois que ela mergear.
-
-### Gap 2 — `culto_id` dos importados (caminho C) · **prioridade baixa**
-As linhas importadas estão em `cui_convertidos` sem `culto_id` (area = 'sede' default).
-Imports encerrados (decisão do Marcos), então não cresce. Resolve quando o **Marcelo**
-trouxer a coluna **"Culto"** na planilha → casar `(data + culto)` com `cultos` →
-preencher `culto_id` → a área sai do culto. Já descrito em
-`[[proxima-sessao-arquitetura-jornada]]`. Idealmente reinserir pelo fluxo de decisão de
-culto pra virar 100% nativo (resolve também os ~11 órfãos sem `membro_id`).
+### Gap 2 — `culto_id` dos importados (caminho C) · ❌ **DESCARTADO (25/06)**
+Marcos: "essas colunas não vão aparecer." A coluna "Culto" na planilha do Marelo e o
+backfill de `culto_id`/área dos importados **não serão feitos**. As linhas importadas
+ficam como estão (sem culto vinculado · `area='sede'` default) — é histórico que não
+cresce (imports encerrados) e não vira pendência (ver a aba Decisões, bloco neutro
+"Convertidos importados · histórico"). Não planejar trabalho nisso.
 
 ### Gap 3 — data/horário opcionais · **sem trabalho estrutural**
 `cui_convertidos` já representa convertido sem `culto_id` (os importados provam), e
 `recalcular_nsm` usa janela de data → "sem data = fora da NSM, dentro da jornada" já
-vale. Só garantir que o caminho redirecionado do Gap 1 aceite data/horário vazios.
+vale. Se o registro pela Integração (Gap 1) precisar do caso "história posterior" sem
+data/horário, garantir que o fluxo de decisão de culto aceite esses campos vazios.
 
 ## Já em andamento — NÃO duplicar
 
@@ -72,9 +71,12 @@ vale. Só garantir que o caminho redirecionado do Gap 1 aceite data/horário vaz
 
 ## Ordem sugerida de execução
 
-1. **Depois** das sessões acima assentarem: Gap 1 (redirecionar `POST /cuidados/convertidos`
-   pra criar decisão de culto). Backend pequeno + remover/ajustar o botão "Novo convertido".
-2. Gap 2 (vínculo de `culto_id` dos importados) quando a coluna "Culto" do Marcelo chegar.
+1. ✅ Gap 1 (botão "Novo convertido" → Integração) — **feito 25/06**.
+2. ✅ Limpeza: `POST /cuidados/convertidos` + `api.cuidados.convertidos.create` **removidos** (25/06).
+3. ~~Gap 2~~ — descartado (Marcos: "essas colunas não vão aparecer").
+
+**Estado final: entrada única de convertido = Integração (decisão de culto).** Nenhum
+botão cria convertido sem culto · "história posterior" sem culto é vínculo manual no banco.
 
 ## Verificação (origin/main, 2026-06-25)
 

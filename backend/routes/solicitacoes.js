@@ -1187,10 +1187,15 @@ router.post('/:id/relatar-problema', async (req, res) => {
     if (!['descricao', 'escopo', 'data', 'cancelamento'].includes(motivo)) {
       return res.status(400).json({ error: 'Motivo inválido.' });
     }
+    // Comentário é OBRIGATÓRIO ao relatar problema (descrever o que precisa ajustar).
+    // Cancelamento (encerra a solicitação) segue com comentário opcional.
+    if (motivo !== 'cancelamento' && (!comentario || comentario.trim().length < 3)) {
+      return res.status(400).json({ error: 'Descreva o problema (mínimo 3 caracteres).' });
+    }
 
     const { data: sol } = await supabase
       .from('solicitacoes')
-      .select('id, solicitante_id, responsavel_id, area_responsavel, categoria, titulo, status, vezes_refeita')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, categoria, titulo, status, vezes_refeita, aprovacao_origem_status')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
 
@@ -1207,6 +1212,13 @@ router.post('/:id/relatar-problema', async (req, res) => {
     if (!isSolic && !podeGerir) return res.status(403).json({ error: 'Sem permissão.' });
     if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
       return res.status(400).json({ error: 'Solicitação já encerrada · não é possível relatar problema.' });
+    }
+    // Ainda no portão de origem (o diretor não aprovou) · o ciclo de ajuste/devolução
+    // só vale DEPOIS da aprovação de origem. Sem isso, devolver aqui geraria estado
+    // duplo: a aba "Aprovar" do diretor filtra por aprovacao_origem_status, então a
+    // solicitação ficaria na fila do solicitante (aguardando_ajuste) E na do diretor.
+    if (sol.status === 'aguardando_aprovacao_origem' || ['pendente', 'triagem'].includes(sol.aprovacao_origem_status)) {
+      return res.status(400).json({ error: 'Esta solicitação ainda aguarda a aprovação do diretor de origem · o ajuste/devolução só vale depois que ela for aprovada.' });
     }
     // Já em ajuste: não re-pausa (preservaria status_antes_ajuste/sla_pausado_em
     // originais) · o solicitante deve editar e reenviar. Cancelar ainda é possível.
@@ -1278,7 +1290,8 @@ router.post('/:id/relatar-problema', async (req, res) => {
 router.post('/:id/reenviar', async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { titulo, descricao, justificativa, data_necessaria } = req.body || {};
+    const userName = req.user.name;
+    const { titulo, descricao, justificativa, data_necessaria, resposta } = req.body || {};
     const { data: sol } = await supabase
       .from('solicitacoes')
       .select('id, solicitante_id, status, status_antes_ajuste, sla_pausado_em, sla_resposta_deadline, sla_resolucao_deadline, categoria, titulo, area_responsavel')
@@ -1290,6 +1303,10 @@ router.post('/:id/reenviar', async (req, res) => {
     }
     if (sol.status !== 'aguardando_ajuste') {
       return res.status(400).json({ error: 'Solicitação não está aguardando ajuste.' });
+    }
+    // A tréplica (resposta ao ajuste pedido) é OBRIGATÓRIA · fica na linha do tempo.
+    if (!resposta || resposta.trim().length < 3) {
+      return res.status(400).json({ error: 'Descreva sua resposta ao ajuste (mínimo 3 caracteres).' });
     }
 
     const update = {
@@ -1315,13 +1332,19 @@ router.post('/:id/reenviar', async (req, res) => {
       .update(update).eq('id', sol.id).select('*').single();
     if (error) throw error;
 
+    // Registra a tréplica do solicitante na linha do tempo (resposta ao ajuste pedido).
+    const respostaTxt = resposta.trim();
+    await supabase.from('solicitacao_ajustes').insert({
+      solicitacao_id: sol.id, autor_id: userId, lado: 'solicitante', motivo: 'resposta', comentario: respostaTxt,
+    });
+
     const modulo = CATEGORIA_MODULO[sol.categoria] || 'administrativo';
     resolverDestinatarios(modulo).then(managers => {
       if (managers.length) {
         notificar({
           modulo, tipo: 'solicitacao_status',
           titulo: `Reenviada: ${data.titulo}`,
-          mensagem: `O solicitante ajustou e reenviou · voltou pra fila ${data.area_responsavel || ''}.`,
+          mensagem: `${userName || 'O solicitante'} ajustou e respondeu: "${respostaTxt}" · voltou pra fila ${data.area_responsavel || ''}.`,
           link: '/solicitacoes', severidade: 'info',
           chaveDedup: `solicitacao_reenviada_${sol.id}_${Date.now()}`,
           targetIds: managers,
