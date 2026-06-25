@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { AbrirRotaMenu } from '../../components/grupos/AbrirRotaMenu';
@@ -945,15 +946,18 @@ export default function Grupos() {
   // ── LISTA DE GRUPOS ──
   return (
     <div className="cbrio-grupos-page" style={{ padding: '24px 20px', maxWidth: 1240, margin: '0 auto' }}>
-      <div className="cbrio-grupos-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>Grupos</h1>
-        {tabAtiva === 'grupos' && podeEditarGrupos && (
-          <div style={{ display: 'flex', gap: 8 }}>
+      <ModuleHeader
+        icon={Users}
+        title="Grupos"
+        subtitle="Grupos de conexão, caixa de entrada, supervisão e relatórios"
+        accent={C.primary}
+        actions={tabAtiva === 'grupos' && podeEditarGrupos ? (
+          <>
             <Button variant="outline" onClick={() => setImportLideresOpen(true)}><FileUp size={16} style={{ marginRight: 6 }} /> Importar líderes</Button>
             <Button onClick={openCreate}><Plus size={16} style={{ marginRight: 6 }} /> Novo Grupo</Button>
-          </div>
-        )}
-      </div>
+          </>
+        ) : undefined}
+      />
 
       {/* Tabs principais · centralizadas; quebram em 2 linhas se faltar espaço */}
       <div className="cbrio-grupos-tabs" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>

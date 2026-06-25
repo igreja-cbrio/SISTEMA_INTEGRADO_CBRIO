@@ -225,6 +225,45 @@ table tbody tr:hover {
 .cbrio-body-sm { font-size: 12px; color: var(--cbrio-text2); }
 .cbrio-caption { font-size: 11px; color: var(--cbrio-text3); }
 
+/* ── Header padrão de módulo (componente ModuleHeader) ──
+   Cabeçalho único de todas as páginas: ícone em chip colorido + título +
+   subtítulo (esquerda) e ações (direita). Hierarquia/espaçamento consistentes. */
+.module-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.module-header__left { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.module-header__icon {
+  width: 46px; height: 46px; border-radius: 14px;
+  display: grid; place-items: center; flex: none;
+  box-shadow: var(--hi, inset 0 1px 0 rgba(255,255,255,.06));
+}
+.module-header__text { min-width: 0; }
+.module-header__title {
+  font-size: 26px; font-weight: 800; letter-spacing: -.025em;
+  color: var(--cbrio-text); margin: 0; line-height: 1.08;
+}
+.module-header__subtitle {
+  font-size: 13.5px; color: var(--cbrio-text3); margin: 4px 0 0; line-height: 1.45;
+  max-width: 64ch;
+}
+.module-header__actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+@media (max-width: 640px) {
+  .module-header__title { font-size: 21px; }
+  .module-header__icon { width: 40px; height: 40px; border-radius: 12px; }
+}
+
+/* ── Micro-interação global · cards clicáveis sobem suave ──
+   Aplica só a quem opta com .lift (não mexe em dado denso/tabelas). */
+.lift { transition: transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s cubic-bezier(.2,.8,.2,1); }
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .lift:hover { transform: translateY(-3px); box-shadow: var(--shadow-hover, 0 20px 52px rgba(0,0,0,.52)); }
+}
+
 /* ── Spacing tokens ── */
 .cbrio-page { padding: 0 24px; }
 /* ── Superfície de vidro (fórmula do card) ──

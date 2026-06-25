@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link } from 'react-router-dom';
 import { cuidados as cuidadosApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -1032,10 +1033,11 @@ export default function Cuidados() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2"><Heart className="h-6 w-6 text-primary" /> Cuidados</h1>
-        <p className="text-sm text-muted-foreground mt-1">Acompanhamentos pastorais, Jornada 180, capelania, aconselhamento e convertidos pós-culto.</p>
-      </div>
+      <ModuleHeader
+        icon={Heart}
+        title="Cuidados"
+        subtitle="Acompanhamentos pastorais, Jornada 180, capelania, aconselhamento e convertidos pós-culto."
+      />
 
       <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList>
