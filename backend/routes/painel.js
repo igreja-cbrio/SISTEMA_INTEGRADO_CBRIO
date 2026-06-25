@@ -2100,6 +2100,39 @@ router.get('/monitoramento-okr', async (req, res) => {
         `(${adm} admissões + ${dem} demissões) ÷ 2 ÷ ${ativos} ativos (12 meses)`);
     } catch (e) { console.error('okr · rotatividade:', e.message); }
 
+    // 4) Batismos · % de convertidos (90d) que se batizaram em ≤90 dias (coorte
+    //    cruzada membro/cpf/nome). SOBRESCREVE okr_batismos (cabeçalho + tático do
+    //    box usam essa chave) — é a conta "convertidos que se batizaram" (ex.: 2 de 117).
+    try {
+      const dig = (v) => String(v || '').replace(/\D/g, '');
+      const convs = await fetchPaged('cui_convertidos', 'nome, cpf, membro_id, data_culto',
+        (q) => q.is('deleted_at', null).gte('data_culto', _h90));
+      if (convs.length) {
+        const bat = await fetchPaged('batismo_inscricoes', 'membro_id, cpf, nome, data_batismo',
+          (q) => q.eq('status', 'realizado').is('deleted_at', null).not('data_batismo', 'is', null));
+        const byM = new Map(), byC = new Map(), byN = new Map();
+        const put = (m, k, d) => { if (!k || !d) return; const c = m.get(k); if (!c || d < c) m.set(k, d); };
+        for (const b of bat) {
+          const d = _d10(b.data_batismo);
+          put(byM, b.membro_id, d);
+          put(byC, dig(b.cpf).length === 11 ? dig(b.cpf) : null, d);
+          put(byN, String(b.nome || '').trim().toLowerCase() || null, d);
+        }
+        let ok = 0;
+        for (const c of convs) {
+          const cands = [c.membro_id ? byM.get(c.membro_id) : null,
+            dig(c.cpf).length === 11 ? byC.get(dig(c.cpf)) : null,
+            byN.get(String(c.nome || '').trim().toLowerCase())].filter(Boolean);
+          const d = cands.length ? cands.sort()[0] : null;
+          if (!d) continue;
+          const dias = Math.floor((new Date(d + 'T12:00:00') - new Date(_d10(c.data_culto) + 'T12:00:00')) / 86400000);
+          if (dias >= 0 && dias <= 90) ok++;
+        }
+        addM('okr_batismos', Math.round(ok / convs.length * 1000) / 10, '%',
+          `${ok} de ${convs.length} convertidos batizados em ≤90 dias`);
+      }
+    } catch (e) { console.error('okr · batismos coorte:', e.message); }
+
     // 5) Taxa de engajamento YouTube = (curtidas + comentários) ÷ views × 100 (ano)
     try {
       const vids = await fetchPaged('online_videos', 'view_count, like_count, comment_count',
