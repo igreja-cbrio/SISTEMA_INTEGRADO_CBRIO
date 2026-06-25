@@ -658,10 +658,12 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     })).sort((a, b) => b.cultos - a.cultos);
 
     // Estouro por etapa (momento) · onde o tempo mais foge do previsto.
-    // As 3 músicas viram um único momento "Louvor": o desvio é medido no BLOCO
-    // (soma das músicas), não música a música — uma maior compensa outra menor,
-    // sem falso "estourou" quando o tempo só se deslocou entre elas (Pedro · 2026).
-    const grupoEtapa = (titulo) => /^m[uú]sica(\s|\d|$)/i.test(titulo) ? 'Louvor' : titulo;
+    // As músicas NUMERADAS do louvor (Música 1/2/3) viram um único momento
+    // "Louvor": o desvio é medido no BLOCO (soma), não música a música — uma maior
+    // compensa outra menor, sem falso "estourou" quando o tempo só se deslocou
+    // entre elas (Pedro · 2026). Só as numeradas — "Música Dízimo"/"Música Ceia"
+    // são momentos próprios (atrelados a dízimo/ceia) e ficam separados.
+    const grupoEtapa = (titulo) => /^m[uú]sica\s*\d/i.test(titulo) ? 'Louvor' : titulo;
     // 1) Rollup por (culto × grupo): soma previsto/executado das etapas do grupo
     //    no culto. Pra etapas comuns o grupo é o próprio título (1 por culto).
     const porCultoGrupo = {}; // `${culto_id}|${grupo}` -> somas do bloco no culto
