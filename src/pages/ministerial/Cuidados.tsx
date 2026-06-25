@@ -1283,9 +1283,19 @@ export default function Cuidados() {
 
         {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}
         <TabsContent value="convertidos" className="space-y-4">
-          <AgentePrimeiroContato />
-          <AgenteBatismoNext />
-          <NextConvite />
+          <Tabs defaultValue="acompanhamento" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="acompanhamento">Acompanhamento</TabsTrigger>
+              <TabsTrigger value="disparos">Disparos de mensagem</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="disparos" className="space-y-4">
+              <AgentePrimeiroContato />
+              <AgenteBatismoNext />
+              <NextConvite />
+            </TabsContent>
+
+            <TabsContent value="acompanhamento" className="space-y-4">
           <div>
             <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Acompanhamento dos novos convertidos</h3>
             <p className="text-xs text-muted-foreground">Quem a Integração registrou neste período inicial · marque o 1º contato, defina o responsável e o direcionamento, e acompanhe a jornada (contato em 3d · batismo e Next em 90d · atrasados em vermelho).</p>
@@ -1533,6 +1543,8 @@ export default function Cuidados() {
               </TableBody>
             </Table>
           </div>
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
         <TabsContent value="devocional" className="space-y-4">
