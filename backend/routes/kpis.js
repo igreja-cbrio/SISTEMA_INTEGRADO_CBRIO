@@ -39,6 +39,23 @@ function authorizeIntegracao(req, res, next) {
   });
 }
 
+// Helper: escrita em BATISMO · aceita quem tem Integração (admin/diretor, área
+// integracao, ou nível >=2 na matriz de integracao) OU o módulo dedicado
+// `batismo` >=2 (cargo responsavel-batismo · acesso isolado a batismo).
+// Guard SEPARADO de propósito: quem só tem `batismo` NÃO pode escrever em
+// cultos/decisões (que seguem em authorizeIntegracao). Fail-closed.
+function authorizeBatismo(req, res, next) {
+  const u = req.user || {};
+  if (['admin', 'diretor'].includes(u.role)) return next();
+  const areas = (u.kpi_areas || []).map(a => String(a).toLowerCase());
+  if (areas.includes('integracao')) return next();
+  if ((getEffectiveLevel(req, 'integracao') || 0) >= 2) return next();
+  if ((getEffectiveLevel(req, 'batismo') || 0) >= 2) return next();
+  return res.status(403).json({
+    error: 'Sem permissão · necessário acesso a Batismo ou Integração',
+  });
+}
+
 // Helper: valida número >= 0 (rejeita negativos antes do INSERT/UPDATE)
 function nonNeg(v, fallback = 0) {
   const n = Number(v);
@@ -685,7 +702,7 @@ function _proximo4Domingo() {
 }
 
 // GET /api/kpis/batismos/horarios — todos os horários (incl. fechados) + ocupação
-router.get('/batismos/horarios', authorizeIntegracao, async (_req, res) => {
+router.get('/batismos/horarios', authorizeBatismo, async (_req, res) => {
   try {
     const dataBatismo = _proximo4Domingo();
     const { data: horarios, error } = await supabase
@@ -705,7 +722,7 @@ router.get('/batismos/horarios', authorizeIntegracao, async (_req, res) => {
 });
 
 // POST /api/kpis/batismos/horarios — adiciona um horário
-router.post('/batismos/horarios', authorizeIntegracao, async (req, res) => {
+router.post('/batismos/horarios', authorizeBatismo, async (req, res) => {
   try {
     const horario = String(req.body?.horario || '').trim().slice(0, 40);
     if (!horario) return res.status(400).json({ error: 'horário é obrigatório' });
@@ -722,7 +739,7 @@ router.post('/batismos/horarios', authorizeIntegracao, async (req, res) => {
 });
 
 // PATCH /api/kpis/batismos/horarios/:id — abrir/fechar, limite, label
-router.patch('/batismos/horarios/:id', authorizeIntegracao, async (req, res) => {
+router.patch('/batismos/horarios/:id', authorizeBatismo, async (req, res) => {
   try {
     const upd = { updated_at: new Date().toISOString() };
     if (typeof req.body?.aberto === 'boolean') upd.aberto = req.body.aberto;
@@ -740,7 +757,7 @@ router.patch('/batismos/horarios/:id', authorizeIntegracao, async (req, res) => 
 });
 
 // DELETE /api/kpis/batismos/horarios/:id — remove (soft)
-router.delete('/batismos/horarios/:id', authorizeIntegracao, async (req, res) => {
+router.delete('/batismos/horarios/:id', authorizeBatismo, async (req, res) => {
   try {
     const { error } = await supabase.from('batismo_horarios')
       .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
@@ -750,14 +767,14 @@ router.delete('/batismos/horarios/:id', authorizeIntegracao, async (req, res) =>
 });
 
 // Config do batismo · link do grupo de WhatsApp (Lorena atualiza a cada mês)
-router.get('/batismos/config', authorizeIntegracao, async (_req, res) => {
+router.get('/batismos/config', authorizeBatismo, async (_req, res) => {
   try {
     const { data } = await supabase.from('batismo_config').select('grupo_url, updated_at').eq('id', 1).maybeSingle();
     res.json(data || { grupo_url: null });
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao carregar config' }); }
 });
 
-router.patch('/batismos/config', authorizeIntegracao, async (req, res) => {
+router.patch('/batismos/config', authorizeBatismo, async (req, res) => {
   try {
     const grupo_url = req.body?.grupo_url ? String(req.body.grupo_url).trim().slice(0, 500) : null;
     if (grupo_url && !/^https:\/\/chat\.whatsapp\.com\//.test(grupo_url)) {
@@ -771,7 +788,7 @@ router.patch('/batismos/config', authorizeIntegracao, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao salvar o link do grupo' }); }
 });
 
-router.post('/batismos', authorizeIntegracao, async (req, res) => {
+router.post('/batismos', authorizeBatismo, async (req, res) => {
   const {
     cpf, nome, sobrenome, data_nascimento, telefone, email,
     origem = 'manual', observacoes, area_kpi,
@@ -839,7 +856,7 @@ router.post('/batismos', authorizeIntegracao, async (req, res) => {
   res.json(inscricaoPub);
 });
 
-router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
+router.put('/batismos/:id', authorizeBatismo, async (req, res) => {
   const {
     status, data_batismo, observacoes, area_kpi,
     tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
@@ -880,7 +897,7 @@ router.put('/batismos/:id', authorizeIntegracao, async (req, res) => {
 
 // Lista os batizandos de uma data (default = hoje, São Paulo) para o check-in.
 // Não expõe CPF cru — só nome + flags.
-router.get('/batismos/checkin/do-dia', authorizeIntegracao, async (req, res) => {
+router.get('/batismos/checkin/do-dia', authorizeBatismo, async (req, res) => {
   const data = req.query.data || hojeSP();
   const { data: rows, error } = await supabase
     .from('batismo_inscricoes')
@@ -905,7 +922,7 @@ router.get('/batismos/checkin/do-dia', authorizeIntegracao, async (req, res) => 
 // Registra o check-in: dedup por CPF (acharOuCriarGuardado · opcional), grava
 // presença + consentimento, devolve os códigos para imprimir a etiqueta.
 // Idempotente: pode ser rodado de novo (reimpressão) — o token não muda.
-router.post('/batismos/:id/checkin', authorizeIntegracao, async (req, res) => {
+router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
   const { cpf, consentiu } = req.body || {};
   const cpfClean = cpf ? String(cpf).replace(/\D/g, '') : null;
 
@@ -965,7 +982,7 @@ router.post('/batismos/:id/checkin', authorizeIntegracao, async (req, res) => {
 });
 
 // Upload da selfie de referência (opcional · consentida) → bucket privado.
-router.post('/batismos/:id/foto-referencia', authorizeIntegracao, uploadFotoRef.single('foto'), async (req, res) => {
+router.post('/batismos/:id/foto-referencia', authorizeBatismo, uploadFotoRef.single('foto'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'arquivo (campo "foto") obrigatório' });
 
   const { data: insc, error: e0 } = await supabase
