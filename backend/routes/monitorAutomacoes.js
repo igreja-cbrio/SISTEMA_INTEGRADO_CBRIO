@@ -3,9 +3,12 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { checarSaude, checarEAlertar } = require('../services/monitorAutomacoes');
+
+// Painel restrito: o monitor de saúde das automações é só do Matheus (dono).
+const DONO_MONITOR = 'matheus.toscano@cbrio.org';
 
 // Cron (CRON_SECRET) — checa e alerta os pipelines parados. Também roda no cron
 // diário de notificações; este endpoint permite uma frequência dedicada.
@@ -22,8 +25,11 @@ async function cronChecar(req, res) {
 router.get('/cron/checar', cronChecar);
 router.post('/cron/checar', cronChecar);
 
-// GET /status — saúde atual de cada pipeline (pro painel). Leitura: dashboard>=1.
-router.get('/status', authenticate, authorizeModule('dashboard', 1), async (_req, res) => {
+// GET /status — saúde atual de cada pipeline (pro painel). Restrito ao dono.
+router.get('/status', authenticate, async (req, res) => {
+  if ((req.user?.email || '').toLowerCase() !== DONO_MONITOR) {
+    return res.status(403).json({ error: 'Acesso restrito.' });
+  }
   try {
     const pipelines = await checarSaude();
     const resumo = {
