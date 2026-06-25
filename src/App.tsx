@@ -256,6 +256,7 @@ const DevocionalLogin = lazyWithRetry(() => import('./pages/devocional/Devociona
 const DevocionalHoje = lazyWithRetry(() => import('./pages/devocional/DevocionalHoje'));
 const DevocionalHistorico = lazyWithRetry(() => import('./pages/devocional/DevocionalHistorico'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
+const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
 const Relatorios = lazyWithRetry(() => import('./pages/ministerial/Relatorios'));
 const WifiModulo = lazyWithRetry(() => import('./pages/ministerial/Wifi'));
 const Producao = lazyWithRetry(() => import('./pages/ministerial/Producao'));
@@ -531,6 +532,7 @@ function AppRoutes() {
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard moduleSlug="integracao"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        <Route path="/batismo" element={<ModuleGuard moduleSlug="batismo"><Suspense fallback={<Loading />}><Batismo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/relatorios" element={<ModuleGuard moduleSlug="relatorios"><Suspense fallback={<Loading />}><Relatorios /></Suspense></ModuleGuard>} />
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />

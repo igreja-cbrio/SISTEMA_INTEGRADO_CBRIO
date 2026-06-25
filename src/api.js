@@ -1963,6 +1963,12 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Controle de acesso de voluntários (quem tem login + cargo + cruzamento com membresia)
+  acessos: {
+    list: (params) => get('/voluntariado/acessos' + (params ? '?' + new URLSearchParams(params) : '')),
+    cargos: () => get('/voluntariado/acessos/cargos'),
+    criarLogin: (data) => post('/voluntariado/acessos/criar-login', data),
+  },
   // Controle de frequência (histórico da planilha + check-ins) · ativos/inativos
   frequencia: {
     list: (params) => get('/voluntariado/frequencia' + (params ? '?' + new URLSearchParams(params) : '')),

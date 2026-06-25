@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
+const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
@@ -3246,6 +3246,211 @@ router.get('/antecedentes/pendentes', async (req, res) => {
   } catch (e) {
     console.error('[antecedentes pendentes]', e.message);
     res.status(500).json({ error: 'Erro ao listar pendências' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// CONTROLE DE ACESSO DE VOLUNTÁRIOS (aba "Acessos")
+// Saber quais voluntários têm login + acesso (cargo/responsabilidades) e cruzar
+// com o cadastro de Membresia. Criar/garantir login com senha temporária.
+// Sensível (mexe em auth/permissões) → admin/diretor apenas.
+// ════════════════════════════════════════════════════════════════════════════
+function soAdmin(req, res) {
+  if (!['admin', 'diretor'].includes(req.user?.role)) {
+    res.status(403).json({ error: 'Apenas administradores podem gerir acessos de voluntários.' });
+    return false;
+  }
+  return true;
+}
+const soDigitos = (v) => String(v || '').replace(/\D/g, '');
+function chunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+// Busca um auth user por e-mail (paginado · contorna ausência de filtro direto)
+async function acharAuthUserPorEmail(email) {
+  const alvo = String(email || '').toLowerCase().trim();
+  if (!alvo) return null;
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw new Error(`listUsers: ${error.message}`);
+    const u = (data.users || []).find((x) => (x.email || '').toLowerCase().trim() === alvo);
+    if (u) return u;
+    if (!data.users || data.users.length < 1000) break;
+  }
+  return null;
+}
+
+// GET /api/voluntariado/acessos — registro de acesso dos voluntários
+// Âncora = vol_profiles. Anota: tem login? acesso base (role) + cargo
+// (responsabilidades) + cruzamento com mem_membros (info completa).
+router.get('/acessos', async (req, res) => {
+  if (!soAdmin(req, res)) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 25));
+    const from = (page - 1) * pageSize;
+
+    let qv = supabase.from('vol_profiles')
+      .select('id, full_name, email, cpf, phone, membresia_id, auth_user_id, profile_complete, created_at', { count: 'exact' })
+      .order('full_name', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (q) qv = qv.or(`full_name.ilike.%${q}%,email.ilike.%${q}%`);
+    const { data: vols, count, error } = await qv;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const emails = [...new Set((vols || []).map(v => (v.email || '').toLowerCase().trim()).filter(Boolean))];
+    const memIds = [...new Set((vols || []).map(v => v.membresia_id).filter(Boolean))];
+    const cpfs = [...new Set((vols || []).map(v => soDigitos(v.cpf)).filter(c => c.length >= 11))];
+
+    // profiles por e-mail (quem tem login)
+    const profByEmail = new Map();
+    for (const ch of chunk(emails, 100)) {
+      if (!ch.length) continue;
+      const { data } = await supabase.from('profiles')
+        .select('id, email, name, role, active').in('email', ch);
+      (data || []).forEach(p => profByEmail.set((p.email || '').toLowerCase().trim(), p));
+    }
+    // usuarios (matriz) por e-mail → cargo
+    const usuByEmail = new Map();
+    for (const ch of chunk(emails, 100)) {
+      if (!ch.length) continue;
+      const { data } = await supabase.from('usuarios')
+        .select('id, email, cargo_id').in('email', ch);
+      (data || []).forEach(u => usuByEmail.set((u.email || '').toLowerCase().trim(), u));
+    }
+    // cargos (catálogo pequeno)
+    const cargoById = new Map();
+    {
+      const { data } = await supabase.from('cargos').select('id, nome, slug');
+      (data || []).forEach(c => cargoById.set(c.id, c));
+    }
+    // mem_membros por membresia_id e (fallback) por cpf
+    const memById = new Map();
+    const memByCpf = new Map();
+    for (const ch of chunk(memIds, 100)) {
+      if (!ch.length) continue;
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, cpf, telefone, email, status, data_nascimento, frequenta_area')
+        .in('id', ch).is('deleted_at', null);
+      (data || []).forEach(m => memById.set(m.id, m));
+    }
+    for (const ch of chunk(cpfs, 100)) {
+      if (!ch.length) continue;
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, cpf, telefone, email, status, data_nascimento, frequenta_area')
+        .in('cpf', ch).is('deleted_at', null);
+      (data || []).forEach(m => memByCpf.set(soDigitos(m.cpf), m));
+    }
+
+    const rows = (vols || []).map(v => {
+      const email = (v.email || '').toLowerCase().trim();
+      const prof = profByEmail.get(email) || null;
+      const temLogin = !!(v.auth_user_id || prof);
+      const usu = usuByEmail.get(email) || null;
+      const cargo = usu?.cargo_id ? cargoById.get(usu.cargo_id) : null;
+      const membro = (v.membresia_id && memById.get(v.membresia_id))
+        || memByCpf.get(soDigitos(v.cpf)) || null;
+      return {
+        vol_profile_id: v.id,
+        nome: v.full_name,
+        email: v.email,
+        cpf: v.cpf,
+        telefone: v.phone,
+        perfil_completo: !!v.profile_complete,
+        tem_login: temLogin,
+        acesso: prof ? { id: prof.id, role: prof.role, ativo: prof.active } : null,
+        cargo: cargo ? { id: cargo.id, nome: cargo.nome, slug: cargo.slug } : null,
+        membresia: membro
+          ? { id: membro.id, nome: membro.nome, cpf: membro.cpf, telefone: membro.telefone,
+              email: membro.email, status: membro.status, data_nascimento: membro.data_nascimento,
+              frequenta_area: membro.frequenta_area, via: v.membresia_id ? 'vinculo' : 'cpf' }
+          : null,
+      };
+    });
+
+    res.json({ rows, total: count || 0, page, pageSize });
+  } catch (e) {
+    console.error('[voluntariado/acessos]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar acessos.' });
+  }
+});
+
+// GET /api/voluntariado/acessos/cargos — cargos disponíveis pro select de acesso
+router.get('/acessos/cargos', async (req, res) => {
+  if (!soAdmin(req, res)) return;
+  try {
+    const { data } = await supabase.from('cargos')
+      .select('id, slug, nome, categoria').eq('ativo', true).order('nome');
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/voluntariado/acessos/criar-login — cria/garante login do voluntário
+// com SENHA TEMPORÁRIA (o usuário troca no 1º acesso · password_changed_at fica
+// nulo → dispara o modal de troca). Amarra o cargo (responsabilidades).
+router.post('/acessos/criar-login', async (req, res) => {
+  if (!soAdmin(req, res)) return;
+  try {
+    const { vol_profile_id, nome, email, cpf, data_nascimento, cargo_slug, senha } = req.body || {};
+    const mail = String(email || '').toLowerCase().trim();
+    if (!nome || !mail) return res.status(400).json({ error: 'Nome e e-mail são obrigatórios.' });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return res.status(400).json({ error: 'E-mail inválido.' });
+    if (!senha || String(senha).length < 8) return res.status(400).json({ error: 'A senha temporária precisa ter ao menos 8 caracteres.' });
+
+    // 1. auth user (cria ou redefine senha)
+    let authUser = await acharAuthUserPorEmail(mail);
+    let uid = authUser?.id;
+    let jaExistia = !!uid;
+    if (!uid) {
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: mail, password: String(senha), email_confirm: true,
+        user_metadata: { name: nome },
+      });
+      if (error) return res.status(400).json({ error: `Falha ao criar login: ${error.message}` });
+      uid = data.user.id;
+    } else {
+      await supabase.auth.admin.updateUserById(uid, { password: String(senha) });
+    }
+
+    // 2. profile (acesso base) · password_changed_at nulo = força troca no 1º acesso
+    const { error: pErr } = await supabase.from('profiles').upsert({
+      id: uid, name: nome, email: mail, role: 'assistente', active: true,
+    }, { onConflict: 'id' });
+    if (pErr) return res.status(400).json({ error: `Falha no profile: ${pErr.message}` });
+
+    // 3. usuarios (matriz) + cargo
+    let cargoId = null;
+    if (cargo_slug) {
+      const { data: cg } = await supabase.from('cargos').select('id').eq('slug', cargo_slug).maybeSingle();
+      cargoId = cg?.id || null;
+    }
+    const { data: usuExist } = await supabase.from('usuarios').select('id').eq('email', mail).maybeSingle();
+    if (usuExist?.id) {
+      const patch = { nome };
+      if (cargoId) patch.cargo_id = cargoId;
+      await supabase.from('usuarios').update(patch).eq('id', usuExist.id);
+    } else {
+      await supabase.from('usuarios').insert({ nome, email: mail, cargo_id: cargoId });
+    }
+
+    // 4. liga o vol_profile ao login (se veio do registro de voluntário)
+    if (vol_profile_id) {
+      await supabase.from('vol_profiles').update({ auth_user_id: uid }).eq('id', vol_profile_id);
+    }
+
+    bustPermissionCaches();
+    res.json({
+      ok: true, user_id: uid, ja_existia: jaExistia,
+      aviso: 'Login pronto. Repasse a senha temporária; ele troca no 1º acesso. Pode levar alguns minutos pra liberar (cache de permissões).',
+    });
+  } catch (e) {
+    console.error('[voluntariado/acessos/criar-login]', e.message);
+    res.status(500).json({ error: 'Erro ao criar login.' });
   }
 });
 

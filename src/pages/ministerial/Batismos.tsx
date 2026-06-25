@@ -40,6 +40,7 @@ type BatismoInscricao = {
   email?: string | null;
   status: Status;
   data_batismo?: string | null;
+  horario_culto?: string | null; // horário escolhido (casa com batismo_horarios.horario)
   origem: 'totem' | 'manual';
   observacoes?: string | null;
   created_at: string;
@@ -255,6 +256,8 @@ export default function Batismos() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<Status | 'todos'>('todos');
   const [mesFiltro, setMesFiltro] = useState<string>('todos');
+  const [horarioFiltro, setHorarioFiltro] = useState<string>('todos');
+  const [horariosMap, setHorariosMap] = useState<Record<string, string>>({});
   const [busca, setBusca] = useState('');
   const [categoriaFiltro, setCategoriaFiltro] = useState<CategoriaEtaria | 'todos'>('todos');
   const [selected, setSelected] = useState<BatismoInscricao | null>(null);
@@ -271,6 +274,11 @@ export default function Batismos() {
       const data = await kpisApi.batismos.list();
       setList(Array.isArray(data) ? data : []);
       kpisApi.batismos.coberturaConvertidos().then(setCobertura).catch(() => {});
+      kpisApi.batismos.horarios.list().then((r: any) => {
+        const m: Record<string, string> = {};
+        (r?.horarios || []).forEach((h: any) => { if (h.horario) m[h.horario] = h.label || h.horario; });
+        setHorariosMap(m);
+      }).catch(() => {});
     } catch (e: any) {
       toast.error(e?.message || 'Erro ao carregar batismos');
     }
@@ -310,6 +318,7 @@ export default function Batismos() {
     if (categoriaFiltro !== 'todos') {
       if (categoriaDe(b) !== categoriaFiltro) return false;
     }
+    if (horarioFiltro !== 'todos' && (b.horario_culto || '') !== horarioFiltro) return false;
     if (busca) {
       const q = busca.toLowerCase();
       const hay = `${b.nome} ${b.sobrenome} ${b.cpf || ''} ${b.telefone || ''} ${b.email || ''}`.toLowerCase();
@@ -317,6 +326,16 @@ export default function Batismos() {
     }
     return true;
   });
+
+  const labelHorario = (hc?: string | null) => (hc ? (horariosMap[hc] || hc) : '—');
+  // Horários presentes nas inscrições (pro filtro clicável "ver quem se batiza
+  // naquele horário"), com contagem. Ordena pelo label.
+  const horariosPresentes = useMemo(() => {
+    const m: Record<string, number> = {};
+    list.forEach(b => { const k = b.horario_culto || ''; if (k) m[k] = (m[k] || 0) + 1; });
+    return Object.entries(m).sort((a, b) =>
+      (horariosMap[a[0]] || a[0]).localeCompare(horariosMap[b[0]] || b[0]));
+  }, [list, horariosMap]);
 
   // "Por turma" = agrupado pela data do batismo (a data É a turma). Respeita os
   // filtros ativos; inscrições sem data caem num grupo "Sem data definida".
@@ -651,6 +670,25 @@ export default function Batismos() {
             );
           })}
         </div>
+        {horariosPresentes.length > 0 && (
+          <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 overflow-x-auto max-w-full">
+            <button
+              onClick={() => setHorarioFiltro('todos')}
+              className={`px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap inline-flex items-center gap-1 ${horarioFiltro === 'todos' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <Clock className="h-3 w-3" /> Todos horários
+            </button>
+            {horariosPresentes.map(([h, n]) => (
+              <button
+                key={h}
+                onClick={() => setHorarioFiltro(horarioFiltro === h ? 'todos' : h)}
+                className={`px-3 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${horarioFiltro === h ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {horariosMap[h] || h} ({n})
+              </button>
+            ))}
+          </div>
+        )}
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar nome, CPF, telefone ou email" className="pl-9" />
@@ -708,6 +746,7 @@ export default function Batismos() {
                 <TableHead className="text-center hidden md:table-cell">Camisa</TableHead>
                 <TableHead className="text-center">Status</TableHead>
                 <TableHead className="text-center hidden sm:table-cell">Data batismo</TableHead>
+                <TableHead className="text-center hidden sm:table-cell">Horário</TableHead>
                 <TableHead className="text-center hidden lg:table-cell">Origem</TableHead>
                 <TableHead className="w-10"></TableHead>
               </TableRow>
@@ -773,6 +812,17 @@ export default function Batismos() {
                     </TableCell>
                     <TableCell className="text-center hidden sm:table-cell text-sm text-muted-foreground">
                       {b.data_batismo ? ymdLocal(b.data_batismo) : '—'}
+                    </TableCell>
+                    <TableCell className="text-center hidden sm:table-cell">
+                      {b.horario_culto ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setHorarioFiltro(b.horario_culto!); }}
+                          className="text-xs text-primary underline-offset-2 hover:underline inline-flex items-center gap-1"
+                          title="Ver quem se batiza neste horário"
+                        >
+                          <Clock className="h-3 w-3" />{labelHorario(b.horario_culto)}
+                        </button>
+                      ) : <span className="text-xs text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-center hidden lg:table-cell">
                       <Badge variant="outline" className="text-[9px] uppercase">{b.origem}</Badge>
