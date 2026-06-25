@@ -231,6 +231,15 @@ export const next = {
     if (!r.ok) throw new Error(j.error || 'Erro');
     return j;
   }),
+  // Direcionamento self-service pelo QR no fim do Next (Fase 2a) · token assinado da turma
+  publicDirecionarInfo: (token) => fetch(`${API}/public/next/direcionar/${token}`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
+  publicDirecionar: (token, data) => fetch(`${API}/public/next/direcionar/${token}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
+  direcionarQr: () => get('/next/direcionar-qr'),
   // Admin
   dashboard: () => get('/next/dashboard'),
   eventos: {

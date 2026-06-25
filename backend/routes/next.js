@@ -29,6 +29,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { direcionarMatricula, signDirecionarToken } = require('../services/nextDirecionar');
 
 // Re-calcula KPIs do NEXT em background (não bloqueia a resposta).
 // Chamado após qualquer mudança em inscrições ou indicacoes.
@@ -378,100 +379,27 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
 //   devocional         → só registra a escolha (flag · estatística). 1º acesso/leitura = Fase 2.
 // NÃO marca engajamento (NSM conta o sinal real). Dedup por matrícula × destino.
 // ----------------------------------------------------------------------------
-const NEXT_DIRECIONA = {
-  grupos:      { flag: 'indicou_grupo',      destino: 'grupos',      valor_alvo: 'conectar', modulo: 'grupos',       label: 'Grupos',      link: '/grupos' },
-  voluntarios: { flag: 'indicou_servir',     destino: 'voluntarios', valor_alvo: 'servir',   modulo: 'voluntariado', label: 'Voluntários', link: '/ministerial/voluntariado/encaminhados' },
-  batismo:     { flag: 'indicou_batismo' },
-  devocional:  { flag: 'indicou_devocional' },
-};
-
 router.post('/matriculas/:id/direcionar', async (req, res) => {
   try {
-    const { destinos = [] } = req.body || {};
-    const validos = (Array.isArray(destinos) ? destinos : []).filter(d => NEXT_DIRECIONA[d]);
-    if (validos.length === 0) return res.status(400).json({ error: 'Informe ao menos um destino válido' });
-
-    const { data: m, error: em } = await supabase
-      .from('next_matriculas')
-      .select('id, nome, sobrenome, cpf, telefone, membro_id, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional')
-      .eq('id', req.params.id).is('deleted_at', null).single();
-    if (em) throw em;
-
-    const userId = req.user?.id || null;
-    const nomeCompleto = `${m.nome || ''} ${m.sobrenome || ''}`.trim() || m.nome || 'Sem nome';
-
-    // 1) Flags na matrícula (estatística "pra onde cada um foi ao fim do encontro")
-    const flags = { updated_at: new Date().toISOString() };
-    for (const d of validos) flags[NEXT_DIRECIONA[d].flag] = true;
-    await supabase.from('next_matriculas').update(flags).eq('id', m.id);
-
-    // Resolve membro_id (pra batismo não duplicar) · reusa o da matrícula, senão cria/liga
-    let membroId = m.membro_id || null;
-    async function garantirMembro() {
-      if (membroId) return membroId;
-      try {
-        const r = await findOrCreateMembro({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, status: 'visitante' });
-        membroId = r?.membro_id || null;
-        if (membroId) await supabase.from('next_matriculas').update({ membro_id: membroId }).eq('id', m.id);
-      } catch (e) { console.error('[next/direcionar] findOrCreateMembro:', e.message); }
-      return membroId;
-    }
-
-    const criados = {};
-    for (const d of validos) {
-      const cfg = NEXT_DIRECIONA[d];
-      if (d === 'grupos' || d === 'voluntarios') {
-        // Encaminhamento na caixa da área · idempotente por (matrícula × destino)
-        const { data: ja } = await supabase.from('jornada_encaminhamentos').select('id')
-          .eq('next_matricula_id', m.id).eq('destino', cfg.destino).is('deleted_at', null)
-          .limit(1).maybeSingle();
-        if (!ja) {
-          await supabase.from('jornada_encaminhamentos').insert({
-            origem: 'next', next_matricula_id: m.id, membro_id: membroId || m.membro_id || null,
-            nome: nomeCompleto, telefone: m.telefone || null, destino: cfg.destino,
-            valor_alvo: cfg.valor_alvo, encaminhado_por: userId,
-          });
-          notificar({
-            modulo: cfg.modulo, titulo: `Direcionado pra ${cfg.label} no NEXT`,
-            mensagem: `${nomeCompleto} foi direcionado(a) pra ${cfg.label} no NEXT. Faça o primeiro contato e registre a devolutiva.`,
-            link: cfg.link,
-          }).catch(() => {});
-          criados[d] = true;
-        }
-      } else if (d === 'batismo') {
-        await garantirMembro();
-        let ja = null;
-        if (membroId) {
-          const { data } = await supabase.from('batismo_inscricoes').select('id')
-            .eq('membro_id', membroId).in('status', ['pendente', 'confirmado']).limit(1).maybeSingle();
-          ja = data;
-        }
-        if (!ja) {
-          const partes = String(m.nome || '').trim().split(/\s+/);
-          await supabase.from('batismo_inscricoes').insert({
-            nome: partes[0] || (m.nome || 'Convertido'),
-            sobrenome: m.sobrenome || partes.slice(1).join(' ') || '',
-            cpf: m.cpf || null, telefone: m.telefone || null, membro_id: membroId || null,
-            status: 'pendente', origem: 'manual', observacoes: 'Direcionado pelo NEXT', inscrito_por: userId,
-          });
-          notificar({
-            modulo: 'integracao', titulo: 'Direcionado pra Batismo no NEXT',
-            mensagem: `${nomeCompleto} foi direcionado(a) pro batismo no NEXT.`,
-            link: '/ministerial/integracao?tab=batismos',
-          }).catch(() => {});
-          criados.batismo = true;
-        }
-      } else if (d === 'devocional') {
-        // Só registra a escolha (flag acima · estatística). O 1º acesso/leitura é Fase 2 (app).
-        criados.devocional = true;
-      }
-    }
-
+    const r = await direcionarMatricula({
+      matriculaId: req.params.id,
+      destinos: (req.body || {}).destinos || [],
+      userId: req.user?.id || null,
+    });
     recalcularKpisNext();
-    res.json({ ok: true, destinos: validos, criados });
+    res.json(r);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
+});
+
+// GET /direcionar-qr — token FIXO pro QR de direcionamento (resolve a turma aberta · Fase 2a)
+router.get('/direcionar-qr', async (_req, res) => {
+  try {
+    const token = signDirecionarToken();
+    if (!token) return res.status(503).json({ error: 'QR indisponível (CRON_SECRET ausente no servidor)' });
+    res.json({ token });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.get('/indicacoes', async (req, res) => {
