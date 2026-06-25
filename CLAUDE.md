@@ -1762,18 +1762,41 @@ de YouTube — a API NÃO foi ligada (coletor futuro faz UPSERT por mês).
 ⚠️ Base dos % = membros ativos (provisório · confirmar "total da igreja" quando
 grupos/voluntários/dízimos popularem). Histórico de versões v1→v3 no legado.
 
-## Produção de Culto · /producao (2026-06-02)
+## Produção de Culto · /producao (2026-06-02 · cronograma 2026-06-16 · preview por culto 2026-06-25)
 
 Módulo `producao` (matriz copiada de kids · boost de área pro Pedro Fernandes).
 KPIs técnicos POR CULTO em satélite 1:1 de `cultos` (`culto_producao` + log
-unificado `culto_producao_ocorrencias` + checklist itemizado com template
-editável). Duração-alvo 60 min em `vol_service_types.meta_duracao_min`;
-observação sempre opcional. Os 4 KPIs `PROD-CULTO-*` são **específicos, não
-cascateiam** (`is_okr=false`, `valores='{}'`, fora da matriz NSM) ·
-⚠️ `tipo_kpi` só aceita `qualitativo|quantitativo|operacional` (não 'tatico').
-SLA/NPS gerais já existiam (`ADM-C-G/Q-PRODUCAO`). Categoria `producao` no form
-de Solicitações roteia `area_responsavel='producao'`. Ocorrência crítica
-notifica urgente. 6 sub-abas em `Producao.jsx`. Detalhes no legado.
+unificado `culto_producao_ocorrencias` + checklist itemizado). Os 4 KPIs
+`PROD-CULTO-*` são **específicos, não cascateiam** (`is_okr=false`,
+`valores='{}'`, fora da matriz NSM) · ⚠️ `tipo_kpi` só aceita
+`qualitativo|quantitativo|operacional`. SLA/NPS gerais já existiam
+(`ADM-C-G/Q-PRODUCAO`). Categoria `producao` no form de Solicitações roteia
+`area_responsavel='producao'`. **5 sub-abas** em `Producao.jsx`: Preenchimento ·
+Detalhado · Modelos · Solicitações · Desempenho.
+
+**Cronograma por etapas (2026-06-16):** a equipe lança o tempo POR MOMENTO em
+mm:ss; a soma dos executados da seção 'culto' é a duração total
+(`culto_producao.duracao_minutos` segue derivada disso → KPI/trigger de
+pontualidade intactos). `producao_roteiro_etapas` = roteiro/preview padrão por
+tipo (aba Modelos · `service_type_id` NULL = geral · seed Música 1/2/3 +
+Intercessão + Pregação + … = 60:00). `culto_producao_etapas` = etapas por culto
+(pré-carregam do roteiro · `previsto_seg`/`executado_seg`/`secao` culto|pos_culto
++ atividades especiais ceia/batismo). A análise previsto×executado / estouro por
+etapa é computada no `/acumulado` (NÃO mexe em `kpi_calcular_valor_auto`).
+
+**Preview editável por culto + Louvor no Detalhado (2026-06-25 · só código, sem migration):**
+- O `Previsto` de cada momento virou input mm:ss no modal de preenchimento
+  (`EtapasEditor` · era um `<span>` travado no roteiro). O roteiro em Modelos
+  segue como BASE/default; ajustar por culto só grava `culto_producao_etapas.previsto_seg`
+  (já persistido pelo `PUT /culto/:id/etapas`) e flui automático pra "Prev.
+  média"/"Aderência" do Detalhado. Atividade especial continua sem previsto (—).
+- No `por_etapa` do `/acumulado`, etapas cujo nome casa `/^m[uú]sica(\s|\d|$)/i`
+  colapsam num único momento **"Louvor"**: rollup por (culto × grupo) somando
+  previsto+executado, depois média entre cultos (desvio = média de exec−prev por
+  culto; % que estourou idem). Uma música maior compensa outra menor → sem falso
+  "estourou" quando o tempo só se deslocou entre as músicas. NÃO altera o tempo
+  total nem os outros momentos. Pra agrupar por nome (não por coluna) foi decisão
+  do Marcos (2026-06-25) · roteiro usa "Música 1/2/3" canônico.
 
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
