@@ -661,11 +661,11 @@ export default function Solicitacoes() {
                 <Plus className="h-4 w-4" /> Nova Solicitação
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
               <DialogHeader>
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
-              <div className="space-y-4 mt-2">
+              <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
                 <div className="space-y-2">
                   <Label>Qual tipo de solicitação? *</Label>
                   <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
@@ -1930,14 +1930,14 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
 
   return (
     <Dialog open={!!item} onOpenChange={v => { if (!v) { cancelAction(); onClose(); } }}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Badge className={cat.color}>{cat.label}</Badge>
             {item.titulo}
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 mt-2">
+        <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <span className="text-muted-foreground">Solicitante</span>
