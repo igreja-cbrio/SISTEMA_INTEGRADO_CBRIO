@@ -35,6 +35,8 @@ const C = {
   inputBg: 'var(--cbrio-input-bg)', modalBg: 'var(--cbrio-modal-bg)', overlay: 'var(--cbrio-overlay)',
   primary: '#6366F1', primaryBg: '#6366F118', // indigo · cor da área Produção (voluntariado seed)
 };
+// Paleta de linhas do gráfico de tempo · 1 cor por tipo de culto
+const CORES_CULTO = ['#6366F1', '#00B39D', '#F59E0B', '#EC4899', '#3B82F6', '#8B5CF6', '#10B981', '#EF4444', '#06B6D4'];
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const MESES_CURTO = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
@@ -668,11 +670,20 @@ function AbaDetalhado() {
     return () => { alive = false; };
   }, [periodo]);
 
-  // Série pro gráfico de tempo de culto (executado × previsto) · label = dd/mm
-  const serieChart = useMemo(() => (data?.serie || []).map(s => {
-    const [, m, d] = String(s.data).split('-');
-    return { ...s, label: `${d}/${m}` };
-  }), [data]);
+  // Série pro gráfico · 1 linha por tipo de culto · pivot por data (cada tipo vira uma coluna)
+  const { linhasChart, tiposChart } = useMemo(() => {
+    const rows = data?.serie || [];
+    const tipos = [];
+    const byData = {};
+    for (const s of rows) {
+      const [, m, d] = String(s.data).split('-');
+      if (!byData[s.data]) byData[s.data] = { data: s.data, label: `${d}/${m}` };
+      byData[s.data][s.tipo] = s.duracao_min;
+      if (!tipos.includes(s.tipo)) tipos.push(s.tipo);
+    }
+    const linhas = Object.values(byData).sort((a, b) => a.data.localeCompare(b.data));
+    return { linhasChart: linhas, tiposChart: tipos };
+  }, [data]);
 
   const aderCor = (v) => v == null ? C.primary : v >= 90 ? '#10B981' : v >= 75 ? '#F59E0B' : '#EF4444';
 
@@ -685,29 +696,24 @@ function AbaDetalhado() {
       </div>
       {loading ? <div style={loadingBox}>Carregando…</div> : !data ? null : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          {serieChart.length > 0 && (
+          {tiposChart.length > 0 && (
             <div>
-              <h3 style={subTit}>Tempo de culto · executado × previsto</h3>
+              <h3 style={subTit}>Tempo de cada culto · executado (min)</h3>
               <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
-                Duração de cada culto preenchido no período (min), comparada ao previsto do cronograma. A linha pontilhada marca o alvo de 60 min.
+                Duração executada de cada culto ao longo do período · uma linha por culto. A linha pontilhada marca o alvo de 60 min; o eixo começa em 45 min pra destacar os picos.
               </p>
-              <div style={{ width: '100%', height: 280 }}>
+              <div style={{ width: '100%', height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={serieChart} margin={{ top: 8, right: 16, bottom: 4, left: -8 }}>
+                  <LineChart data={linhasChart} margin={{ top: 8, right: 16, bottom: 4, left: -8 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                     <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={22} />
-                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={32} />
-                    <Tooltip
-                      formatter={(v, n) => [v == null ? '—' : `${v} min`, n]}
-                      labelFormatter={(label, payload) => {
-                        const t = payload && payload[0] && payload[0].payload && payload[0].payload.tipo;
-                        return t ? `${label} · ${t}` : label;
-                      }}
-                    />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={32} domain={[45, 'auto']} />
+                    <Tooltip formatter={(v, n) => [v == null ? '—' : `${v} min`, n]} />
                     <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
                     <ReferenceLine y={60} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth={1} />
-                    <Line type="monotone" dataKey="previsto_min" name="Previsto" stroke="#94A3B8" strokeWidth={1.5} strokeDasharray="5 4" dot={false} connectNulls />
-                    <Line type="monotone" dataKey="duracao_min" name="Executado" stroke={C.primary} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />
+                    {tiposChart.map((t, i) => (
+                      <Line key={t} type="monotone" dataKey={t} name={t} stroke={CORES_CULTO[i % CORES_CULTO.length]} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} connectNulls />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
