@@ -2284,6 +2284,13 @@ export const kpis = {
   },
 };
 
+// Agente de Primeiro Contato (piloto) · fila de revisão
+export const agentePrimeiroContato = {
+  fila: (status = 'pendente') => get(`/agente-primeiro-contato?status=${encodeURIComponent(status)}`),
+  enviado: (id, editou = false) => post(`/agente-primeiro-contato/${id}/enviado`, { editou }),
+  ignorar: (id, motivo) => post(`/agente-primeiro-contato/${id}/ignorar`, { motivo }),
+};
+
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2457,6 +2464,14 @@ export const devocionalPlanos = {
     fd.append('arquivo', file);
     return requestFile(`/devocional-planos/${id}/carregar-docx${sobrescrever ? '?sobrescrever=1' : ''}`, fd, { timeoutMs: 120_000 });
   },
+  // Prévia: extrai o .docx e devolve os itens p/ revisão (NÃO grava).
+  previewDocx: (file) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    return requestFile('/devocional-planos/preview-docx', fd, { timeoutMs: 120_000 });
+  },
+  // Publica os itens já revisados nos dias do plano.
+  publicarItensLote: (id, itens, sobrescrever = false) => post(`/devocional-planos/${id}/itens-lote`, { itens, sobrescrever }),
   createItem: (id, body) => post(`/devocional-planos/${id}/itens`, body),
   updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
   removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
