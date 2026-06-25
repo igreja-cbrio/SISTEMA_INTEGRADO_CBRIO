@@ -440,8 +440,8 @@ function VisaoPessoas() {
                     <TableCell className="font-medium">
                       {p.nome}
                       {p._importado && (
-                        <Badge variant="outline" className="ml-2 text-[9px] bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900">
-                          culto não vinculado
+                        <Badge variant="outline" className="ml-2 text-[9px] text-muted-foreground">
+                          importado · sem horário
                         </Badge>
                       )}
                     </TableCell>
@@ -454,7 +454,7 @@ function VisaoPessoas() {
                       {p._importado ? (
                         <>
                           <div>{formatDataCurta(p.data_conversao)}</div>
-                          <div className="text-muted-foreground">Culto não vinculado</div>
+                          <div className="text-muted-foreground">Importado · sem horário</div>
                         </>
                       ) : p._culto && (
                         <>
@@ -465,7 +465,7 @@ function VisaoPessoas() {
                     </TableCell>
                     <TableCell className="text-center">
                       {p._importado ? (
-                        <Badge variant="outline" className="text-[9px]">culto não vinculado</Badge>
+                        <Badge variant="outline" className="text-[9px] text-muted-foreground">importado</Badge>
                       ) : (
                         <Badge variant="outline" className="text-[9px] capitalize">{p.tipo_decisao}</Badge>
                       )}
@@ -488,28 +488,46 @@ function VisaoPessoas() {
       ) : (
         // Sem busca: histórico importado (colapsado) + lista de cultos com expand
         <div className="space-y-1.5">
-          {historicoImportado.length > 0 && (
-            <HistoricoImportadoExpandivel
-              pessoas={historicoImportado}
-              expanded={expandedId === '__historico__'}
-              onToggle={() => setExpandedId(expandedId === '__historico__' ? null : '__historico__')}
-            />
-          )}
-          {cultosFiltrados.length === 0 && historicoImportado.length === 0 ? (
-            <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-              Nenhum culto com decisões nesse filtro.
-            </div>
-          ) : (
-            cultosFiltrados.map((c: any) => (
+          {/* Cultos + bloco de importados, TODOS na ordem dos lançamentos (data desc).
+              O bloco de importados NÃO fica fixo no topo: entra pela última data de
+              importação (17/05/2026). Só na visão "Todos" — não é pendência (tem data,
+              falta só o horário do culto · histórico que não se repete). */}
+          {(() => {
+            const mostrarHist = historicoImportado.length > 0 && filtroStatus === 'todos';
+            const dataHist = mostrarHist
+              ? historicoImportado.reduce(
+                  (max: string, p: any) => (p.data_conversao && p.data_conversao > max ? p.data_conversao : max),
+                  '')
+              : '';
+            const linhas: any[] = [
+              ...cultosFiltrados.map((c: any) => ({ tipo: 'culto', data: c.data_culto, culto: c })),
+              ...(mostrarHist ? [{ tipo: 'historico', data: dataHist }] : []),
+            ].sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+
+            if (linhas.length === 0) {
+              return (
+                <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                  Nenhum culto com decisões nesse filtro.
+                </div>
+              );
+            }
+            return linhas.map((l: any) => l.tipo === 'historico' ? (
+              <HistoricoImportadoExpandivel
+                key="__historico__"
+                pessoas={historicoImportado}
+                expanded={expandedId === '__historico__'}
+                onToggle={() => setExpandedId(expandedId === '__historico__' ? null : '__historico__')}
+              />
+            ) : (
               <CultoExpandivel
-                key={c.culto_id}
-                culto={c}
-                expanded={expandedId === c.culto_id}
-                onToggle={() => setExpandedId(expandedId === c.culto_id ? null : c.culto_id)}
+                key={l.culto.culto_id}
+                culto={l.culto}
+                expanded={expandedId === l.culto.culto_id}
+                onToggle={() => setExpandedId(expandedId === l.culto.culto_id ? null : l.culto.culto_id)}
                 onChanged={() => refetch()}
               />
-            ))
-          )}
+            ));
+          })()}
         </div>
       )}
     </div>
@@ -531,25 +549,25 @@ function HistoricoImportadoExpandivel({
   }, [pessoas]);
 
   return (
-    <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/30 dark:bg-amber-950/20 overflow-hidden">
+    <div className="rounded-xl border border-border bg-muted/30 overflow-hidden">
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-amber-100/40 dark:hover:bg-amber-950/30 transition-colors"
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/50 transition-colors"
       >
         <div className="flex items-center gap-3">
           <span className="text-base">📜</span>
           <div className="text-left">
-            <div className="text-sm font-medium text-foreground">Culto não vinculado</div>
+            <div className="text-sm font-medium text-foreground">Convertidos importados · histórico</div>
             <div className="text-xs text-muted-foreground">
-              {pessoas.length} {pessoas.length === 1 ? 'pessoa' : 'pessoas'} · {porData.length} {porData.length === 1 ? 'data' : 'datas'} · importadas da planilha
+              {pessoas.length} {pessoas.length === 1 ? 'pessoa' : 'pessoas'} · {porData.length} {porData.length === 1 ? 'data' : 'datas'} · com data, sem o horário do culto · não é pendência
             </div>
           </div>
         </div>
         <span className="text-xs text-muted-foreground">{expanded ? '▾' : '▸'}</span>
       </button>
       {expanded && (
-        <div className="border-t border-amber-200 dark:border-amber-900 p-3 space-y-3">
+        <div className="border-t border-border p-3 space-y-3">
           {porData.map(([data, list]) => (
             <div key={data}>
               <div className="text-xs font-semibold text-muted-foreground mb-1.5 px-1">
@@ -575,8 +593,8 @@ function HistoricoImportadoExpandivel({
                           </TableCell>
                           <TableCell className="text-center">
                             {incompleto ? (
-                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
-                                incompleto
+                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title="Sem CPF/nascimento · censo posterior completa">
+                                sem CPF
                               </span>
                             ) : (
                               <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">

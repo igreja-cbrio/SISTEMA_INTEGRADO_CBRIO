@@ -12,7 +12,7 @@ import { Badge } from '../../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { ArrowLeft, Boxes, Plus, Loader2, Minus, Trash2, Package, AlertTriangle, Archive } from 'lucide-react';
+import { ArrowLeft, Boxes, Plus, Loader2, Minus, Trash2, Package, AlertTriangle, Archive, RefreshCw } from 'lucide-react';
 
 const CATEGORIAS = ['Mobiliário', 'Brinquedos', 'Material', 'Higiene', 'Eletrônico', 'Outro'];
 
@@ -22,12 +22,29 @@ export default function EstoqueKids() {
   const [loading, setLoading] = useState(true);
   const [novoSala, setNovoSala] = useState<any>(null);
   const [editItem, setEditItem] = useState<any>(null);
+  const [locs, setLocs] = useState<any[]>([]);
+  const [sincronizando, setSincronizando] = useState(false);
 
   const carregar = useCallback(() => {
     setLoading(true);
     api.estoque.list().then((d: any) => setSalas(Array.isArray(d) ? d : [])).catch(() => toast.error('Erro ao carregar')).finally(() => setLoading(false));
   }, []);
   useEffect(() => { carregar(); }, [carregar]);
+  const carregarLocs = useCallback(() => { api.estoque.localizacoesKids().then((d: any) => setLocs(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
+  useEffect(() => { carregarLocs(); }, [carregarLocs]);
+
+  async function sincronizar() {
+    setSincronizando(true);
+    try {
+      const r: any = await api.estoque.sincronizarPatrimonio();
+      toast.success(r?.criadas ? `${r.criadas} sala(s) criada(s) a partir do Patrimônio` : 'Tudo sincronizado — nenhuma sala nova');
+      carregar(); carregarLocs();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao sincronizar'); } finally { setSincronizando(false); }
+  }
+  async function vincular(sala: any, locId: string | null) {
+    try { await api.estoque.vincularLocalizacao(sala.id, locId); toast.success('Localização vinculada'); carregar(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao vincular'); }
+  }
 
   async function ajustar(item: any, delta: number) {
     const novo = Math.max(0, (item.qtd_atual || 0) + delta);
@@ -46,7 +63,12 @@ export default function EstoqueKids() {
           <h1 className="text-xl font-bold flex items-center gap-2"><Boxes className="h-5 w-5 text-primary" /> Estoque por sala</h1>
           <p className="text-sm text-muted-foreground">O que tem e o que deveria ter em cada sala. Item durável vai pro Patrimônio (tag Kids).</p>
         </div>
-        {totalFaltando > 0 && <Badge variant="outline" className="text-amber-600 border-amber-400 shrink-0"><AlertTriangle className="h-3 w-3 mr-1" /> {totalFaltando} faltando</Badge>}
+        <div className="flex items-center gap-2 shrink-0">
+          {totalFaltando > 0 && <Badge variant="outline" className="text-amber-600 border-amber-400"><AlertTriangle className="h-3 w-3 mr-1" /> {totalFaltando} faltando</Badge>}
+          <Button size="sm" variant="outline" onClick={sincronizar} disabled={sincronizando} title="Cria salas a partir das localizações do Kids no Patrimônio">
+            {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4 md:mr-1" />}<span className="hidden md:inline">Sincronizar Patrimônio</span>
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -63,7 +85,16 @@ export default function EstoqueKids() {
                   <div className="font-semibold text-sm truncate">{s.nome}</div>
                   {s.faltando > 0 && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-400">{s.faltando} faltando</Badge>}
                 </div>
-                <Button size="sm" variant="outline" onClick={() => setNovoSala(s)}><Plus className="h-4 w-4 md:mr-1" /><span className="hidden md:inline">Item</span></Button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Select value={s.pat_localizacao_id || undefined} onValueChange={(v) => vincular(s, v === '__none__' ? null : v)}>
+                    <SelectTrigger className="h-8 text-xs w-[150px]"><SelectValue placeholder="Localização" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— sem vínculo</SelectItem>
+                      {locs.map((l) => <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" variant="outline" onClick={() => setNovoSala(s)}><Plus className="h-4 w-4 md:mr-1" /><span className="hidden md:inline">Item</span></Button>
+                </div>
               </div>
               {(s.itens || []).length === 0 ? (
                 <p className="text-xs text-muted-foreground">Nenhum item cadastrado.</p>
@@ -85,6 +116,17 @@ export default function EstoqueKids() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+              {(s.patrimonio || []).length > 0 && (
+                <div className="rounded-md border border-border bg-muted/30 p-2 space-y-1 mt-1">
+                  <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><Archive className="h-3 w-3" /> Patrimônio nesta sala · {s.patrimonio.length}</div>
+                  {s.patrimonio.map((b: any) => (
+                    <div key={b.id} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate">{b.nome}{b.pat_categorias?.nome ? ` · ${b.pat_categorias.nome}` : ''}</span>
+                      {b.status && <span className="text-muted-foreground shrink-0 capitalize">{b.status}</span>}
+                    </div>
+                  ))}
                 </div>
               )}
             </Card>

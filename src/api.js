@@ -269,6 +269,9 @@ export const next = {
     create: (data) => post('/next/matriculas', data),
     update: (id, data) => patch(`/next/matriculas/${id}`, data),
     remove: (id) => del(`/next/matriculas/${id}`),
+    // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
+    // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
+    direcionar: (id, destinos) => post(`/next/matriculas/${id}/direcionar`, { destinos }),
   },
   // Pessoas — funil unificado (convertidos + matrículas, 1 linha/pessoa)
   pessoas: (params) => get('/next/pessoas' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1196,6 +1199,9 @@ export const totemKids = {
     update: (id, body) => patch(`/totem-kids/estoque/${id}`, body),
     remove: (id) => del(`/totem-kids/estoque/${id}`),
     registrarPatrimonio: (id) => post(`/totem-kids/estoque/${id}/patrimonio`, {}),
+    localizacoesKids: () => get('/totem-kids/salas/localizacoes-kids'),
+    sincronizarPatrimonio: () => post('/totem-kids/salas/sincronizar-patrimonio', {}),
+    vincularLocalizacao: (salaId, localizacao_id) => patch(`/totem-kids/salas/${salaId}/localizacao`, { localizacao_id }),
   },
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),

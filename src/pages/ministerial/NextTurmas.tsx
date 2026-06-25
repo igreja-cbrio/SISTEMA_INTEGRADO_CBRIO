@@ -24,6 +24,7 @@ type Encontro = { id: string; turma_id: string; numero: number; data?: string | 
 type Matricula = {
   id: string; turma_id?: string | null; nome: string; sobrenome?: string | null;
   cpf?: string | null; telefone?: string | null; email?: string | null; status: Status;
+  indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean; indicou_devocional?: boolean;
 };
 type Presenca = { encontro_id: string; matricula_id: string; presente: boolean };
 type Turma = {
@@ -38,6 +39,16 @@ const STATUS_LABEL: Record<Status, string> = {
 const STATUS_COLOR: Record<Status, string> = {
   matriculado: C.info, formado: C.primary, incompleto: C.warn, desistiu: C.gray,
 };
+
+// Direcionamento pros valores DENTRO do Next (Fase 1B · Marcos · 2026-06-25). Os flags
+// indicou_* vivem na matrícula. Grupos/Voluntários → caixa da área; Batismo → inscrição
+// pendente; Devocional → registra a escolha. Sem Dízimo (decisão do Marcos).
+const NEXT_VALORES: { v: string; flag: keyof Matricula; l: string }[] = [
+  { v: 'grupos',      flag: 'indicou_grupo',      l: 'Grupos' },
+  { v: 'voluntarios', flag: 'indicou_servir',     l: 'Voluntários' },
+  { v: 'batismo',     flag: 'indicou_batismo',    l: 'Batismo' },
+  { v: 'devocional',  flag: 'indicou_devocional', l: 'Devocional' },
+];
 
 function ymdLocal(d?: string | null): string {
   if (!d) return '—';
@@ -328,11 +339,63 @@ type Pessoa = {
   next_status: 'formado' | 'matriculado' | 'nao_inscrito' | 'resolvido';
   bucket?: 'no_prazo' | 'vencendo' | 'fora_prazo' | null;
   next_resolucao?: string | null;
+  indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean; indicou_devocional?: boolean;
 };
 const RESOLUCAO_LABEL: Record<string, string> = {
   contatado: 'Contatado', sem_interesse: 'Sem interesse', encerrado: 'Encerrado',
 };
 const RESOLUCOES = Object.keys(RESOLUCAO_LABEL);
+
+// Direcionar pros valores (Grupos/Voluntários/Batismo/Devocional) ao fim do Next.
+// Aditivo: marcar adiciona; o backend é idempotente (não duplica). Já-direcionados ficam
+// travados (checked + disabled) · pra desfazer, fala com a área.
+function DirecionarValoresModal({ m, onClose, onDone }: { m: { id: string; nome: string; sobrenome?: string | null; indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean; indicou_devocional?: boolean }; onClose: () => void; onDone: () => void }) {
+  const jaFeito = (flag: string) => !!(m as any)[flag];
+  const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const nomeC = `${m.nome} ${m.sobrenome || ''}`.trim();
+
+  async function save() {
+    const destinos = NEXT_VALORES.filter(x => sel[x.v] && !jaFeito(x.flag)).map(x => x.v);
+    if (destinos.length === 0) { toast.error('Escolha ao menos um destino novo'); return; }
+    setSaving(true);
+    try {
+      await nextApi.matriculas.direcionar(m.id, destinos);
+      toast.success('Direcionado');
+      onDone();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao direcionar'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Direcionar — {nomeC}</DialogTitle></DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          Pra onde a pessoa segue ao fim do Next. Grupos/Voluntários caem na caixa da área;
+          Batismo vira inscrição pendente; Devocional registra a escolha.
+        </p>
+        <div className="space-y-2 py-1">
+          {NEXT_VALORES.map(x => {
+            const feito = jaFeito(x.flag);
+            return (
+              <label key={x.v} className={`flex items-center gap-2 text-sm rounded-md border border-border p-2 ${feito ? 'opacity-60' : 'cursor-pointer'}`}>
+                <input type="checkbox" disabled={feito} checked={feito || !!sel[x.v]}
+                  onChange={e => setSel(s => ({ ...s, [x.v]: e.target.checked }))}
+                  className="h-4 w-4 accent-[#00B39D]" />
+                {x.l}{feito && <span className="text-[10px] text-muted-foreground">· já direcionado</span>}
+              </label>
+            );
+          })}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Direcionar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function PessoasView() {
   const [itens, setItens] = useState<Pessoa[]>([]);
@@ -343,6 +406,7 @@ function PessoasView() {
   const [fOrigem, setFOrigem] = useState<'todos' | 'convertido' | 'externo'>('todos');
   const [fData, setFData] = useState<'tudo' | '30' | '60' | '90' | '180' | '365'>('tudo');
   const [matricularPessoa, setMatricularPessoa] = useState<Pessoa | null>(null);
+  const [direcionarP, setDirecionarP] = useState<Pessoa | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -432,6 +496,7 @@ function PessoasView() {
                 <th className="text-left p-2.5 font-medium">Nome</th>
                 <th className="text-left p-2.5 font-medium">Origem</th>
                 <th className="text-left p-2.5 font-medium">Next</th>
+                <th className="text-left p-2.5 font-medium">Direcionamento</th>
                 <th className="text-right p-2.5 font-medium">Ações</th>
               </tr>
             </thead>
@@ -457,6 +522,16 @@ function PessoasView() {
                     )}
                   </td>
                   <td className="p-2.5"><NextStatusCell p={p} /></td>
+                  <td className="p-2.5">
+                    {p.matricula_id ? (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {NEXT_VALORES.filter(x => (p as any)[x.flag]).map(x => (
+                          <Badge key={x.v} variant="outline" className="text-[9px]">{x.l}</Badge>
+                        ))}
+                        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={() => setDirecionarP(p)}>Direcionar</Button>
+                      </div>
+                    ) : <span className="text-xs text-muted-foreground">—</span>}
+                  </td>
                   <td className="p-2.5 text-right">
                     {p.next_status === 'nao_inscrito' && (
                       <div className="inline-flex items-center gap-1.5">
@@ -486,6 +561,13 @@ function PessoasView() {
 
       {matricularPessoa && (
         <MatricularModal pessoa={matricularPessoa} onClose={() => setMatricularPessoa(null)} onDone={() => { setMatricularPessoa(null); load(); }} />
+      )}
+      {direcionarP && direcionarP.matricula_id && (
+        <DirecionarValoresModal
+          m={{ id: direcionarP.matricula_id, nome: direcionarP.nome, indicou_grupo: direcionarP.indicou_grupo, indicou_servir: direcionarP.indicou_servir, indicou_batismo: direcionarP.indicou_batismo, indicou_devocional: direcionarP.indicou_devocional }}
+          onClose={() => setDirecionarP(null)}
+          onDone={() => { setDirecionarP(null); load(); }}
+        />
       )}
     </div>
   );

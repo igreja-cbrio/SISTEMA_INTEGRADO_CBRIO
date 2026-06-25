@@ -132,11 +132,11 @@ function _normalizarArea(nome) {
     .replace(/[̀-ͯ]/g, ''); // remove acentos · "Integração" → "integração"
 }
 
-// Resolve a permissão efetiva de um usuário por módulo:
-//   override (permissoes_modulo) ?? default cargo (cargo_modulo_permissao) ?? zero
-// + Boost por área: se a área da pessoa esta em AREA_MODULO_BOOST, escala
-//   leitura+escrita pra 5 no módulo correspondente (e o boost so eleva,
-//   nunca rebaixa um override mais alto).
+// Resolve a permissão efetiva de um usuário por módulo · REGRA ÚNICA (2026-06-25):
+//   1. Se há override (permissoes_modulo) no módulo → o OVERRIDE VENCE (0–5; 0 = sem acesso).
+//   2. Senão → acesso base = MAIOR entre o nível do cargo e o boost da área.
+// O override é a exceção soberana: o cargo manda (base), o override é a exceção que vence
+// até a área. (Antes a área fazia Math.max DEPOIS do override e o engolia — corrigido.)
 function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos, areas = [] }) {
   const result = {};
   const overridesByMod = new Map();
@@ -156,16 +156,26 @@ function resolveEffectivePerms({ overrides, cargoMatrix, cargoId, modulos, areas
   for (const m of modulos) {
     const o = overridesByMod.get(m.id);
     const d = defaultsByMod.get(m.id);
-    let nivelL = o?.nivel_leitura ?? d?.nivel ?? 0;
-    let nivelE = o?.nivel_escrita ?? d?.nivel ?? 0;
-    const exp    = o?.pode_exportar ?? d?.pode_exportar ?? false;
-    const apr    = o?.pode_aprovar  ?? d?.pode_aprovar  ?? false;
-    const esc    = o?.escopo_proprio ?? d?.escopo_proprio ?? false;
+    let nivelL, nivelE, exp, apr, esc;
 
-    // Boost por área · so eleva, nunca rebaixa override existente
-    if (m.slug && slugsComBoost.has(m.slug)) {
-      nivelL = Math.max(nivelL, 5);
-      nivelE = Math.max(nivelE, 5);
+    if (o) {
+      // Exceção SOBERANA · o override vence cargo E área (incl. 0 = sem acesso).
+      nivelL = o.nivel_leitura ?? 0;
+      nivelE = o.nivel_escrita ?? 0;
+      exp = o.pode_exportar ?? false;
+      apr = o.pode_aprovar ?? false;
+      esc = o.escopo_proprio ?? false;
+    } else {
+      // Acesso base (sem exceção) = MAIOR entre o nível do cargo e o boost da área.
+      nivelL = d?.nivel ?? 0;
+      nivelE = d?.nivel ?? 0;
+      exp = d?.pode_exportar ?? false;
+      apr = d?.pode_aprovar ?? false;
+      esc = d?.escopo_proprio ?? false;
+      if (m.slug && slugsComBoost.has(m.slug)) {
+        nivelL = Math.max(nivelL, 5);
+        nivelE = Math.max(nivelE, 5);
+      }
     }
 
     // Indexa por nome E por slug (legado: alguns lookups usam 'Financeiro', etc)

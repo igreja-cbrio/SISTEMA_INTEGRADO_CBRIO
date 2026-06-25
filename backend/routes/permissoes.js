@@ -461,10 +461,10 @@ router.get('/usuario/:id', async (req, res) => {
         // middleware usa pra montar modulosBloqueados · vence boost de área e admin).
         const blocked = !!ov && (ov.nivel_leitura ?? 1) === 0;
         const eff = (m.slug && efetivas[m.slug]) || (m.nome && efetivas[m.nome]) || { leitura: 0, escrita: 0 };
+        // Override é soberano (vence cargo/área) · por isso é checado primeiro.
         let origem;
-        if (blocked) origem = 'bloqueio';
+        if (ov) origem = blocked ? 'bloqueio' : 'override';
         else if (boost) origem = 'area';
-        else if (ov) origem = 'override';
         else if (cargoCell && (cargoCell.nivel ?? 0) > 0) origem = 'cargo';
         else origem = 'nenhum';
         return {
