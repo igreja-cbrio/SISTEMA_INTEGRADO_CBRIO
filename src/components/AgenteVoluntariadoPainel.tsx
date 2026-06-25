@@ -11,7 +11,7 @@ import { agenteVoluntariado as api } from '../api';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Sparkles, MessageCircle, Loader2, CalendarClock, UserX, AlertTriangle, Copy, Download } from 'lucide-react';
+import { Sparkles, MessageCircle, Loader2, CalendarClock, UserX, AlertTriangle, Copy, Download, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Pendente = { schedule_id: string; nome: string; funcao: string; servico: string | null; quando: string; telefone: string | null; whatsapp: string | null };
@@ -22,6 +22,7 @@ type Dados = { confirmacoes_pendentes: Pendente[]; reposicoes: Reposicao[]; no_s
 export default function AgenteVoluntariadoPainel() {
   const [d, setD] = useState<Dados | null>(null);
   const [loading, setLoading] = useState(true);
+  const [aberto, setAberto] = useState(true);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -75,11 +76,12 @@ export default function AgenteVoluntariadoPainel() {
   return (
     <Card className="p-4 border-primary/30 bg-primary/5 space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary" />
+        <button onClick={() => setAberto((v) => !v)} className="flex items-center gap-2 min-w-0" title={aberto ? 'Recolher' : 'Expandir'}>
+          <Sparkles className="h-4 w-4 text-primary shrink-0" />
           <span className="font-semibold text-sm">Agente de Voluntariado</span>
           <Badge variant="secondary" className="text-[10px]">{total}</Badge>
-        </div>
+          {aberto ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </button>
         <div className="flex items-center gap-1.5">
           <Button size="sm" variant="outline" onClick={copiar} className="h-8 gap-1.5">
             <Copy className="h-3.5 w-3.5" /> Copiar
@@ -90,6 +92,18 @@ export default function AgenteVoluntariadoPainel() {
         </div>
       </div>
 
+      {!aberto && (
+        <button onClick={() => setAberto(true)} className="text-xs text-muted-foreground text-left">
+          {[
+            d.confirmacoes_pendentes.length > 0 ? `${d.confirmacoes_pendentes.length} a confirmar` : '',
+            d.reposicoes.length > 0 ? `${d.reposicoes.length} p/ repor` : '',
+            d.no_shows.length > 0 ? `${d.no_shows.length} faltaram` : '',
+          ].filter(Boolean).join(' · ')} · toque para ver
+        </button>
+      )}
+
+      {aberto && (
+      <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
       {d.confirmacoes_pendentes.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -137,6 +151,8 @@ export default function AgenteVoluntariadoPainel() {
             </div>
           ))}
         </div>
+      )}
+      </div>
       )}
     </Card>
   );
