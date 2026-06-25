@@ -1762,7 +1762,7 @@ de YouTube — a API NÃO foi ligada (coletor futuro faz UPSERT por mês).
 ⚠️ Base dos % = membros ativos (provisório · confirmar "total da igreja" quando
 grupos/voluntários/dízimos popularem). Histórico de versões v1→v3 no legado.
 
-## Produção de Culto · /producao (2026-06-02 · cronograma 2026-06-16 · preview por culto 2026-06-25)
+## Produção de Culto · /producao (2026-06-02 · cronograma 2026-06-16 · preview por culto + gráfico no Detalhado 2026-06-25)
 
 Módulo `producao` (matriz copiada de kids · boost de área pro Pedro Fernandes).
 KPIs técnicos POR CULTO em satélite 1:1 de `cultos` (`culto_producao` + log
@@ -1807,6 +1807,18 @@ recomputa os totais do satélite `culto_producao`. Momentos reais incluem "Músi
 Dízimo"/"Música Ceia" (separados do Louvor pela regra acima) e "Intercessão"/"Avisos"
 com executado 0 (feitos dentro da música / junto da generosidade). Carga só de dados ·
 o código não depende dela. Aplicar no SQL Editor (RAISE NOTICE confirma os 4 cultos).
+
+**Gráfico de tempo de culto + total do estouro no Detalhado (2026-06-25 · só código, sem migration):**
+- O `/acumulado` ganhou 2 campos: `serie` (1 ponto por culto preenchido ·
+  `{data, tipo, duracao_min, previsto_min}` ordenado por data) e `por_etapa_total`
+  (resumo do culto INTEIRO: previsto/executado médios, desvio e % que estourou ·
+  sobre os cultos com ambos lançados). NÃO mexe em `kpi_calcular_valor_auto`.
+- A aba **Detalhado** (`Producao.jsx`) abre com um **gráfico de linhas** (recharts)
+  executado × previsto por culto ao longo do tempo (alvo 60 min via `ReferenceLine`
+  pontilhada), e a tabela "Estouro por etapa" ganhou uma faixa-resumo do culto
+  inteiro (`por_etapa_total`). Recharts herda o tema vidro do `index.css`; linhas
+  NÃO usam gradiente (regra da casa). Executado = indigo da área (`C.primary` #6366F1),
+  previsto = cinza tracejado.
 
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
