@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { formatErro } from '../../lib/formatErro';
 import { SkeletonBlock } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
+import Paginacao from '../../components/Paginacao';
 import { COLORS, btnGhostSm } from '../../lib/uiTokens';
 
 const C = {
@@ -287,32 +288,14 @@ export default function CruzamentosPessoas() {
             />
           ) : (
             <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
-              <div style={{
-                padding: '10px 16px', background: 'var(--cbrio-table-header)',
-                fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-              }}>
-                <span>
-                  Pagina {page + 1} de {Math.max(1, Math.ceil(resultado.total_match / PAGE_SIZE))}
-                  {' · '}{(page * PAGE_SIZE) + 1}-{Math.min((page + 1) * PAGE_SIZE, resultado.total_match)} de {resultado.total_match.toLocaleString('pt-BR')}
-                </span>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <button
-                    onClick={() => setPage(p => Math.max(0, p - 1))}
-                    disabled={page === 0 || loading}
-                    style={{ ...btnGhostSm, opacity: page === 0 ? 0.4 : 1 }}
-                  >
-                    ← Anterior
-                  </button>
-                  <button
-                    onClick={() => setPage(p => p + 1)}
-                    disabled={(page + 1) * PAGE_SIZE >= resultado.total_match || loading}
-                    style={{ ...btnGhostSm, opacity: (page + 1) * PAGE_SIZE >= resultado.total_match ? 0.4 : 1 }}
-                  >
-                    Próxima →
-                  </button>
-                </div>
-              </div>
+              <Paginacao
+                page={page + 1}
+                pageSize={PAGE_SIZE}
+                total={resultado.total_match}
+                onPageChange={(p) => setPage(p - 1)}
+                itemLabel="pessoas"
+                className="px-4 pt-3"
+              />
               <div style={{ maxHeight: 540, overflowY: 'auto' }}>
                 {resultado.membros.map(m => (
                   <div key={m.id} style={{

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { wifi as wifiApi } from '../../api';
+import Paginacao from '../../components/Paginacao';
 import { formatErro } from '../../lib/formatErro';
 
 const C = {
@@ -340,13 +341,7 @@ function AbaPessoas({ onPick }) {
         {!loading && data.pessoas.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: C.t3 }}>Nenhuma pessoa encontrada.</div>}
         {!loading && data.pessoas.map(p => <PessoaRow key={p.cpf_norm} p={p} onClick={() => onPick(p.cpf_norm)} />)}
       </div>
-      {totalPages > 1 && (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 14 }}>
-          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} style={chipStyle(false)}>Anterior</button>
-          <span style={{ fontSize: 13, color: C.t3 }}>Página {page} de {totalPages}</span>
-          <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} style={chipStyle(false)}>Próxima</button>
-        </div>
-      )}
+      <Paginacao page={page} pageSize={limit} total={data.total} onPageChange={setPage} itemLabel="pessoas" />
     </div>
   );
 }
