@@ -371,12 +371,12 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
               </p>
             </section>
 
-            {/* Acesso base (role) */}
+            {/* Tipo de conta (role · admin/diretor = vê tudo; assistente = segue cargo+área+exceções) */}
             <section>
-              <h3 className="text-sm font-semibold text-foreground mb-2">Acesso base</h3>
+              <h3 className="text-sm font-semibold text-foreground mb-2">Tipo de conta</h3>
               <Select value={role || ''} onValueChange={salvarRole} disabled={salvando}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Definir acesso base..." />
+                  <SelectValue placeholder="Definir tipo de conta..." />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="assistente">Assistente · segue a matriz do cargo</SelectItem>
@@ -432,9 +432,9 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
             <section>
               <h3 className="text-sm font-semibold text-foreground mb-1">Acesso por módulo</h3>
               <p className="text-xs text-muted-foreground mb-3">
-                O que a pessoa pode <strong>ver</strong> ou <strong>mexer</strong> em cada módulo. O nível vem
-                do cargo; mude aqui pra criar uma exceção só pra ela (o ↺ volta ao padrão do cargo).{' '}
-                <strong>Ver</strong> = só leitura · <strong>Mexer</strong> = criar/editar.
+                Cada módulo mostra a <strong>base</strong> que vem do cargo/área. Mudar aqui cria uma{' '}
+                <strong>exceção</strong> só pra essa pessoa — e a exceção <strong>vence a base</strong> (o ↺ remove).{' '}
+                <strong>Ver</strong> = só leitura · <strong>Mexer</strong> = criar/editar · <strong>Sem acesso</strong> = bloqueia.
               </p>
               <GradeModulos grade={grade} usuarioId={colaborador.id} onSaved={onSaved} />
             </section>
@@ -567,61 +567,39 @@ function GradeModulos({ grade, usuarioId, onSaved }) {
                     </div>
                   </div>
 
-                  {row.area_boost && !row.blocked ? (
-                    // Elevado pela área (boost) · um nível < 5 não rebaixa; só "bloquear" tem efeito.
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs text-blue-700 dark:text-blue-400 font-medium">Admin · via área</span>
+                  {/* Override é soberano · o seletor SEMPRE aparece (incl. módulos vindos da área).
+                      "via área" indica que, sem exceção, a área concede Admin aqui. */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {row.area_boost && !temOverride && (
+                      <span className="text-[10px] text-blue-700 dark:text-blue-400 mr-1 whitespace-nowrap">via área</span>
+                    )}
+                    <Select
+                      value={String(row.leitura)}
+                      onValueChange={v => aplicarNivel(row, parseInt(v, 10))}
+                      disabled={saving}
+                    >
+                      <SelectTrigger className="w-[176px] h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {NIVEL_OPCOES.map(n => (
+                          <SelectItem key={n.v} value={String(n.v)} className="text-xs">
+                            {n.v} · {n.l}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {temOverride && (
                       <Button
                         size="sm" variant="ghost" disabled={saving}
-                        className="h-7 px-2 text-xs text-red-600 hover:text-red-700"
-                        onClick={() => aplicarNivel(row, 0)}
-                        title="Bloquear este módulo mesmo a pessoa tendo a área"
-                      >
-                        Bloquear
-                      </Button>
-                    </div>
-                  ) : row.area_boost && row.blocked ? (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs text-red-600 font-medium">Bloqueado</span>
-                      <Button
-                        size="sm" variant="ghost" disabled={saving}
-                        className="h-7 px-2 text-xs"
+                        className="h-8 w-8 p-0"
                         onClick={() => resetarModulo(row)}
-                        title="Voltar ao acesso que a área concede"
+                        title="Remover a exceção · volta ao padrão do cargo/área"
                       >
-                        Desbloquear
+                        <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
                       </Button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Select
-                        value={String(row.leitura)}
-                        onValueChange={v => aplicarNivel(row, parseInt(v, 10))}
-                        disabled={saving}
-                      >
-                        <SelectTrigger className="w-[176px] h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {NIVEL_OPCOES.map(n => (
-                            <SelectItem key={n.v} value={String(n.v)} className="text-xs">
-                              {n.v} · {n.l}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {temOverride && (
-                        <Button
-                          size="sm" variant="ghost" disabled={saving}
-                          className="h-8 w-8 p-0"
-                          onClick={() => resetarModulo(row)}
-                          title="Voltar ao padrão do cargo"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
-                        </Button>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               );
             })}
