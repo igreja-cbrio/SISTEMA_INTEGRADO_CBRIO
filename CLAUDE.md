@@ -1813,12 +1813,14 @@ o código não depende dela. Aplicar no SQL Editor (RAISE NOTICE confirma os 4 c
   `{data, tipo, duracao_min, previsto_min}` ordenado por data) e `por_etapa_total`
   (resumo do culto INTEIRO: previsto/executado médios, desvio e % que estourou ·
   sobre os cultos com ambos lançados). NÃO mexe em `kpi_calcular_valor_auto`.
-- A aba **Detalhado** (`Producao.jsx`) abre com um **gráfico de linhas** (recharts)
-  executado × previsto por culto ao longo do tempo (alvo 60 min via `ReferenceLine`
-  pontilhada), e a tabela "Estouro por etapa" ganhou uma faixa-resumo do culto
-  inteiro (`por_etapa_total`). Recharts herda o tema vidro do `index.css`; linhas
-  NÃO usam gradiente (regra da casa). Executado = indigo da área (`C.primary` #6366F1),
-  previsto = cinza tracejado.
+- A aba **Detalhado** (`Producao.jsx`) abre com um **gráfico de linhas** (recharts):
+  **1 linha por tipo de culto** (Domingo 08:30/10:00/11:30/19:00, Quarta, AMI, Bridge),
+  duração executada (min) ao longo do tempo — pivot por data (`linhasChart`/`tiposChart`,
+  cada tipo vira uma coluna). Alvo 60 min via `ReferenceLine`; **eixo Y começa em 45**
+  (`domain={[45,'auto']}`) pra destacar os picos. A tabela "Estouro por etapa" ganhou
+  uma faixa-resumo do culto inteiro (`por_etapa_total`). Recharts herda o tema vidro do
+  `index.css`; linhas NÃO usam gradiente (regra da casa); cores das linhas em `CORES_CULTO`.
+  (Ajuste 2026-06-25, pedido do Marcos: era executado×previsto numa linha só.)
 
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
