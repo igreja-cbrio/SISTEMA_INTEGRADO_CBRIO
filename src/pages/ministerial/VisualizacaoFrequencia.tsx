@@ -9,13 +9,14 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
+import { CAPACIDADE_TEMPLO, CAPACIDADE_KIDS } from '@/lib/capacidades';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ec4899' };
 
-// Capacidade de assentos · usado pro % de ocupacao media.
-// Templo = 1050 lugares (Domingo, Quarta, AMI) · Kids = 250.
-const CAP_TEMPLO = 1050;
-const CAP_KIDS = 250;
+// Capacidade de assentos · usado pro % de ocupacao media · fonte única em
+// src/lib/capacidades.ts (Templo 1050 · Kids 250).
+const CAP_TEMPLO = CAPACIDADE_TEMPLO;
+const CAP_KIDS = CAPACIDADE_KIDS;
 
 // Bridge e Online não acontecem no templo → ficam de fora da ocupacao.
 // (Online nem e tipo de culto · so sai de graca por usarmos presencial.)
