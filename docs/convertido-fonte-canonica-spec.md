@@ -30,7 +30,7 @@ como numerador (≥1 sinal de engajamento, ±60d) e denominador (coorte 90d). �
 | # | Caminho | Origem | Veredito |
 |---|---------|--------|----------|
 | A | Trigger `tg_cultos_dec_pessoas_to_cuidados` (migration `20260603160000`): `cultos_decisoes_pessoas` → `cui_convertidos`, com `area` derivada do culto | **culto** | ✅ caminho nativo correto |
-| B | `POST /cuidados/convertidos` (`backend/routes/cuidados.js:916`) → `insert` direto · botão **"Novo convertido"** | ~~**Cuidados**~~ | ✅ corrigido 25/06: botão agora redireciona pra Integração; endpoint órfão a remover |
+| B | ~~`POST /cuidados/convertidos` + botão "Novo convertido"~~ | ~~**Cuidados**~~ | ✅ FECHADO 25/06: botão redireciona pra Integração; **endpoint + `api.create` REMOVIDOS**. Cuidados só edita/acompanha. |
 | C | Import da planilha (`backend/scripts/_import_acompanhamento_jornada.js`) | planilha | ⚠️ ENCERRADO (sem mais imports); linhas existem **sem `culto_id`** |
 
 ## Gaps vs o princípio
@@ -42,11 +42,12 @@ em vez de criar um `cui_convertidos` direto. Assim o convertido só nasce de uma
 de culto (cai no trigger A, com `culto_id`/`area` corretos); o Cuidados volta a só
 acompanhar/direcionar.
 
-**Feito:** `Cuidados.tsx` — botão `onClick` → `navigate('/ministerial/integracao')`
-(o modal de criação fica inacessível pela UI; segue usado só pra **editar** convertido
-existente). **Follow-up (não-urgente, evitar colisão com a sessão de Cuidados):** o
-`POST /cuidados/convertidos` + `api.cuidados.convertidos.create` ficam **órfãos** (sem
-chamador na UI) → remover numa limpeza de backend depois.
+**Feito:** `Cuidados.tsx` — botão `onClick` → `navigate('/ministerial/integracao')`; o
+modal segue só pra **editar** convertido existente (`save()` virou edit-only). **O
+endpoint `POST /cuidados/convertidos` + `api.cuidados.convertidos.create` FORAM REMOVIDOS**
+(2026-06-25) — entrada única de convertido = Integração (decisão de culto). O caso raro de
+"história posterior" (sem culto) é vinculado **direto no banco**, sem botão no sistema
+(decisão do Marcos · não facilitar a informalidade).
 
 ### Gap 2 — `culto_id` dos importados (caminho C) · ❌ **DESCARTADO (25/06)**
 Marcos: "essas colunas não vão aparecer." A coluna "Culto" na planilha do Marelo e o
@@ -71,9 +72,11 @@ data/horário, garantir que o fluxo de decisão de culto aceite esses campos vaz
 ## Ordem sugerida de execução
 
 1. ✅ Gap 1 (botão "Novo convertido" → Integração) — **feito 25/06**.
-2. Limpeza follow-up (não-urgente · coordenar com a sessão de Cuidados): remover o
-   `POST /cuidados/convertidos` + `api.cuidados.convertidos.create`, agora órfãos.
+2. ✅ Limpeza: `POST /cuidados/convertidos` + `api.cuidados.convertidos.create` **removidos** (25/06).
 3. ~~Gap 2~~ — descartado (Marcos: "essas colunas não vão aparecer").
+
+**Estado final: entrada única de convertido = Integração (decisão de culto).** Nenhum
+botão cria convertido sem culto · "história posterior" sem culto é vínculo manual no banco.
 
 ## Verificação (origin/main, 2026-06-25)
 

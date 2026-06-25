@@ -908,20 +908,11 @@ router.get('/convertidos', async (req, res) => {
   }
 });
 
-router.post('/convertidos', async (req, res) => {
-  try {
-    const body = { ...req.body };
-    if (body.cpf) {
-      const m = await findMembroByCpf(body.cpf);
-      if (m) body.membro_id = m.id;
-    }
-    const { data, error } = await supabase.from('cui_convertidos').insert(body).select().single();
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+// POST /convertidos REMOVIDO (2026-06-25) · convertido nasce SEMPRE do culto
+// (cultos_decisoes_pessoas → trigger tg_cultos_dec_pessoas_to_cuidados), nunca no
+// Cuidados. A entrada única é a Integração. Caso raro de "história posterior" (sem
+// culto/data) é vinculado direto no banco, sem botão no sistema (decisão do Marcos ·
+// não facilitar a informalidade). Cuidados só ACOMPANHA/edita (PATCH abaixo).
 
 router.patch('/convertidos/:id', async (req, res) => {
   try {

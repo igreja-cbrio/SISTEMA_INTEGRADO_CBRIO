@@ -395,17 +395,13 @@ function ConvertidoModal({
 
   async function save() {
     if (!form.nome) return toast.error('Nome obrigatório');
+    // Modal é EDIT-only · convertido nasce no culto (Integração), não aqui.
+    if (!editing) return;
     setSaving(true);
     try {
       const payload: any = { ...form };
-      if (editing) {
-        await cuidadosApi.convertidos.update(initial.id, payload);
-        toast.success('Convertido atualizado');
-      } else {
-        if (membro) { payload.membro_id = membro.id; payload.nome = membro.nome; payload.cadastrado = true; }
-        await cuidadosApi.convertidos.create(payload);
-        toast.success('Convertido registrado');
-      }
+      await cuidadosApi.convertidos.update(initial.id, payload);
+      toast.success('Convertido atualizado');
       onSaved();
       onClose();
     } catch (e: any) { toast.error(e.message); }
