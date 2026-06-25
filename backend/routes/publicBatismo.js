@@ -272,7 +272,7 @@ router.post('/', limiter, async (req, res) => {
       tipo: 'nova_inscricao_batismo',
       titulo: 'Nova inscrição de batismo',
       mensagem: `${nomeT} ${sobrenomeT} se inscreveu para o batismo de ${dataBatismo}.`,
-      link: '/ministerial/integracao?tab=batismos',
+      link: `/ministerial/integracao?tab=batismos&inscricao=${data.id}`,
       severidade: 'info',
       chaveDedup: `batismo_inscricao_${data.id}`,
       email: true, // responsável da Integração (Lorena) recebe também por e-mail
