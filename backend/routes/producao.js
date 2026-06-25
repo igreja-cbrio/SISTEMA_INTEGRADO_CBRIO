@@ -658,21 +658,37 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     })).sort((a, b) => b.cultos - a.cultos);
 
     // Estouro por etapa (momento) · onde o tempo mais foge do previsto.
-    // Agrupa por título da etapa nos cultos do período (só etapas com executado).
-    const porEtapaMap = {};
+    // As 3 músicas viram um único momento "Louvor": o desvio é medido no BLOCO
+    // (soma das músicas), não música a música — uma maior compensa outra menor,
+    // sem falso "estourou" quando o tempo só se deslocou entre elas (Pedro · 2026).
+    const grupoEtapa = (titulo) => /^m[uú]sica(\s|\d|$)/i.test(titulo) ? 'Louvor' : titulo;
+    // 1) Rollup por (culto × grupo): soma previsto/executado das etapas do grupo
+    //    no culto. Pra etapas comuns o grupo é o próprio título (1 por culto).
+    const porCultoGrupo = {}; // `${culto_id}|${grupo}` -> somas do bloco no culto
     for (const e of etapas) {
       const titulo = String(e.titulo || '').trim();
-      if (!titulo || e.executado_seg == null) continue;
-      if (!porEtapaMap[titulo]) porEtapaMap[titulo] = {
-        titulo, secao: e.secao || 'culto', n: 0, soma_exec: 0,
+      if (!titulo) continue;
+      const grupo = grupoEtapa(titulo);
+      const k = `${e.culto_id}|${grupo}`;
+      if (!porCultoGrupo[k]) porCultoGrupo[k] = { grupo, secao: e.secao || 'culto', exec: 0, hasExec: false, prev: 0, hasPrev: false };
+      const cg = porCultoGrupo[k];
+      if (e.executado_seg != null) { cg.exec += e.executado_seg; cg.hasExec = true; }
+      if (e.previsto_seg != null) { cg.prev += e.previsto_seg; cg.hasPrev = true; }
+    }
+    // 2) Média entre cultos · cada (culto × grupo) com executado conta como 1.
+    const porEtapaMap = {};
+    for (const cg of Object.values(porCultoGrupo)) {
+      if (!cg.hasExec) continue;
+      if (!porEtapaMap[cg.grupo]) porEtapaMap[cg.grupo] = {
+        titulo: cg.grupo, secao: cg.secao, n: 0, soma_exec: 0,
         n_prev: 0, soma_prev: 0, n_ambos: 0, soma_desvio: 0, estouros: 0,
       };
-      const g = porEtapaMap[titulo];
-      g.n++; g.soma_exec += e.executado_seg;
-      if (e.previsto_seg != null) {
-        g.n_prev++; g.soma_prev += e.previsto_seg;
-        g.n_ambos++; g.soma_desvio += (e.executado_seg - e.previsto_seg);
-        if (e.executado_seg > e.previsto_seg) g.estouros++;
+      const g = porEtapaMap[cg.grupo];
+      g.n++; g.soma_exec += cg.exec;
+      if (cg.hasPrev) {
+        g.n_prev++; g.soma_prev += cg.prev;
+        g.n_ambos++; g.soma_desvio += (cg.exec - cg.prev);
+        if (cg.exec > cg.prev) g.estouros++;
       }
     }
     const por_etapa = Object.values(porEtapaMap).map(g => ({

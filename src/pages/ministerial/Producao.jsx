@@ -340,7 +340,7 @@ function EtapasEditor({ etapas, setEtapas }) {
   return (
     <div>
       <p style={{ fontSize: 11, color: C.t3, margin: '0 0 8px' }}>
-        Lance o <strong>tempo executado</strong> de cada momento em <strong>mm:ss</strong> (ex.: 5:45). Nomes e previsto seguem o roteiro (aba “Modelos”). Use <strong>+ Atividade especial</strong> pra registrar ceia, batismo, etc.
+        Lance o <strong>tempo executado</strong> de cada momento em <strong>mm:ss</strong> (ex.: 5:45). O <strong>previsto</strong> vem do roteiro (aba “Modelos”), mas pode ser ajustado neste culto se as músicas ou a liturgia mudarem. Use <strong>+ Atividade especial</strong> pra registrar ceia, batismo, etc.
       </p>
       <div style={{ overflowX: 'auto' }}>
         <div style={{ minWidth: 400 }}>
@@ -366,7 +366,9 @@ function EtapasEditor({ etapas, setEtapas }) {
                 ) : (
                   <span style={{ fontSize: 12, color: C.text, fontWeight: 600, lineHeight: 1.2 }}>{e.titulo}{ehPos && <span style={{ fontSize: 8, color: C.t3, fontWeight: 700, marginLeft: 5 }}>PÓS</span>}</span>
                 )}
-                <span style={{ fontSize: 11, color: C.t3, textAlign: 'center' }}>{ehEsp ? '—' : fmtMMSSdash(prSeg)}</span>
+                {ehEsp
+                  ? <span style={{ fontSize: 11, color: C.t3, textAlign: 'center' }}>—</span>
+                  : <input value={e.previsto_str} onChange={ev => setRow(e.key, { previsto_str: maskMMSS(ev.target.value) })} inputMode="numeric" maxLength={5} placeholder="mm:ss" title="Previsto deste culto (ajustável · base no roteiro)" style={{ ...inpSm, textAlign: 'center', color: C.t2 }} />}
                 <input value={e.executado_str} onChange={ev => setRow(e.key, { executado_str: maskMMSS(ev.target.value) })} inputMode="numeric" maxLength={5} placeholder="mm:ss" style={{ ...inpSm, textAlign: 'center', color: estourouEtapa ? '#EF4444' : C.text, fontWeight: 600 }} />
                 <input value={e.observacao} onChange={ev => setRow(e.key, { observacao: ev.target.value })} placeholder={ehEsp ? 'obs' : 'ex.: pregador'} style={{ ...inpSm }} />
                 {ehEsp
