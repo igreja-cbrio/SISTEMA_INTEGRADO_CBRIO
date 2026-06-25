@@ -1790,13 +1790,23 @@ etapa é computada no `/acumulado` (NÃO mexe em `kpi_calcular_valor_auto`).
   segue como BASE/default; ajustar por culto só grava `culto_producao_etapas.previsto_seg`
   (já persistido pelo `PUT /culto/:id/etapas`) e flui automático pra "Prev.
   média"/"Aderência" do Detalhado. Atividade especial continua sem previsto (—).
-- No `por_etapa` do `/acumulado`, etapas cujo nome casa `/^m[uú]sica(\s|\d|$)/i`
-  colapsam num único momento **"Louvor"**: rollup por (culto × grupo) somando
-  previsto+executado, depois média entre cultos (desvio = média de exec−prev por
-  culto; % que estourou idem). Uma música maior compensa outra menor → sem falso
-  "estourou" quando o tempo só se deslocou entre as músicas. NÃO altera o tempo
-  total nem os outros momentos. Pra agrupar por nome (não por coluna) foi decisão
-  do Marcos (2026-06-25) · roteiro usa "Música 1/2/3" canônico.
+- No `por_etapa` do `/acumulado`, as músicas NUMERADAS do louvor (nome casa
+  `/^m[uú]sica\s*\d/i` → Música 1/2/3) colapsam num único momento **"Louvor"**:
+  rollup por (culto × grupo) somando previsto+executado, depois média entre cultos
+  (desvio = média de exec−prev por culto; % que estourou idem). Uma música maior
+  compensa outra menor → sem falso "estourou" quando o tempo só se deslocou entre
+  elas. **Só as numeradas** — "Música Dízimo"/"Música Ceia" são momentos próprios
+  (atrelados a dízimo/ceia) e ficam separados. NÃO altera o tempo total nem os
+  outros momentos. Agrupamento por nome (não por coluna) · decisão do Marcos (2026-06-25).
+
+**Carga do cronograma real de 2026-06-07 (migration `20260625150000_producao_cronograma_07jun.sql`):**
+Carrega as etapas dos 4 cultos de domingo 07/06 (08:30/10:00/11:30/19:00) da planilha
+"Cronograma Culto 07.06.2026" (espelha a carga de 14/06). Casa o culto por
+(`data` × `vol_service_types.recurrence_time`), REPLACE idempotente das etapas +
+recomputa os totais do satélite `culto_producao`. Momentos reais incluem "Música
+Dízimo"/"Música Ceia" (separados do Louvor pela regra acima) e "Intercessão"/"Avisos"
+com executado 0 (feitos dentro da música / junto da generosidade). Carga só de dados ·
+o código não depende dela. Aplicar no SQL Editor (RAISE NOTICE confirma os 4 cultos).
 
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
