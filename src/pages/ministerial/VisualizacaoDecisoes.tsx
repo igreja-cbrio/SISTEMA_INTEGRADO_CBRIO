@@ -488,31 +488,46 @@ function VisaoPessoas() {
       ) : (
         // Sem busca: histórico importado (colapsado) + lista de cultos com expand
         <div className="space-y-1.5">
-          {/* Só aparece na visão "Todos" · NÃO é pendência (tem data, falta só o
-              horário do culto · import histórico que não se repete). Fica fora dos
-              filtros Pendentes/Sem dados/Completos pra não parecer trabalho aberto. */}
-          {historicoImportado.length > 0 && filtroStatus === 'todos' && (
-            <HistoricoImportadoExpandivel
-              pessoas={historicoImportado}
-              expanded={expandedId === '__historico__'}
-              onToggle={() => setExpandedId(expandedId === '__historico__' ? null : '__historico__')}
-            />
-          )}
-          {cultosFiltrados.length === 0 && historicoImportado.length === 0 ? (
-            <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-              Nenhum culto com decisões nesse filtro.
-            </div>
-          ) : (
-            cultosFiltrados.map((c: any) => (
+          {/* Cultos + bloco de importados, TODOS na ordem dos lançamentos (data desc).
+              O bloco de importados NÃO fica fixo no topo: entra pela última data de
+              importação (17/05/2026). Só na visão "Todos" — não é pendência (tem data,
+              falta só o horário do culto · histórico que não se repete). */}
+          {(() => {
+            const mostrarHist = historicoImportado.length > 0 && filtroStatus === 'todos';
+            const dataHist = mostrarHist
+              ? historicoImportado.reduce(
+                  (max: string, p: any) => (p.data_conversao && p.data_conversao > max ? p.data_conversao : max),
+                  '')
+              : '';
+            const linhas: any[] = [
+              ...cultosFiltrados.map((c: any) => ({ tipo: 'culto', data: c.data_culto, culto: c })),
+              ...(mostrarHist ? [{ tipo: 'historico', data: dataHist }] : []),
+            ].sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+
+            if (linhas.length === 0) {
+              return (
+                <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                  Nenhum culto com decisões nesse filtro.
+                </div>
+              );
+            }
+            return linhas.map((l: any) => l.tipo === 'historico' ? (
+              <HistoricoImportadoExpandivel
+                key="__historico__"
+                pessoas={historicoImportado}
+                expanded={expandedId === '__historico__'}
+                onToggle={() => setExpandedId(expandedId === '__historico__' ? null : '__historico__')}
+              />
+            ) : (
               <CultoExpandivel
-                key={c.culto_id}
-                culto={c}
-                expanded={expandedId === c.culto_id}
-                onToggle={() => setExpandedId(expandedId === c.culto_id ? null : c.culto_id)}
+                key={l.culto.culto_id}
+                culto={l.culto}
+                expanded={expandedId === l.culto.culto_id}
+                onToggle={() => setExpandedId(expandedId === l.culto.culto_id ? null : l.culto.culto_id)}
                 onChanged={() => refetch()}
               />
-            ))
-          )}
+            ));
+          })()}
         </div>
       )}
     </div>
