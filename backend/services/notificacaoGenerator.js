@@ -34,6 +34,12 @@ async function gerarTodasNotificacoes() {
   total += await safe('Solicitacoes', gerarNotificacoesSolicitacoes);
   total += await safe('Marketing', gerarNotificacoesMarketing);
   total += await safe('Online', gerarNotificacoesOnline);
+  // Agente de Voluntariado: escalas pendentes/recusadas dos próximos cultos +
+  // no-show do último culto (só sugere/alerta).
+  total += await safe('AgenteVoluntariado', async () => {
+    const { alertar } = require('./agenteVoluntariado');
+    return alertar();
+  });
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
