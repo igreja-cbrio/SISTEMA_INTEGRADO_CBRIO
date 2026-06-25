@@ -440,8 +440,8 @@ function VisaoPessoas() {
                     <TableCell className="font-medium">
                       {p.nome}
                       {p._importado && (
-                        <Badge variant="outline" className="ml-2 text-[9px] bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900">
-                          culto não vinculado
+                        <Badge variant="outline" className="ml-2 text-[9px] text-muted-foreground">
+                          importado · sem horário
                         </Badge>
                       )}
                     </TableCell>
@@ -454,7 +454,7 @@ function VisaoPessoas() {
                       {p._importado ? (
                         <>
                           <div>{formatDataCurta(p.data_conversao)}</div>
-                          <div className="text-muted-foreground">Culto não vinculado</div>
+                          <div className="text-muted-foreground">Importado · sem horário</div>
                         </>
                       ) : p._culto && (
                         <>
@@ -465,7 +465,7 @@ function VisaoPessoas() {
                     </TableCell>
                     <TableCell className="text-center">
                       {p._importado ? (
-                        <Badge variant="outline" className="text-[9px]">culto não vinculado</Badge>
+                        <Badge variant="outline" className="text-[9px] text-muted-foreground">importado</Badge>
                       ) : (
                         <Badge variant="outline" className="text-[9px] capitalize">{p.tipo_decisao}</Badge>
                       )}
@@ -488,7 +488,10 @@ function VisaoPessoas() {
       ) : (
         // Sem busca: histórico importado (colapsado) + lista de cultos com expand
         <div className="space-y-1.5">
-          {historicoImportado.length > 0 && (
+          {/* Só aparece na visão "Todos" · NÃO é pendência (tem data, falta só o
+              horário do culto · import histórico que não se repete). Fica fora dos
+              filtros Pendentes/Sem dados/Completos pra não parecer trabalho aberto. */}
+          {historicoImportado.length > 0 && filtroStatus === 'todos' && (
             <HistoricoImportadoExpandivel
               pessoas={historicoImportado}
               expanded={expandedId === '__historico__'}
@@ -531,25 +534,25 @@ function HistoricoImportadoExpandivel({
   }, [pessoas]);
 
   return (
-    <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/30 dark:bg-amber-950/20 overflow-hidden">
+    <div className="rounded-xl border border-border bg-muted/30 overflow-hidden">
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-amber-100/40 dark:hover:bg-amber-950/30 transition-colors"
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/50 transition-colors"
       >
         <div className="flex items-center gap-3">
           <span className="text-base">📜</span>
           <div className="text-left">
-            <div className="text-sm font-medium text-foreground">Culto não vinculado</div>
+            <div className="text-sm font-medium text-foreground">Convertidos importados · histórico</div>
             <div className="text-xs text-muted-foreground">
-              {pessoas.length} {pessoas.length === 1 ? 'pessoa' : 'pessoas'} · {porData.length} {porData.length === 1 ? 'data' : 'datas'} · importadas da planilha
+              {pessoas.length} {pessoas.length === 1 ? 'pessoa' : 'pessoas'} · {porData.length} {porData.length === 1 ? 'data' : 'datas'} · com data, sem o horário do culto · não é pendência
             </div>
           </div>
         </div>
         <span className="text-xs text-muted-foreground">{expanded ? '▾' : '▸'}</span>
       </button>
       {expanded && (
-        <div className="border-t border-amber-200 dark:border-amber-900 p-3 space-y-3">
+        <div className="border-t border-border p-3 space-y-3">
           {porData.map(([data, list]) => (
             <div key={data}>
               <div className="text-xs font-semibold text-muted-foreground mb-1.5 px-1">
@@ -575,8 +578,8 @@ function HistoricoImportadoExpandivel({
                           </TableCell>
                           <TableCell className="text-center">
                             {incompleto ? (
-                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
-                                incompleto
+                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title="Sem CPF/nascimento · censo posterior completa">
+                                sem CPF
                               </span>
                             ) : (
                               <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
