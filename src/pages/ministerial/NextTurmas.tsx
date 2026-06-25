@@ -24,6 +24,7 @@ type Encontro = { id: string; turma_id: string; numero: number; data?: string | 
 type Matricula = {
   id: string; turma_id?: string | null; nome: string; sobrenome?: string | null;
   cpf?: string | null; telefone?: string | null; email?: string | null; status: Status;
+  indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean; indicou_devocional?: boolean;
 };
 type Presenca = { encontro_id: string; matricula_id: string; presente: boolean };
 type Turma = {
@@ -38,6 +39,16 @@ const STATUS_LABEL: Record<Status, string> = {
 const STATUS_COLOR: Record<Status, string> = {
   matriculado: C.info, formado: C.primary, incompleto: C.warn, desistiu: C.gray,
 };
+
+// Direcionamento pros valores DENTRO do Next (Fase 1B · Marcos · 2026-06-25). Os flags
+// indicou_* vivem na matrícula. Grupos/Voluntários → caixa da área; Batismo → inscrição
+// pendente; Devocional → registra a escolha. Sem Dízimo (decisão do Marcos).
+const NEXT_VALORES: { v: string; flag: keyof Matricula; l: string }[] = [
+  { v: 'grupos',      flag: 'indicou_grupo',      l: 'Grupos' },
+  { v: 'voluntarios', flag: 'indicou_servir',     l: 'Voluntários' },
+  { v: 'batismo',     flag: 'indicou_batismo',    l: 'Batismo' },
+  { v: 'devocional',  flag: 'indicou_devocional', l: 'Devocional' },
+];
 
 function ymdLocal(d?: string | null): string {
   if (!d) return '—';
@@ -173,6 +184,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [det, setDet] = useState<TurmaDetalhe | null>(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
+  const [direcionarM, setDirecionarM] = useState<Matricula | null>(null);
   const load = useCallback(async () => {
     setLoading(true);
     try { setDet(await nextApi.turmas.get(turmaId)); } catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -233,11 +245,12 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                       </th>
                     ))}
                     <th className="text-center p-2 font-medium">Status</th>
+                    <th className="text-center p-2 font-medium">Valores</th>
                   </tr>
                 </thead>
                 <tbody>
                   {det.matriculas.length === 0 ? (
-                    <tr><td colSpan={2 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
+                    <tr><td colSpan={3 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
                   ) : det.matriculas.map(m => {
                     const n = presCount(m.id);
                     const incompletoFim = totalEnc > 0 && n < totalEnc && det.status === 'encerrada';
@@ -254,6 +267,14 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                         ))}
                         <td className="text-center p-2">
                           <Badge variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[m.status], borderColor: STATUS_COLOR[m.status] + '60' }}>{STATUS_LABEL[m.status]}</Badge>
+                        </td>
+                        <td className="p-2">
+                          <div className="flex items-center gap-1 flex-wrap justify-center">
+                            {NEXT_VALORES.filter(x => (m as any)[x.flag]).map(x => (
+                              <Badge key={x.v} variant="outline" className="text-[9px]">{x.l}</Badge>
+                            ))}
+                            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={() => setDirecionarM(m)}>Direcionar</Button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -274,6 +295,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               </div>
             </DialogFooter>
             {addOpen && <AddMatriculaModal turmaId={turmaId} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); onChanged(); }} />}
+            {direcionarM && <DirecionarValoresModal m={direcionarM} onClose={() => setDirecionarM(null)} onDone={() => { setDirecionarM(null); load(); onChanged(); }} />}
           </>
         )}
       </DialogContent>
@@ -333,6 +355,57 @@ const RESOLUCAO_LABEL: Record<string, string> = {
   contatado: 'Contatado', sem_interesse: 'Sem interesse', encerrado: 'Encerrado',
 };
 const RESOLUCOES = Object.keys(RESOLUCAO_LABEL);
+
+// Direcionar pros valores (Grupos/Voluntários/Batismo/Devocional) ao fim do Next.
+// Aditivo: marcar adiciona; o backend é idempotente (não duplica). Já-direcionados ficam
+// travados (checked + disabled) · pra desfazer, fala com a área.
+function DirecionarValoresModal({ m, onClose, onDone }: { m: Matricula; onClose: () => void; onDone: () => void }) {
+  const jaFeito = (flag: keyof Matricula) => !!(m as any)[flag];
+  const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const nomeC = `${m.nome} ${m.sobrenome || ''}`.trim();
+
+  async function save() {
+    const destinos = NEXT_VALORES.filter(x => sel[x.v] && !jaFeito(x.flag)).map(x => x.v);
+    if (destinos.length === 0) { toast.error('Escolha ao menos um destino novo'); return; }
+    setSaving(true);
+    try {
+      await nextApi.matriculas.direcionar(m.id, destinos);
+      toast.success('Direcionado');
+      onDone();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao direcionar'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Direcionar — {nomeC}</DialogTitle></DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          Pra onde a pessoa segue ao fim do Next. Grupos/Voluntários caem na caixa da área;
+          Batismo vira inscrição pendente; Devocional registra a escolha.
+        </p>
+        <div className="space-y-2 py-1">
+          {NEXT_VALORES.map(x => {
+            const feito = jaFeito(x.flag);
+            return (
+              <label key={x.v} className={`flex items-center gap-2 text-sm rounded-md border border-border p-2 ${feito ? 'opacity-60' : 'cursor-pointer'}`}>
+                <input type="checkbox" disabled={feito} checked={feito || !!sel[x.v]}
+                  onChange={e => setSel(s => ({ ...s, [x.v]: e.target.checked }))}
+                  className="h-4 w-4 accent-[#00B39D]" />
+                {x.l}{feito && <span className="text-[10px] text-muted-foreground">· já direcionado</span>}
+              </label>
+            );
+          })}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Direcionar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function PessoasView() {
   const [itens, setItens] = useState<Pessoa[]>([]);
