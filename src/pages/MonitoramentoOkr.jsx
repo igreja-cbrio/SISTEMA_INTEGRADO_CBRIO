@@ -144,8 +144,8 @@ const BLOCOS = [
         taticos: [
           { ind: 'Retenção média em vídeos', alvo: '≥40%', live: 'eng_retencao', alvoNum: 40, cmp: 'gte' },
           { ind: 'Taxa de compartilhamento', alvo: '≥5%', live: 'eng_compartilhamento', alvoNum: 5, cmp: 'gte' },
-          // Taxa de engajamento real do YouTube (curtidas + comentários ÷ views). Alvo provisório · ajustar.
-          { ind: 'Taxa de engajamento no YouTube', alvo: '≥4%', live: 'eng_interacao', alvoNum: 4, cmp: 'gte', casas: 1 },
+          // Taxa de engajamento real do YouTube (curtidas + comentários ÷ views). Real ~7% · alvo ≥5%.
+          { ind: 'Taxa de engajamento no YouTube', alvo: '≥5%', live: 'eng_interacao', alvoNum: 5, cmp: 'gte', casas: 1 },
         ],
       },
     ],
