@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { cuidados as cuidadosApi } from '../../api';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -830,6 +830,7 @@ export default function Cuidados() {
   const [pedidosApp, setPedidosApp] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
   const [jornadaData, setJornadaData] = useState<any>(null); // /jornada-convertidos · status contato/batismo/Next por pessoa
+  const navigate = useNavigate();
 
   const [modalAcomp, setModalAcomp] = useState(false);
   const [editAcomp, setEditAcomp] = useState<any | null>(null);
@@ -1328,8 +1329,14 @@ export default function Cuidados() {
             <div className="text-sm text-muted-foreground">
               <strong className="text-foreground">{convertidos.length}</strong> convertidos
             </div>
+            {/* Convertido nasce SEMPRE do culto (princípio · 25/06): "Novo
+                convertido" leva pra Integração registrar a decisão no culto —
+                Cuidados acompanha/direciona, não origina. */}
             {podeEditarCuidados && (
-              <Button onClick={() => { setEditConvert(null); setModalConvert(true); }}>
+              <Button
+                onClick={() => navigate('/ministerial/integracao')}
+                title="Registrar pela Integração (decisão de culto)"
+              >
                 <Plus className="h-4 w-4 mr-2" />Novo convertido
               </Button>
             )}
