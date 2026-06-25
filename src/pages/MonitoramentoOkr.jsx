@@ -99,8 +99,8 @@ const BLOCOS = [
         envolvida: 'Integração',
         live: 'okr_batismos', alvoNum: 30, cmp: 'gte',
         taticos: [
-          // Trimestral (90d) · % de convertidos que foram batizados (coorte cruzada). Vermelho < 30%, verde ≥ 30%.
-          { ind: '% de convertidos batizados (90 dias)', alvo: '≥30% dos convertidos', live: 'bat_cohort', alvoNum: 30, cmp: 'gte', casas: 1 },
+          // Mesma base do cabeçalho do box (batismos ÷ convertidos · 90d). Vermelho < 30%, verde ≥ 30%.
+          { ind: '% de convertidos batizados (90 dias)', alvo: '≥30% dos convertidos', live: 'okr_batismos', alvoNum: 30, cmp: 'gte', casas: 1 },
           { ind: 'Tempo médio de decisão até o batismo', alvo: '90 dias', memoria: 'Nº de batizandos x convertidos nos últimos 90 dias — mensal', live: 'tempo_batismo', alvoNum: 90, cmp: 'lte' },
         ],
       },
