@@ -39,6 +39,23 @@ async function jaTemNext(membroIds, cpfs, nomes) {
   return { membro, cpf, nome };
 }
 
+// Marca o status da PESSOA quando a mensagem é disparada:
+// - boas_vindas → primeiro_contato_em (vira "contactada", se ainda não tinha)
+// - next       → next_convite_em (foi convidada pro NEXT, se ainda não tinha)
+async function marcarStatusDisparo(ids, tipo, userId) {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  const agora = new Date().toISOString();
+  if (tipo === 'boas_vindas') {
+    await supabase.from('cui_convertidos')
+      .update({ primeiro_contato_em: agora, primeiro_contato_por: userId || null })
+      .in('id', ids).is('primeiro_contato_em', null);
+  } else {
+    await supabase.from('cui_convertidos')
+      .update({ next_convite_em: agora, next_convite_por: userId || null })
+      .in('id', ids).is('next_convite_em', null);
+  }
+}
+
 // GET /pendentes?contato=nao|sim|todos — convertidos (últimos 120d) sem NEXT.
 // Filtro por contato pastoral (padrão: não contactados, p/ aquecer com boas-vindas).
 router.get('/pendentes', authorizeModule('cuidados', 1), async (req, res) => {
@@ -47,7 +64,7 @@ router.get('/pendentes', authorizeModule('cuidados', 1), async (req, res) => {
     const desde = new Date(Date.now() - 120 * DIA).toISOString().slice(0, 10);
     const { data: convs } = await supabase
       .from('cui_convertidos')
-      .select('id, nome, cpf, telefone, area, data_culto, membro_id, primeiro_contato_em, primeiro_contato_status')
+      .select('id, nome, cpf, telefone, area, data_culto, membro_id, primeiro_contato_em, primeiro_contato_status, next_convite_em')
       .is('deleted_at', null)
       .gte('data_culto', desde)
       .order('data_culto', { ascending: false })
@@ -69,6 +86,7 @@ router.get('/pendentes', authorizeModule('cuidados', 1), async (req, res) => {
         id: c.id, nome: c.nome, telefone: c.telefone || null, area: c.area || null,
         data_culto: c.data_culto, tem_telefone: !!soDigitos(c.telefone),
         contatado: contatoFoiFeito(c),
+        next_convite_em: c.next_convite_em || null,
       }))
       .filter((c) => (contato === 'nao' ? !c.contatado : contato === 'sim' ? c.contatado : true));
     res.json(pendentes);
@@ -128,6 +146,7 @@ router.post('/enviar', authorizeModule('cuidados', 2), async (req, res) => {
       .from('cui_convertidos').select('id, nome, telefone').in('id', ids).is('deleted_at', null);
 
     let enviados = 0, sem_telefone = 0, falhas = 0;
+    const enviadosIds = [];
     for (const c of convs || []) {
       const tel = soDigitos(c.telefone);
       if (!tel) { sem_telefone++; continue; }
@@ -135,8 +154,10 @@ router.post('/enviar', authorizeModule('cuidados', 2), async (req, res) => {
       const primeiro = (c.nome || '').trim().split(/\s+/)[0] || '';
       // Ambos os templates têm só {{1}} = nome no corpo (o link do NEXT é botão).
       const r = await wpp.sendTemplate(c.telefone, templateName, 'pt_BR', [primeiro]);
-      if (r?.sent) enviados++; else falhas++;
+      if (r?.sent) { enviados++; enviadosIds.push(c.id); } else falhas++;
     }
+    // atualiza o status da pessoa só de quem realmente recebeu
+    if (enviadosIds.length) await marcarStatusDisparo(enviadosIds, tipo, req.user?.id);
 
     res.json({
       total: ids.length,
@@ -148,6 +169,21 @@ router.post('/enviar', authorizeModule('cuidados', 2), async (req, res) => {
   } catch (e) {
     console.error('[next-convite] enviar:', e.message);
     res.status(500).json({ error: 'Erro ao enviar convites' });
+  }
+});
+
+// POST /marcar { convertido_ids, tipo } — marca o status da pessoa SEM enviar
+// pela API (usado quando o envio foi manual pelo WhatsApp/wa.me).
+router.post('/marcar', authorizeModule('cuidados', 2), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.convertido_ids) ? req.body.convertido_ids : [];
+    if (ids.length === 0) return res.status(400).json({ error: 'Nada para marcar' });
+    const tipo = req.body?.tipo === 'boas_vindas' ? 'boas_vindas' : 'next';
+    await marcarStatusDisparo(ids, tipo, req.user?.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[next-convite] marcar:', e.message);
+    res.status(500).json({ error: 'Erro ao marcar status' });
   }
 });
 

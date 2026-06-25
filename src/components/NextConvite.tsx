@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Send, MessageCircle, CheckSquare, Square, Loader2, Sparkles, ChevronDown, ChevronUp, Save, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
-type Pendente = { id: string; nome: string; telefone: string | null; area: string | null; data_culto: string | null; tem_telefone: boolean; contatado: boolean };
+type Pendente = { id: string; nome: string; telefone: string | null; area: string | null; data_culto: string | null; tem_telefone: boolean; contatado: boolean; next_convite_em: string | null };
 const AREA_LABEL: Record<string, string> = { ami: 'AMI', bridge: 'Bridge', online: 'Online', sede: 'Sede' };
 type Tipo = 'next' | 'boas_vindas';
 type Contato = 'nao' | 'sim' | 'todos';
@@ -64,13 +64,15 @@ export default function NextConvite() {
   const modeloAtivo = tipo === 'boas_vindas' ? modeloBV : modelo;
   const setModeloAtivo = (v: string) => (tipo === 'boas_vindas' ? setModeloBV(v) : setModelo(v));
   const templateAtivoOk = tipo === 'boas_vindas' ? templateBVOk : templateOk;
-  const comTelefone = pendentes.filter((p) => p.tem_telefone);
+  // "já enviado" deste tipo: boas-vindas marca contato; convite marca next_convite_em
+  const jaEnviado = (p: Pendente) => (tipo === 'boas_vindas' ? p.contatado : !!p.next_convite_em);
+  const elegiveis = pendentes.filter((p) => p.tem_telefone && !jaEnviado(p));
 
   function toggle(id: string) {
     setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleTodos() {
-    setSel((s) => (s.size >= comTelefone.length ? new Set() : new Set(comTelefone.map((p) => p.id))));
+    setSel((s) => (s.size >= elegiveis.length && elegiveis.length > 0 ? new Set() : new Set(elegiveis.map((p) => p.id))));
   }
   function mensagemPara(nome: string) {
     const primeiro = (nome || '').trim().split(/\s+/)[0] || '';
@@ -81,6 +83,8 @@ export default function NextConvite() {
     if (!tel) return;
     const num = tel.startsWith('55') ? tel : `55${tel}`;
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(mensagemPara(p.nome))}`, '_blank', 'noopener,noreferrer');
+    // marca o status da pessoa (envio manual) e recarrega a lista
+    api.marcar([p.id], tipo).then(() => carregarPendentes(contato)).catch(() => {});
   }
   async function salvar() {
     setSalvando(true);
@@ -98,6 +102,7 @@ export default function NextConvite() {
       } else {
         toast.success(`${r.enviados} enviado(s)${r.sem_telefone ? ` · ${r.sem_telefone} sem telefone` : ''}${r.falhas ? ` · ${r.falhas} falha(s)` : ''}`);
         setSel(new Set());
+        carregarPendentes(contato); // reflete o status atualizado
       }
     } catch (e: any) { toast.error(e.message); } finally { setEnviando(false); }
   }
@@ -170,9 +175,9 @@ export default function NextConvite() {
 
           {/* Ações de seleção */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <Button variant="outline" size="sm" onClick={toggleTodos}>
-              {sel.size >= comTelefone.length && comTelefone.length > 0 ? <CheckSquare className="h-4 w-4 mr-1" /> : <Square className="h-4 w-4 mr-1" />}
-              {sel.size >= comTelefone.length && comTelefone.length > 0 ? 'Limpar seleção' : `Selecionar todos com telefone (${comTelefone.length})`}
+            <Button variant="outline" size="sm" onClick={toggleTodos} disabled={elegiveis.length === 0}>
+              {sel.size >= elegiveis.length && elegiveis.length > 0 ? <CheckSquare className="h-4 w-4 mr-1" /> : <Square className="h-4 w-4 mr-1" />}
+              {sel.size >= elegiveis.length && elegiveis.length > 0 ? 'Limpar seleção' : `Selecionar não-enviados (${elegiveis.length})`}
             </Button>
             <Button size="sm" onClick={enviar} disabled={enviando || sel.size === 0}>
               {enviando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />} Enviar ({sel.size})
@@ -197,7 +202,8 @@ export default function NextConvite() {
                       <div className="text-sm font-medium truncate">{p.nome}</div>
                       <div className="text-xs text-muted-foreground flex items-center gap-1 flex-wrap">
                         {p.area && <Badge variant="outline" className="text-[10px]">{AREA_LABEL[p.area] || p.area}</Badge>}
-                        {p.contatado && <Badge variant="outline" className="text-[10px] text-green-700 border-green-300">contactado</Badge>}
+                        {tipo === 'boas_vindas' && p.contatado && <Badge variant="outline" className="text-[10px] text-green-700 border-green-300">contactado ✓</Badge>}
+                        {tipo === 'next' && p.next_convite_em && <Badge variant="outline" className="text-[10px] text-green-700 border-green-300">convidado ✓</Badge>}
                         <span>{p.tem_telefone ? p.telefone : <span className="text-amber-600">sem telefone</span>}</span>
                       </div>
                     </div>
