@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import PaginacaoPadrao from '../../../components/Paginacao';
 
 // ── Tema (vidro · tokens glass do index.css) ────────────────
 const C = {
@@ -353,7 +354,7 @@ export default function LogisticaCompras() {
               </div>
             </div>
           ))}
-          <Paginacao pagina={paginaAtual} total={totalPaginas} n={compras.length} onPrev={() => setPagina((p) => Math.max(1, p - 1))} onNext={() => setPagina((p) => Math.min(totalPaginas, p + 1))} />
+          <PaginacaoPadrao page={paginaAtual} pageSize={PAGE_SIZE} total={compras.length} onPageChange={setPagina} itemLabel="compras" />
         </div>
       ) : (
         <div style={S.tableCard}>
@@ -404,7 +405,7 @@ export default function LogisticaCompras() {
               </tbody>
             </table>
           </div>
-          <Paginacao pagina={paginaAtual} total={totalPaginas} n={compras.length} onPrev={() => setPagina((p) => Math.max(1, p - 1))} onNext={() => setPagina((p) => Math.min(totalPaginas, p + 1))} />
+          <PaginacaoPadrao page={paginaAtual} pageSize={PAGE_SIZE} total={compras.length} onPageChange={setPagina} itemLabel="compras" />
         </div>
       )}
 
@@ -546,18 +547,6 @@ function VinculoModal({ data, onClose, onConfirmar, busy }) {
             )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ── Controles de paginação ──
-function Paginacao({ pagina, total, n, onPrev, onNext }) {
-  if (total <= 1) return null;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 12, flexWrap: 'wrap' }}>
-      <button style={{ ...btnOutline(), opacity: pagina <= 1 ? 0.5 : 1 }} disabled={pagina <= 1} onClick={onPrev}>‹ Anterior</button>
-      <span style={{ fontSize: 13, color: C.text2 }}>Página {pagina} de {total} · {n} compras</span>
-      <button style={{ ...btnOutline(), opacity: pagina >= total ? 0.5 : 1 }} disabled={pagina >= total} onClick={onNext}>Próxima ›</button>
     </div>
   );
 }

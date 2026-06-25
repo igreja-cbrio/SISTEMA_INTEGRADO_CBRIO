@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
+import Paginacao from '@/components/Paginacao';
 import { Inbox, CheckCircle2, Percent, Search, Link2 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -579,27 +580,15 @@ export default function VolInscricoes() {
               </tbody>
             </table>
           </div>
-          {lista && lista.total > pageSize && (
-            <div className="flex items-center justify-between px-4 py-3 border-t text-sm">
-              <span className="text-muted-foreground">
-                Pagina {page + 1} de {Math.ceil(lista.total / pageSize)}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  size="sm" variant="outline"
-                  disabled={page === 0}
-                  onClick={() => setPage(p => Math.max(0, p - 1))}
-                >
-                  Anterior
-                </Button>
-                <Button
-                  size="sm" variant="outline"
-                  disabled={(page + 1) * pageSize >= lista.total}
-                  onClick={() => setPage(p => p + 1)}
-                >
-                  Proxima
-                </Button>
-              </div>
+          {lista && (
+            <div className="px-4 pb-3">
+              <Paginacao
+                page={page + 1}
+                pageSize={pageSize}
+                total={lista.total}
+                onPageChange={(p) => setPage(p - 1)}
+                itemLabel="inscritos"
+              />
             </div>
           )}
         </CardContent>
