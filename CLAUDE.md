@@ -1190,6 +1190,27 @@ pendente por nota** na aba Compras (aguardando aprovação · nada entra direto)
   `WHATSAPP_ACCESS_TOKEN`/`ANTHROPIC_API_KEY`). Notifica `logistica` ao criar.
   ⚠️ Custo: Opus por nota é mais caro — decisão do Matheus ("melhor modelo").
 
+## Logística · aba Solicitações removida + fix de corte nos modais (2026-06-25)
+
+Amaury reportou o **modal de Solicitações cortando** a visualização e Marcos
+pediu pra **tirar a aba "Solicitações" de dentro de `/admin/logistica`** (o
+fluxo vive só em `/solicitacoes`). PR `claude/logistica-remove-solic-modal-fix`:
+- **Logística** (`Logistica.jsx`): removida a aba "Solicitações" (era índice 8)
+  — import, entrada do `TABS`, render `{tab === 8 && <LogisticaSolicitacoes/>}`
+  e o componente órfão `LogisticaSolicitacoes.jsx` (deletado · só era usado
+  aqui). ⚠️ Histórico que confunde: a aba foi removida em 19/05, **reintroduzida**
+  depois junto com Compras/Estoque, e agora saiu em definitivo. As demais abas
+  (Dashboard/Fornecedores/Pedidos/Notas/Compras/Compras ML/Rastreio/Estoque ·
+  índices 0-7) não mudaram. Backend e `api.js` de compras intactos.
+- **Modais de `/solicitacoes`** (`Solicitacoes.jsx` · `DetailDialog` + "Nova
+  Solicitação"): o `DialogContent` usava `max-h-[90vh] overflow-y-auto` sobre o
+  `grid` do shadcn — conteúdo alto **cortava** em vez de rolar. Padrão correto e
+  reusável: `DialogContent` vira `flex flex-col` (sem `overflow`) e o corpo
+  ganha `flex-1 overflow-y-auto min-h-0` (header pinado, corpo rola). ⚠️ Ao criar
+  modal com conteúdo potencialmente alto, usar SEMPRE esse padrão — NUNCA
+  `overflow-y-auto` no container grid; `min-h-0` no corpo flex é obrigatório
+  (sem ele o filho não encolhe abaixo do conteúdo e o corte volta).
+
 ## Eventos · update/delete resiliente + filtro Série por category_id (2026-06-09)
 
 Sintoma recorrente: **"Erro ao atualizar/excluir evento"** mas a mudança

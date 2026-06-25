@@ -4,7 +4,6 @@ import { logistica, ml, arquivei } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
 import LogisticaEstoque from './LogisticaEstoque';
-import LogisticaSolicitacoes from './LogisticaSolicitacoes';
 import LogisticaCompras from './LogisticaCompras';
 
 // ── Tema ────────────────────────────────────────────────────
@@ -115,12 +114,12 @@ function Badge({ status, map }) {
 }
 
 // ── TABS ────────────────────────────────────────────────────
-// Aba "Solicitações" foi removida em 19/05/2026 · Marcos pediu pra unificar
-// com /solicitacoes (sistema unificado de TI/compras/reembolso/espaco/etc).
-// Quem precisa abrir solicitação de compras hoje vai em /solicitacoes,
-// escolhe categoria=compras e o fluxo segue com SLA/NPS/notificacao do
-// solicitante automática.
-const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras', 'Compras ML', 'Rastreio', 'Estoque', 'Solicitações'];
+// Aba "Solicitações" removida (de novo) em 25/06/2026 · havia sido tirada em
+// 19/05 e reintroduzida depois junto com Compras/Estoque; agora sai em
+// definitivo (Amaury/Marcos · usamos o módulo /solicitacoes direto).
+// O fluxo de solicitação (TI/compras/reembolso/pagamento/espaço/etc.) vive
+// só em /solicitacoes, com SLA/NPS/aprovação e notificação do solicitante.
+const TABS = ['Dashboard', 'Fornecedores', 'Pedidos', 'Notas Fiscais', 'Compras', 'Compras ML', 'Rastreio', 'Estoque'];
 
 // ═══════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -387,7 +386,6 @@ export default function Logistica() {
       {tab === 5 && <ComprasMLTab />}
       {tab === 6 && <RastreioMLTab />}
       {tab === 7 && <LogisticaEstoque />}
-      {tab === 8 && <LogisticaSolicitacoes />}
 
       {/* ── MODAIS ─────────────────────────────────────────── */}
 
@@ -613,9 +611,6 @@ function FornecedoresTab({ data, loading, isDiretor, filtroAtivo, setFiltroAtivo
   </>);
 }
 
-// ═══════════════════════════════════════════════════════════
-// TAB: Solicitações
-// ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════
 // TAB: Pedidos
 // ═══════════════════════════════════════════════════════════
