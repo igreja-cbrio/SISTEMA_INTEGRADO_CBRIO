@@ -2321,6 +2321,7 @@ export const agenteBatismoNext = {
 
 export const agenteVoluntariado = {
   analisar: () => get('/agente-voluntariado'),
+  lembrar: (schedule_ids) => post('/agente-voluntariado/lembrar', schedule_ids ? { schedule_ids } : {}),
 };
 
 export const monitorAutomacoes = {

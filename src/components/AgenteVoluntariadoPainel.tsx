@@ -23,6 +23,7 @@ export default function AgenteVoluntariadoPainel() {
   const [d, setD] = useState<Dados | null>(null);
   const [loading, setLoading] = useState(true);
   const [aberto, setAberto] = useState(true);
+  const [enviando, setEnviando] = useState(false);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -61,6 +62,20 @@ export default function AgenteVoluntariadoPainel() {
     try { await navigator.clipboard.writeText(textoListas().trim()); toast.success('Listas copiadas — é só colar.'); }
     catch { toast.error('Não consegui copiar. Tente o "Baixar".'); }
   };
+  const comTelefone = d.confirmacoes_pendentes.filter((p) => p.telefone);
+  const lembrarTodos = async () => {
+    if (comTelefone.length === 0) { toast.error('Ninguém com telefone para lembrar.'); return; }
+    if (!window.confirm(`Enviar o lembrete de escala pelo WhatsApp para ${comTelefone.length} voluntário(s)?`)) return;
+    setEnviando(true);
+    try {
+      const r: any = await api.lembrar(); // todos os pendentes com telefone
+      if (!r.template_configurado) {
+        toast.warning('Template de escala ainda não aprovado na Meta (WHATSAPP_TEMPLATE_ESCALA) — nada foi enviado. Use o "Lembrar" por pessoa, ou aprove o template.');
+      } else {
+        toast.success(`${r.enviados} lembrete(s) enviado(s)${r.sem_telefone ? ` · ${r.sem_telefone} sem telefone` : ''}${r.falhas ? ` · ${r.falhas} falha(s)` : ''}`);
+      }
+    } catch (e: any) { toast.error(e.message); } finally { setEnviando(false); }
+  };
   const baixarCsv = () => {
     const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const rows = [['Categoria', 'Nome', 'Função', 'Serviço', 'Quando', 'Telefone'], ...linhas().map((l) => [l.categoria, l.nome, l.funcao, l.servico, l.quando, l.telefone])];
@@ -82,7 +97,12 @@ export default function AgenteVoluntariadoPainel() {
           <Badge variant="secondary" className="text-[10px]">{total}</Badge>
           {aberto ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </button>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {comTelefone.length > 0 && (
+            <Button size="sm" onClick={lembrarTodos} disabled={enviando} className="h-8 gap-1.5">
+              {enviando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />} Lembrar todos ({comTelefone.length})
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={copiar} className="h-8 gap-1.5">
             <Copy className="h-3.5 w-3.5" /> Copiar
           </Button>
