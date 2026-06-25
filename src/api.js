@@ -2297,6 +2297,7 @@ export const nextConvite = {
   getConfig: () => get('/next-convite/config'),
   saveConfig: (body) => put('/next-convite/config', body),
   enviar: (convertido_ids, tipo = 'next') => post('/next-convite/enviar', { convertido_ids, tipo }),
+  marcar: (convertido_ids, tipo = 'next') => post('/next-convite/marcar', { convertido_ids, tipo }),
 };
 
 // Agente de Primeiro Contato (piloto) · fila de revisão
