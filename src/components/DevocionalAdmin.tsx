@@ -237,6 +237,7 @@ function PlanosLista({ onAbrir, podeEditar }: { onAbrir: (id: string) => void; p
   const [planos, setPlanos] = useState<Plano[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalNovo, setModalNovo] = useState(false);
+  const [modalImportar, setModalImportar] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -256,9 +257,14 @@ function PlanosLista({ onAbrir, podeEditar }: { onAbrir: (id: string) => void; p
           <p className="text-sm text-muted-foreground">Crie planos mensais e acompanhe a adesao dos membros</p>
         </div>
         {podeEditar && (
-          <Button onClick={() => setModalNovo(true)}>
-            <Plus className="h-4 w-4 mr-2" /> Novo plano
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setModalImportar(true)} title="Suba o .docx do pastor (semana toda), revise a prévia e publique">
+              <Upload className="h-4 w-4 mr-2" /> Importar .docx
+            </Button>
+            <Button onClick={() => setModalNovo(true)}>
+              <Plus className="h-4 w-4 mr-2" /> Novo plano
+            </Button>
+          </div>
         )}
       </div>
 
@@ -296,6 +302,7 @@ function PlanosLista({ onAbrir, podeEditar }: { onAbrir: (id: string) => void; p
       )}
 
       {modalNovo && <NovoPlanoModal onClose={() => setModalNovo(false)} onSaved={(id) => { setModalNovo(false); load(); onAbrir(id); }} />}
+      {modalImportar && <ImportarDocxModal createMode onClose={() => setModalImportar(false)} onDone={(id) => { setModalImportar(false); load(); if (id) onAbrir(id); }} />}
     </>
   );
 }
@@ -364,27 +371,11 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
   const [itens, setItens] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalIA, setModalIA] = useState(false);
+  const [modalEditar, setModalEditar] = useState(false);
   const [modalNovoItem, setModalNovoItem] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [tab, setTab] = useState('itens');
-  const [importando, setImportando] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  async function importarDocx(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file || !plano) return;
-    const jaTem = itens.length > 0;
-    if (jaTem && !confirm('Já há itens neste plano. Os dias presentes no documento serão substituídos. Continuar?')) return;
-    setImportando(true);
-    try {
-      const r: any = await planosApi.carregarDocx(plano.id, file, { sobrescrever: jaTem });
-      toast.success(`${r.criados} dia(s) importados do documento.`);
-      if (r.ignorados > 0) toast.warning(`${r.ignorados} devocional(is) além dos ${r.dias_do_plano} dias do plano foram ignorados. Ajuste as datas do plano se precisar de mais dias.`);
-      load();
-    } catch (err: any) { toast.error(err.message); }
-    finally { setImportando(false); }
-  }
+  const [modalImportar, setModalImportar] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -438,6 +429,7 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
         </div>
         {podeEditar && (
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setModalEditar(true)}><Edit2 className="h-4 w-4 mr-1" /> Renomear</Button>
             <Button variant="outline" size="sm" onClick={togglePlanoAtivo}>{plano.ativo ? 'Desativar' : 'Ativar'}</Button>
             <Button variant="outline" size="sm" onClick={removerPlano}><Trash2 className="h-4 w-4" /></Button>
           </div>
@@ -455,9 +447,8 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
         <TabsContent value="itens" className="space-y-3">
           {podeEditar && (
             <div className="flex items-center justify-end gap-2 flex-wrap">
-              <input ref={fileRef} type="file" accept=".docx" hidden onChange={importarDocx} />
-              <Button onClick={() => fileRef.current?.click()} variant="outline" disabled={importando} title="Suba o .docx do pastor com a semana toda (1 devocional por dia)">
-                {importando ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />} Importar .docx
+              <Button onClick={() => setModalImportar(true)} variant="outline" title="Suba o .docx do pastor (semana toda) e revise a prévia antes de publicar">
+                <Upload className="h-4 w-4 mr-2" /> Importar .docx
               </Button>
               <Button onClick={() => setModalNovoItem(true)} variant="outline">
                 <Plus className="h-4 w-4 mr-2" /> Novo item
@@ -514,9 +505,163 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
       </Tabs>
 
       {modalIA && plano && <GerarIAModal plano={plano} onClose={() => setModalIA(false)} onDone={() => { setModalIA(false); load(); }} />}
+      {modalEditar && plano && <EditarPlanoModal plano={plano} onClose={() => setModalEditar(false)} onSaved={() => { setModalEditar(false); load(); }} />}
+      {modalImportar && plano && <ImportarDocxModal plano={plano} onClose={() => setModalImportar(false)} onDone={() => { setModalImportar(false); load(); }} />}
       {modalNovoItem && plano && <NovoItemModal plano={plano} itens={itens} onClose={() => setModalNovoItem(false)} onSaved={() => { setModalNovoItem(false); load(); }} />}
       {editingItem && <EditarItemModal item={editingItem} onClose={() => setEditingItem(null)} onSaved={() => { setEditingItem(null); load(); }} />}
     </>
+  );
+}
+
+// Importar .docx COM PRÉVIA: extrai → revisar/editar → publicar. Usado tanto no
+// "criar devocional" (createMode) quanto dentro de um plano existente.
+type ItemPrev = { titulo: string; passagem: string; passagem_texto: string; reflexao: string; aplicacao: string };
+function ImportarDocxModal({ plano, createMode, onClose, onDone }: { plano?: Plano; createMode?: boolean; onClose: () => void; onDone: (id?: string) => void }) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const [etapa, setEtapa] = useState<'arquivo' | 'previa'>('arquivo');
+  const [lendo, setLendo] = useState(false);
+  const [publicando, setPublicando] = useState(false);
+  const [itens, setItens] = useState<ItemPrev[]>([]);
+  const [nome, setNome] = useState('');
+  const [inicio, setInicio] = useState(plano?.data_inicio || hoje);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function escolher(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setLendo(true);
+    try {
+      const r: any = await planosApi.previewDocx(file);
+      const its: ItemPrev[] = (r?.itens || []).map((o: any) => ({
+        titulo: o.titulo || '', passagem: o.passagem || '', passagem_texto: o.passagem_texto || '',
+        reflexao: o.reflexao || '', aplicacao: o.aplicacao || '',
+      }));
+      if (its.length === 0) { toast.error('Nenhum devocional reconhecido no documento.'); return; }
+      setItens(its);
+      if (createMode && !nome.trim()) setNome(`Devocional da semana ${inicio.slice(8, 10)}/${inicio.slice(5, 7)}`);
+      setEtapa('previa');
+    } catch (err: any) { toast.error(err.message); }
+    finally { setLendo(false); }
+  }
+
+  function setCampo(i: number, k: keyof ItemPrev, v: string) {
+    setItens((xs) => xs.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
+  }
+
+  async function publicar() {
+    const validos = itens.filter((i) => i.titulo.trim() && i.reflexao.trim());
+    if (validos.length === 0) { toast.error('Cada dia precisa de título e reflexão.'); return; }
+    setPublicando(true);
+    try {
+      let planoId = plano?.id;
+      if (createMode) {
+        const fim = new Date(inicio + 'T12:00:00'); fim.setDate(fim.getDate() + (validos.length - 1));
+        const titulo = nome.trim() || `Devocional da semana ${inicio.slice(8, 10)}/${inicio.slice(5, 7)}`;
+        const r: any = await planosApi.create({ titulo, data_inicio: inicio, data_fim: fim.toISOString().slice(0, 10) });
+        planoId = r.id;
+      }
+      const res: any = await planosApi.publicarItensLote(planoId, validos, !createMode);
+      toast.success(`${res.criados} dia(s) publicados no devocional.`);
+      onDone(planoId);
+    } catch (err: any) { toast.error(err.message); }
+    finally { setPublicando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !publicando && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>{createMode ? 'Importar devocional (.docx)' : 'Importar .docx no plano'}</DialogTitle></DialogHeader>
+
+        {etapa === 'arquivo' ? (
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              Suba o documento do pastor (semana toda, 1 devocional por dia). O sistema vai extrair e mostrar a <b>prévia</b> — nada vai pro app antes de você revisar e publicar.
+            </p>
+            <input ref={fileRef} type="file" accept=".docx" hidden onChange={escolher} />
+            <Button onClick={() => fileRef.current?.click()} disabled={lendo}>
+              {lendo ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Lendo o documento...</> : <><Upload className="h-4 w-4 mr-2" /> Escolher arquivo .docx</>}
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-md bg-primary/10 border border-primary/30 p-2 text-xs flex items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-primary" /> Prévia: {itens.length} dia(s). Revise/edite abaixo e clique em <b>Publicar</b>.
+            </div>
+
+            {createMode && (
+              <div className="grid grid-cols-2 gap-3">
+                <div><Label className="text-xs">Nome do devocional</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+                <div><Label className="text-xs">1º dia (início)</Label><Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {itens.map((it, i) => (
+                <Card key={i} className="p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs">Dia {i + 1}</Badge>
+                    <Input className="h-8 text-sm font-medium" value={it.titulo} onChange={(e) => setCampo(i, 'titulo', e.target.value)} placeholder="Título" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input className="h-8 text-sm" value={it.passagem} onChange={(e) => setCampo(i, 'passagem', e.target.value)} placeholder="Passagem (ex.: Jó 1-6)" />
+                  </div>
+                  <Textarea rows={2} value={it.passagem_texto} onChange={(e) => setCampo(i, 'passagem_texto', e.target.value)} placeholder="Versículo em destaque" className="text-sm" />
+                  <Textarea rows={4} value={it.reflexao} onChange={(e) => setCampo(i, 'reflexao', e.target.value)} placeholder="Reflexão" className="text-sm" />
+                  <Textarea rows={2} value={it.aplicacao} onChange={(e) => setCampo(i, 'aplicacao', e.target.value)} placeholder="Aplicação (Viva esta mensagem...)" className="text-sm" />
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="flex-wrap gap-2">
+          <Button variant="outline" onClick={onClose} disabled={publicando}>Cancelar</Button>
+          {etapa === 'previa' && (
+            <Button onClick={publicar} disabled={publicando}>
+              {publicando ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Publicando...</> : <><CheckCircle2 className="h-4 w-4 mr-2" /> Publicar no app</>}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditarPlanoModal({ plano, onClose, onSaved }: { plano: Plano; onClose: () => void; onSaved: () => void }) {
+  const [titulo, setTitulo] = useState(plano.titulo);
+  const [dataInicio, setDataInicio] = useState(plano.data_inicio);
+  const [dataFim, setDataFim] = useState(plano.data_fim);
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvar() {
+    if (!titulo.trim()) { toast.error('Informe o nome do devocional'); return; }
+    if (dataFim < dataInicio) { toast.error('A data final não pode ser antes da inicial'); return; }
+    setSalvando(true);
+    try {
+      await planosApi.update(plano.id, { titulo: titulo.trim(), data_inicio: dataInicio, data_fim: dataFim });
+      toast.success('Devocional atualizado');
+      onSaved();
+    } catch (e: any) { toast.error(e.message); } finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Editar devocional</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div><Label className="text-xs">Nome</Label><Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex.: Devocional da semana — Jó" /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label className="text-xs">Início</Label><Input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} /></div>
+            <div><Label className="text-xs">Fim</Label><Input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} /></div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={salvando}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Save className="h-4 w-4 mr-1" /> Salvar</>}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

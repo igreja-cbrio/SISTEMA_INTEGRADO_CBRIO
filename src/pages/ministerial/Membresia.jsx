@@ -805,7 +805,11 @@ function MesmaFamiliaInline({ membroId, excluirIds = [], onDone }) {
 /* ── Main ── */
 export default function Membresia() {
   const navigate = useNavigate();
-  const { isDiretor } = useAuth();
+  // Gestão de membresia (editar, fundir, família, vínculos) é liberada pra
+  // admin E diretor — igual ao backend (authorize('admin','diretor')). O flag
+  // isDiretor sozinho excluía admins (super-admins têm role 'admin').
+  const { isAdmin } = useAuth();
+  const isDiretor = isAdmin;
   const [membros, setMembros] = useState([]);
   const [kpis, setKpis] = useState({ total: 0, byStatus: {}, familias: 0 });
   const [familias, setFamilias] = useState([]);
