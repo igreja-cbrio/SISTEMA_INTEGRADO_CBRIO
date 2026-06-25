@@ -4,6 +4,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { patrimonio, logistica } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import BarcodeScanner from '../../../components/BarcodeScanner';
+import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -314,6 +315,7 @@ function DashboardTab({ dash, onNavigate }) {
 }
 
 function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, localizacoes, onNew, onDetail, onDelete, isDiretor }) {
+  const { pageItems: bensPag, paginacaoProps: bensPagProps } = usePaginacaoLocal(bens, 25);
   return (
     <>
       <div style={styles.filterRow}>
@@ -343,7 +345,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
             <tbody>
               {loading && <tr><td colSpan={8}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
               {!loading && bens.length === 0 && <tr><td colSpan={8}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
-              {bens.map(b => (
+              {bensPag.map(b => (
                 <tr key={b.id} className="cbrio-row" onClick={() => onDetail(b.id)}>
                   <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{fmtCodigo(b.codigo_barras)}</td>
                   <td style={{ ...styles.td, fontWeight: 600 }}>{b.nome}</td>
@@ -359,6 +361,7 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
           </table>
         </div>
       </div>
+      <Paginacao {...bensPagProps} itemLabel="bens" />
     </>
   );
 }
