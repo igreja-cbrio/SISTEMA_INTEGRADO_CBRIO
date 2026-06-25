@@ -257,7 +257,6 @@ const DevocionalHoje = lazyWithRetry(() => import('./pages/devocional/Devocional
 const DevocionalHistorico = lazyWithRetry(() => import('./pages/devocional/DevocionalHistorico'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
-const Relatorios = lazyWithRetry(() => import('./pages/ministerial/Relatorios'));
 const WifiModulo = lazyWithRetry(() => import('./pages/ministerial/Wifi'));
 const Producao = lazyWithRetry(() => import('./pages/ministerial/Producao'));
 const ColetaCulto = lazyWithRetry(() => import('./pages/ministerial/coleta/ColetaCulto'));
@@ -533,7 +532,8 @@ function AppRoutes() {
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard moduleSlug="integracao"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/batismo" element={<ModuleGuard moduleSlug="batismo"><Suspense fallback={<Loading />}><Batismo /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/relatorios" element={<ModuleGuard moduleSlug="relatorios"><Suspense fallback={<Loading />}><Relatorios /></Suspense></ModuleGuard>} />
+        {/* Relatórios virou aba dentro do Dashboard Semanal · mantém link antigo */}
+        <Route path="/ministerial/relatorios" element={<Navigate to="/dashboard-semanal" replace />} />
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
