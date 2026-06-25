@@ -10,6 +10,7 @@ import OracaoPanel from '../../components/OracaoPanel';
 import CuidadosJ180 from '../../components/CuidadosJ180';
 import AgentePrimeiroContato from '../../components/AgentePrimeiroContato';
 import AgenteBatismoNext from '../../components/AgenteBatismoNext';
+import NextConvite from '../../components/NextConvite';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -1280,6 +1281,7 @@ export default function Cuidados() {
         <TabsContent value="convertidos" className="space-y-4">
           <AgentePrimeiroContato />
           <AgenteBatismoNext />
+          <NextConvite />
           <div>
             <h3 className="font-semibold text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />Acompanhamento dos novos convertidos</h3>
             <p className="text-xs text-muted-foreground">Quem a Integração registrou neste período inicial · marque o 1º contato, defina o responsável e o direcionamento, e acompanhe a jornada (contato em 3d · batismo e Next em 90d · atrasados em vermelho).</p>
