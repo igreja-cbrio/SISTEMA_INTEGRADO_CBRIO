@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { nps as api } from '../api';
@@ -190,20 +191,13 @@ export default function Nps() {
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: C.text, margin: 0, letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <MessageSquare size={26} style={{ color: C.cyan }} />
-            NPS — Pesquisas com IA
-          </h1>
-          <p style={{ fontSize: 13, color: C.t2, margin: '4px 0 0', maxWidth: 720 }}>
-            Crie pesquisas para os 5 valores · IA gera as perguntas a partir do que você quer medir · respostas analisadas automaticamente e ligadas aos KPIs.
-          </p>
-        </div>
-        {canWrite && (
-          <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn>
-        )}
-      </div>
+      <ModuleHeader
+        icon={MessageSquare}
+        title="NPS — Pesquisas com IA"
+        accent={C.cyan}
+        subtitle="Crie pesquisas para os 5 valores · IA gera as perguntas a partir do que você quer medir · respostas analisadas automaticamente e ligadas aos KPIs."
+        actions={canWrite ? <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn> : undefined}
+      />
 
       {/* Tabs + busca */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
