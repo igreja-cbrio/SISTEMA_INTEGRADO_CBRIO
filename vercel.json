@@ -132,6 +132,22 @@
     {
       "path": "/api/notificacoes/cron/alerta-culto-dados",
       "schedule": "0 13 * * 1"
+    },
+    {
+      "path": "/api/monitor-automacoes/cron/checar",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/agente-primeiro-contato/cron/enfileirar",
+      "schedule": "5 11 * * *"
+    },
+    {
+      "path": "/api/agente-voluntariado/cron/checar",
+      "schedule": "10 11 * * *"
+    },
+    {
+      "path": "/api/agente-batismo-next/cron/enfileirar",
+      "schedule": "15 11 * * *"
     }
   ],
   "rewrites": [
