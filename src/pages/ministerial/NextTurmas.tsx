@@ -184,7 +184,6 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [det, setDet] = useState<TurmaDetalhe | null>(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
-  const [direcionarM, setDirecionarM] = useState<Matricula | null>(null);
   const load = useCallback(async () => {
     setLoading(true);
     try { setDet(await nextApi.turmas.get(turmaId)); } catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -245,12 +244,11 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                       </th>
                     ))}
                     <th className="text-center p-2 font-medium">Status</th>
-                    <th className="text-center p-2 font-medium">Valores</th>
                   </tr>
                 </thead>
                 <tbody>
                   {det.matriculas.length === 0 ? (
-                    <tr><td colSpan={3 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
+                    <tr><td colSpan={2 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
                   ) : det.matriculas.map(m => {
                     const n = presCount(m.id);
                     const incompletoFim = totalEnc > 0 && n < totalEnc && det.status === 'encerrada';
@@ -267,14 +265,6 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                         ))}
                         <td className="text-center p-2">
                           <Badge variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[m.status], borderColor: STATUS_COLOR[m.status] + '60' }}>{STATUS_LABEL[m.status]}</Badge>
-                        </td>
-                        <td className="p-2">
-                          <div className="flex items-center gap-1 flex-wrap justify-center">
-                            {NEXT_VALORES.filter(x => (m as any)[x.flag]).map(x => (
-                              <Badge key={x.v} variant="outline" className="text-[9px]">{x.l}</Badge>
-                            ))}
-                            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={() => setDirecionarM(m)}>Direcionar</Button>
-                          </div>
                         </td>
                       </tr>
                     );
@@ -295,7 +285,6 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               </div>
             </DialogFooter>
             {addOpen && <AddMatriculaModal turmaId={turmaId} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); onChanged(); }} />}
-            {direcionarM && <DirecionarValoresModal m={direcionarM} onClose={() => setDirecionarM(null)} onDone={() => { setDirecionarM(null); load(); onChanged(); }} />}
           </>
         )}
       </DialogContent>
@@ -350,6 +339,7 @@ type Pessoa = {
   next_status: 'formado' | 'matriculado' | 'nao_inscrito' | 'resolvido';
   bucket?: 'no_prazo' | 'vencendo' | 'fora_prazo' | null;
   next_resolucao?: string | null;
+  indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean; indicou_devocional?: boolean;
 };
 const RESOLUCAO_LABEL: Record<string, string> = {
   contatado: 'Contatado', sem_interesse: 'Sem interesse', encerrado: 'Encerrado',
@@ -359,8 +349,8 @@ const RESOLUCOES = Object.keys(RESOLUCAO_LABEL);
 // Direcionar pros valores (Grupos/Voluntários/Batismo/Devocional) ao fim do Next.
 // Aditivo: marcar adiciona; o backend é idempotente (não duplica). Já-direcionados ficam
 // travados (checked + disabled) · pra desfazer, fala com a área.
-function DirecionarValoresModal({ m, onClose, onDone }: { m: Matricula; onClose: () => void; onDone: () => void }) {
-  const jaFeito = (flag: keyof Matricula) => !!(m as any)[flag];
+function DirecionarValoresModal({ m, onClose, onDone }: { m: { id: string; nome: string; sobrenome?: string | null; indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean; indicou_devocional?: boolean }; onClose: () => void; onDone: () => void }) {
+  const jaFeito = (flag: string) => !!(m as any)[flag];
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const nomeC = `${m.nome} ${m.sobrenome || ''}`.trim();
@@ -416,6 +406,7 @@ function PessoasView() {
   const [fOrigem, setFOrigem] = useState<'todos' | 'convertido' | 'externo'>('todos');
   const [fData, setFData] = useState<'tudo' | '30' | '60' | '90' | '180' | '365'>('tudo');
   const [matricularPessoa, setMatricularPessoa] = useState<Pessoa | null>(null);
+  const [direcionarP, setDirecionarP] = useState<Pessoa | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -505,6 +496,7 @@ function PessoasView() {
                 <th className="text-left p-2.5 font-medium">Nome</th>
                 <th className="text-left p-2.5 font-medium">Origem</th>
                 <th className="text-left p-2.5 font-medium">Next</th>
+                <th className="text-left p-2.5 font-medium">Direcionamento</th>
                 <th className="text-right p-2.5 font-medium">Ações</th>
               </tr>
             </thead>
@@ -530,6 +522,16 @@ function PessoasView() {
                     )}
                   </td>
                   <td className="p-2.5"><NextStatusCell p={p} /></td>
+                  <td className="p-2.5">
+                    {p.matricula_id ? (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {NEXT_VALORES.filter(x => (p as any)[x.flag]).map(x => (
+                          <Badge key={x.v} variant="outline" className="text-[9px]">{x.l}</Badge>
+                        ))}
+                        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={() => setDirecionarP(p)}>Direcionar</Button>
+                      </div>
+                    ) : <span className="text-xs text-muted-foreground">—</span>}
+                  </td>
                   <td className="p-2.5 text-right">
                     {p.next_status === 'nao_inscrito' && (
                       <div className="inline-flex items-center gap-1.5">
@@ -559,6 +561,13 @@ function PessoasView() {
 
       {matricularPessoa && (
         <MatricularModal pessoa={matricularPessoa} onClose={() => setMatricularPessoa(null)} onDone={() => { setMatricularPessoa(null); load(); }} />
+      )}
+      {direcionarP && direcionarP.matricula_id && (
+        <DirecionarValoresModal
+          m={{ id: direcionarP.matricula_id, nome: direcionarP.nome, indicou_grupo: direcionarP.indicou_grupo, indicou_servir: direcionarP.indicou_servir, indicou_batismo: direcionarP.indicou_batismo, indicou_devocional: direcionarP.indicou_devocional }}
+          onClose={() => setDirecionarP(null)}
+          onDone={() => { setDirecionarP(null); load(); }}
+        />
       )}
     </div>
   );

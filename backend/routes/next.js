@@ -780,10 +780,15 @@ router.get('/pessoas', async (req, res) => {
       'id, nome, telefone, cpf, membro_id, data_culto, area, next_resolucao, next_resolucao_em',
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; });
     const matriculas = await fetchAllNext('next_matriculas',
-      'id, turma_id, nome, sobrenome, cpf, telefone, email, membro_id, status',
+      'id, turma_id, nome, sobrenome, cpf, telefone, email, membro_id, status, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional',
       (q) => q.is('deleted_at', null));
     const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null));
     const turmaNome = new Map(turmas.map(t => [t.id, t.nome]));
+    // Direcionamento (pra onde a pessoa vai ao fim do Next) · vem da matrícula
+    const dirFlags = (mm) => ({
+      indicou_grupo: !!(mm && mm.indicou_grupo), indicou_servir: !!(mm && mm.indicou_servir),
+      indicou_batismo: !!(mm && mm.indicou_batismo), indicou_devocional: !!(mm && mm.indicou_devocional),
+    });
 
     // índice de matrículas por identidade (membro_id > cpf > nome completo)
     const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map();
@@ -817,6 +822,7 @@ router.get('/pessoas', async (req, res) => {
         area: cv.area, data_nsm: cv.data_culto, dias_desde_conversao: dias,
         turma_id: m ? m.turma_id : null, turma_nome: m && m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
         next_status, bucket, next_resolucao: cv.next_resolucao || null, next_resolucao_em: cv.next_resolucao_em || null,
+        ...dirFlags(m),
       });
     }
     // 2. matrículas externas (sem convertido correspondente)
@@ -828,6 +834,7 @@ router.get('/pessoas', async (req, res) => {
         area: null, data_nsm: null, dias_desde_conversao: null,
         turma_id: m.turma_id, turma_nome: m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
         next_status: m.status === 'formado' ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
+        ...dirFlags(m),
       });
     }
 
