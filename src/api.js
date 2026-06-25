@@ -2457,6 +2457,14 @@ export const devocionalPlanos = {
     fd.append('arquivo', file);
     return requestFile(`/devocional-planos/${id}/carregar-docx${sobrescrever ? '?sobrescrever=1' : ''}`, fd, { timeoutMs: 120_000 });
   },
+  // Prévia: extrai o .docx e devolve os itens p/ revisão (NÃO grava).
+  previewDocx: (file) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    return requestFile('/devocional-planos/preview-docx', fd, { timeoutMs: 120_000 });
+  },
+  // Publica os itens já revisados nos dias do plano.
+  publicarItensLote: (id, itens, sobrescrever = false) => post(`/devocional-planos/${id}/itens-lote`, { itens, sobrescrever }),
   createItem: (id, body) => post(`/devocional-planos/${id}/itens`, body),
   updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
   removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
