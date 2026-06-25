@@ -433,22 +433,81 @@ async function resolveMembroApp(req) {
   return null;
 }
 
+// Resolve o vol_profile do usuário do app. Ordem: auth_user_id → CPF do membro
+// (auto-vínculo · todo voluntário tem CPF) → membresia_id → e-mail. Quando casa
+// por outro caminho, grava auth_user_id/membresia_id pra ficar vinculado.
+async function resolverVolProfile(req, membro) {
+  const sel = 'id, full_name, planning_center_id, auth_user_id, cpf, membresia_id, allocation_status';
+  let { data: vp } = await supabase.from('vol_profiles').select(sel).eq('auth_user_id', req.user.id).maybeSingle();
+  if (!vp) {
+    const cpf = String(membro?.cpf || '').replace(/\D/g, '');
+    if (cpf.length === 11) {
+      const fmt = `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
+      const { data } = await supabase.from('vol_profiles').select(sel).or(`cpf.eq.${cpf},cpf.eq.${fmt}`).limit(1);
+      vp = (data && data[0]) || null;
+    }
+  }
+  if (!vp && membro?.id) {
+    const { data } = await supabase.from('vol_profiles').select(sel).eq('membresia_id', membro.id).maybeSingle();
+    vp = data || null;
+  }
+  if (!vp && req.user.email) {
+    const { data } = await supabase.from('vol_profiles').select(sel).ilike('email', req.user.email).limit(1);
+    vp = (data && data[0]) || null;
+  }
+  // backfill do vínculo (fica ligado pras próximas vezes · best-effort)
+  if (vp) {
+    const patch = {};
+    if (!vp.auth_user_id) patch.auth_user_id = req.user.id;
+    if (membro?.id && !vp.membresia_id) patch.membresia_id = membro.id;
+    if (Object.keys(patch).length) {
+      try { await supabase.from('vol_profiles').update(patch).eq('id', vp.id); Object.assign(vp, patch); } catch { /* best-effort */ }
+    }
+  }
+  return vp;
+}
+
 async function escalasDoVoluntario(vp) {
   if (!vp) return [];
   const conds = [`volunteer_id.eq.${vp.id}`];
   if (vp.planning_center_id) conds.push(`planning_center_person_id.eq.${vp.planning_center_id}`);
   const { data: schedules } = await supabase.from('vol_schedules')
-    .select('*, service:vol_services!inner(*)')
-    .or(conds.join(','))
-    .gte('service.scheduled_at', new Date().toISOString())
-    .order('service(scheduled_at)', { ascending: true });
-  const ids = (schedules || []).map(s => s.id);
+    .select('id, service_id, team_name, position_name, confirmation_status, service:vol_services(name, service_type_name, scheduled_at)')
+    .or(conds.join(','));
+  const agora = Date.now();
+  const futuras = (schedules || [])
+    .map(s => ({ ...s, service: Array.isArray(s.service) ? s.service[0] : s.service }))
+    .filter(s => s.service?.scheduled_at && new Date(s.service.scheduled_at).getTime() >= agora)
+    .sort((a, b) => new Date(a.service.scheduled_at).getTime() - new Date(b.service.scheduled_at).getTime());
+  const ids = futuras.map(s => s.id);
   let checked = new Set();
   if (ids.length) {
     const { data: ci } = await supabase.from('vol_check_ins').select('schedule_id').in('schedule_id', ids);
     checked = new Set((ci || []).map(c => c.schedule_id));
   }
-  return (schedules || []).map(s => ({ ...s, has_checkin: checked.has(s.id) }));
+  return futuras.map(s => ({
+    id: s.id, service_id: s.service_id, team_name: s.team_name, position_name: s.position_name,
+    confirmation_status: s.confirmation_status, has_checkin: checked.has(s.id),
+    service: s.service ? { name: s.service.name, service_type_name: s.service.service_type_name, scheduled_at: s.service.scheduled_at } : null,
+  }));
+}
+
+// Histórico de check-ins do voluntário (mais recentes primeiro).
+async function historicoCheckinVoluntario(vp) {
+  if (!vp) return [];
+  const { data: cis } = await supabase.from('vol_check_ins')
+    .select('id, checked_in_at, method, service:vol_services(name, service_type_name, scheduled_at)')
+    .eq('volunteer_id', vp.id)
+    .order('checked_in_at', { ascending: false })
+    .limit(30);
+  return (cis || []).map(c => {
+    const svc = Array.isArray(c.service) ? c.service[0] : c.service;
+    return {
+      id: c.id, checked_in_at: c.checked_in_at, method: c.method || null,
+      servico: svc?.name || svc?.service_type_name || null,
+      data: svc?.scheduled_at || c.checked_in_at,
+    };
+  });
 }
 
 // GET /api/app/voluntariado/me — agregador: inscrição + área + escalas + indisponibilidades
@@ -456,9 +515,7 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req);
 
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id, full_name, allocation_status, planning_center_id')
-      .eq('auth_user_id', req.user.id).maybeSingle();
+    const vp = await resolverVolProfile(req, membro);
 
     // Inscrição mais recente (por membro_id ou e-mail)
     let inscricao = null;
@@ -558,12 +615,18 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
   }
 });
 
-// GET /api/app/voluntariado/escalas — próximas escalas do voluntário
+// GET /api/app/voluntariado/escalas — próximas escalas + histórico de check-in.
+// Resolve o voluntário por auth_user_id/CPF/membresia/e-mail (service_role,
+// sem as travas de RLS do client).
 router.get('/voluntariado/escalas', authApp, limiterNormal, async (req, res) => {
   try {
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id, planning_center_id').eq('auth_user_id', req.user.id).maybeSingle();
-    res.json(await escalasDoVoluntario(vp));
+    const membro = await resolveMembroApp(req);
+    const vp = await resolverVolProfile(req, membro);
+    const [escalas, historico] = await Promise.all([
+      escalasDoVoluntario(vp),
+      historicoCheckinVoluntario(vp),
+    ]);
+    res.json({ escalas, historico, vol_profile_id: vp?.id || null });
   } catch (e) {
     console.error('[APP vol/escalas]', e.message);
     res.status(500).json({ error: 'Erro ao buscar escalas' });
@@ -577,8 +640,8 @@ router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async
     if (!['confirmed', 'declined'].includes(status)) {
       return res.status(400).json({ error: "status deve ser 'confirmed' ou 'declined'" });
     }
-    const { data: vp } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    const membro = await resolveMembroApp(req);
+    const vp = await resolverVolProfile(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
     // só responde escala própria
     const { data, error } = await supabase.from('vol_schedules')
