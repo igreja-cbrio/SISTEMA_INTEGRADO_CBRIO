@@ -3417,9 +3417,12 @@ router.post('/acessos/criar-login', async (req, res) => {
       await supabase.auth.admin.updateUserById(uid, { password: String(senha) });
     }
 
-    // 2. profile (acesso base) · password_changed_at nulo = força troca no 1º acesso
+    // 2. profile (acesso base) · password_changed_at nulo = força troca no 1º acesso.
+    //    is_membro_only=false: o trigger handle_new_user marca signups como
+    //    "membro" (cai no /devocional). Aqui é colaborador com acesso ao ERP.
     const { error: pErr } = await supabase.from('profiles').upsert({
       id: uid, name: nome, email: mail, role: 'assistente', active: true,
+      is_membro_only: false,
     }, { onConflict: 'id' });
     if (pErr) return res.status(400).json({ error: `Falha no profile: ${pErr.message}` });
 

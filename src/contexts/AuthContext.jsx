@@ -221,11 +221,21 @@ export function AuthProvider({ children }) {
   // Colaborador = admin/diretor ou usuário com qualquer permissão de módulo
   // (voluntários e membros sem permissão não são colaboradores)
   const isColaborador = isAdmin || canRH || canFinanceiro || canLogistica || canPatrimonio || canMembresia || canProjetos || canExpansao || canAgenda || canIAModulo || canCuidados || canSolicitacoes || canDadosBrutos || canNPS;
+  // Tem acesso a QUALQUER módulo do sistema (leitura >= 1 em pelo menos um)?
+  // `isColaborador` acima é uma lista fixa de canX que NÃO cobre vários módulos
+  // ministeriais (batismo, integracao, grupos, voluntariado, producao, online,
+  // kids, ami, bridge, marketing, painel, gestao...). Um responsável só de um
+  // desses módulos não casava em nenhum canX e, com is_membro_only=true, caía
+  // preso no devocional ao logar. Esta checagem olha o mapa de permissões
+  // inteiro, então qualquer detentor de módulo é reconhecido como gente do
+  // sistema (membro puro = todos os módulos em leitura 0 → continua false).
+  const temAcessoSistema = !!modulePerms
+    && Object.values(modulePerms).some((p) => p && (p.leitura || 0) >= 1);
   // "Membro só do app devocional" só vale pra ROTEAMENTO quando a pessoa não é
-  // colaborador. Evita que um staff que um dia entrou pelo devocional (flag
-  // is_membro_only=true grudada no profile) fique preso na tela do devocional
-  // ao logar com as credenciais reais.
-  const isMembroOnly = !!profile?.is_membro_only && !isColaborador;
+  // colaborador e não tem acesso a nenhum módulo. Evita que um staff que um dia
+  // entrou pelo devocional (flag is_membro_only=true grudada no profile) fique
+  // preso na tela do devocional ao logar com as credenciais reais.
+  const isMembroOnly = !!profile?.is_membro_only && !isColaborador && !temAcessoSistema;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
   const canIA = isColaborador;
