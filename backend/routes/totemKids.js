@@ -751,20 +751,76 @@ router.get('/kids-equipe/membro/:volProfileId/ficha', authorizeModule('kids', 1)
 });
 
 // ── Estoque por sala (qtd esperada vs atual · liga ao Patrimônio com tag Kids) ─
-// GET /estoque · salas + itens + resumo (quantos faltando)
+// ── Sala ↔ Patrimônio · localizações Kids, sincronização e reflexo dos bens ──
+// Localizações do módulo Patrimônio "do Kids" (CBKIDS, salas, recepção, copa...).
+// Exclui os nós-reflexo "Kids" / "Kids · <sala>" criados pelo fluxo inverso.
+async function localizacoesKidsPatrimonio() {
+  const ors = ['nome.ilike.*kid*', 'nome.ilike.*infantil*', 'nome.ilike.*maternal*', 'nome.ilike.*berç*', 'nome.ilike.*baby*', 'nome.ilike.*little*', 'nome.ilike.*elevate*'].join(',');
+  const { data } = await supabase.from('pat_localizacoes').select('id, nome').or(ors).order('nome');
+  return (data || []).filter((l) => l.nome && !/^kids(\s·|$)/i.test(String(l.nome).trim()));
+}
+
+// GET /salas/localizacoes-kids · localizações Kids do patrimônio + se já têm sala
+router.get('/salas/localizacoes-kids', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const locs = await localizacoesKidsPatrimonio();
+    const { data: salas } = await supabase.from('kids_salas').select('pat_localizacao_id');
+    const linkadas = new Set((salas || []).map((s) => s.pat_localizacao_id).filter(Boolean));
+    res.json(locs.map((l) => ({ ...l, tem_sala: linkadas.has(l.id) })));
+  } catch (e) { console.error('[totemKids] loc-kids:', e.message); res.status(500).json({ error: 'Erro ao listar localizações' }); }
+});
+
+// POST /salas/sincronizar-patrimonio · cria salas das localizações Kids sem sala
+router.post('/salas/sincronizar-patrimonio', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const locs = await localizacoesKidsPatrimonio();
+    const { data: salas } = await supabase.from('kids_salas').select('pat_localizacao_id, ordem');
+    const linkadas = new Set((salas || []).map((s) => s.pat_localizacao_id).filter(Boolean));
+    let ordem = Math.max(0, ...(salas || []).map((s) => s.ordem || 0));
+    const novas = locs.filter((l) => !linkadas.has(l.id));
+    if (!novas.length) return res.json({ criadas: 0, ja_linkadas: linkadas.size, total_loc: locs.length });
+    const rows = novas.map((l) => ({ nome: l.nome, pat_localizacao_id: l.id, cor: '#00B39D', ordem: ++ordem }));
+    const { error } = await supabase.from('kids_salas').insert(rows);
+    if (error) throw error;
+    res.json({ criadas: rows.length, ja_linkadas: linkadas.size, total_loc: locs.length });
+  } catch (e) { console.error('[totemKids] sync salas:', e.message); res.status(500).json({ error: 'Erro ao sincronizar' }); }
+});
+
+// PATCH /salas/:id/localizacao · liga/desliga uma localização do patrimônio
+router.patch('/salas/:id/localizacao', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const locId = req.body?.localizacao_id || null;
+    const { data, error } = await supabase.from('kids_salas')
+      .update({ pat_localizacao_id: locId }).eq('id', req.params.id).select('id, pat_localizacao_id').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[totemKids] link sala loc:', e.message); res.status(500).json({ error: 'Erro ao vincular localização' }); }
+});
+
+// GET /estoque · salas + itens + bens do patrimônio (sala vinculada) + resumo
 router.get('/estoque', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data: salas } = await supabase.from('kids_salas')
-      .select('id, nome, cor, ordem').eq('ativo', true).order('ordem', { ascending: true });
+      .select('id, nome, cor, ordem, pat_localizacao_id').eq('ativo', true).order('ordem', { ascending: true });
     const { data: itens } = await supabase.from('kids_estoque')
       .select('id, sala_id, nome, categoria, unidade, qtd_esperada, qtd_atual, pat_bem_id, observacao')
       .is('deleted_at', null).order('categoria', { ascending: true });
     const porSala = {};
     (itens || []).forEach((i) => { (porSala[i.sala_id] = porSala[i.sala_id] || []).push(i); });
+    // reflete os bens do Patrimônio das localizações vinculadas
+    const locIds = [...new Set((salas || []).map((s) => s.pat_localizacao_id).filter(Boolean))];
+    const patPorLoc = {};
+    if (locIds.length) {
+      const { data: bens } = await supabase.from('pat_bens')
+        .select('id, nome, status, numero_serie, marca, modelo, localizacao_id, pat_categorias(nome)')
+        .in('localizacao_id', locIds).order('nome');
+      (bens || []).forEach((b) => { (patPorLoc[b.localizacao_id] = patPorLoc[b.localizacao_id] || []).push(b); });
+    }
     res.json((salas || []).map((s) => {
       const list = porSala[s.id] || [];
       const faltando = list.filter((i) => (i.qtd_atual || 0) < (i.qtd_esperada || 0)).length;
-      return { ...s, itens: list, faltando, total_itens: list.length };
+      const patrimonio = s.pat_localizacao_id ? (patPorLoc[s.pat_localizacao_id] || []) : [];
+      return { ...s, itens: list, faltando, total_itens: list.length, patrimonio };
     }));
   } catch (e) { console.error('[totemKids] estoque:', e.message); res.status(500).json({ error: 'Erro ao carregar estoque' }); }
 });
