@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
+import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../../components/ui/dialog';
@@ -135,6 +136,8 @@ export default function Usuarios() {
     });
   }, [colaboradores, busca, filtroCargo]);
 
+  const { pageItems: filtradosPag, paginacaoProps: usuariosPagProps } = usePaginacaoLocal(filtrados, 25);
+
   const totalSemCargo = useMemo(
     () => (colaboradores || []).filter(c => !c.cargo_id).length,
     [colaboradores]
@@ -194,7 +197,7 @@ export default function Usuarios() {
             Nenhum colaborador encontrado.
           </div>
         ) : (
-          filtrados.map(c => {
+          filtradosPag.map(c => {
             const semCargo = !c.cargo_id;
             return (
               <div
@@ -232,9 +235,12 @@ export default function Usuarios() {
           })
         )}
       </Card>
-      <p className="text-xs text-muted-foreground text-right">
-        {filtrados.length} {filtrados.length === 1 ? 'pessoa' : 'pessoas'}
-      </p>
+      <Paginacao {...usuariosPagProps} itemLabel="pessoas" />
+      {usuariosPagProps.total <= usuariosPagProps.pageSize && (
+        <p className="text-xs text-muted-foreground text-right">
+          {filtrados.length} {filtrados.length === 1 ? 'pessoa' : 'pessoas'}
+        </p>
+      )}
 
       {/* Dialog de edição */}
       {editando && (

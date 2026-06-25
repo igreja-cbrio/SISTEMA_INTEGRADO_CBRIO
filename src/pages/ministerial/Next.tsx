@@ -13,6 +13,7 @@ import { Calendar as CalendarPicker } from '../../components/ui/calendar';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
+import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import { ptBR } from 'date-fns/locale';
 import {
   Calendar, Users, CheckCircle2, Clock, Plus, Loader2, Search, ChevronRight,
@@ -465,6 +466,8 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
     setLoading(false);
   }, [eventoFilter, search]);
 
+  const { pageItems: listPag, paginacaoProps: nextInscPagProps } = usePaginacaoLocal(list, 25);
+
   useEffect(() => { nextApi.eventos.list().then(setEventos).catch(() => {}); }, []);
   useEffect(() => {
     const t = setTimeout(load, search ? 300 : 0);
@@ -589,7 +592,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.map(i => {
+              {listPag.map(i => {
                 const indicCount = [i.indicou_batismo, i.indicou_servir, i.indicou_grupo, i.indicou_dizimo].filter(Boolean).length;
                 return (
                   <TableRow key={i.id}>
@@ -648,6 +651,7 @@ function TabInscritos({ onChanged }: { onChanged: () => void }) {
               })}
             </TableBody>
           </Table>
+          <Paginacao {...nextInscPagProps} itemLabel="inscritos" />
         </div>
       )}
 

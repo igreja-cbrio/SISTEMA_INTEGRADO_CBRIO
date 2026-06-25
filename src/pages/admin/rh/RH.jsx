@@ -4,6 +4,7 @@ import { toast as sonnerToast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatisticsCard } from '../../../components/ui/statistics-card';
+import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { ScrollArea, ScrollBar } from '../../../components/ui/scroll-area';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -937,6 +938,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
       return info.situacao === filtroAcesso;
     });
   }, [funcs, filtroAcesso, acessoIdx]);
+  const { pageItems: funcsPag, paginacaoProps: rhPagProps } = usePaginacaoLocal(funcsVisiveis, 25);
   const acessoContagem = { todos: funcsVisiveis.length, com_acesso: acessoIdx.comAcesso, sem_acesso: acessoIdx.semAcesso, divergente: acessoIdx.divergente };
   const acessoLabel = (info) => !info ? '—' : info.situacao === 'sem_acesso' ? 'Sem acesso' : (info.cargo_perm_nome || '—');
 
@@ -1061,7 +1063,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
             <tbody>
               {loading && <tr><td colSpan={8}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
               {!loading && funcsVisiveis.length === 0 && <tr><td colSpan={8}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><Users className="h-5 w-5 text-muted-foreground" /></div><span className="text-sm font-medium text-foreground">Nenhum colaborador encontrado</span><span className="text-xs text-muted-foreground">Tente ajustar os filtros</span></div></td></tr>}
-              {funcsVisiveis.map(f => (
+              {funcsPag.map(f => (
                 <tr key={f.id} className="cbrio-row hover:bg-muted/50 transition-colors"
                   onClick={() => onDetail(f.id)}>
                   <td style={{ ...styles.td, fontWeight: 600 }}>
@@ -1106,6 +1108,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
             </tbody>
           </table>
         </div>
+        <Paginacao {...rhPagProps} itemLabel="colaboradores" />
       </CardContent>
     </Card>
   );

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
+import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
@@ -812,6 +813,7 @@ export default function Membresia() {
   const { isAdmin } = useAuth();
   const isDiretor = isAdmin;
   const [membros, setMembros] = useState([]);
+  const { pageItems: membrosPag, paginacaoProps: membrosPagProps } = usePaginacaoLocal(membros, 25);
   const [kpis, setKpis] = useState({ total: 0, byStatus: {}, familias: 0 });
   const [familias, setFamilias] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1507,7 +1509,7 @@ export default function Membresia() {
               <tr><td colSpan={7}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>
             ) : membros.length === 0 ? (
               <tr><td colSpan={7}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum membro encontrado</span></div></td></tr>
-            ) : membros.map((m) => (
+            ) : membrosPag.map((m) => (
               <tr key={m.id} className="cbrio-row" onClick={() => openDetail(m)}>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -1561,6 +1563,7 @@ export default function Membresia() {
           </tbody>
         </table>
       </div>
+      <Paginacao {...membrosPagProps} itemLabel="membros" />
         </TabsContent>
 
         <TabsContent value="jornada">

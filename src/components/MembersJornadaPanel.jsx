@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { jornada as api } from '../api';
+import Paginacao from './Paginacao';
 import { useKpis } from '../hooks/useKpis';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -393,15 +394,7 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
         </div>
       )}
 
-      {total > 50 && (
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-            style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'none', cursor: page <= 1 ? 'default' : 'pointer', color: C.t2, opacity: page <= 1 ? 0.3 : 1 }}>Anterior</button>
-          <span style={{ padding: '6px 12px', fontSize: 13, color: C.t3 }}>{page} / {Math.ceil(total / 50)}</span>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / 50)}
-            style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'none', cursor: 'pointer', color: C.t2 }}>Próximo</button>
-        </div>
-      )}
+      <Paginacao page={page} pageSize={50} total={total} onPageChange={setPage} itemLabel="membros" />
     </div>
   );
 }

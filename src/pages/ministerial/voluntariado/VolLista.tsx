@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
+import Paginacao, { usePaginacaoLocal } from '@/components/Paginacao';
 import {
   useVolunteersPool, useSyncPlanningCenter, useWaitingAllocation,
   useAllocateVolunteer, useVolTeamsManaged,
@@ -102,6 +103,8 @@ function TodosList() {
     return list;
   }, [pool, search, teamFilter, sourceFilter]);
 
+  const { pageItems: filteredPag, paginacaoProps: volPagProps } = usePaginacaoLocal(filtered, 25);
+
   const handleSync = () => {
     sync.mutate(undefined, {
       onSuccess: (data: any) => {
@@ -177,8 +180,9 @@ function TodosList() {
           </CardContent>
         </Card>
       ) : (
+        <>
         <div className="space-y-1.5">
-          {filtered.map((vol: any) => {
+          {filteredPag.map((vol: any) => {
             const teamsOf = (vol.team_members || []) as any[];
             const hasPc = !!vol.planning_center_id;
             return (
@@ -214,6 +218,8 @@ function TodosList() {
             );
           })}
         </div>
+        <Paginacao {...volPagProps} itemLabel="voluntários" />
+        </>
       )}
 
       {/* Modal: adicionar voluntário manualmente */}
