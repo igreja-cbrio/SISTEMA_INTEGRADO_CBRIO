@@ -10,7 +10,7 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
-const { verifyTurmaToken, direcionarMatricula } = require('../services/nextDirecionar');
+const { verifyDirecionarToken, direcionarMatricula } = require('../services/nextDirecionar');
 
 // Rate limit dedicado para inscrições (anti-spam)
 const limiter = rateLimit({
@@ -215,21 +215,28 @@ router.post('/inscrever', async (req, res) => {
 });
 
 // ── Direcionamento self-service pelo QR no fim do Next (Fase 2a) ──────────────
-// O QR carrega um token assinado da turma. A pessoa abre, acha o nome dela e escolhe
-// pra onde vai (Grupos/Voluntários/Batismo · Devocional é Fase 2b). Escreve na matrícula
-// (mesmo motor do líder). Token turma-scoped + assinado (HMAC CRON_SECRET) + validade.
+// UM QR pro Next inteiro (token fixo assinado): resolve a TURMA ABERTA do momento e lista
+// as pessoas dela. A pessoa acha o nome e escolhe pra onde vai (Grupos/Voluntários/Batismo ·
+// Devocional é Fase 2b). Escreve na matrícula (mesmo motor do líder). Não há turmas
+// simultâneas, então "a turma aberta" é sempre clara.
 
-// GET /api/public/next/direcionar/:token — turma + pessoas da turma pra escolher o nome
+// Resolve a turma ABERTA do momento (a mais recente, se houver mais de uma).
+async function turmaAbertaAtual() {
+  const { data } = await supabase.from('next_turmas')
+    .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  return data || null;
+}
+
+// GET /api/public/next/direcionar/:token — turma aberta + suas pessoas pra escolher o nome
 router.get('/direcionar/:token', async (req, res) => {
   try {
-    const turmaId = verifyTurmaToken(req.params.token);
-    if (!turmaId) return res.status(403).json({ error: 'Link inválido ou expirado' });
-    const { data: turma } = await supabase.from('next_turmas')
-      .select('id, nome').eq('id', turmaId).is('deleted_at', null).maybeSingle();
-    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
+    if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
+    const turma = await turmaAbertaAtual();
+    if (!turma) return res.json({ turma: null, pessoas: [] }); // nenhuma turma aberta agora
     const { data: pessoas } = await supabase.from('next_matriculas')
       .select('id, nome, sobrenome, indicou_grupo, indicou_servir, indicou_batismo')
-      .eq('turma_id', turmaId).is('deleted_at', null).order('nome');
+      .eq('turma_id', turma.id).is('deleted_at', null).order('nome');
     res.json({
       turma: { nome: turma.nome },
       pessoas: (pessoas || []).map(p => ({
@@ -244,14 +251,15 @@ router.get('/direcionar/:token', async (req, res) => {
 // POST /api/public/next/direcionar/:token — { matricula_id, destinos: ['grupos','voluntarios','batismo'] }
 router.post('/direcionar/:token', async (req, res) => {
   try {
-    const turmaId = verifyTurmaToken(req.params.token);
-    if (!turmaId) return res.status(403).json({ error: 'Link inválido ou expirado' });
+    if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
     const { matricula_id, destinos } = req.body || {};
     if (!matricula_id) return res.status(400).json({ error: 'Selecione a pessoa' });
-    // Segurança: a matrícula PRECISA ser desta turma (o token só vale pra ela)
+    const turma = await turmaAbertaAtual();
+    if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
+    // Segurança: a matrícula PRECISA ser da turma aberta (não direcionar gente de fora)
     const { data: m } = await supabase.from('next_matriculas')
       .select('id, turma_id').eq('id', matricula_id).is('deleted_at', null).maybeSingle();
-    if (!m || m.turma_id !== turmaId) return res.status(403).json({ error: 'Pessoa não pertence a esta turma' });
+    if (!m || m.turma_id !== turma.id) return res.status(403).json({ error: 'Pessoa não pertence à turma aberta' });
     const r = await direcionarMatricula({
       matriculaId: matricula_id, destinos, userId: null,
       permitir: ['grupos', 'voluntarios', 'batismo'], // Devocional = Fase 2b (com o app do Matheus)

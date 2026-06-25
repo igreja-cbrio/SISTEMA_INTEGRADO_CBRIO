@@ -29,7 +29,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { escapePostgrestValue } = require('../utils/sanitize');
-const { direcionarMatricula, signTurmaToken } = require('../services/nextDirecionar');
+const { direcionarMatricula, signDirecionarToken } = require('../services/nextDirecionar');
 
 // Re-calcula KPIs do NEXT em background (não bloqueia a resposta).
 // Chamado após qualquer mudança em inscrições ou indicacoes.
@@ -393,10 +393,10 @@ router.post('/matriculas/:id/direcionar', async (req, res) => {
   }
 });
 
-// GET /turmas/:id/direcionar-qr — token assinado pro QR de direcionamento da turma (Fase 2a)
-router.get('/turmas/:id/direcionar-qr', async (req, res) => {
+// GET /direcionar-qr — token FIXO pro QR de direcionamento (resolve a turma aberta · Fase 2a)
+router.get('/direcionar-qr', async (_req, res) => {
   try {
-    const token = signTurmaToken(req.params.id);
+    const token = signDirecionarToken();
     if (!token) return res.status(503).json({ error: 'QR indisponível (CRON_SECRET ausente no servidor)' });
     res.json({ token });
   } catch (e) { res.status(500).json({ error: e.message }); }

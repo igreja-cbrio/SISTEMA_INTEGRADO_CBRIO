@@ -238,6 +238,8 @@ export const next = {
   publicDirecionar: (token, data) => fetch(`${API}/public/next/direcionar/${token}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
+  direcionarQr: () => get('/next/direcionar-qr'),
   // Admin
   dashboard: () => get('/next/dashboard'),
   eventos: {
@@ -266,7 +268,6 @@ export const next = {
     create: (data) => post('/next/turmas', data),
     update: (id, data) => patch(`/next/turmas/${id}`, data),
     remove: (id) => del(`/next/turmas/${id}`),
-    direcionarQr: (id) => get(`/next/turmas/${id}/direcionar-qr`),
   },
   encontros: {
     update: (id, data) => patch(`/next/encontros/${id}`, data),

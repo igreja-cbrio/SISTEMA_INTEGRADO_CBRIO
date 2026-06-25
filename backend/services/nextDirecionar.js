@@ -26,29 +26,28 @@ const NEXT_DIRECIONA = {
   devocional:  { flag: 'indicou_devocional' },
 };
 
-// ── Token assinado da turma (pro QR público) · HMAC com CRON_SECRET (fail-closed) ──
+// ── Token FIXO do QR de direcionamento · HMAC com CRON_SECRET (fail-closed) ──
+// UM QR pro Next inteiro: resolve a TURMA ABERTA do momento (não há turmas simultâneas).
+// Estável (não expira · é um QR que se imprime/fixa na tela) e assinado pra não ser
+// adivinhável. A resolução da turma aberta fica no endpoint público.
 const CRON_SECRET = process.env.CRON_SECRET || '';
-const TOKEN_TTL_DIAS = 60;
+const DIRECIONAR_PAYLOAD = 'next-direcionar-v1';
 
-function signTurmaToken(turmaId) {
+function signDirecionarToken() {
   if (!CRON_SECRET) return null;
-  const exp = Date.now() + TOKEN_TTL_DIAS * 86400000;
-  const payload = `${turmaId}.${exp}`;
-  const sig = crypto.createHmac('sha256', CRON_SECRET).update(payload).digest('hex').slice(0, 24);
-  return Buffer.from(`${payload}.${sig}`).toString('base64url');
+  const sig = crypto.createHmac('sha256', CRON_SECRET).update(DIRECIONAR_PAYLOAD).digest('hex').slice(0, 24);
+  return Buffer.from(`${DIRECIONAR_PAYLOAD}.${sig}`).toString('base64url');
 }
 
-function verifyTurmaToken(token) {
-  if (!CRON_SECRET || !token) return null;
+function verifyDirecionarToken(token) {
+  if (!CRON_SECRET || !token) return false;
   try {
     const raw = Buffer.from(String(token), 'base64url').toString('utf8');
-    const [turmaId, exp, sig] = raw.split('.');
-    if (!turmaId || !exp || !sig) return null;
-    const expected = crypto.createHmac('sha256', CRON_SECRET).update(`${turmaId}.${exp}`).digest('hex').slice(0, 24);
-    if (sig !== expected) return null;
-    if (Date.now() > Number(exp)) return null;
-    return turmaId;
-  } catch (_) { return null; }
+    const [payload, sig] = raw.split('.');
+    if (payload !== DIRECIONAR_PAYLOAD || !sig) return false;
+    const expected = crypto.createHmac('sha256', CRON_SECRET).update(DIRECIONAR_PAYLOAD).digest('hex').slice(0, 24);
+    return sig === expected;
+  } catch (_) { return false; }
 }
 
 // Direciona UMA matrícula pros destinos pedidos. permitir = lista de destinos aceitos
@@ -136,4 +135,4 @@ async function direcionarMatricula({ matriculaId, destinos = [], userId = null, 
   return { ok: true, destinos: validos, criados, turma_id: m.turma_id };
 }
 
-module.exports = { NEXT_DIRECIONA, signTurmaToken, verifyTurmaToken, direcionarMatricula };
+module.exports = { NEXT_DIRECIONA, signDirecionarToken, verifyDirecionarToken, direcionarMatricula };
