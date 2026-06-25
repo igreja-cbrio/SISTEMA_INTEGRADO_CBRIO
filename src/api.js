@@ -2365,7 +2365,7 @@ export const cuidados = {
   },
   convertidos: {
     list: (params) => get('/cuidados/convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
-    create: (data) => post('/cuidados/convertidos', data),
+    // create removido (2026-06-25) · convertido só nasce via Integração (decisão de culto)
     update: (id, data) => patch(`/cuidados/convertidos/${id}`, data),
     remove: (id) => del(`/cuidados/convertidos/${id}`),
     tags: () => get('/cuidados/convertidos/tags'),
