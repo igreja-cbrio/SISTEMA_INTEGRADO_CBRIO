@@ -11,7 +11,7 @@ import { agenteVoluntariado as api } from '../api';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Sparkles, MessageCircle, Loader2, CalendarClock, UserX, AlertTriangle } from 'lucide-react';
+import { Sparkles, MessageCircle, Loader2, CalendarClock, UserX, AlertTriangle, Copy, Download } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Pendente = { schedule_id: string; nome: string; funcao: string; servico: string | null; quando: string; telefone: string | null; whatsapp: string | null };
@@ -38,11 +38,56 @@ export default function AgenteVoluntariadoPainel() {
   const total = d.confirmacoes_pendentes.length + d.reposicoes.length + d.no_shows.length;
   if (total === 0) return null;
 
+  // ── Recolher as listas (copiar / baixar CSV) ──────────────────────────────
+  const linhas = () => {
+    const out: { categoria: string; nome: string; funcao: string; servico: string; quando: string; telefone: string }[] = [];
+    d.confirmacoes_pendentes.forEach((p) => out.push({ categoria: 'Aguardando confirmação', nome: p.nome, funcao: p.funcao || '', servico: p.servico || '', quando: p.quando || '', telefone: p.telefone || '' }));
+    d.reposicoes.forEach((r) => out.push({ categoria: 'Reposição (recusou)', nome: r.nome, funcao: r.funcao || '', servico: r.servico || '', quando: r.quando || '', telefone: '' }));
+    d.no_shows.forEach((n) => out.push({ categoria: 'Faltou sem avisar', nome: n.nome, funcao: n.funcao || '', servico: n.servico || '', quando: n.quando || '', telefone: '' }));
+    return out;
+  };
+  const textoListas = () => {
+    const secao = (titulo: string, arr: { nome: string; funcao: string; servico: string | null; quando: string; telefone?: string | null }[], comTel = false) =>
+      arr.length
+        ? `\n${titulo} (${arr.length}):\n` + arr.map((x) => `- ${[x.nome, x.funcao, x.servico, x.quando, comTel ? x.telefone : ''].filter(Boolean).join(' · ')}`).join('\n') + '\n'
+        : '';
+    return 'Agente de Voluntariado\n' +
+      secao('Aguardando confirmação', d.confirmacoes_pendentes, true) +
+      secao('Recusadas — precisam de reposição', d.reposicoes) +
+      secao('Faltaram sem avisar no último culto', d.no_shows);
+  };
+  const copiar = async () => {
+    try { await navigator.clipboard.writeText(textoListas().trim()); toast.success('Listas copiadas — é só colar.'); }
+    catch { toast.error('Não consegui copiar. Tente o "Baixar".'); }
+  };
+  const baixarCsv = () => {
+    const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const rows = [['Categoria', 'Nome', 'Função', 'Serviço', 'Quando', 'Telefone'], ...linhas().map((l) => [l.categoria, l.nome, l.funcao, l.servico, l.quando, l.telefone])];
+    const csv = '﻿' + rows.map((r) => r.map(esc).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'agente-voluntariado.csv'; a.click();
+    URL.revokeObjectURL(url);
+    toast.success('CSV baixado.');
+  };
+
   return (
     <Card className="p-4 border-primary/30 bg-primary/5 space-y-3">
-      <div className="flex items-center gap-2">
-        <Sparkles className="h-4 w-4 text-primary" />
-        <span className="font-semibold text-sm">Agente de Voluntariado</span>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <span className="font-semibold text-sm">Agente de Voluntariado</span>
+          <Badge variant="secondary" className="text-[10px]">{total}</Badge>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button size="sm" variant="outline" onClick={copiar} className="h-8 gap-1.5">
+            <Copy className="h-3.5 w-3.5" /> Copiar
+          </Button>
+          <Button size="sm" variant="outline" onClick={baixarCsv} className="h-8 gap-1.5">
+            <Download className="h-3.5 w-3.5" /> Baixar CSV
+          </Button>
+        </div>
       </div>
 
       {d.confirmacoes_pendentes.length > 0 && (

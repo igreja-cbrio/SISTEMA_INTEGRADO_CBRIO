@@ -396,6 +396,7 @@ function homeRoute(auth: Record<string, unknown>): string {
     const distintos = new Set<object>();
     for (const v of Object.values(modulePerms)) if (v && (v.leitura || 0) > 0) distintos.add(v);
     if (distintos.size === 1 && (modulePerms.producao?.leitura || 0) > 0) return '/producao';
+    if (distintos.size === 1 && (modulePerms.batismo?.leitura || 0) > 0) return '/batismo';
   }
   return '/dashboard';
 }
