@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { kpis as kpisApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { Button } from '../../components/ui/button';
@@ -248,6 +249,7 @@ function BatismoHorarios() {
   );
 }
 
+// (deep-link via useSearchParams)
 export default function Batismos() {
   const [list, setList] = useState<BatismoInscricao[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,6 +278,20 @@ export default function Batismos() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Deep-link: ?inscricao=<id> (vindo da notificação) abre a ficha direto.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const insId = searchParams.get('inscricao');
+    if (insId && list.length) {
+      const found = list.find((i) => i.id === insId);
+      if (found) {
+        setSelected(found);
+        const next = new URLSearchParams(searchParams); next.delete('inscricao');
+        setSearchParams(next, { replace: true });
+      }
+    }
+  }, [list, searchParams, setSearchParams]);
 
   // Meses disponíveis para o filtro · ordenados desc (mais recente primeiro)
   const mesesDisponiveis = useMemo(() => {

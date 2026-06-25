@@ -958,7 +958,7 @@ router.delete('/convertidos/:id', async (req, res) => {
 // destino do encaminhamento → valor da jornada + módulo de notificação + label
 const DESTINO_META = {
   jornada180:  { valor: 'investir', modulo: 'cuidados',     label: 'Jornada 180',  link: '/ministerial/cuidados?tab=jornada' },
-  grupos:      { valor: 'conectar', modulo: 'grupos',       label: 'Grupos',       link: '/grupos' },
+  grupos:      { valor: 'conectar', modulo: 'grupos',       label: 'Grupos',       link: '/grupos?tab=encaminhados' },
   voluntarios: { valor: 'servir',   modulo: 'voluntariado', label: 'Voluntários',  link: '/ministerial/voluntariado/encaminhados' },
 };
 
