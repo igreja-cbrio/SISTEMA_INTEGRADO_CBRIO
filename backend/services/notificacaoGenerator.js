@@ -46,6 +46,12 @@ async function gerarTodasNotificacoes() {
     const { checarEAlertar } = require('./monitorAutomacoes');
     return checarEAlertar();
   });
+  // Agente de Voluntariado: escalas pendentes/recusadas dos próximos cultos +
+  // no-show do último culto (só sugere/alerta).
+  total += await safe('AgenteVoluntariado', async () => {
+    const { alertar } = require('./agenteVoluntariado');
+    return alertar();
+  });
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
