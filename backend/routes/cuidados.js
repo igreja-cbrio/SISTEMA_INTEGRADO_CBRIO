@@ -1117,17 +1117,14 @@ router.post('/convertidos/:id/desfecho', async (req, res) => {
 });
 
 // POST /api/cuidados/convertidos/:id/direcionar
-// Registra PRA ONDE o responsável direcionou o convertido. 5 destinos:
-//   grupos / voluntarios → handoff (encaminhamento) na caixa da área (o líder de lá acessa).
-//   devocionais          → só registro (sem caixa · engajamento = 1ª leitura no app).
-//   next / batismo       → INSCREVE a pessoa (matrícula Next em fila de espera · inscrição
-//                          de batismo pendente) REUSANDO o membro_id → sem duplicar cadastro.
-//                          Aparece como pendente "vindo de Cuidados" pra Integração confirmar
-//                          (ou linkar via QR · a dedup por membro_id evita duplicata).
-// NÃO marca engajamento: o NSM conta batismo só quando 'realizado' e Next só quando 'formado'.
-// Misclick: voltar pra "—" (ou trocar de destino) RETRAI o que o Cuidados criou, mas só se
-// ainda estiver intocado (a área/Integração não mexeu).
-const DIRECIONAMENTOS_VALIDOS = ['grupos', 'devocionais', 'voluntarios', 'next', 'batismo'];
+// Pra NOVO CONVERTIDO o único próximo passo direcionável no Cuidados é o NEXT (decisão
+// Marcos · 2026-06-25 · o direcionamento pros valores migrou pra DENTRO do Next). Direcionar
+// "next" INSCREVE a pessoa numa matrícula em FILA DE ESPERA reusando o membro_id (sem duplicar);
+// ela passa a aparecer no Next. NÃO marca engajamento (o NSM conta Next só quando 'formado').
+// Misclick: voltar pra "—" RETRAI a matrícula criada, só se intocada (sem turma · não formada).
+// retrairDirecionamento ainda cobre os tipos LEGADOS (grupos/voluntarios/batismo) de registros
+// criados antes da inversão (PRs #1242/#1293).
+const DIRECIONAMENTOS_VALIDOS = ['next'];
 
 // Desfaz o registro que o direcionamento anterior criou — só se ainda intocado.
 async function retrairDirecionamento(tipo, id, convertidoId) {
@@ -1193,32 +1190,11 @@ router.post('/convertidos/:id/direcionar', authorizeModule('cuidados', 3), async
     const primeiroNome = partes[0] || (atual.nome || 'Convertido');
     const sobrenome = partes.slice(1).join(' ');
 
-    let refTipo = null, refId = null, encaminhamento = null;
+    let refTipo = null, refId = null;
     const extra = {};
 
-    if (novo === 'grupos' || novo === 'voluntarios') {
-      const meta = DESTINO_META[novo];
-      const { data: jaExiste } = await supabase
-        .from('jornada_encaminhamentos').select('id')
-        .eq('convertido_id', atual.id).eq('destino', novo).is('deleted_at', null)
-        .limit(1).maybeSingle();
-      if (jaExiste) { encaminhamento = jaExiste; refTipo = novo; refId = jaExiste.id; }
-      else {
-        const { data: row, error: e2 } = await supabase.from('jornada_encaminhamentos').insert({
-          origem: 'cuidados', convertido_id: atual.id, membro_id: atual.membro_id || null,
-          nome: atual.nome, telefone: atual.telefone || null, destino: novo,
-          valor_alvo: meta.valor, encaminhado_por: userId,
-        }).select().single();
-        if (e2) throw e2;
-        encaminhamento = row; refTipo = novo; refId = row.id;
-        notificar({
-          modulo: meta.modulo, tipo: 'novo_encaminhamento',
-          titulo: `Encaminhado: ${atual.nome} → ${meta.label}`,
-          mensagem: `${atual.nome} foi encaminhado(a) pelo cuidado pastoral. Faça o primeiro contato e registre a devolutiva.`,
-          link: meta.link, severidade: 'info', chaveDedup: `enc_${row.id}`,
-        }).catch(() => {});
-      }
-    } else if (novo === 'next') {
+    // Único destino do Cuidados = Next (inscreve em fila de espera, reusa membro_id, sem duplicar).
+    if (novo === 'next') {
       await garantirMembro();
       let ja = null;
       if (membroId) {
@@ -1237,26 +1213,6 @@ router.post('/convertidos/:id/direcionar', authorizeModule('cuidados', 3), async
         if (en) throw en;
         refTipo = 'next'; refId = row.id; extra.matricula_id = row.id;
       }
-    } else if (novo === 'batismo') {
-      await garantirMembro();
-      let ja = null;
-      if (membroId) {
-        const { data } = await supabase.from('batismo_inscricoes').select('id')
-          .eq('membro_id', membroId).in('status', ['pendente', 'confirmado']).limit(1).maybeSingle();
-        ja = data;
-      }
-      if (ja) { refTipo = 'batismo'; refId = null; extra.ja_inscrito = true; } // já inscrito · não duplica
-      else {
-        const areaKpi = ['kids', 'sede', 'bridge', 'ami', 'online'].includes(atual.area) ? atual.area : null;
-        const { data: row, error: eb } = await supabase.from('batismo_inscricoes').insert({
-          nome: primeiroNome, sobrenome: sobrenome || '', cpf: atual.cpf || null,
-          telefone: atual.telefone || null, membro_id: membroId || null,
-          status: 'pendente', origem: 'manual', area_kpi: areaKpi,
-          observacoes: 'Direcionado pelo Cuidados', inscrito_por: userId,
-        }).select().single();
-        if (eb) throw eb;
-        refTipo = 'batismo'; refId = row.id; extra.inscricao_id = row.id;
-      }
     }
 
     // 2) Salva o direcionamento + a referência (pro retract) no convertido
@@ -1268,7 +1224,7 @@ router.post('/convertidos/:id/direcionar', authorizeModule('cuidados', 3), async
     }).eq('id', atual.id).select().single();
     if (e1) throw e1;
 
-    res.json({ convertido: conv, encaminhamento, ...extra });
+    res.json({ convertido: conv, ...extra });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

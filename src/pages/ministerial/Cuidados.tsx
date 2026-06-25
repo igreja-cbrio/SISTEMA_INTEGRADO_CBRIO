@@ -270,20 +270,22 @@ const TAG_COLORS: Record<string, string> = {
 // Cuidados — o Marcelo registra quem ficou responsável. Editável aqui se a equipe mudar.
 const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Paiva', 'Wesley Ramos'];
 
-// Pra onde o responsável direcionou a pessoa. Grupos/Voluntários geram o handoff na
-// caixa da área (que o líder daquele módulo acessa); Devocionais fica só registrado.
-// Next/Batismo INSCREVEM a pessoa (pendente · reusam o membro_id, sem duplicar) e ela
-// aparece "vinda de Cuidados" pra Integração confirmar. NÃO conta engajamento — isso vem
-// do sinal real (entrar no grupo, virar voluntário, ler a 1ª devocional, se batizar de
-// fato, concluir o Next), que o NSM mede sozinho.
+// Pra NOVO CONVERTIDO o único próximo passo direcionável no Cuidados é o NEXT (decisão
+// Marcos · 2026-06-25 · o direcionamento pros valores — Grupos/Voluntários/Batismo/Devocional —
+// migrou pra DENTRO do Next). Direcionar "Next" INSCREVE a pessoa numa matrícula em fila,
+// reusando o membro_id (sem duplicar). NÃO conta engajamento (NSM conta Next só quando 'formado').
 const DIRECIONAMENTOS: { v: string; l: string }[] = [
-  { v: 'grupos',      l: 'Grupos' },
-  { v: 'devocionais', l: 'Devocionais' },
-  { v: 'voluntarios', l: 'Voluntários' },
-  { v: 'next',        l: 'Next' },
-  { v: 'batismo',     l: 'Batismo' },
+  { v: 'next', l: 'Next' },
 ];
-const DIRECIONAMENTO_LABEL: Record<string, string> = Object.fromEntries(DIRECIONAMENTOS.map(d => [d.v, d.l]));
+// Labels de TODOS os destinos (inclui os LEGADOS grupos/devocionais/voluntarios/batismo, de
+// registros criados antes da inversão · só pra EXIBIR · não são mais oferecidos).
+const DIRECIONAMENTO_LABEL: Record<string, string> = {
+  next: 'Next',
+  grupos: 'Grupos',
+  devocionais: 'Devocionais',
+  voluntarios: 'Voluntários',
+  batismo: 'Batismo',
+};
 
 // Status do PRIMEIRO CONTATO. O Marcelo simplificou pra 3 (decisão Marcos · 2026-06-23):
 // Não respondeu · Não atendido · Atendido e respondido — os 3 contam como 1º CONTATO
@@ -941,18 +943,15 @@ export default function Cuidados() {
     }
   }
 
-  // Direcionamento (otimista). Grupos/Voluntários criam o encaminhamento na caixa da
-  // área (handoff) · NÃO marca engajamento (o NSM lê o sinal real). Devocionais = só registro.
+  // Direcionamento (otimista). Único destino do Cuidados = Next (inscreve em fila reusando
+  // membro_id, sem duplicar) · NÃO marca engajamento (o NSM conta Next só quando 'formado').
   async function setDirecionamento(id: string, value: string) {
     const v = value || null;
     const anterior = convertidos;
     setConvertidos(prev => prev.map((x: any) => x.id === id ? { ...x, direcionamento: v } : x));
     try {
       await cuidadosApi.convertidos.direcionar(id, v);
-      if (v === 'grupos') toast.success('Encaminhado para Grupos');
-      else if (v === 'voluntarios') toast.success('Encaminhado para Voluntários');
-      else if (v === 'next') toast.success('Inscrito no Next (pendente · fila de espera)');
-      else if (v === 'batismo') toast.success('Inscrito no Batismo (pendente)');
+      if (v === 'next') toast.success('Inscrito no Next (pendente · fila de espera)');
     } catch (e: any) {
       setConvertidos(anterior);
       toast.error(`Não foi possível direcionar: ${e.message}`);
@@ -1462,6 +1461,9 @@ export default function Cuidados() {
                             {DIRECIONAMENTOS.map(d => (
                               <option key={d.v} value={d.v}>{d.l}</option>
                             ))}
+                            {c.direcionamento && !DIRECIONAMENTOS.some(d => d.v === c.direcionamento) && (
+                              <option value={c.direcionamento}>{(DIRECIONAMENTO_LABEL[c.direcionamento] || c.direcionamento) + ' (antigo)'}</option>
+                            )}
                           </select>
                         ) : (
                           <span className="text-xs">{c.direcionamento ? (DIRECIONAMENTO_LABEL[c.direcionamento] || c.direcionamento) : <span className="text-muted-foreground">—</span>}</span>
