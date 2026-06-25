@@ -111,6 +111,7 @@ async function cronLancarSemanal(req, res) {
     const rows = await gerarItensViaIA(plano, dias, '', 'pastoral, edificante, com aplicação pratica');
     const { error: e2 } = await supabase.from('devocional_itens').insert(rows);
     if (e2) throw e2;
+    pushDevocionalApp(plano.id).catch(() => {});
 
     try {
       const { notificar } = require('../services/notificar');
@@ -260,6 +261,22 @@ router.delete('/:id', authorize('admin', 'diretor'), async (req, res) => {
 // Gera itens devocionais via Haiku pra um conjunto de datas. Retorna as
 // rows prontas pro insert em devocional_itens (NÃO insere). Usada pela
 // rota gerar-ia (admin) e pelo cron de lançamento semanal.
+// Push pro app quando o devocional da semana é publicado (1x por plano).
+async function pushDevocionalApp(planoId) {
+  try {
+    const { data: p } = await supabase.from('devocional_planos').select('id, notificado_app').eq('id', planoId).maybeSingle();
+    if (!p || p.notificado_app) return;
+    if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      fetch(`${process.env.SUPABASE_URL}/functions/v1/notify-devocional-semana`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ titulo: 'Devocional da semana 📖', body: 'O devocional desta semana já está no app. Bora começar?' }),
+      }).catch((e) => console.error('[devocional] push fetch:', e.message));
+    }
+    await supabase.from('devocional_planos').update({ notificado_app: true }).eq('id', planoId);
+  } catch (e) { console.error('[devocional] pushDevocionalApp:', e.message); }
+}
+
 async function gerarItensViaIA(plano, diasAlvo, tema, tom) {
   const client = new Anthropic();
   const systemPrompt = `Você e um pastor protestante brasileiro escrevendo devocionais diarios para a Igreja CBRio. Estilo: ${tom}.
@@ -445,6 +462,7 @@ router.post('/:id/gerar-ia', authorize('admin', 'diretor'), async (req, res) => 
 
     const { error: e2 } = await supabase.from('devocional_itens').insert(rows);
     if (e2) throw e2;
+    pushDevocionalApp(req.params.id).catch(() => {});
 
     res.json({
       criados: rows.length,
@@ -539,6 +557,7 @@ router.post('/:id/itens-lote', authorize('admin', 'diretor'), async (req, res) =
       if (eIns.code === '23505') return res.status(409).json({ error: 'Já existem itens em algumas datas. Marque "substituir".' });
       throw eIns;
     }
+    pushDevocionalApp(req.params.id).catch(() => {});
     res.status(201).json({ criados: rows.length, dias_do_plano: dias.length, ignorados: Math.max(0, itens.length - usados) });
   } catch (e) {
     console.error('devocional-planos itens-lote:', e.message);
