@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { notificacoes as notifApi, rh, financeiro, patrimonio, logistica, cuidados } from '../api';
 import { StatisticsCard, StatisticsCardSkeleton } from '../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import MonitorAutomacoes from '../components/MonitorAutomacoes';
 import {
   Users, DollarSign, CalendarDays, FolderKanban,
   Truck, Tag, BookOpen, ClipboardList, Bell, ArrowRight,
@@ -142,6 +143,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-8">
+      <MonitorAutomacoes />
       {/* Greeting */}
       <div>
         <p className="text-xs text-muted-foreground capitalize">{dateStr}</p>
