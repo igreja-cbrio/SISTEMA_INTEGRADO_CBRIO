@@ -2700,7 +2700,9 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
   const isSolicitante = item.solicitante_id === currentUserId;
   const emAjuste = item.status === 'aguardando_ajuste';
   const encerrada = ['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(item.status);
-  const podeRelatar = (isSolicitante || isAdmin) && !encerrada && !emAjuste;
+  // Ainda aguardando o diretor de origem · o ciclo de ajuste/devolução só vale depois.
+  const aguardaOrigem = item.status === 'aguardando_aprovacao_origem' || ['pendente', 'triagem'].includes(item.aprovacao_origem_status);
+  const podeRelatar = (isSolicitante || isAdmin) && !encerrada && !emAjuste && !aguardaOrigem;
 
   useEffect(() => {
     let alive = true;

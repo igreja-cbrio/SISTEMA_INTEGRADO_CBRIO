@@ -1195,7 +1195,7 @@ router.post('/:id/relatar-problema', async (req, res) => {
 
     const { data: sol } = await supabase
       .from('solicitacoes')
-      .select('id, solicitante_id, responsavel_id, area_responsavel, categoria, titulo, status, vezes_refeita')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, categoria, titulo, status, vezes_refeita, aprovacao_origem_status')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
 
@@ -1212,6 +1212,13 @@ router.post('/:id/relatar-problema', async (req, res) => {
     if (!isSolic && !podeGerir) return res.status(403).json({ error: 'Sem permissão.' });
     if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
       return res.status(400).json({ error: 'Solicitação já encerrada · não é possível relatar problema.' });
+    }
+    // Ainda no portão de origem (o diretor não aprovou) · o ciclo de ajuste/devolução
+    // só vale DEPOIS da aprovação de origem. Sem isso, devolver aqui geraria estado
+    // duplo: a aba "Aprovar" do diretor filtra por aprovacao_origem_status, então a
+    // solicitação ficaria na fila do solicitante (aguardando_ajuste) E na do diretor.
+    if (sol.status === 'aguardando_aprovacao_origem' || ['pendente', 'triagem'].includes(sol.aprovacao_origem_status)) {
+      return res.status(400).json({ error: 'Esta solicitação ainda aguarda a aprovação do diretor de origem · o ajuste/devolução só vale depois que ela for aprovada.' });
     }
     // Já em ajuste: não re-pausa (preservaria status_antes_ajuste/sla_pausado_em
     // originais) · o solicitante deve editar e reenviar. Cancelar ainda é possível.
