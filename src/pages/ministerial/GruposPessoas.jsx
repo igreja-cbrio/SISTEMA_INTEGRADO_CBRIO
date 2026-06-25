@@ -20,6 +20,7 @@ import { Input } from '../../components/ui/input';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
 import { Search, Users, GraduationCap, Star, Crown, Eye } from 'lucide-react';
+import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -167,6 +168,8 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
     if (filtroStatus !== 'todos') lista = lista.filter(p => statusDe(p) === filtroStatus);
     return lista;
   }, [pessoas, busca, filtro, filtroGrupo, filtroStatus]);
+
+  const { pageItems: filtradasPag, paginacaoProps: gruposPessoasPagProps } = usePaginacaoLocal(filtradas, 25);
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando pessoas...</div>;
 
@@ -318,7 +321,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
                 </tr>
               </thead>
               <tbody>
-                {filtradas.map(p => {
+                {filtradasPag.map(p => {
                   const pap = PAPEIS[p.papel] || PAPEIS.frequentador;
                   const st = STATUS[statusDe(p)];
                   const gs = gruposDe(p);
@@ -368,6 +371,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
             </table>
           </div>
         )}
+        <Paginacao {...gruposPessoasPagProps} itemLabel="pessoas" />
       </div>
 
       {/* Modal · grupos da pessoa */}
