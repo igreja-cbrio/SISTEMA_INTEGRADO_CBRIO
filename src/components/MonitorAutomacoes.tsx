@@ -7,8 +7,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { monitorAutomacoes as api } from '../api';
+import { useAuth } from '../contexts/AuthContext';
 import { Card } from './ui/card';
 import { Activity, RefreshCw } from 'lucide-react';
+
+// Painel restrito ao Matheus (dono).
+const DONO_MONITOR = 'matheus.toscano@cbrio.org';
 
 type Pipeline = { chave: string; label: string; status: 'ok' | 'atrasado' | 'parado' | 'desconhecido'; horas: number | null; maxHoras: number };
 type Dados = { pipelines: Pipeline[]; resumo: { ok: number; atrasado: number; parado: number; desconhecido: number } };
@@ -21,19 +25,23 @@ const LABEL_STATUS: Record<string, string> = {
 };
 
 export default function MonitorAutomacoes() {
+  const { user, profile } = useAuth();
+  const ehDono = String(profile?.email || user?.email || '').toLowerCase() === DONO_MONITOR;
   const [d, setD] = useState<Dados | null>(null);
   const [loading, setLoading] = useState(true);
 
   const carregar = useCallback(() => {
+    if (!ehDono) { setLoading(false); return; }
     setLoading(true);
     api.status()
       .then((r: Dados) => setD(r))
       .catch(() => setD(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [ehDono]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  if (!ehDono) return null;
   if (loading || !d) return null;
   const problemas = d.resumo.atrasado + d.resumo.parado;
 
