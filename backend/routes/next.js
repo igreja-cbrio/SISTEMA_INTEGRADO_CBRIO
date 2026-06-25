@@ -368,6 +368,112 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Direcionar pros valores DENTRO do Next (Fase 1B · Marcos · 2026-06-25)
+// POST /matriculas/:id/direcionar  body: { destinos: ['grupos','voluntarios','batismo','devocional'] }
+// A inversão: o direcionamento do convertido pros valores saiu do Cuidados e vem pra cá.
+//   grupos/voluntarios → encaminhamento (origem='next') na caixa da área (devolutiva lá ·
+//                        "engajou" materializa o vínculo na NSM). Ligado à matrícula.
+//   batismo            → inscrição pendente em batismo_inscricoes REUSANDO membro_id (sem duplicar).
+//   devocional         → só registra a escolha (flag · estatística). 1º acesso/leitura = Fase 2.
+// NÃO marca engajamento (NSM conta o sinal real). Dedup por matrícula × destino.
+// ----------------------------------------------------------------------------
+const NEXT_DIRECIONA = {
+  grupos:      { flag: 'indicou_grupo',      destino: 'grupos',      valor_alvo: 'conectar', modulo: 'grupos',       label: 'Grupos',      link: '/grupos' },
+  voluntarios: { flag: 'indicou_servir',     destino: 'voluntarios', valor_alvo: 'servir',   modulo: 'voluntariado', label: 'Voluntários', link: '/ministerial/voluntariado/encaminhados' },
+  batismo:     { flag: 'indicou_batismo' },
+  devocional:  { flag: 'indicou_devocional' },
+};
+
+router.post('/matriculas/:id/direcionar', async (req, res) => {
+  try {
+    const { destinos = [] } = req.body || {};
+    const validos = (Array.isArray(destinos) ? destinos : []).filter(d => NEXT_DIRECIONA[d]);
+    if (validos.length === 0) return res.status(400).json({ error: 'Informe ao menos um destino válido' });
+
+    const { data: m, error: em } = await supabase
+      .from('next_matriculas')
+      .select('id, nome, sobrenome, cpf, telefone, membro_id, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional')
+      .eq('id', req.params.id).is('deleted_at', null).single();
+    if (em) throw em;
+
+    const userId = req.user?.id || null;
+    const nomeCompleto = `${m.nome || ''} ${m.sobrenome || ''}`.trim() || m.nome || 'Sem nome';
+
+    // 1) Flags na matrícula (estatística "pra onde cada um foi ao fim do encontro")
+    const flags = { updated_at: new Date().toISOString() };
+    for (const d of validos) flags[NEXT_DIRECIONA[d].flag] = true;
+    await supabase.from('next_matriculas').update(flags).eq('id', m.id);
+
+    // Resolve membro_id (pra batismo não duplicar) · reusa o da matrícula, senão cria/liga
+    let membroId = m.membro_id || null;
+    async function garantirMembro() {
+      if (membroId) return membroId;
+      try {
+        const r = await findOrCreateMembro({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, status: 'visitante' });
+        membroId = r?.membro_id || null;
+        if (membroId) await supabase.from('next_matriculas').update({ membro_id: membroId }).eq('id', m.id);
+      } catch (e) { console.error('[next/direcionar] findOrCreateMembro:', e.message); }
+      return membroId;
+    }
+
+    const criados = {};
+    for (const d of validos) {
+      const cfg = NEXT_DIRECIONA[d];
+      if (d === 'grupos' || d === 'voluntarios') {
+        // Encaminhamento na caixa da área · idempotente por (matrícula × destino)
+        const { data: ja } = await supabase.from('jornada_encaminhamentos').select('id')
+          .eq('next_matricula_id', m.id).eq('destino', cfg.destino).is('deleted_at', null)
+          .limit(1).maybeSingle();
+        if (!ja) {
+          await supabase.from('jornada_encaminhamentos').insert({
+            origem: 'next', next_matricula_id: m.id, membro_id: membroId || m.membro_id || null,
+            nome: nomeCompleto, telefone: m.telefone || null, destino: cfg.destino,
+            valor_alvo: cfg.valor_alvo, encaminhado_por: userId,
+          });
+          notificar({
+            modulo: cfg.modulo, titulo: `Direcionado pra ${cfg.label} no NEXT`,
+            mensagem: `${nomeCompleto} foi direcionado(a) pra ${cfg.label} no NEXT. Faça o primeiro contato e registre a devolutiva.`,
+            link: cfg.link,
+          }).catch(() => {});
+          criados[d] = true;
+        }
+      } else if (d === 'batismo') {
+        await garantirMembro();
+        let ja = null;
+        if (membroId) {
+          const { data } = await supabase.from('batismo_inscricoes').select('id')
+            .eq('membro_id', membroId).in('status', ['pendente', 'confirmado']).limit(1).maybeSingle();
+          ja = data;
+        }
+        if (!ja) {
+          const partes = String(m.nome || '').trim().split(/\s+/);
+          await supabase.from('batismo_inscricoes').insert({
+            nome: partes[0] || (m.nome || 'Convertido'),
+            sobrenome: m.sobrenome || partes.slice(1).join(' ') || '',
+            cpf: m.cpf || null, telefone: m.telefone || null, membro_id: membroId || null,
+            status: 'pendente', origem: 'manual', observacoes: 'Direcionado pelo NEXT', inscrito_por: userId,
+          });
+          notificar({
+            modulo: 'integracao', titulo: 'Direcionado pra Batismo no NEXT',
+            mensagem: `${nomeCompleto} foi direcionado(a) pro batismo no NEXT.`,
+            link: '/ministerial/integracao?tab=batismos',
+          }).catch(() => {});
+          criados.batismo = true;
+        }
+      } else if (d === 'devocional') {
+        // Só registra a escolha (flag acima · estatística). O 1º acesso/leitura é Fase 2 (app).
+        criados.devocional = true;
+      }
+    }
+
+    recalcularKpisNext();
+    res.json({ ok: true, destinos: validos, criados });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/indicacoes', async (req, res) => {
   const { tipo, status, area } = req.query;
   let q = supabase
@@ -674,10 +780,15 @@ router.get('/pessoas', async (req, res) => {
       'id, nome, telefone, cpf, membro_id, data_culto, area, next_resolucao, next_resolucao_em',
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; });
     const matriculas = await fetchAllNext('next_matriculas',
-      'id, turma_id, nome, sobrenome, cpf, telefone, email, membro_id, status',
+      'id, turma_id, nome, sobrenome, cpf, telefone, email, membro_id, status, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional',
       (q) => q.is('deleted_at', null));
     const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null));
     const turmaNome = new Map(turmas.map(t => [t.id, t.nome]));
+    // Direcionamento (pra onde a pessoa vai ao fim do Next) · vem da matrícula
+    const dirFlags = (mm) => ({
+      indicou_grupo: !!(mm && mm.indicou_grupo), indicou_servir: !!(mm && mm.indicou_servir),
+      indicou_batismo: !!(mm && mm.indicou_batismo), indicou_devocional: !!(mm && mm.indicou_devocional),
+    });
 
     // índice de matrículas por identidade (membro_id > cpf > nome completo)
     const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map();
@@ -711,6 +822,7 @@ router.get('/pessoas', async (req, res) => {
         area: cv.area, data_nsm: cv.data_culto, dias_desde_conversao: dias,
         turma_id: m ? m.turma_id : null, turma_nome: m && m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
         next_status, bucket, next_resolucao: cv.next_resolucao || null, next_resolucao_em: cv.next_resolucao_em || null,
+        ...dirFlags(m),
       });
     }
     // 2. matrículas externas (sem convertido correspondente)
@@ -722,6 +834,7 @@ router.get('/pessoas', async (req, res) => {
         area: null, data_nsm: null, dias_desde_conversao: null,
         turma_id: m.turma_id, turma_nome: m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
         next_status: m.status === 'formado' ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
+        ...dirFlags(m),
       });
     }
 

@@ -269,6 +269,9 @@ export const next = {
     create: (data) => post('/next/matriculas', data),
     update: (id, data) => patch(`/next/matriculas/${id}`, data),
     remove: (id) => del(`/next/matriculas/${id}`),
+    // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
+    // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
+    direcionar: (id, destinos) => post(`/next/matriculas/${id}/direcionar`, { destinos }),
   },
   // Pessoas — funil unificado (convertidos + matrículas, 1 linha/pessoa)
   pessoas: (params) => get('/next/pessoas' + (params ? '?' + new URLSearchParams(params) : '')),
