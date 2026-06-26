@@ -827,7 +827,18 @@ function AbaDetalhado() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                  {['Tipo de culto', 'Cultos', 'Preench.', 'Pontual.', 'Aderência', 'Dur. média', 'Prev. média', 'Checklist', 'Falhas', 'Estrutura'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                  {[
+                    { h: 'Tipo de culto' },
+                    { h: 'Cultos', d: 'Total de cultos do tipo no período.' },
+                    { h: 'Preench.', d: 'Cultos com o tempo de execução já lançado.' },
+                    { h: 'Pontual.', d: 'Pontualidade — % de cultos que ficaram DENTRO do alvo de duração (60 min, ou o alvo do tipo). Responde: "estourou o tempo?"' },
+                    { h: 'Aderência', d: 'Aderência — quão PERTO do PREVISTO (cronograma planejado) o tempo executado ficou, na média. 100% = bateu o previsto; conta passar OU adiantar. Não é "ficar dentro de 60".' },
+                    { h: 'Dur. média', d: 'Duração média EXECUTADA dos cultos (min).' },
+                    { h: 'Prev. média', d: 'Duração média PREVISTA no cronograma (min).' },
+                    { h: 'Checklist', d: '% de itens do checklist técnico marcados como feitos.' },
+                    { h: 'Falhas', d: 'Ocorrências técnicas registradas.' },
+                    { h: 'Estrutura', d: 'Ocorrências de estrutura registradas.' },
+                  ].map(({ h, d }) => <th key={h} title={d || undefined} style={{ padding: '8px 10px', fontWeight: 700, ...(d ? { cursor: 'help', textDecoration: 'underline dotted', textUnderlineOffset: 3 } : {}) }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -870,7 +881,14 @@ function AbaDetalhado() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                  {['Momento', 'Cultos', 'Previsto', 'Executado', 'Desvio médio', '% que estourou'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                  {[
+                    { h: 'Momento' },
+                    { h: 'Cultos', d: 'Em quantos cultos esse momento teve tempo lançado.' },
+                    { h: 'Previsto', d: 'Tempo previsto médio do momento (cronograma).' },
+                    { h: 'Executado', d: 'Tempo executado médio do momento.' },
+                    { h: 'Desvio médio', d: 'Executado − previsto, na média. Positivo = passou; negativo = adiantou.' },
+                    { h: '% que estourou', d: '% dos cultos em que esse momento passou do previsto.' },
+                  ].map(({ h, d }) => <th key={h} title={d || undefined} style={{ padding: '8px 10px', fontWeight: 700, ...(d ? { cursor: 'help', textDecoration: 'underline dotted', textUnderlineOffset: 3 } : {}) }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -940,7 +958,13 @@ function AbaDetalhado() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
-                  {['Atividade', 'Tipo', 'Ocorrências', 'Duração', '% do culto'].map(h => <th key={h} style={{ padding: '8px 10px', fontWeight: 700 }}>{h}</th>)}
+                  {[
+                    { h: 'Atividade' },
+                    { h: 'Tipo', d: 'Rotina (ceia/batismo/apresentação) ou Outros.' },
+                    { h: 'Ocorrências', d: 'Em quantos cultos a atividade apareceu.' },
+                    { h: 'Duração', d: 'Tempo médio que a atividade durou.' },
+                    { h: '% do culto', d: 'Quanto a atividade representou do tempo total do culto, na média.' },
+                  ].map(({ h, d }) => <th key={h} title={d || undefined} style={{ padding: '8px 10px', fontWeight: 700, ...(d ? { cursor: 'help', textDecoration: 'underline dotted', textUnderlineOffset: 3 } : {}) }}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>

@@ -1881,6 +1881,11 @@ satélite `culto_producao` (totais derivados das etapas).
   herda o tema vidro do `index.css`; linhas NÃO usam gradiente (regra da casa); cores em `CORES_CULTO`.
   (Ajustes 2026-06-25/26, pedidos do Marcos: era executado×previsto numa linha só → 1 linha
   por culto → eixo 40 + esconde não-preenchidos + legenda isola culto.)
+- **Métricas do Detalhado (definições · NÃO confundir) + tooltips:** **Pontualidade** = % de
+  cultos ≤ ALVO (`meta_duracao_min`, default 60) = "estourou o tempo?". **Aderência** = fidelidade
+  ao PREVISTO (`100 − média(|exec−prev|/prev)`, desvio ABSOLUTO, relativo ao previsto de cada culto,
+  NÃO a 60) = "executou perto do planejado?". Os cabeçalhos das tabelas do Detalhado têm `title`
+  (tooltip nativo no hover · sublinhado pontilhado + cursor help) explicando cada coluna.
 
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
