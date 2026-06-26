@@ -177,6 +177,7 @@ function AbaSemana() {
   const [editando, setEditando] = useState(null);
   const [pend, setPend] = useState(null);
   const [loadingPend, setLoadingPend] = useState(true);
+  const [vista, setVista] = useState('semana'); // 'semana' | 'pendentes'
 
   const dias = useMemo(() => diasDaSemana(semanaInicio), [semanaInicio]);
   const ehSemanaAtual = mesmoDia(semanaInicio, inicioSemana(hoje));
@@ -221,39 +222,35 @@ function AbaSemana() {
     let p = 0, n = 0; cultos.forEach(c => c.producao_preenchido ? p++ : n++); return { preenchidos: p, pendentes: n };
   }, [cultos]);
 
-  const pendList = useMemo(() => {
-    if (!pend) return [];
-    return [
-      ...(pend.nao_preenchidos || []).map(c => ({ ...c, _inc: false })),
-      ...(pend.incompletos || []).map(c => ({ ...c, _inc: true })),
-    ].sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.hora || '').localeCompare(a.hora || ''));
-  }, [pend]);
   const totalPend = (pend?.nao_preenchidos?.length || 0) + (pend?.incompletos?.length || 0);
 
   return (
     <section>
-      {!loadingPend && pend && (totalPend > 0 ? (
-        <div style={{ marginBottom: 14, padding: '10px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>A preencher · desde 07/06</span>
-            {(pend.nao_preenchidos?.length || 0) > 0 && <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: '#EF4444' }}>{pend.nao_preenchidos.length}</strong> não preenchido{pend.nao_preenchidos.length > 1 ? 's' : ''}</span>}
-            {(pend.incompletos?.length || 0) > 0 && <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: '#F59E0B' }}>{pend.incompletos.length}</strong> incompleto{pend.incompletos.length > 1 ? 's' : ''}</span>}
+      {/* Seletor Semana / Pendentes · mesmo padrão da aba Cultos da Integração */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+        <button onClick={() => setVista('semana')} style={vistaBtn(vista === 'semana')}>
+          <Calendar size={13} /> Semana
+        </button>
+        <button onClick={() => setVista('pendentes')} style={vistaBtn(vista === 'pendentes')}>
+          <ListChecks size={13} /> Pendentes
+          {totalPend > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: '#F59E0B', color: '#fff' }}>{totalPend}</span>}
+        </button>
+      </div>
+
+      {vista === 'pendentes' ? (
+        loadingPend ? (
+          <div style={loadingBox}>Carregando pendências…</div>
+        ) : totalPend === 0 ? (
+          <div style={{ fontSize: 13, color: '#10B981', fontWeight: 600, padding: 20, textAlign: 'center', background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>✓ Tudo preenchido desde 07/06</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <p style={{ fontSize: 11, color: C.t3, margin: 0 }}>Cultos a preencher desde 07/06 (início do cronograma por momento). Clique pra abrir e lançar.</p>
+            <CardPendencia titulo="Cultos pendentes" sub="nada lançado" cor="#EF4444" icone={AlertCircle} cultos={pend?.nao_preenchidos || []} status="pendente" onSelect={setEditando} />
+            <CardPendencia titulo="Cultos incompletos" sub="faltam momentos" cor="#F59E0B" icone={Clock} cultos={pend?.incompletos || []} status="incompleto" onSelect={setEditando} />
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {pendList.map(c => (
-              <button key={c.id} onClick={() => setEditando(c)}
-                title={c._inc ? `Incompleto · faltam ${c.etapas_faltam} momento(s)` : 'Não preenchido'}
-                style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: C.text, background: C.inputBg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${c._inc ? '#F59E0B' : '#EF4444'}` }}>
-                <span>{fmtDiaMes(c.data)}</span>
-                <span style={{ color: C.t2, fontWeight: 500 }}>{c.service_type_name || c.nome}</span>
-                {c._inc && <span style={{ color: '#F59E0B', fontWeight: 700 }}>faltam {c.etapas_faltam}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
+        )
       ) : (
-        <div style={{ marginBottom: 14, fontSize: 11, color: '#10B981', fontWeight: 600 }}>✓ Tudo preenchido desde 07/06</div>
-      ))}
+      <>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
           <Calendar size={11} style={{ color: C.primary }} /> Cultos da semana
@@ -302,9 +299,64 @@ function AbaSemana() {
           </div>
         </div>
       )}
+      </>
+      )}
 
       {editando && <ModalProducao culto={editando} onClose={() => setEditando(null)} onSaved={() => { setEditando(null); carregar(); carregarPend(); }} />}
     </section>
+  );
+}
+
+// Botão do seletor Semana/Pendentes (espelha o padrão da aba Cultos da Integração)
+function vistaBtn(active) {
+  return {
+    padding: '6px 14px', fontSize: 12, fontWeight: 700, borderRadius: 8, cursor: 'pointer',
+    border: `1px solid ${active ? C.primary : C.border}`,
+    background: active ? C.primaryBg : 'transparent',
+    color: active ? C.primary : C.t2,
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+  };
+}
+
+// Linha de culto pendente/incompleto (estilo LinhaPendencia da Integração)
+function LinhaPendenciaProd({ culto, status, onClick }) {
+  const p = String(culto.data || '').split('-');
+  const dt = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  const cor = status === 'incompleto' ? '#F59E0B' : '#EF4444';
+  const badge = status === 'incompleto' ? `faltam ${culto.etapas_faltam}` : 'não preenchido';
+  return (
+    <button onClick={onClick} style={{ textAlign: 'left', width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, cursor: 'pointer', background: C.inputBg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${cor}` }}>
+      <div style={{ minWidth: 42, textAlign: 'center' }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{DIAS[dt.getDay()] || ''}</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, lineHeight: 1 }}>{p[2] || '--'}</div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{culto.service_type_name || culto.nome}</div>
+        <div style={{ fontSize: 11, color: C.t3 }}>{(culto.hora || '').slice(0, 5) || '--:--'} · {fmtDiaMes(culto.data)}</div>
+      </div>
+      <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: `${cor}1F`, color: cor, whiteSpace: 'nowrap' }}>{badge}</span>
+    </button>
+  );
+}
+
+// Card de pendência (pendentes / incompletos) com a lista de cultos dentro
+function CardPendencia({ titulo, sub, cor, icone: Icone, cultos, status, onSelect }) {
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: cultos.length ? 10 : 0 }}>
+        <Icone size={15} style={{ color: cor }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{titulo}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 99, background: `${cor}1F`, color: cor }}>{cultos.length}</span>
+        {sub && <span style={{ fontSize: 11, color: C.t3 }}>· {sub}</span>}
+      </div>
+      {cultos.length === 0 ? (
+        <div style={{ fontSize: 12, color: C.t3, fontStyle: 'italic' }}>Nenhum.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {cultos.map(c => <LinhaPendenciaProd key={c.id} culto={c} status={status} onClick={() => onSelect(c)} />)}
+        </div>
+      )}
+    </div>
   );
 }
 
