@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { resolveApiBaseUrl } from '../lib/api-base';
 
@@ -41,6 +41,9 @@ export function AuthProvider({ children }) {
   const [modulePerms, setModulePerms] = useState(null);
   const [permData, setPermData] = useState(null);
   const [loading, setLoading] = useState(DEV_BYPASS_AUTH ? false : true);
+  // Já temos sessão ativa? Usado pra distinguir login REAL de re-emissão de
+  // SIGNED_IN por foco de aba (Alt+Tab) — ver onAuthStateChange abaixo.
+  const sessaoAtivaRef = useRef(false);
 
   async function fetchProfile(userId) {
     if (!supabase) return;
@@ -88,6 +91,7 @@ export function AuthProvider({ children }) {
     }, 8000);
 
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      sessaoAtivaRef.current = !!session?.user;
       setUser(session?.user ?? null);
       if (session?.user) {
         await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
@@ -105,15 +109,23 @@ export function AuthProvider({ children }) {
       // entra direto · não tem cadastro público, então não tem risco de
       // hijacking de email. Microsoft eh restrito ao tenant CBRio e Google
       // tem email verificado.
+      // ⚠️ O supabase-js re-dispara SIGNED_IN a cada FOCO de aba (Alt+Tab), não só
+      // no login real. Tratar todo SIGNED_IN como login = jogar o app no
+      // "carregando" (e travar se o re-fetch pendurar) toda vez que a aba volta ao
+      // foco. Por isso só bloqueamos a UI na transição REAL "sem sessão → com
+      // sessão" (sessaoAtivaRef), não pelo nome do evento.
+      const tinhaSessao = sessaoAtivaRef.current;
+      sessaoAtivaRef.current = !!session?.user;
       setUser(session?.user ?? null);
       if (session?.user) {
-        // No LOGIN, segura o loading até profile+permissões chegarem — senão o
+        // Login real: segura o loading até profile+permissões chegarem — senão o
         // homeRoute roda com modulePerms nulo e manda pro lugar errado (ex.:
-        // /devocional ou /dashboard em vez da trava de módulo).
-        const ehLogin = _event === 'SIGNED_IN';
-        if (ehLogin) setLoading(true);
+        // /devocional ou /dashboard em vez da trava de módulo). Em re-emissões
+        // por foco de aba (já tinha sessão), atualiza em segundo plano sem travar.
+        const loginReal = _event === 'SIGNED_IN' && !tinhaSessao;
+        if (loginReal) setLoading(true);
         await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
-        if (ehLogin) setLoading(false);
+        if (loginReal) setLoading(false);
       } else {
         setProfile(null);
         setModulePerms(null);
