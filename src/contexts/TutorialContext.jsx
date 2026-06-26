@@ -61,6 +61,22 @@ const JOYRIDE_LOCALE = {
   open: 'Abrir',
 };
 
+// Fallback local · "mostrou 1x, não mostra mais" mesmo se o salvamento no backend
+// falhar. Chave por usuário pra não vazar entre contas no mesmo navegador.
+const lsKey = (uid) => `cbrio_tutorial_seen_${uid || 'anon'}`;
+function lsSeen(uid) {
+  try { return new Set(JSON.parse(localStorage.getItem(lsKey(uid)) || '[]')); } catch { return new Set(); }
+}
+function lsAdd(uid, id) {
+  try { const s = lsSeen(uid); s.add(id); localStorage.setItem(lsKey(uid), JSON.stringify([...s])); } catch { /* ignore */ }
+}
+function lsDel(uid, id) {
+  try { const s = lsSeen(uid); s.delete(id); localStorage.setItem(lsKey(uid), JSON.stringify([...s])); } catch { /* ignore */ }
+}
+function lsClear(uid) {
+  try { localStorage.removeItem(lsKey(uid)); } catch { /* ignore */ }
+}
+
 export function TutorialProvider({ children }) {
   const auth = useAuth();
   const location = useLocation();
@@ -81,7 +97,10 @@ export function TutorialProvider({ children }) {
       try {
         const data = await tutorialApi.progress();
         if (cancelled) return;
-        setCompletedTours(new Set((data || []).map((r) => r.tour_id)));
+        // Une o backend (cross-device) com o fallback local (este navegador): se o
+        // POST de salvar tiver falhado, o localStorage ainda evita repetir aqui.
+        const ids = (data || []).map((r) => r.tour_id);
+        setCompletedTours(new Set([...ids, ...lsSeen(auth.user.id)]));
       } catch (e) {
         if (cancelled) return;
         // Falha ao carregar · mantém em "loading" (null) pra NÃO disparar tours
@@ -134,8 +153,9 @@ export function TutorialProvider({ children }) {
   // 3) Marcar tour como completo no banco (via backend · service role + JWT)
   const markTourComplete = useCallback(async (tourId, status = 'completed') => {
     if (!auth.user?.id) return;
-    // Marca local PRIMEIRO · evita re-disparar o mesmo tour na sessão atual
-    // mesmo se o POST falhar (a próxima sessão recarrega do banco).
+    // Marca local PRIMEIRO (estado + localStorage) · evita re-disparar o tour mesmo
+    // se o POST falhar; o localStorage sobrevive ao reload (próxima sessão não repete).
+    lsAdd(auth.user.id, tourId);
     setCompletedTours((prev) => {
       const next = new Set(prev || []);
       next.add(tourId);
@@ -149,7 +169,14 @@ export function TutorialProvider({ children }) {
   }, [auth.user?.id]);
 
   const handleJoyrideCallback = useCallback((data) => {
-    const { status } = data;
+    const { status, type } = data;
+
+    // Marca como VISTO assim que o tour aparece (tour:start) · "mostrou 1x, não
+    // mostra mais" — robusto a qualquer forma de dispensar (pular, fechar, clicar
+    // fora, recarregar, sair). O fim só atualiza o status (skipped/completed).
+    if (type === 'tour:start' && activeTour?.id) {
+      markTourComplete(activeTour.id, 'completed');
+    }
 
     if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
       const tourId = activeTour?.id;
@@ -183,6 +210,7 @@ export function TutorialProvider({ children }) {
     if (!auth.user?.id) return;
     const tour = getTourById(tourId);
     if (!tour) return;
+    lsDel(auth.user.id, tourId); // limpa o fallback local · "Refazer" volta a exibir
     setCompletedTours((prev) => {
       const next = new Set(prev || []);
       next.delete(tourId);
@@ -204,6 +232,7 @@ export function TutorialProvider({ children }) {
 
   const resetAllTours = useCallback(async () => {
     if (!auth.user?.id) return;
+    lsClear(auth.user.id); // limpa o fallback local de todos os tours
     setCompletedTours(new Set());
     try {
       await tutorialApi.reset();
