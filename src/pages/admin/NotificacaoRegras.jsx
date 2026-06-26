@@ -28,6 +28,7 @@ const MODULOS = [
   { id: 'nps', label: 'NPS', desc: 'Novas pesquisas de satisfação, lembretes e análises', color: '#06b6d4' },
   { id: 'marketing', label: 'Marketing', desc: 'Cards atribuídos, prazo confirmado, preview pronto, entrega aprovada, revisão sugerida, gargalo de aprovação', color: '#ec4899' },
   { id: 'producao', label: 'Produção de Culto', desc: 'Ocorrências críticas (falha técnica / estrutura) e novas solicitações da Produção', color: '#6366f1' },
+  { id: 'governanca', label: 'Governança', desc: 'Lembrete de reunião próxima e reuniões da diretoria sem ata registrada', color: '#475569' },
   { id: 'wifi', label: 'WiFi', desc: 'Novos visitantes recorrentes identificados pelo portal WiFi (2+ cultos)', color: '#00B39D' },
   { id: 'administrativo', label: 'Administrativo', desc: 'Solicitações em triagem (sem setor), reserva de espaço, infraestrutura, devolução/ajuste de pedido', color: '#64748b' },
   { id: 'ti', label: 'TI', desc: 'Solicitações de tecnologia (acessos, equipamentos, sistemas)', color: '#0ea5e9' },

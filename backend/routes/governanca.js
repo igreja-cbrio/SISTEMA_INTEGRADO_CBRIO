@@ -485,7 +485,7 @@ router.get('/cron/lembrete', async (req, res) => {
       tipo: 'lembrete_okr',
       titulo: `Reunião OKR em 2 dias`,
       mensagem,
-      link: '/eventos',
+      link: '/governanca',
       severidade: okr.checklist.every(c => c.ok) ? 'info' : 'warning',
       chaveDedup: `gov_okr_${h}`,
     });
