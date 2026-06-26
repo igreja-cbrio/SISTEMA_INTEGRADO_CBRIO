@@ -16,8 +16,8 @@ const C = {
 };
 
 const STATUS_VISUAL = {
-  critico: { Icon: TrendingDown, cor: '#EF4444', bg: '#FEE2E2', label: 'Critico' },
-  atras:   { Icon: Clock,        cor: '#F59E0B', bg: '#FEF3C7', label: 'Atras' },
+  critico: { Icon: TrendingDown, cor: '#EF4444', bg: '#FEE2E2', label: 'Crítico' },
+  atras:   { Icon: Clock,        cor: '#F59E0B', bg: '#FEF3C7', label: 'Atrás' },
 };
 
 export default function AlertasCriticos() {
@@ -67,7 +67,7 @@ export default function AlertasCriticos() {
         <header style={{ marginBottom: 12 }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             <AlertCircle size={18} style={{ color: '#10B981' }} />
-            Alertas criticos
+            Alertas críticos
           </h2>
         </header>
         <div style={{
@@ -87,10 +87,10 @@ export default function AlertasCriticos() {
           <div>
             <h2 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
               <AlertCircle size={18} style={{ color: '#EF4444' }} />
-              Alertas criticos
+              Alertas críticos
             </h2>
             <p style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
-              Top 3 KPIs · {data.total_criticos} criticos · {data.total_atrasados} atrasados · OKRs priorizados
+              Top 3 KPIs · {data.total_criticos} críticos · {data.total_atrasados} atrasados · OKRs priorizados
             </p>
           </div>
           {data.total_em_alerta > 3 && (

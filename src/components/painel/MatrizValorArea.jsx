@@ -28,8 +28,8 @@ const STATUS_COR = {
 
 const STATUS_LABEL_CURTO = {
   verde:    'OK',
-  amarelo:  'Atencao',
-  vermelho: 'Critico',
+  amarelo:  'Atenção',
+  vermelho: 'Crítico',
   sem_dado: 'Sem dado',
   na:       'N/A',
 };
@@ -92,7 +92,7 @@ export default function MatrizValorArea() {
             Matriz Valor × Area
           </h2>
           <p style={{ fontSize: 11, color: C.t3, marginTop: 4, margin: 0 }}>
-            Clique numa celula para ver os KPIs daquela intersecao. Cor = pior status entre os KPIs.
+            Clique numa célula para ver os KPIs daquela interseção. Cor = pior status entre os KPIs.
           </p>
         </header>
 
@@ -160,7 +160,7 @@ export default function MatrizValorArea() {
                           e.currentTarget.style.transform = 'scale(1)';
                           e.currentTarget.style.boxShadow = 'none';
                         }}
-                        title={isNA ? 'Sem KPIs nesta intersecao' : `${cell?.total_kpis} KPIs · ${STATUS_LABEL_CURTO[cell?.status]}`}
+                        title={isNA ? 'Sem KPIs nesta interseção' : `${cell?.total_kpis} KPIs · ${STATUS_LABEL_CURTO[cell?.status]}`}
                       >
                         {isNA ? (
                           <span style={{ color: '#9CA3AF', fontWeight: 500, fontSize: 10 }}>—</span>
@@ -190,12 +190,12 @@ export default function MatrizValorArea() {
           fontSize: 10, color: C.t3,
         }}>
           <Legenda cor={STATUS_COR.verde}    label={`Em dia · ${countByStatus.verde}`} />
-          <Legenda cor={STATUS_COR.amarelo}  label={`Atencao · ${countByStatus.amarelo}`} />
-          <Legenda cor={STATUS_COR.vermelho} label={`Critico · ${countByStatus.vermelho}`} />
+          <Legenda cor={STATUS_COR.amarelo}  label={`Atenção · ${countByStatus.amarelo}`} />
+          <Legenda cor={STATUS_COR.vermelho} label={`Crítico · ${countByStatus.vermelho}`} />
           <Legenda cor={STATUS_COR.sem_dado} label={`Sem dado · ${countByStatus.sem_dado}`} />
           <Legenda cor={STATUS_COR.na}       label={`N/A · ${countByStatus.na}`} />
           <span style={{ marginLeft: 'auto', fontWeight: 600 }}>
-            Total: {totalCells} celulas
+            Total: {totalCells} células
           </span>
         </div>
       </section>
