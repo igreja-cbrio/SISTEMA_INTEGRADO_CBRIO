@@ -20,7 +20,7 @@ import {
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch, Droplets,
+  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch, Droplets, Landmark,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -104,6 +104,12 @@ const NAV_ITEMS = [
           { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
+        ],
+      },
+      {
+        title: 'Governança',
+        items: [
+          { label: 'Governança', description: 'Ciclo de reuniões da diretoria · pauta, documentos e atas', icon: Landmark, path: '/governanca', module: 'governanca' },
         ],
       },
     ],
