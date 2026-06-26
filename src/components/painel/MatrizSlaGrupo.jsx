@@ -40,8 +40,8 @@ const STATUS_COR = {
 
 const STATUS_LABEL_CURTO = {
   verde:    'OK',
-  amarelo:  'Atencao',
-  vermelho: 'Critico',
+  amarelo:  'Atenção',
+  vermelho: 'Crítico',
   sem_dado: 'Sem dado',
   na:       'N/A',
 };
@@ -212,7 +212,7 @@ export default function MatrizSlaGrupo({ titulo, subtitulo, loadMatriz, loadCelu
           <Legenda cor={STATUS_COR.vermelho} label={`<70% ou com atraso · ${countByStatus.vermelho}`} />
           <Legenda cor={STATUS_COR.sem_dado} label={`Sem dado · ${countByStatus.sem_dado}`} />
           <span style={{ marginLeft: 'auto', fontWeight: 600 }}>
-            desde {desde} · {totalCells} celulas
+            desde {desde} · {totalCells} células
           </span>
         </div>
       </section>

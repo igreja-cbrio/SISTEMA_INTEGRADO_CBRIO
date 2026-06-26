@@ -21,8 +21,8 @@ const STATUS_OPACITY = {
 
 const STATUS_LABEL = {
   verde:    'Em dia',
-  amarelo:  'Atencao',
-  vermelho: 'Critico',
+  amarelo:  'Atenção',
+  vermelho: 'Crítico',
   sem_dado: 'Sem dado',
 };
 
