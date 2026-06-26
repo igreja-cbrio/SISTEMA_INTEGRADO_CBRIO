@@ -53,7 +53,7 @@ export default function NsmTendencia() {
   if (loading || !serie || !serie.length) return null;
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: '16px 18px' }}>
+    <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, padding: '16px 18px', boxShadow: 'var(--shadow), var(--hi)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         <TrendingUp size={16} style={{ color: C.primary }} />
         <h3 style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: 0 }}>
