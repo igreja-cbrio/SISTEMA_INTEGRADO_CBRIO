@@ -670,3 +670,80 @@ a img[data-foto-avatar],
             backdrop-filter: none;
   }
 }
+
+/* ============================================================
+   GLASSMORPHISM · Dashboard Semanal (pedido do Matheus).
+   Frosted glass nos cards/painéis, theme-aware (branco no claro,
+   escuro no dark). Dado denso (tabela/gráfico) segue NÍTIDO —
+   regra de ouro + legibilidade AA (suavizei o inner-glow do CSS
+   original pra o texto não lavar).
+   ============================================================ */
+.glass-dash { position: relative; }
+.glass-dash::before {
+  content: '';
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(900px 520px at 12% 0%, rgba(0,179,157,0.12), transparent 60%),
+    radial-gradient(820px 480px at 100% 6%, rgba(40,120,150,0.10), transparent 55%);
+}
+/* CARDS → vidro fosco (dark default) */
+.glass-dash .glass-surface,
+.glass-dash .cbrio-card,
+.glass-dash .bg-card {
+  background: rgba(20,28,33,0.55) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+          backdrop-filter: blur(14px) saturate(150%);
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  border-radius: 18px !important;
+  box-shadow:
+    0 8px 32px rgba(0,0,0,0.30),
+    inset 0 1px 0 rgba(255,255,255,0.10),
+    inset 1px 0 0 rgba(255,255,255,0.05) !important;
+}
+/* TEMA CLARO → vidro BRANCO fosco (estilo do CSS enviado, suavizado p/ ler) */
+[data-theme="light"] .glass-dash::before {
+  background:
+    radial-gradient(900px 520px at 12% 0%, rgba(0,179,157,0.10), transparent 60%),
+    radial-gradient(820px 480px at 100% 6%, rgba(40,140,165,0.07), transparent 55%);
+}
+[data-theme="light"] .glass-dash .glass-surface,
+[data-theme="light"] .glass-dash .cbrio-card,
+[data-theme="light"] .glass-dash .bg-card {
+  background: rgba(255,255,255,0.62) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+          backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.55) !important;
+  box-shadow:
+    0 8px 32px rgba(11,31,38,0.10),
+    inset 0 1px 0 rgba(255,255,255,0.75),
+    inset 1px 0 0 rgba(255,255,255,0.5),
+    inset 0 -1px 0 rgba(255,255,255,0.25) !important;
+}
+/* DADO DENSO fica NÍTIDO (não envidraçar tabela/gráfico) */
+.glass-dash .glass-surface:has(table),
+.glass-dash .glass-surface:has(.recharts-wrapper),
+.glass-dash .cbrio-card:has(table),
+.glass-dash .cbrio-card:has(.recharts-wrapper),
+.glass-dash .bg-card:has(table),
+.glass-dash .bg-card:has(.recharts-wrapper) {
+  background: var(--cbrio-card) !important;
+  -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+}
+[data-theme="light"] .glass-dash .glass-surface:has(table),
+[data-theme="light"] .glass-dash .glass-surface:has(.recharts-wrapper),
+[data-theme="light"] .glass-dash .cbrio-card:has(table),
+[data-theme="light"] .glass-dash .cbrio-card:has(.recharts-wrapper),
+[data-theme="light"] .glass-dash .bg-card:has(table),
+[data-theme="light"] .glass-dash .bg-card:has(.recharts-wrapper) {
+  background: #ffffff !important;
+}
+/* acessibilidade · "reduzir transparência" → cards sólidos */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-dash .glass-surface,
+  .glass-dash .cbrio-card,
+  .glass-dash .bg-card { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  [data-theme="light"] .glass-dash .glass-surface,
+  [data-theme="light"] .glass-dash .cbrio-card,
+  [data-theme="light"] .glass-dash .bg-card { background: #ffffff !important; }
+}

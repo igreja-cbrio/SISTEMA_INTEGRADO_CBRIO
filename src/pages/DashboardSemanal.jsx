@@ -70,7 +70,7 @@ export default function DashboardSemanal() {
   return (
     <div
       ref={wrapperRef}
-      className={`space-y-4 ${isFullscreen ? 'p-8 bg-background overflow-auto h-screen' : 'p-1'}`}
+      className={`glass-dash space-y-4 ${isFullscreen ? 'p-8 bg-background overflow-auto h-screen' : 'p-1'}`}
     >
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
