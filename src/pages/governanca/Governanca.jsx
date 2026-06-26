@@ -17,7 +17,9 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   ChevronLeft, ChevronRight, X, Plus, Trash2, FileText, Upload, Download,
   CheckCircle2, Circle, ClipboardList, Sparkles, Loader2, CalendarDays, Settings2,
+  Brain, Layers, Pencil,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
 import { governanca as gov } from '../../api';
 import { formatErro } from '../../lib/formatErro';
@@ -44,9 +46,13 @@ const STATUS_MEETING = {
 const STATUS_TASK = { pendente: 'Pendente', em_andamento: 'Em andamento', concluida: 'Concluída', cancelada: 'Cancelada' };
 const TIPO_DOC = {
   entrada: { label: 'Documento (pré-reunião)', cor: '#3B82F6' },
+  transcricao: { label: 'Transcrição (Plaud)', cor: '#0EA5E9' },
   ata: { label: 'Ata', cor: '#10B981' },
   apoio: { label: 'Apoio', cor: '#8B5CF6' },
+  pauta_ia: { label: 'Pauta (IA)', cor: '#00B39D' },
 };
+// Tipos que o usuário pode SUBIR (pauta_ia é gerada pela IA, não enviada).
+const UPLOAD_TIPOS = ['transcricao', 'entrada', 'apoio', 'ata'];
 const SIGLAS_RELATORIO = new Set(['OKR', 'DRE', 'KPI', 'CC', 'DE', 'AG']);
 
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -129,11 +135,13 @@ export default function Governanca() {
           <p style={{ color: C.t2 }} className="text-sm">Ciclo de reuniões da diretoria · pauta, documentos, atas e pendências</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setView(view === 'tipos' ? 'agenda' : 'tipos')}
-            className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg"
-            style={{ border: `1px solid ${C.border}`, color: C.t2, background: view === 'tipos' ? C.primaryBg : 'transparent' }}>
-            <Settings2 size={15} /> Tipos
-          </button>
+          {[['agenda', 'Agenda', CalendarDays], ['analise', 'Análise', Layers], ['tipos', 'Tipos', Settings2]].map(([v, label, Icon]) => (
+            <button key={v} onClick={() => setView(v)}
+              className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg"
+              style={{ border: `1px solid ${C.border}`, color: view === v ? C.primary : C.t2, background: view === v ? C.primaryBg : 'transparent' }}>
+              <Icon size={15} /> {label}
+            </button>
+          ))}
           {canEdit && view === 'agenda' && (
             <button onClick={() => setNovaOpen(true)} className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg text-white"
               style={{ background: C.primary }}><Plus size={15} /> Reunião</button>
@@ -143,6 +151,8 @@ export default function Governanca() {
 
       {view === 'tipos' ? (
         <TiposPanel types={types} canEdit={canEdit} onChange={carregar} />
+      ) : view === 'analise' ? (
+        <AnalisePanel types={types} canEdit={canEdit} />
       ) : (
         <>
           {/* Navegação de mês */}
@@ -221,8 +231,23 @@ function DetalheReuniao({ id, canEdit, types, onClose, onChange }) {
   const [prep, setPrep] = useState(null);
   const [prepLoading, setPrepLoading] = useState(false);
   const [novaTarefa, setNovaTarefa] = useState({ titulo: '', responsavel: '', prazo: '' });
-  const [uploadTipo, setUploadTipo] = useState('entrada');
+  const [uploadTipo, setUploadTipo] = useState('transcricao');
   const [uploading, setUploading] = useState(false);
+  const [gerandoPauta, setGerandoPauta] = useState(false);
+
+  async function gerarPautaIA() {
+    if (gerandoPauta) return;
+    if (!window.confirm('Gerar a pauta desta reunião com IA (resumo + pendências + indicadores)? Pode levar até 1 minuto.')) return;
+    setGerandoPauta(true);
+    try { await gov.meetings.gerarPauta(id); toast.success('Pauta gerada pela IA'); await carregar(); }
+    catch (e) { toast.error(formatErro(e)); }
+    finally { setGerandoPauta(false); }
+  }
+  async function salvarDocMd(docId, md) {
+    const r = await gov.docs.update(docId, md);
+    await carregar();
+    return r;
+  }
 
   const carregar = useCallback(async () => {
     try {
@@ -381,14 +406,18 @@ function DetalheReuniao({ id, canEdit, types, onClose, onChange }) {
 
             {/* documentos */}
             <div>
-              <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: C.text }}><FileText size={15} /> Documentos</div>
                 {canEdit && (
                   <div className="flex items-center gap-1.5">
+                    <button onClick={gerarPautaIA} disabled={gerandoPauta} title="Gera a pauta desta reunião com IA"
+                      className="text-xs px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1.5 text-white" style={{ background: C.primary, opacity: gerandoPauta ? 0.6 : 1 }}>
+                      {gerandoPauta ? <Loader2 className="animate-spin" size={14} /> : <Brain size={14} />} {gerandoPauta ? 'Gerando…' : 'Gerar pauta (IA)'}
+                    </button>
                     <select value={uploadTipo} onChange={e => setUploadTipo(e.target.value)} style={{ ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 }}>
-                      {Object.entries(TIPO_DOC).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                      {UPLOAD_TIPOS.map(k => <option key={k} value={k}>{TIPO_DOC[k].label}</option>)}
                     </select>
-                    <label className="text-xs px-2.5 py-1.5 rounded-lg cursor-pointer inline-flex items-center gap-1.5 text-white" style={{ background: C.primary, opacity: uploading ? 0.6 : 1 }}>
+                    <label className="text-xs px-2.5 py-1.5 rounded-lg cursor-pointer inline-flex items-center gap-1.5" style={{ border: `1px solid ${C.border}`, color: C.t2, opacity: uploading ? 0.6 : 1 }}>
                       {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />} Enviar
                       <input type="file" hidden disabled={uploading} onChange={enviarDoc} />
                     </label>
@@ -398,8 +427,8 @@ function DetalheReuniao({ id, canEdit, types, onClose, onChange }) {
               {(m?.docs || []).length === 0 ? (
                 <p className="text-sm" style={{ color: C.t3 }}>Nenhum documento anexado.</p>
               ) : (
-                <div className="space-y-1.5">
-                  {m.docs.map(d => {
+                <div className="space-y-2">
+                  {m.docs.filter(d => d.tipo !== 'pauta_ia').map(d => {
                     const td = TIPO_DOC[d.tipo] || TIPO_DOC.entrada;
                     return (
                       <div key={d.id} className="flex items-center gap-2 p-2 rounded-lg" style={{ border: `1px solid ${C.border}` }}>
@@ -410,6 +439,10 @@ function DetalheReuniao({ id, canEdit, types, onClose, onChange }) {
                       </div>
                     );
                   })}
+                  {m.docs.filter(d => d.tipo === 'pauta_ia').map(d => (
+                    <BlocoMarkdownEditavel key={d.id} titulo="Pauta gerada pela IA" conteudo={d.conteudo_md ?? ''} canEdit={canEdit}
+                      onSalvar={(md) => salvarDocMd(d.id, md)} onRemover={canEdit ? () => removerDoc(d) : null} />
+                  ))}
                 </div>
               )}
             </div>
@@ -535,6 +568,137 @@ function NovaReuniaoModal({ types, dataPadrao, onClose, onSaved }) {
           <button onClick={salvar} disabled={saving} className="text-sm px-4 py-2 rounded-lg text-white" style={{ background: C.primary, opacity: saving ? 0.6 : 1 }}>{saving ? 'Criando…' : 'Criar'}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+function BlocoMarkdownEditavel({ titulo, conteudo, canEdit, onSalvar, onRemover, vazioMsg }) {
+  const [editando, setEditando] = useState(false);
+  const [txt, setTxt] = useState(conteudo || '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setTxt(conteudo || ''); }, [conteudo]);
+  const temConteudo = conteudo != null && conteudo !== '';
+  async function salvar() {
+    setSaving(true);
+    try { await onSalvar(txt); setEditando(false); toast.success('Salvo'); }
+    catch (e) { toast.error(formatErro(e)); }
+    finally { setSaving(false); }
+  }
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+      <div className="flex items-center justify-between gap-2 p-2" style={{ background: C.primaryBg }}>
+        <span className="text-sm font-medium flex items-center gap-1.5" style={{ color: C.text }}><Brain size={14} style={{ color: C.primary }} /> {titulo}</span>
+        <div className="flex items-center gap-1.5">
+          {canEdit && temConteudo && !editando && <button onClick={() => setEditando(true)} className="text-xs px-2 py-1 rounded" style={{ border: `1px solid ${C.border}`, color: C.t2 }}><Pencil size={12} className="inline mr-1" />Editar</button>}
+          {canEdit && editando && <button onClick={salvar} disabled={saving} className="text-xs px-2 py-1 rounded text-white" style={{ background: C.primary }}>{saving ? 'Salvando…' : 'Salvar'}</button>}
+          {canEdit && editando && <button onClick={() => { setEditando(false); setTxt(conteudo || ''); }} className="text-xs px-2 py-1 rounded" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Cancelar</button>}
+          {onRemover && !editando && <button onClick={onRemover} title="Remover" style={{ color: '#EF4444' }}><Trash2 size={14} /></button>}
+        </div>
+      </div>
+      <div className="p-3">
+        {!temConteudo ? <p className="text-sm" style={{ color: C.t3 }}>{vazioMsg || 'Sem conteúdo.'}</p>
+          : editando ? <textarea value={txt} onChange={e => setTxt(e.target.value)} rows={16} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: 13 }} />
+            : <div className="text-sm leading-relaxed governanca-md" style={{ color: C.text }}><ReactMarkdown>{conteudo}</ReactMarkdown></div>}
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+function AnalisePanel({ types, canEdit }) {
+  const anoAtual = new Date().getFullYear();
+  const [sigla, setSigla] = useState(types?.[0]?.sigla || 'OKR');
+  const [ano, setAno] = useState(anoAtual);
+  const [data, setData] = useState(null);
+  const [memoria, setMemoria] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [gerando, setGerando] = useState(false);
+
+  const carregar = useCallback(async () => {
+    if (!sigla) return;
+    setLoading(true);
+    try {
+      const [a, m] = await Promise.all([gov.analise(sigla, ano), gov.memoria.get(sigla, ano)]);
+      setData(a); setMemoria(m);
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setLoading(false); }
+  }, [sigla, ano]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function gerarMemoria() {
+    if (gerando) return;
+    if (!window.confirm('Gerar/atualizar a memória do tema com IA (consolida transcrições, atas e dados do sistema)? Pode levar até 1 minuto.')) return;
+    setGerando(true);
+    try { const m = await gov.memoria.gerar(sigla, ano); setMemoria(m); toast.success('Memória atualizada'); }
+    catch (e) { toast.error(formatErro(e)); }
+    finally { setGerando(false); }
+  }
+
+  const pend = data?.pendencias_abertas || [];
+  return (
+    <div className="max-w-4xl">
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <select value={sigla} onChange={e => setSigla(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+          {(types || []).map(t => <option key={t.id} value={t.sigla}>{t.nome} ({t.sigla})</option>)}
+        </select>
+        <select value={ano} onChange={e => setAno(Number(e.target.value))} style={{ ...inputStyle, width: 'auto' }}>
+          {[anoAtual, anoAtual - 1, anoAtual - 2].map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        {canEdit && (
+          <button onClick={gerarMemoria} disabled={gerando} className="text-sm px-3 py-2 rounded-lg text-white inline-flex items-center gap-1.5" style={{ background: C.primary, opacity: gerando ? 0.6 : 1 }}>
+            {gerando ? <Loader2 className="animate-spin" size={15} /> : <Brain size={15} />} {gerando ? 'Gerando…' : 'Gerar/atualizar memória'}
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 py-10 justify-center" style={{ color: C.t3 }}><Loader2 className="animate-spin" size={18} /> Carregando…</div>
+      ) : (
+        <div className="space-y-5">
+          <BlocoMarkdownEditavel
+            titulo={`Memória — ${sigla} ${ano}`}
+            conteudo={memoria?.conteudo_md ?? ''}
+            canEdit={canEdit}
+            vazioMsg='Sem memória ainda. Clique em "Gerar/atualizar memória" para a IA consolidar o histórico do tema.'
+            onSalvar={async (md) => { const r = await gov.memoria.update(memoria.id, md); setMemoria(r); }}
+          />
+
+          {pend.length > 0 && (
+            <div>
+              <div className="text-sm font-semibold mb-2" style={{ color: C.text }}>Pendências em aberto ({pend.length})</div>
+              <div className="space-y-1">
+                {pend.map(t => (
+                  <div key={t.id} className="text-sm p-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>
+                    {t.titulo}{t.responsavel ? ` · ${t.responsavel}` : ''}{t.prazo ? ` · prazo ${fmtData(t.prazo)}` : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="text-sm font-semibold mb-2" style={{ color: C.text }}>Reuniões de {ano} ({data?.meetings?.length || 0})</div>
+            {(data?.meetings || []).length === 0 ? (
+              <p className="text-sm" style={{ color: C.t3 }}>Nenhuma reunião deste tema em {ano}.</p>
+            ) : (
+              <div className="space-y-2">
+                {data.meetings.map(m => {
+                  const abertas = (m.tasks || []).filter(t => t.status !== 'concluida' && t.status !== 'cancelada');
+                  return (
+                    <div key={m.id} className="p-3 rounded-xl" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+                      <div className="text-sm font-medium" style={{ color: C.text }}>{fmtData(m.date)} · {(STATUS_MEETING[m.status] || {}).label || m.status}</div>
+                      {m.ata && <div className="text-sm mt-1" style={{ color: C.t2 }}><b>Ata:</b> {m.ata}</div>}
+                      {m.deliberacoes && <div className="text-sm mt-1" style={{ color: C.t2 }}><b>Deliberações:</b> {m.deliberacoes}</div>}
+                      {abertas.length > 0 && <div className="text-xs mt-1" style={{ color: C.t3 }}>Pendências: {abertas.map(t => t.titulo).join(', ')}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
