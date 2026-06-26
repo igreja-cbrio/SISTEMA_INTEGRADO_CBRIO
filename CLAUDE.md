@@ -253,6 +253,12 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   `sessaoAtivaRef`, NÃO em todo evento `SIGNED_IN`. Motivo: o supabase-js re-dispara
   `SIGNED_IN` a cada FOCO de aba (Alt+Tab); bloquear nisso jogava o app no "carregando"
   (e travava) a cada Alt+Tab (incidente 2026-06-26). Não voltar a usar `_event === 'SIGNED_IN'` sozinho.
+- **Tutorial/onboarding (`TutorialContext`) marca "visto" ao EXIBIR** (evento `tour:start`),
+  não só no Concluir/Pular — regra "mostrou 1× não mostra mais", robusta a pular/fechar/
+  clicar fora/recarregar (pedido do Marcos 2026-06-26). Persiste no backend
+  (`/tutorial/complete`, service role, tabela `app_tutorial_progress`) **+ fallback
+  `localStorage`** (`cbrio_tutorial_seen_<uid>`) caso o POST falhe. `completedTours` =
+  união backend ∪ local. "Refazer tutorial" limpa os dois.
 - Nunca adicionar emoji em código a menos que o usuário peça.
 - Evitar criar arquivos `.md` novos a menos que o usuário peça
   explicitamente (exceto este `CLAUDE.md`).
