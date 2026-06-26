@@ -17,7 +17,7 @@ const GOV_LIBRARY_NAME = 'Gestão';
 const MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_MS = 500;
-const TIPOS_DOC = ['entrada', 'ata', 'apoio'];
+const TIPOS_DOC = ['entrada', 'ata', 'apoio', 'transcricao', 'pauta_ia'];
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 

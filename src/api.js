@@ -576,6 +576,7 @@ export const governanca = {
     update: (id, data) => patch(`/governanca/meetings/${id}`, data),
     remove: (id) => del(`/governanca/meetings/${id}`),
     aplicarTemplates: (id) => post(`/governanca/meetings/${id}/apply-templates`, {}),
+    gerarPauta: (id) => post(`/governanca/meetings/${id}/gerar-pauta`, {}),
   },
   tasks: {
     create: (meetingId, data) => post(`/governanca/meetings/${meetingId}/tasks`, data),
@@ -592,6 +593,14 @@ export const governanca = {
     },
     download: (docId) => get(`/governanca/docs/${docId}/download`),
     remove:   (docId) => del(`/governanca/docs/${docId}`),
+    update:   (docId, conteudo_md) => patch(`/governanca/docs/${docId}`, { conteudo_md }),
+  },
+  // Análise por tema + IA (memória acumulada · pauta gerada)
+  analise: (sigla, ano) => get('/governanca/analise?' + new URLSearchParams({ sigla, ...(ano ? { ano } : {}) })),
+  memoria: {
+    get:    (sigla, ano) => get('/governanca/memoria?' + new URLSearchParams({ sigla, ...(ano ? { ano } : {}) })),
+    gerar:  (sigla, ano) => post('/governanca/memoria/gerar', { sigla, ano }),
+    update: (id, conteudo_md) => patch(`/governanca/memoria/${id}`, { conteudo_md }),
   },
 };
 

@@ -11,6 +11,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { supabase } = require('../utils/supabase');
 const govDocs = require('../services/sharepointGovernanca');
+const govIA = require('../services/governancaIA');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: govDocs.MAX_BYTES } });
 
@@ -503,6 +504,22 @@ router.get('/cron/lembrete', async (req, res) => {
 const rd = authorizeModule('governanca', 1); // leitura
 const wr = authorizeModule('governanca', 3); // escrita
 
+// Dados vivos do sistema por tipo de reunião (reusa os relatórios automáticos)
+// pra alimentar a IA (memória e pauta).
+async function dadosVivosPorSigla(sigla, mes) {
+  try {
+    switch ((sigla || '').toUpperCase()) {
+      case 'OKR': return await buildOKR();
+      case 'DRE': return await buildDRE(mes);
+      case 'KPI': return await buildKPI(mes);
+      case 'CC':  return await buildCC(mes);
+      case 'DE':  return await buildDE();
+      case 'AG':  return await buildAG();
+      default: return null;
+    }
+  } catch (e) { console.warn('[GOV] dadosVivos', sigla, e.message); return null; }
+}
+
 // ── Tipos de reunião (editáveis · escopo híbrido) ──────────────────────
 router.get('/types', rd, async (req, res) => {
   try {
@@ -830,6 +847,122 @@ router.delete('/docs/:id', wr, async (req, res) => {
   try {
     await govDocs.removerDoc(req.params.id, req.user.userId);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Análise por tema (Fase B) + IA: memória acumulada + pauta (Fase C)
+// ════════════════════════════════════════════════════════════════════
+
+// Timeline de todas as reuniões de um tipo no ano + pendências em aberto.
+router.get('/analise', rd, async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    let typeId = req.query.type_id, tipo = null;
+    if (req.query.sigla) {
+      const { data } = await supabase.from('governance_meeting_types')
+        .select('id, sigla, nome, cor').eq('sigla', String(req.query.sigla).toUpperCase()).maybeSingle();
+      tipo = data; typeId = data?.id;
+    } else if (typeId) {
+      const { data } = await supabase.from('governance_meeting_types')
+        .select('id, sigla, nome, cor').eq('id', typeId).maybeSingle();
+      tipo = data;
+    }
+    if (!typeId) return res.status(400).json({ error: 'sigla ou type_id obrigatório' });
+
+    const { data: meetings } = await supabase.from('governance_meetings')
+      .select('id, date, status, pauta, ata, deliberacoes')
+      .eq('type_id', typeId).is('deleted_at', null)
+      .gte('date', `${ano}-01-01`).lte('date', `${ano}-12-31`).order('date');
+    const ids = (meetings || []).map(m => m.id);
+
+    const tasksByMtg = {}, docsByMtg = {};
+    if (ids.length) {
+      const { data: tasks } = await supabase.from('governance_tasks')
+        .select('id, meeting_id, titulo, responsavel, prazo, status, prioridade').in('meeting_id', ids);
+      for (const t of (tasks || [])) (tasksByMtg[t.meeting_id] ||= []).push(t);
+      const { data: docs } = await supabase.from('governance_meeting_docs')
+        .select('id, meeting_id, tipo, nome_arquivo, gerado_por_ia').in('meeting_id', ids).is('deleted_at', null);
+      for (const d of (docs || [])) (docsByMtg[d.meeting_id] ||= []).push(d);
+    }
+
+    const lista = (meetings || []).map(m => ({ ...m, tasks: tasksByMtg[m.id] || [], docs: docsByMtg[m.id] || [] }));
+    const pendencias = Object.values(tasksByMtg).flat().filter(t => t.status === 'pendente' || t.status === 'em_andamento');
+    res.json({ tipo: tipo || { id: typeId }, ano, meetings: lista, pendencias_abertas: pendencias });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Memória acumulada do tema (lê o markdown vivo).
+router.get('/memoria', rd, async (req, res) => {
+  try {
+    const ano = Number(req.query.ano) || new Date().getFullYear();
+    let typeId = req.query.type_id;
+    if (req.query.sigla) {
+      const { data } = await supabase.from('governance_meeting_types').select('id').eq('sigla', String(req.query.sigla).toUpperCase()).maybeSingle();
+      typeId = data?.id;
+    }
+    if (!typeId) return res.status(400).json({ error: 'sigla ou type_id obrigatório' });
+    const { data } = await supabase.from('governance_memoria')
+      .select('*').eq('type_id', typeId).eq('ano', ano).is('deleted_at', null).maybeSingle();
+    res.json(data || null);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Gera/atualiza a memória do tema com IA (Plaud + atas + dados vivos).
+router.post('/memoria/gerar', wr, async (req, res) => {
+  try {
+    const ano = Number(req.body?.ano) || new Date().getFullYear();
+    let typeId = req.body?.type_id, sigla = req.body?.sigla;
+    if (sigla && !typeId) {
+      const { data } = await supabase.from('governance_meeting_types').select('id, sigla').eq('sigla', String(sigla).toUpperCase()).maybeSingle();
+      typeId = data?.id; sigla = data?.sigla;
+    } else if (typeId && !sigla) {
+      const { data } = await supabase.from('governance_meeting_types').select('sigla').eq('id', typeId).maybeSingle();
+      sigla = data?.sigla;
+    }
+    if (!typeId) return res.status(400).json({ error: 'sigla ou type_id obrigatório' });
+    const mes = `${ano}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const dadosVivos = await dadosVivosPorSigla(sigla, mes);
+    const row = await govIA.gerarMemoria({ typeId, ano, userId: req.user.userId, dadosVivos });
+    res.status(201).json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/memoria/:id', wr, async (req, res) => {
+  try {
+    if (typeof req.body?.conteudo_md !== 'string') return res.status(400).json({ error: 'conteudo_md obrigatório' });
+    const { data, error } = await supabase.from('governance_memoria')
+      .update({ conteudo_md: req.body.conteudo_md, atualizado_em: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Memória não encontrada' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Gera a pauta da reunião com IA (resumo + pendências + indicadores).
+router.post('/meetings/:id/gerar-pauta', wr, async (req, res) => {
+  try {
+    const { data: m } = await supabase.from('governance_meetings')
+      .select('date, governance_meeting_types(sigla)').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'Reunião não encontrada' });
+    const sigla = m.governance_meeting_types?.sigla;
+    const mes = m.date ? String(m.date).slice(0, 7) : `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const dadosVivos = await dadosVivosPorSigla(sigla, mes);
+    const row = await govIA.gerarPauta({ meetingId: req.params.id, userId: req.user.userId, dadosVivos });
+    res.status(201).json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Edita o texto in-app de um documento gerado (pauta_ia · refinamento humano).
+router.patch('/docs/:id', wr, async (req, res) => {
+  try {
+    if (typeof req.body?.conteudo_md !== 'string') return res.status(400).json({ error: 'conteudo_md obrigatório' });
+    const { data, error } = await supabase.from('governance_meeting_docs')
+      .update({ conteudo_md: req.body.conteudo_md }).eq('id', req.params.id).is('deleted_at', null).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Documento não encontrado' });
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
