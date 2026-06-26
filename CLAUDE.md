@@ -248,7 +248,11 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   e auto-recuperável, bem menos grave que travar o sistema). Cliente é único/singleton.
   Reforço: o **`AuthContext` tem timeout de 8s** no carregamento inicial (`getSession()` num
   `.finally()` + `safetyTimer`) — libera o "carregando" mesmo se algo pendurar por qualquer
-  motivo. NÃO remover esse timeout.
+  motivo. NÃO remover esse timeout. **E o `onAuthStateChange` só bloqueia a UI
+  (`setLoading(true)`) no login REAL** — transição "sem sessão → com sessão" via
+  `sessaoAtivaRef`, NÃO em todo evento `SIGNED_IN`. Motivo: o supabase-js re-dispara
+  `SIGNED_IN` a cada FOCO de aba (Alt+Tab); bloquear nisso jogava o app no "carregando"
+  (e travava) a cada Alt+Tab (incidente 2026-06-26). Não voltar a usar `_event === 'SIGNED_IN'` sozinho.
 - Nunca adicionar emoji em código a menos que o usuário peça.
 - Evitar criar arquivos `.md` novos a menos que o usuário peça
   explicitamente (exceto este `CLAUDE.md`).
