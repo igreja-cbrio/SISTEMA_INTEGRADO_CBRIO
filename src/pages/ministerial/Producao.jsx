@@ -43,6 +43,7 @@ const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function fmtDiaMes(iso) { const p = String(iso).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}` : String(iso); }
 function inicioSemana(d) {
   const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const dow = c.getDay();
@@ -174,6 +175,8 @@ function AbaSemana() {
   const [cultos, setCultos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
+  const [pend, setPend] = useState(null);
+  const [loadingPend, setLoadingPend] = useState(true);
 
   const dias = useMemo(() => diasDaSemana(semanaInicio), [semanaInicio]);
   const ehSemanaAtual = mesmoDia(semanaInicio, inicioSemana(hoje));
@@ -188,6 +191,15 @@ function AbaSemana() {
     finally { setLoading(false); }
   }, [semanaInicio]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Pendências de preenchimento (não preenchidos + incompletos) desde 07/06 · todas as semanas
+  const carregarPend = useCallback(async () => {
+    setLoadingPend(true);
+    try { setPend(await prodApi.pendencias()); }
+    catch { setPend(null); }
+    finally { setLoadingPend(false); }
+  }, []);
+  useEffect(() => { carregarPend(); }, [carregarPend]);
 
   const irSemana = (delta) => { const n = new Date(semanaInicio); n.setDate(n.getDate() + delta * 7); setSemanaInicio(n); };
   const voltarHoje = () => setSemanaInicio(inicioSemana(new Date()));
@@ -209,8 +221,39 @@ function AbaSemana() {
     let p = 0, n = 0; cultos.forEach(c => c.producao_preenchido ? p++ : n++); return { preenchidos: p, pendentes: n };
   }, [cultos]);
 
+  const pendList = useMemo(() => {
+    if (!pend) return [];
+    return [
+      ...(pend.nao_preenchidos || []).map(c => ({ ...c, _inc: false })),
+      ...(pend.incompletos || []).map(c => ({ ...c, _inc: true })),
+    ].sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.hora || '').localeCompare(a.hora || ''));
+  }, [pend]);
+  const totalPend = (pend?.nao_preenchidos?.length || 0) + (pend?.incompletos?.length || 0);
+
   return (
     <section>
+      {!loadingPend && pend && (totalPend > 0 ? (
+        <div style={{ marginBottom: 14, padding: '10px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>A preencher · desde 07/06</span>
+            {(pend.nao_preenchidos?.length || 0) > 0 && <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: '#EF4444' }}>{pend.nao_preenchidos.length}</strong> não preenchido{pend.nao_preenchidos.length > 1 ? 's' : ''}</span>}
+            {(pend.incompletos?.length || 0) > 0 && <span style={{ fontSize: 12, color: C.t2 }}><strong style={{ color: '#F59E0B' }}>{pend.incompletos.length}</strong> incompleto{pend.incompletos.length > 1 ? 's' : ''}</span>}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {pendList.map(c => (
+              <button key={c.id} onClick={() => setEditando(c)}
+                title={c._inc ? `Incompleto · faltam ${c.etapas_faltam} momento(s)` : 'Não preenchido'}
+                style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: C.text, background: C.inputBg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${c._inc ? '#F59E0B' : '#EF4444'}` }}>
+                <span>{fmtDiaMes(c.data)}</span>
+                <span style={{ color: C.t2, fontWeight: 500 }}>{c.service_type_name || c.nome}</span>
+                {c._inc && <span style={{ color: '#F59E0B', fontWeight: 700 }}>faltam {c.etapas_faltam}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginBottom: 14, fontSize: 11, color: '#10B981', fontWeight: 600 }}>✓ Tudo preenchido desde 07/06</div>
+      ))}
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
           <Calendar size={11} style={{ color: C.primary }} /> Cultos da semana
@@ -260,7 +303,7 @@ function AbaSemana() {
         </div>
       )}
 
-      {editando && <ModalProducao culto={editando} onClose={() => setEditando(null)} onSaved={() => { setEditando(null); carregar(); }} />}
+      {editando && <ModalProducao culto={editando} onClose={() => setEditando(null)} onSaved={() => { setEditando(null); carregar(); carregarPend(); }} />}
     </section>
   );
 }

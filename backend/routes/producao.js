@@ -200,6 +200,55 @@ router.get('/semana', authorizeModule('producao', 1), async (req, res) => {
   }
 });
 
+// ── Pendências de preenchimento (não preenchidos + incompletos) ──────────────
+// GET /api/producao/pendencias · cultos de 2026-06-07 (início do cronograma por
+// momento) até hoje que faltam lançar. Culto com executado 0/null = NÃO preenchido;
+// com executado real mas algum momento em branco (executado_seg NULL) = INCOMPLETO.
+// Cultos anteriores a 07/06 (sem etapas) ficam de fora pelo corte de data.
+router.get('/pendencias', authorizeModule('producao', 1), async (req, res) => {
+  try {
+    const DESDE = '2026-06-07';
+    const ate = new Date().toISOString().slice(0, 10);
+    const { data: cultos, error } = await supabase
+      .from('vw_culto_stats')
+      .select('*')
+      .gte('data', DESDE).lte('data', ate)
+      .order('data', { ascending: false })
+      .order('hora', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    const ids = (cultos || []).map(c => c.id);
+    const prodById = {}, etapasByCulto = {};
+    if (ids.length > 0) {
+      const [prod, etapas] = await Promise.all([
+        fetchAllPaged(() => supabase.from('culto_producao').select('culto_id, duracao_segundos').in('culto_id', ids).order('culto_id')),
+        fetchAllPaged(() => supabase.from('culto_producao_etapas').select('culto_id, executado_seg').in('culto_id', ids).order('culto_id')),
+      ]);
+      (prod || []).forEach(p => { prodById[p.culto_id] = p; });
+      (etapas || []).forEach(e => {
+        if (!etapasByCulto[e.culto_id]) etapasByCulto[e.culto_id] = [];
+        etapasByCulto[e.culto_id].push(e);
+      });
+    }
+
+    const nao_preenchidos = [], incompletos = [];
+    for (const c of (cultos || [])) {
+      const dur = prodById[c.id]?.duracao_segundos;
+      if (dur == null || dur === 0) {
+        nao_preenchidos.push(c); // nada lançado (ou preenchido zerado / teste)
+      } else {
+        const eps = etapasByCulto[c.id] || [];
+        const faltam = eps.filter(e => e.executado_seg == null).length;
+        if (faltam > 0) incompletos.push({ ...c, etapas_total: eps.length, etapas_faltam: faltam });
+      }
+    }
+    res.json({ desde: DESDE, ate, nao_preenchidos, incompletos });
+  } catch (e) {
+    console.error('producao/pendencias:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar pendências' });
+  }
+});
+
 // ── Detalhe de produção de um culto (modal) ──────────────────────────────────
 router.get('/culto/:id', authorizeModule('producao', 1), async (req, res) => {
   try {
