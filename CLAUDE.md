@@ -1808,6 +1808,16 @@ Dízimo"/"Música Ceia" (separados do Louvor pela regra acima) e "Intercessão"/
 com executado 0 (feitos dentro da música / junto da generosidade). Carga só de dados ·
 o código não depende dela. Aplicar no SQL Editor (RAISE NOTICE confirma os 4 cultos).
 
+**Consolidação dos momentos do 07/06 (migration `20260626120000` · pedido do Marcos 2026-06-26):**
+Os 4 cultos de 07/06 tinham os momentos "crus" da planilha; consolidados pra forma
+canônica do roteiro (o 14/06 já estava assim via 20260616190000): Generosidade + Música
+Dízimo → **"Dízimos e Ofertas"**, Vídeo Testemunho + Vídeo Pré-Pregação → **"Vídeo
+Pré-Pregação"**, Avisos + Benção → **"Avisos / Benção"** (os três somando previsto +
+executado), e Música Ceia → **"Ceia"** (`tipo='especial'`, `categoria_especial='ceia'`,
+segue na seção 'culto' → entra no tempo total, como a "Apresentação de Criança" do 14/06).
+**Totais do culto inalterados** (só junta linhas). REPLACE idempotente + recomputa o
+satélite `culto_producao` (totais derivados das etapas).
+
 **Gráfico de tempo de culto + total do estouro no Detalhado (2026-06-25 · só código, sem migration):**
 - O `/acumulado` ganhou 2 campos: `serie` (1 ponto por culto preenchido ·
   `{data, tipo, duracao_min, previsto_min}` ordenado por data) e `por_etapa_total`
