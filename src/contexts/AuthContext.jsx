@@ -93,8 +93,13 @@ export function AuthProvider({ children }) {
       // tem email verificado.
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id);
-        fetchPermissions();
+        // No LOGIN, segura o loading até profile+permissões chegarem — senão o
+        // homeRoute roda com modulePerms nulo e manda pro lugar errado (ex.:
+        // /devocional ou /dashboard em vez da trava de módulo).
+        const ehLogin = _event === 'SIGNED_IN';
+        if (ehLogin) setLoading(true);
+        await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
+        if (ehLogin) setLoading(false);
       } else {
         setProfile(null);
         setModulePerms(null);
@@ -252,13 +257,17 @@ export function AuthProvider({ children }) {
   // EXATAMENTE 1 módulo — ex.: voluntário responsável só pelo Batismo — abre
   // direto naquele módulo, sem menu e sem poder navegar pra mais nada. Não afeta
   // staff (is_membro_only=false), admin, diretor nem voluntário (kiosk próprio).
-  const modulosComAcesso = modulePerms
-    ? Object.keys(modulePerms).filter((s) => (modulePerms[s]?.leitura || 0) >= 1)
+  // ⚠️ modulePerms é indexado por NOME *e* por SLUG (2 chaves apontando pro MESMO
+  // objeto), então conta módulos DISTINTOS por referência — não por nº de chaves.
+  const entriesComAcesso = modulePerms
+    ? [...new Set(Object.values(modulePerms).filter((p) => p && (p.leitura || 0) >= 1))]
     : [];
+  const slugTravavel = entriesComAcesso.length === 1
+    ? Object.keys(MODULO_ROTA_TRAVA).find((s) => modulePerms?.[s] === entriesComAcesso[0])
+    : null;
   const moduloTravado = (
-    !!profile?.is_membro_only && !isAdmin && profile?.role !== 'diretor' && !isVoluntario
-    && modulosComAcesso.length === 1 && MODULO_ROTA_TRAVA[modulosComAcesso[0]]
-  ) ? modulosComAcesso[0] : null;
+    !!profile?.is_membro_only && !isAdmin && profile?.role !== 'diretor' && !isVoluntario && slugTravavel
+  ) ? slugTravavel : null;
   const rotaTravada = moduloTravado ? MODULO_ROTA_TRAVA[moduloTravado] : null;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
