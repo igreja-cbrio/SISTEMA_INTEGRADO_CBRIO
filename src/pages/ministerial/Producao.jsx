@@ -772,15 +772,6 @@ function AbaDetalhado() {
           <div style={{ overflowX: 'auto' }}>
             <h3 style={subTit}>Estouro por etapa (previsto × executado)</h3>
             <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>Onde o tempo mais foge do cronograma. Ordenado pelo maior estouro médio.</p>
-            {data.por_etapa_total && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'baseline', padding: '10px 12px', marginBottom: 10, background: C.inputBg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}>
-                <span style={{ color: C.t2 }}>Culto inteiro ({data.por_etapa_total.ocorrencias} {data.por_etapa_total.ocorrencias === 1 ? 'culto' : 'cultos'}):</span>
-                <span style={{ color: C.text }}>previsto <strong>{fmtMMSSdash(data.por_etapa_total.previsto_medio_seg)}</strong></span>
-                <span style={{ color: C.text }}>executado <strong>{fmtMMSSdash(data.por_etapa_total.executado_medio_seg)}</strong></span>
-                <span style={{ color: data.por_etapa_total.desvio_medio_seg > 0 ? '#EF4444' : data.por_etapa_total.desvio_medio_seg < 0 ? '#10B981' : C.t2, fontWeight: 600 }}>desvio {fmtDesvio(data.por_etapa_total.desvio_medio_seg)}</span>
-                <span style={{ color: C.t2 }}>estourou em <strong>{data.por_etapa_total.estouro_pct}%</strong> dos cultos</span>
-              </div>
-            )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: C.t3, textAlign: 'left', borderBottom: `1px solid ${C.border}` }}>
@@ -803,6 +794,15 @@ function AbaDetalhado() {
                 {(data.por_etapa || []).length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem etapas lançadas no período.</td></tr>}
               </tbody>
             </table>
+            {data.por_etapa_total && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'baseline', padding: '10px 12px', marginTop: 10, background: C.inputBg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}>
+                <span style={{ color: C.t2 }}>Culto inteiro ({data.por_etapa_total.ocorrencias} {data.por_etapa_total.ocorrencias === 1 ? 'culto' : 'cultos'}):</span>
+                <span style={{ color: C.text }}>previsto <strong>{fmtMMSSdash(data.por_etapa_total.previsto_medio_seg)}</strong></span>
+                <span style={{ color: C.text }}>executado <strong>{fmtMMSSdash(data.por_etapa_total.executado_medio_seg)}</strong></span>
+                <span style={{ color: data.por_etapa_total.desvio_medio_seg > 0 ? '#EF4444' : data.por_etapa_total.desvio_medio_seg < 0 ? '#10B981' : C.t2, fontWeight: 600 }}>desvio {fmtDesvio(data.por_etapa_total.desvio_medio_seg)}</span>
+                <span style={{ color: C.t2 }}>estourou em <strong>{data.por_etapa_total.estouro_pct}%</strong> dos cultos</span>
+              </div>
+            )}
           </div>
 
           <div style={{ overflowX: 'auto' }}>
