@@ -1787,7 +1787,11 @@ tipo (aba Modelos · `service_type_id` NULL = geral · seed Música 1/2/3 +
 Intercessão + Pregação + … = 60:00). `culto_producao_etapas` = etapas por culto
 (pré-carregam do roteiro · `previsto_seg`/`executado_seg`/`secao` culto|pos_culto
 + atividades especiais ceia/batismo). A análise previsto×executado / estouro por
-etapa é computada no `/acumulado` (NÃO mexe em `kpi_calcular_valor_auto`).
+etapa é computada no `/acumulado` (NÃO mexe em `kpi_calcular_valor_auto`). ⚠️ **Culto com
+executado 0 = NÃO preenchido** (teste/pendente) → fica de fora de TODAS as médias do Detalhado
+(duração média, pontualidade, aderência, desvio, por-etapa, gráfico) via `cultoTemExec` +
+`duracao_minutos/segundos > 0`. Senão um culto vazio (prev 60:00 / exec 0 = desvio −60:00) afunda
+a média (bug pego 2026-06-26: a "Quarta teste" puxava o "Culto inteiro" pra −3:43 com 78% estourando).
 
 **Preview editável por culto + Louvor no Detalhado (2026-06-25 · só código, sem migration):**
 - O `Previsto` de cada momento virou input mm:ss no modal de preenchimento
