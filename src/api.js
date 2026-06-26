@@ -551,9 +551,46 @@ export const revisoes = {
 };
 
 export const governanca = {
+  // Relatórios automáticos de preparo (legado · consumidos no Eventos)
   tipos: () => get('/governanca/tipos'),
   relatorio: (sigla) => get(`/governanca/relatorio/${sigla}`),
   salvarObservacoes: (sigla, observacoes) => post(`/governanca/relatorio/${sigla}/observacoes`, { observacoes }),
+
+  // Ciclo de reuniões de diretoria (F1)
+  types: {
+    list:   () => get('/governanca/types'),
+    create: (data) => post('/governanca/types', data),
+    update: (id, data) => patch(`/governanca/types/${id}`, data),
+  },
+  cycles: {
+    list:   (year) => get('/governanca/cycles' + (year ? `?year=${year}` : '')),
+    get:    (id) => get(`/governanca/cycles/${id}`),
+    create: (year, month) => post('/governanca/cycles', { year, month }),
+  },
+  meetings: {
+    list:   (params = {}) => get('/governanca/meetings' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
+    get:    (id) => get(`/governanca/meetings/${id}`),
+    create: (data) => post('/governanca/meetings', data),
+    update: (id, data) => patch(`/governanca/meetings/${id}`, data),
+    remove: (id) => del(`/governanca/meetings/${id}`),
+    aplicarTemplates: (id) => post(`/governanca/meetings/${id}/apply-templates`, {}),
+  },
+  tasks: {
+    create: (meetingId, data) => post(`/governanca/meetings/${meetingId}/tasks`, data),
+    update: (id, data) => patch(`/governanca/tasks/${id}`, data),
+    remove: (id) => del(`/governanca/tasks/${id}`),
+  },
+  docs: {
+    list:     (meetingId) => get(`/governanca/meetings/${meetingId}/docs`),
+    upload:   (meetingId, file, tipo) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      if (tipo) fd.append('tipo', tipo);
+      return requestFile(`/governanca/meetings/${meetingId}/docs`, fd, { timeoutMs: 120_000 });
+    },
+    download: (docId) => get(`/governanca/docs/${docId}/download`),
+    remove:   (docId) => del(`/governanca/docs/${docId}`),
+  },
 };
 
 export const agents = {
