@@ -91,7 +91,13 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
   let failed = 0;
   const usersInseridos = [];
   const erros = [];
-  for (const userId of destinatarios) {
+
+  // Processa os destinatários em CHUNKS paralelos (cada inserção é 1 round-trip
+  // REST ao Supabase · em série isso fica lento quando o fan-out é grande — ex:
+  // fallback pra todos os admins/diretores). Concorrência limitada (CHUNK) pra
+  // não estourar conexões; um destinatário com erro não derruba os demais.
+  const CHUNK = 8;
+  async function processarUm(userId) {
     // Dedup: não cria se já existe notificação não-lida com mesma chave
     if (chaveDedup) {
       const { count } = await supabase
@@ -100,7 +106,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
         .eq('usuario_id', userId)
         .eq('chave_dedup', chaveDedup)
         .eq('lida', false);
-      if (count > 0) { skipped++; continue; }
+      if (count > 0) return { status: 'skipped' };
     }
 
     const { error } = await supabase.from('notificacoes').insert({
@@ -114,12 +120,17 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       chave_dedup: chaveDedup,
       lida: false,
     });
-    if (!error) {
-      inserted++;
-      usersInseridos.push(userId);
-    } else {
-      failed++;
-      erros.push(`${userId.slice(0, 8)}: ${error.message}`);
+    if (!error) return { status: 'inserted', userId };
+    return { status: 'failed', erro: `${userId.slice(0, 8)}: ${error.message}` };
+  }
+
+  for (let i = 0; i < destinatarios.length; i += CHUNK) {
+    const slice = destinatarios.slice(i, i + CHUNK);
+    const resultados = await Promise.all(slice.map(processarUm));
+    for (const r of resultados) {
+      if (r.status === 'inserted') { inserted++; usersInseridos.push(r.userId); }
+      else if (r.status === 'skipped') { skipped++; }
+      else { failed++; erros.push(r.erro); }
     }
   }
 
