@@ -24,8 +24,20 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   );
 }
 
+// Lock NO-OP para o auth · ⚠️ NÃO reativar o lock padrão sem resolver o deadlock.
+// O lock padrão do supabase-js (Web Locks API · `lock:sb-<ref>-auth-token`) usa
+// timeout INFINITO ao adquirir. Quando o lock fica órfão (aba travada, refresh
+// abortado, reload no meio de um refresh), o `getSession()` que roda no carregamento
+// (AuthContext) PENDURA PRA SEMPRE → "carregando infinito / não consigo acessar".
+// Bug conhecido e ativo do supabase-js: issues #1594, #2111, #2013.
+// O no-op desliga o Web Lock (o auth roda direto, sem travar) — corrige o deadlock
+// E os warnings "lock ... was released because another request stole it".
+// Trade-off: sem coordenação de refresh ENTRE ABAS (race raro e auto-recuperável —
+// muito menos grave que pendurar o sistema). Incidente 2026-06-26.
+const noOpLock = async (_name, _acquireTimeout, fn) => fn();
+
 export const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { lock: noOpLock } })
   : null;
 
 // Helper pra a tela de Login mostrar diagnóstico claro ao inves de "Supabase não configurado"

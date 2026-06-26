@@ -238,6 +238,14 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   retry automático em chunk load errors.
 - API client em `src/api.js` — um `export const <modulo>` por módulo,
   com subnamespaces para sub-recursos.
+- ⚠️ **Cliente Supabase (`src/supabaseClient.js`) usa `auth: { lock: noOpLock }` de
+  propósito — NÃO reativar o lock padrão (Web Locks API).** O lock padrão tem timeout
+  INFINITO ao adquirir; quando fica órfão (aba travada / refresh abortado / reload no
+  meio de um refresh), o `getSession()` do carregamento (AuthContext) PENDURA PRA SEMPRE
+  → "carregando infinito / não consigo acessar" (bug ativo supabase-js #1594/#2111 ·
+  incidente 2026-06-26). O no-op desliga o Web Lock → corrige o deadlock e os warnings
+  "lock ... stole it". Trade-off aceito: sem coordenação de refresh ENTRE ABAS (race raro
+  e auto-recuperável, bem menos grave que travar o sistema). Cliente é único/singleton.
 - Nunca adicionar emoji em código a menos que o usuário peça.
 - Evitar criar arquivos `.md` novos a menos que o usuário peça
   explicitamente (exceto este `CLAUDE.md`).
