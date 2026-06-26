@@ -173,14 +173,30 @@ router.post('/inscrever', async (req, res) => {
     // segue como fonte legada (verde/KPIs).
     try {
       const turma = await turmaAbertaAtual(); // null = sem turma aberta → lista de espera
-      await supabase.from('next_matriculas').insert({
-        turma_id: turma?.id || null,
-        nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
-        cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
-        data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
-        ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
-        origem: 'formulario',
-      });
+
+      // Dedup: se a pessoa JÁ está na lista de espera (quando não há turma) ou JÁ
+      // está na turma aberta, não cria outra matrícula (reenvio do formulário não
+      // duplica). Reinscrição é permitida se as matrículas antigas estão em turmas
+      // encerradas. Dedup por membro_id (CPF é opcional no formulário).
+      let jaAtivo = false;
+      if (membroId) {
+        let q = supabase.from('next_matriculas').select('id')
+          .eq('membro_id', membroId).is('deleted_at', null);
+        q = turma?.id ? q.eq('turma_id', turma.id) : q.is('turma_id', null);
+        const { data: ja } = await q.limit(1).maybeSingle();
+        jaAtivo = !!ja;
+      }
+
+      if (!jaAtivo) {
+        await supabase.from('next_matriculas').insert({
+          turma_id: turma?.id || null,
+          nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
+          cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
+          data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
+          ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
+          origem: 'formulario',
+        });
+      }
     } catch (e) {
       console.error('[next] dual-write matrícula:', e.message);
     }
