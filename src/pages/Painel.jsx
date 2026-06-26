@@ -12,6 +12,7 @@
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
+import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { nsm as nsmApi, painel as painelApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -114,35 +115,29 @@ export default function Painel() {
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1300, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Activity size={24} style={{ color: C.primary }} /> Painel CBRio
-          </h1>
-          <p style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
-            North Star Metric · 5 valores · 6 areas · cascata automatica
-            {ultimaAtualizacao && (
-              <span style={{ marginLeft: 8, color: C.t3 }}>· atualizado {timeAgo(ultimaAtualizacao)}</span>
-            )}
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {isAdmin && (
+      <ModuleHeader
+        icon={Activity}
+        title="Painel CBRio"
+        accent={C.primary}
+        subtitle={<>
+          North Star Metric · 5 valores · 6 áreas · cascata automática
+          {ultimaAtualizacao && (
+            <span style={{ marginLeft: 8 }}>· atualizado {timeAgo(ultimaAtualizacao)}</span>
+          )}
+        </>}
+        actions={isAdmin ? (
+          <>
             <button
               onClick={() => navigate('/ritual')}
               style={{
                 padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
-                cursor: 'pointer',
-                background: C.primary, color: '#fff', border: 'none',
+                cursor: 'pointer', background: C.primary, color: '#fff', border: 'none',
                 display: 'inline-flex', alignItems: 'center', gap: 6,
               }}
               title="Revisar OKRs em alerta este mês"
             >
-              <ClipboardCheck size={14} />
-              Ritual Mensal
+              <ClipboardCheck size={14} /> Ritual Mensal
             </button>
-          )}
-          {isAdmin && (
             <button
               onClick={handleRecalcular}
               disabled={recalculando}
@@ -152,14 +147,14 @@ export default function Painel() {
                 background: 'transparent', color: C.t2, border: `1px solid ${C.border}`,
                 display: 'inline-flex', alignItems: 'center', gap: 6, opacity: recalculando ? 0.5 : 1,
               }}
-              title="Forcar recalculo da NSM"
+              title="Forçar recálculo da NSM"
             >
               <RefreshCw size={14} style={{ animation: recalculando ? 'spin 1s linear infinite' : 'none' }} />
               {recalculando ? 'Recalculando...' : 'Recalcular NSM'}
             </button>
-          )}
-        </div>
-      </div>
+          </>
+        ) : undefined}
+      />
 
       {/* NSM CENTRAL · mostra skeleton enquanto carrega · sub-componentes carregam em paralelo */}
       <div data-tour="painel-nsm">
@@ -216,7 +211,7 @@ export default function Painel() {
       <div style={{ marginTop: 24 }}>
         <MatrizSlaGrupo
           titulo="Matriz Gestão × Área"
-          subtitulo="Clique numa celula para ver solicitações e KPIs daquela área da gestão. Hospitalidade = Reserva + Cozinha + Manutenção · Logística = Estoque + Compras."
+          subtitulo="Clique numa célula para ver solicitações e KPIs daquela área da gestão. Hospitalidade = Reserva + Cozinha + Manutenção · Logística = Estoque + Compras."
           loadMatriz={loadMatrizAdm}
           loadCelula={loadCelulaAdm}
         />
@@ -225,7 +220,7 @@ export default function Painel() {
       <div style={{ marginTop: 24 }}>
         <MatrizSlaGrupo
           titulo="Matriz Criativo × Área"
-          subtitulo="Clique numa celula para ver solicitações e KPIs do criativo · 3 áreas: Produção, Adoração, Marketing."
+          subtitulo="Clique numa célula para ver solicitações e KPIs do criativo · 3 áreas: Produção, Adoração, Marketing."
           loadMatriz={loadMatrizCriativo}
           loadCelula={loadCelulaCriativo}
         />
