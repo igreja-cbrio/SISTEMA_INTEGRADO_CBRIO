@@ -97,26 +97,36 @@ function TurmasView() {
   const [loading, setLoading] = useState(true);
   const [novaOpen, setNovaOpen] = useState(false);
   const [turmaAberta, setTurmaAberta] = useState<string | null>(null);
+  const [espera, setEspera] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     try { setTurmas(await nextApi.turmas.list()); } catch (e: any) { toast.error(e?.message || 'Erro ao carregar turmas'); }
+    try { const r = await nextApi.turmas.listaEspera(); setEspera(r?.count || 0); } catch { /* noop */ }
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  const temAberta = turmas.some(t => t.status === 'aberta');
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {espera > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground">{espera}</span> {espera === 1 ? 'pessoa aguardando' : 'pessoas aguardando'} na lista de espera —
+            {temAberta ? ' já entram na próxima turma que você abrir.' : ' abra uma turma pra incluí-las.'}
+          </p>
+        ) : <span />}
         <Button onClick={() => setNovaOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
-          <Plus className="h-4 w-4" /> Nova turma do mês
+          <Plus className="h-4 w-4" /> Abrir turma
         </Button>
       </div>
       {loading ? (
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : turmas.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Nenhuma turma ainda. Crie a turma do mês (2 encontros).
+          Nenhuma turma ainda. Abra a primeira turma (2 encontros).
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -157,8 +167,9 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
     if (!nome.trim()) { toast.error('Informe o nome da turma'); return; }
     setSaving(true);
     try {
-      await nextApi.turmas.create({ nome: nome.trim(), encontros: [{ numero: 1, data: data1 || null }, { numero: 2, data: data2 || null }] });
-      toast.success('Turma criada');
+      const r = await nextApi.turmas.create({ nome: nome.trim(), encontros: [{ numero: 1, data: data1 || null }, { numero: 2, data: data2 || null }] });
+      const n = r?.puxados_da_espera || 0;
+      toast.success(n > 0 ? `Turma aberta · ${n} da lista de espera incluído(s)` : 'Turma aberta');
       onCreated();
     } catch (e: any) { toast.error(e?.message || 'Erro ao criar turma'); }
     setSaving(false);
@@ -166,12 +177,12 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Nova turma do Next</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Abrir turma do Next</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
             <Label>Nome *</Label>
             <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Junho 2026" />
-            <p className="text-[11px] text-muted-foreground mt-1">1 turma por mês — já vem com o mês atual.</p>
+            <p className="text-[11px] text-muted-foreground mt-1">Só uma turma aberta por vez. Ao abrir, todos da lista de espera entram nesta turma.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div><Label>1º encontro</Label><Input type="date" value={data1} onChange={e => setData1(e.target.value)} /></div>
@@ -180,7 +191,7 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={salvar} disabled={saving} className="gap-2">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Criar</Button>
+          <Button onClick={salvar} disabled={saving} className="gap-2">{saving && <Loader2 className="h-4 w-4 animate-spin" />} Abrir turma</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -213,6 +224,10 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   };
   const encerrar = async () => {
     try { await nextApi.turmas.update(turmaId, { status: 'encerrada' }); toast.success('Turma encerrada'); await load(); onChanged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
+  };
+  const reabrir = async () => {
+    try { await nextApi.turmas.update(turmaId, { status: 'aberta' }); toast.success('Turma reaberta'); await load(); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); }
   };
   const setData = async (encId: string, data: string) => {
@@ -288,6 +303,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
               <div className="flex gap-2">
                 {det.status === 'aberta' && <Button variant="outline" onClick={encerrar}>Encerrar turma</Button>}
+                {det.status === 'encerrada' && <Button variant="outline" onClick={reabrir}>Reabrir turma</Button>}
                 <Button onClick={onClose}>Fechar</Button>
               </div>
             </DialogFooter>

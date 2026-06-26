@@ -268,6 +268,7 @@ export const next = {
     create: (data) => post('/next/turmas', data),
     update: (id, data) => patch(`/next/turmas/${id}`, data),
     remove: (id) => del(`/next/turmas/${id}`),
+    listaEspera: () => get('/next/lista-espera'),
   },
   encontros: {
     update: (id, data) => patch(`/next/encontros/${id}`, data),
