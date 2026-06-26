@@ -45,6 +45,7 @@ WHERE t.origem_mes = 'hist-checkin'
   AND NOT EXISTS (SELECT 1 FROM public.next_encontros e WHERE e.turma_id = t.id);
 
 -- 1+2. Promove a formado + re-liga membro_id ao gêmeo canônico ----------------
+--      (UPDATE ... FROM com LEFT JOIN · sem subquery escalar em SET nem CASE)
 WITH ci AS (  -- check-ins legados (compareceu = completou o Next antigo)
   SELECT membro_id,
          NULLIF(regexp_replace(COALESCE(cpf,''), '[^0-9]', '', 'g'), '') AS cpf11,
@@ -61,30 +62,34 @@ ci_nome AS (  -- 1 membro_id por nome exato (fallback)
   SELECT DISTINCT ON (nomek) nomek, membro_id
   FROM ci WHERE nomek <> '' AND membro_id IS NOT NULL
   ORDER BY nomek, membro_id
+),
+alvo AS (     -- matrículas históricas candidatas (chave normalizada pré-calculada)
+  SELECT m.id AS mat_id,
+         NULLIF(regexp_replace(COALESCE(m.cpf,''), '[^0-9]', '', 'g'), '') AS cpf11,
+         lower(btrim(m.nome)) AS nomek,
+         m.membro_id AS cur_membro
+  FROM public.next_matriculas m
+  WHERE m.deleted_at IS NULL
+    AND m.status IN ('matriculado', 'incompleto')
+    AND (m.origem_mes_key IS NOT NULL OR m.origem_inscricao_id IS NOT NULL)  -- só backfill histórico
 )
-UPDATE public.next_matriculas m
+UPDATE public.next_matriculas t
 SET status = 'formado',
     membro_id = COALESCE(
-      -- gêmeo por CPF (forte) sempre que houver
-      (SELECT c.membro_id FROM ci_cpf c
-        WHERE length(NULLIF(regexp_replace(COALESCE(m.cpf,''), '[^0-9]','','g'),'')) = 11
-          AND c.cpf11 = regexp_replace(m.cpf, '[^0-9]','','g')),
-      -- gêmeo por nome SÓ se o membro_id atual é nulo ou sintético (não existe em mem_membros)
-      CASE WHEN m.membro_id IS NULL
-                OR NOT EXISTS (SELECT 1 FROM public.mem_membros mm WHERE mm.id = m.membro_id)
-           THEN (SELECT n.membro_id FROM ci_nome n WHERE n.nomek = lower(btrim(m.nome)))
-      END,
-      m.membro_id),
+      cc.membro_id,                                                   -- gêmeo por CPF (forte)
+      CASE WHEN a.cur_membro IS NULL OR mm.id IS NULL                 -- atual nulo ou sintético
+           THEN cn.membro_id END,                                     -- gêmeo por nome
+      a.cur_membro),                                                  -- senão mantém
     updated_at = now()
-WHERE m.deleted_at IS NULL
-  AND m.status IN ('matriculado', 'incompleto')
-  AND (m.origem_mes_key IS NOT NULL OR m.origem_inscricao_id IS NOT NULL)  -- só backfill histórico
-  AND EXISTS (
-    SELECT 1 FROM ci
-    WHERE (m.membro_id IS NOT NULL AND ci.membro_id = m.membro_id)
-       OR (length(NULLIF(regexp_replace(COALESCE(m.cpf,''), '[^0-9]','','g'),'')) = 11
-           AND ci.cpf11 = regexp_replace(m.cpf, '[^0-9]','','g'))
-       OR (ci.nomek = lower(btrim(m.nome)))
+FROM alvo a
+LEFT JOIN ci_cpf  cc ON a.cpf11 IS NOT NULL AND cc.cpf11 = a.cpf11
+LEFT JOIN ci_nome cn ON cn.nomek = a.nomek
+LEFT JOIN public.mem_membros mm ON mm.id = a.cur_membro
+WHERE t.id = a.mat_id
+  AND (
+    (a.cur_membro IS NOT NULL AND EXISTS (SELECT 1 FROM ci WHERE ci.membro_id = a.cur_membro))
+    OR cc.membro_id IS NOT NULL   -- casou check-in por CPF
+    OR cn.membro_id IS NOT NULL   -- casou check-in por nome
   );
 
 -- 3. Órfãos: check-in legado SEM nenhuma matrícula → formado na turma histórica
