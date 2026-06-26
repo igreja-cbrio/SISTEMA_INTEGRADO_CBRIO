@@ -101,6 +101,7 @@ function SelectField({
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   options: { value: string; label: string }[]; required?: boolean;
 }) {
+  const { C } = usePublicTheme();
   const [focused, setFocused] = useState(false);
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
   return (
