@@ -1830,11 +1830,14 @@ satélite `culto_producao` (totais derivados das etapas).
 - A aba **Detalhado** (`Producao.jsx`) abre com um **gráfico de linhas** (recharts):
   **1 linha por tipo de culto** (Domingo 08:30/10:00/11:30/19:00, Quarta, AMI, Bridge),
   duração executada (min) ao longo do tempo — pivot por data (`linhasChart`/`tiposChart`,
-  cada tipo vira uma coluna). Alvo 60 min via `ReferenceLine`; **eixo Y começa em 45**
-  (`domain={[45,'auto']}`) pra destacar os picos. A tabela "Estouro por etapa" ganhou
-  uma faixa-resumo do culto inteiro (`por_etapa_total`). Recharts herda o tema vidro do
-  `index.css`; linhas NÃO usam gradiente (regra da casa); cores das linhas em `CORES_CULTO`.
-  (Ajuste 2026-06-25, pedido do Marcos: era executado×previsto numa linha só.)
+  cada tipo vira uma coluna). Alvo 60 min via `ReferenceLine`; **eixo Y começa em 40**
+  (`domain={[40,'auto']}`) pra destacar as variações; **cultos não preenchidos (0 min)
+  ficam fora** (filtro `duracao_min > 0`). **Legenda clicável isola 1 culto**
+  (`cultoIsolado` + `Legend onClick` → `Line hide`; clicar de novo mostra todos). A tabela
+  "Estouro por etapa" ganhou uma faixa-resumo do culto inteiro (`por_etapa_total`). Recharts
+  herda o tema vidro do `index.css`; linhas NÃO usam gradiente (regra da casa); cores em `CORES_CULTO`.
+  (Ajustes 2026-06-25/26, pedidos do Marcos: era executado×previsto numa linha só → 1 linha
+  por culto → eixo 40 + esconde não-preenchidos + legenda isola culto.)
 
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
