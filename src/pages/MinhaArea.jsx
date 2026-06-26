@@ -275,7 +275,7 @@ export default function MinhaArea() {
   const algumFiltro = busca || filtroPilar.length || filtroValor.length || filtroArea.length || filtroStatus.length || soOkr;
 
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
+    <div className="glass-dash p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
       <ModuleHeader
         icon={Activity}
         title="Minha Área"
