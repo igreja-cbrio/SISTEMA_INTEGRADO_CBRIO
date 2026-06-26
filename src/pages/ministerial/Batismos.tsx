@@ -871,28 +871,42 @@ export default function Batismos() {
 // ──────────────────────────────────────────────────────────────────────────
 // MODAL · TURMA (batismos de uma data) — lista quem batizou/vai batizar naquele dia
 // ──────────────────────────────────────────────────────────────────────────
-// Imprime a lista de presença SÓ desta turma (data), separada por culto (horário).
-function imprimirPresencaDeTurma(
-  data: string,
-  pessoas: BatismoInscricao[],
-  labelHorario: (hc?: string | null) => string,
+// Monta um culto pra impressão (filtra cancelados, ordena por nome).
+function montarCultoImpressao(
+  data: string, hc: string, lista: BatismoInscricao[], labelHorario: (hc?: string | null) => string,
 ) {
-  const ativos = pessoas.filter(b => b.status !== 'cancelado');
-  if (ativos.length === 0) { toast.error('Nenhum batizando para imprimir nesta turma.'); return; }
   const dataFmt = data && data !== 'sem-data'
     ? new Date(data + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
     : 'Sem data definida';
+  return {
+    titulo: [dataFmt, hc ? labelHorario(hc) : ''].filter(Boolean).join(' · '),
+    batizandos: lista.filter(b => b.status !== 'cancelado').slice()
+      .sort((x, y) => `${x.nome} ${x.sobrenome}`.localeCompare(`${y.nome} ${y.sobrenome}`))
+      .map(b => ({ nome: `${b.nome} ${b.sobrenome || ''}`.trim(), categoria: b.categoria_etaria ? CATEGORIA_LABEL[b.categoria_etaria] : '', camisa: b.tamanho_camisa || '' })),
+  };
+}
+
+// Imprime a turma INTEIRA (todos os cultos do dia, numa folha só).
+function imprimirPresencaDeTurma(
+  data: string, pessoas: BatismoInscricao[], labelHorario: (hc?: string | null) => string,
+) {
   const grupos = new Map<string, BatismoInscricao[]>();
-  ativos.forEach(b => { const k = b.horario_culto || ''; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k)!.push(b); });
+  pessoas.filter(b => b.status !== 'cancelado').forEach(b => { const k = b.horario_culto || ''; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k)!.push(b); });
   const cultos = [...grupos.entries()]
     .sort(([a], [b]) => (!a ? 1 : !b ? -1 : labelHorario(a).localeCompare(labelHorario(b))))
-    .map(([hc, arr]) => ({
-      titulo: [dataFmt, hc ? labelHorario(hc) : ''].filter(Boolean).join(' · '),
-      batizandos: arr.slice()
-        .sort((x, y) => `${x.nome} ${x.sobrenome}`.localeCompare(`${y.nome} ${y.sobrenome}`))
-        .map(b => ({ nome: `${b.nome} ${b.sobrenome || ''}`.trim(), categoria: b.categoria_etaria ? CATEGORIA_LABEL[b.categoria_etaria] : '', camisa: b.tamanho_camisa || '' })),
-    }));
+    .map(([hc, arr]) => montarCultoImpressao(data, hc, arr, labelHorario))
+    .filter(c => c.batizandos.length);
+  if (cultos.length === 0) { toast.error('Nenhum batizando para imprimir nesta turma.'); return; }
   imprimirListaPresencaBatismo(cultos);
+}
+
+// Imprime SÓ um culto (horário) da turma.
+function imprimirUmCulto(
+  data: string, hc: string, lista: BatismoInscricao[], labelHorario: (hc?: string | null) => string,
+) {
+  const culto = montarCultoImpressao(data, hc, lista, labelHorario);
+  if (culto.batizandos.length === 0) { toast.error('Nenhum batizando neste culto.'); return; }
+  imprimirListaPresencaBatismo([culto]);
 }
 
 function ModalTurmaBatismo({
@@ -917,8 +931,8 @@ function ModalTurmaBatismo({
             <Droplets className="h-5 w-5" style={{ color: C.primary }} />
             Batismos · {titulo}
             <span className="text-sm font-normal text-muted-foreground">({pessoas.length})</span>
-            <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={() => imprimirPresencaDeTurma(data, pessoas, labelHorario)}>
-              <Printer className="h-3.5 w-3.5" /> Lista de presença
+            <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={() => imprimirPresencaDeTurma(data, pessoas, labelHorario)} title="Imprime a lista de todos os cultos deste dia">
+              <Printer className="h-3.5 w-3.5" /> Imprimir tudo
             </Button>
           </DialogTitle>
         </DialogHeader>
@@ -929,6 +943,9 @@ function ModalTurmaBatismo({
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" />
                 {hc ? labelHorario(hc) : 'Sem horário definido'}
                 <span className="text-xs font-normal text-muted-foreground">({lista.length})</span>
+                <Button variant="ghost" size="sm" className="ml-auto h-7 gap-1 text-xs" onClick={() => imprimirUmCulto(data, hc, lista, labelHorario)} title="Imprimir só este culto">
+                  <Printer className="h-3 w-3" /> Imprimir
+                </Button>
               </div>
               <div className="rounded-xl border border-border overflow-hidden">
                 <Table>
