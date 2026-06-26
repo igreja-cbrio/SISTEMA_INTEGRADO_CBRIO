@@ -6,9 +6,13 @@
  * Regra: todo desvio deve gerar causa, decisão, responsável e próximo passo.
  */
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const multer = require('multer');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { supabase } = require('../utils/supabase');
+const govDocs = require('../services/sharepointGovernanca');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: govDocs.MAX_BYTES } });
 
 router.use(authenticate);
 
@@ -29,6 +33,20 @@ function parseMes(input) {
   const mesAnteriorInicio = `${py}-${String(pm).padStart(2, '0')}-01`;
   const mesAnteriorFim = new Date(Date.UTC(py, pm, 0)).toISOString().split('T')[0];
   return { mesISO, inicioStr, fimStr, diasNoMes, semanasNoMes, mesAnteriorInicio, mesAnteriorFim };
+}
+
+// Nésima quarta-feira (weekday=3) do mês · clampa pra última quarta se faltar.
+function nthWednesday(year, month, n) {
+  const firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay(); // 0=dom..6=sab
+  let day = 1 + ((3 - firstDow + 7) % 7) + (Math.max(1, n) - 1) * 7;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  while (day > lastDay) day -= 7;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString().split('T')[0];
 }
 
 const TIPOS = [
@@ -467,13 +485,328 @@ router.get('/cron/lembrete', async (req, res) => {
       tipo: 'lembrete_okr',
       titulo: `Reunião OKR em 2 dias`,
       mensagem,
-      link: '/eventos',
+      link: '/governanca',
       severidade: okr.checklist.every(c => c.ok) ? 'info' : 'warning',
       chaveDedup: `gov_okr_${h}`,
     });
 
     res.json({ success: true, checklist: okr.checklist });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// CRUD do ciclo de reuniões de diretoria (F1)
+//   Gated pelo módulo 'governanca': ler >=1 · editar/criar/excluir >=3.
+//   Quem opera = super-admin (Marcos) + override; diretoria entra leitura.
+// ════════════════════════════════════════════════════════════════════
+
+const rd = authorizeModule('governanca', 1); // leitura
+const wr = authorizeModule('governanca', 3); // escrita
+
+// ── Tipos de reunião (editáveis · escopo híbrido) ──────────────────────
+router.get('/types', rd, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('governance_meeting_types')
+      .select('*').order('sort_order', { ascending: true }).order('nome');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/types', wr, async (req, res) => {
+  try {
+    const { nome, sigla, semana, recorrencia, cor, descricao, sort_order } = req.body || {};
+    if (!nome || !sigla || !semana) return res.status(400).json({ error: 'nome, sigla e semana são obrigatórios' });
+    const { data, error } = await supabase.from('governance_meeting_types').insert({
+      nome, sigla, semana: Number(semana),
+      recorrencia: recorrencia || 'mensal',
+      cor: cor || '#00B39D', descricao: descricao || null,
+      sort_order: sort_order != null ? Number(sort_order) : 0,
+    }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/types/:id', wr, async (req, res) => {
+  try {
+    const allow = ['nome', 'sigla', 'semana', 'recorrencia', 'cor', 'descricao', 'ativo', 'sort_order'];
+    const patch = {};
+    for (const k of allow) if (k in (req.body || {})) patch[k] = req.body[k];
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('governance_meeting_types')
+      .update(patch).eq('id', req.params.id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Tipo não encontrado' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Ciclos mensais ─────────────────────────────────────────────────────
+router.get('/cycles', rd, async (req, res) => {
+  try {
+    let q = supabase.from('governance_cycles').select('*')
+      .order('year', { ascending: false }).order('month', { ascending: false });
+    if (req.query.year) q = q.eq('year', Number(req.query.year));
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/cycles/:id', rd, async (req, res) => {
+  try {
+    const { data: cycle, error } = await supabase.from('governance_cycles')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!cycle) return res.status(404).json({ error: 'Ciclo não encontrado' });
+    const { data: meetings } = await supabase.from('governance_meetings')
+      .select('*, governance_meeting_types(sigla, nome, cor, recorrencia)')
+      .eq('cycle_id', cycle.id).is('deleted_at', null)
+      .order('date', { ascending: true });
+    res.json({ ...cycle, meetings: meetings || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cria (ou retorna) o ciclo do mês. No primeiro INSERT, materializa as
+// reuniões mensais (1 por tipo ativo · data = N-ésima quarta) + as tarefas
+// dos templates de cada tipo.
+router.post('/cycles', wr, async (req, res) => {
+  try {
+    const y = Number(req.body?.year), m = Number(req.body?.month);
+    if (!y || !m || m < 1 || m > 12) return res.status(400).json({ error: 'year e month (1-12) obrigatórios' });
+
+    let { data: cycle } = await supabase.from('governance_cycles')
+      .select('*').eq('year', y).eq('month', m).maybeSingle();
+
+    let reunioesCriadas = 0;
+    if (!cycle) {
+      const ins = await supabase.from('governance_cycles')
+        .insert({ year: y, month: m, created_by: req.user.userId }).select('*').single();
+      if (ins.error) throw ins.error;
+      cycle = ins.data;
+
+      const { data: tipos } = await supabase.from('governance_meeting_types')
+        .select('*').eq('ativo', true).eq('recorrencia', 'mensal').order('sort_order');
+      for (const t of (tipos || [])) {
+        const date = nthWednesday(y, m, t.semana || 1);
+        const mtg = await supabase.from('governance_meetings')
+          .insert({ cycle_id: cycle.id, type_id: t.id, date, created_by: req.user.userId })
+          .select('id').single();
+        if (mtg.error || !mtg.data) continue;
+        reunioesCriadas++;
+        const { data: tmpls } = await supabase.from('governance_task_templates')
+          .select('*').eq('type_id', t.id).eq('ativo', true).order('sort_order');
+        if (tmpls?.length) {
+          await supabase.from('governance_tasks').insert(tmpls.map(tp => ({
+            meeting_id: mtg.data.id,
+            titulo: tp.titulo, descricao: tp.descricao,
+            responsavel: tp.responsavel_padrao || null,
+            prazo: addDays(date, tp.prazo_offset_dias || 0),
+            prioridade: tp.prioridade || 'normal',
+            origem: 'template', sort_order: tp.sort_order || 0,
+            created_by: req.user.userId,
+          })));
+        }
+      }
+    }
+    res.status(201).json({ ...cycle, reunioes_criadas: reunioesCriadas });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Reuniões ───────────────────────────────────────────────────────────
+// Lista por período (calendário) e/ou por ciclo.
+router.get('/meetings', rd, async (req, res) => {
+  try {
+    let q = supabase.from('governance_meetings')
+      .select('*, governance_meeting_types(sigla, nome, cor, recorrencia)')
+      .is('deleted_at', null);
+    if (req.query.cycle_id) q = q.eq('cycle_id', req.query.cycle_id);
+    if (req.query.from) q = q.gte('date', req.query.from);
+    if (req.query.to) q = q.lte('date', req.query.to);
+    const { data, error } = await q.order('date', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/meetings/:id', rd, async (req, res) => {
+  try {
+    const { data: meeting, error } = await supabase.from('governance_meetings')
+      .select('*, governance_meeting_types(sigla, nome, cor, recorrencia), governance_cycles(year, month)')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!meeting) return res.status(404).json({ error: 'Reunião não encontrada' });
+    const [tasksR, docsR] = await Promise.all([
+      supabase.from('governance_tasks').select('*').eq('meeting_id', meeting.id)
+        .order('sort_order', { ascending: true }).order('created_at'),
+      supabase.from('governance_meeting_docs').select('*').eq('meeting_id', meeting.id)
+        .is('deleted_at', null).order('created_at', { ascending: false }),
+    ]);
+    res.json({ ...meeting, tasks: tasksR.data || [], docs: docsR.data || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cria reunião (avulsa ou dentro de um ciclo). Sem cycle_id, atrela ao ciclo
+// do mês da data (find-or-create) — governance_meetings.cycle_id é NOT NULL.
+router.post('/meetings', wr, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.type_id) return res.status(400).json({ error: 'type_id é obrigatório' });
+    let cycleId = b.cycle_id;
+    if (!cycleId) {
+      const baseDate = b.date || hoje();
+      const [yy, mm] = baseDate.split('-').map(Number);
+      let { data: cyc } = await supabase.from('governance_cycles')
+        .select('id').eq('year', yy).eq('month', mm).maybeSingle();
+      if (!cyc) {
+        const ins = await supabase.from('governance_cycles')
+          .insert({ year: yy, month: mm, created_by: req.user.userId }).select('id').single();
+        if (ins.error) throw ins.error;
+        cyc = ins.data;
+      }
+      cycleId = cyc.id;
+    }
+    const { data, error } = await supabase.from('governance_meetings').insert({
+      cycle_id: cycleId,
+      type_id: b.type_id,
+      date: b.date || null,
+      status: b.status || 'agendada',
+      pauta: b.pauta || null,
+      participantes: b.participantes || null,
+      local: b.local || null,
+      observacoes: b.observacoes || null,
+      created_by: req.user.userId,
+    }).select('*, governance_meeting_types(sigla, nome, cor)').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/meetings/:id', wr, async (req, res) => {
+  try {
+    const allow = ['date', 'status', 'pauta', 'ata', 'deliberacoes', 'participantes',
+      'quorum_presente', 'local', 'observacoes', 'type_id'];
+    const patch = {};
+    for (const k of allow) if (k in (req.body || {})) patch[k] = req.body[k];
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('governance_meetings')
+      .update(patch).eq('id', req.params.id).is('deleted_at', null)
+      .select('*, governance_meeting_types(sigla, nome, cor)').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Reunião não encontrada' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/meetings/:id', wr, async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'governance_meetings', p_row_id: req.params.id, p_deleted_by: req.user.userId,
+    });
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Tarefas/demandas da reunião ────────────────────────────────────────
+router.post('/meetings/:id/tasks', wr, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.titulo) return res.status(400).json({ error: 'titulo é obrigatório' });
+    const { data, error } = await supabase.from('governance_tasks').insert({
+      meeting_id: req.params.id,
+      titulo: b.titulo, descricao: b.descricao || null,
+      responsavel: b.responsavel || null, prazo: b.prazo || null,
+      status: b.status || 'pendente', prioridade: b.prioridade || 'normal',
+      origem: b.origem || 'manual', created_by: req.user.userId,
+    }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Aplica os templates de tarefa do tipo da reunião (sem duplicar por título).
+router.post('/meetings/:id/apply-templates', wr, async (req, res) => {
+  try {
+    const { data: meeting } = await supabase.from('governance_meetings')
+      .select('id, type_id, date').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!meeting) return res.status(404).json({ error: 'Reunião não encontrada' });
+    const { data: tmpls } = await supabase.from('governance_task_templates')
+      .select('*').eq('type_id', meeting.type_id).eq('ativo', true).order('sort_order');
+    const { data: existentes } = await supabase.from('governance_tasks')
+      .select('titulo').eq('meeting_id', meeting.id);
+    const jaTem = new Set((existentes || []).map(t => t.titulo));
+    const novas = (tmpls || []).filter(tp => !jaTem.has(tp.titulo)).map(tp => ({
+      meeting_id: meeting.id, titulo: tp.titulo, descricao: tp.descricao,
+      responsavel: tp.responsavel_padrao || null,
+      prazo: meeting.date ? addDays(meeting.date, tp.prazo_offset_dias || 0) : null,
+      prioridade: tp.prioridade || 'normal', origem: 'template',
+      sort_order: tp.sort_order || 0, created_by: req.user.userId,
+    }));
+    if (novas.length) {
+      const { error } = await supabase.from('governance_tasks').insert(novas);
+      if (error) throw error;
+    }
+    res.json({ criadas: novas.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/tasks/:id', wr, async (req, res) => {
+  try {
+    const allow = ['titulo', 'descricao', 'responsavel', 'prazo', 'status', 'prioridade', 'sort_order'];
+    const patch = {};
+    for (const k of allow) if (k in (req.body || {})) patch[k] = req.body[k];
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('governance_tasks')
+      .update(patch).eq('id', req.params.id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Tarefa não encontrada' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/tasks/:id', wr, async (req, res) => {
+  try {
+    const { error } = await supabase.from('governance_tasks').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Documentos da reunião (SharePoint) ─────────────────────────────────
+router.get('/meetings/:id/docs', rd, async (req, res) => {
+  try { res.json(await govDocs.listarDocs(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/meetings/:id/docs', wr, upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo (campo "arquivo") é obrigatório' });
+    const row = await govDocs.uploadDoc({
+      meetingId: req.params.id,
+      userId: req.user.userId,
+      userNome: req.user.name || null,
+      file: req.file,
+      tipo: req.body?.tipo,
+    });
+    res.status(201).json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Devolve a URL temporária do Graph em JSON (o front abre/baixa) — evita
+// depender do header de auth viajar num <a href>.
+router.get('/docs/:id/download', rd, async (req, res) => {
+  try { res.json(await govDocs.getDownloadUrl(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/docs/:id', wr, async (req, res) => {
+  try {
+    await govDocs.removerDoc(req.params.id, req.user.userId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;

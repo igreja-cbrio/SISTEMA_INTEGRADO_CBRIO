@@ -58,8 +58,50 @@ async function gerarTodasNotificacoes() {
     const { enfileirar } = require('./agenteBatismoNext');
     return enfileirar();
   });
+  total += await safe('Governanca', gerarNotificacoesGovernanca);
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
+}
+
+// Governança · reunião da diretoria que já passou e está sem ata registrada
+// (lembra de "recolher as atas"). Dedup por reunião/dia.
+async function gerarNotificacoesGovernanca() {
+  let count = 0;
+  const hoje = new Date().toISOString().slice(0, 10);
+  const ha60d = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+
+  const { data: reunioes, error } = await supabase
+    .from('governance_meetings')
+    .select('id, date, status, ata, governance_meeting_types(nome, sigla)')
+    .is('deleted_at', null)
+    .lt('date', hoje)
+    .gte('date', ha60d)
+    .neq('status', 'cancelada')
+    .neq('status', 'adiada');
+  if (error) {
+    if (!String(error.message || '').includes('does not exist')) {
+      console.warn('[Governanca notify] erro:', error.message);
+    }
+    return 0;
+  }
+
+  for (const r of reunioes || []) {
+    if (r.ata && r.ata.trim().length) continue; // já tem ata
+    const tipo = r.governance_meeting_types || {};
+    const nome = tipo.nome || 'Reunião';
+    const dataBr = String(r.date).split('-').reverse().join('/');
+    await notificar({
+      modulo: 'governanca',
+      tipo: 'ata_pendente',
+      titulo: `Ata pendente · ${nome}`,
+      mensagem: `A reunião ${nome}${tipo.sigla ? ` (${tipo.sigla})` : ''} de ${dataBr} ainda está sem ata registrada.`,
+      link: '/governanca',
+      severidade: 'info',
+      chaveDedup: `gov_ata_${r.id}_${hoje}`,
+    });
+    count++;
+  }
+  return count;
 }
 
 // ═══════════════════════════════════════════════════════════

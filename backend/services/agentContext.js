@@ -848,8 +848,9 @@ async function fetchGovernancaContext() {
   if (cicloAtual?.id) {
     const { data } = await supabase
       .from('governance_meetings')
-      .select('id, tipo, data, status, pauta, ata, deliberacoes')
-      .eq('cycle_id', cicloAtual.id);
+      .select('id, type_id, date, status, pauta, ata, deliberacoes')
+      .eq('cycle_id', cicloAtual.id)
+      .is('deleted_at', null);
     reunioesCiclo = data || [];
   }
 

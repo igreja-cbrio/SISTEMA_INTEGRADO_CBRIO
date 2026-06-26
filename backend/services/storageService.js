@@ -33,6 +33,7 @@ const MODULE_LIBRARY_MAP = {
   eventos: 'Planejamento',
   criativo: 'Criativo',
   ministerial: 'Ministerial',
+  governanca: 'Gestão',
 };
 
 // Cache de drive IDs por nome de biblioteca (name → driveId)
