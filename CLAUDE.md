@@ -1840,7 +1840,7 @@ satélite `culto_producao` (totais derivados das etapas).
   ficam fora** (filtro `duracao_min > 0`). **Legenda clicável · multi-seleção** (`cultosSel`
   Set + `Legend onClick` toggle → `Line hide`): clicar 1 culto isola só ele, clicar outros
   soma à seleção, clicar de novo tira; Set vazio = todos (1ª seleção a partir do vazio = isolar). A tabela
-  "Estouro por etapa" ganhou uma faixa-resumo do culto inteiro (`por_etapa_total`). Recharts
+  "Estouro por etapa" ganhou uma faixa-resumo do culto inteiro (`por_etapa_total`) no rodapé (abaixo da tabela). Recharts
   herda o tema vidro do `index.css`; linhas NÃO usam gradiente (regra da casa); cores em `CORES_CULTO`.
   (Ajustes 2026-06-25/26, pedidos do Marcos: era executado×previsto numa linha só → 1 linha
   por culto → eixo 40 + esconde não-preenchidos + legenda isola culto.)
