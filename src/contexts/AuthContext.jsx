@@ -75,14 +75,28 @@ export function AuthProvider({ children }) {
       return;
     }
 
+    // Rede de segurança · se getSession()/perfil pendurar (ex.: lock de auth
+    // travado de uma aba/refresh órfão), NUNCA deixa o app preso no "carregando"
+    // pra sempre — libera após 8s. O lock no-op (supabaseClient.js) já evita o
+    // deadlock; isto é o cinto de segurança caso algo trave por outro motivo.
+    let initDone = false;
+    const safetyTimer = setTimeout(() => {
+      if (!initDone) {
+        console.warn('[Auth] getSession demorou demais — liberando o carregamento (rede de segurança).');
+        setLoading(false);
+      }
+    }, 8000);
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
         await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
       }
-      setLoading(false);
     }).catch((e) => {
       console.warn('[Auth] Erro ao obter sessão:', e?.message);
+    }).finally(() => {
+      initDone = true;
+      clearTimeout(safetyTimer);
       setLoading(false);
     });
 
@@ -107,7 +121,7 @@ export function AuthProvider({ children }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => { clearTimeout(safetyTimer); subscription.unsubscribe(); };
   }, []);
 
   function supabaseErroMsg() {
