@@ -527,10 +527,27 @@ router.get('/turmas', async (req, res) => {
   res.json(lista);
 });
 
+// GET /lista-espera — contagem de inscritos SEM turma (aguardando a próxima
+// turma abrir). São puxados automaticamente quando uma turma nova é aberta.
+router.get('/lista-espera', async (req, res) => {
+  const { count, error } = await supabase.from('next_matriculas')
+    .select('id', { count: 'exact', head: true }).is('turma_id', null).is('deleted_at', null);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ count: count || 0 });
+});
+
 // POST /turmas — cria turma (+ os encontros · default 2)
 router.post('/turmas', async (req, res) => {
   const { nome, responsavel_id, observacoes, encontros } = req.body || {};
   if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
+
+  // Só UMA turma aberta por vez (decisão Marcos · não há turmas simultâneas).
+  const { data: aberta } = await supabase.from('next_turmas')
+    .select('id, nome').eq('status', 'aberta').is('deleted_at', null).limit(1).maybeSingle();
+  if (aberta) {
+    return res.status(409).json({ error: `Já existe a turma aberta "${aberta.nome}". Encerre-a antes de abrir outra.` });
+  }
+
   const { data: turma, error } = await supabase
     .from('next_turmas')
     .insert({ nome: String(nome).trim(), responsavel_id: responsavel_id || null, observacoes: observacoes || null })
@@ -540,7 +557,25 @@ router.post('/turmas', async (req, res) => {
   const rows = base.map((e, i) => ({ turma_id: turma.id, numero: e.numero || (i + 1), data: e.data || null, tema: e.tema || null }));
   const { error: encErr } = await supabase.from('next_encontros').insert(rows);
   if (encErr) return res.status(500).json({ error: encErr.message });
-  res.status(201).json(turma);
+
+  // Puxa a LISTA DE ESPERA (matrículas sem turma) pra esta turma nova (decisão
+  // Marcos · "puxa todos automático" — o operador remove quem não vai). Defensivo:
+  // 1 a 1, pulando conflito de UNIQUE (cpf/email já na turma) · nunca derruba a
+  // criação da turma.
+  let puxados = 0;
+  try {
+    const { data: espera } = await supabase.from('next_matriculas')
+      .select('id').is('turma_id', null).is('deleted_at', null);
+    for (const m of (espera || [])) {
+      const { error: upErr } = await supabase.from('next_matriculas')
+        .update({ turma_id: turma.id, status: 'matriculado', updated_at: new Date().toISOString() })
+        .eq('id', m.id).is('turma_id', null);
+      if (!upErr) puxados += 1;
+      else if (upErr.code !== '23505') console.error('[next] puxar espera:', upErr.message);
+    }
+  } catch (e) { console.error('[next] puxar lista de espera:', e.message); }
+
+  res.status(201).json({ ...turma, puxados_da_espera: puxados });
 });
 
 // GET /turmas/:id — detalhe (encontros + matrículas + presenças)
@@ -563,6 +598,15 @@ router.get('/turmas/:id', async (req, res) => {
 // PATCH /turmas/:id — atualizar. Ao encerrar, não-formados viram 'incompleto'.
 router.patch('/turmas/:id', async (req, res) => {
   const b = req.body || {};
+  // Reabrir: só se não houver OUTRA turma aberta (uma aberta por vez).
+  if (b.status === 'aberta') {
+    const { data: outra } = await supabase.from('next_turmas')
+      .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
+      .neq('id', req.params.id).limit(1).maybeSingle();
+    if (outra) {
+      return res.status(409).json({ error: `Já existe a turma aberta "${outra.nome}". Encerre-a antes de reabrir esta.` });
+    }
+  }
   const patch = {};
   ['nome', 'status', 'responsavel_id', 'observacoes'].forEach(k => { if (k in b) patch[k] = b[k]; });
   patch.updated_at = new Date().toISOString();
@@ -574,6 +618,14 @@ router.patch('/turmas/:id', async (req, res) => {
       .update({ status: 'incompleto', updated_at: new Date().toISOString() })
       .eq('turma_id', req.params.id).is('deleted_at', null)
       .not('status', 'in', '("formado","desistiu")');
+  } else if (b.status === 'aberta') {
+    // Reabrir: 'incompleto' volta a 'matriculado' pra poder re-qualificar
+    // (recomputarStatusTurma pula 'incompleto'), e recalcula pela presença atual.
+    await supabase.from('next_matriculas')
+      .update({ status: 'matriculado', updated_at: new Date().toISOString() })
+      .eq('turma_id', req.params.id).is('deleted_at', null)
+      .eq('status', 'incompleto');
+    await recomputarStatusTurma(req.params.id);
   }
   res.json(data);
 });

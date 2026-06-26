@@ -166,31 +166,21 @@ router.post('/inscrever', async (req, res) => {
       return res.status(500).json({ error: insErr.message });
     }
 
-    // Dual-write: também matricula na turma do mês (modelo novo de turmas).
-    // Defensivo — nunca derruba a inscrição se algo falhar. O next_inscricoes
-    // acima segue como fonte legada (verde/KPIs) até o cutover do Cuidados.
+    // Dual-write: matricula na turma ABERTA do momento. Se NÃO houver turma
+    // aberta, entra na LISTA DE ESPERA (turma_id null) — é puxada quando a próxima
+    // turma for aberta. NUNCA matricula numa turma já encerrada (decisão Marcos ·
+    // 2026-06-26). Defensivo — nunca derruba a inscrição. O next_inscricoes acima
+    // segue como fonte legada (verde/KPIs).
     try {
-      const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-      const hoje = new Date();
-      const ym = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
-      let { data: turma } = await supabase.from('next_turmas').select('id').eq('origem_mes', ym).is('deleted_at', null).maybeSingle();
-      if (!turma) {
-        const { data: nova } = await supabase.from('next_turmas')
-          .insert({ nome: `${MESES[hoje.getMonth()]} ${hoje.getFullYear()}`, status: 'aberta', origem_mes: ym })
-          .select('id').single();
-        turma = nova;
-        if (turma) await supabase.from('next_encontros').insert([{ turma_id: turma.id, numero: 1 }, { turma_id: turma.id, numero: 2 }]);
-      }
-      if (turma) {
-        await supabase.from('next_matriculas').insert({
-          turma_id: turma.id,
-          nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
-          cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
-          data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
-          ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
-          origem: 'formulario',
-        });
-      }
+      const turma = await turmaAbertaAtual(); // null = sem turma aberta → lista de espera
+      await supabase.from('next_matriculas').insert({
+        turma_id: turma?.id || null,
+        nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
+        cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
+        data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
+        ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
+        origem: 'formulario',
+      });
     } catch (e) {
       console.error('[next] dual-write matrícula:', e.message);
     }
