@@ -246,6 +246,9 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   incidente 2026-06-26). O no-op desliga o Web Lock → corrige o deadlock e os warnings
   "lock ... stole it". Trade-off aceito: sem coordenação de refresh ENTRE ABAS (race raro
   e auto-recuperável, bem menos grave que travar o sistema). Cliente é único/singleton.
+  Reforço: o **`AuthContext` tem timeout de 8s** no carregamento inicial (`getSession()` num
+  `.finally()` + `safetyTimer`) — libera o "carregando" mesmo se algo pendurar por qualquer
+  motivo. NÃO remover esse timeout.
 - Nunca adicionar emoji em código a menos que o usuário peça.
 - Evitar criar arquivos `.md` novos a menos que o usuário peça
   explicitamente (exceto este `CLAUDE.md`).
