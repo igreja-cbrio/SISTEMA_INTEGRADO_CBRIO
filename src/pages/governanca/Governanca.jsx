@@ -66,6 +66,7 @@ export default function Governanca() {
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [criando, setCriando] = useState(false);
+  const [gerandoAno, setGerandoAno] = useState(false);
   const [view, setView] = useState('agenda'); // 'agenda' | 'tipos'
   const [openId, setOpenId] = useState(null);
   const [novaOpen, setNovaOpen] = useState(false);
@@ -95,6 +96,22 @@ export default function Governanca() {
       await carregar();
     } catch (e) { toast.error(formatErro(e)); }
     finally { setCriando(false); }
+  }
+
+  // Gera as reuniões mensais do ano (do próximo mês até dezembro, no ano atual).
+  async function gerarAno() {
+    if (gerandoAno) return;
+    const thisYear = new Date().getFullYear();
+    const fromMonth = ano === thisYear ? new Date().getMonth() + 2 : 1; // ano atual: próximo mês; senão janeiro
+    if (fromMonth > 12) { toast.info('O ano já está no fim — use "Criar ciclo do mês".'); return; }
+    if (!window.confirm(`Gerar as 4 reuniões mensais de ${MESES[fromMonth - 1]} a Dezembro de ${ano}?`)) return;
+    setGerandoAno(true);
+    try {
+      const r = await gov.cycles.generateYear(ano, fromMonth);
+      toast.success(`${r?.reunioes_criadas || 0} reuniões geradas em ${r?.ciclos_criados || 0} mês(es)`);
+      await carregar();
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setGerandoAno(false); }
   }
 
   const irMes = (delta) => setRef(new Date(ano, mes - 1 + delta, 1));
@@ -135,6 +152,12 @@ export default function Governanca() {
               <div className="text-lg font-semibold min-w-[170px] text-center">{MESES[mes - 1]} {ano}</div>
               <button onClick={() => irMes(1)} className="p-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}><ChevronRight size={16} /></button>
               <button onClick={irHoje} className="text-sm px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Hoje</button>
+              {canEdit && (
+                <button onClick={gerarAno} disabled={gerandoAno} title="Cria as 4 reuniões mensais até dezembro"
+                  className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.primary, opacity: gerandoAno ? 0.6 : 1 }}>
+                  {gerandoAno ? <Loader2 className="animate-spin" size={15} /> : <CalendarDays size={15} />} Gerar ano
+                </button>
+              )}
             </div>
           </div>
 
