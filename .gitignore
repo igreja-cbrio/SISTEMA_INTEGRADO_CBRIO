@@ -38,3 +38,7 @@ tmp/
 *.zip
 guia-implementacao-cerebro-cbrio.md
 .tmp/
+
+# Skills locais (npx skills add) — tooling, não versionar
+.agents/
+skills-lock.json
