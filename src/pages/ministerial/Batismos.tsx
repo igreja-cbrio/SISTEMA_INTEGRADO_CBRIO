@@ -15,8 +15,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import {
   Droplets, Loader2, Search, Plus, Calendar, Phone, Mail, AlertCircle,
   CheckCircle2, Clock, XCircle, ChevronRight, User, IdCard, FileText, BarChart3,
-  Share2, Copy, Check, Hourglass,
+  Share2, Copy, Check, Hourglass, Printer,
 } from 'lucide-react';
+import { imprimirListaPresencaBatismo } from '../../lib/imprimirListaPresencaBatismo';
 import { toast } from 'sonner';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -416,6 +417,37 @@ export default function Batismos() {
     window.open(`https://wa.me/?text=${msg}`, '_blank');
   };
 
+  // Lista de presença · agrupa os inscritos visíveis (respeita os filtros, exclui
+  // cancelados) por CULTO = data + horário, num só documento separado por cabeçalho.
+  const imprimirPresenca = () => {
+    const grupos = new Map<string, BatismoInscricao[]>();
+    filtrada.filter(b => b.status !== 'cancelado').forEach(b => {
+      const k = `${b.data_batismo || 'sem-data'}__${b.horario_culto || ''}`;
+      if (!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k)!.push(b);
+    });
+    if (grupos.size === 0) { toast.error('Nenhum batizando para imprimir (ajuste os filtros).'); return; }
+    const cultos = [...grupos.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, arr]) => {
+        const [data, hc] = k.split('__');
+        const dataFmt = data && data !== 'sem-data'
+          ? new Date(data + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+          : 'Sem data definida';
+        const titulo = [dataFmt, hc ? labelHorario(hc) : ''].filter(Boolean).join(' · ');
+        const batizandos = arr
+          .slice()
+          .sort((x, y) => `${x.nome} ${x.sobrenome}`.localeCompare(`${y.nome} ${y.sobrenome}`))
+          .map(b => ({
+            nome: `${b.nome} ${b.sobrenome || ''}`.trim(),
+            categoria: b.categoria_etaria ? CATEGORIA_LABEL[b.categoria_etaria] : '',
+            camisa: b.tamanho_camisa || '',
+          }));
+        return { titulo, batizandos };
+      });
+    imprimirListaPresencaBatismo(cultos);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -438,6 +470,9 @@ export default function Batismos() {
             WhatsApp
           </button>
         </div>
+        <Button variant="outline" onClick={imprimirPresenca} className="gap-2" title="Imprime a lista de presença dos inscritos visíveis, separada por culto">
+          <Printer className="h-4 w-4" /> Lista de presença
+        </Button>
         <Button onClick={() => setNovaOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
           <Plus className="h-4 w-4" /> Cadastrar inscricao
         </Button>
