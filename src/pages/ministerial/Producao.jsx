@@ -668,9 +668,12 @@ function AbaDetalhado() {
     return () => { alive = false; };
   }, [periodo]);
 
-  // Série pro gráfico · 1 linha por tipo de culto · pivot por data (cada tipo vira uma coluna)
+  const [cultoIsolado, setCultoIsolado] = useState(null); // legenda clicável: isola 1 culto
+
+  // Série pro gráfico · 1 linha por tipo de culto · pivot por data (cada tipo vira uma coluna).
+  // Ignora culto com 0 min (não preenchido) — só entram cultos com duração real.
   const { linhasChart, tiposChart } = useMemo(() => {
-    const rows = data?.serie || [];
+    const rows = (data?.serie || []).filter(s => s.duracao_min != null && s.duracao_min > 0);
     const tipos = [];
     const byData = {};
     for (const s of rows) {
@@ -698,19 +701,22 @@ function AbaDetalhado() {
             <div>
               <h3 style={subTit}>Tempo de cada culto · executado (min)</h3>
               <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
-                Duração executada de cada culto ao longo do período · uma linha por culto. A linha pontilhada marca o alvo de 60 min; o eixo começa em 45 min pra destacar os picos.
+                Duração executada de cada culto ao longo do período · uma linha por culto (cultos não preenchidos ficam de fora). A linha pontilhada marca o alvo de 60 min; o eixo começa em 40 min pra destacar as variações. Clique num culto na legenda pra ver só ele (clique de novo pra ver todos).
               </p>
               <div style={{ width: '100%', height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={linhasChart} margin={{ top: 8, right: 16, bottom: 4, left: -8 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                     <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={22} />
-                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={32} domain={[45, 'auto']} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={32} domain={[40, 'auto']} />
                     <Tooltip formatter={(v, n) => [v == null ? '—' : `${v} min`, n]} />
-                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 12, paddingTop: 8, cursor: 'pointer' }}
+                      onClick={(o) => setCultoIsolado(cur => cur === o.dataKey ? null : o.dataKey)}
+                    />
                     <ReferenceLine y={60} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth={1} />
                     {tiposChart.map((t, i) => (
-                      <Line key={t} type="monotone" dataKey={t} name={t} stroke={CORES_CULTO[i % CORES_CULTO.length]} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} connectNulls />
+                      <Line key={t} type="monotone" dataKey={t} name={t} stroke={CORES_CULTO[i % CORES_CULTO.length]} strokeWidth={cultoIsolado === t ? 3 : 2} dot={{ r: 2 }} activeDot={{ r: 4 }} connectNulls hide={cultoIsolado != null && cultoIsolado !== t} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
