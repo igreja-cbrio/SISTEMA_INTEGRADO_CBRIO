@@ -566,8 +566,10 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     const metaByType = {};
     serviceTypes.forEach(s => { metaByType[s.id] = s.meta_duracao_min ?? 60; });
 
-    // Totais
-    const prodComDur = prod.filter(p => p.duracao_minutos != null);
+    // Totais · culto com executado 0 = NÃO preenchido (teste / pendente) — fica fora
+    // das médias de executado, senão afunda duração média / aderência / desvio.
+    const cultoTemExec = new Set(prod.filter(p => (p.duracao_segundos ?? 0) > 0).map(p => p.culto_id));
+    const prodComDur = prod.filter(p => p.duracao_minutos != null && p.duracao_minutos > 0);
     const noHorario = prodComDur.filter(p => {
       const c = cultoById[p.culto_id]; if (!c) return false;
       return p.duracao_minutos <= (metaByType[c.service_type_id] ?? 60);
@@ -579,7 +581,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     // Previsto × executado (aderência ao roteiro)
     const comPrev = prod.filter(p => p.duracao_prevista_seg != null);
     const comAmbos = prod.filter(p =>
-      p.duracao_segundos != null && p.duracao_prevista_seg != null && p.duracao_prevista_seg > 0);
+      p.duracao_segundos != null && p.duracao_segundos > 0 && p.duracao_prevista_seg != null && p.duracao_prevista_seg > 0);
     const desviosPct = comAmbos.map(p =>
       Math.abs(p.duracao_segundos - p.duracao_prevista_seg) / p.duracao_prevista_seg * 100);
     const mediaSeg = (arr, sel) => arr.length ? arr.reduce((a, x) => a + sel(x), 0) / arr.length : null;
@@ -668,6 +670,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     //    no culto. Pra etapas comuns o grupo é o próprio título (1 por culto).
     const porCultoGrupo = {}; // `${culto_id}|${grupo}` -> somas do bloco no culto
     for (const e of etapas) {
+      if (!cultoTemExec.has(e.culto_id)) continue; // pula culto sem executado (teste/pendente)
       const titulo = String(e.titulo || '').trim();
       if (!titulo) continue;
       const grupo = grupoEtapa(titulo);
@@ -763,7 +766,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
 
     // Série pro gráfico de tempos de culto · 1 ponto por culto preenchido (min).
     const serie = prod
-      .filter(p => p.duracao_minutos != null)
+      .filter(p => p.duracao_minutos != null && p.duracao_minutos > 0)
       .map(p => {
         const c = cultoById[p.culto_id];
         if (!c) return null;
