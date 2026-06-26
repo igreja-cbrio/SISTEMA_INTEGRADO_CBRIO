@@ -534,8 +534,8 @@ export default function DashSemanalAba() {
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle className="text-sm font-medium">
               {isSingle
-                ? `${primario?.indDef?.label} por culto · ${primario?.data?.inicio && primario?.data?.fim ? `${formatBr(primario.data.inicio)} a ${formatBr(primario.data.fim)}` : '—'}`
-                : `Comparativo · ${datasets.map(d => d.indDef?.label).join(' / ')}`}
+                ? `${primario?.indDef?.label || INDICADORES.find(x => x.key === indicadoresSel[0])?.label || 'Indicador'} por culto · ${primario?.data?.inicio && primario?.data?.fim ? `${formatBr(primario.data.inicio)} a ${formatBr(primario.data.fim)}` : '—'}`
+                : `Comparativo · ${datasets.map(d => d?.indDef?.label).filter(Boolean).join(' / ')}`}
             </CardTitle>
             {isMulti && (
               <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
