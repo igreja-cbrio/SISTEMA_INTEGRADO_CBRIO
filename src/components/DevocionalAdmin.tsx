@@ -1157,10 +1157,9 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
   const itemHoje = useMemo(() => (planoItens || []).find(i => i.data === hoje), [planoItens, hoje]);
 
   function buildMensagem(item: Item) {
-    const link = `${window.location.origin}/devocional/hoje`;
     const linhas = ['📖 *Devocional de hoje*', '', `*${item.titulo}*`];
     if (item.passagem) linhas.push(item.passagem);
-    linhas.push('', `Leia em: ${link}`);
+    linhas.push('', 'Leia no aplicativo CBRio 💙');
     return linhas.join('\n');
   }
 

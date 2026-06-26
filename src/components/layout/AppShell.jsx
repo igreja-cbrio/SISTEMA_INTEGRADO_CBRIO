@@ -173,7 +173,8 @@ const NAV_ITEMS = [
 
 export default function AppShell() {
   const auth = useAuth();
-  const { profile, role, signOut, isAdmin, isVoluntario } = auth;
+  const { profile, role, signOut, isAdmin, isVoluntario, rotaTravada, moduloTravado } = auth;
+  const labelTravado = moduloTravado ? moduloTravado.charAt(0).toUpperCase() + moduloTravado.slice(1) : '';
 
   // Visibilidade de item de menu · navItemAllowed (src/lib/menuAccess) espelha
   // o ModuleGuard das rotas (src/App.tsx) e é compartilhado com a busca ⌘K
@@ -198,6 +199,15 @@ export default function AppShell() {
 
   const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Login travado num módulo (quiosque): qualquer rota fora do módulo redireciona
+  // de volta — o usuário só consegue ficar na tela dele (ex.: Marcelo só /batismo).
+  useEffect(() => {
+    if (rotaTravada && !location.pathname.startsWith(rotaTravada)) {
+      navigate(rotaTravada, { replace: true });
+    }
+  }, [rotaTravada, location.pathname, navigate]);
 
   const initials = (profile?.name || '??')
     .split(' ')
@@ -363,23 +373,28 @@ export default function AppShell() {
           {/* Left: Menu mobile + Logo */}
           <div className="flex items-center gap-2">
             {/* Hamburger · so mobile (desktop usa MegaMenu) */}
-            {!isVoluntario && (
+            {!isVoluntario && !rotaTravada && (
               <MobileNavSheet items={filteredNavItems} />
             )}
-            <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+            <button onClick={() => navigate(rotaTravada || '/dashboard')} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
               <img src="/logo-cbrio-text.png" alt="CBRio" className="h-8 object-contain" />
             </button>
           </div>
 
           {/* Center: Navigation desktop · escondido no mobile (vai pro Sheet) */}
-          {!isVoluntario && (
+          {!isVoluntario && !rotaTravada && (
             <div className="flex-1 flex justify-center" data-tour="megamenu">
               <MegaMenu items={filteredNavItems} role={role} />
             </div>
           )}
-          {isVoluntario && (
+          {isVoluntario && !rotaTravada && (
             <div className="flex-1 flex justify-center">
               <span className="text-sm font-medium text-muted-foreground">Voluntariado</span>
+            </div>
+          )}
+          {rotaTravada && (
+            <div className="flex-1 flex justify-center">
+              <span className="text-sm font-medium text-muted-foreground">{labelTravado}</span>
             </div>
           )}
 

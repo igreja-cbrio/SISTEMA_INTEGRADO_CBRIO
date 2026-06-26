@@ -252,9 +252,7 @@ const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
-const DevocionalLogin = lazyWithRetry(() => import('./pages/devocional/DevocionalLogin'));
-const DevocionalHoje = lazyWithRetry(() => import('./pages/devocional/DevocionalHoje'));
-const DevocionalHistorico = lazyWithRetry(() => import('./pages/devocional/DevocionalHistorico'));
+const DevocionalMovido = lazyWithRetry(() => import('./pages/devocional/DevocionalMovido'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
 const WifiModulo = lazyWithRetry(() => import('./pages/ministerial/Wifi'));
@@ -305,7 +303,7 @@ function ProtectedRoute({ children }) {
 function MemberOnlyRedirect({ children }: { children: ReactNode }) {
   const { isMembroOnly, loading } = useAuth();
   if (loading) return <Loading />;
-  if (isMembroOnly) return <Navigate to="/devocional/hoje" replace />;
+  if (isMembroOnly) return <Navigate to="/devocional" replace />;
   return <>{children}</>;
 }
 
@@ -390,7 +388,8 @@ function VolunteerShell() {
 // Home pós-login. Quem tem acesso a um ÚNICO módulo abre direto nele
 // (ex.: colaborador só de Produção → /producao) em vez do dashboard.
 function homeRoute(auth: Record<string, unknown>): string {
-  if (auth.isMembroOnly) return '/devocional/hoje';
+  if (auth.rotaTravada) return auth.rotaTravada as string; // login travado num módulo (quiosque)
+  if (auth.isMembroOnly) return '/devocional';
   if (auth.isVoluntario) return '/voluntariado/checkin';
   const modulePerms = auth.modulePerms as Record<string, { leitura?: number }> | null | undefined;
   if (!auth.isAdmin && modulePerms) {
@@ -441,12 +440,11 @@ function AppRoutes() {
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
 
-      {/* Devocional · página publica de login (magic link) + páginas autenticadas
-          do membro. Membros logados aqui ficam restritos a essas rotas via
-          MemberOnlyRedirect nas rotas de staff abaixo. */}
-      <Route path="/devocional" element={<Suspense fallback={<Loading />}><DevocionalLogin /></Suspense>} />
-      <Route path="/devocional/hoje" element={<ProtectedRoute><Suspense fallback={<Loading />}><DevocionalHoje /></Suspense></ProtectedRoute>} />
-      <Route path="/devocional/historico" element={<ProtectedRoute><Suspense fallback={<Loading />}><DevocionalHistorico /></Suspense></ProtectedRoute>} />
+      {/* Devocional · migrou pro app de membros. As telas web saíram; estas rotas
+          mostram um aviso curto "está no app" e os links antigos redirecionam. */}
+      <Route path="/devocional" element={<Suspense fallback={<Loading />}><DevocionalMovido /></Suspense>} />
+      <Route path="/devocional/hoje" element={<Navigate to="/devocional" replace />} />
+      <Route path="/devocional/historico" element={<Navigate to="/devocional" replace />} />
 
       {/* Preview de design (estilo Rondesignlab) · fullscreen isolado · não-produção */}
       <Route path="/design-preview" element={<ProtectedRoute><Suspense fallback={<Loading />}><DesignPreview /></Suspense></ProtectedRoute>} />

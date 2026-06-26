@@ -5,6 +5,18 @@ import { resolveApiBaseUrl } from '../lib/api-base';
 const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 const AuthContext = createContext(null);
 
+// Rota destino quando um login fica TRAVADO num único módulo (quiosque).
+// Só os módulos que fazem sentido como "tela única" pra um voluntário.
+const MODULO_ROTA_TRAVA = {
+  batismo: '/batismo',
+  producao: '/producao',
+  cuidados: '/ministerial/cuidados',
+  grupos: '/grupos',
+  kids: '/ministerial/kids',
+  marketing: '/marketing',
+  online: '/online',
+};
+
 // Set to true to bypass login and simulate an admin user
 const DEV_BYPASS_AUTH = false;
 
@@ -236,6 +248,18 @@ export function AuthProvider({ children }) {
   // entrou pelo devocional (flag is_membro_only=true grudada no profile) fique
   // preso na tela do devocional ao logar com as credenciais reais.
   const isMembroOnly = !!profile?.is_membro_only && !isColaborador && !temAcessoSistema;
+  // Trava de módulo (quiosque): login de MEMBRO (is_membro_only) com acesso a
+  // EXATAMENTE 1 módulo — ex.: voluntário responsável só pelo Batismo — abre
+  // direto naquele módulo, sem menu e sem poder navegar pra mais nada. Não afeta
+  // staff (is_membro_only=false), admin, diretor nem voluntário (kiosk próprio).
+  const modulosComAcesso = modulePerms
+    ? Object.keys(modulePerms).filter((s) => (modulePerms[s]?.leitura || 0) >= 1)
+    : [];
+  const moduloTravado = (
+    !!profile?.is_membro_only && !isAdmin && profile?.role !== 'diretor' && !isVoluntario
+    && modulosComAcesso.length === 1 && MODULO_ROTA_TRAVA[modulosComAcesso[0]]
+  ) ? modulosComAcesso[0] : null;
+  const rotaTravada = moduloTravado ? MODULO_ROTA_TRAVA[moduloTravado] : null;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
   const canIA = isColaborador;
@@ -249,6 +273,8 @@ export function AuthProvider({ children }) {
     isDiretor: profile?.role === 'diretor',
     isVoluntario,
     isMembroOnly,
+    moduloTravado,
+    rotaTravada,
     isColaborador,
     modulePerms,
     modulosBloqueados,
@@ -278,7 +304,7 @@ export function useAuth() {
     // During HMR, context can temporarily be null — return a safe fallback
     return {
       user: null, profile: null, loading: true, role: null,
-      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, isColaborador: false, modulePerms: null,
+      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, moduloTravado: null, rotaTravada: null, isColaborador: false, modulePerms: null,
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,
