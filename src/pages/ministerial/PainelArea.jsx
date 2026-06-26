@@ -216,7 +216,7 @@ export default function PainelArea({ area }) {
   const mostrarPessoas = ['ami', 'bridge'].includes(area);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="glass-dash p-6 space-y-6 max-w-7xl mx-auto">
       {/* ─────────────────────────── BREADCRUMB ─────────────────────────── */}
       <button
         onClick={() => navigate('/painel')}
