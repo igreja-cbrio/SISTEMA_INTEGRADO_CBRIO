@@ -123,20 +123,19 @@ router.post('/inscrever', async (req, res) => {
       console.error('publicNext findOrCreateMembro:', e.message);
     }
 
-    // Snapshot do status pre-NEXT (pra coletor saber 'estava nao-batizado')
-    if (membroId) {
-      const { data: m } = await supabase
-        .from('mem_membros').select('batizado').eq('id', membroId).maybeSingle();
-      jaBatizado = !!m?.batizado;
-    }
-    if (cleanCpf) {
-      const { count: volCount } = await supabase
-        .from('vol_profiles')
-        .select('id', { count: 'exact', head: true })
-        .eq('cpf', cleanCpf)
-        .eq('allocation_status', 'active');
-      if (volCount && volCount > 0) jaVoluntario = true;
-    }
+    // Snapshot do status pre-NEXT (pra coletor saber 'estava nao-batizado').
+    // As duas leituras são independentes → em paralelo (corta um round-trip).
+    const [snapBatizado, snapVol] = await Promise.all([
+      membroId
+        ? supabase.from('mem_membros').select('batizado').eq('id', membroId).maybeSingle()
+        : Promise.resolve({ data: null }),
+      cleanCpf
+        ? supabase.from('vol_profiles').select('id', { count: 'exact', head: true })
+            .eq('cpf', cleanCpf).eq('allocation_status', 'active')
+        : Promise.resolve({ count: 0 }),
+    ]);
+    jaBatizado = !!snapBatizado?.data?.batizado;
+    if (snapVol?.count && snapVol.count > 0) jaVoluntario = true;
 
     const { data: insc, error: insErr } = await supabase
       .from('next_inscricoes')
