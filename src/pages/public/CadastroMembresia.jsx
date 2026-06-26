@@ -500,7 +500,7 @@ export default function CadastroMembresia() {
             password: form.senha,
           });
           if (!signErr) {
-            window.location.href = resp.can_login_devocional ? '/devocional/hoje' : '/devocional/login?cadastrado=1';
+            window.location.href = '/devocional';
             return;
           }
         } catch { /* fallback: tela de sucesso normal */ }
