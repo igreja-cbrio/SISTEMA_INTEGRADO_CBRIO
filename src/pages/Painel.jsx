@@ -252,12 +252,15 @@ function NsmCentralCard({ data, onAbrirPessoas }) {
 
   return (
     <div style={{
-      background: `linear-gradient(135deg, ${C.primary}10 0%, ${C.primary}05 100%)`,
+      background: `linear-gradient(135deg, ${C.primary}14 0%, transparent 55%), var(--panel)`,
+      WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+      backdropFilter: 'blur(14px) saturate(140%)',
       border: `1px solid ${C.primary}30`,
       borderRadius: 16,
       padding: 28,
       position: 'relative',
       overflow: 'hidden',
+      boxShadow: 'var(--shadow), var(--hi)',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 280 }}>
@@ -345,11 +348,15 @@ function NsmSegmentoCard({ data, onAbrirPessoas }) {
     <div
       onClick={onAbrirPessoas}
       style={{
-        background: C.card, borderRadius: 12, padding: 16,
-        border: `1px solid ${C.border}`,
+        background: 'var(--panel)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+        backdropFilter: 'blur(14px) saturate(140%)',
+        borderRadius: 16, padding: 16,
+        border: '1px solid var(--hairline)',
         borderTop: `3px solid ${status.cor}`,
+        boxShadow: 'var(--shadow), var(--hi)',
         cursor: onAbrirPessoas ? 'pointer' : 'default',
-        transition: 'border-color 0.15s',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
       }}
       onMouseEnter={e => { if (onAbrirPessoas) e.currentTarget.style.borderColor = status.cor; }}
       onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.borderTop = `3px solid ${status.cor}`; }}
