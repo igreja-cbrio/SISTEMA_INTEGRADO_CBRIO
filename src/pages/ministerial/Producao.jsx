@@ -19,13 +19,13 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save,
   Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2,
-  Inbox, Gauge, Activity,
+  Gauge, Activity,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from 'recharts';
 import { toast } from 'sonner';
-import { producao as prodApi, solicitacoes as solicApi } from '../../api';
+import { producao as prodApi } from '../../api';
 import { formatErro } from '../../lib/formatErro';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 
@@ -129,7 +129,6 @@ const ABAS = [
   { key: 'semana',       label: 'Preenchimento', icon: Calendar },
   { key: 'detalhado',    label: 'Detalhado',     icon: Activity },
   { key: 'checklists',   label: 'Modelos',       icon: ListChecks },
-  { key: 'solicitacoes', label: 'Solicitações',  icon: Inbox },
   { key: 'desempenho',   label: 'Desempenho',    icon: Gauge },
 ];
 
@@ -140,7 +139,7 @@ export default function Producao() {
       <header style={{ marginBottom: 16, borderLeft: `4px solid ${C.primary}`, paddingLeft: 12 }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0, color: C.text }}>Produção de Culto</h1>
         <p style={{ fontSize: 13, color: C.t3, margin: '4px 0 0' }}>
-          Cronograma e indicadores técnicos por culto · solicitações da Produção · desempenho da área
+          Cronograma e indicadores técnicos por culto · desempenho da área
         </p>
       </header>
 
@@ -162,7 +161,6 @@ export default function Producao() {
       {aba === 'semana'       && <AbaSemana />}
       {aba === 'detalhado'    && <AbaDetalhado />}
       {aba === 'checklists'   && <AbaModelos />}
-      {aba === 'solicitacoes' && <AbaSolicitacoes />}
       {aba === 'desempenho'   && <AbaDesempenho />}
     </div>
   );
@@ -1075,63 +1073,6 @@ function RoteiroEditor({ tipos }) {
         </div>
       )}
     </div>
-  );
-}
-
-// ── Aba Solicitações (fila da Produção · andamento) ───────────────────────────
-const STATUS_PROD = ['pendente', 'em_analise', 'em_atendimento', 'aguardando_entrega', 'concluido', 'rejeitado'];
-const STATUS_LABEL = {
-  pendente: 'Pendente', em_analise: 'Em análise', em_atendimento: 'Em atendimento',
-  aguardando_entrega: 'Aguardando entrega', concluido: 'Concluído', rejeitado: 'Rejeitado',
-  aguardando_aprovacao_financeira: 'Aprov. financeira', aguardando_aprovacao_origem: 'Aprov. diretor', avaliado: 'Avaliado',
-};
-function AbaSolicitacoes() {
-  const [itens, setItens] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const carregar = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await solicApi.list({ aba: 'atender' });
-      const arr = (Array.isArray(data) ? data : (data?.items || []))
-        .filter(s => s.area_responsavel === 'producao');
-      setItens(arr);
-    } catch (e) { toast.error(formatErro(e)); }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  const mudarStatus = async (id, status) => {
-    try { await solicApi.update(id, { status }); toast.success('Status atualizado'); carregar(); }
-    catch (e) { toast.error(formatErro(e)); }
-  };
-
-  return (
-    <section>
-      <p style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>
-        Solicitações direcionadas à Produção. Dê andamento mudando o status. Para o fluxo completo, use o módulo Solicitações.
-      </p>
-      {loading ? <div style={loadingBox}>Carregando…</div> : itens.length === 0 ? (
-        <div style={{ ...loadingBox, color: C.t3 }}>Nenhuma solicitação para a Produção no momento.</div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {itens.map(s => (
-            <div key={s.id} style={{ padding: 12, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ fontWeight: 700, color: C.text, fontSize: 13 }}>{s.titulo}</div>
-                <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
-                  {s.categoria}{s.eh_urgente ? ' · 🚩 urgente' : ''}{s.data_necessaria ? ` · até ${s.data_necessaria}` : ''}
-                </div>
-              </div>
-              <select value={STATUS_PROD.includes(s.status) ? s.status : ''} onChange={e => mudarStatus(s.id, e.target.value)} style={{ ...inp, width: 'auto', padding: '6px 10px' }}>
-                {!STATUS_PROD.includes(s.status) && <option value="">{STATUS_LABEL[s.status] || s.status}</option>}
-                {STATUS_PROD.map(st => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}
-              </select>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
   );
 }
 
