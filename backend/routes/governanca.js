@@ -571,46 +571,70 @@ router.get('/cycles/:id', rd, async (req, res) => {
 // Cria (ou retorna) o ciclo do mês. No primeiro INSERT, materializa as
 // reuniões mensais (1 por tipo ativo · data = N-ésima quarta) + as tarefas
 // dos templates de cada tipo.
+async function criarCicloDoMes(y, m, userId) {
+  let { data: cycle } = await supabase.from('governance_cycles')
+    .select('*').eq('year', y).eq('month', m).maybeSingle();
+
+  let reunioesCriadas = 0;
+  let criado = false;
+  if (!cycle) {
+    const ins = await supabase.from('governance_cycles')
+      .insert({ year: y, month: m, created_by: userId }).select('*').single();
+    if (ins.error) throw ins.error;
+    cycle = ins.data;
+    criado = true;
+
+    const { data: tipos } = await supabase.from('governance_meeting_types')
+      .select('*').eq('ativo', true).eq('recorrencia', 'mensal').order('sort_order');
+    for (const t of (tipos || [])) {
+      const date = nthWednesday(y, m, t.semana || 1);
+      const mtg = await supabase.from('governance_meetings')
+        .insert({ cycle_id: cycle.id, type_id: t.id, date, created_by: userId })
+        .select('id').single();
+      if (mtg.error || !mtg.data) continue;
+      reunioesCriadas++;
+      const { data: tmpls } = await supabase.from('governance_task_templates')
+        .select('*').eq('type_id', t.id).eq('ativo', true).order('sort_order');
+      if (tmpls?.length) {
+        await supabase.from('governance_tasks').insert(tmpls.map(tp => ({
+          meeting_id: mtg.data.id,
+          titulo: tp.titulo, descricao: tp.descricao,
+          responsavel: tp.responsavel_padrao || null,
+          prazo: addDays(date, tp.prazo_offset_dias || 0),
+          prioridade: tp.prioridade || 'normal',
+          origem: 'template', sort_order: tp.sort_order || 0,
+          created_by: userId,
+        })));
+      }
+    }
+  }
+  return { cycle, reunioesCriadas, criado };
+}
+
 router.post('/cycles', wr, async (req, res) => {
   try {
     const y = Number(req.body?.year), m = Number(req.body?.month);
     if (!y || !m || m < 1 || m > 12) return res.status(400).json({ error: 'year e month (1-12) obrigatórios' });
-
-    let { data: cycle } = await supabase.from('governance_cycles')
-      .select('*').eq('year', y).eq('month', m).maybeSingle();
-
-    let reunioesCriadas = 0;
-    if (!cycle) {
-      const ins = await supabase.from('governance_cycles')
-        .insert({ year: y, month: m, created_by: req.user.userId }).select('*').single();
-      if (ins.error) throw ins.error;
-      cycle = ins.data;
-
-      const { data: tipos } = await supabase.from('governance_meeting_types')
-        .select('*').eq('ativo', true).eq('recorrencia', 'mensal').order('sort_order');
-      for (const t of (tipos || [])) {
-        const date = nthWednesday(y, m, t.semana || 1);
-        const mtg = await supabase.from('governance_meetings')
-          .insert({ cycle_id: cycle.id, type_id: t.id, date, created_by: req.user.userId })
-          .select('id').single();
-        if (mtg.error || !mtg.data) continue;
-        reunioesCriadas++;
-        const { data: tmpls } = await supabase.from('governance_task_templates')
-          .select('*').eq('type_id', t.id).eq('ativo', true).order('sort_order');
-        if (tmpls?.length) {
-          await supabase.from('governance_tasks').insert(tmpls.map(tp => ({
-            meeting_id: mtg.data.id,
-            titulo: tp.titulo, descricao: tp.descricao,
-            responsavel: tp.responsavel_padrao || null,
-            prazo: addDays(date, tp.prazo_offset_dias || 0),
-            prioridade: tp.prioridade || 'normal',
-            origem: 'template', sort_order: tp.sort_order || 0,
-            created_by: req.user.userId,
-          })));
-        }
-      }
-    }
+    const { cycle, reunioesCriadas } = await criarCicloDoMes(y, m, req.user.userId);
     res.status(201).json({ ...cycle, reunioes_criadas: reunioesCriadas });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Gera o ano inteiro (loop dos meses · idempotente · pula o que já existe).
+// from_month/to_month permitem gerar só "de agora em diante".
+router.post('/cycles/generate-year', wr, async (req, res) => {
+  try {
+    const y = Number(req.body?.year);
+    if (!y) return res.status(400).json({ error: 'year obrigatório' });
+    const fromM = Math.max(1, Math.min(12, Number(req.body?.from_month) || 1));
+    const toM = Math.max(fromM, Math.min(12, Number(req.body?.to_month) || 12));
+    let ciclosCriados = 0, reunioesCriadas = 0;
+    for (let m = fromM; m <= toM; m++) {
+      const r = await criarCicloDoMes(y, m, req.user.userId);
+      if (r.criado) ciclosCriados++;
+      reunioesCriadas += r.reunioesCriadas;
+    }
+    res.status(201).json({ year: y, ciclos_criados: ciclosCriados, reunioes_criadas: reunioesCriadas });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -567,6 +567,7 @@ export const governanca = {
     list:   (year) => get('/governanca/cycles' + (year ? `?year=${year}` : '')),
     get:    (id) => get(`/governanca/cycles/${id}`),
     create: (year, month) => post('/governanca/cycles', { year, month }),
+    generateYear: (year, fromMonth) => post('/governanca/cycles/generate-year', { year, from_month: fromMonth }),
   },
   meetings: {
     list:   (params = {}) => get('/governanca/meetings' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
