@@ -160,6 +160,7 @@ function PessoaPicker({ disponiveis, onPick }) {
 const AREAS = [
   { id: 'ti',                 label: 'TI',                  color: '#3b82f6' },
   { id: 'marketing',          label: 'Marketing',           color: '#ec4899' },
+  { id: 'producao',           label: 'Produção',            color: '#6366F1' },
   { id: 'logistica_compras',  label: 'Compras',             color: '#f97316' },
   { id: 'logistica_estoque',  label: 'Logística · Estoque', color: '#eab308' },
   { id: 'manutencao',         label: 'Manutenção · Infra',  color: '#f59e0b' },
