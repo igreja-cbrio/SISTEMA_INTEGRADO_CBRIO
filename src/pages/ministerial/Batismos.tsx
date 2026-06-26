@@ -417,36 +417,6 @@ export default function Batismos() {
     window.open(`https://wa.me/?text=${msg}`, '_blank');
   };
 
-  // Lista de presença · agrupa os inscritos visíveis (respeita os filtros, exclui
-  // cancelados) por CULTO = data + horário, num só documento separado por cabeçalho.
-  const imprimirPresenca = () => {
-    const grupos = new Map<string, BatismoInscricao[]>();
-    filtrada.filter(b => b.status !== 'cancelado').forEach(b => {
-      const k = `${b.data_batismo || 'sem-data'}__${b.horario_culto || ''}`;
-      if (!grupos.has(k)) grupos.set(k, []);
-      grupos.get(k)!.push(b);
-    });
-    if (grupos.size === 0) { toast.error('Nenhum batizando para imprimir (ajuste os filtros).'); return; }
-    const cultos = [...grupos.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, arr]) => {
-        const [data, hc] = k.split('__');
-        const dataFmt = data && data !== 'sem-data'
-          ? new Date(data + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
-          : 'Sem data definida';
-        const titulo = [dataFmt, hc ? labelHorario(hc) : ''].filter(Boolean).join(' · ');
-        const batizandos = arr
-          .slice()
-          .sort((x, y) => `${x.nome} ${x.sobrenome}`.localeCompare(`${y.nome} ${y.sobrenome}`))
-          .map(b => ({
-            nome: `${b.nome} ${b.sobrenome || ''}`.trim(),
-            categoria: b.categoria_etaria ? CATEGORIA_LABEL[b.categoria_etaria] : '',
-            camisa: b.tamanho_camisa || '',
-          }));
-        return { titulo, batizandos };
-      });
-    imprimirListaPresencaBatismo(cultos);
-  };
 
   return (
     <div className="space-y-4">
@@ -470,9 +440,6 @@ export default function Batismos() {
             WhatsApp
           </button>
         </div>
-        <Button variant="outline" onClick={imprimirPresenca} className="gap-2" title="Imprime a lista de presença dos inscritos visíveis, separada por culto">
-          <Printer className="h-4 w-4" /> Lista de presença
-        </Button>
         <Button onClick={() => setNovaOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
           <Plus className="h-4 w-4" /> Cadastrar inscricao
         </Button>
@@ -877,6 +844,7 @@ export default function Batismos() {
         <ModalTurmaBatismo
           data={turmaAberta}
           pessoas={turmas.find(t => t.data === turmaAberta)?.pessoas || []}
+          labelHorario={labelHorario}
           onClose={() => setTurmaAberta(null)}
           onSelectPessoa={(b) => { setTurmaAberta(null); setSelected(b); }}
         />
@@ -903,70 +871,113 @@ export default function Batismos() {
 // ──────────────────────────────────────────────────────────────────────────
 // MODAL · TURMA (batismos de uma data) — lista quem batizou/vai batizar naquele dia
 // ──────────────────────────────────────────────────────────────────────────
+// Imprime a lista de presença SÓ desta turma (data), separada por culto (horário).
+function imprimirPresencaDeTurma(
+  data: string,
+  pessoas: BatismoInscricao[],
+  labelHorario: (hc?: string | null) => string,
+) {
+  const ativos = pessoas.filter(b => b.status !== 'cancelado');
+  if (ativos.length === 0) { toast.error('Nenhum batizando para imprimir nesta turma.'); return; }
+  const dataFmt = data && data !== 'sem-data'
+    ? new Date(data + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+    : 'Sem data definida';
+  const grupos = new Map<string, BatismoInscricao[]>();
+  ativos.forEach(b => { const k = b.horario_culto || ''; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k)!.push(b); });
+  const cultos = [...grupos.entries()]
+    .sort(([a], [b]) => (!a ? 1 : !b ? -1 : labelHorario(a).localeCompare(labelHorario(b))))
+    .map(([hc, arr]) => ({
+      titulo: [dataFmt, hc ? labelHorario(hc) : ''].filter(Boolean).join(' · '),
+      batizandos: arr.slice()
+        .sort((x, y) => `${x.nome} ${x.sobrenome}`.localeCompare(`${y.nome} ${y.sobrenome}`))
+        .map(b => ({ nome: `${b.nome} ${b.sobrenome || ''}`.trim(), categoria: b.categoria_etaria ? CATEGORIA_LABEL[b.categoria_etaria] : '', camisa: b.tamanho_camisa || '' })),
+    }));
+  imprimirListaPresencaBatismo(cultos);
+}
+
 function ModalTurmaBatismo({
-  data, pessoas, onClose, onSelectPessoa,
+  data, pessoas, labelHorario, onClose, onSelectPessoa,
 }: {
   data: string;
   pessoas: BatismoInscricao[];
+  labelHorario: (hc?: string | null) => string;
   onClose: () => void;
   onSelectPessoa: (b: BatismoInscricao) => void;
 }) {
   const titulo = data === 'sem-data' ? 'Sem data definida' : ymdLocal(data);
+  // Agrupa por culto (horário) dentro da turma · "Sem horário" no fim.
+  const porCulto = new Map<string, BatismoInscricao[]>();
+  pessoas.forEach(b => { const k = b.horario_culto || ''; if (!porCulto.has(k)) porCulto.set(k, []); porCulto.get(k)!.push(b); });
+  const cultos = [...porCulto.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : labelHorario(a).localeCompare(labelHorario(b))));
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
             <Droplets className="h-5 w-5" style={{ color: C.primary }} />
             Batismos · {titulo}
             <span className="text-sm font-normal text-muted-foreground">({pessoas.length})</span>
+            <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={() => imprimirPresencaDeTurma(data, pessoas, labelHorario)}>
+              <Printer className="h-3.5 w-3.5" /> Lista de presença
+            </Button>
           </DialogTitle>
         </DialogHeader>
-        <div className="rounded-xl border border-border overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead className="text-center hidden sm:table-cell">Categoria</TableHead>
-                <TableHead className="text-center">Status</TableHead>
-                <TableHead className="w-10"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pessoas.map(b => {
-                const Icon = STATUS_ICON[b.status];
-                const cat = categoriaDe(b);
-                return (
-                  <TableRow
-                    key={b.id}
-                    className="cursor-pointer hover:bg-muted/40 transition-colors"
-                    onClick={() => onSelectPessoa(b)}
-                  >
-                    <TableCell>
-                      <p className="font-medium">{b.nome} {b.sobrenome}</p>
-                      {b.telefone && <p className="text-xs text-muted-foreground">{b.telefone}</p>}
-                    </TableCell>
-                    <TableCell className="text-center hidden sm:table-cell">
-                      {cat ? (
-                        <Badge variant="outline" className="text-[10px]" style={{ color: CATEGORIA_COLOR[cat], borderColor: CATEGORIA_COLOR[cat] + '60' }}>
-                          {CATEGORIA_LABEL[cat]}
-                        </Badge>
-                      ) : <span className="text-xs text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant="outline" className="gap-1" style={{ color: STATUS_COLOR[b.status], borderColor: STATUS_COLOR[b.status] + '60' }}>
-                        <Icon className="h-3 w-3" />
-                        {STATUS_LABEL[b.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      <ChevronRight className="h-4 w-4 inline-block" />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+        <div className="space-y-4">
+          {cultos.map(([hc, lista]) => (
+            <div key={hc || 'sem-horario'}>
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground mb-1.5">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                {hc ? labelHorario(hc) : 'Sem horário definido'}
+                <span className="text-xs font-normal text-muted-foreground">({lista.length})</span>
+              </div>
+              <div className="rounded-xl border border-border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nome</TableHead>
+                      <TableHead className="text-center hidden sm:table-cell">Categoria</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
+                      <TableHead className="w-10"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {lista.map(b => {
+                      const Icon = STATUS_ICON[b.status];
+                      const cat = categoriaDe(b);
+                      return (
+                        <TableRow
+                          key={b.id}
+                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                          onClick={() => onSelectPessoa(b)}
+                        >
+                          <TableCell>
+                            <p className="font-medium">{b.nome} {b.sobrenome}</p>
+                            {b.telefone && <p className="text-xs text-muted-foreground">{b.telefone}</p>}
+                          </TableCell>
+                          <TableCell className="text-center hidden sm:table-cell">
+                            {cat ? (
+                              <Badge variant="outline" className="text-[10px]" style={{ color: CATEGORIA_COLOR[cat], borderColor: CATEGORIA_COLOR[cat] + '60' }}>
+                                {CATEGORIA_LABEL[cat]}
+                              </Badge>
+                            ) : <span className="text-xs text-muted-foreground">—</span>}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Badge variant="outline" className="gap-1" style={{ color: STATUS_COLOR[b.status], borderColor: STATUS_COLOR[b.status] + '60' }}>
+                              <Icon className="h-3 w-3" />
+                              {STATUS_LABEL[b.status]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            <ChevronRight className="h-4 w-4 inline-block" />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ))}
         </div>
       </DialogContent>
     </Dialog>
