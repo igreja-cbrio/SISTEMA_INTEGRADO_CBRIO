@@ -668,7 +668,7 @@ function AbaDetalhado() {
     return () => { alive = false; };
   }, [periodo]);
 
-  const [cultoIsolado, setCultoIsolado] = useState(null); // legenda clicável: isola 1 culto
+  const [cultosSel, setCultosSel] = useState(() => new Set()); // legenda clicável · multi-seleção (vazio = todos)
 
   // Série pro gráfico · 1 linha por tipo de culto · pivot por data (cada tipo vira uma coluna).
   // Ignora culto com 0 min (não preenchido) — só entram cultos com duração real.
@@ -701,7 +701,7 @@ function AbaDetalhado() {
             <div>
               <h3 style={subTit}>Tempo de cada culto · executado (min)</h3>
               <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
-                Duração executada de cada culto ao longo do período · uma linha por culto (cultos não preenchidos ficam de fora). A linha pontilhada marca o alvo de 60 min; o eixo começa em 40 min pra destacar as variações. Clique num culto na legenda pra ver só ele (clique de novo pra ver todos).
+                Duração executada de cada culto ao longo do período · uma linha por culto (cultos não preenchidos ficam de fora). A linha pontilhada marca o alvo de 60 min; o eixo começa em 40 min pra destacar as variações. Clique num culto na legenda pra ver só ele; clique em outros pra somar à seleção; clique de novo pra tirar (sem nenhum selecionado = todos).
               </p>
               <div style={{ width: '100%', height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -712,11 +712,15 @@ function AbaDetalhado() {
                     <Tooltip formatter={(v, n) => [v == null ? '—' : `${v} min`, n]} />
                     <Legend
                       wrapperStyle={{ fontSize: 12, paddingTop: 8, cursor: 'pointer' }}
-                      onClick={(o) => setCultoIsolado(cur => cur === o.dataKey ? null : o.dataKey)}
+                      onClick={(o) => setCultosSel(cur => {
+                        const next = new Set(cur);
+                        if (next.has(o.dataKey)) next.delete(o.dataKey); else next.add(o.dataKey);
+                        return next;
+                      })}
                     />
                     <ReferenceLine y={60} stroke="#94A3B8" strokeDasharray="4 4" strokeWidth={1} />
                     {tiposChart.map((t, i) => (
-                      <Line key={t} type="monotone" dataKey={t} name={t} stroke={CORES_CULTO[i % CORES_CULTO.length]} strokeWidth={cultoIsolado === t ? 3 : 2} dot={{ r: 2 }} activeDot={{ r: 4 }} connectNulls hide={cultoIsolado != null && cultoIsolado !== t} />
+                      <Line key={t} type="monotone" dataKey={t} name={t} stroke={CORES_CULTO[i % CORES_CULTO.length]} strokeWidth={cultosSel.has(t) ? 3 : 2} dot={{ r: 2 }} activeDot={{ r: 4 }} connectNulls hide={cultosSel.size > 0 && !cultosSel.has(t)} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>

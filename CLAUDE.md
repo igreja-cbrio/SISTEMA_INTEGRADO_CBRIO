@@ -1837,8 +1837,9 @@ satélite `culto_producao` (totais derivados das etapas).
   duração executada (min) ao longo do tempo — pivot por data (`linhasChart`/`tiposChart`,
   cada tipo vira uma coluna). Alvo 60 min via `ReferenceLine`; **eixo Y começa em 40**
   (`domain={[40,'auto']}`) pra destacar as variações; **cultos não preenchidos (0 min)
-  ficam fora** (filtro `duracao_min > 0`). **Legenda clicável isola 1 culto**
-  (`cultoIsolado` + `Legend onClick` → `Line hide`; clicar de novo mostra todos). A tabela
+  ficam fora** (filtro `duracao_min > 0`). **Legenda clicável · multi-seleção** (`cultosSel`
+  Set + `Legend onClick` toggle → `Line hide`): clicar 1 culto isola só ele, clicar outros
+  soma à seleção, clicar de novo tira; Set vazio = todos (1ª seleção a partir do vazio = isolar). A tabela
   "Estouro por etapa" ganhou uma faixa-resumo do culto inteiro (`por_etapa_total`). Recharts
   herda o tema vidro do `index.css`; linhas NÃO usam gradiente (regra da casa); cores em `CORES_CULTO`.
   (Ajustes 2026-06-25/26, pedidos do Marcos: era executado×previsto numa linha só → 1 linha
