@@ -1550,6 +1550,7 @@ export const producao = {
   removerOcorrencia: (id) => del(`/producao/ocorrencias/${id}`),
   salvarChecklist: (cultoId, marks) => put(`/producao/culto/${cultoId}/checklist`, { marks }),
   acumulado:    (params = {}) => get('/producao/acumulado' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
+  pendencias:   () => get('/producao/pendencias'),
   desempenho:   () => get('/producao/desempenho'),
   // Template do checklist (aba admin)
   checklistItens: {

@@ -1793,6 +1793,15 @@ executado 0 = NÃO preenchido** (teste/pendente) → fica de fora de TODAS as m�
 `duracao_minutos/segundos > 0`. Senão um culto vazio (prev 60:00 / exec 0 = desvio −60:00) afunda
 a média (bug pego 2026-06-26: a "Quarta teste" puxava o "Culto inteiro" pra −3:43 com 78% estourando).
 
+**Pendências de preenchimento na aba Preenchimento (2026-06-26 · só código, sem migration):**
+painel no topo do `AbaSemana` (estilo dashboard da Integração) listando os cultos **a preencher
+desde 07/06** (corte = início do cronograma por momento), em chips clicáveis que abrem o modal do
+culto (`setEditando`). `GET /producao/pendencias` (varre 07/06→hoje, paginado) classifica:
+**não preenchido** = `culto_producao.duracao_segundos` null/0 (nada lançado ou teste zerado);
+**incompleto** = tem executado real mas ≥1 etapa com `executado_seg IS NULL`; **completo** = todas
+lançadas. Recarrega ao salvar um culto. `prodApi.pendencias()`. Cultos < 07/06 ficam fora (não
+tinham etapas). Quando zero, mostra "✓ Tudo preenchido desde 07/06".
+
 **Preview editável por culto + Louvor no Detalhado (2026-06-25 · só código, sem migration):**
 - O `Previsto` de cada momento virou input mm:ss no modal de preenchimento
   (`EtapasEditor` · era um `<span>` travado no roteiro). O roteiro em Modelos
