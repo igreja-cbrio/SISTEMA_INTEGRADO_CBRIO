@@ -1771,8 +1771,13 @@ unificado `culto_producao_ocorrencias` + checklist itemizado). Os 4 KPIs
 `valores='{}'`, fora da matriz NSM) · ⚠️ `tipo_kpi` só aceita
 `qualitativo|quantitativo|operacional`. SLA/NPS gerais já existiam
 (`ADM-C-G/Q-PRODUCAO`). Categoria `producao` no form de Solicitações roteia
-`area_responsavel='producao'`. **5 sub-abas** em `Producao.jsx`: Preenchimento ·
-Detalhado · Modelos · Solicitações · Desempenho.
+`area_responsavel='producao'`. **4 sub-abas** em `Producao.jsx`: Preenchimento ·
+Detalhado · Modelos · Desempenho. (A aba "Solicitações" foi removida em #1364 — era só
+um espelho filtrado do `/solicitacoes`; o Pedro usa o módulo Solicitações direto. Pra ele
+ver a fila de Produção lá, a área **Produção** foi adicionada ao `/admin/solicitacoes-responsaveis`
+(`AREAS` em `SolicitacoesResponsaveis.jsx`) e o Pedro Fernandes cadastrado em
+`area_solicitacoes_responsaveis` (`area='producao'`) — a fila "Atender" filtra POR ESSA
+tabela, não pelo cargo/boost; isso também faz a notificação de ocorrência crítica chegar nele.)
 
 **Cronograma por etapas (2026-06-16):** a equipe lança o tempo POR MOMENTO em
 mm:ss; a soma dos executados da seção 'culto' é a duração total
