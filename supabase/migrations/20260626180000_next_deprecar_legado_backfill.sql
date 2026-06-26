@@ -47,7 +47,7 @@ WHERE t.origem_mes = 'hist-checkin'
 -- 1+2. Promove a formado + re-liga membro_id ao gêmeo canônico ----------------
 WITH ci AS (  -- check-ins legados (compareceu = completou o Next antigo)
   SELECT membro_id,
-         NULLIF(regexp_replace(COALESCE(cpf,''), '\D', '', 'g'), '') AS cpf11,
+         NULLIF(regexp_replace(COALESCE(cpf,''), '[^0-9]', '', 'g'), '') AS cpf11,
          lower(btrim(nome)) AS nomek
   FROM public.next_inscricoes
   WHERE check_in_at IS NOT NULL
@@ -67,8 +67,8 @@ SET status = 'formado',
     membro_id = COALESCE(
       -- gêmeo por CPF (forte) sempre que houver
       (SELECT c.membro_id FROM ci_cpf c
-        WHERE length(NULLIF(regexp_replace(COALESCE(m.cpf,''), '\D','','g'),'')) = 11
-          AND c.cpf11 = regexp_replace(m.cpf, '\D','','g')),
+        WHERE length(NULLIF(regexp_replace(COALESCE(m.cpf,''), '[^0-9]','','g'),'')) = 11
+          AND c.cpf11 = regexp_replace(m.cpf, '[^0-9]','','g')),
       -- gêmeo por nome SÓ se o membro_id atual é nulo ou sintético (não existe em mem_membros)
       CASE WHEN m.membro_id IS NULL
                 OR NOT EXISTS (SELECT 1 FROM public.mem_membros mm WHERE mm.id = m.membro_id)
@@ -82,8 +82,8 @@ WHERE m.deleted_at IS NULL
   AND EXISTS (
     SELECT 1 FROM ci
     WHERE (m.membro_id IS NOT NULL AND ci.membro_id = m.membro_id)
-       OR (length(NULLIF(regexp_replace(COALESCE(m.cpf,''), '\D','','g'),'')) = 11
-           AND ci.cpf11 = regexp_replace(m.cpf, '\D','','g'))
+       OR (length(NULLIF(regexp_replace(COALESCE(m.cpf,''), '[^0-9]','','g'),'')) = 11
+           AND ci.cpf11 = regexp_replace(m.cpf, '[^0-9]','','g'))
        OR (ci.nomek = lower(btrim(m.nome)))
   );
 
@@ -91,7 +91,7 @@ WHERE m.deleted_at IS NULL
 WITH orf AS (
   SELECT DISTINCT ON (
            COALESCE(i.membro_id::text,
-                    NULLIF(regexp_replace(COALESCE(i.cpf,''),'\D','','g'),''),
+                    NULLIF(regexp_replace(COALESCE(i.cpf,''),'[^0-9]','','g'),''),
                     lower(btrim(i.nome)))
          )
          i.id, i.membro_id, i.cpf, i.telefone, i.email, i.nome, i.sobrenome,
@@ -102,12 +102,12 @@ WITH orf AS (
       SELECT 1 FROM public.next_matriculas m
       WHERE m.deleted_at IS NULL AND (
            (i.membro_id IS NOT NULL AND m.membro_id = i.membro_id)
-        OR (length(NULLIF(regexp_replace(COALESCE(i.cpf,''),'\D','','g'),'')) = 11
-            AND regexp_replace(COALESCE(m.cpf,''),'\D','','g') = regexp_replace(i.cpf,'\D','','g'))
+        OR (length(NULLIF(regexp_replace(COALESCE(i.cpf,''),'[^0-9]','','g'),'')) = 11
+            AND regexp_replace(COALESCE(m.cpf,''),'[^0-9]','','g') = regexp_replace(i.cpf,'[^0-9]','','g'))
         OR (lower(btrim(m.nome)) = lower(btrim(i.nome)))
       ))
   ORDER BY COALESCE(i.membro_id::text,
-                    NULLIF(regexp_replace(COALESCE(i.cpf,''),'\D','','g'),''),
+                    NULLIF(regexp_replace(COALESCE(i.cpf,''),'[^0-9]','','g'),''),
                     lower(btrim(i.nome))),
            (i.cpf IS NOT NULL) DESC, (i.membro_id IS NOT NULL) DESC, i.created_at ASC
 )
