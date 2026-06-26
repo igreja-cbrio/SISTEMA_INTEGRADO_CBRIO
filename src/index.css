@@ -747,3 +747,33 @@ a img[data-foto-avatar],
   [data-theme="light"] .glass-dash .cbrio-card,
   [data-theme="light"] .glass-dash .bg-card { background: #ffffff !important; }
 }
+
+/* ============================================================
+   MOTION · acabamento dos dashboards (.glass-dash).
+   Entrada suave (fade · sem transform na raiz pra não quebrar o
+   ::before fixed) + hover-lift nos cards. Respeita reduce-motion;
+   dado denso (tabela/gráfico) NÃO levanta.
+   ============================================================ */
+@media (prefers-reduced-motion: no-preference) {
+  .glass-dash { animation: glassDashIn 0.4s ease both; }
+  @keyframes glassDashIn { from { opacity: 0; } to { opacity: 1; } }
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .glass-dash .glass-surface,
+  .glass-dash .cbrio-card,
+  .glass-dash .bg-card {
+    transition: transform .22s cubic-bezier(.2,.8,.2,1),
+                box-shadow .22s cubic-bezier(.2,.8,.2,1),
+                border-color .2s ease;
+  }
+  .glass-dash .glass-surface:hover,
+  .glass-dash .cbrio-card:hover,
+  .glass-dash .bg-card:hover { transform: translateY(-2px); }
+  /* dado denso não levanta */
+  .glass-dash .glass-surface:has(table):hover,
+  .glass-dash .glass-surface:has(.recharts-wrapper):hover,
+  .glass-dash .cbrio-card:has(table):hover,
+  .glass-dash .cbrio-card:has(.recharts-wrapper):hover,
+  .glass-dash .bg-card:has(table):hover,
+  .glass-dash .bg-card:has(.recharts-wrapper):hover { transform: none; }
+}
