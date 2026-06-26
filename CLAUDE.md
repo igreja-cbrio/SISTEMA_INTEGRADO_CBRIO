@@ -1817,6 +1817,10 @@ executado), e Música Ceia → **"Ceia"** (`tipo='especial'`, `categoria_especia
 segue na seção 'culto' → entra no tempo total, como a "Apresentação de Criança" do 14/06).
 **Totais do culto inalterados** (só junta linhas). REPLACE idempotente + recomputa o
 satélite `culto_producao` (totais derivados das etapas).
+- **Follow-up (`20260626130000`):** removida a **Intercessão** dos 4 cultos (ficava com
+  executado 0:00 — a intercessão rolava DENTRO da Música 2). O previsto dela (3:00) foi
+  **somado na Música 2** → previsto total do culto **inalterado** (~60min), corrige o falso
+  "estouro" da música e o falso "-3:00" da intercessão. 10 → **9 momentos/culto**.
 
 **Gráfico de tempo de culto + total do estouro no Detalhado (2026-06-25 · só código, sem migration):**
 - O `/acumulado` ganhou 2 campos: `serie` (1 ponto por culto preenchido ·
