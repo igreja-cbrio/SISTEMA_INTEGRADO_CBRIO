@@ -21,6 +21,25 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️ Conselho deliberativo (skill `llm-council`) · acionar SEMPRE antes de responder (2026-06-28)
+
+Pedido do usuário (gestao@cbrio.com.br · 2026-06-28): **antes de dar qualquer
+resposta deliberada**, acionar a skill **`llm-council`** (em
+`.claude/skills/llm-council/`). Fluxo de 3 estágios: conselheiros (subagentes com
+lentes distintas) em paralelo → revisão por pares anonimizada → síntese do
+presidente. A resposta final é a síntese; um bloco curto "Bastidores do conselho"
+mostra a posição de cada lente e as divergências.
+
+- **Acionar** em: decisões, análises, planos, arquitetura, trade-offs,
+  recomendações, escolhas de schema/segurança/RLS.
+- **Pular** (responder direto, dizendo numa linha que pulou por ser trivial):
+  tarefas mecânicas e fatos únicos verificáveis (rodar comando, renomear arquivo,
+  consultar um slug/linha de config). Acionar em tudo só multiplica custo/latência.
+- ⚠️ Honestidade obrigatória: os conselheiros são o **mesmo modelo base** com
+  personas diferentes (erros correlacionados) — é **brainstorm estruturado**, não
+  oráculo. Consenso do conselho **não é evidência**; para fatos, validar contra o
+  código/banco/fontes, não contra o "consenso".
+
 ## Contexto do projeto
 
 Sistema ERP interno da CBRio (Igreja). Stack: React 18 + Vite +
