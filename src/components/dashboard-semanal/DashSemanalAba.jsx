@@ -746,18 +746,6 @@ export default function DashSemanalAba() {
             </CardContent>
           </Card>
         )}
-
-        {/* Meta · só aparece em modo single */}
-        {isSingle && primario?.data?.meta && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Meta semanal de {primario.data.rotulo}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <MetaProgresso atual={primario.data.resumo.total} meta={primario.data.meta.meta_valor} />
-            </CardContent>
-          </Card>
-        )}
       </div>
     </div>
   );
@@ -783,27 +771,4 @@ function formatBr(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
-}
-
-function MetaProgresso({ atual, meta }) {
-  const pct = Math.min(200, Math.round((atual / meta) * 100));
-  const cor = pct >= 100 ? '#10b981' : pct >= 70 ? '#f59e0b' : '#ef4444';
-  return (
-    <div>
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="text-2xl font-bold">{atual.toLocaleString('pt-BR')}</div>
-        <div className="text-sm text-muted-foreground">/ meta {meta.toLocaleString('pt-BR')}</div>
-      </div>
-      <div className="h-3 rounded-full bg-muted overflow-hidden">
-        <motion.div
-          className="h-full rounded-full cbrio-bar"
-          style={{ background: cor }}
-          initial={{ width: 0 }}
-          animate={{ width: `${Math.min(100, pct)}%` }}
-          transition={{ duration: 0.9, ease: 'easeOut' }}
-        />
-      </div>
-      <div className="text-xs text-muted-foreground mt-1">{pct}% da meta semanal</div>
-    </div>
-  );
 }

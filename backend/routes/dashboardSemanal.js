@@ -785,7 +785,7 @@ router.get('/metas/valor-atual', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /metas/sugerir · calcula meta sugerida com base em histórico
-//   query: indicador, base (mes_anterior | trimestre_anterior | ano_anterior | mesmo_mes_ano_anterior)
+//   query: indicador, base (mes_anterior | valor_absoluto_mes_anterior | trimestre_anterior | ano_anterior | mesmo_mes_ano_anterior)
 //          periodicidade (semanal | mensal · default semanal)
 //          culto (uuid opcional)
 //
@@ -803,7 +803,10 @@ router.get('/metas/sugerir', async (req, res) => {
     const hoje = new Date();
     let inicio, fim, baseLabel;
 
-    if (base === 'mes_anterior') {
+    // modo absoluto = soma total do indicador no período (não a média por período)
+    const modoAbsoluto = base === 'valor_absoluto_mes_anterior';
+
+    if (base === 'mes_anterior' || base === 'valor_absoluto_mes_anterior') {
       const mesAtual = hoje.getUTCMonth();
       const anoAtual = hoje.getUTCFullYear();
       const inicioMesAnt = new Date(Date.UTC(anoAtual, mesAtual - 1, 1));
@@ -849,6 +852,39 @@ router.get('/metas/sugerir', async (req, res) => {
 
     const { data, error } = await q;
     if (error) throw error;
+
+    // Modo absoluto · soma total do indicador no mês anterior (vira a meta direto).
+    // Filtro por string de data (inclusivo do mês inteiro · evita o off-by-one de hora UTC).
+    if (modoAbsoluto) {
+      const inicioStr = inicio.toISOString().slice(0, 10);
+      const fimStr = fim.toISOString().slice(0, 10);
+      let total = 0;
+      let qtd = 0;
+      for (const row of (data || [])) {
+        if (row.data < inicioStr || row.data > fimStr) continue;
+        total += Number(row[colunaCrua(indicadorKey)]) || 0;
+        qtd++;
+      }
+      if (total === 0) {
+        return res.json({
+          sugestao: 0,
+          base_label: baseLabel,
+          periodo_referencia: `${inicioStr} a ${fimStr}`,
+          amostra: 0,
+          valores_amostra: [],
+          modo: 'absoluto',
+          aviso: 'Sem dados preenchidos no mês anterior. Verifique os cultos.',
+        });
+      }
+      return res.json({
+        sugestao: Math.round(total),
+        base_label: baseLabel,
+        periodo_referencia: `${inicioStr} a ${fimStr}`,
+        amostra: qtd,
+        valores_amostra: [],
+        modo: 'absoluto',
+      });
+    }
 
     // Agrupa por (semana ISO · usando o domingo daquela semana como ancora) ou (mês)
     // Regra do Marcos: semana so conta se o DOMINGO dela cai dentro do período
