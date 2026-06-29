@@ -145,8 +145,9 @@ router.get('/semanal', async (req, res) => {
     if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
 
     // Linhas da semana selecionada
+    const fonte = fonteView(indicadorKey);
     let q = supabase
-      .from('vw_dashboard_semanal')
+      .from(fonte)
       .select(`service_type_id, service_type_name, service_type_color, recurrence_day, recurrence_time,
                ${colunasView(indicadorKey).join(', ')}, total_presencial, total_cultos`)
       .eq('ano_iso', ano)
@@ -163,7 +164,7 @@ router.get('/semanal', async (req, res) => {
     // Pega janela ampla e filtra "anterior à semana atual" em JS pra simplificar
     // Volume é trivial (1 linha por (ano, semana, tipo) · ~1000 rows em 5 anos)
     let qHist = supabase
-      .from('vw_dashboard_semanal')
+      .from(fonte)
       .select(`service_type_id, ${colunasView(indicadorKey).join(', ')}, ano_iso, semana_iso`)
       .gte('ano_iso', ano - 1)
       .lte('ano_iso', ano);
@@ -292,7 +293,7 @@ router.get('/ranking', async (req, res) => {
     if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
 
     let q = supabase
-      .from('vw_dashboard_semanal')
+      .from(fonteView(indicadorKey))
       .select(`service_type_id, semana_iso, ${colunasView(indicadorKey).join(', ')}`)
       .eq('ano_iso', ano);
     if (cultoId) q = q.eq('service_type_id', cultoId);
@@ -386,7 +387,7 @@ router.get('/yoy', async (req, res) => {
       : [anoAtual - 2, anoAtual - 1, anoAtual];
 
     let q = supabase
-      .from('vw_dashboard_semanal')
+      .from(fonteView(indicadorKey))
       .select(`service_type_id, ano_iso, ${colunasView(indicadorKey).join(', ')}`)
       .in('ano_iso', anos)
       .eq('semana_iso', semana);
@@ -450,7 +451,7 @@ router.get('/mensal', async (req, res) => {
       : null;
 
     let q = supabase
-      .from('vw_dashboard_semanal')
+      .from(fonteView(indicadorKey))
       .select(`ano_calendario, mes, service_type_id, ${colunasView(indicadorKey).join(', ')}`)
       .in('ano_calendario', anos);
     if (cultoId) q = q.eq('service_type_id', cultoId);
@@ -764,6 +765,30 @@ router.get('/metas/valor-atual', async (req, res) => {
       return res.status(400).json({ error: 'periodicidade inválida' });
     }
 
+    // Voluntariado vem dos check-ins (por bloco) · view vw_dashboard_voluntariado.
+    // Os períodos do valor-atual são alinhados a semana ISO / mês / ano, que a
+    // view já agrega — filtra direto por esses campos.
+    if (indicadorKey === 'voluntariado') {
+      let vq = supabase.from('vw_dashboard_voluntariado').select('voluntariado');
+      if (periodicidade === 'semanal') {
+        const w = isoWeekOf(fim);
+        vq = vq.eq('ano_iso', w.ano).eq('semana_iso', w.semana);
+      } else if (periodicidade === 'mensal') {
+        vq = vq.eq('ano_calendario', inicio.getUTCFullYear()).eq('mes', inicio.getUTCMonth() + 1);
+      } else {
+        vq = vq.eq('ano_calendario', inicio.getUTCFullYear());
+      }
+      const { data: vdata, error: verr } = await vq;
+      if (verr) throw verr;
+      const totalVol = (vdata || []).reduce((s, r) => s + (Number(r.voluntariado) || 0), 0);
+      return res.json({
+        indicador: indicadorKey, periodicidade, label,
+        inicio: inicio.toISOString().slice(0, 10),
+        fim: fim.toISOString().slice(0, 10),
+        total: totalVol,
+      });
+    }
+
     const colsCultos = colunasCultos(indicadorKey);
     const { data, error } = await supabase
       .from('cultos')
@@ -839,6 +864,50 @@ router.get('/metas/sugerir', async (req, res) => {
       baseLabel = `mesmo mês ano passado (${formatMesAno(inicioMes)})`;
     } else {
       return res.status(400).json({ error: 'base inválida' });
+    }
+
+    const periodoRef = `${inicio.toISOString().slice(0, 10)} a ${fim.toISOString().slice(0, 10)}`;
+
+    // Voluntariado vem dos check-ins (por bloco) · vw_dashboard_voluntariado.
+    // Os períodos das bases são alinhados a mês, então filtramos por (ano, mês).
+    if (indicadorKey === 'voluntariado') {
+      const mesesSet = new Set();
+      const cur = new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), 1));
+      while (cur <= fim) {
+        mesesSet.add(`${cur.getUTCFullYear()}-${cur.getUTCMonth() + 1}`);
+        cur.setUTCMonth(cur.getUTCMonth() + 1);
+      }
+      const anosPeriodo = [...new Set([...mesesSet].map(k => Number(k.split('-')[0])))];
+      const { data: vrows, error: verr } = await supabase
+        .from('vw_dashboard_voluntariado')
+        .select('ano_iso, semana_iso, ano_calendario, mes, voluntariado')
+        .in('ano_calendario', anosPeriodo);
+      if (verr) throw verr;
+      const noPeriodo = (vrows || []).filter(r => mesesSet.has(`${r.ano_calendario}-${r.mes}`));
+
+      if (modoAbsoluto) {
+        const total = noPeriodo.reduce((s, r) => s + (Number(r.voluntariado) || 0), 0);
+        return res.json({
+          sugestao: Math.round(total), base_label: baseLabel, periodo_referencia: periodoRef,
+          amostra: noPeriodo.length, valores_amostra: [], modo: 'absoluto',
+          ...(total === 0 ? { aviso: 'Sem check-ins de voluntariado no período.' } : {}),
+        });
+      }
+      // média por período (semana ISO ou mês), somando os blocos dentro de cada um
+      const grupos = new Map();
+      for (const r of noPeriodo) {
+        const key = periodicidade === 'mensal' ? `${r.ano_calendario}-${r.mes}` : `${r.ano_iso}-${r.semana_iso}`;
+        grupos.set(key, (grupos.get(key) || 0) + (Number(r.voluntariado) || 0));
+      }
+      const valores = [...grupos.values()].filter(v => v > 0);
+      if (!valores.length) {
+        return res.json({ sugestao: 0, base_label: baseLabel, periodo_referencia: periodoRef, amostra: 0, valores_amostra: [], aviso: 'Sem check-ins de voluntariado no período.' });
+      }
+      const media = valores.reduce((s, v) => s + v, 0) / valores.length;
+      return res.json({
+        sugestao: Math.round(media), base_label: baseLabel, periodo_referencia: periodoRef,
+        amostra: valores.length, valores_amostra: valores.slice(0, 8), media_exata: Math.round(media * 100) / 100,
+      });
     }
 
     // Pega dados brutos da tabela cultos no período · janela estendida pra
@@ -987,6 +1056,13 @@ function colunasCultos(indKey) {
 // Soma o valor de um conjunto de colunas numa linha (composto = vários canais).
 function somaColunas(row, cols) {
   return cols.reduce((s, col) => s + (Number(row[col]) || 0), 0);
+}
+
+// Fonte do indicador nas queries por (service_type × período). Voluntariado vem
+// dos check-ins (vol_check_ins · por bloco), não da coluna manual cultos.voluntarios
+// — view vw_dashboard_voluntariado tem a MESMA forma da vw_dashboard_semanal.
+function fonteView(indicadorKey) {
+  return indicadorKey === 'voluntariado' ? 'vw_dashboard_voluntariado' : 'vw_dashboard_semanal';
 }
 
 function sundayOfWeek(date) {
