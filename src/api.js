@@ -4,10 +4,39 @@ import { resolveApiBaseUrl } from './lib/api-base';
 // Configure this to point to your Vercel backend
 const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 
+// Token de acesso em cache · mantido fresco pelo onAuthStateChange (o supabase-js
+// re-dispara a sessão a cada refresh/foco de aba). Serve de fallback pra quando o
+// getSession() pendura (bug do Web Lock órfão do supabase-js · ver supabaseClient.js).
+// Sem isso, um getToken() travado deixava QUALQUER request (ex.: salvar meta)
+// "carregando pra sempre" até o usuário recarregar a página.
+let _cachedToken = null;
+if (supabase) {
+  supabase.auth.getSession()
+    .then(({ data }) => { _cachedToken = data?.session?.access_token || null; })
+    .catch(() => {});
+  supabase.auth.onAuthStateChange((_event, session) => {
+    _cachedToken = session?.access_token || null;
+  });
+}
+
 async function getToken() {
   if (!supabase) return null;
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token || null;
+  // getSession() pode pendurar indefinidamente (Web Lock órfão · issues supabase-js
+  // #1594/#2111). Corremos contra um timeout curto e caímos no token cacheado, pra
+  // o request nunca travar (botão "Salvar" girando infinito · incidente 2026-06-29).
+  try {
+    const session = await Promise.race([
+      supabase.auth.getSession().then(({ data }) => data?.session || null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (session?.access_token) {
+      _cachedToken = session.access_token;
+      return _cachedToken;
+    }
+  } catch {
+    /* cai no token cacheado abaixo */
+  }
+  return _cachedToken;
 }
 
 const headers = async () => {
