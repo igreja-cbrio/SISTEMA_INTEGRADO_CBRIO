@@ -14,7 +14,17 @@ import RedefinirSenha from './pages/RedefinirSenha';
 import { CbrioLoader } from './components/ui/cbrio-loader';
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+      // Cache de 60s · trocar de aba/voltar mostra o dado em cache na hora
+      // (revalida em background) em vez de recarregar do zero toda vez.
+      staleTime: 60_000,
+      // Mantém o dado em memória por 10 min depois de sair da tela.
+      gcTime: 10 * 60_000,
+    },
+  },
 });
 
 // ── Lazy loader com retry automático em caso de chunk load failure ──
