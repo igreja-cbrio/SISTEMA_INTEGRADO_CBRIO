@@ -71,6 +71,14 @@ const CACHE_TTL = 30 * 1000; // 30 segundos
 let modulosCache = null;
 let modulosCacheTime = 0;
 
+// Cache da AUTENTICAÇÃO resolvida (token -> req.user) · evita 3-4 round-trips
+// (getUser + profiles + usuarios + matriz) a CADA request — era o maior custo
+// por chamada e a causa da lentidão ao trocar de aba. TTL curto (60s). Limpo no
+// bustPermissionCaches (mudança de cargo/matriz reflete no máximo em 60s).
+// Trade-off aceito: sessão revogada manualmente segue válida por até 60s.
+const AUTH_CACHE_TTL = 60 * 1000;
+const authUserCache = new Map(); // token -> { user, exp }
+
 async function getModulos() {
   if (modulosCache && Date.now() - modulosCacheTime < CACHE_TTL) return modulosCache;
   const { data } = await supabase
@@ -200,6 +208,13 @@ async function authenticate(req, res, next) {
   if (!supabase) {
     console.error('[AUTH] Supabase client não inicializado · verifique SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no Vercel');
     return res.status(500).json({ error: 'Backend não configurado (Supabase env vars ausentes)', reason: 'no_supabase_client' });
+  }
+
+  // Cache hit · pula getUser + profile + usuarios + matriz (todos os round-trips)
+  const cachedAuth = authUserCache.get(token);
+  if (cachedAuth && cachedAuth.exp > Date.now()) {
+    req.user = cachedAuth.user;
+    return next();
   }
 
   const { data: { user }, error } = await supabase.auth.getUser(token);
@@ -373,6 +388,10 @@ async function authenticate(req, res, next) {
     id: user.id, // alias amigavel · req.user.id
     granular, // null se usuário não está no sistema granular
   };
+
+  // Cacheia a auth resolvida por 60s (guard de tamanho contra crescimento)
+  if (authUserCache.size > 1000) authUserCache.clear();
+  authUserCache.set(token, { user: req.user, exp: Date.now() + AUTH_CACHE_TTL });
 
   next();
 }
@@ -595,6 +614,7 @@ async function getMyPermissions(req, res) {
 // cargoMatrix não tem mais cache · sempre fresco.
 function bustPermissionCaches() {
   modulosCache = null;
+  authUserCache.clear();
   modulosCacheTime = 0;
 }
 
