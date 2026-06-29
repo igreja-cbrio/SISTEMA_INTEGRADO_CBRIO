@@ -257,11 +257,15 @@ function MetaForm({ editing, setEditing }) {
       </div>
 
       <div>
-        <label className="text-xs font-medium text-muted-foreground block mb-1">Rótulo</label>
+        <label className="text-xs font-medium text-muted-foreground block mb-1">Nome da meta</label>
         <Input
           value={editing.rotulo}
           onChange={e => setEditing({ ...editing, rotulo: e.target.value })}
+          placeholder="Ex.: Aceitações (mensal)"
         />
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Nome exibido no card. Pode ser personalizado livremente.
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
