@@ -20,6 +20,7 @@ export const INDICADORES = [
   { key: 'aceitacoes',        label: 'Aceitações',        usa_ocupacao: false },
   { key: 'aceitacoes_online', label: 'Aceitações Online', usa_ocupacao: false },
   { key: 'aceitacoes_total',  label: 'Aceitações (Presencial + Online)', usa_ocupacao: false },
+  { key: 'aceitacoes_total_kids', label: 'Aceitações (Presencial + Online + Kids)', usa_ocupacao: false },
   { key: 'ao_vivo',           label: 'Ao vivo',           usa_ocupacao: false },
   { key: 'online_ds',         label: 'Online DS',         usa_ocupacao: false },
   { key: 'online_ddus',       label: 'Online DDUS',       usa_ocupacao: false },

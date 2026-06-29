@@ -32,6 +32,7 @@ const INDICADORES = {
   // Compostos · somam vários canais (ver INDICADORES_COMPOSTOS). coluna = pseudo-coluna.
   frequencia_total:  { coluna: 'frequencia_total',  rotulo: 'Frequência Total (Templo + Kids)',   usa_ocupacao: false },
   aceitacoes_total:  { coluna: 'aceitacoes_total',  rotulo: 'Aceitações (Presencial + Online)',   usa_ocupacao: false },
+  aceitacoes_total_kids: { coluna: 'aceitacoes_total_kids', rotulo: 'Aceitações (Presencial + Online + Kids)', usa_ocupacao: false },
   ao_vivo:           { coluna: 'ao_vivo',           rotulo: 'Ao vivo',           usa_ocupacao: false },
   online_ds:         { coluna: 'online_ds',         rotulo: 'Online DS',         usa_ocupacao: false },
   online_ddus:       { coluna: 'online_ddus',       rotulo: 'Online DDUS',       usa_ocupacao: false },
@@ -966,6 +967,7 @@ function colunaCrua(indKey) {
 const INDICADORES_COMPOSTOS = {
   frequencia_total: { view: ['frequencia', 'frequencia_kids'],   cultos: ['presencial_adulto', 'presencial_kids'] },
   aceitacoes_total: { view: ['aceitacoes', 'aceitacoes_online'], cultos: ['decisoes_presenciais', 'decisoes_online'] },
+  aceitacoes_total_kids: { view: ['aceitacoes', 'aceitacoes_online', 'aceitacoes_kids'], cultos: ['decisoes_presenciais', 'decisoes_online', 'decisoes_kids'] },
 };
 
 // Colunas a selecionar/somar para um indicador na VIEW vw_dashboard_semanal.
