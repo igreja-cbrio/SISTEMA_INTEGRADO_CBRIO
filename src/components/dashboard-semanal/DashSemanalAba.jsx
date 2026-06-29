@@ -754,7 +754,10 @@ export default function DashSemanalAba() {
 function shortLabel(nome, day, time) {
   if (!nome) return '—';
   const hhmm = (time || '').slice(0, 5);
-  if (/domingo/i.test(nome)) return hhmm ? `Dom ${hhmm}` : nome;
+  // Cultos por horário ("Domingo 08:30") encurtam pra "Dom 08:30". Blocos de
+  // voluntariado ("Domingo Manhã"/"Domingo Noite") não têm horário no nome →
+  // mantêm o nome do bloco.
+  if (/domingo/i.test(nome)) return /\d/.test(nome) && hhmm ? `Dom ${hhmm}` : nome;
   if (/quarta/i.test(nome)) return 'Quarta';
   return nome;
 }
