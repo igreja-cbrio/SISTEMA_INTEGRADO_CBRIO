@@ -25,10 +25,11 @@ const TIPOS_GRAFICO = [
 ];
 
 const BASES_SUGESTAO = [
-  { value: 'mes_anterior',           label: 'Média do mês anterior' },
-  { value: 'mesmo_mes_ano_anterior', label: 'Mesmo mês do ano passado' },
-  { value: 'trimestre_anterior',     label: 'Últimos 3 meses' },
-  { value: 'ano_anterior',           label: 'Ano anterior inteiro' },
+  { value: 'mes_anterior',                label: 'Média do mês anterior' },
+  { value: 'valor_absoluto_mes_anterior', label: 'Valor absoluto do mês anterior' },
+  { value: 'mesmo_mes_ano_anterior',      label: 'Mesmo mês do ano passado' },
+  { value: 'trimestre_anterior',          label: 'Últimos 3 meses' },
+  { value: 'ano_anterior',                label: 'Ano anterior inteiro' },
 ];
 
 export default function DashMetasAba() {
@@ -316,10 +317,14 @@ function MetaForm({ editing, setEditing }) {
               <p className="text-amber-600">{sugestaoResult.aviso || 'Sem dados no período.'}</p>
             ) : (
               <p className="text-foreground">
-                Média {editing.periodicidade} no {sugestaoResult.base_label}:{' '}
+                {sugestaoResult.modo === 'absoluto'
+                  ? <>Total no {sugestaoResult.base_label}:{' '}</>
+                  : <>Média {editing.periodicidade} no {sugestaoResult.base_label}:{' '}</>}
                 <span className="font-bold text-[#00B39D]">{sugestaoResult.sugestao.toLocaleString('pt-BR')}</span>
                 {' '}<span className="text-muted-foreground">
-                  ({sugestaoResult.amostra} {editing.periodicidade === 'semanal' ? 'semana(s) completa(s) · domingo dentro do mês' : 'período(s)'})
+                  {sugestaoResult.modo === 'absoluto'
+                    ? `(soma de ${sugestaoResult.amostra} culto(s) no mês)`
+                    : `(${sugestaoResult.amostra} ${editing.periodicidade === 'semanal' ? 'semana(s) completa(s) · domingo dentro do mês' : 'período(s)'})`}
                 </span>
                 {' · '}
                 <span className="text-muted-foreground">preenchido no campo</span>
