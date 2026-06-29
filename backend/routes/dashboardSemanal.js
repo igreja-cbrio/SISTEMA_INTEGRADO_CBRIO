@@ -29,6 +29,9 @@ const INDICADORES = {
   frequencia_kids:   { coluna: 'frequencia_kids',   rotulo: 'Frequência Kids',   usa_ocupacao: false },
   aceitacoes:        { coluna: 'aceitacoes',        rotulo: 'Aceitações',        usa_ocupacao: false },
   aceitacoes_online: { coluna: 'aceitacoes_online', rotulo: 'Aceitações Online', usa_ocupacao: false },
+  // Compostos · somam vários canais (ver INDICADORES_COMPOSTOS). coluna = pseudo-coluna.
+  frequencia_total:  { coluna: 'frequencia_total',  rotulo: 'Frequência Total (Templo + Kids)',   usa_ocupacao: false },
+  aceitacoes_total:  { coluna: 'aceitacoes_total',  rotulo: 'Aceitações (Presencial + Online)',   usa_ocupacao: false },
   ao_vivo:           { coluna: 'ao_vivo',           rotulo: 'Ao vivo',           usa_ocupacao: false },
   online_ds:         { coluna: 'online_ds',         rotulo: 'Online DS',         usa_ocupacao: false },
   online_ddus:       { coluna: 'online_ddus',       rotulo: 'Online DDUS',       usa_ocupacao: false },
@@ -144,7 +147,7 @@ router.get('/semanal', async (req, res) => {
     let q = supabase
       .from('vw_dashboard_semanal')
       .select(`service_type_id, service_type_name, service_type_color, recurrence_day, recurrence_time,
-               ${indDef.coluna}, total_presencial, total_cultos`)
+               ${colunasView(indicadorKey).join(', ')}, total_presencial, total_cultos`)
       .eq('ano_iso', ano)
       .eq('semana_iso', semana);
     if (cultoId) q = q.eq('service_type_id', cultoId);
@@ -160,7 +163,7 @@ router.get('/semanal', async (req, res) => {
     // Volume é trivial (1 linha por (ano, semana, tipo) · ~1000 rows em 5 anos)
     let qHist = supabase
       .from('vw_dashboard_semanal')
-      .select(`service_type_id, ${indDef.coluna}, ano_iso, semana_iso`)
+      .select(`service_type_id, ${colunasView(indicadorKey).join(', ')}, ano_iso, semana_iso`)
       .gte('ano_iso', ano - 1)
       .lte('ano_iso', ano);
     if (cultoId) qHist = qHist.eq('service_type_id', cultoId);
@@ -175,7 +178,7 @@ router.get('/semanal', async (req, res) => {
     const histPorTipo = new Map();
     for (const r of (histData || [])) {
       const arr = histPorTipo.get(r.service_type_id) || [];
-      arr.push(Number(r[indDef.coluna]) || 0);
+      arr.push(somaColunas(r, colunasView(indicadorKey)));
       histPorTipo.set(r.service_type_id, arr);
     }
 
@@ -184,7 +187,7 @@ router.get('/semanal', async (req, res) => {
       const media = valores.length
         ? Math.round(valores.reduce((s, v) => s + v, 0) / valores.length)
         : 0;
-      const valor_absoluto = Number(r[indDef.coluna]) || 0;
+      const valor_absoluto = somaColunas(r, colunasView(indicadorKey));
       return {
         service_type_id: r.service_type_id,
         nome: r.service_type_name,
@@ -289,7 +292,7 @@ router.get('/ranking', async (req, res) => {
 
     let q = supabase
       .from('vw_dashboard_semanal')
-      .select(`service_type_id, semana_iso, ${indDef.coluna}`)
+      .select(`service_type_id, semana_iso, ${colunasView(indicadorKey).join(', ')}`)
       .eq('ano_iso', ano);
     if (cultoId) q = q.eq('service_type_id', cultoId);
     const { data, error } = await q;
@@ -308,7 +311,7 @@ router.get('/ranking', async (req, res) => {
     const porSemana = new Map();
     for (const r of (data || [])) {
       if (excluir.has(r.service_type_id)) continue;
-      const v = Number(r[indDef.coluna]) || 0;
+      const v = somaColunas(r, colunasView(indicadorKey));
       porSemana.set(r.semana_iso, (porSemana.get(r.semana_iso) || 0) + v);
     }
 
@@ -383,7 +386,7 @@ router.get('/yoy', async (req, res) => {
 
     let q = supabase
       .from('vw_dashboard_semanal')
-      .select(`service_type_id, ano_iso, ${indDef.coluna}`)
+      .select(`service_type_id, ano_iso, ${colunasView(indicadorKey).join(', ')}`)
       .in('ano_iso', anos)
       .eq('semana_iso', semana);
     if (cultoId) q = q.eq('service_type_id', cultoId);
@@ -403,7 +406,7 @@ router.get('/yoy', async (req, res) => {
     const porAno = new Map(); // ano -> { total, linhas }
     for (const r of (data || [])) {
       if (excluir.has(r.service_type_id)) continue;
-      const v = Number(r[indDef.coluna]) || 0;
+      const v = somaColunas(r, colunasView(indicadorKey));
       const acc = porAno.get(r.ano_iso) || { total: 0, linhas: 0 };
       acc.total += v;
       acc.linhas += 1;
@@ -447,7 +450,7 @@ router.get('/mensal', async (req, res) => {
 
     let q = supabase
       .from('vw_dashboard_semanal')
-      .select(`ano_calendario, mes, service_type_id, ${indDef.coluna}`)
+      .select(`ano_calendario, mes, service_type_id, ${colunasView(indicadorKey).join(', ')}`)
       .in('ano_calendario', anos);
     if (cultoId) q = q.eq('service_type_id', cultoId);
     const { data, error } = await q;
@@ -457,7 +460,7 @@ router.get('/mensal', async (req, res) => {
 
     const acc = new Map();
     for (const r of filtered) {
-      const v = Number(r[indDef.coluna]) || 0;
+      const v = somaColunas(r, colunasView(indicadorKey));
       if (!v) continue; // 0/null = sem dado · não cria ponto (linha não cai a 0)
       const key = `${r.mes}-${r.ano_calendario}`;
       acc.set(key, (acc.get(key) || 0) + v);
@@ -760,14 +763,15 @@ router.get('/metas/valor-atual', async (req, res) => {
       return res.status(400).json({ error: 'periodicidade inválida' });
     }
 
+    const colsCultos = colunasCultos(indicadorKey);
     const { data, error } = await supabase
       .from('cultos')
-      .select(`${colunaCrua(indicadorKey)}`)
+      .select(colsCultos.join(', '))
       .gte('data', inicio.toISOString().slice(0, 10))
       .lte('data', fim.toISOString().slice(0, 10));
     if (error) throw error;
 
-    const total = (data || []).reduce((s, r) => s + (Number(r[colunaCrua(indicadorKey)]) || 0), 0);
+    const total = (data || []).reduce((s, r) => s + somaColunas(r, colsCultos), 0);
 
     res.json({
       indicador: indicadorKey,
@@ -843,9 +847,10 @@ router.get('/metas/sugerir', async (req, res) => {
     const fimExt = new Date(fim);
     fimExt.setUTCDate(fimExt.getUTCDate() + 7);
 
+    const colsCultos = colunasCultos(indicadorKey);
     let q = supabase
       .from('cultos')
-      .select(`data, service_type_id, ${colunaCrua(indicadorKey)}`)
+      .select(`data, service_type_id, ${colsCultos.join(', ')}`)
       .gte('data', inicioExt.toISOString().slice(0, 10))
       .lte('data', fimExt.toISOString().slice(0, 10));
     if (cultoId) q = q.eq('service_type_id', cultoId);
@@ -862,7 +867,7 @@ router.get('/metas/sugerir', async (req, res) => {
       let qtd = 0;
       for (const row of (data || [])) {
         if (row.data < inicioStr || row.data > fimStr) continue;
-        total += Number(row[colunaCrua(indicadorKey)]) || 0;
+        total += somaColunas(row, colsCultos);
         qtd++;
       }
       if (total === 0) {
@@ -908,7 +913,7 @@ router.get('/metas/sugerir', async (req, res) => {
         if (d.getTime() < inicioMs || d.getTime() > fimMs) continue;
         key = String(d.getUTCFullYear());
       }
-      const valor = Number(row[colunaCrua(indicadorKey)]) || 0;
+      const valor = somaColunas(row, colsCultos);
       grupos.set(key, (grupos.get(key) || 0) + valor);
     }
 
@@ -954,6 +959,32 @@ function colunaCrua(indKey) {
     voluntariado:      'voluntarios',
   };
   return map[indKey] || indKey;
+}
+
+// Indicadores compostos · somam vários canais. Os nomes de coluna diferem por
+// fonte: `view` = colunas de vw_dashboard_semanal · `cultos` = colunas da tabela cultos.
+const INDICADORES_COMPOSTOS = {
+  frequencia_total: { view: ['frequencia', 'frequencia_kids'],   cultos: ['presencial_adulto', 'presencial_kids'] },
+  aceitacoes_total: { view: ['aceitacoes', 'aceitacoes_online'], cultos: ['decisoes_presenciais', 'decisoes_online'] },
+};
+
+// Colunas a selecionar/somar para um indicador na VIEW vw_dashboard_semanal.
+function colunasView(indKey) {
+  const c = INDICADORES_COMPOSTOS[indKey];
+  if (c) return c.view;
+  return [INDICADORES[indKey]?.coluna || indKey];
+}
+
+// Colunas a selecionar/somar para um indicador na tabela cultos.
+function colunasCultos(indKey) {
+  const c = INDICADORES_COMPOSTOS[indKey];
+  if (c) return c.cultos;
+  return [colunaCrua(indKey)];
+}
+
+// Soma o valor de um conjunto de colunas numa linha (composto = vários canais).
+function somaColunas(row, cols) {
+  return cols.reduce((s, col) => s + (Number(row[col]) || 0), 0);
 }
 
 function sundayOfWeek(date) {
