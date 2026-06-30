@@ -507,6 +507,13 @@ function PessoasView() {
         </div>
       </div>
 
+      {!loading && (
+        <div className="text-xs text-muted-foreground">
+          Mostrando <strong className="text-foreground">{filtrada.length}</strong> de {itens.length} pessoa{itens.length !== 1 ? 's' : ''}
+          {fData !== 'tudo' && ` · só convertidos com até ${fData} dias desde a conversão (externos não têm data)`}
+        </div>
+      )}
+
       {loading ? (
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : filtrada.length === 0 ? (
