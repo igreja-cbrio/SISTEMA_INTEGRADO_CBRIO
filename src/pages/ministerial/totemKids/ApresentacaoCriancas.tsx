@@ -26,14 +26,22 @@ export default function ApresentacaoCriancas() {
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
 
-  const load = () => {
-    setLoading(true);
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     api.apresentacoes()
       .then((d: any) => setLista(Array.isArray(d) ? d : []))
-      .catch(() => toast.error('Erro ao carregar'))
-      .finally(() => setLoading(false));
+      .catch(() => { if (!silent) toast.error('Erro ao carregar'); })
+      .finally(() => { if (!silent) setLoading(false); });
   };
-  useEffect(load, []);
+  // Carrega ao abrir + atualiza em segundo plano (polling 20s e ao focar a aba),
+  // pra novas inscrições aparecerem sem precisar recarregar a página.
+  useEffect(() => {
+    load();
+    const interval = setInterval(() => load(true), 20000);
+    const onFocus = () => load(true);
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(interval); window.removeEventListener('focus', onFocus); };
+  }, []);
 
   const mudarStatus = async (id: string, status: string) => {
     try {
