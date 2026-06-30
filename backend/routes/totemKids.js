@@ -984,6 +984,27 @@ router.post('/resumo/exemplo', authorizeModule('kids', 1), async (req, res) => {
   } catch (e) { console.error('[totemKids] resumo exemplo:', e.message); res.status(500).json({ error: 'Erro ao enviar exemplo' }); }
 });
 
+// POST /resumo-pco/testar · DIAGNÓSTICO (só leitura · não grava, não envia):
+// puxa os check-ins do Planning Center de um dia e devolve a frequência de
+// crianças por culto + um retrato da estrutura do PCO. Default = último domingo.
+router.post('/resumo-pco/testar', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { coletarFrequenciaKidsPCO } = require('../services/planningCenterKidsCheckins');
+    let data = req.body?.data;
+    if (!data) {
+      // último domingo (BRT)
+      const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000);
+      const d = new Date(hojeBRT); d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+      data = d.toISOString().slice(0, 10);
+    }
+    const r = await coletarFrequenciaKidsPCO(data);
+    res.json(r);
+  } catch (e) {
+    console.error('[totemKids] resumo-pco/testar:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao consultar o Planning Center' });
+  }
+});
+
 // GET /batismos · crianças inscritas pra batismo (eh_crianca ou <13 anos) · a
 // equipe Kids contata a família. Aparece também na Integração (não duplica dado).
 router.get('/batismos', authorizeModule('kids', 1), async (req, res) => {
