@@ -418,7 +418,7 @@ function JornadaStarCard({ onAbrir }) {
     return () => { vivo = false; };
   }, []);
 
-  const mm = data?.membro_modelo;
+  const mm = data?.engajados;
   return (
     <div style={{
       background: `linear-gradient(135deg, ${C.primary}10 0%, ${C.primary}05 100%)`,
@@ -427,10 +427,10 @@ function JornadaStarCard({ onAbrir }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 280 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.primaryDark, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <Sparkles size={13} /> Jornada da Igreja · Membro Modelo
+            <Sparkles size={13} /> Jornada da Igreja · Membros engajados
           </div>
           <div style={{ fontSize: 14, color: C.t2, marginBottom: 12, lineHeight: 1.5, maxWidth: 600 }}>
-            Profundidade da igreja toda · membros ativos vivendo pelo menos 2 dos 5 valores (últimos 90 dias)
+            Profundidade da igreja toda · convertidos + engajados em ≥1 dos 5 valores (últimos 90 dias)
           </div>
           {loading ? (
             <div style={{ fontSize: 40, fontWeight: 800, color: C.gray, lineHeight: 1 }}>…</div>

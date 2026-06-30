@@ -370,16 +370,15 @@ const COLLECTORS = {
   },
 
   'cuidados.membros_2mais_valores': async () => {
-    // CUID-06: % de membros envolvidos em 2+ valores ("Membro Modelo").
-    // Fonte única = services/jornadaEngajamento (mesma definição da estrela
-    // Jornada do /painel e da página /jornada · 2026-06-20). Janela 3m (90d).
-    // Substituiu a versão antiga que tinha cap-1000 (sem paginação), media
-    // 'investir' por cui_jornada180 e não filtrava tipo de contribuição.
+    // "Membro Modelo" = % de membros ENGAJADOS = conversão + ≥1 dos 6 módulos
+    // {Batismo, Next, Grupos, Voluntariado, Dízimo/Oferta, Devocional}. Fonte
+    // única = services/jornadaEngajamento (mesma régua do NSM e da estrela
+    // Jornada do /painel · unificado 2026-06-30). Janela 3m (90d).
     const { computeJornada, agregar } = require('./jornadaEngajamento');
     const { membros, total_base } = await computeJornada('3m');
     if (!total_base) return { valor: 0, observacao: 'Sem membros ativos' };
-    const { membro_modelo } = agregar(membros);
-    return { valor: membro_modelo.pct, observacao: `${membro_modelo.total} de ${total_base} membros com 2+ valores` };
+    const { engajados } = agregar(membros);
+    return { valor: engajados.pct, observacao: `${engajados.total} de ${total_base} membros engajados (conversão + 1)` };
   },
 
   // ── Cuidados · Devocional + Jornada 180 inscrições ──

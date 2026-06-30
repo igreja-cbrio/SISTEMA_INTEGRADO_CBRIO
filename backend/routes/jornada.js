@@ -60,7 +60,7 @@ router.get('/dashboard', async (req, res) => {
       janela,
       total_base,
       total_membros: total_base, // back-compat (denominador = base sem filtro)
-      membro_modelo: ag.membro_modelo,
+      engajados: ag.engajados,
       valores: ag.valores,
     };
     painelCache.set(cacheKey, payload);
@@ -85,7 +85,7 @@ router.get('/visao', async (req, res) => {
 
     const { membros, total_base, dias } = await computeJornada(janela);
     const ag = agregar(membros);
-    const payload = { janela, dias, total_base, membros, membro_modelo: ag.membro_modelo, valores: ag.valores };
+    const payload = { janela, dias, total_base, membros, engajados: ag.engajados, valores: ag.valores };
     painelCache.set(cacheKey, payload);
     res.json(payload);
   } catch (e) {

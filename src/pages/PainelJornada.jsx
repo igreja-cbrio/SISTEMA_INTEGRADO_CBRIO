@@ -59,8 +59,8 @@ const JANELA_VALIDA = new Set(JANELAS.map((j) => j.id));
 
 const STATUS_OPCOES = [
   { id: 'todos', label: 'Todos' },
-  { id: 'modelo', label: 'Membro Modelo (2+)' },
-  { id: 'formacao', label: 'Em formação' },
+  { id: 'modelo', label: 'Engajado (1+)' },
+  { id: 'formacao', label: 'Sem engajar' },
 ];
 
 const fmtPct = (n) => (n === null || n === undefined ? '—' : `${n}%`);
@@ -109,8 +109,8 @@ export default function PainelJornada() {
     const q = busca.trim().toLowerCase();
     let out = universo.membros;
     if (valoresFiltro.length) out = out.filter((m) => valoresFiltro.every((v) => m.valores[v]));
-    if (statusF === 'modelo') out = out.filter((m) => m.total_valores >= 2);
-    else if (statusF === 'formacao') out = out.filter((m) => m.total_valores < 2);
+    if (statusF === 'modelo') out = out.filter((m) => m.engajado);
+    else if (statusF === 'formacao') out = out.filter((m) => !m.engajado);
     if (q) out = out.filter((m) => (m.nome || '').toLowerCase().includes(q));
     return [...out].sort((a, b) => (b.total_valores - a.total_valores) || (a.nome || '').localeCompare(b.nome || ''));
   }, [universo, valoresFiltro, statusF, busca]);
@@ -128,7 +128,7 @@ export default function PainelJornada() {
 
   const stats = useMemo(() => {
     if (!lista) return null;
-    const modelo = lista.filter((m) => m.total_valores >= 2).length;
+    const modelo = lista.filter((m) => m.engajado).length;
     return {
       total: lista.length, modelo, formacao: lista.length - modelo,
       pct: lista.length > 0 ? Math.round((modelo / lista.length) * 100) : 0,
@@ -163,7 +163,7 @@ export default function PainelJornada() {
             Jornada da Igreja
           </h1>
           <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-            Profundidade da igreja toda · todos os membros ativos · "Membro Modelo" vive ≥2 dos 5 valores · janela: {janelaLabel}
+            Profundidade da igreja toda · todos os membros ativos · engajado = convertido + ≥1 dos 5 valores · janela: {janelaLabel}
           </p>
         </div>
         <button onClick={irParaNsm} style={{ ...btnVoltar, color: C.primaryDark, borderColor: `${C.primary}40` }}>
@@ -250,14 +250,14 @@ export default function PainelJornada() {
         <div style={{ marginBottom: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
             <Stat label={filtraDentro ? 'Membros no filtro' : 'Membros ativos'} value={stats.total} cor={C.t2} />
-            <Stat label="Membro Modelo (2+)" value={stats.modelo} cor="#10B981" />
-            <Stat label="Em formação (<2)" value={stats.formacao} cor="#F59E0B" />
-            <Stat label="% Membro Modelo" value={fmtPct(stats.pct)} cor={C.primary} />
+            <Stat label="Engajados (1+)" value={stats.modelo} cor="#10B981" />
+            <Stat label="Sem engajar (0)" value={stats.formacao} cor="#F59E0B" />
+            <Stat label="% Engajados" value={fmtPct(stats.pct)} cor={C.primary} />
           </div>
           {filtraDentro && universo && (
             <p style={{ fontSize: 11, color: C.t3, margin: '8px 0 0' }}>
               Números do filtro atual · a base completa tem <strong>{universo.total_base}</strong> membros ativos
-              {universo.membro_modelo ? <> ({universo.membro_modelo.total} Membro Modelo, {universo.membro_modelo.pct}%)</> : null}.
+              {universo.engajados ? <> ({universo.engajados.total} engajados, {universo.engajados.pct}%)</> : null}.
             </p>
           )}
         </div>
@@ -298,10 +298,10 @@ function MembroModeloCard({ loading, pct, modelo, total, totalBase, filtraDentro
       border: `1px solid ${C.primary}30`, borderRadius: 16, padding: 24,
     }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: C.primaryDark, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6 }}>
-        Membro Modelo {filtraDentro ? '· no filtro atual' : '· igreja toda'}
+        Membros engajados {filtraDentro ? '· no filtro atual' : '· igreja toda'}
       </div>
       <div style={{ fontSize: 13, color: C.t2, marginBottom: 10, maxWidth: 620, lineHeight: 1.5 }}>
-        Membros ativos vivendo pelo menos 2 dos 5 valores da CBRio
+        Convertidos + engajados em pelo menos 1 dos 5 valores da CBRio
       </div>
       {loading ? (
         <div style={{ fontSize: 40, fontWeight: 800, color: C.t3, lineHeight: 1 }}>…</div>
@@ -387,8 +387,8 @@ function Stat({ label, value, cor }) {
 }
 
 function MembroCard({ membro }) {
-  const modelo = membro.total_valores >= 2;
-  const cor = modelo ? '#10B981' : membro.total_valores === 1 ? '#F59E0B' : '#EF4444';
+  const engajado = membro.engajado; // ≥1 valor = conversão + 1
+  const cor = membro.total_valores >= 2 ? '#10B981' : membro.total_valores === 1 ? '#F59E0B' : '#EF4444';
   return (
     <div style={{
       background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${cor}`,
@@ -404,7 +404,7 @@ function MembroCard({ membro }) {
             fontSize: 9, padding: '1px 7px', borderRadius: 99, fontWeight: 700,
             background: cor + '20', color: cor,
           }}>
-            {membro.total_valores}/5 valores{modelo ? ' · Modelo' : ''}
+            {membro.total_valores}/5 valores{engajado ? ' · engajado' : ''}
           </span>
         </div>
         <div style={{ fontSize: 11, color: C.t3, marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
