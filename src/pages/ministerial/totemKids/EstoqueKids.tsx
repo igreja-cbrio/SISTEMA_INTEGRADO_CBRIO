@@ -24,6 +24,7 @@ export default function EstoqueKids() {
   const [editItem, setEditItem] = useState<any>(null);
   const [locs, setLocs] = useState<any[]>([]);
   const [sincronizando, setSincronizando] = useState(false);
+  const [aba, setAba] = useState<'estoque' | 'patrimonio'>('estoque');
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -60,15 +61,26 @@ export default function EstoqueKids() {
       <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao hub do Kids</button>
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h1 className="text-xl font-bold flex items-center gap-2"><Boxes className="h-5 w-5 text-primary" /> Estoque por sala</h1>
-          <p className="text-sm text-muted-foreground">O que tem e o que deveria ter em cada sala. Item durável vai pro Patrimônio (tag Kids).</p>
+          <h1 className="text-xl font-bold flex items-center gap-2"><Boxes className="h-5 w-5 text-primary" /> Kids por sala</h1>
+          <p className="text-sm text-muted-foreground">Estoque = consumíveis (quanto tem de massinha, lápis...). Patrimônio = bens duráveis (móveis, eletrônicos).</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {totalFaltando > 0 && <Badge variant="outline" className="text-amber-600 border-amber-400"><AlertTriangle className="h-3 w-3 mr-1" /> {totalFaltando} faltando</Badge>}
+        {aba === 'estoque' && totalFaltando > 0 && <Badge variant="outline" className="text-amber-600 border-amber-400 shrink-0"><AlertTriangle className="h-3 w-3 mr-1" /> {totalFaltando} faltando</Badge>}
+      </div>
+
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30">
+          {([['estoque', 'Estoque'], ['patrimonio', 'Patrimônio']] as const).map(([v, lbl]) => (
+            <button key={v} onClick={() => setAba(v)}
+              className={`px-4 py-1.5 text-sm rounded-lg whitespace-nowrap ${aba === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+        {aba === 'patrimonio' && (
           <Button size="sm" variant="outline" onClick={sincronizar} disabled={sincronizando} title="Cria salas a partir das localizações do Kids no Patrimônio">
-            {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4 md:mr-1" />}<span className="hidden md:inline">Sincronizar Patrimônio</span>
+            {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4 md:mr-1" />}<span className="hidden md:inline">Sincronizar do Patrimônio</span>
           </Button>
-        </div>
+        )}
       </div>
 
       {loading ? (
@@ -83,58 +95,65 @@ export default function EstoqueKids() {
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${s.cor || '#00B39D'}1a` }}><Package className="h-4 w-4" style={{ color: s.cor || '#00B39D' }} /></div>
                   <div className="font-semibold text-sm truncate">{s.nome}</div>
-                  {s.faltando > 0 && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-400">{s.faltando} faltando</Badge>}
+                  {aba === 'estoque' && s.faltando > 0 && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-400">{s.faltando} faltando</Badge>}
+                  {aba === 'patrimonio' && (s.patrimonio || []).length > 0 && <Badge variant="outline" className="text-[10px] text-muted-foreground">{s.patrimonio.length} {s.patrimonio.length === 1 ? 'bem' : 'bens'}</Badge>}
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                {aba === 'estoque' ? (
+                  <Button size="sm" variant="outline" onClick={() => setNovoSala(s)} className="shrink-0"><Plus className="h-4 w-4 md:mr-1" /><span className="hidden md:inline">Item</span></Button>
+                ) : (
                   <Select value={s.pat_localizacao_id || undefined} onValueChange={(v) => vincular(s, v === '__none__' ? null : v)}>
-                    <SelectTrigger className="h-8 text-xs w-[150px]"><SelectValue placeholder="Localização" /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs w-[160px] shrink-0"><SelectValue placeholder="Vincular localização" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— sem vínculo</SelectItem>
                       {locs.map((l) => <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <Button size="sm" variant="outline" onClick={() => setNovoSala(s)}><Plus className="h-4 w-4 md:mr-1" /><span className="hidden md:inline">Item</span></Button>
-                </div>
+                )}
               </div>
-              {(s.itens || []).length === 0 ? (
-                <p className="text-xs text-muted-foreground">Nenhum item cadastrado.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {s.itens.map((i: any) => {
-                    const falta = (i.qtd_atual || 0) < (i.qtd_esperada || 0);
-                    return (
-                      <div key={i.id} className={`flex items-center gap-2 rounded-md border p-2 ${falta ? 'border-amber-400/50 bg-amber-500/5' : 'border-border'}`}>
-                        <button onClick={() => setEditItem({ ...i, sala_id: s.id })} className="flex-1 min-w-0 text-left">
-                          <div className="font-medium text-sm truncate flex items-center gap-1">{i.nome}{i.pat_bem_id && <Archive className="h-3 w-3 text-muted-foreground" />}</div>
-                          <div className="text-xs text-muted-foreground">{i.categoria || 'Sem categoria'}{i.unidade && i.unidade !== 'un' ? ` · ${i.unidade}` : ''}</div>
-                        </button>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => ajustar(i, -1)} className="h-6 w-6 rounded border border-border flex items-center justify-center hover:bg-muted"><Minus className="h-3 w-3" /></button>
-                          <span className={`text-sm font-semibold tabular-nums w-14 text-center ${falta ? 'text-amber-600' : ''}`}>{i.qtd_atual ?? 0}/{i.qtd_esperada ?? 0}</span>
-                          <button onClick={() => ajustar(i, 1)} className="h-6 w-6 rounded border border-border flex items-center justify-center hover:bg-muted"><Plus className="h-3 w-3" /></button>
+
+              {aba === 'estoque' ? (
+                (s.itens || []).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Nenhum item de estoque. Clique em "Item" pra cadastrar (ex.: massinha, lápis de cor).</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {s.itens.map((i: any) => {
+                      const falta = (i.qtd_atual || 0) < (i.qtd_esperada || 0);
+                      return (
+                        <div key={i.id} className={`flex items-center gap-2 rounded-md border p-2 ${falta ? 'border-amber-400/50 bg-amber-500/5' : 'border-border'}`}>
+                          <button onClick={() => setEditItem({ ...i, sala_id: s.id })} className="flex-1 min-w-0 text-left">
+                            <div className="font-medium text-sm truncate flex items-center gap-1">{i.nome}{i.pat_bem_id && <Archive className="h-3 w-3 text-muted-foreground" />}</div>
+                            <div className="text-xs text-muted-foreground">{i.categoria || 'Sem categoria'}{i.unidade && i.unidade !== 'un' ? ` · ${i.unidade}` : ''}</div>
+                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => ajustar(i, -1)} className="h-6 w-6 rounded border border-border flex items-center justify-center hover:bg-muted"><Minus className="h-3 w-3" /></button>
+                            <span className={`text-sm font-semibold tabular-nums w-14 text-center ${falta ? 'text-amber-600' : ''}`}>{i.qtd_atual ?? 0}/{i.qtd_esperada ?? 0}</span>
+                            <button onClick={() => ajustar(i, 1)} className="h-6 w-6 rounded border border-border flex items-center justify-center hover:bg-muted"><Plus className="h-3 w-3" /></button>
+                          </div>
                         </div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (
+                (s.patrimonio || []).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{s.pat_localizacao_id ? 'Nenhum bem de patrimônio nesta localização.' : 'Vincule uma localização do Patrimônio (acima) pra ver os bens desta sala.'}</p>
+                ) : (
+                  <div className="space-y-1">
+                    {s.patrimonio.map((b: any) => (
+                      <div key={b.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
+                        <span className="truncate flex items-center gap-1.5"><Archive className="h-3.5 w-3.5 text-muted-foreground shrink-0" />{b.nome}{b.pat_categorias?.nome ? <span className="text-xs text-muted-foreground"> · {b.pat_categorias.nome}</span> : null}</span>
+                        {b.status && <span className="text-xs text-muted-foreground shrink-0 capitalize">{b.status}</span>}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-              {(s.patrimonio || []).length > 0 && (
-                <div className="rounded-md border border-border bg-muted/30 p-2 space-y-1 mt-1">
-                  <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><Archive className="h-3 w-3" /> Patrimônio nesta sala · {s.patrimonio.length}</div>
-                  {s.patrimonio.map((b: any) => (
-                    <div key={b.id} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="truncate">{b.nome}{b.pat_categorias?.nome ? ` · ${b.pat_categorias.nome}` : ''}</span>
-                      {b.status && <span className="text-muted-foreground shrink-0 capitalize">{b.status}</span>}
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )
               )}
             </Card>
           ))}
         </div>
       )}
 
-      {novoSala && <ItemModal sala={novoSala} onClose={() => setNovoSala(null)} onSaved={() => { setNovoSala(null); carregar(); }} />}
+            {novoSala && <ItemModal sala={novoSala} onClose={() => setNovoSala(null)} onSaved={() => { setNovoSala(null); carregar(); }} />}
       {editItem && <ItemModal item={editItem} onClose={() => setEditItem(null)} onSaved={() => { setEditItem(null); carregar(); }} />}
     </div>
   );
