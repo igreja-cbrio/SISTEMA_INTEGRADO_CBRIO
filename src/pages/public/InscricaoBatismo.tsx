@@ -173,6 +173,7 @@ export default function InscricaoBatismo() {
     data_nascimento: '',
     endereco: '', cep: '',
     tamanho_camisa: '',
+    fez_next: '', // '' não informado | 'sim' | 'nao'
     limitacao_mobilidade: '',
     motivo: '',
     observacoes: '',
@@ -231,6 +232,7 @@ export default function InscricaoBatismo() {
         endereco: form.endereco || null,
         cep: form.cep || null,
         tamanho_camisa: form.tamanho_camisa || null,
+        fez_next: form.fez_next === 'sim' ? true : form.fez_next === 'nao' ? false : null,
         limitacao_mobilidade: form.limitacao_mobilidade || null,
         motivo: form.motivo || null,
         observacoes: form.observacoes || null,
@@ -393,6 +395,16 @@ export default function InscricaoBatismo() {
                   { value: 'ami', label: 'AMI' },
                   { value: 'bridge', label: 'Bridge' },
                   { value: 'online', label: 'Online' },
+                ]}
+              />
+              <SelectField
+                id="fez_next" label="Você já fez o NEXT?"
+                value={form.fez_next}
+                onChange={set('fez_next') as any}
+                options={[
+                  { value: '', label: 'Selecione' },
+                  { value: 'sim', label: 'Sim' },
+                  { value: 'nao', label: 'Não' },
                 ]}
               />
               <SelectField
