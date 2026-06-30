@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '../ui/button';
 import { KeyRound, ShieldAlert } from 'lucide-react';
 import TrocarSenhaForm from './TrocarSenhaForm';
+import { useTutorial } from '../../contexts/TutorialContext';
 
 /**
  * Detecta usuário que ainda não trocou a senha padrão (password_changed_at IS NULL)
@@ -16,6 +17,7 @@ import TrocarSenhaForm from './TrocarSenhaForm';
  */
 export default function PrimeiroAcessoSenhaModal() {
   const { user, profile } = useAuth();
+  const { startTour } = useTutorial();
   const [open, setOpen] = useState(false);
   const [modo, setModo] = useState('aviso'); // 'aviso' | 'form'
 
@@ -34,6 +36,11 @@ export default function PrimeiroAcessoSenhaModal() {
 
   function aposTrocar() {
     setOpen(false);
+    // Primeiro acesso concluído → mostra o tour de boas-vindas UMA vez. O delay deixa
+    // o modal fechar e o AppShell ficar interativo antes do tour focar os elementos.
+    // Se for pulado/fechado/clicado fora/concluído, o tour:start já marcou como visto
+    // → não aparece mais (e o gatilho — trocar a senha — só acontece no 1º acesso).
+    setTimeout(() => startTour('welcome'), 600);
   }
 
   return (

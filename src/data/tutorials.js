@@ -29,7 +29,10 @@ export const TUTORIALS = [
   {
     id: 'welcome',
     name: 'Boas-vindas ao sistema',
-    route: '/dashboard',
+    // SEM route de propósito · NÃO auto-dispara por rota (não fica reaparecendo no
+    // /dashboard). É disparado UMA vez no PRIMEIRO ACESSO, logo após trocar a senha
+    // (PrimeiroAcessoSenhaModal → startTour('welcome')). O "Refazer tutorial" reinicia
+    // direto (route null → restartTour inicia na hora, em qualquer página).
     qualifies: (auth) => !auth.isVoluntario && !auth.isMembroOnly,
     steps: [
       s({
