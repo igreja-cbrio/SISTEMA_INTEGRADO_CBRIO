@@ -12,7 +12,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 const FAIXAS = [
@@ -44,6 +44,7 @@ export default function GestaoCriancas() {
     if (cid) setSel({ id: cid });
   }, [searchParams]);
 
+  const [sincronizando, setSincronizando] = useState(false);
   const carregar = useCallback(() => {
     setLoading(true);
     api.criancas.list({ ativo: status === 'ativos' })
@@ -52,6 +53,17 @@ export default function GestaoCriancas() {
       .finally(() => setLoading(false));
   }, [status]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  async function sincronizarPco() {
+    setSincronizando(true);
+    try {
+      const r: any = await api.criancas.syncPco();
+      toast.success(`Planning Center sincronizado · ${r?.vinculadas ?? 0} vinculadas · ${r?.criadas ?? 0} novas · ${r?.atualizadas ?? 0} atualizadas.`);
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao sincronizar com o Planning Center.');
+    } finally { setSincronizando(false); }
+  }
 
   const filtradas = useMemo(() => {
     const f = FAIXAS.find(x => x.key === faixa)!;
@@ -78,6 +90,9 @@ export default function GestaoCriancas() {
           <p className="text-sm text-muted-foreground">Gerencie cada criança · ficha, atendimentos, desativar.</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={sincronizarPco} disabled={sincronizando}>
+            {sincronizando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sincronizar Planning Center
+          </Button>
           <Button variant="outline" onClick={() => setDupOpen(true)}><Copy className="h-4 w-4 mr-1" /> Duplicados</Button>
           <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>
         </div>
