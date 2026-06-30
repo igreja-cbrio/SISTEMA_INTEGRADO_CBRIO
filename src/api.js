@@ -1324,6 +1324,7 @@ export const totemKids = {
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
   resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
+  resumoPcoTestar: (data) => post('/totem-kids/resumo-pco/testar', data ? { data } : {}),
   kidsEquipe: {
     list: () => get('/totem-kids/kids-equipe'),
     buscar: (q) => get(`/totem-kids/kids-equipe/buscar?q=${encodeURIComponent(q)}`),
