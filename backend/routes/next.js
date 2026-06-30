@@ -541,12 +541,8 @@ router.post('/turmas', async (req, res) => {
   const { nome, responsavel_id, observacoes, encontros } = req.body || {};
   if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
 
-  // Só UMA turma aberta por vez (decisão Marcos · não há turmas simultâneas).
-  const { data: aberta } = await supabase.from('next_turmas')
-    .select('id, nome').eq('status', 'aberta').is('deleted_at', null).limit(1).maybeSingle();
-  if (aberta) {
-    return res.status(409).json({ error: `Já existe a turma aberta "${aberta.nome}". Encerre-a antes de abrir outra.` });
-  }
+  // Múltiplas turmas abertas são permitidas — ex.: 2 por mês (1º/2º domingo e
+  // 3º/4º domingo · pedido do Matheus 2026-06-30). Antes só permitia 1 aberta.
 
   const { data: turma, error } = await supabase
     .from('next_turmas')
@@ -558,12 +554,15 @@ router.post('/turmas', async (req, res) => {
   const { error: encErr } = await supabase.from('next_encontros').insert(rows);
   if (encErr) return res.status(500).json({ error: encErr.message });
 
-  // Puxa a LISTA DE ESPERA (matrículas sem turma) pra esta turma nova (decisão
-  // Marcos · "puxa todos automático" — o operador remove quem não vai). Defensivo:
-  // 1 a 1, pulando conflito de UNIQUE (cpf/email já na turma) · nunca derruba a
-  // criação da turma.
+  // Puxa a LISTA DE ESPERA (matrículas sem turma) pra esta turma nova — SÓ quando
+  // não há OUTRA turma aberta. Com mais de uma turma aberta ao mesmo tempo (ex.: 2
+  // por mês), o operador decide quem vai em cada uma, então não vacuamos a fila pra
+  // a turma recém-criada. Defensivo: 1 a 1, pulando conflito de UNIQUE.
   let puxados = 0;
-  try {
+  const { count: outrasAbertas } = await supabase.from('next_turmas')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'aberta').is('deleted_at', null).neq('id', turma.id);
+  if (!outrasAbertas) try {
     const { data: espera } = await supabase.from('next_matriculas')
       .select('id').is('turma_id', null).is('deleted_at', null);
     for (const m of (espera || [])) {
@@ -598,15 +597,7 @@ router.get('/turmas/:id', async (req, res) => {
 // PATCH /turmas/:id — atualizar. Ao encerrar, não-formados viram 'incompleto'.
 router.patch('/turmas/:id', async (req, res) => {
   const b = req.body || {};
-  // Reabrir: só se não houver OUTRA turma aberta (uma aberta por vez).
-  if (b.status === 'aberta') {
-    const { data: outra } = await supabase.from('next_turmas')
-      .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
-      .neq('id', req.params.id).limit(1).maybeSingle();
-    if (outra) {
-      return res.status(409).json({ error: `Já existe a turma aberta "${outra.nome}". Encerre-a antes de reabrir esta.` });
-    }
-  }
+  // Reabrir é livre — múltiplas turmas abertas são permitidas (2 por mês · 2026-06-30).
   const patch = {};
   ['nome', 'status', 'responsavel_id', 'observacoes'].forEach(k => { if (k in b) patch[k] = b[k]; });
   patch.updated_at = new Date().toISOString();

@@ -181,8 +181,8 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
         <div className="space-y-3">
           <div>
             <Label>Nome *</Label>
-            <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Junho 2026" />
-            <p className="text-[11px] text-muted-foreground mt-1">Só uma turma aberta por vez. Ao abrir, todos da lista de espera entram nesta turma.</p>
+            <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Julho 2026 · Turma 1" />
+            <p className="text-[11px] text-muted-foreground mt-1">Pode ter mais de uma turma aberta (ex.: 2 por mês — 1º/2º domingo e 3º/4º domingo). A lista de espera entra automaticamente só quando esta for a única turma aberta; com mais de uma, você organiza quem vai em cada uma.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div><Label>1º encontro</Label><Input type="date" value={data1} onChange={e => setData1(e.target.value)} /></div>
