@@ -9,7 +9,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import Paginacao from '@/components/Paginacao';
-import { Inbox, CheckCircle2, Percent, Search, Link2 } from 'lucide-react';
+import { Inbox, CheckCircle2, Percent, Search, Link2, Pencil, Save } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   LineChart, Line,
@@ -116,6 +116,7 @@ interface InscricaoRow {
   membro_id: string | null;
   nome_mae: string | null;
   origem: string | null;
+  area_direcionada: string[] | null;
 }
 
 interface InscricoesListResponse {
@@ -151,6 +152,14 @@ const BG_STATUS: Record<string, { label: string; cls: string }> = {
 const BG_LIBERADO = new Set(['nada_consta', 'aprovado_manual', 'dispensado']);
 const ehKidsBridge = (area?: string | null) => ['kids', 'bridge'].includes(String(area || '').toLowerCase());
 
+// Lista de ministérios pra marcar onde a pessoa foi DE FATO direcionada a
+// servir (multi-seleção). Pode ajustar/expandir conforme os ministérios da CBRio.
+const MINISTERIOS_DIRECIONAMENTO = [
+  'Louvor', 'Kids', 'Bridge', 'AMI', 'Online', 'Integração', 'Recepção',
+  'Estacionamento', 'Ofertório', 'Produção', 'Cuidados', 'Diaconia',
+  'Intercessão', 'Comunicação', 'Boas-vindas', 'Grupos', 'Next',
+];
+
 export default function VolInscricoes() {
   const [ano, setAno] = useState<string>(String(ANO_ATUAL));
   const [area, setArea] = useState<string>('todas');
@@ -161,6 +170,10 @@ export default function VolInscricoes() {
   const [copied, setCopied] = useState(false);
   const [selected, setSelected] = useState<InscricaoRow | null>(null);
   const [obs, setObs] = useState('');
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState<{ cpf: string; data_nascimento: string; nome_mae: string; ministerios_interesse: string; area_direcionada: string[] }>({
+    cpf: '', data_nascimento: '', nome_mae: '', ministerios_interesse: '', area_direcionada: [],
+  });
   const pageSize = 50;
   const queryClient = useQueryClient();
 
@@ -206,6 +219,49 @@ export default function VolInscricoes() {
       toast.success('Triagem atualizada.');
     },
     onError: (e: any) => toast.error(e?.message || 'Erro ao atualizar triagem.'),
+  });
+
+  // Falta dado obrigatório pra consulta automática de antecedentes?
+  const faltaDadosAntecedentes = selKidsBridge && !!selected && (
+    String(selected.cpf || '').replace(/\D+/g, '').length !== 11 ||
+    !selected.data_nascimento ||
+    !selected.nome_mae
+  );
+
+  const abrirEdicao = () => {
+    if (!selected) return;
+    setForm({
+      cpf: selected.cpf || '',
+      data_nascimento: selected.data_nascimento ? String(selected.data_nascimento).slice(0, 10) : '',
+      nome_mae: selected.nome_mae || '',
+      ministerios_interesse: selected.ministerios_interesse || '',
+      area_direcionada: Array.isArray(selected.area_direcionada) ? selected.area_direcionada : [],
+    });
+    setEditando(true);
+  };
+  const toggleMinisterio = (m: string) =>
+    setForm((f) => ({
+      ...f,
+      area_direcionada: f.area_direcionada.includes(m)
+        ? f.area_direcionada.filter((x) => x !== m)
+        : [...f.area_direcionada, m],
+    }));
+
+  const salvarDados = useMutation({
+    mutationFn: () => voluntariado.editarInscricao(selected!.id, {
+      cpf: form.cpf,
+      data_nascimento: form.data_nascimento || null,
+      nome_mae: form.nome_mae,
+      ministerios_interesse: form.ministerios_interesse,
+      area_direcionada: form.area_direcionada,
+    }),
+    onSuccess: (row: any) => {
+      setSelected((prev) => (prev ? { ...prev, ...row } : prev));
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      setEditando(false);
+      toast.success('Dados atualizados.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao salvar dados.'),
   });
 
   const { data, isLoading } = useQuery<InscricoesSummary>({
@@ -595,7 +651,7 @@ export default function VolInscricoes() {
       </Card>
 
       {/* Detalhe da inscrição · clique numa linha pra abrir */}
-      <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+      <Dialog open={!!selected} onOpenChange={(o) => { if (!o) { setSelected(null); setEditando(false); } }}>
         <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
           {selected && (
             <>
@@ -607,33 +663,97 @@ export default function VolInscricoes() {
                   </Badge>
                 </DialogTitle>
               </DialogHeader>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm mt-1">
-                <Info label="Area" value={<span className="capitalize">{selected.area}</span>} />
-                <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
-                <Info label="Telefone" value={fmtTel(selected.telefone)} />
-                <Info label="E-mail" value={selected.email || '-'} />
-                <Info label="CPF" value={fmtCpf(selected.cpf)} />
-                <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
-                <Info label="Nome da mae" value={selected.nome_mae || '-'} />
-                <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
-                <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
-                <Info label="Origem" value={origemLabel(selected.origem)} />
-                <div className="sm:col-span-2">
-                  <Info label="Áreas de interesse" value={selected.ministerios_interesse || '-'} />
-                </div>
-                <Info
-                  label="Vinculo de membro"
-                  value={selected.membro_id
-                    ? <span className="text-green-600 font-medium">Vinculado</span>
-                    : 'Não vinculado'}
-                />
-                {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
-                {selected.feedback && (
-                  <div className="sm:col-span-2">
-                    <Info label="Observacoes" value={selected.feedback} />
+              {!editando ? (
+                <>
+                  <div className="flex justify-end -mb-2 mt-1">
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={abrirEdicao}>
+                      <Pencil className="h-3.5 w-3.5" /> Editar dados
+                    </Button>
                   </div>
-                )}
-              </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <Info label="Area" value={<span className="capitalize">{selected.area}</span>} />
+                    <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
+                    <Info label="Telefone" value={fmtTel(selected.telefone)} />
+                    <Info label="E-mail" value={selected.email || '-'} />
+                    <Info label="CPF" value={fmtCpf(selected.cpf)} />
+                    <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
+                    <Info label="Nome da mae" value={selected.nome_mae || '-'} />
+                    <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
+                    <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
+                    <Info label="Origem" value={origemLabel(selected.origem)} />
+                    <div className="sm:col-span-2">
+                      <Info label="Áreas de interesse (o que pediu)" value={selected.ministerios_interesse || '-'} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Info
+                        label="Área direcionada (onde foi de fato)"
+                        value={selected.area_direcionada && selected.area_direcionada.length ? (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {selected.area_direcionada.map((m) => (
+                              <Badge key={m} variant="outline" className="bg-[#00B39D]/10 text-[#00837a] border-[#00B39D]/20">{m}</Badge>
+                            ))}
+                          </div>
+                        ) : <span className="text-muted-foreground">— ainda não direcionada</span>}
+                      />
+                    </div>
+                    <Info
+                      label="Vinculo de membro"
+                      value={selected.membro_id
+                        ? <span className="text-green-600 font-medium">Vinculado</span>
+                        : 'Não vinculado'}
+                    />
+                    {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
+                    {selected.feedback && (
+                      <div className="sm:col-span-2">
+                        <Info label="Observacoes" value={selected.feedback} />
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-3 mt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">CPF</label>
+                      <Input value={form.cpf} onChange={(e) => setForm((f) => ({ ...f, cpf: e.target.value }))} placeholder="Só números (11 dígitos)" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Data de nascimento</label>
+                      <Input type="date" value={form.data_nascimento} onChange={(e) => setForm((f) => ({ ...f, data_nascimento: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Nome da mãe</label>
+                    <Input value={form.nome_mae} onChange={(e) => setForm((f) => ({ ...f, nome_mae: e.target.value }))} placeholder="Necessário pra antecedentes (Kids/Bridge)" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Áreas de interesse (o que pediu)</label>
+                    <Input value={form.ministerios_interesse} onChange={(e) => setForm((f) => ({ ...f, ministerios_interesse: e.target.value }))} placeholder="Ex.: Louvor, Kids, Recepção" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Área direcionada (onde foi de fato · pode marcar mais de uma)</label>
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      {MINISTERIOS_DIRECIONAMENTO.map((m) => {
+                        const on = form.area_direcionada.includes(m);
+                        return (
+                          <button key={m} type="button" onClick={() => toggleMinisterio(m)}
+                            className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? 'bg-[#00B39D] text-white border-[#00B39D]' : 'bg-background text-muted-foreground border-border hover:border-[#00B39D]/50'}`}>
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" disabled={salvarDados.isPending} onClick={() => salvarDados.mutate()}>
+                      <Save className="h-3.5 w-3.5 mr-1" /> {salvarDados.isPending ? 'Salvando...' : 'Salvar'}
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={salvarDados.isPending} onClick={() => setEditando(false)}>
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {/* Triagem de antecedentes criminais · obrigatória pra Kids/Bridge */}
               {selKidsBridge && (
@@ -656,6 +776,12 @@ export default function VolInscricoes() {
                   {!bg?.autoConfigurado && (
                     <p className="text-xs text-muted-foreground">
                       Consulta automática não configurada — faça a triagem manual: confira a certidão e aprove.
+                    </p>
+                  )}
+                  {bg?.autoConfigurado && faltaDadosAntecedentes && !editando && (
+                    <p className="text-xs text-amber-600">
+                      Faltam dados pra consulta automática (CPF, data de nascimento e/ou nome da mãe).{' '}
+                      <button type="button" className="underline font-medium" onClick={abrirEdicao}>Completar agora</button>
                     </p>
                   )}
                   {check?.consulta_erro && (
