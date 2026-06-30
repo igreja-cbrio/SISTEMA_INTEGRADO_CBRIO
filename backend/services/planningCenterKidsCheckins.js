@@ -233,4 +233,4 @@ async function detalhePessoaPCO(pcoId) {
   return { pessoa, total_checkins: historico.length, historico };
 }
 
-module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO };
+module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO, ehEventoKids };

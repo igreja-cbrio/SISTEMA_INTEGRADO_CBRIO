@@ -1295,7 +1295,7 @@ router.delete('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res)
 router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res) => {
   try {
     const id = req.params.id;
-    const { data: crianca } = await supabase.from('kids_criancas').select('familia_id').eq('id', id).maybeSingle();
+    const { data: crianca } = await supabase.from('kids_criancas').select('familia_id, planning_center_id').eq('id', id).maybeSingle();
     let familia_membros = [];
     if (crianca?.familia_id) {
       const { data: ms } = await supabase.from('mem_membros')
@@ -1307,18 +1307,36 @@ router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res)
       .eq('crianca_id', id).is('deleted_at', null).order('checkin_at');
     const lista = cis || [];
     const porMesMap = {};
-    let ultima = null;
-    lista.forEach((c) => {
-      if (!c.checkin_at) return;
-      const mes = String(c.checkin_at).slice(0, 7);
-      porMesMap[mes] = (porMesMap[mes] || 0) + 1;
-      if (!ultima || c.checkin_at > ultima) ultima = c.checkin_at;
-    });
+    let ultima = null;     // 'YYYY-MM-DD'
+    let total = 0;
+    const addCheckin = (dataYmd) => {
+      if (!dataYmd) return;
+      const ymd = String(dataYmd).slice(0, 10);
+      porMesMap[ymd.slice(0, 7)] = (porMesMap[ymd.slice(0, 7)] || 0) + 1;
+      if (!ultima || ymd > ultima) ultima = ymd;
+      total += 1;
+    };
+    lista.forEach((c) => addCheckin(c.checkin_at)); // totem (quando houver)
+
+    // Frequência REAL vem do Planning Center: histórico de check-ins da criança
+    // nos eventos do Kids (CBKids). Liga o gráfico mesmo sem o totem.
+    if (crianca?.planning_center_id) {
+      try {
+        const { detalhePessoaPCO, ehEventoKids } = require('../services/planningCenterKidsCheckins');
+        const det = await detalhePessoaPCO(crianca.planning_center_id);
+        (det?.historico || []).forEach((h) => {
+          if (String(h.kind || '').toLowerCase() === 'volunteer') return;
+          if (h.evento && !ehEventoKids(h.evento)) return; // só check-ins do Kids
+          addCheckin(h.data);
+        });
+      } catch (e) { console.error('[totemKids] jornada PCO:', e.message); }
+    }
+
     const porMes = Object.entries(porMesMap).map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes));
     const dec = lista.filter((c) => c.fez_decisao_jesus).map((c) => c.decisao_jesus_em || c.checkin_at).filter(Boolean).sort();
     res.json({
       familia_membros,
-      frequencia: { porMes, ultima, total: lista.length },
+      frequencia: { porMes, ultima, total },
       conversao_sugerida: dec.length ? String(dec[0]).slice(0, 10) : null,
     });
   } catch (e) {
