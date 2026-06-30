@@ -1003,6 +1003,51 @@ router.get('/batismos', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// Apresentação de crianças · inscrições do form público (agrupadas por turma na UI)
+router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data } = await supabase.from('apresentacao_criancas')
+      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
+      .is('deleted_at', null)
+      .order('data_apresentacao', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    res.json(data || []);
+  } catch (e) {
+    console.error('[totemKids] apresentacoes:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar apresentações' });
+  }
+});
+
+router.patch('/apresentacoes/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const allowed = ['status', 'observacoes', 'data_apresentacao', 'crianca_idade'];
+    const payload = { updated_at: new Date().toISOString() };
+    for (const k of allowed) if (req.body[k] !== undefined) payload[k] = req.body[k];
+    const { data, error } = await supabase.from('apresentacao_criancas')
+      .update(payload).eq('id', req.params.id).is('deleted_at', null)
+      .select('id, status, observacoes, data_apresentacao, crianca_idade').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids] apresentacao update:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar apresentação' });
+  }
+});
+
+router.delete('/apresentacoes/:id', authorizeModule('kids', 4), async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'apresentacao_criancas', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] apresentacao delete:', e.message);
+    res.status(500).json({ error: 'Erro ao remover apresentação' });
+  }
+});
+
 // GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
 // aniversariantes da semana. Alimenta o hub/dashboard do módulo.
 router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
