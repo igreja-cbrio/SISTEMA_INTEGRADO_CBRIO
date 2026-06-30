@@ -596,7 +596,7 @@ export default function VolInscricoes() {
 
       {/* Detalhe da inscrição · clique numa linha pra abrir */}
       <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
           {selected && (
             <>
               <DialogHeader>
