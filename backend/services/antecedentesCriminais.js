@@ -78,6 +78,20 @@ async function consultarInfosimplesPF({ nome, cpf, nome_mae, nome_pai, data_nasc
   const code = Number(json?.code);
   const receipt = Array.isArray(json?.site_receipts) ? json.site_receipts[0] : null;
 
+  // 606 = parâmetros vazios · 607 = parâmetros inválidos. Em vez de vazar o
+  // texto cru do provedor ("Parâmetro(s) inválido(s).: birthdate, cpf, ..."),
+  // devolve uma mensagem acionável: quase sempre é dado faltando/incorreto na
+  // inscrição (CPF, data de nascimento ou nome da mãe).
+  if (code === 606 || code === 607) {
+    return {
+      ok: false,
+      status: 'erro',
+      certidaoUrl: receipt || null,
+      raw: json,
+      erro: 'A fonte recusou os dados informados — confira CPF, data de nascimento e nome da mãe (completos e corretos) na ficha e refaça a consulta.',
+    };
+  }
+
   if (code !== 200) {
     return {
       ok: false,

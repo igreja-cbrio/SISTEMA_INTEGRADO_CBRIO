@@ -2170,6 +2170,8 @@ export const voluntariado = {
   },
   // Triagem: muda o status da inscrição (inscrito → enviado_ministerio → integrado)
   atualizarInscricao: (id, status) => patch(`/voluntariado/inscricoes/${id}`, { status }),
+  // Edita os dados da ficha (CPF, nascimento, nome da mãe, interesse, área direcionada)
+  editarInscricao: (id, dados) => patch(`/voluntariado/inscricoes/${id}/dados`, dados),
   // Triagem de antecedentes criminais (Kids/Bridge)
   antecedentes: (inscricaoId) => get(`/voluntariado/inscricoes/${inscricaoId}/antecedentes`),
   consultarAntecedentes: (inscricaoId) => post(`/voluntariado/inscricoes/${inscricaoId}/antecedentes/consultar`, {}),

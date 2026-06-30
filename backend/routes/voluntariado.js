@@ -3033,7 +3033,7 @@ router.get('/inscricoes', async (req, res) => {
       .select(`
         id, nome, sobrenome, nome_completo, cpf, email, telefone,
         data_nascimento, nome_mae, data_inscricao, area, status,
-        dom_predominante, ministerios_interesse, participou_next,
+        dom_predominante, ministerios_interesse, area_direcionada, participou_next,
         feedback, integrado_em, membro_id, origem
       `, { count: 'exact' })
       .order('data_inscricao', { ascending: false })
@@ -3140,6 +3140,58 @@ router.patch('/inscricoes/:id', async (req, res) => {
   }
 });
 
+// PATCH /api/voluntariado/inscricoes/:id/dados — edita os dados da ficha
+// (CPF, data de nascimento, nome da mãe, áreas de interesse e a área onde a
+// pessoa foi de fato direcionada). Destrava completar o que falta pra triagem
+// de antecedentes (Kids/Bridge) e registra "pediu X, foi pra Y".
+router.patch('/inscricoes/:id/dados', async (req, res) => {
+  try {
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const lvl = Math.max(getEffectiveLevel(req, 'voluntariado') || 0, getEffectiveLevel(req, 'membresia') || 0);
+    if (!isAdmin && lvl < 3) {
+      return res.status(403).json({ error: 'Sem permissão para editar a inscrição' });
+    }
+
+    const { cpf, data_nascimento, nome_mae, ministerios_interesse, area_direcionada } = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+
+    if (cpf !== undefined) {
+      const d = String(cpf || '').replace(/\D+/g, '');
+      if (d && d.length !== 11) return res.status(400).json({ error: 'CPF deve ter 11 dígitos' });
+      patch.cpf = d || null;
+    }
+    if (data_nascimento !== undefined) {
+      const d = data_nascimento ? String(data_nascimento).slice(0, 10) : null;
+      if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return res.status(400).json({ error: 'Data de nascimento inválida' });
+      patch.data_nascimento = d;
+    }
+    if (nome_mae !== undefined) {
+      patch.nome_mae = nome_mae ? String(nome_mae).trim() : null;
+    }
+    if (ministerios_interesse !== undefined) {
+      patch.ministerios_interesse = ministerios_interesse ? String(ministerios_interesse).trim() : null;
+    }
+    if (area_direcionada !== undefined) {
+      const arr = Array.isArray(area_direcionada)
+        ? [...new Set(area_direcionada.map((s) => String(s).trim()).filter(Boolean))]
+        : [];
+      patch.area_direcionada = arr.length ? arr : null;
+    }
+
+    if (Object.keys(patch).length === 1) {
+      return res.status(400).json({ error: 'Nada para atualizar' });
+    }
+
+    const { data, error } = await supabase.from('vol_inscricoes')
+      .update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[inscricao dados]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar dados da inscrição' });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // TRIAGEM DE ANTECEDENTES (Kids/Bridge) · PII sensível
 // Leitura/ação restrita a quem triagem (voluntariado/kids/bridge >=3).
@@ -3191,9 +3243,44 @@ router.post('/inscricoes/:id/antecedentes/consultar', async (req, res) => {
     if (!antecedentes.isConfigured()) {
       return res.status(400).json({ error: 'Consulta automática indisponível (token não configurado). Faça a triagem manual.', code: 'sem_token' });
     }
+
+    // Pré-validação: a fonte (PF/Infosimples) exige nome + CPF + data de
+    // nascimento + nome da mãe. Se faltar algo, avisa O QUE completar em vez de
+    // disparar a consulta e devolver o erro cru do provedor ("Parâmetro(s)
+    // inválido(s)."). A coordenação completa o dado na ficha (PATCH /dados).
+    const nomeCompleto = insc.nome_completo || [insc.nome, insc.sobrenome].filter(Boolean).join(' ').trim();
+    const cpfDigitos = String(insc.cpf || '').replace(/\D+/g, '');
+    const faltando = [];
+    if (!nomeCompleto || nomeCompleto.trim().length < 3) faltando.push('nome completo');
+    if (cpfDigitos.length !== 11) faltando.push('CPF');
+    if (!insc.data_nascimento) faltando.push('data de nascimento');
+    if (!insc.nome_mae || String(insc.nome_mae).trim().length < 2) faltando.push('nome da mãe');
+    if (faltando.length) {
+      return res.status(400).json({
+        error: `Complete os dados da pessoa antes de consultar os antecedentes: ${faltando.join(', ')}.`,
+        code: 'dados_incompletos',
+        faltando,
+      });
+    }
+
     // Garante a triagem (consentimento atestado pela coordenação ao acionar).
     const chk = await antecedentes.criarCheckParaInscricao(insc, { consentimento: true, origem: 'coordenacao' });
     if (!chk) return res.status(500).json({ error: 'Não foi possível abrir a triagem' });
+
+    // Re-sincroniza o snapshot da triagem com os dados ATUAIS da inscrição.
+    // (criarCheckParaInscricao é idempotente e não reescreve uma triagem já
+    // existente — sem isso, corrigir o cadastro e "refazer consulta" reusaria o
+    // dado velho.)
+    await supabase.from('vol_background_checks')
+      .update({
+        nome_completo: nomeCompleto,
+        cpf: cpfDigitos,
+        nome_mae: String(insc.nome_mae).trim(),
+        data_nascimento: insc.data_nascimento,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', chk.id);
+
     const r = await antecedentes.processarCheck(chk.id);
     const { data } = await supabase.from('vol_background_checks')
       .select(BGCHECK_FIELDS).eq('id', chk.id).maybeSingle();
