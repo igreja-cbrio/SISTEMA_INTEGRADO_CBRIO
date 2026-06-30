@@ -180,8 +180,9 @@ router.post('/inscrever', async (req, res) => {
 // ── Direcionamento self-service pelo QR no fim do Next (Fase 2a) ──────────────
 // UM QR pro Next inteiro (token fixo assinado): resolve a TURMA ABERTA do momento e lista
 // as pessoas dela. A pessoa acha o nome e escolhe pra onde vai (Grupos/Voluntários/Batismo ·
-// Devocional é Fase 2b). Escreve na matrícula (mesmo motor do líder). Não há turmas
-// simultâneas, então "a turma aberta" é sempre clara.
+// Devocional é Fase 2b). Escreve na matrícula (mesmo motor do líder). Quando há
+// mais de uma turma aberta (2 por mês), o público cai na MAIS RECENTE (ver
+// turmaAbertaAtual) · o operador reorganiza quem vai em cada uma na aba Turmas.
 
 // Resolve a turma ABERTA do momento (a mais recente, se houver mais de uma).
 async function turmaAbertaAtual() {
