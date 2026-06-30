@@ -12,7 +12,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw, Sparkles } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 const FAIXAS = [
@@ -501,7 +501,9 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
   const [conv, setConv] = useState<string>(c?.data_conversao || '');
   const [bat, setBat] = useState<string>(c?.data_batismo || '');
   const [salvando, setSalvando] = useState(false);
-  useEffect(() => { api.criancas.jornada(criancaId).then(setJ).catch(() => {}); }, [criancaId]);
+  const [analise, setAnalise] = useState<any>(null);
+  const [analisando, setAnalisando] = useState(false);
+  useEffect(() => { api.criancas.jornada(criancaId).then(setJ).catch(() => {}); setAnalise(null); }, [criancaId]);
 
   async function salvar() {
     setSalvando(true);
@@ -509,8 +511,18 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
     catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); } finally { setSalvando(false); }
   }
 
-  const dados = (j?.frequencia?.porMes || []).map((p: any) => ({ mes: `${p.mes.slice(5)}/${p.mes.slice(2, 4)}`, total: p.total }));
+  async function gerarAnalise() {
+    setAnalisando(true);
+    try { setAnalise(await api.criancas.analiseFrequencia(criancaId)); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao gerar análise'); }
+    finally { setAnalisando(false); }
+  }
+
+  const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const mesAno = (ym: string) => `${MESES_ABREV[Number(ym.slice(5, 7)) - 1] || ''}/${ym.slice(2, 4)}`;
+  const dados = (j?.frequencia?.porMes || []).map((p: any) => ({ mes: mesAno(p.mes), total: p.total }));
   const freq = j?.frequencia;
+  const SIT_COR: Record<string, string> = { frequente: 'text-emerald-600', regular: 'text-sky-600', esporadica: 'text-amber-600', afastada: 'text-red-600' };
 
   return (
     <div className="space-y-4 text-sm">
@@ -546,6 +558,35 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
                 <Line type="monotone" dataKey="total" stroke="#00B39D" strokeWidth={2} dot />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Análise de IA da frequência */}
+      <div className="rounded-lg border border-border p-3 bg-foreground/[0.02]">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="text-xs font-medium flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-primary" /> Análise de IA</div>
+          {(freq?.total ?? 0) > 0 && (
+            <Button size="sm" variant="outline" onClick={gerarAnalise} disabled={analisando}>
+              {analisando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : (analise ? 'Atualizar' : 'Gerar análise')}
+            </Button>
+          )}
+        </div>
+        {(freq?.total ?? 0) === 0 ? (
+          <p className="text-xs text-muted-foreground">Sem frequência pra analisar.</p>
+        ) : !analise ? (
+          <p className="text-xs text-muted-foreground">Clique em "Gerar análise" pra a IA interpretar a frequência desta criança.</p>
+        ) : analise.sem_dados ? (
+          <p className="text-xs text-muted-foreground">{analise.motivo}</p>
+        ) : (
+          <div className="space-y-1.5">
+            {analise.situacao && (
+              <div className={`text-xs font-semibold uppercase tracking-wide ${SIT_COR[analise.situacao] || 'text-foreground'}`}>{analise.situacao}</div>
+            )}
+            <p className="text-sm">{analise.analise}</p>
+            {analise.recomendacao && (
+              <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">Ação sugerida:</span> {analise.recomendacao}</p>
+            )}
           </div>
         )}
       </div>
