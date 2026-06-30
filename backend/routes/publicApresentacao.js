@@ -116,6 +116,16 @@ router.post('/', limiter, async (req, res) => {
     if (!criados.length) return res.status(500).json({ error: 'Erro ao enviar inscrição.' });
 
     const nomes = lista.map(c => c.nome).join(', ');
+    // Notifica diretamente a líder do Kids (Mariane Gaia) e a Milena. Se não
+    // achar (e-mail mudou), cai no módulo 'kids'.
+    let alvosKids;
+    try {
+      const { data: alvos } = await supabase
+        .from('profiles').select('id')
+        .in('email', ['mariane.gaia@cbrio.org', 'milena.rochet@cbrio.org']);
+      alvosKids = (alvos || []).map(a => a.id);
+    } catch { /* fallback no módulo kids */ }
+
     notificar({
       modulo: 'kids',
       tipo: 'nova_apresentacao_crianca',
@@ -124,6 +134,7 @@ router.post('/', limiter, async (req, res) => {
       link: '/ministerial/totem-kids/apresentacao',
       severidade: 'info',
       chaveDedup: `apresentacao_crianca_${criados[0]}`,
+      targetIds: alvosKids && alvosKids.length ? alvosKids : undefined,
     }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));
 
     res.status(201).json({ ok: true, ids: criados, data_apresentacao: dataApresentacao });

@@ -84,16 +84,15 @@ export default function ApresentacaoCriancas() {
     nome_pai: '', nome_mae: '', telefone: '',
     website: '', // honeypot
   });
-  const [criancas, setCriancas] = useState<{ nome: string; idade: string }[]>([{ nome: '', idade: '' }]);
+  const [criancas, setCriancas] = useState<{ nome: string; idadeNum: string; idadeUnidade: string }[]>([{ nome: '', idadeNum: '', idadeUnidade: 'meses' }]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
-  const setCrianca = (i: number, k: 'nome' | 'idade') => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const v = e.target.value;
+  const setCriancaCampo = (i: number, k: 'nome' | 'idadeNum' | 'idadeUnidade', v: string) => {
     setCriancas(cs => cs.map((c, idx) => (idx === i ? { ...c, [k]: v } : c)));
   };
-  const addCrianca = () => setCriancas(cs => [...cs, { nome: '', idade: '' }]);
+  const addCrianca = () => setCriancas(cs => [...cs, { nome: '', idadeNum: '', idadeUnidade: 'meses' }]);
   const removeCrianca = (i: number) => setCriancas(cs => (cs.length > 1 ? cs.filter((_, idx) => idx !== i) : cs));
 
   useEffect(() => {
@@ -114,7 +113,7 @@ export default function ApresentacaoCriancas() {
     if (form.website) return; // honeypot
     if (!form.nome_pai.trim() && !form.nome_mae.trim()) return setError('Informe o nome do pai ou da mãe.');
     const criancasValidas = criancas
-      .map(c => ({ nome: c.nome.trim(), idade: c.idade.trim() || null }))
+      .map(c => ({ nome: c.nome.trim(), idade: c.idadeNum.trim() ? `${c.idadeNum.trim()} ${c.idadeUnidade}` : null }))
       .filter(c => c.nome.length >= 2);
     if (!criancasValidas.length) return setError('Informe o nome completo de ao menos uma criança.');
     if (soDigitos(form.telefone).length < 10) return setError('Telefone inválido.');
@@ -217,9 +216,22 @@ export default function ApresentacaoCriancas() {
                 Crianças
               </div>
               {criancas.map((c, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 110px auto', gap: 12, alignItems: 'end' }}>
-                  <Field id={`crianca_nome_${i}`} label={`Nome completo da criança ${criancas.length > 1 ? i + 1 : ''}`.trim()} value={c.nome} onChange={setCrianca(i, 'nome')} required={i === 0} />
-                  <Field id={`crianca_idade_${i}`} label="Idade" value={c.idade} onChange={setCrianca(i, 'idade')} inputMode="numeric" />
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 64px 92px auto', gap: 10, alignItems: 'end' }}>
+                  <Field id={`crianca_nome_${i}`} label={`Nome completo da criança ${criancas.length > 1 ? i + 1 : ''}`.trim()} value={c.nome} onChange={(e) => setCriancaCampo(i, 'nome', e.target.value)} required={i === 0} />
+                  <Field id={`crianca_idade_${i}`} label="Idade" value={c.idadeNum} onChange={(e) => setCriancaCampo(i, 'idadeNum', e.target.value)} inputMode="numeric" />
+                  <div style={{ position: 'relative', marginBottom: 20 }}>
+                    <label htmlFor={`crianca_unidade_${i}`} style={{ position: 'absolute', left: 0, top: -14, fontSize: 11, color: 'var(--cbrio-text3)' }}>Unidade</label>
+                    <select
+                      id={`crianca_unidade_${i}`}
+                      value={c.idadeUnidade}
+                      onChange={(e) => setCriancaCampo(i, 'idadeUnidade', e.target.value)}
+                      style={{ display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: '2px solid var(--cbrio-border)', outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}
+                    >
+                      <option value="dias" style={{ background: C.optionBg, color: C.text }}>dias</option>
+                      <option value="meses" style={{ background: C.optionBg, color: C.text }}>meses</option>
+                      <option value="anos" style={{ background: C.optionBg, color: C.text }}>anos</option>
+                    </select>
+                  </div>
                   {criancas.length > 1 ? (
                     <button type="button" onClick={() => removeCrianca(i)} title="Remover criança"
                       style={{ marginBottom: 22, background: 'transparent', border: 'none', color: '#ef4444', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
