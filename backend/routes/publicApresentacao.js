@@ -48,71 +48,85 @@ router.get('/proxima-data', (_req, res) => {
 router.post('/', limiter, async (req, res) => {
   try {
     const {
-      nome_pai, nome_mae, crianca_nome, crianca_idade, telefone,
+      nome_pai, nome_mae, criancas, crianca_nome, crianca_idade, telefone,
       observacoes, website, // website = honeypot
     } = req.body || {};
 
     if (website) return res.json({ ok: true }); // honeypot · ignora silenciosamente
 
-    const criancaNome = (crianca_nome || '').trim();
+    // Aceita lista de crianças (1 por filho) · tolera o formato antigo (1 campo).
+    const listaBruta = Array.isArray(criancas) && criancas.length
+      ? criancas
+      : [{ nome: crianca_nome, idade: crianca_idade }];
+    const lista = listaBruta
+      .map(c => ({
+        nome: String(c?.nome || '').trim().slice(0, 200),
+        idade: c?.idade ? String(c.idade).trim().slice(0, 60) : null,
+      }))
+      .filter(c => c.nome.length >= 2);
+
     const tel = String(telefone || '').replace(/\D+/g, '');
-    if (criancaNome.length < 2) return res.status(400).json({ error: 'Informe o nome da criança.' });
+    if (!lista.length) return res.status(400).json({ error: 'Informe o nome de ao menos uma criança.' });
     if (tel.length < 10) return res.status(400).json({ error: 'Telefone inválido.' });
 
     const dataApresentacao = proximoSegundoDomingoISO();
     const nomePaiT = nome_pai ? String(nome_pai).trim().slice(0, 200) : null;
     const nomeMaeT = nome_mae ? String(nome_mae).trim().slice(0, 200) : null;
-    const idadeT = crianca_idade ? String(crianca_idade).trim().slice(0, 120) : null;
+    const obsExtra = observacoes ? String(observacoes).trim().slice(0, 1000) : null;
 
-    // Cadastro mínimo da criança em kids_criancas (sem data de nascimento · o form
-    // pede idade). Best-effort: se falhar, a inscrição ainda é registrada.
-    let criancaId = null;
-    try {
-      const obsInterna = `Cadastrado via formulário de Apresentação de Crianças (${dataApresentacao}). `
-        + `Pais: ${nomePaiT || '—'} / ${nomeMaeT || '—'}. Idade informada: ${idadeT || '—'}.`;
-      const { data: kid, error: kidErr } = await supabase
-        .from('kids_criancas')
-        .insert({ nome: criancaNome.slice(0, 200), visitante: true, observacoes_internas: obsInterna })
-        .select('id')
-        .single();
-      if (kidErr) throw kidErr;
-      criancaId = kid?.id || null;
-    } catch (e) {
-      console.error('[publicApresentacao] cadastro kids_criancas falhou:', e.message);
+    // 1 registro por criança (cada uma aparece/cadastra separada · mesmo
+    // responsável/telefone/turma). Best-effort no cadastro em kids_criancas.
+    const criados = [];
+    for (const c of lista) {
+      let criancaId = null;
+      try {
+        const obsInterna = `Cadastrado via formulário de Apresentação de Crianças (${dataApresentacao}). `
+          + `Pais: ${nomePaiT || '—'} / ${nomeMaeT || '—'}. Idade informada: ${c.idade || '—'}.`;
+        const { data: kid } = await supabase
+          .from('kids_criancas')
+          .insert({ nome: c.nome, visitante: true, observacoes_internas: obsInterna })
+          .select('id').single();
+        criancaId = kid?.id || null;
+      } catch (e) {
+        console.error('[publicApresentacao] cadastro kids_criancas falhou:', e.message);
+      }
+
+      const { data, error } = await supabase
+        .from('apresentacao_criancas')
+        .insert({
+          nome_pai: nomePaiT,
+          nome_mae: nomeMaeT,
+          crianca_nome: c.nome,
+          crianca_idade: c.idade,
+          telefone: tel,
+          data_apresentacao: dataApresentacao,
+          status: 'pendente',
+          origem: 'publico',
+          crianca_id: criancaId,
+          observacoes: obsExtra,
+        })
+        .select('id').single();
+      if (error) {
+        console.error('[publicApresentacao] insert error:', error.message);
+        continue;
+      }
+      criados.push(data.id);
     }
 
-    const { data, error } = await supabase
-      .from('apresentacao_criancas')
-      .insert({
-        nome_pai: nomePaiT,
-        nome_mae: nomeMaeT,
-        crianca_nome: criancaNome.slice(0, 300),
-        crianca_idade: idadeT,
-        telefone: tel,
-        data_apresentacao: dataApresentacao,
-        status: 'pendente',
-        origem: 'publico',
-        crianca_id: criancaId,
-        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
-      })
-      .select('id')
-      .single();
-    if (error) {
-      console.error('[publicApresentacao] insert error:', error.message);
-      return res.status(500).json({ error: 'Erro ao enviar inscrição.' });
-    }
+    if (!criados.length) return res.status(500).json({ error: 'Erro ao enviar inscrição.' });
 
+    const nomes = lista.map(c => c.nome).join(', ');
     notificar({
       modulo: 'kids',
       tipo: 'nova_apresentacao_crianca',
-      titulo: 'Nova apresentação de criança',
-      mensagem: `${criancaNome} foi inscrita para a apresentação de ${dataApresentacao}. Entrar em contato com a família para agendar o horário.`,
+      titulo: lista.length > 1 ? 'Nova apresentação de crianças' : 'Nova apresentação de criança',
+      mensagem: `${nomes} — inscriç${lista.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}. Entrar em contato com a família para agendar o horário.`,
       link: '/ministerial/totem-kids/apresentacao',
       severidade: 'info',
-      chaveDedup: `apresentacao_crianca_${data.id}`,
+      chaveDedup: `apresentacao_crianca_${criados[0]}`,
     }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));
 
-    res.status(201).json({ ok: true, id: data.id, data_apresentacao: dataApresentacao });
+    res.status(201).json({ ok: true, ids: criados, data_apresentacao: dataApresentacao });
   } catch (e) {
     console.error('[publicApresentacao] erro:', e.message);
     res.status(500).json({ error: 'Erro ao enviar inscrição.' });
