@@ -1387,6 +1387,65 @@ router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res)
   }
 });
 
+// GET /criancas/:id/analise-frequencia · análise de IA (Haiku) da frequência da
+// criança a partir do histórico de check-ins do Planning Center. As estatísticas
+// são calculadas em JS (não no modelo); a IA só interpreta e sugere ação pastoral.
+router.get('/criancas/:id/analise-frequencia', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: cr } = await supabase.from('kids_criancas')
+      .select('nome, data_nascimento, planning_center_id, data_conversao, data_batismo')
+      .eq('id', req.params.id).maybeSingle();
+    if (!cr) return res.status(404).json({ error: 'Criança não encontrada' });
+    if (!cr.planning_center_id) return res.json({ sem_dados: true, motivo: 'Criança sem vínculo com o Planning Center.' });
+
+    const { detalhePessoaPCO, ehEventoKids } = require('../services/planningCenterKidsCheckins');
+    const det = await detalhePessoaPCO(cr.planning_center_id);
+    const datas = (det?.historico || [])
+      .filter(h => String(h.kind || '').toLowerCase() !== 'volunteer' && (!h.evento || ehEventoKids(h.evento)) && h.data)
+      .map(h => h.data).sort();
+    if (!datas.length) return res.json({ sem_dados: true, motivo: 'Sem check-ins do Kids no Planning Center.' });
+
+    const hoje = new Date();
+    const diasDesde = (d) => Math.floor((hoje - new Date(d + 'T00:00:00')) / 86400000);
+    const ultimo = datas[datas.length - 1];
+    const primeiro = datas[0];
+    const dias90 = datas.filter(d => diasDesde(d) <= 90).length;
+    const dias90a180 = datas.filter(d => diasDesde(d) > 90 && diasDesde(d) <= 180).length;
+    const porMes = {};
+    datas.forEach(d => { const m = d.slice(0, 7); porMes[m] = (porMes[m] || 0) + 1; });
+    const mesesComPresenca = Object.keys(porMes).length;
+    const idade = cr.data_nascimento ? Math.floor((hoje - new Date(cr.data_nascimento + 'T00:00:00')) / (365.25 * 86400000)) : null;
+
+    const stats = {
+      nome: cr.nome, idade,
+      total_checkins: datas.length,
+      primeiro_checkin: primeiro, ultimo_checkin: ultimo,
+      dias_desde_ultimo: diasDesde(ultimo),
+      checkins_ultimos_90d: dias90, checkins_90_a_180d: dias90a180,
+      meses_com_presenca: mesesComPresenca,
+      ja_convertida: !!cr.data_conversao, ja_batizada: !!cr.data_batismo,
+    };
+
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.json({ stats, situacao: null, analise: 'Análise de IA indisponível (chave não configurada).', recomendacao: null });
+    }
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic();
+    const sys = 'Você é analista do ministério infantil (Kids) de uma igreja. A partir de estatísticas de frequência (check-ins) de UMA criança, escreva uma análise curta e útil pra liderança. Responda SOMENTE com JSON válido: {"situacao":"frequente|regular|esporadica|afastada","analise":"2 a 3 frases, específica com números e datas","recomendacao":"1 frase de ação pastoral"}. Português do Brasil. Hoje é ' + hoje.toISOString().slice(0, 10) + '. "afastada" = sem check-in há 60+ dias.';
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001', max_tokens: 400, system: sys,
+      messages: [{ role: 'user', content: JSON.stringify(stats) }],
+    });
+    const raw = (msg?.content?.[0]?.text || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    let parsed = {};
+    try { parsed = JSON.parse(raw); } catch { parsed = { analise: raw }; }
+    res.json({ stats, situacao: parsed.situacao || null, analise: parsed.analise || '', recomendacao: parsed.recomendacao || null });
+  } catch (e) {
+    console.error('[totemKids] analise-frequencia:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao gerar análise' });
+  }
+});
+
 // GET /cron/age-out · desativa crianças que completaram 13 anos (12a+12m) ·
 // vira adolescente, sai do Kids (preserva histórico). Cron diário OU admin.
 router.get('/cron/age-out', async (req, res) => {

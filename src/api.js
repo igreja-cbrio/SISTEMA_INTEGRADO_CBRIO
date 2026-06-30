@@ -1372,6 +1372,7 @@ export const totemKids = {
     removeResponsavel: (responsavelId) => del(`/totem-kids/responsaveis/${responsavelId}`),
     inativar: (id, body) => patch(`/totem-kids/criancas/${id}/inativar`, body),
     jornada: (id) => get(`/totem-kids/criancas/${id}/jornada`),
+    analiseFrequencia: (id) => get(`/totem-kids/criancas/${id}/analise-frequencia`),
     // Atendimentos (histórico de contatos da equipe Kids com a criança)
     atendimentos: (id) => get(`/totem-kids/criancas/${id}/atendimentos`),
     addAtendimento: (id, data) => post(`/totem-kids/criancas/${id}/atendimentos`, data),
