@@ -30,6 +30,13 @@ function tokenExpirado(t) {
 
 async function getToken() {
   if (!supabase) return null;
+  // FAST-PATH (perf · 2026-06-30): token cacheado e ainda válido → devolve na
+  // HORA, sem aguardar o getSession(). Antes, todo request esperava o getSession
+  // (corrida de 3s) antes de disparar → os dados demoravam a aparecer. O cache é
+  // mantido fresco pelo onAuthStateChange (refresh/foco) e a checagem de exp
+  // (margem de 30s) força um refresh real ANTES de vencer. Sem getSession no hot path.
+  if (_cachedToken && !tokenExpirado(_cachedToken)) return _cachedToken;
+
   // getSession() pode pendurar indefinidamente (Web Lock órfão · issues supabase-js
   // #1594/#2111). Corremos contra um timeout curto e caímos no token cacheado, pra
   // o request nunca travar (botão "Salvar" girando infinito · incidente 2026-06-29).
