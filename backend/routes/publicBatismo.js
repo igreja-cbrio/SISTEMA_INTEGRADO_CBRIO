@@ -209,12 +209,12 @@ router.post('/', limiter, async (req, res) => {
       }
     }
 
-    // Observações agora so guarda o que não tem coluna própria
+    // Observações agora so guarda o que não tem coluna própria.
+    // CEP e horário (Culto) têm colunas dedicadas (cep, horario_culto) → não entram aqui.
     const obsParts = [];
-    if (cep) obsParts.push(`CEP: ${String(cep).trim().slice(0, 20)}`);
-    if (horario_culto) obsParts.push(`Culto: ${String(horario_culto).trim().slice(0, 80)}`);
     if (motivo) obsParts.push(`Motivo: ${String(motivo).trim().slice(0, 500)}`);
     if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim().slice(0, 1000)}`);
+    const cepNorm = cep ? String(cep).trim().slice(0, 20) : null;
 
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
@@ -256,6 +256,7 @@ router.post('/', limiter, async (req, res) => {
       deficiencia_descricao: possuiDef && defDescricao ? defDescricao.slice(0, 500) : null,
       // "Você já fez o NEXT?" · boolean | null (não informado)
       fez_next: typeof fez_next === 'boolean' ? fez_next : null,
+      cep: cepNorm,
     };
 
     const { data, error } = await supabase

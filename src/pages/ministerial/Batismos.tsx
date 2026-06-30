@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import {
   Droplets, Loader2, Search, Plus, Calendar, Phone, Mail, AlertCircle,
   CheckCircle2, Clock, XCircle, ChevronRight, User, IdCard, FileText, BarChart3,
-  Share2, Copy, Check, Hourglass, Printer,
+  Share2, Copy, Check, Hourglass, Printer, MapPin,
 } from 'lucide-react';
 import { imprimirListaPresencaBatismo } from '../../lib/imprimirListaPresencaBatismo';
 import { toast } from 'sonner';
@@ -42,6 +42,7 @@ type BatismoInscricao = {
   status: Status;
   data_batismo?: string | null;
   horario_culto?: string | null; // horário escolhido (casa com batismo_horarios.horario)
+  cep?: string | null;
   origem: 'totem' | 'manual';
   observacoes?: string | null;
   created_at: string;
@@ -853,6 +854,7 @@ export default function Batismos() {
       {selected && (
         <ModalDetalheBatismo
           batismo={selected}
+          labelHorario={labelHorario}
           onClose={() => setSelected(null)}
           onSaved={() => { load(); setSelected(null); }}
         />
@@ -1004,8 +1006,9 @@ function ModalTurmaBatismo({
 // ──────────────────────────────────────────────────────────────────────────
 // MODAL DE DETALHE / EDIÇÃO
 // ──────────────────────────────────────────────────────────────────────────
-function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
+function ModalDetalheBatismo({ batismo, labelHorario, onClose, onSaved }: {
   batismo: BatismoInscricao;
+  labelHorario: (hc?: string | null) => string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1098,6 +1101,18 @@ function ModalDetalheBatismo({ batismo, onClose, onSaved }: {
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Calendar className="h-4 w-4" />
                 <span>Nascimento: {ymdLocal(batismo.data_nascimento)}</span>
+              </div>
+            )}
+            {batismo.horario_culto && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Clock className="h-4 w-4" />
+                <span>Horário: {labelHorario(batismo.horario_culto)}</span>
+              </div>
+            )}
+            {batismo.cep && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <MapPin className="h-4 w-4" />
+                <span>CEP: {batismo.cep}</span>
               </div>
             )}
             <div className="flex items-center gap-2 text-muted-foreground text-xs pt-1 border-t border-border/50">
