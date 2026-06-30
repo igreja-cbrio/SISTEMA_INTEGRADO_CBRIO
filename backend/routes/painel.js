@@ -1184,11 +1184,11 @@ async function nsmSinaisCohorte(pessoas) {
     q => q.eq('status', 'realizado').not('data_batismo', 'is', null));
   const bM = new Map(), bC = new Map(), bN = new Map();
   bat.forEach(b => { add(bM, b.membro_id, b.data_batismo); add(bC, dig(b.cpf).length === 11 ? dig(b.cpf) : null, b.data_batismo); add(bN, lower(b.nome) || null, b.data_batismo); });
+  // Next "fez" = formado na turma (fonte única next_matriculas · o check-in legado
+  // de next_inscricoes foi backfillado pra formado na migration 20260626180000).
   const nxM = await pageAll('next_matriculas', 'membro_id, cpf, nome, created_at', q => q.eq('status', 'formado').is('deleted_at', null));
-  const nxL = await pageAll('next_inscricoes', 'membro_id, nome, check_in_at', q => q.not('check_in_at', 'is', null));
   const nM = new Map(), nC = new Map(), nN = new Map();
   nxM.forEach(n => { add(nM, n.membro_id, n.created_at); add(nC, dig(n.cpf).length === 11 ? dig(n.cpf) : null, n.created_at); add(nN, lower(n.nome) || null, n.created_at); });
-  nxL.forEach(n => { add(nM, n.membro_id, n.check_in_at); add(nN, lower(n.nome) || null, n.check_in_at); });
   // grupo (sem data) + investir/servir/generosidade (por membro_id) · chunked
   const gru = new Set(); const inv = new Map(), ser = new Map(), gen = new Map();
   for (const part of nsmChunk(ids, 150)) {

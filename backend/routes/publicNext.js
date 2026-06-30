@@ -64,7 +64,6 @@ router.get('/eventos', async (_req, res) => {
 router.post('/inscrever', async (req, res) => {
   try {
     const {
-      evento_id,
       nome, sobrenome, cpf, telefone, email, data_nascimento, motivo, observacoes,
       website, // honeypot
     } = req.body || {};
@@ -88,21 +87,6 @@ router.post('/inscrever', async (req, res) => {
 
     const cleanCpf = cpf ? soDigitos(cpf) : null;
     const cleanEmail = String(email).toLowerCase().trim();
-
-    // Resolver evento: se não informado, pegar o próximo agendado
-    let eventoId = evento_id || null;
-    if (!eventoId) {
-      const hoje = new Date().toISOString().slice(0, 10);
-      const { data: prox } = await supabase
-        .from('next_eventos')
-        .select('id')
-        .eq('status', 'agendado')
-        .gte('data', hoje)
-        .order('data')
-        .limit(1)
-        .maybeSingle();
-      eventoId = prox?.id || null;
-    }
 
     // Membresia e fonte única: garante que existe mem_membros (cria se não
     // existe). Após esta chamada, toda inscrição NEXT estará vinculada a
@@ -137,68 +121,42 @@ router.post('/inscrever', async (req, res) => {
     jaBatizado = !!snapBatizado?.data?.batizado;
     if (snapVol?.count && snapVol.count > 0) jaVoluntario = true;
 
-    const { data: insc, error: insErr } = await supabase
-      .from('next_inscricoes')
-      .insert({
-        evento_id: eventoId,
-        nome: nome.trim(),
-        sobrenome: sobrenome ? sobrenome.trim() : null,
-        cpf: cleanCpf,
-        telefone: telefone ? soDigitos(telefone) : null,
-        email: cleanEmail,
-        data_nascimento: data_nascimento || null,
-        motivo: cleanMotivo,
-        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
-        membro_id: membroId,
-        ja_batizado: jaBatizado,
-        ja_voluntario: jaVoluntario,
-        ja_doador: jaDoador,
-        origem: 'formulario',
-      })
-      .select()
-      .single();
+    // FONTE ÚNICA: matrícula na turma ABERTA do momento. Se NÃO houver turma
+    // aberta, entra na LISTA DE ESPERA (turma_id null) — puxada quando a próxima
+    // turma abrir. NUNCA matricula numa turma já encerrada (decisão Marcos ·
+    // 2026-06-26). O legado next_inscricoes foi aposentado como destino de escrita
+    // (a coleta agora vive só em next_matriculas · migration 20260626180000).
+    const turma = await turmaAbertaAtual(); // null = sem turma aberta → lista de espera
 
-    if (insErr) {
-      // CPF/email duplicado no mesmo evento: não quebrar, retornar OK
-      if (insErr.code === '23505') {
-        return res.status(200).json({ ok: true, ja_inscrito: true });
-      }
-      return res.status(500).json({ error: insErr.message });
+    // Dedup por membro_id (CPF é opcional no formulário): se a pessoa JÁ está na
+    // lista de espera (sem turma) OU na turma aberta, não duplica (reenvio do form).
+    // Reinscrição é permitida quando as matrículas antigas estão em turmas encerradas.
+    if (membroId) {
+      let q = supabase.from('next_matriculas').select('id')
+        .eq('membro_id', membroId).is('deleted_at', null);
+      q = turma?.id ? q.eq('turma_id', turma.id) : q.is('turma_id', null);
+      const { data: ja } = await q.limit(1).maybeSingle();
+      if (ja) return res.json({ ok: true, ja_inscrito: true, id: ja.id });
     }
 
-    // Dual-write: matricula na turma ABERTA do momento. Se NÃO houver turma
-    // aberta, entra na LISTA DE ESPERA (turma_id null) — é puxada quando a próxima
-    // turma for aberta. NUNCA matricula numa turma já encerrada (decisão Marcos ·
-    // 2026-06-26). Defensivo — nunca derruba a inscrição. O next_inscricoes acima
-    // segue como fonte legada (verde/KPIs).
-    try {
-      const turma = await turmaAbertaAtual(); // null = sem turma aberta → lista de espera
+    const { data: mat, error: matErr } = await supabase
+      .from('next_matriculas')
+      .insert({
+        turma_id: turma?.id || null,
+        nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
+        cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
+        data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
+        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
+        ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
+        origem: 'formulario',
+      })
+      .select('id')
+      .single();
 
-      // Dedup: se a pessoa JÁ está na lista de espera (quando não há turma) ou JÁ
-      // está na turma aberta, não cria outra matrícula (reenvio do formulário não
-      // duplica). Reinscrição é permitida se as matrículas antigas estão em turmas
-      // encerradas. Dedup por membro_id (CPF é opcional no formulário).
-      let jaAtivo = false;
-      if (membroId) {
-        let q = supabase.from('next_matriculas').select('id')
-          .eq('membro_id', membroId).is('deleted_at', null);
-        q = turma?.id ? q.eq('turma_id', turma.id) : q.is('turma_id', null);
-        const { data: ja } = await q.limit(1).maybeSingle();
-        jaAtivo = !!ja;
-      }
-
-      if (!jaAtivo) {
-        await supabase.from('next_matriculas').insert({
-          turma_id: turma?.id || null,
-          nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
-          cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
-          data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
-          ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
-          origem: 'formulario',
-        });
-      }
-    } catch (e) {
-      console.error('[next] dual-write matrícula:', e.message);
+    if (matErr) {
+      // UNIQUE (turma_id, cpf|email): a pessoa já está na turma → não quebrar.
+      if (matErr.code === '23505') return res.status(200).json({ ok: true, ja_inscrito: true });
+      return res.status(500).json({ error: matErr.message });
     }
 
     // Notificação para responsáveis do NEXT
@@ -213,7 +171,7 @@ router.post('/inscrever', async (req, res) => {
       console.error('[next] erro ao notificar:', e.message);
     }
 
-    res.json({ ok: true, id: insc.id });
+    res.json({ ok: true, id: mat.id });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
