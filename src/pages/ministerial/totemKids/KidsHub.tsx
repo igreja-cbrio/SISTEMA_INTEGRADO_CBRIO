@@ -20,6 +20,7 @@ const ACESSOS = [
   { titulo: 'Equipe do Kids', desc: 'Voluntários por posição (salas, recepção...) + ficha', icon: UserCheck, path: '/ministerial/totem-kids/voluntarios', cor: '#14b8a6' },
   { titulo: 'Estoque por sala', desc: 'O que tem e o que deve ter em cada sala (Patrimônio)', icon: Boxes, path: '/ministerial/totem-kids/estoque', cor: '#f97316' },
   { titulo: 'Batismos (crianças)', desc: 'Crianças pra batizar · contatar a família', icon: Droplets, path: '/ministerial/totem-kids/batismos', cor: '#0ea5e9' },
+  { titulo: 'Apresentação de crianças', desc: 'Inscrições do formulário · por turma (2º domingo)', icon: Baby, path: '/ministerial/totem-kids/apresentacao', cor: '#d946ef' },
   { titulo: 'Decisões', desc: 'Decisões de fé registradas no Kids', icon: Sparkles, path: '/ministerial/totem-kids/decisoes', cor: '#8b5cf6' },
   { titulo: 'Painel ao vivo', desc: 'Quem está em cada sala agora', icon: Monitor, path: '/ministerial/totem-kids/painel', cor: '#f59e0b' },
   { titulo: 'Etiqueta (teste)', desc: 'Testar impressão da etiqueta', icon: Printer, path: '/ministerial/totem-kids/teste-etiqueta', cor: '#64748b' },

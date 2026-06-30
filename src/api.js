@@ -1271,6 +1271,9 @@ export const painelArea = {
 export const totemKids = {
   dashboard: () => get('/totem-kids/dashboard'),
   batismos: () => get('/totem-kids/batismos'),
+  apresentacoes: () => get('/totem-kids/apresentacoes'),
+  apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
+  apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
   resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
   kidsEquipe: {
     list: () => get('/totem-kids/kids-equipe'),
@@ -1778,6 +1781,26 @@ export const gruposPublic = {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     return j;
+  },
+};
+
+export const apresentacaoCriancasPublico = {
+  proximaData: async () => {
+    const res = await fetch(`${API}/public/apresentacao-criancas/proxima-data`);
+    if (!res.ok) throw new Error('Erro ao buscar próxima data');
+    return res.json();
+  },
+  inscrever: async (data) => {
+    const res = await fetch(`${API}/public/apresentacao-criancas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
   },
 };
 
