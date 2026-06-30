@@ -132,16 +132,10 @@ async function cohortNoPrazoPct({ inicio, fim, area, marco }) {
       q => q.eq('status', 'realizado').is('deleted_at', null).not('data_batismo', 'is', null));
     for (const b of rows) { put(byMembro, b.membro_id, b.data_batismo); put(byCpf, dig(b.cpf).length === 11 ? dig(b.cpf) : null, b.data_batismo); put(byNome, String(b.nome || '').trim().toLowerCase() || null, b.data_batismo); }
   } else {
-    // Next "feito" = formado na turma (presente em todos os encontros) · data = último encontro da turma
-    const mats = await fetchAll('next_matriculas', 'membro_id, nome, cpf, turma_id, status', q => q.eq('status', 'formado').is('deleted_at', null));
-    const turmaIds = [...new Set(mats.map(m => m.turma_id).filter(Boolean))];
-    const dataPorTurma = new Map();
-    if (turmaIds.length) {
-      const encs = await fetchAll('next_encontros', 'turma_id, data', q => q.in('turma_id', turmaIds).not('data', 'is', null));
-      for (const e of encs) { const d = String(e.data).slice(0, 10); const cur = dataPorTurma.get(e.turma_id); if (!cur || d > cur) dataPorTurma.set(e.turma_id, d); }
-    }
-    for (const n of mats) {
-      const d = dataPorTurma.get(n.turma_id); if (!d) continue;
+    // Next "feito" = formado POR PESSOA (fonte única vw_next_formado_pessoa · cross-turma)
+    const rows = await fetchAll('vw_next_formado_pessoa', 'membro_id, cpf, nome, formado_em');
+    for (const n of rows) {
+      const d = n.formado_em ? String(n.formado_em).slice(0, 10) : null; if (!d) continue;
       put(byMembro, n.membro_id, d); put(byCpf, dig(n.cpf).length === 11 ? dig(n.cpf) : null, d); put(byNome, String(n.nome || '').trim().toLowerCase() || null, d);
     }
   }
