@@ -28,6 +28,7 @@ export default function NpsPublica() {
   const [enviado, setEnviado] = useState(false);
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
+  const [anonimo, setAnonimo] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -42,11 +43,13 @@ export default function NpsPublica() {
   }, [token]);
 
   async function enviar({ score, respostas, comentario }) {
-    if (!nome.trim()) return alert('Informe seu nome.');
-    if (!email.trim()) return alert('Informe seu e-mail.');
+    if (!anonimo) {
+      if (!nome.trim()) return alert('Informe seu nome (ou marque "responder como anônimo").');
+      if (!email.trim()) return alert('Informe seu e-mail (ou marque "responder como anônimo").');
+    }
     setEnviando(true);
     try {
-      await api.publicResponder(token, { nome: nome.trim(), email: email.trim(), score, respostas, comentario });
+      await api.publicResponder(token, { nome: anonimo ? null : nome.trim(), email: anonimo ? null : email.trim(), anonimo, score, respostas, comentario });
       setEnviado(true);
     } catch (e) {
       alert(e.message || 'Erro ao enviar resposta');
@@ -92,15 +95,23 @@ export default function NpsPublica() {
               onSubmit={enviar}
               enviando={enviando}
               extraHeader={
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, paddingBottom: 16, borderBottom: `1px dashed ${C.border}` }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Seu nome *</label>
-                    <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Como prefere ser chamado" style={inp} />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Seu e-mail *</label>
-                    <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@exemplo.com" style={inp} />
-                  </div>
+                <div style={{ paddingBottom: 16, borderBottom: `1px dashed ${C.border}` }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer', marginBottom: anonimo ? 0 : 12 }}>
+                    <input type="checkbox" checked={anonimo} onChange={e => setAnonimo(e.target.checked)} style={{ accentColor: C.cyan, width: 16, height: 16 }} />
+                    Responder como anônimo (não pede nome nem e-mail)
+                  </label>
+                  {!anonimo && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Seu nome *</label>
+                        <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Como prefere ser chamado" style={inp} />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Seu e-mail *</label>
+                        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@exemplo.com" style={inp} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               }
             />

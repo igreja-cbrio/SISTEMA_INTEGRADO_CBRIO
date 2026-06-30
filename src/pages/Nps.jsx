@@ -293,6 +293,43 @@ export default function Nps() {
 // ════════════════════════════════════════════════════════════════════
 // Modal de criação (com geração IA)
 // ════════════════════════════════════════════════════════════════════
+function RespostaCard({ r, perguntasMap }) {
+  const [aberto, setAberto] = useState(false);
+  const cor = r.score >= 9 ? C.green : r.score >= 7 ? C.amber : C.red;
+  const entries = Object.entries(r.respostas || {}).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0));
+  const fmt = (v) => (Array.isArray(v) ? v.join(', ') : String(v));
+  return (
+    <div style={{ padding: 12, background: C.inputBg, borderRadius: 8, border: `1px solid ${C.border}`, borderLeft: `4px solid ${cor}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ fontWeight: 800, color: cor, fontSize: 18 }}>{r.score}</span>
+          <span style={{ fontSize: 11, color: C.t3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {r.origem === 'publico' ? (r.nome_publico || 'Anônimo') : 'Colaborador'}
+          </span>
+        </div>
+        <span style={{ fontSize: 10, color: C.t3, whiteSpace: 'nowrap' }}>{new Date(r.created_at).toLocaleDateString('pt-BR')}</span>
+      </div>
+      {r.comentario && <p style={{ margin: '6px 0 0', fontSize: 12, color: C.t2, lineHeight: 1.4 }}>{r.comentario}</p>}
+      {entries.length > 0 && (
+        <>
+          <button onClick={() => setAberto(v => !v)} style={{ marginTop: 6, fontSize: 11, color: C.cyan, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+            {aberto ? '▲ ocultar respostas' : `▼ ver ${entries.length} respostas`}
+          </button>
+          {aberto && (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${C.border}`, display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {entries.map(([k, val]) => (
+                <div key={k} style={{ fontSize: 11.5, color: C.t2, lineHeight: 1.4 }}>
+                  <span style={{ color: C.t3 }}>{perguntasMap[k] || k}:</span> <strong style={{ color: C.text, fontWeight: 600 }}>{fmt(val)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function CreateModal({ onClose, onCreated }) {
   const [step, setStep] = useState(1); // 1: definir · 2: revisar perguntas
   const [valor, setValor] = useState(null);
@@ -669,6 +706,8 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
 
   const v = valorMeta(pesquisa.valor);
   const stats = pesquisa.stats || { total_respostas: 0, score_medio: 0, nps_score: 0, promoters: 0, passives: 0, detractors: 0 };
+  const perguntasMap = {};
+  (pesquisa.perguntas?.perguntas_extras || []).forEach((p) => { if (p.tipo !== 'secao') perguntasMap[p.id] = p.texto; });
 
   return (
     <Modal open onClose={onClose} title={pesquisa.titulo} width={820}>
@@ -739,32 +778,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
           <div style={{ textAlign: 'center', padding: 30, color: C.t3, fontSize: 13 }}>Nenhuma resposta ainda</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
-            {respostas.map(r => {
-              const cor = r.score >= 9 ? C.green : r.score >= 7 ? C.amber : C.red;
-              return (
-                <div key={r.id} style={{ padding: 12, background: C.inputBg, borderRadius: 8, border: `1px solid ${C.border}`, borderLeft: `4px solid ${cor}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontWeight: 800, color: cor, fontSize: 18 }}>{r.score}</span>
-                      <span style={{ fontSize: 11, color: C.t3 }}>
-                        {r.origem === 'publico' ? `${r.nome_publico} · público` : 'Colaborador'}
-                      </span>
-                    </div>
-                    <span style={{ fontSize: 10, color: C.t3 }}>{new Date(r.created_at).toLocaleString('pt-BR')}</span>
-                  </div>
-                  {r.comentario && <p style={{ margin: '4px 0 0', fontSize: 12, color: C.t2, lineHeight: 1.4 }}>{r.comentario}</p>}
-                  {r.respostas && Object.keys(r.respostas).length > 0 && (
-                    <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${C.border}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {Object.entries(r.respostas).map(([k, val]) => val ? (
-                        <div key={k} style={{ fontSize: 11, color: C.t2 }}>
-                          <span style={{ color: C.t3 }}>{k}:</span> {String(val)}
-                        </div>
-                      ) : null)}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {respostas.map(r => <RespostaCard key={r.id} r={r} perguntasMap={perguntasMap} />)}
           </div>
         )
       )}

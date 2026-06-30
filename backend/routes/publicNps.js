@@ -41,12 +41,14 @@ router.get('/:token', publicLimiter, async (req, res) => {
 // POST /api/public/nps/:token/responder
 router.post('/:token/responder', publicLimiter, async (req, res) => {
   try {
-    const { nome, email, score, respostas, comentario } = req.body || {};
-    if (!nome || !email) {
-      return res.status(400).json({ error: 'Nome e e-mail são obrigatórios' });
-    }
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email))) {
-      return res.status(400).json({ error: 'E-mail inválido' });
+    const { nome, email, score, respostas, comentario, anonimo } = req.body || {};
+    if (!anonimo) {
+      if (!nome || !email) {
+        return res.status(400).json({ error: 'Nome e e-mail são obrigatórios' });
+      }
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email))) {
+        return res.status(400).json({ error: 'E-mail inválido' });
+      }
     }
     if (score === undefined || score < 0 || score > 10) {
       return res.status(400).json({ error: 'score deve estar entre 0 e 10' });
@@ -71,8 +73,8 @@ router.post('/:token/responder', publicLimiter, async (req, res) => {
       .insert({
         pesquisa_id: pesquisa.id,
         profile_id: null,
-        nome_publico: String(nome).slice(0, 120),
-        email_publico: String(email).toLowerCase().slice(0, 200),
+        nome_publico: anonimo ? 'Anônimo' : String(nome).slice(0, 120),
+        email_publico: anonimo ? null : String(email).toLowerCase().slice(0, 200),
         score: Math.round(score),
         // respostas: objeto JSONB · limita tamanho serializado pra evitar DoS
         respostas: (() => {
