@@ -76,36 +76,85 @@ export default function NpsForm({ pesquisa, onSubmit, enviando, extraHeader }) {
         </div>
       </div>
 
-      {perguntasExtras.map(p => (
-        <div key={p.id}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>
-            {p.texto}
-          </label>
-          {p.tipo === 'texto_longo' && (
-            <textarea rows={3} value={respostas[p.id] || ''}
-              onChange={e => setRespostaPergunta(p.id, e.target.value)}
-              placeholder="Sua resposta..." style={{ ...inp, resize: 'vertical', minHeight: 70 }} />
-          )}
-          {p.tipo === 'texto_curto' && (
-            <input value={respostas[p.id] || ''}
-              onChange={e => setRespostaPergunta(p.id, e.target.value)}
-              placeholder="Sua resposta..." style={inp} />
-          )}
-          {p.tipo === 'escala_5' && (
-            <div style={{ display: 'flex', gap: 6 }}>
-              {[1, 2, 3, 4, 5].map(n => (
-                <button key={n} type="button" onClick={() => setRespostaPergunta(p.id, n)}
-                  style={{
-                    width: 44, height: 44, borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer',
-                    border: `2px solid ${respostas[p.id] === n ? C.cyan : C.border}`,
-                    background: respostas[p.id] === n ? C.cyan : 'transparent',
-                    color: respostas[p.id] === n ? '#fff' : C.t2,
-                  }}>{n}</button>
-              ))}
+      {perguntasExtras.map(p => {
+        // Cabeçalho de seção (não coleta resposta)
+        if (p.tipo === 'secao') {
+          return (
+            <div key={p.id} style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16, marginTop: 2 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: C.text }}>{p.texto}</h3>
+              {p.descricao && <p style={{ margin: '4px 0 0', fontSize: 12, color: C.t3, lineHeight: 1.45 }}>{p.descricao}</p>}
             </div>
-          )}
-        </div>
-      ))}
+          );
+        }
+        const arr = Array.isArray(respostas[p.id]) ? respostas[p.id] : [];
+        return (
+          <div key={p.id}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>
+              {p.texto}
+            </label>
+            {p.tipo === 'texto_longo' && (
+              <textarea rows={3} value={respostas[p.id] || ''}
+                onChange={e => setRespostaPergunta(p.id, e.target.value)}
+                placeholder="Sua resposta..." style={{ ...inp, resize: 'vertical', minHeight: 70 }} />
+            )}
+            {p.tipo === 'texto_curto' && (
+              <input value={respostas[p.id] || ''}
+                onChange={e => setRespostaPergunta(p.id, e.target.value)}
+                placeholder="Sua resposta..." style={inp} />
+            )}
+            {p.tipo === 'escala_5' && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[1, 2, 3, 4, 5].map(n => (
+                  <button key={n} type="button" onClick={() => setRespostaPergunta(p.id, n)}
+                    style={{
+                      width: 44, height: 44, borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                      border: `2px solid ${respostas[p.id] === n ? C.cyan : C.border}`,
+                      background: respostas[p.id] === n ? C.cyan : 'transparent',
+                      color: respostas[p.id] === n ? '#fff' : C.t2,
+                    }}>{n}</button>
+                ))}
+              </div>
+            )}
+            {p.tipo === 'sim_nao' && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['Sim', 'Não'].map(op => (
+                  <button key={op} type="button" onClick={() => setRespostaPergunta(p.id, op)}
+                    style={{
+                      padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                      border: `2px solid ${respostas[p.id] === op ? C.cyan : C.border}`,
+                      background: respostas[p.id] === op ? C.cyan : 'transparent',
+                      color: respostas[p.id] === op ? '#fff' : C.t2,
+                    }}>{op}</button>
+                ))}
+              </div>
+            )}
+            {p.tipo === 'opcao_unica' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {(p.opcoes || []).map(op => (
+                  <label key={op} style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontSize: 14, color: C.text }}>
+                    <input type="radio" name={p.id} checked={respostas[p.id] === op} onChange={() => setRespostaPergunta(p.id, op)} style={{ accentColor: C.cyan }} />
+                    {op}
+                  </label>
+                ))}
+              </div>
+            )}
+            {p.tipo === 'multipla' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {(p.opcoes || []).map(op => {
+                  const checked = arr.includes(op);
+                  return (
+                    <label key={op} style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontSize: 14, color: C.text }}>
+                      <input type="checkbox" checked={checked} style={{ accentColor: C.cyan }}
+                        onChange={() => setRespostaPergunta(p.id, checked ? arr.filter(x => x !== op) : [...arr, op])} />
+                      {op}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       <button type="submit" disabled={enviando}
         style={{
