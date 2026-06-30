@@ -65,6 +65,19 @@ export default function GestaoCriancas() {
     } finally { setSincronizando(false); }
   }
 
+  const [depurando, setDepurando] = useState(false);
+  async function depurarInativos() {
+    if (!window.confirm('Desativar (tirar da lista) as crianças sem check-in no Planning Center nos últimos 6 meses? É reversível — elas ficam como inativas, não são apagadas.')) return;
+    setDepurando(true);
+    try {
+      const r: any = await api.criancas.depurarInativos(6);
+      toast.success(`${r?.desativadas ?? 0} crianças desativadas (sem check-in há 6+ meses).`);
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao depurar inativos.');
+    } finally { setDepurando(false); }
+  }
+
   const filtradas = useMemo(() => {
     const f = FAIXAS.find(x => x.key === faixa)!;
     const t = busca.trim().toLowerCase();
@@ -92,6 +105,9 @@ export default function GestaoCriancas() {
         <div className="flex gap-2">
           <Button variant="outline" onClick={sincronizarPco} disabled={sincronizando}>
             {sincronizando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sincronizar Planning Center
+          </Button>
+          <Button variant="outline" onClick={depurarInativos} disabled={depurando}>
+            {depurando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserX className="h-4 w-4 mr-1" />} Depurar inativos (6m)
           </Button>
           <Button variant="outline" onClick={() => setDupOpen(true)}><Copy className="h-4 w-4 mr-1" /> Duplicados</Button>
           <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>

@@ -233,4 +233,30 @@ async function detalhePessoaPCO(pcoId) {
   return { pessoa, total_checkins: historico.length, historico };
 }
 
-module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO, ehEventoKids };
+// Conjunto de person ids do PCO que tiveram ALGUM check-in desde uma data
+// (paginado). Usado pra depurar o cadastro: quem não aparece aqui está inativo.
+async function idsComCheckinDesde(dataISO) {
+  const { basic } = getPCCredentials();
+  const headers = { Authorization: `Basic ${basic}` };
+  const ids = new Set();
+  let offset = 0;
+  while (true) {
+    const url = `${PC_CHECKINS_BASE}/check_ins`
+      + `?where[created_at][gte]=${encodeURIComponent(dataISO)}`
+      + `&per_page=100&offset=${offset}`;
+    const resp = await fetchWithRetry(url, headers);
+    if (!resp || !resp.ok) break;
+    const json = await resp.json();
+    const data = json.data || [];
+    for (const ci of data) {
+      const pid = ci.relationships?.person?.data?.id;
+      if (pid) ids.add(String(pid));
+    }
+    if (data.length < 100) break;
+    offset += 100;
+    if (offset > 500000) break; // trava de segurança
+  }
+  return ids;
+}
+
+module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO, ehEventoKids, idsComCheckinDesde };

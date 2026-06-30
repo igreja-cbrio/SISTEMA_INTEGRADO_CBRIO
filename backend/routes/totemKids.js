@@ -1009,6 +1009,48 @@ router.post('/resumo-pco/testar', authorizeModule('kids', 1), async (req, res) =
   }
 });
 
+// POST /criancas/depurar-inativos · desativa as crianças (com vínculo PCO) que
+// NÃO tiveram check-in nos últimos N meses (default 6). Saem da lista (que mostra
+// só ativos). Reversível (ativo=false · não apaga). Body: { meses }.
+router.post('/criancas/depurar-inativos', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const meses = Math.min(Math.max(Number(req.body?.meses) || 6, 1), 60);
+    const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - meses);
+    const { idsComCheckinDesde } = require('../services/planningCenterKidsCheckins');
+    const ativosPco = await idsComCheckinDesde(cutoff.toISOString());
+
+    // Crianças ativas COM vínculo PCO que não aparecem nos check-ins recentes.
+    const inativar = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase.from('kids_criancas')
+        .select('id, planning_center_id')
+        .eq('ativo', true).is('deleted_at', null)
+        .not('planning_center_id', 'is', null)
+        .range(from, from + 999);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      for (const c of data) if (!ativosPco.has(String(c.planning_center_id))) inativar.push(c.id);
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+
+    let desativadas = 0;
+    const motivo = `Sem check-in no Planning Center nos últimos ${meses} meses`;
+    for (let i = 0; i < inativar.length; i += 500) {
+      const lote = inativar.slice(i, i + 500);
+      const { error } = await supabase.from('kids_criancas')
+        .update({ ativo: false, inativado_em: new Date().toISOString(), motivo_inativacao: motivo })
+        .in('id', lote);
+      if (!error) desativadas += lote.length;
+    }
+    res.json({ ok: true, meses, ativos_pco: ativosPco.size, desativadas });
+  } catch (e) {
+    console.error('[totemKids] depurar-inativos:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao depurar inativos' });
+  }
+});
+
 // GET /pco-pessoa/:pcoId · ficha + histórico de check-ins de uma criança no PCO
 // (clique na lista de frequência). Resolve a ficha local por planning_center_id
 // quando existir (sexo, responsáveis). Só leitura.

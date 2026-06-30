@@ -1386,6 +1386,7 @@ export const totemKids = {
     modeloImportacaoUrl: () => `${API}/totem-kids/criancas/modelo-importacao`,
     // Sync com a API do Planning Center Check-Ins (upsert idempotente)
     syncPco: (data = {}) => post('/totem-kids/sync-pco', data),
+    depurarInativos: (meses = 6) => post('/totem-kids/criancas/depurar-inativos', { meses }),
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
