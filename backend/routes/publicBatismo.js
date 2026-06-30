@@ -13,6 +13,33 @@ const limiter = rateLimit({
   message: { error: 'Muitas inscrições deste endereço. Tente novamente mais tarde.' },
 });
 
+// Rate limit dedicado pro acesso às fotos (leitura · mais generoso que o de
+// inscrição): uma família reabre/recarrega várias vezes. O token de 32 hex
+// (não-enumerável) já torna brute-force inviável; isto é só higiene.
+const acessoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas. Aguarde um instante e tente de novo.' },
+});
+
+// Bucket público com as fotos da cerimônia (pasta = YYYY-MM-DD). Mesmo padrão do
+// admin (batismoFotos.js): lista os arquivos da data e devolve a URL pública.
+const BUCKET_FOTOS = 'batismos';
+async function listarFotosData(data) {
+  const { data: arquivos, error } = await supabase.storage
+    .from(BUCKET_FOTOS)
+    .list(data, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
+  if (error) throw error;
+  return (arquivos || [])
+    .filter((f) => f.name && !f.name.startsWith('.'))
+    .map((f) => ({
+      nome: f.name,
+      url: supabase.storage.from(BUCKET_FOTOS).getPublicUrl(`${data}/${f.name}`).data.publicUrl,
+    }));
+}
+
 function soDigitos(v) {
   return String(v || '').replace(/\D+/g, '');
 }
@@ -311,6 +338,53 @@ router.post('/', limiter, async (req, res) => {
     });
   } catch (e) {
     console.error('[publicBatismo] erro:', e.message);
+    res.status(500).json({ error: 'Erro inesperado. Tente novamente.' });
+  }
+});
+
+// GET /api/public/batismo/acesso?token=...
+// O QR da etiqueta do quiosque aponta pra cá. O token (batismo_inscricoes.
+// codigo_acesso · 32 hex, não-enumerável) É a credencial: quem o tem (recebeu a
+// etiqueta na mão · presença física verificada) vê as fotos do batismo DAQUELE
+// DIA. Sem conta, sem senha, sem sessão (passwordless · CPF nunca vira senha ·
+// lição do account-takeover). Fotos por data na Fase 1; "as suas" vem na Fase 2
+// (rosto). O backend (service_role) só devolve a data ligada ao token — que está
+// sob lockdown column-level (20260630160000) e não vaza pela anon key.
+router.get('/acesso', acessoLimiter, async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  // token = 32 hex (gen_random_uuid sem hífens). Valida o formato antes de tocar
+  // o banco e não revela nada quando não casa.
+  if (!/^[0-9a-f]{32}$/i.test(token)) {
+    return res.status(404).json({ error: 'Link inválido ou expirado. Procure a equipe.' });
+  }
+  try {
+    const { data: insc, error } = await supabase
+      .from('batismo_inscricoes')
+      .select('nome, sobrenome, data_batismo, status')
+      .eq('codigo_acesso', token)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) {
+      console.error('[publicBatismo] acesso lookup:', error.message);
+      return res.status(500).json({ error: 'Erro ao validar o acesso. Tente novamente.' });
+    }
+    if (!insc || ['cancelado', 'rejeitado'].includes(insc.status)) {
+      return res.status(404).json({ error: 'Link inválido ou expirado. Procure a equipe.' });
+    }
+    let fotos = [];
+    try {
+      if (insc.data_batismo) fotos = await listarFotosData(insc.data_batismo);
+    } catch (e) {
+      // pasta pode ainda não existir (fotos não subiram) — não falha o acesso
+      console.error('[publicBatismo] acesso listar fotos:', e.message);
+    }
+    res.json({
+      nome: `${insc.nome} ${insc.sobrenome || ''}`.trim(),
+      data_batismo: insc.data_batismo,
+      fotos,
+    });
+  } catch (e) {
+    console.error('[publicBatismo] acesso erro:', e.message);
     res.status(500).json({ error: 'Erro inesperado. Tente novamente.' });
   }
 });

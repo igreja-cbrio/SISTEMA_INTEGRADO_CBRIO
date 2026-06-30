@@ -1878,6 +1878,16 @@ export const batismoPublico = {
     }
     return res.json();
   },
+  // Acesso às fotos pela etiqueta do quiosque: o token (codigo_acesso) É a
+  // credencial — devolve nome + data + fotos do dia do batismo. Sem login.
+  acesso: async (token) => {
+    const res = await fetch(`${API}/public/batismo/acesso?token=${encodeURIComponent(token)}`, { cache: 'no-store' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Link inválido ou expirado.');
+    }
+    return res.json();
+  },
 };
 
 // Módulo Relatórios · catálogo, dados (preview/PDF) e download do Excel (.xlsx).
