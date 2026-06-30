@@ -51,11 +51,13 @@ async function getToken() {
   // 'no_token' (mensagem suave de re-login, sem redirect abrupto). 2026-06-30.
   if (_cachedToken && tokenExpirado(_cachedToken)) {
     try {
+      // refreshSession() FORÇA a renovação (getSession poderia devolver o mesmo
+      // token vencido). Re-valida o exp do retornado antes de aceitar.
       const refreshed = await Promise.race([
-        supabase.auth.getSession().then(({ data }) => data?.session?.access_token || null),
+        supabase.auth.refreshSession().then(({ data }) => data?.session?.access_token || null),
         new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
       ]);
-      if (refreshed) { _cachedToken = refreshed; return _cachedToken; }
+      if (refreshed && !tokenExpirado(refreshed)) { _cachedToken = refreshed; return _cachedToken; }
     } catch { /* ignora */ }
     return null;
   }
