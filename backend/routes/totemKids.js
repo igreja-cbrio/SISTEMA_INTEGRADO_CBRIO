@@ -1005,6 +1005,33 @@ router.post('/resumo-pco/testar', authorizeModule('kids', 1), async (req, res) =
   }
 });
 
+// GET /pco-pessoa/:pcoId · ficha + histórico de check-ins de uma criança no PCO
+// (clique na lista de frequência). Resolve a ficha local por planning_center_id
+// quando existir (sexo, responsáveis). Só leitura.
+router.get('/pco-pessoa/:pcoId', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { detalhePessoaPCO } = require('../services/planningCenterKidsCheckins');
+    const r = await detalhePessoaPCO(req.params.pcoId);
+    const { data: cr } = await supabase.from('kids_criancas')
+      .select('id, nome, data_nascimento, sexo, visitante')
+      .eq('planning_center_id', req.params.pcoId).maybeSingle();
+    let responsaveis = [];
+    if (cr?.id) {
+      const { data: resp } = await supabase.from('kids_responsaveis')
+        .select('parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
+        .eq('crianca_id', cr.id);
+      responsaveis = (resp || []).map(x => ({
+        parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar,
+        nome: x.membro?.nome || null, telefone: x.membro?.telefone || null,
+      }));
+    }
+    res.json({ ...r, crianca_local: cr || null, responsaveis });
+  } catch (e) {
+    console.error('[totemKids] pco-pessoa:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao consultar o Planning Center' });
+  }
+});
+
 // GET /batismos · crianças inscritas pra batismo (eh_crianca ou <13 anos) · a
 // equipe Kids contata a família. Aparece também na Integração (não duplica dado).
 router.get('/batismos', authorizeModule('kids', 1), async (req, res) => {

@@ -7,8 +7,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { BarChart3, Loader2, ChevronDown, ChevronRight, ArrowLeft, Baby, RefreshCw } from 'lucide-react';
+import { BarChart3, Loader2, ChevronDown, ChevronRight, ArrowLeft, Baby, RefreshCw, Clock, Phone, User } from 'lucide-react';
 
 // Último domingo (local) em YYYY-MM-DD.
 function ultimoDomingo() {
@@ -17,6 +18,17 @@ function ultimoDomingo() {
   return d.toISOString().slice(0, 10);
 }
 
+function idadeDe(nasc?: string | null) {
+  if (!nasc) return null;
+  try {
+    const n = new Date(); const b = new Date(nasc + 'T00:00:00');
+    let a = n.getFullYear() - b.getFullYear();
+    if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--;
+    return a;
+  } catch { return null; }
+}
+const fmtData = (d?: string | null) => (d ? d.split('-').reverse().join('/') : '');
+
 export default function KidsFrequenciaPCO() {
   const navigate = useNavigate();
   const [data, setData] = useState(ultimoDomingo());
@@ -24,6 +36,23 @@ export default function KidsFrequenciaPCO() {
   const [res, setRes] = useState<any>(null);
   const [aberto, setAberto] = useState<string | null>(null);
   const [verExcluidos, setVerExcluidos] = useState(false);
+  const [pessoaSel, setPessoaSel] = useState<any>(null);
+  const [detalhe, setDetalhe] = useState<any>(null);
+  const [loadingDet, setLoadingDet] = useState(false);
+
+  async function abrirPessoa(k: any) {
+    if (!k?.pco_id) { toast.error('Sem vínculo com o Planning Center pra esta pessoa.'); return; }
+    setPessoaSel(k);
+    setDetalhe(null);
+    setLoadingDet(true);
+    try {
+      const r: any = await api.pcoPessoa(k.pco_id);
+      setDetalhe(r);
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível carregar a ficha.');
+      setPessoaSel(null);
+    } finally { setLoadingDet(false); }
+  }
 
   async function buscar(d = data) {
     setLoading(true);
@@ -101,9 +130,12 @@ export default function KidsFrequenciaPCO() {
                         ) : (
                           <ol className="text-sm divide-y divide-border/40">
                             {c.criancas.map((k: any, i: number) => (
-                              <li key={i} className="flex items-center justify-between py-1.5">
-                                <span><span className="text-muted-foreground tabular-nums mr-2">{i + 1}.</span>{k.nome}</span>
-                                <span className="text-xs text-muted-foreground tabular-nums">{k.hora || ''}</span>
+                              <li key={i}>
+                                <button onClick={() => abrirPessoa(k)} disabled={!k.pco_id}
+                                  className="w-full flex items-center justify-between py-1.5 text-left rounded hover:text-primary disabled:opacity-70 disabled:hover:text-inherit">
+                                  <span><span className="text-muted-foreground tabular-nums mr-2">{i + 1}.</span>{k.nome}</span>
+                                  <span className="text-xs text-muted-foreground tabular-nums">{k.hora || ''}</span>
+                                </button>
                               </li>
                             ))}
                           </ol>
@@ -128,9 +160,12 @@ export default function KidsFrequenciaPCO() {
               {verExcluidos && (
                 <ol className="mt-2 text-sm divide-y divide-border/40 border-t border-border/50 pt-2">
                   {res.nao_contadas.map((k: any, i: number) => (
-                    <li key={i} className="flex items-center justify-between py-1.5">
-                      <span><span className="text-muted-foreground tabular-nums mr-2">{i + 1}.</span>{k.nome}</span>
-                      <span className="text-xs text-muted-foreground">{[k.culto, k.hora].filter(Boolean).join(' · ')}</span>
+                    <li key={i}>
+                      <button onClick={() => abrirPessoa(k)} disabled={!k.pco_id}
+                        className="w-full flex items-center justify-between py-1.5 text-left rounded hover:text-primary disabled:opacity-70 disabled:hover:text-inherit">
+                        <span><span className="text-muted-foreground tabular-nums mr-2">{i + 1}.</span>{k.nome}</span>
+                        <span className="text-xs text-muted-foreground">{[k.culto, k.hora].filter(Boolean).join(' · ')}</span>
+                      </button>
                     </li>
                   ))}
                 </ol>
@@ -139,6 +174,65 @@ export default function KidsFrequenciaPCO() {
           )}
         </>
       )}
+
+      <Dialog open={!!pessoaSel} onOpenChange={(o) => { if (!o) { setPessoaSel(null); setDetalhe(null); } }}>
+        <DialogContent className="max-w-lg flex flex-col max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><User className="h-5 w-5 text-sky-500" /> {pessoaSel?.nome || detalhe?.pessoa?.nome || 'Criança'}</DialogTitle>
+          </DialogHeader>
+          {loadingDet ? (
+            <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+          ) : detalhe ? (
+            <div className="flex-1 overflow-y-auto min-h-0 space-y-4 text-sm">
+              {/* Ficha */}
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+                {(() => { const id = idadeDe(detalhe.crianca_local?.data_nascimento || detalhe.pessoa?.birthdate); return id != null ? <span>Idade: <b className="text-foreground">{id} ano{id === 1 ? '' : 's'}</b></span> : null; })()}
+                {detalhe.crianca_local?.sexo && <span>Sexo: <b className="text-foreground">{detalhe.crianca_local.sexo}</b></span>}
+                <span>PCO: {detalhe.pessoa?.child ? <b className="text-emerald-600">criança</b> : <b className="text-amber-600">não-criança</b>}</span>
+                {detalhe.crianca_local?.visitante ? <span className="text-amber-600">visitante</span> : null}
+              </div>
+              {!detalhe.crianca_local && (
+                <div className="text-xs text-amber-600">Sem ficha local (ainda não sincronizada do PCO pro cadastro de crianças).</div>
+              )}
+
+              {/* Responsáveis */}
+              {(detalhe.responsaveis || []).length > 0 && (
+                <div>
+                  <div className="font-semibold mb-1">Responsáveis</div>
+                  <div className="space-y-1">
+                    {detalhe.responsaveis.map((r: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between border-b border-border/40 py-1">
+                        <span>{r.nome || '—'}{r.parentesco ? <span className="text-muted-foreground"> · {r.parentesco}</span> : ''}{r.autorizado_buscar ? <span className="text-emerald-600 text-xs"> · pode buscar</span> : ''}</span>
+                        {r.telefone && <a href={`https://wa.me/55${String(r.telefone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="text-xs text-primary inline-flex items-center gap-1"><Phone className="h-3 w-3" />{r.telefone}</a>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Histórico de check-ins */}
+              <div>
+                <div className="font-semibold mb-1 flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-muted-foreground" /> Histórico de check-ins
+                  <span className="text-muted-foreground font-normal">({detalhe.total_checkins || 0})</span>
+                </div>
+                {(detalhe.historico || []).length === 0 ? (
+                  <div className="text-muted-foreground text-xs py-2">Sem check-ins no Planning Center.</div>
+                ) : (
+                  <ol className="divide-y divide-border/40">
+                    {detalhe.historico.map((h: any, i: number) => (
+                      <li key={i} className="flex items-center justify-between py-1.5">
+                        <span>{fmtData(h.data)}{h.evento ? <span className="text-muted-foreground"> · {h.evento}</span> : ''}{h.local ? <span className="text-muted-foreground"> · {h.local}</span> : ''}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{h.hora || ''}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
