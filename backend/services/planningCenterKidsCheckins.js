@@ -130,14 +130,14 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
     const hora = horaBRT(et?.starts_at || et?.shows_at || ci.attributes?.created_at);
     const culto = cultoMaisProximo(hora);
     if (!ehCrianca) {
-      naoContadas.push({ nome, hora, kind, culto: culto?.nome || null });
+      naoContadas.push({ nome, hora, kind, culto: culto?.nome || null, pco_id: personId || null });
       continue;
     }
     totalCriancas += 1;
     if (culto) {
       const acc = porCulto[culto.id] || (porCulto[culto.id] = { culto_id: culto.id, nome: culto.nome, hhmm: culto.hhmm, total: 0, criancas: [] });
       acc.total += 1;
-      acc.criancas.push({ nome, hora, kind });
+      acc.criancas.push({ nome, hora, kind, pco_id: personId || null });
     } else {
       semCulto += 1;
     }
@@ -159,4 +159,58 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
   };
 }
 
-module.exports = { coletarFrequenciaKidsPCO };
+// Ficha + histórico de check-ins de UMA criança no PCO (pela person id do
+// Check-Ins). Usado no clique da lista de frequência pra ver os detalhes e a
+// frequência histórica da criança.
+async function detalhePessoaPCO(pcoId) {
+  const { basic } = getPCCredentials();
+  const headers = { Authorization: `Basic ${basic}` };
+
+  // Pessoa (nome, nascimento, child)
+  let pessoa = {};
+  try {
+    const rp = await fetchWithRetry(`${PC_CHECKINS_BASE}/people/${encodeURIComponent(pcoId)}`, headers);
+    if (rp && rp.ok) {
+      const pj = await rp.json();
+      const a = pj?.data?.attributes || {};
+      pessoa = { nome: a.name || `${a.first_name || ''} ${a.last_name || ''}`.trim(), child: a.child === true, birthdate: a.birthdate || null };
+    }
+  } catch { /* best-effort */ }
+
+  // Histórico de check-ins (mais recentes primeiro)
+  const events = new Map(), locations = new Map();
+  const historico = [];
+  let offset = 0;
+  while (true) {
+    const url = `${PC_CHECKINS_BASE}/people/${encodeURIComponent(pcoId)}/check_ins`
+      + `?include=event,location&order=-created_at&per_page=100&offset=${offset}`;
+    const resp = await fetchWithRetry(url, headers);
+    if (!resp || !resp.ok) break;
+    const json = await resp.json();
+    for (const inc of (json.included || [])) {
+      if (inc.type === 'Event') events.set(inc.id, inc.attributes || {});
+      if (inc.type === 'Location') locations.set(inc.id, inc.attributes || {});
+    }
+    const data = json.data || [];
+    for (const ci of data) {
+      const evId = ci.relationships?.event?.data?.id;
+      const locId = ci.relationships?.location?.data?.id;
+      const cr = ci.attributes?.created_at;
+      const brt = cr ? new Date(new Date(cr).getTime() - 3 * 3600 * 1000) : null;
+      historico.push({
+        data: brt ? brt.toISOString().slice(0, 10) : null,
+        hora: brt ? brt.toISOString().slice(11, 16) : null,
+        evento: evId ? (events.get(evId)?.name || null) : null,
+        local: locId ? (locations.get(locId)?.name || null) : null,
+        kind: ci.attributes?.kind || null,
+      });
+    }
+    if (data.length < 100) break;
+    offset += 100;
+    if (offset > 2000) break; // trava de segurança
+  }
+
+  return { pessoa, total_checkins: historico.length, historico };
+}
+
+module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO };
