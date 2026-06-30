@@ -110,7 +110,7 @@ router.post('/', limiter, async (req, res) => {
     const {
       nome, sobrenome, email, telefone, cpf, data_nascimento,
       endereco, cep, tamanho_camisa, limitacao_mobilidade, motivo,
-      observacoes, horario_culto, area_kpi,
+      observacoes, horario_culto, area_kpi, fez_next,
       // Novos · LGPD/integracao
       eh_crianca, possui_deficiencia, deficiencia_descricao,
     } = req.body || {};
@@ -254,6 +254,8 @@ router.post('/', limiter, async (req, res) => {
       eh_crianca: !!eh_crianca,
       possui_deficiencia: possuiDef,
       deficiencia_descricao: possuiDef && defDescricao ? defDescricao.slice(0, 500) : null,
+      // "Você já fez o NEXT?" · boolean | null (não informado)
+      fez_next: typeof fez_next === 'boolean' ? fez_next : null,
     };
 
     const { data, error } = await supabase
