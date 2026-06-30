@@ -44,7 +44,7 @@ function minutosDe(hhmm) {
   return h * 60 + (m || 0);
 }
 
-// Puxa os check-ins de um dia (paginado) com event_time e person inclusos.
+// Puxa os check-ins de um dia (paginado) com event e person inclusos.
 async function buscarCheckinsDia(dataBRT) {
   const { basic } = getPCCredentials();
   const headers = { Authorization: `Basic ${basic}` };
@@ -52,21 +52,21 @@ async function buscarCheckinsDia(dataBRT) {
   const perPage = 100;
   let offset = 0;
   const checkins = [];
-  const eventTimes = new Map();
+  const events = new Map();
   const persons = new Map();
 
   while (true) {
     const url = `${PC_CHECKINS_BASE}/check_ins`
       + `?where[created_at][gte]=${encodeURIComponent(start)}`
       + `&where[created_at][lte]=${encodeURIComponent(end)}`
-      + `&include=event_time,person&per_page=${perPage}&offset=${offset}`;
+      + `&include=event,person&per_page=${perPage}&offset=${offset}`;
     const resp = await fetchWithRetry(url, headers);
     if (!resp || !resp.ok) {
       throw new Error(`PCO Check-Ins ${resp?.status || '???'}: falha ao listar check_ins (offset ${offset})`);
     }
     const json = await resp.json();
     for (const inc of (json.included || [])) {
-      if (inc.type === 'EventTime') eventTimes.set(inc.id, inc.attributes || {});
+      if (inc.type === 'Event') events.set(inc.id, inc.attributes || {});
       if (inc.type === 'Person') persons.set(inc.id, inc.attributes || {});
     }
     const data = json.data || [];
@@ -75,14 +75,22 @@ async function buscarCheckinsDia(dataBRT) {
     offset += perPage;
     if (offset > 100000) break; // trava de segurança
   }
-  return { checkins, eventTimes, persons };
+  return { checkins, events, persons };
+}
+
+// "É check-in do Kids?" — o sinal confiável é o EVENTO (CBKids), não a flag
+// `child` do PCO (que vem em branco pra muita criança). Casa por nome do evento.
+function ehEventoKids(nome) {
+  if (!nome) return false;
+  const n = String(nome).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  return /\bkids?\b/.test(n) || n.includes('cbkids') || n.includes('infantil');
 }
 
 // Coleta a frequência de crianças por culto num dia. Retorna os totais por culto
 // (mapeados pela hora do event_time → recurrence_time do culto) + um diagnóstico
 // da estrutura do PCO (pra validar o que está vindo). NÃO grava nada.
 async function coletarFrequenciaKidsPCO(dataBRT) {
-  const { checkins, eventTimes, persons } = await buscarCheckinsDia(dataBRT);
+  const { checkins, events, persons } = await buscarCheckinsDia(dataBRT);
 
   // Cultos do dia (com a hora recorrente do slot pra casar com o event_time).
   const { data: cultos } = await supabase
@@ -111,9 +119,10 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
   }
 
   const porKind = {};
+  const porEvento = {}; // nome do evento -> { total, kids } (diagnóstico)
   let totalCriancas = 0;
-  const porCulto = {}; // cultoId -> { culto_id, nome, hhmm, total, criancas:[{nome,hora,kind}] }
-  const naoContadas = []; // check-ins não-criança (pra validação: ver quem ficou de fora)
+  const porCulto = {}; // cultoId -> { culto_id, nome, hhmm, total, criancas:[...] }
+  const naoContadas = []; // check-ins que NÃO contam como criança (com o motivo)
   let semCulto = 0;
 
   for (const ci of checkins) {
@@ -121,23 +130,33 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
     porKind[kind] = (porKind[kind] || 0) + 1;
     const personId = ci.relationships?.person?.data?.id;
     const pessoa = personId ? persons.get(personId) : null;
-    const ehCrianca = pessoa?.child === true;
     const nome = (pessoa?.name || ci.attributes?.name || `${pessoa?.first_name || ''} ${pessoa?.last_name || ''}`).trim() || 'Sem nome';
-    // Horário do check-in: o event_time costuma não vir na lista; o created_at do
-    // PRÓPRIO check-in (momento da entrada) é o sinal confiável → casa com o culto.
-    const etId = ci.relationships?.event_time?.data?.id;
-    const et = etId ? eventTimes.get(etId) : null;
-    const hora = horaBRT(et?.starts_at || et?.shows_at || ci.attributes?.created_at);
+    const evId = ci.relationships?.event?.data?.id;
+    const evNome = evId ? (events.get(evId)?.name || null) : null;
+    // created_at do PRÓPRIO check-in = horário de entrada → casa com o culto.
+    const hora = horaBRT(ci.attributes?.created_at);
     const culto = cultoMaisProximo(hora);
+
+    const ev = porEvento[evNome || '(sem evento)'] || (porEvento[evNome || '(sem evento)'] = { total: 0, kids: 0 });
+    ev.total += 1;
+
+    // É criança do Kids? Regra: deu check-in num EVENTO do Kids (CBKids) e não é
+    // voluntário. A flag `child` do PCO serve só de reserva quando não há evento.
+    const eventoKids = ehEventoKids(evNome);
+    const ehVoluntario = String(kind).toLowerCase() === 'volunteer';
+    const ehCrianca = !ehVoluntario && (eventoKids || (!evNome && pessoa?.child === true));
+
     if (!ehCrianca) {
-      naoContadas.push({ nome, hora, kind, culto: culto?.nome || null, pco_id: personId || null });
+      const motivo = ehVoluntario ? 'voluntário' : (evNome ? 'evento não-Kids' : 'sem evento');
+      naoContadas.push({ nome, hora, kind, evento: evNome, motivo, culto: culto?.nome || null, pco_id: personId || null });
       continue;
     }
+    ev.kids += 1;
     totalCriancas += 1;
     if (culto) {
       const acc = porCulto[culto.id] || (porCulto[culto.id] = { culto_id: culto.id, nome: culto.nome, hhmm: culto.hhmm, total: 0, criancas: [] });
       acc.total += 1;
-      acc.criancas.push({ nome, hora, kind, pco_id: personId || null });
+      acc.criancas.push({ nome, hora, kind, evento: evNome, pco_id: personId || null });
     } else {
       semCulto += 1;
     }
@@ -155,6 +174,7 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
     diagnostico: {
       cultos_do_dia: cultosDoDia,
       por_kind: porKind,
+      por_evento: Object.entries(porEvento).map(([evento, v]) => ({ evento, ...v })).sort((a, b) => b.total - a.total),
     },
   };
 }
