@@ -18,6 +18,10 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/totem-kids/cron/resumo-pco",
+      "schedule": "0 * * * *"
+    },
+    {
       "path": "/api/cerebro/processar",
       "schedule": "0 3 * * *"
     },
