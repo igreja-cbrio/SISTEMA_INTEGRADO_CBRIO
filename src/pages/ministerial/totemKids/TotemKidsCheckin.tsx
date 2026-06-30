@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet, ShieldCheck, Maximize, Lock } from 'lucide-react';
+import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet, ShieldCheck, Maximize, Lock, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -84,6 +84,10 @@ export default function TotemKidsCheckin() {
   const [pagers, setPagers] = useState<any[]>([]);
   const [pagerSelecionado, setPagerSelecionado] = useState<string>('');
 
+  // Multi-culto: outros cultos do dia (com Kids) em que a criança também fica
+  const [cultosDia, setCultosDia] = useState<any[]>([]);
+  const [cultosExtras, setCultosExtras] = useState<string[]>([]);
+
   // Modal de cadastro novo
   const [modalNovo, setModalNovo] = useState(false);
 
@@ -142,6 +146,12 @@ export default function TotemKidsCheckin() {
       .then(([s, sl]) => {
         setSessao(s);
         setSalas(sl);
+        // Outros cultos do dia (com Kids) pro check-in multi-culto
+        if (s?.culto?.data) {
+          totemKids.cultosDoDia(String(s.culto.data).slice(0, 10))
+            .then((cs: any[]) => setCultosDia((cs || []).filter(c => c.id !== s.culto?.id)))
+            .catch(() => setCultosDia([]));
+        }
       })
       .finally(() => setCarregando(false));
     carregarPagers();
@@ -277,6 +287,7 @@ export default function TotemKidsCheckin() {
         sala_id: salaSelecionada,
         estacao_id: estacao?.id || null,
         pager_id: pagerSelecionado || null,
+        cultos_extras: cultosExtras,
       };
       if (usarRespManual) {
         payload.responsavel_nome_manual = respManualNome.trim();
@@ -344,6 +355,7 @@ export default function TotemKidsCheckin() {
       setRespManualNome('');
       setRespManualTel('');
       setPagerSelecionado('');
+      setCultosExtras([]);
       setResultados([]);
       carregarPagers();          // o pager usado some da lista de disponíveis
 
@@ -581,6 +593,9 @@ export default function TotemKidsCheckin() {
           pagers={pagers}
           pagerSelecionado={pagerSelecionado}
           setPagerSelecionado={setPagerSelecionado}
+          cultosDia={cultosDia}
+          cultosExtras={cultosExtras}
+          setCultosExtras={setCultosExtras}
           usarRespManual={usarRespManual}
           setUsarRespManual={setUsarRespManual}
           respManualNome={respManualNome}
@@ -659,6 +674,9 @@ function CheckinSelecao(props: {
   pagers: any[];
   pagerSelecionado: string;
   setPagerSelecionado: (s: string) => void;
+  cultosDia: any[];
+  cultosExtras: string[];
+  setCultosExtras: (v: string[]) => void;
   usarRespManual: boolean;
   setUsarRespManual: (b: boolean) => void;
   respManualNome: string;
@@ -673,6 +691,7 @@ function CheckinSelecao(props: {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
     pagers, pagerSelecionado, setPagerSelecionado,
+    cultosDia, cultosExtras, setCultosExtras,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     onCancelar, onConfirmar, imprimindo, onResponsavelCadastrado } = props;
@@ -770,6 +789,32 @@ function CheckinSelecao(props: {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+        )}
+
+        {cultosDia.length > 0 && (
+          <div>
+            <label className="text-sm font-medium block mb-2">
+              Fica em mais de um culto? <span className="text-muted-foreground font-normal">(marque os outros · 1 etiqueta só)</span>
+            </label>
+            <div className="space-y-2">
+              {cultosDia.map((c: any) => {
+                const marcado = cultosExtras.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setCultosExtras(marcado ? cultosExtras.filter(x => x !== c.id) : [...cultosExtras, c.id])}
+                    className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${marcado ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/40'}`}
+                  >
+                    <span className={`h-5 w-5 rounded border flex items-center justify-center shrink-0 ${marcado ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
+                      {marcado && <Check className="h-3.5 w-3.5" />}
+                    </span>
+                    <span className="font-medium">{c.nome}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 

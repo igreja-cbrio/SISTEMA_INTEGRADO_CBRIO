@@ -1579,6 +1579,26 @@ router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) 
 // CHECK-IN / CHECK-OUT
 // ═══════════════════════════════════════════════════════════════════════════
 
+// GET /api/totem-kids/cultos-do-dia?data=YYYY-MM-DD · cultos COM Kids do dia
+// (pro check-in multi-culto: marcar em quais a criança vai ficar).
+router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const data = req.query.data;
+    if (!data) return res.json([]);
+    const { data: cultos } = await supabase.from('cultos')
+      .select('id, nome, vol_service_types(has_kids, recurrence_time)')
+      .eq('data', data);
+    const lista = (cultos || [])
+      .filter(c => c.vol_service_types?.has_kids)
+      .map(c => ({ id: c.id, nome: c.nome, hora: (c.vol_service_types?.recurrence_time || '').slice(0, 5) }))
+      .sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+    res.json(lista);
+  } catch (e) {
+    console.error('[totemKids/cultos-do-dia]', e.message);
+    res.status(500).json({ error: 'Erro ao listar cultos do dia' });
+  }
+});
+
 // POST /api/totem-kids/checkin · cria check-in + gera código + retorna pra impressão
 router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   try {
@@ -1586,6 +1606,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       sessao_id, crianca_id, sala_id, estacao_id,
       responsavel_id, responsavel_nome_manual, responsavel_telefone_manual, responsavel_parentesco,
       pager_id,
+      cultos_extras, // ids de OUTROS cultos do dia em que a criança também fica (multi-culto)
     } = req.body;
 
     if (!sessao_id) return res.status(400).json({ error: 'sessao_id obrigatorio' });
@@ -1667,7 +1688,15 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       return c;
     })();
 
-    // INSERT
+    // Multi-culto: se a criança fica em mais de um culto, todas as linhas
+    // (uma por culto) compartilham o mesmo código + checkin_grupo_id. A retirada
+    // fecha o grupo; cada culto conta a presença (consolidação por sessao_id).
+    const cultosExtras = Array.isArray(cultos_extras)
+      ? [...new Set(cultos_extras.map(String))].filter(cid => cid && cid !== sessao.culto_id)
+      : [];
+    const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
+
+    // INSERT (primário · culto atual · leva pager/etiqueta)
     const { data: checkin, error: errIns } = await supabase
       .from('kids_checkins')
       .insert({
@@ -1683,10 +1712,41 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         codigo_barras: codigoFinal,                      // mesmo código
         pager_id: pager_id || null,                      // pager entregue a família (opcional)
         checkin_por: req.user.userId,
+        checkin_grupo_id: grupoId,
       })
       .select('*')
       .single();
     if (errIns) throw errIns;
+
+    // Cultos do grupo (pro recibo): começa com o atual.
+    const cultosDoGrupo = [{ id: sessao.culto_id, nome: sessao.culto?.nome || null }];
+
+    // Linhas secundárias dos outros cultos do dia (find-or-create a sessão).
+    for (const cultoId of cultosExtras) {
+      try {
+        let { data: sx } = await supabase.from('kids_sessoes')
+          .select('id, status, culto:cultos(nome)').eq('culto_id', cultoId).maybeSingle();
+        if (!sx) {
+          const { data: nova } = await supabase.from('kids_sessoes')
+            .insert({ culto_id: cultoId, status: 'aberta', abrir_em: new Date().toISOString() })
+            .select('id, status, culto:cultos(nome)').single();
+          sx = nova;
+        }
+        if (!sx) continue;
+        const { error: e2 } = await supabase.from('kids_checkins').insert({
+          sessao_id: sx.id, crianca_id, sala_id,
+          estacao_checkin_id: estacao_id || null,
+          responsavel_checkin_id: respId,
+          responsavel_checkin_nome: respNome,
+          responsavel_checkin_telefone: respTel,
+          responsavel_checkin_parentesco: responsavel_parentesco || null,
+          codigo_seguranca: codigoFinal, codigo_barras: codigoFinal,
+          checkin_por: req.user.userId, checkin_grupo_id: grupoId, labels_impressas: 0,
+        });
+        // 23505 = criança já tinha check-in nesse culto · ignora
+        if (!e2 || e2.code === '23505') cultosDoGrupo.push({ id: cultoId, nome: sx.culto?.nome || null });
+      } catch (ex) { console.error('[totemKids/checkin] culto extra:', ex.message); }
+    }
 
     // Retorna tudo pro frontend renderizar as 2 etiquetas
     res.status(201).json({
@@ -1694,6 +1754,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       crianca,
       sala,
       sessao: { id: sessao.id, culto: sessao.culto },
+      cultos: cultosDoGrupo,
       responsavel: { id: respId, nome: respNome, telefone: respTel, parentesco: responsavel_parentesco },
       codigo_seguranca: codigoFinal,
       codigo_barras: codigoFinal,
@@ -1733,7 +1794,17 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
       .eq('crianca_id', data.crianca.id)
       .eq('autorizado_buscar', true);
 
-    res.json({ ...data, responsaveis: responsaveis || [] });
+    // Multi-culto: cultos em que a criança ficou (pra mostrar no pickup que a
+    // retirada encerra todos).
+    let cultos_grupo = null;
+    if (data.checkin_grupo_id) {
+      const { data: grupo } = await supabase.from('kids_checkins')
+        .select('sessao:kids_sessoes(culto:cultos(id, nome))')
+        .eq('checkin_grupo_id', data.checkin_grupo_id).is('checkout_at', null);
+      cultos_grupo = (grupo || []).map(g => g.sessao?.culto?.nome).filter(Boolean);
+    }
+
+    res.json({ ...data, responsaveis: responsaveis || [], cultos_grupo });
   } catch (e) {
     console.error('[totemKids/checkin/codigo]', e.message);
     res.status(500).json({ error: 'Erro ao buscar código' });
@@ -1775,26 +1846,28 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     }
     if (!respNome) return res.status(400).json({ error: 'responsavel_nome obrigatorio (snapshot)' });
 
-    const { data, error } = await supabase
-      .from('kids_checkins')
-      .update({
-        checkout_at: new Date().toISOString(),
-        responsavel_checkout_id: responsavel_id || null,
-        responsavel_checkout_nome: respNome,
-        checkout_metodo: metodo,
-        checkout_por: req.user.userId,
-        override_motivo: metodo === 'override_supervisor' ? override_motivo : null,
-        override_aprovado_por: metodo === 'override_supervisor' ? req.user.userId : null,
-      })
-      .eq('id', checkin_id)
-      .is('checkout_at', null)
-      .select(`*, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome)`)
-      .single();
-    if (error) {
-      if (error.code === 'PGRST116') return res.status(409).json({ error: 'Check-in já foi feito checkout' });
-      throw error;
-    }
-    res.json(data);
+    // Multi-culto: se o check-in faz parte de um grupo (criança ficou em mais de
+    // um culto), a retirada fecha TODAS as linhas ativas do grupo de uma vez.
+    const { data: alvo } = await supabase.from('kids_checkins')
+      .select('id, checkin_grupo_id, checkout_at').eq('id', checkin_id).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Check-in não encontrado' });
+    if (alvo.checkout_at) return res.status(409).json({ error: 'Check-in já foi feito checkout' });
+
+    const patch = {
+      checkout_at: new Date().toISOString(),
+      responsavel_checkout_id: responsavel_id || null,
+      responsavel_checkout_nome: respNome,
+      checkout_metodo: metodo,
+      checkout_por: req.user.userId,
+      override_motivo: metodo === 'override_supervisor' ? override_motivo : null,
+      override_aprovado_por: metodo === 'override_supervisor' ? req.user.userId : null,
+    };
+    let q = supabase.from('kids_checkins').update(patch).is('checkout_at', null);
+    q = alvo.checkin_grupo_id ? q.eq('checkin_grupo_id', alvo.checkin_grupo_id) : q.eq('id', checkin_id);
+    const { data, error } = await q.select(`*, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome)`);
+    if (error) throw error;
+    if (!data || !data.length) return res.status(409).json({ error: 'Check-in já foi feito checkout' });
+    res.json({ ...data[0], cultos_encerrados: data.length });
   } catch (e) {
     console.error('[totemKids/checkout]', e.message);
     res.status(500).json({ error: 'Erro ao fazer checkout' });
