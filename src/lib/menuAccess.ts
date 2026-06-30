@@ -73,6 +73,7 @@ const DOMINIO_POR_PATH: Record<string, { dom: Dominio; slug?: string }> = {
   '/planejamento': { dom: 'planejamento' },
   '/gestao': { dom: 'planejamento' },
   '/monitoramento-okr': { dom: 'estrategico' }, // + diretoria geral (Juninho)
+  '/jornada': { dom: 'estrategico' }, // Jornada da Igreja · liderança (+ diretoria geral)
   // 2 · Criativo (time criativo + admin)
   '/marketing': { dom: 'criativo' },
   '/producao': { dom: 'criativo' },

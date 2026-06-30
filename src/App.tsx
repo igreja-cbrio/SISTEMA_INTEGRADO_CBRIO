@@ -189,6 +189,7 @@ const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
 const PainelNsmPessoas = lazyWithRetry(() => import('./pages/PainelNsmPessoas'));
+const PainelJornada = lazyWithRetry(() => import('./pages/PainelJornada'));
 const EstruturaOkr = lazyWithRetry(() => import('./pages/admin/EstruturaOkr'));
 const Ritual = lazyWithRetry(() => import('./pages/Ritual'));
 const Gestao = lazyWithRetry(() => import('./pages/Gestao'));
@@ -586,6 +587,7 @@ function AppRoutes() {
         <Route path="/painel" element={<Suspense fallback={<Loading />}><Painel /></Suspense>} />
         <Route path="/painel/kpi/:id" element={<Navigate to="/painel" replace />} />
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
+        <Route path="/jornada" element={<Suspense fallback={<Loading />}><PainelJornada /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
         <Route path="/admin/destaques" element={<ModuleGuard permKey="isAdmin"><Suspense fallback={<Loading />}><Destaques /></Suspense></ModuleGuard>} />
         <Route path="/admin/fotos-batismo" element={<ModuleGuard permKey="isAdmin"><Suspense fallback={<Loading />}><FotosBatismo /></Suspense></ModuleGuard>} />

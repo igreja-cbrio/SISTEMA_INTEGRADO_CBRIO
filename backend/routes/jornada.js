@@ -1,6 +1,8 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const painelCache = require('../services/painelCache');
+const { computeJornada, agregar, normalizaJanela, janelaDias } = require('../services/jornadaEngajamento');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -41,78 +43,65 @@ router.use(authenticate);
 
 function daysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
-// Lê todos os valores de uma coluna contornando o cap de 1000 do PostgREST.
-async function fetchAllIds(table, buildQuery, col = 'id') {
-  const page = 1000; let from = 0; const out = [];
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const { data, error } = await buildQuery(supabase.from(table)).range(from, from + page - 1);
-    if (error) throw error;
-    if (!data || !data.length) break;
-    for (const r of data) if (r[col] != null) out.push(r[col]);
-    if (data.length < page) break;
-    from += page;
-  }
-  return out;
-}
-
-// Conjunto de membro_id distintos de uma tabela de valor (paginado, sem cap).
-async function fetchMembroSet(table, applyFilter) {
-  const ids = await fetchAllIds(table, (q) => applyFilter(q.select('membro_id').is('deleted_at', null)), 'membro_id');
-  return new Set(ids.filter(Boolean));
-}
-
-// ── GET /api/jornada/dashboard ──
+// ── GET /api/jornada/dashboard?janela= ──
+// Agregado dos 5 valores + Membro Modelo (>=2 valores) sobre os membros ativos,
+// na janela escolhida (motor único · services/jornadaEngajamento). Alimenta a
+// estrela "Jornada" do /painel. Cache de 60s por janela (painelCache).
 router.get('/dashboard', async (req, res) => {
   try {
-    // Base = MEMBROS formais (status 'membro_ativo'). Decisão do Matheus
-    // (2026-06-19): o engajamento é "% dos membros", não da base inteira —
-    // visitantes do wifi/import do Next NÃO contam (continuam como visitante).
-    // Os numeradores também são restritos a esses membros (interseção).
-    const memberIds = await fetchAllIds('mem_membros', (q) =>
-      q.select('id').is('deleted_at', null).eq('active', true).eq('status', 'membro_ativo'), 'id');
-    const memberSet = new Set(memberIds);
-    const total = memberIds.length || 1;
-    const inter = (set) => { let n = 0; for (const id of set) if (memberSet.has(id)) n++; return n; };
+    const janela = normalizaJanela(req.query.janela);
+    const cacheKey = `jornada:dash:${janela}`;
+    const cached = painelCache.get(cacheKey);
+    if (cached) return res.json(cached);
 
-    // membro_ids distintos com cada valor (paginado), depois ∩ membros
-    const [seguirSet, conectarSet, investirSet, servirSet, genSet] = await Promise.all([
-      fetchMembroSet('mem_trilha_valores', (q) => q.in('etapa', ['conversao', 'primeiro_contato', 'batismo']).eq('concluida', true)),
-      fetchMembroSet('mem_grupo_membros', (q) => q.is('saiu_em', null)),
-      // Investir Tempo com Deus = devocional feito no app (mem_devocionais ·
-      // decisão Matheus 2026-06-20). Antes era cui_jornada180.
-      fetchMembroSet('mem_devocionais', (q) => q.eq('concluida', true).gte('data_devocional', daysAgo(90))),
-      fetchMembroSet('mem_voluntarios', (q) => q.is('ate', null)),
-      fetchMembroSet('mem_contribuicoes', (q) => q.gte('data', daysAgo(90))),
-    ]);
-
-    const seguirCount = inter(seguirSet);
-    const conectar = inter(conectarSet);
-    const investirCount = inter(investirSet);
-    const servir = inter(servirSet);
-    const genCount = inter(genSet);
-
-    res.json({
-      total_membros: memberIds.length,
-      valores: {
-        seguir:       { total: seguirCount, pct: Math.round((seguirCount / total) * 100) },
-        conectar:     { total: conectar, pct: Math.round((conectar / total) * 100) },
-        investir:     { total: investirCount, pct: Math.round((investirCount / total) * 100) },
-        servir:       { total: servir, pct: Math.round((servir / total) * 100) },
-        generosidade: { total: genCount, pct: Math.round((genCount / total) * 100) },
-      },
-    });
+    const { membros, total_base } = await computeJornada(janela);
+    const ag = agregar(membros);
+    const payload = {
+      janela,
+      total_base,
+      total_membros: total_base, // back-compat (denominador = base sem filtro)
+      membro_modelo: ag.membro_modelo,
+      valores: ag.valores,
+    };
+    painelCache.set(cacheKey, payload);
+    res.json(payload);
   } catch (e) {
     console.error('jornada dashboard:', e.message);
     res.status(500).json({ error: 'Erro ao calcular dashboard' });
   }
 });
 
+// ── GET /api/jornada/visao?janela= ──
+// Página "Jornada da Igreja" (Inteligência): retorna a base inteira de membros
+// ativos já com os 5 valores por membro, na janela escolhida. A tela faz o funil
+// cumulativo + filtros + paginação client-side (base é pequena · ~centenas).
+// Cache de 60s por janela.
+router.get('/visao', async (req, res) => {
+  try {
+    const janela = normalizaJanela(req.query.janela);
+    const cacheKey = `jornada:visao:${janela}`;
+    const cached = painelCache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const { membros, total_base, dias } = await computeJornada(janela);
+    const ag = agregar(membros);
+    const payload = { janela, dias, total_base, membros, membro_modelo: ag.membro_modelo, valores: ag.valores };
+    painelCache.set(cacheKey, payload);
+    res.json(payload);
+  } catch (e) {
+    console.error('jornada visao:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a Jornada' });
+  }
+});
+
 // ── GET /api/jornada/membros ──
 router.get('/membros', async (req, res) => {
   try {
-    const { search, valor, page = 1, limit = 50 } = req.query;
+    const { search, valor, janela: janelaQ, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
+    // Mesma janela do motor único: corta só investir/generosidade (atual = sem corte).
+    const dias = janelaDias(normalizaJanela(janelaQ));
+    const comJanela = (q, col) => (dias == null ? q : q.gte(col, daysAgo(dias)));
 
     // Base = membros formais (consistente com o dashboard 5 valores · 2026-06-19)
     let q = supabase.from('mem_membros').select('id, nome, email, telefone, status, foto_url', { count: 'exact' })
@@ -129,9 +118,9 @@ router.get('/membros', async (req, res) => {
     const [trilha, grupos, j180, voluntarios, contribuicoes] = await Promise.all([
       supabase.from('mem_trilha_valores').select('membro_id, etapa, concluida').is('deleted_at', null).in('membro_id', ids).eq('concluida', true),
       supabase.from('mem_grupo_membros').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('saiu_em', null),
-      supabase.from('mem_devocionais').select('membro_id').is('deleted_at', null).in('membro_id', ids).eq('concluida', true).gte('data_devocional', daysAgo(90)),
+      comJanela(supabase.from('mem_devocionais').select('membro_id').is('deleted_at', null).in('membro_id', ids).eq('concluida', true), 'data_devocional'),
       supabase.from('mem_voluntarios').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('ate', null),
-      supabase.from('mem_contribuicoes').select('membro_id').is('deleted_at', null).in('membro_id', ids).gte('data', daysAgo(90)),
+      comJanela(supabase.from('mem_contribuicoes').select('membro_id').is('deleted_at', null).in('membro_id', ids).in('tipo', ['dizimo', 'oferta']), 'data'),
     ]);
 
     const trilhaSet = new Set((trilha.data || []).filter(t => ['conversao', 'primeiro_contato', 'batismo'].includes(t.etapa)).map(t => t.membro_id));

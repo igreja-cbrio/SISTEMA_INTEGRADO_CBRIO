@@ -7,7 +7,7 @@ import {
   Search, Users, DollarSign, Truck, Tag, CalendarDays,
   FolderKanban, BookOpen, ClipboardList, Bot, User,
   LayoutDashboard, Map, UserCheck, UsersRound, Heart,
-  HandHelping, Megaphone,
+  HandHelping, Megaphone, Sparkles,
 } from 'lucide-react'
 
 interface SearchItem {
@@ -40,6 +40,7 @@ const PAGES: SearchItem[] = [
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial', perm: 'canMembresia' },
   { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial', module: 'cuidados' },
   { label: 'Entradas', description: 'Porta de entrada · liga inscrição ao membro e funde duplicados', path: '/next-batismo', icon: Users, category: 'Ministerial', module: 'next-batismo' },
+  { label: 'Jornada da Igreja', description: 'Profundidade · 5 valores · Membro Modelo (≥2 valores)', path: '/jornada', icon: Sparkles, category: 'Inteligência' },
 ]
 
 export function CommandSearch() {
