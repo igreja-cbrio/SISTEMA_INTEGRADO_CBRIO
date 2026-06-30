@@ -278,6 +278,15 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   (`/tutorial/complete`, service role, tabela `app_tutorial_progress`) **+ fallback
   `localStorage`** (`cbrio_tutorial_seen_<uid>`) caso o POST falhe. `completedTours` =
   união backend ∪ local. "Refazer tutorial" limpa os dois.
+- **Tour `welcome` = só no PRIMEIRO ACESSO** (2026-06-30): NÃO tem `route` (não auto-dispara
+  por rota — antes reaparecia no `/dashboard` a cada visita, pois a persistência podia falhar).
+  É disparado UMA vez por `PrimeiroAcessoSenhaModal` logo após a troca da senha padrão
+  (`aposTrocar` → `startTour('welcome')`, novo método do contexto). Como o gatilho (trocar a
+  senha) só ocorre no 1º acesso, não depende da persistência pra não repetir. Quem já trocou a
+  senha (logins email/senha antigos) e usuários OAuth (Google/MS, sem senha pra trocar) **não**
+  veem o welcome automático — só via "Refazer tutorial" no /perfil (`restartTour`, que com
+  `route` nula inicia na hora em qualquer página). Tours de MÓDULO seguem gated atrás de
+  `welcome` visto (`completedTours.has('welcome')`), disparados por rota.
 - Nunca adicionar emoji em código a menos que o usuário peça.
 - Evitar criar arquivos `.md` novos a menos que o usuário peça
   explicitamente (exceto este `CLAUDE.md`).

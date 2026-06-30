@@ -132,7 +132,10 @@ export function TutorialProvider({ children }) {
     if (!tour) return;
     if (completedTours.has(tour.id)) return;
 
-    // welcome tem prioridade · só dispara tours de módulo se welcome já foi feito
+    // Tours de módulo só disparam depois que o welcome foi visto. O welcome agora é
+    // disparado no 1º acesso (após a troca de senha · startTour em PrimeiroAcessoSenhaModal),
+    // não por rota — então pra quem já passou do 1º acesso os tours de módulo ficam
+    // dormentes (como já estavam), sem risco de começarem a repetir.
     if (tour.id !== 'welcome' && !completedTours.has('welcome')) return;
 
     // Espera o DOM montar (lazy load + render)
@@ -241,14 +244,27 @@ export function TutorialProvider({ children }) {
     }
   }, [auth.user?.id]);
 
+  // Dispara um tour AGORA (uso programático · ex.: welcome no 1º acesso, logo após
+  // a troca de senha). Não repete se já foi visto (backend ∪ localStorage) — e o
+  // tour:start já marca como visto, então qualquer forma de dispensar encerra de vez.
+  const startTour = useCallback((tourId) => {
+    if (activeTour) return;
+    const tour = getTourById(tourId);
+    if (!tour) return;
+    if ((completedTours || new Set()).has(tourId)) return;
+    setActiveTour(tour);
+    setRunJoyride(true);
+  }, [activeTour, completedTours]);
+
   const value = useMemo(() => ({
     activeTour,
     isRunning: runJoyride,
     completedTours: completedTours || new Set(),
+    startTour,
     restartTour,
     resetAllTours,
     allTours: TUTORIALS,
-  }), [activeTour, runJoyride, completedTours, restartTour, resetAllTours]);
+  }), [activeTour, runJoyride, completedTours, startTour, restartTour, resetAllTours]);
 
   return (
     <TutorialContext.Provider value={value}>
@@ -280,6 +296,7 @@ export function useTutorial() {
       activeTour: null,
       isRunning: false,
       completedTours: new Set(),
+      startTour: () => {},
       restartTour: async () => {},
       resetAllTours: async () => {},
       allTours: [],
