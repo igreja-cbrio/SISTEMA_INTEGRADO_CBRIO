@@ -428,6 +428,8 @@ export const grupos = {
   update: (id, data) => put(`/grupos/${id}`, data),
   remove: (id) => del(`/grupos/${id}`),
   addMembro: (grupoId, data) => post(`/grupos/${grupoId}/membros`, data),
+  // Funil de entrada pro botão "Adicionar": direcionados do Next + inscritos neste grupo
+  candidatosAdicionar: (grupoId) => get(`/grupos/${grupoId}/candidatos-adicionar`),
   sairMembro: (participacaoId, data) => patch(`/grupos/participacao/${participacaoId}/sair`, data),
   registrarPresenca: (participacaoId) => patch(`/grupos/participacao/${participacaoId}/presenca`, {}),
   materiais: (params) => get('/grupos/materiais' + (params ? '?' + new URLSearchParams(params) : '')),

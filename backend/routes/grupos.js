@@ -1589,6 +1589,93 @@ router.delete('/:id', authorizeModule('grupos', 3), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao desativar grupo' }); }
 });
 
+// GET /api/grupos/:id/candidatos-adicionar — lista enxuta pro botão "Adicionar
+// pessoa". Em vez da base inteira, só quem está no FUNIL DE ENTRADA de grupos:
+//   (1) direcionados do Next → grupos (pendentes · servem pra qualquer grupo)
+//   (2) pedidos de inscrição PENDENTES deste grupo
+// Exclui quem já está ativo em algum grupo e deduplica por pessoa. Ao escolher,
+// o frontend resolve a origem (engajar do Next / aprovar o pedido), então a
+// pessoa sai da fila e o vínculo (NSM/KPI) é materializado pela máquina existente.
+router.get('/:id/candidatos-adicionar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const grupoId = req.params.id;
+    // "pendente" do encaminhamento = ainda não resolvido (mesma régua do badge da caixa)
+    const STATUS_PEND = ['pendente', 'nao_respondeu', 'em_duvida'];
+
+    const [{ data: encs }, { data: peds }] = await Promise.all([
+      supabase.from('jornada_encaminhamentos')
+        .select('id, nome, membro_id, convertido_id, origem, status')
+        .eq('destino', 'grupos').in('status', STATUS_PEND).is('deleted_at', null),
+      supabase.from('mem_grupo_pedidos')
+        .select('id, nome, telefone, membro_id, cadastro_pendente_id, origem, status')
+        .eq('grupo_id', grupoId).eq('status', 'pendente'),
+    ]);
+
+    // Resolve membro_id dos encaminhamentos que só têm convertido_id
+    const convIds = [...new Set((encs || []).filter(e => !e.membro_id && e.convertido_id).map(e => e.convertido_id))];
+    const convMap = {};
+    if (convIds.length) {
+      const { data: convs } = await supabase.from('cui_convertidos')
+        .select('id, membro_id').in('id', convIds);
+      (convs || []).forEach(c => { convMap[c.id] = c.membro_id; });
+    }
+
+    // Quem já está ativo em algum grupo sai da fila + nome/telefone de fallback
+    const membroIds = [...new Set([
+      ...(encs || []).map(e => e.membro_id || convMap[e.convertido_id]).filter(Boolean),
+      ...(peds || []).map(p => p.membro_id).filter(Boolean),
+    ])];
+    const ativosSet = new Set();
+    const memMap = {};
+    if (membroIds.length) {
+      const [{ data: ativos }, { data: mems }] = await Promise.all([
+        supabase.from('mem_grupo_membros').select('membro_id')
+          .in('membro_id', membroIds).is('saiu_em', null).is('deleted_at', null),
+        supabase.from('mem_membros').select('id, nome, telefone')
+          .in('id', membroIds).is('deleted_at', null),
+      ]);
+      (ativos || []).forEach(a => ativosSet.add(a.membro_id));
+      (mems || []).forEach(m => { memMap[m.id] = m; });
+    }
+
+    const out = [];
+    const seen = new Set(); // dedup por pessoa (membro_id)
+
+    // (1) Next primeiro — agnóstico de grupo. Sem membro_id resolvível, pula
+    // (órfão · precisa reconciliar antes de poder ser colocado no grupo).
+    for (const e of (encs || [])) {
+      const mid = e.membro_id || convMap[e.convertido_id] || null;
+      if (!mid || ativosSet.has(mid) || seen.has(mid)) continue;
+      seen.add(mid);
+      out.push({
+        tipo: 'next', fonte_id: e.id, membro_id: mid,
+        nome: e.nome || memMap[mid]?.nome || 'Sem nome',
+        telefone: memMap[mid]?.telefone || null,
+        origem: e.origem || 'next',
+      });
+    }
+    // (2) Pedidos deste grupo (cadastro pendente sem membro_id é válido · o
+    // aprovar resolve a pessoa pelo matcher)
+    for (const p of (peds || [])) {
+      const mid = p.membro_id || null;
+      if (mid && (ativosSet.has(mid) || seen.has(mid))) continue;
+      if (mid) seen.add(mid);
+      out.push({
+        tipo: 'inscricao', fonte_id: p.id, membro_id: mid,
+        nome: p.nome || (mid && memMap[mid]?.nome) || 'Sem nome',
+        telefone: p.telefone || (mid && memMap[mid]?.telefone) || null,
+        origem: p.origem || 'inscricao',
+      });
+    }
+
+    out.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    res.json(out);
+  } catch (e) {
+    console.error('[Grupos candidatos-adicionar]', e.message);
+    res.status(500).json({ error: 'Erro ao listar candidatos' });
+  }
+});
+
 // POST /api/grupos/:id/membros — adicionar membro
 router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
   try {

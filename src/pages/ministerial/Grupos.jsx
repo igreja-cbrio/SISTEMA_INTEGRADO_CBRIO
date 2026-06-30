@@ -97,6 +97,11 @@ export default function Grupos() {
   const [qrCopied, setQrCopied] = useState(false);
   const [membrosSearch, setMembrosSearch] = useState('');
   const [allMembros, setAllMembros] = useState([]);
+  // Funil de entrada do botão "Adicionar": direcionados do Next + inscritos
+  // neste grupo (em vez da base inteira). buscarBaseToda = escape hatch.
+  const [candidatos, setCandidatos] = useState([]);
+  const [candidatosLoading, setCandidatosLoading] = useState(false);
+  const [buscarBaseToda, setBuscarBaseToda] = useState(false);
   const [supPickerOpen, setSupPickerOpen] = useState(false);
   const [supBusca, setSupBusca] = useState('');
   const [gruposForSelect, setGruposForSelect] = useState([]);
@@ -355,6 +360,27 @@ export default function Grupos() {
     } catch (e) { toast.error(e.message || 'Erro ao adicionar'); }
   };
 
+  // Adiciona uma pessoa do FUNIL DE ENTRADA ao grupo, resolvendo a origem:
+  // Next → "engajar" (materializa o vínculo + alimenta NSM/KPI + sincroniza o
+  // Next); Inscrição → "aprovar" o pedido (coloca neste grupo + notifica). Assim
+  // a pessoa sai da fila e nada fica "pendente pra sempre".
+  const handleAddCandidato = async (c) => {
+    try {
+      if (c.tipo === 'next') {
+        await encaminhamentos.contato(c.fonte_id, {
+          devolutiva: 'engajou', grupo_id: selectedGrupo,
+          observacao: 'Adicionado ao grupo pelo líder',
+        });
+      } else {
+        await api.aprovarPedido(c.fonte_id);
+      }
+      toast.success('Pessoa adicionada ao grupo');
+      setAddMembroOpen(false);
+      loadDetail(selectedGrupo);
+      loadList();
+    } catch (e) { toast.error(e.message || 'Erro ao adicionar'); }
+  };
+
   const handleRemoveMembro = async (participacaoId) => {
     if (!window.confirm('Remover este membro do grupo?')) return;
     try {
@@ -441,6 +467,16 @@ export default function Grupos() {
       const data = await membresia.membros.list();
       setAllMembros(data || []);
     } catch {}
+  };
+
+  // Carrega o funil de entrada (Next + inscrições deste grupo) pro modal Adicionar
+  const loadCandidatos = async (grupoId) => {
+    setCandidatosLoading(true);
+    try {
+      const data = await api.candidatosAdicionar(grupoId);
+      setCandidatos(data || []);
+    } catch { setCandidatos([]); }
+    finally { setCandidatosLoading(false); }
   };
 
   // Extrair opções únicas para filtros
@@ -653,7 +689,7 @@ export default function Grupos() {
                   <Button size="sm" variant="outline" disabled={isOptimistic || membrosAtivos.length === 0} onClick={() => setChamadaOpen(true)}>
                     <ClipboardCheck size={14} style={{ marginRight: 4 }} /> Registrar encontro
                   </Button>
-                  <Button size="sm" onClick={() => { loadMembros(); setAddMembroOpen(true); }}>
+                  <Button size="sm" onClick={() => { setBuscarBaseToda(false); setMembrosSearch(''); loadCandidatos(selectedGrupo); setAddMembroOpen(true); }}>
                     <UserPlus size={14} style={{ marginRight: 4 }} /> Adicionar
                   </Button>
                 </>
@@ -895,28 +931,73 @@ export default function Grupos() {
           encontroEdit={encontroEdit}
         />
 
-        {/* Modal adicionar membro */}
+        {/* Modal adicionar pessoa — funil de entrada (Next + inscrições deste grupo) */}
         <Dialog open={addMembroOpen} onOpenChange={setAddMembroOpen}>
           <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Adicionar membro ao grupo</DialogTitle></DialogHeader>
-            <Input placeholder="Buscar membro..." value={membrosSearch} onChange={e => setMembrosSearch(e.target.value)} />
-            <div style={{ maxHeight: 300, overflowY: 'auto', marginTop: 8 }}>
-              {allMembros
-                .filter(m => m.nome?.toLowerCase().includes(membrosSearch.toLowerCase()))
-                .filter(m => !membrosAtivos.some(a => a.id === m.id))
-                .slice(0, 20)
-                .map(m => (
-                  <div key={m.id} onClick={() => handleAddMembro(m.id)} style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, borderRadius: 8 }}
-                    onMouseEnter={e => e.currentTarget.style.background = C.bg}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: C.primary }}>{m.nome?.charAt(0)}</div>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</div>
-                      <div style={{ fontSize: 11, color: C.t3 }}>{m.telefone || m.email || ''}</div>
-                    </div>
-                  </div>
-                ))}
-            </div>
+            <DialogHeader><DialogTitle>Adicionar pessoa ao grupo</DialogTitle></DialogHeader>
+            <Input placeholder="Buscar por nome..." value={membrosSearch} onChange={e => setMembrosSearch(e.target.value)} />
+
+            {!buscarBaseToda ? (
+              <>
+                <div style={{ fontSize: 11, color: C.t3, margin: '6px 2px' }}>
+                  Direcionados do Next e inscritos neste grupo.
+                </div>
+                <div style={{ maxHeight: 300, overflowY: 'auto', marginTop: 4 }}>
+                  {candidatosLoading ? (
+                    <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>Carregando…</div>
+                  ) : (() => {
+                    const lista = candidatos.filter(c => c.nome?.toLowerCase().includes(membrosSearch.toLowerCase()));
+                    if (lista.length === 0) return (
+                      <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>
+                        {membrosSearch ? 'Ninguém na fila de entrada com esse nome.' : 'Ninguém na fila de entrada agora.'}
+                      </div>
+                    );
+                    return lista.map(c => (
+                      <div key={`${c.tipo}-${c.fonte_id}`} onClick={() => handleAddCandidato(c)} style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, borderRadius: 8 }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: C.primary }}>{c.nome?.charAt(0)}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{c.nome}</div>
+                          <div style={{ fontSize: 11, color: C.t3 }}>{c.telefone || ''}</div>
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: c.tipo === 'next' ? '#8b5cf620' : '#3b82f620', color: c.tipo === 'next' ? '#8b5cf6' : '#3b82f6', whiteSpace: 'nowrap' }}>
+                          {c.tipo === 'next' ? 'Next' : 'Inscrição'}
+                        </span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+                <button onClick={() => { setBuscarBaseToda(true); if (allMembros.length === 0) loadMembros(); }}
+                  style={{ marginTop: 8, background: 'none', border: 'none', color: C.primary, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 4 }}>
+                  Não está na lista? Buscar na base toda
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ maxHeight: 300, overflowY: 'auto', marginTop: 8 }}>
+                  {allMembros
+                    .filter(m => m.nome?.toLowerCase().includes(membrosSearch.toLowerCase()))
+                    .filter(m => !membrosAtivos.some(a => a.id === m.id))
+                    .slice(0, 20)
+                    .map(m => (
+                      <div key={m.id} onClick={() => handleAddMembro(m.id)} style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, borderRadius: 8 }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: C.primary }}>{m.nome?.charAt(0)}</div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</div>
+                          <div style={{ fontSize: 11, color: C.t3 }}>{m.telefone || m.email || ''}</div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+                <button onClick={() => setBuscarBaseToda(false)}
+                  style={{ marginTop: 8, background: 'none', border: 'none', color: C.primary, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 4 }}>
+                  ← Voltar à fila de entrada
+                </button>
+              </>
+            )}
           </DialogContent>
         </Dialog>
 
