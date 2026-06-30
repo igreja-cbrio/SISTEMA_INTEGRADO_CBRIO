@@ -179,7 +179,7 @@ router.get('/inscricoes/:id', async (req, res) => {
   res.json(data);
 });
 
-const { findOrCreateMembro } = require('./pessoas');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 
 router.post('/inscricoes', async (req, res) => {
   const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
@@ -192,14 +192,15 @@ router.post('/inscricoes', async (req, res) => {
   // (status='visitante' no mínimo) e fica acessivel em /ministerial/membresia.
   let membro_id = null;
   try {
-    const r = await findOrCreateMembro({
+    const r = await acharOuCriarGuardado({
       cpf: cleanCpf, email, telefone,
       nome: [nome, sobrenome].filter(Boolean).join(' '),
+      dataNascimento: data_nascimento || null,
       status: 'visitante',
     });
     membro_id = r.membro_id;
   } catch (e) {
-    console.error('next/inscricoes findOrCreateMembro failed:', e.message);
+    console.error('next/inscricoes acharOuCriarGuardado failed:', e.message);
     // segue sem membro_id - inscrição ainda e criada pra não perder dado
   }
 

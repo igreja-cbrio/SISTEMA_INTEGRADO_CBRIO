@@ -94,17 +94,18 @@ router.post('/inscrever', async (req, res) => {
     let jaBatizado = false, jaVoluntario = false, jaDoador = false;
     let membroId = null;
     try {
-      const { findOrCreateMembro } = require('./pessoas');
-      const r = await findOrCreateMembro({
+      const { acharOuCriarGuardado } = require('../services/membroMatch');
+      const r = await acharOuCriarGuardado({
         cpf: cleanCpf,
         email: cleanEmail,
         telefone,
         nome: [nome, sobrenome].filter(Boolean).join(' '),
+        dataNascimento: data_nascimento || null,
         status: 'visitante',
       });
       membroId = r.membro_id;
     } catch (e) {
-      console.error('publicNext findOrCreateMembro:', e.message);
+      console.error('publicNext acharOuCriarGuardado:', e.message);
     }
 
     // Snapshot do status pre-NEXT (pra coletor saber 'estava nao-batizado').
