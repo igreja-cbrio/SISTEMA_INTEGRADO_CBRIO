@@ -9,7 +9,8 @@ import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { toast } from 'sonner';
-import { ArrowLeft, Baby, Loader2, Phone, Search, Copy, Share2, Check } from 'lucide-react';
+import { ArrowLeft, Baby, Loader2, Phone, Search, Copy, Share2, Check, Award } from 'lucide-react';
+import { gerarCertificadoApresentacao } from '../../../lib/gerarCertificadoApresentacao';
 
 const fmt = (d?: string | null) => { if (!d) return '—'; try { return new Date(d + (String(d).length === 10 ? 'T00:00:00' : '')).toLocaleDateString('pt-BR'); } catch { return d || '—'; } };
 const STATUS_COR: Record<string, string> = {
@@ -25,6 +26,25 @@ export default function ApresentacaoCriancas() {
   const [lista, setLista] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
+  const [generos, setGeneros] = useState<Record<string, 'menino' | 'menina'>>({});
+  const [gerandoId, setGerandoId] = useState<string | null>(null);
+
+  const gerarCert = async (b: any) => {
+    setGerandoId(b.id);
+    try {
+      await gerarCertificadoApresentacao({
+        criancaNome: b.crianca_nome,
+        nomePai: b.nome_pai,
+        nomeMae: b.nome_mae,
+        dataApresentacao: b.data_apresentacao,
+        genero: generos[b.id] || 'menino',
+      });
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao gerar certificado');
+    } finally {
+      setGerandoId(null);
+    }
+  };
 
   const load = (silent = false) => {
     if (!silent) setLoading(true);
@@ -128,30 +148,53 @@ export default function ApresentacaoCriancas() {
                 <Badge variant="secondary" className="text-[10px]">{items.length}</Badge>
               </div>
               {items.map((b) => (
-                <Card key={b.id} className="p-3 flex items-start gap-3">
-                  <div className="h-10 w-10 rounded-full bg-fuchsia-500/10 flex items-center justify-center shrink-0"><Baby className="h-5 w-5 text-fuchsia-500" /></div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{b.crianca_nome}{b.crianca_idade ? ` · ${b.crianca_idade}` : ''}</div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {[b.nome_pai, b.nome_mae].filter(Boolean).join(' / ') || '—'}
+                <Card key={b.id} className="p-3 flex flex-col gap-2">
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 rounded-full bg-fuchsia-500/10 flex items-center justify-center shrink-0"><Baby className="h-5 w-5 text-fuchsia-500" /></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">{b.crianca_nome}{b.crianca_idade ? ` · ${b.crianca_idade}` : ''}</div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {[b.nome_pai, b.nome_mae].filter(Boolean).join(' / ') || '—'}
+                      </div>
+                      {b.observacoes && <div className="text-[11px] text-muted-foreground truncate mt-0.5">{b.observacoes}</div>}
                     </div>
-                    {b.observacoes && <div className="text-[11px] text-muted-foreground truncate mt-0.5">{b.observacoes}</div>}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <input
+                        type="date"
+                        value={b.data_apresentacao || ''}
+                        onChange={(e) => mudarData(b.id, e.target.value)}
+                        title="Data da apresentação (turma)"
+                        className="h-7 text-[11px] rounded-md border border-border bg-background px-1.5 text-muted-foreground"
+                      />
+                      <Select value={b.status || 'pendente'} onValueChange={(v) => mudarStatus(b.id, v)}>
+                        <SelectTrigger className={`h-7 text-[11px] w-[120px] ${STATUS_COR[b.status] || ''}`}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {STATUS_OPCOES.map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      {b.telefone && <a href={`https://wa.me/55${String(b.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-emerald-600" title="Falar com a família no WhatsApp"><Phone className="h-4 w-4" /></a>}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <input
-                      type="date"
-                      value={b.data_apresentacao || ''}
-                      onChange={(e) => mudarData(b.id, e.target.value)}
-                      title="Data da apresentação (turma)"
-                      className="h-7 text-[11px] rounded-md border border-border bg-background px-1.5 text-muted-foreground"
-                    />
-                    <Select value={b.status || 'pendente'} onValueChange={(v) => mudarStatus(b.id, v)}>
-                      <SelectTrigger className={`h-7 text-[11px] w-[120px] ${STATUS_COR[b.status] || ''}`}><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {STATUS_OPCOES.map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                    {b.telefone && <a href={`https://wa.me/55${String(b.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-emerald-600" title="Falar com a família no WhatsApp"><Phone className="h-4 w-4" /></a>}
+                  <div className="flex items-center gap-2 justify-end border-t border-border/50 pt-2">
+                    <select
+                      value={generos[b.id] || 'menino'}
+                      onChange={(e) => setGeneros(g => ({ ...g, [b.id]: e.target.value as 'menino' | 'menina' }))}
+                      title="Usado na concordância do certificado (filho/filha)"
+                      className="h-7 text-[11px] rounded-md border border-border bg-background px-1.5"
+                    >
+                      <option value="menino">Menino</option>
+                      <option value="menina">Menina</option>
+                    </select>
+                    <button
+                      onClick={() => gerarCert(b)}
+                      disabled={gerandoId === b.id || !b.data_apresentacao}
+                      title={!b.data_apresentacao ? 'Defina a data da apresentação primeiro' : 'Gerar certificado (.pptx)'}
+                      className="inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1.5 text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                      style={{ background: '#407F96' }}
+                    >
+                      {gerandoId === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Award className="h-3.5 w-3.5" />}
+                      Gerar certificado
+                    </button>
                   </div>
                 </Card>
               ))}
