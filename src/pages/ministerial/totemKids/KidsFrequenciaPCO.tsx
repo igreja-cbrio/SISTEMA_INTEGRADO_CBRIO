@@ -164,7 +164,7 @@ export default function KidsFrequenciaPCO() {
                       <button onClick={() => abrirPessoa(k)} disabled={!k.pco_id}
                         className="w-full flex items-center justify-between py-1.5 text-left rounded hover:text-primary disabled:opacity-70 disabled:hover:text-inherit">
                         <span><span className="text-muted-foreground tabular-nums mr-2">{i + 1}.</span>{k.nome}</span>
-                        <span className="text-xs text-muted-foreground">{[k.culto, k.hora].filter(Boolean).join(' · ')}</span>
+                        <span className="text-xs text-muted-foreground">{[k.motivo, k.evento, k.culto, k.hora].filter(Boolean).join(' · ')}</span>
                       </button>
                     </li>
                   ))}
