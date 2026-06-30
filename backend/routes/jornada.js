@@ -157,25 +157,30 @@ router.get('/membro/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [membro, trilha, grupo, j180, vol, contrib] = await Promise.all([
+    const [membro, trilha, grupo, j180, vol, contrib, devocional] = await Promise.all([
       supabase.from('mem_membros').select('*').eq('id', id).single(),
       supabase.from('mem_trilha_valores').select('*').is('deleted_at', null).eq('membro_id', id).order('created_at'),
       supabase.from('mem_grupo_membros').select('*, mem_grupos(nome)').is('deleted_at', null).eq('membro_id', id).order('entrou_em', { ascending: false }),
       supabase.from('cui_jornada180').select('*').is('deleted_at', null).eq('membro_id', id).order('data_encontro', { ascending: false }),
       supabase.from('mem_voluntarios').select('*, mem_ministerios(nome)').is('deleted_at', null).eq('membro_id', id).order('desde', { ascending: false }),
       supabase.from('mem_contribuicoes').select('*').is('deleted_at', null).eq('membro_id', id).order('data', { ascending: false }).limit(10),
+      // Investir = devocional concluído · mesma fonte do motor jornadaEngajamento (alinhado 2026-06-30)
+      supabase.from('mem_devocionais').select('*').is('deleted_at', null).eq('membro_id', id).eq('concluida', true).order('data_devocional', { ascending: false }).limit(10),
     ]);
 
     if (membro.error || !membro.data) return res.status(404).json({ error: 'Membro não encontrado' });
 
     const grupoAtivo = (grupo.data || []).find(g => !g.saiu_em);
     const volAtivo = (vol.data || []).find(v => !v.ate);
+    // Generosidade só dízimo/oferta (empréstimo não é receita · regra global) · alinha com o motor
     const contribRecente = (contrib.data || []).find(c => {
+      if (!['dizimo', 'oferta'].includes(c.tipo)) return false;
       const diff = (Date.now() - new Date(c.data).getTime()) / 86400000;
       return diff <= 90;
     });
-    const j180Recente = (j180.data || []).find(j => {
-      const diff = (Date.now() - new Date(j.data_encontro).getTime()) / 86400000;
+    // Investir = devocional concluído nos últimos 90d (era cui_jornada180 · alinhado ao motor)
+    const devocionalRecente = (devocional.data || []).find(d => {
+      const diff = (Date.now() - new Date(d.data_devocional).getTime()) / 86400000;
       return diff <= 90;
     });
     const trilhaConversao = (trilha.data || []).find(t => ['conversao', 'primeiro_contato', 'batismo'].includes(t.etapa) && t.concluida);
@@ -185,13 +190,14 @@ router.get('/membro/:id', async (req, res) => {
       valores: {
         seguir:       { ativo: !!trilhaConversao, dados: trilhaConversao || null },
         conectar:     { ativo: !!grupoAtivo, dados: grupoAtivo || null },
-        investir:     { ativo: !!j180Recente, dados: j180Recente || null },
+        investir:     { ativo: !!devocionalRecente, dados: devocionalRecente || null },
         servir:       { ativo: !!volAtivo, dados: volAtivo || null },
         generosidade: { ativo: !!contribRecente, dados: contribRecente || null },
       },
       trilha: trilha.data || [],
       grupos: grupo.data || [],
       jornada180: j180.data || [],
+      devocionais: devocional.data || [],
       voluntariado: vol.data || [],
       contribuicoes: contrib.data || [],
     });
