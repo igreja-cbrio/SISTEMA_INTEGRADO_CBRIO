@@ -45,17 +45,33 @@ export function AuthProvider({ children }) {
   // SIGNED_IN por foco de aba (Alt+Tab) — ver onAuthStateChange abaixo.
   const sessaoAtivaRef = useRef(false);
 
-  async function fetchProfile(userId) {
+  async function fetchProfile(userId, tentativa = 1) {
     if (!supabase) return;
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
-      .eq('id', userId)
-      .single();
-    setProfile(data ?? null);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
+        .eq('id', userId)
+        .single();
+      if (!error && data) { setProfile(data); return; }
+      // Falha transitória (token renovando no resume, race do no-op lock, blip de
+      // rede). Tenta de novo depois que o token assenta.
+      if (tentativa < 2) {
+        await new Promise((r) => setTimeout(r, 1200));
+        return fetchProfile(userId, tentativa + 1);
+      }
+      // Esgotou · NÃO apaga o perfil já carregado — senão o /perfil vira "?".
+      console.warn('[Auth] fetchProfile falhou · mantendo perfil atual:', error?.message);
+    } catch (e) {
+      if (tentativa < 2) {
+        await new Promise((r) => setTimeout(r, 1200));
+        return fetchProfile(userId, tentativa + 1);
+      }
+      console.warn('[Auth] fetchProfile erro · mantendo perfil atual:', e?.message);
+    }
   }
 
-  async function fetchPermissions() {
+  async function fetchPermissions(tentativa = 1) {
     try {
       if (!supabase) return;
       const { data: { session } } = await supabase.auth.getSession();
@@ -67,8 +83,21 @@ export function AuthProvider({ children }) {
         const data = await res.json();
         setModulePerms(data.granular?.modulePerms ?? null);
         setPermData(data.granular ?? null);
+        return;
       }
-    } catch (e) { console.warn('[Auth] Erro ao buscar permissões:', e?.message); }
+      // Resposta não-ok (ex.: 401 com token renovando no resume) · tenta 1x.
+      // Em falha NÃO apaga o que já tem (mantém o estado atual).
+      if (tentativa < 2) {
+        await new Promise((r) => setTimeout(r, 1200));
+        return fetchPermissions(tentativa + 1);
+      }
+    } catch (e) {
+      if (tentativa < 2) {
+        await new Promise((r) => setTimeout(r, 1200));
+        return fetchPermissions(tentativa + 1);
+      }
+      console.warn('[Auth] Erro ao buscar permissões · mantendo as atuais:', e?.message);
+    }
   }
 
   useEffect(() => {
@@ -118,14 +147,19 @@ export function AuthProvider({ children }) {
       sessaoAtivaRef.current = !!session?.user;
       setUser(session?.user ?? null);
       if (session?.user) {
-        // Login real: segura o loading até profile+permissões chegarem — senão o
-        // homeRoute roda com modulePerms nulo e manda pro lugar errado (ex.:
-        // /devocional ou /dashboard em vez da trava de módulo). Em re-emissões
-        // por foco de aba (já tinha sessão), atualiza em segundo plano sem travar.
-        const loginReal = _event === 'SIGNED_IN' && !tinhaSessao;
-        if (loginReal) setLoading(true);
-        await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
-        if (loginReal) setLoading(false);
+        // Só (re)carrega na transição REAL "sem sessão → com sessão" (login, ou
+        // recuperação após um sign-out espúrio do refresh de token). Foco de aba
+        // (o supabase-js re-emite SIGNED_IN a cada Alt+Tab) e TOKEN_REFRESHED NÃO
+        // mudam quem a pessoa é — não refazemos o fetch. Antes refazia a cada foco
+        // e, com o no-op lock, o race do refresh fazia a query falhar e APAGAR o
+        // perfil (virava "?"). Quem muda cargo/perfil recarrega a página (igual à
+        // regra de logout/login pra renovar a matriz).
+        const loginReal = !tinhaSessao;
+        if (loginReal) {
+          setLoading(true);
+          await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
+          setLoading(false);
+        }
       } else {
         setProfile(null);
         setModulePerms(null);
