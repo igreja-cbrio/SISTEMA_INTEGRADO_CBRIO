@@ -2604,7 +2604,8 @@ export const processos = {
 };
 
 export const jornada = {
-  dashboard: () => get('/jornada/dashboard'),
+  dashboard: (p) => get('/jornada/dashboard' + (p ? '?' + new URLSearchParams(p) : '')),
+  visao: (p) => get('/jornada/visao' + (p ? '?' + new URLSearchParams(p) : '')),
   membros: (p) => get('/jornada/membros' + (p ? '?' + new URLSearchParams(p) : '')),
   membro: (id) => get(`/jornada/membro/${id}`),
   cruzar: (criterios, opts = {}) => post('/jornada/cruzar', { criterios, ...opts }),

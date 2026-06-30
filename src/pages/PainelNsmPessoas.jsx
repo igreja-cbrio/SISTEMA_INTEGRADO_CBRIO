@@ -32,7 +32,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { painel as painelApi, nsm as nsmApi } from '../api';
-import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X } from 'lucide-react';
+import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X, Sparkles, ChevronRight } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -386,14 +386,26 @@ export default function PainelNsmPessoas() {
         <ArrowLeft size={14} /> Voltar ao painel
       </button>
 
-      <div style={{ marginTop: 16, marginBottom: 18 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Users size={22} style={{ color: C.primary }} />
-          Pessoas convertidas
-        </h1>
-        <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-          Drilldown da NSM · {descricaoRecorte} · quem decidiu por Jesus e como engajou nos valores
-        </p>
+      <div style={{ marginTop: 16, marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Users size={22} style={{ color: C.primary }} />
+            Pessoas convertidas
+          </h1>
+          <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
+            Drilldown da NSM · {descricaoRecorte} · quem decidiu por Jesus e como engajou nos valores
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            const v = [...valoresSel][0];
+            navigate(`/jornada?from=nsm${v ? `&valor=${v}` : ''}`);
+          }}
+          style={{ ...btnVoltar, color: C.primary, borderColor: `${C.primary}40` }}
+          title="Ver a profundidade da igreja toda (todos os membros)"
+        >
+          <Sparkles size={13} /> Ver Jornada da Igreja <ChevronRight size={13} />
+        </button>
       </div>
 
       {/* Tabs */}

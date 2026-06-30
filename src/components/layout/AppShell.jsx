@@ -77,6 +77,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
           { label: 'Monitoramento OKR', description: 'Planejamento estratégico 2026 · NSM, 9 OKRs e indicadores táticos', icon: Compass, path: '/monitoramento-okr' },
+          { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
           { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
         ],

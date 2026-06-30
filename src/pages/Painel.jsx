@@ -14,9 +14,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
-import { nsm as nsmApi, painel as painelApi } from '../api';
+import { nsm as nsmApi, painel as painelApi, jornada as jornadaApi } from '../api';
 import { useAuth } from '../contexts/AuthContext';
-import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Users, ClipboardCheck } from 'lucide-react';
+import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus, ChevronRight, Users, ClipboardCheck, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import CarrosselMandalas from '../components/painel/CarrosselMandalas';
 import CarrosselValores from '../components/painel/CarrosselValores';
@@ -189,6 +189,11 @@ export default function Painel() {
           </div>
         </div>
       ) : null}
+
+      {/* 2ª estrela · Jornada da Igreja (profundidade · igreja toda) */}
+      <div style={{ marginTop: 20 }}>
+        <JornadaStarCard onAbrir={() => navigate('/jornada')} />
+      </div>
 
       {/* Tendência mensal do NSM · acima das mandalas */}
       <div style={{ marginTop: 24 }}>
@@ -394,6 +399,63 @@ function NsmSegmentoCard({ data, onAbrirPessoas }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Jornada da Igreja — 2ª estrela (profundidade · % Membro Modelo da igreja toda)
+// ----------------------------------------------------------------------------
+function JornadaStarCard({ onAbrir }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let vivo = true;
+    jornadaApi.dashboard({ janela: '3m' })
+      .then((d) => { if (vivo) setData(d); })
+      .catch(() => { /* estrela secundária · falha silenciosa */ })
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
+  }, []);
+
+  const mm = data?.membro_modelo;
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, ${C.primary}10 0%, ${C.primary}05 100%)`,
+      border: `1px solid ${C.primary}30`, borderRadius: 16, padding: 24,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 280 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.primaryDark, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Sparkles size={13} /> Jornada da Igreja · Membro Modelo
+          </div>
+          <div style={{ fontSize: 14, color: C.t2, marginBottom: 12, lineHeight: 1.5, maxWidth: 600 }}>
+            Profundidade da igreja toda · membros ativos vivendo pelo menos 2 dos 5 valores (últimos 90 dias)
+          </div>
+          {loading ? (
+            <div style={{ fontSize: 40, fontWeight: 800, color: C.gray, lineHeight: 1 }}>…</div>
+          ) : !mm ? (
+            <div style={{ fontSize: 36, fontWeight: 700, color: C.gray, lineHeight: 1 }}>—</div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 52, fontWeight: 800, color: C.text, lineHeight: 1 }}>{fmtPct(mm.pct)}</span>
+              <span style={{ fontSize: 14, color: C.t3 }}>
+                <strong style={{ color: C.text }}>{mm.total}</strong> de {data.total_base} membros ativos
+              </span>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onAbrir}
+          style={{
+            padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+            background: 'transparent', color: C.primaryDark, border: `1px solid ${C.primary}40`,
+            cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
+          }}
+        >
+          <Users size={12} /> Ver Jornada <ChevronRight size={12} />
+        </button>
+      </div>
     </div>
   );
 }

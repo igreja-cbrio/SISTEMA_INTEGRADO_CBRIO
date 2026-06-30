@@ -370,33 +370,16 @@ const COLLECTORS = {
   },
 
   'cuidados.membros_2mais_valores': async () => {
-    // CUID-06: % de membros envolvidos em 2+ valores
-    const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-    const { data: membros } = await supabase.from('mem_membros').select('id').eq('active', true);
-    if (!membros || membros.length === 0) return { valor: 0, observacao: 'Sem membros ativos' };
-
-    const ids = membros.map(m => m.id);
-    const [trilha, grupos, j180, vols, contribs] = await Promise.all([
-      supabase.from('mem_trilha_valores').select('membro_id').in('membro_id', ids).in('etapa', ['conversao', 'primeiro_contato', 'batismo']).eq('concluida', true),
-      supabase.from('mem_grupo_membros').select('membro_id').in('membro_id', ids).is('saiu_em', null),
-      supabase.from('cui_jornada180').select('membro_id').in('membro_id', ids).gte('data_encontro', d90),
-      supabase.from('mem_voluntarios').select('membro_id').in('membro_id', ids).is('ate', null),
-      supabase.from('mem_contribuicoes').select('membro_id').in('membro_id', ids).gte('data', d90),
-    ]);
-    const sets = {
-      seguir: new Set((trilha.data || []).map(t => t.membro_id)),
-      conectar: new Set((grupos.data || []).map(g => g.membro_id)),
-      investir: new Set((j180.data || []).map(j => j.membro_id)),
-      servir: new Set((vols.data || []).map(v => v.membro_id)),
-      generosidade: new Set((contribs.data || []).map(c => c.membro_id)),
-    };
-    let com2mais = 0;
-    for (const id of ids) {
-      const count = Object.values(sets).filter(s => s.has(id)).length;
-      if (count >= 2) com2mais++;
-    }
-    const pct = Math.round((com2mais / ids.length) * 100);
-    return { valor: pct, observacao: `${com2mais} de ${ids.length} membros com 2+ valores` };
+    // CUID-06: % de membros envolvidos em 2+ valores ("Membro Modelo").
+    // Fonte única = services/jornadaEngajamento (mesma definição da estrela
+    // Jornada do /painel e da página /jornada · 2026-06-20). Janela 3m (90d).
+    // Substituiu a versão antiga que tinha cap-1000 (sem paginação), media
+    // 'investir' por cui_jornada180 e não filtrava tipo de contribuição.
+    const { computeJornada, agregar } = require('./jornadaEngajamento');
+    const { membros, total_base } = await computeJornada('3m');
+    if (!total_base) return { valor: 0, observacao: 'Sem membros ativos' };
+    const { membro_modelo } = agregar(membros);
+    return { valor: membro_modelo.pct, observacao: `${membro_modelo.total} de ${total_base} membros com 2+ valores` };
   },
 
   // ── Cuidados · Devocional + Jornada 180 inscrições ──
