@@ -16,7 +16,7 @@
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
-const { findOrCreateMembro } = require('../routes/pessoas');
+const { acharOuCriarGuardado } = require('./membroMatch');
 
 // destino → flag na matrícula + (grupos/voluntarios) caixa da área
 const NEXT_DIRECIONA = {
@@ -60,7 +60,7 @@ async function direcionarMatricula({ matriculaId, destinos = [], userId = null, 
 
   const { data: m, error: em } = await supabase
     .from('next_matriculas')
-    .select('id, turma_id, nome, sobrenome, cpf, telefone, membro_id, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional')
+    .select('id, turma_id, nome, sobrenome, cpf, telefone, data_nascimento, membro_id, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional')
     .eq('id', matriculaId).is('deleted_at', null).single();
   if (em) throw em;
 
@@ -76,10 +76,10 @@ async function direcionarMatricula({ matriculaId, destinos = [], userId = null, 
   async function garantirMembro() {
     if (membroId) return membroId;
     try {
-      const r = await findOrCreateMembro({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, status: 'visitante' });
+      const r = await acharOuCriarGuardado({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, dataNascimento: m.data_nascimento || null, status: 'visitante' });
       membroId = r?.membro_id || null;
       if (membroId) await supabase.from('next_matriculas').update({ membro_id: membroId }).eq('id', m.id);
-    } catch (e) { console.error('[nextDirecionar] findOrCreateMembro:', e.message); }
+    } catch (e) { console.error('[nextDirecionar] acharOuCriarGuardado:', e.message); }
     return membroId;
   }
 
