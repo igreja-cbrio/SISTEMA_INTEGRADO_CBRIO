@@ -25,7 +25,8 @@ function mascaraTelefone(v) {
 
 export default function Perfil() {
   const auth_ctx = useAuth();
-  const { profile, role, cargoNome, refreshProfile } = auth_ctx;
+  const { profile, role, cargoNome, refreshProfile, loading } = auth_ctx;
+  const [retentando, setRetentando] = useState(false);
   const cargoLabel = cargoNome || role || 'Membro';
   const navigate = useNavigate();
   const tutorial = useTutorial();
@@ -99,6 +100,27 @@ export default function Perfil() {
     } finally {
       setSavingTel(false);
     }
+  }
+
+  // Sessão carregou mas o perfil não veio (race de token / falha de rede): em vez
+  // de mostrar a tela toda com "—", oferece recarregar os dados (sem exigir F5).
+  if (!loading && !profile) {
+    const tentarDeNovo = async () => {
+      setRetentando(true);
+      try { await refreshProfile?.(); } finally { setRetentando(false); }
+    };
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <h1 className="text-2xl font-bold text-foreground mb-4">Meu Perfil</h1>
+        <div className="rounded-xl border border-border bg-card p-8 text-center space-y-3">
+          <p className="text-sm text-muted-foreground">Não foi possível carregar seus dados de perfil agora (conexão instável).</p>
+          <Button onClick={tentarDeNovo} disabled={retentando}>
+            <RotateCcw className={`h-4 w-4 mr-1.5 ${retentando ? 'animate-spin' : ''}`} />
+            {retentando ? 'Carregando...' : 'Tentar de novo'}
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (

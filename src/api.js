@@ -19,6 +19,15 @@ if (supabase) {
   });
 }
 
+// Decodifica o exp do JWT · true se já venceu (ou vence em <30s). Em qualquer
+// erro de parse, assume VÁLIDO (não pioramos o fluxo).
+function tokenExpirado(t) {
+  try {
+    const p = JSON.parse(atob(t.split('.')[1]));
+    return !p.exp || p.exp * 1000 < Date.now() + 30000;
+  } catch { return false; }
+}
+
 async function getToken() {
   if (!supabase) return null;
   // getSession() pode pendurar indefinidamente (Web Lock órfão · issues supabase-js
@@ -35,6 +44,22 @@ async function getToken() {
     }
   } catch {
     /* cai no token cacheado abaixo */
+  }
+  // Se o token cacheado está EXPIRADO, NÃO o devolvemos: mandá-lo daria 401
+  // 'invalid_token' → handleDeadSession deslogaria abruptamente no meio da ação.
+  // Tenta um refresh real (timeout maior); se nem assim, retorna null → vira
+  // 'no_token' (mensagem suave de re-login, sem redirect abrupto). 2026-06-30.
+  if (_cachedToken && tokenExpirado(_cachedToken)) {
+    try {
+      // refreshSession() FORÇA a renovação (getSession poderia devolver o mesmo
+      // token vencido). Re-valida o exp do retornado antes de aceitar.
+      const refreshed = await Promise.race([
+        supabase.auth.refreshSession().then(({ data }) => data?.session?.access_token || null),
+        new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+      if (refreshed && !tokenExpirado(refreshed)) { _cachedToken = refreshed; return _cachedToken; }
+    } catch { /* ignora */ }
+    return null;
   }
   return _cachedToken;
 }
@@ -65,7 +90,22 @@ async function handleDeadSession() {
 
 async function request(path, opts = {}) {
   const h = await headers();
-  const res = await fetch(`${API}${path}`, { ...opts, headers: { ...h, ...opts.headers } });
+  // Timeout (default 30s · configurável por opts.timeout) pra um backend/rede
+  // lento não deixar a UI "carregando pra sempre". requestFile já usa esse padrão.
+  const { timeout = 30000, ...rest } = opts;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, { ...rest, headers: { ...h, ...rest.headers }, signal: controller.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      throw new Error('Tempo esgotado ao falar com o servidor. Recarregue a página ou tente de novo.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('text/html')) {
