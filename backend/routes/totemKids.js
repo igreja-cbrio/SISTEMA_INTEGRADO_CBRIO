@@ -52,7 +52,11 @@ router.use((req, res, next) => {
   // Agente local de pagers (recepcao) · autentica por bearer token (PAGER_BRIDGE_TOKEN),
   // não por JWT de usuário · handlers validam internamente via bridgeAutorizado()
   const isPagerBridge = req.path.startsWith('/pager/bridge/');
-  if (isDisplay || isChamadaComToken || isParear || isPagerBridge) {
+  // Cron da Vercel/GitHub manda CRON_SECRET (não JWT) · só pula authenticate
+  // quando o secret é VÁLIDO (fail-closed via isAuthorizedCron). Chamada manual
+  // de admin (com JWT, sem secret) segue pelo authenticate normalmente.
+  const isCron = req.path.startsWith('/cron/') && isAuthorizedCron(req);
+  if (isDisplay || isChamadaComToken || isParear || isPagerBridge || isCron) {
     // Pula authenticate · handlers validam token internamente
     return next();
   }
@@ -1032,6 +1036,102 @@ router.get('/pco-pessoa/:pcoId', authorizeModule('kids', 1), async (req, res) =>
   }
 });
 
+// E-mails dos destinatários do resumo (Mari Gaia, Milena, Matheus) → profile ids
+// pra notificação in-app/e-mail (a Mari não tem WhatsApp, recebe por aqui).
+const RESUMO_KIDS_EMAILS = ['mariane.gaia@cbrio.org', 'milena.rochet@cbrio.org', 'matheus.toscano@cbrio.org', 'matheus@cbrio.com.br'];
+
+// Dispara o resumo de UM culto (total de crianças do PCO) pros líderes.
+async function dispararResumoKidsCulto(culto, total) {
+  const dataFmt = culto.data ? new Date(culto.data + 'T00:00:00').toLocaleDateString('pt-BR') : '';
+  const linhas = [
+    '🧒 *Resumo do Kids*',
+    `${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`,
+    '',
+    `👶 Crianças no check-in: *${total}*`,
+    '',
+    '_Frequência do Planning Center · confira a lista em /ministerial/totem-kids/frequencia_',
+  ];
+  const texto = linhas.join('\n');
+  const params = [`${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`, String(total), '—', 'Frequência do Planning Center'];
+  // WhatsApp pros líderes com telefone (Matheus, Milena)
+  const lideres = await lideresKidsComTelefone();
+  for (const l of lideres) { await enviarResumoWpp(l.telefone, { texto, params }).catch(() => {}); }
+  // In-app + e-mail pros 3 nominais (cobre a Mari, que não tem WhatsApp)
+  let targetIds;
+  try {
+    const { data: alvos } = await supabase.from('profiles').select('id').in('email', RESUMO_KIDS_EMAILS);
+    targetIds = (alvos || []).map(a => a.id);
+  } catch { /* fallback no módulo kids */ }
+  await notificar({
+    modulo: 'kids', tipo: 'resumo_kids',
+    titulo: 'Resumo do Kids (fim de culto)',
+    mensagem: texto.replace(/\*/g, '').replace(/_/g, ''),
+    link: '/ministerial/totem-kids/frequencia', severidade: 'info', email: true,
+    chaveDedup: `resumo_kids_${culto.id}`,
+    targetIds: targetIds && targetIds.length ? targetIds : undefined,
+  }).catch(() => {});
+}
+
+// GET /cron/resumo-pco · roda de hora em hora (vercel.json · crons da Vercel são
+// GET). Pra cada culto com Kids que JÁ terminou (data+horário+90min) e ainda não
+// teve resumo enviado, puxa o total de crianças do PCO, grava em
+// cultos.presencial_kids e dispara o resumo pros líderes. Idempotente (dedup por
+// kids_resumo_enviado_at). Self-gating (barato quando não há culto pendente).
+router.get('/cron/resumo-pco', async (req, res) => {
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const { coletarFrequenciaKidsPCO } = require('../services/planningCenterKidsCheckins');
+    const agora = Date.now();
+    const agoraBRT = new Date(agora - 3 * 3600 * 1000);
+    const hoje = agoraBRT.toISOString().slice(0, 10);
+    const ontem = new Date(agoraBRT.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+    // Cultos com Kids dos últimos 2 dias, ainda sem resumo enviado.
+    const { data: cultos } = await supabase
+      .from('cultos')
+      .select('id, nome, data, kids_resumo_enviado_at, vol_service_types(recurrence_time, has_kids)')
+      .in('data', [ontem, hoje])
+      .is('kids_resumo_enviado_at', null);
+
+    // Só os que têm Kids e JÁ terminaram (início + 90 min de folga).
+    const pendentes = (cultos || []).filter((c) => {
+      if (!c.vol_service_types?.has_kids) return false;
+      const hhmm = (c.vol_service_types.recurrence_time || '').slice(0, 5);
+      if (!hhmm) return false;
+      const inicio = new Date(`${c.data}T${hhmm}:00-03:00`).getTime();
+      return agora >= inicio + 90 * 60 * 1000;
+    });
+    if (!pendentes.length) return res.json({ ok: true, enviados: 0, motivo: 'nenhum culto pendente' });
+
+    // Coleta 1x por data (a coleta já devolve o total por culto do dia).
+    const datas = [...new Set(pendentes.map((c) => c.data))];
+    const porData = {};
+    for (const d of datas) {
+      try { porData[d] = await coletarFrequenciaKidsPCO(d); } catch (e) { console.error(`[resumo-pco] coleta ${d}:`, e.message); porData[d] = null; }
+    }
+
+    let enviados = 0;
+    const detalhe = [];
+    for (const c of pendentes) {
+      const col = porData[c.data];
+      if (!col) continue; // coleta falhou → tenta de novo na próxima hora
+      const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
+      const total = entry?.total || 0;
+      if (total <= 0) continue; // sem dado ainda (ou culto sem Kids) → não envia "0", reavalia depois
+      await supabase.from('cultos')
+        .update({ presencial_kids: total, kids_resumo_enviado_at: new Date().toISOString() })
+        .eq('id', c.id);
+      await dispararResumoKidsCulto(c, total);
+      enviados += 1;
+      detalhe.push({ culto: c.nome, total });
+    }
+    res.json({ ok: true, enviados, detalhe });
+  } catch (e) {
+    console.error('[totemKids] cron resumo-pco:', e.message);
+    res.status(500).json({ error: e.message || 'Erro no resumo do Kids' });
+  }
+});
+
 // GET /batismos · crianças inscritas pra batismo (eh_crianca ou <13 anos) · a
 // equipe Kids contata a família. Aparece também na Integração (não duplica dado).
 router.get('/batismos', authorizeModule('kids', 1), async (req, res) => {
@@ -1195,7 +1295,7 @@ router.delete('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res)
 router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res) => {
   try {
     const id = req.params.id;
-    const { data: crianca } = await supabase.from('kids_criancas').select('familia_id').eq('id', id).maybeSingle();
+    const { data: crianca } = await supabase.from('kids_criancas').select('familia_id, planning_center_id').eq('id', id).maybeSingle();
     let familia_membros = [];
     if (crianca?.familia_id) {
       const { data: ms } = await supabase.from('mem_membros')
@@ -1207,18 +1307,36 @@ router.get('/criancas/:id/jornada', authorizeModule('kids', 1), async (req, res)
       .eq('crianca_id', id).is('deleted_at', null).order('checkin_at');
     const lista = cis || [];
     const porMesMap = {};
-    let ultima = null;
-    lista.forEach((c) => {
-      if (!c.checkin_at) return;
-      const mes = String(c.checkin_at).slice(0, 7);
-      porMesMap[mes] = (porMesMap[mes] || 0) + 1;
-      if (!ultima || c.checkin_at > ultima) ultima = c.checkin_at;
-    });
+    let ultima = null;     // 'YYYY-MM-DD'
+    let total = 0;
+    const addCheckin = (dataYmd) => {
+      if (!dataYmd) return;
+      const ymd = String(dataYmd).slice(0, 10);
+      porMesMap[ymd.slice(0, 7)] = (porMesMap[ymd.slice(0, 7)] || 0) + 1;
+      if (!ultima || ymd > ultima) ultima = ymd;
+      total += 1;
+    };
+    lista.forEach((c) => addCheckin(c.checkin_at)); // totem (quando houver)
+
+    // Frequência REAL vem do Planning Center: histórico de check-ins da criança
+    // nos eventos do Kids (CBKids). Liga o gráfico mesmo sem o totem.
+    if (crianca?.planning_center_id) {
+      try {
+        const { detalhePessoaPCO, ehEventoKids } = require('../services/planningCenterKidsCheckins');
+        const det = await detalhePessoaPCO(crianca.planning_center_id);
+        (det?.historico || []).forEach((h) => {
+          if (String(h.kind || '').toLowerCase() === 'volunteer') return;
+          if (h.evento && !ehEventoKids(h.evento)) return; // só check-ins do Kids
+          addCheckin(h.data);
+        });
+      } catch (e) { console.error('[totemKids] jornada PCO:', e.message); }
+    }
+
     const porMes = Object.entries(porMesMap).map(([mes, total]) => ({ mes, total })).sort((a, b) => a.mes.localeCompare(b.mes));
     const dec = lista.filter((c) => c.fez_decisao_jesus).map((c) => c.decisao_jesus_em || c.checkin_at).filter(Boolean).sort();
     res.json({
       familia_membros,
-      frequencia: { porMes, ultima, total: lista.length },
+      frequencia: { porMes, ultima, total },
       conversao_sugerida: dec.length ? String(dec[0]).slice(0, 10) : null,
     });
   } catch (e) {

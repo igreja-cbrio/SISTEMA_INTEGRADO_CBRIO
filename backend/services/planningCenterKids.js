@@ -30,25 +30,38 @@ function idadeAnos(birthdate) {
   return (Date.now() - b.getTime()) / (365.25 * 24 * 3600 * 1000);
 }
 
-// Lê TODAS as crianças já vinculadas a um PCO id (paginado · contorna o cap de
-// 1000 do PostgREST) → Map(planning_center_id -> id da criança).
-async function carregarMapaExistentes() {
-  const mapa = new Map();
+function normNome(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Lê TODAS as crianças locais (paginado · contorna o cap de 1000 do PostgREST).
+// Retorna:
+//   porPco  · Map(planning_center_id -> id)         (já vinculadas)
+//   semPcoPorNome · Map(nome normalizado -> [ids])  (sem vínculo · pra casar por nome)
+async function carregarLocais() {
+  const porPco = new Map();
+  const semPcoPorNome = new Map();
   const pageSize = 1000;
   let from = 0;
   while (true) {
     const { data, error } = await supabase
       .from('kids_criancas')
-      .select('id, planning_center_id')
-      .not('planning_center_id', 'is', null)
+      .select('id, nome, planning_center_id')
+      .is('deleted_at', null)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`Supabase: ${error.message}`);
     if (!data || data.length === 0) break;
-    for (const r of data) mapa.set(String(r.planning_center_id), r.id);
+    for (const r of data) {
+      if (r.planning_center_id) { porPco.set(String(r.planning_center_id), r.id); continue; }
+      const nm = normNome(r.nome);
+      if (!nm) continue;
+      if (!semPcoPorNome.has(nm)) semPcoPorNome.set(nm, []);
+      semPcoPorNome.get(nm).push(r.id);
+    }
     if (data.length < pageSize) break;
     from += pageSize;
   }
-  return mapa;
+  return { porPco, semPcoPorNome };
 }
 
 // Puxa todas as people do Check-Ins (paginado por offset) e devolve só as crianças
@@ -104,31 +117,55 @@ function chunk(arr, n) {
 
 // Sync completo · idempotente. Retorna um resumo com as contagens.
 async function syncCriancasPCO({ maxIdade = 12 } = {}) {
-  const [{ totalPessoas, criancas }, existentes] = await Promise.all([
+  const [{ totalPessoas, criancas }, { porPco, semPcoPorNome }] = await Promise.all([
     buscarCriancasPCO({ maxIdade }),
-    carregarMapaExistentes(),
+    carregarLocais(),
   ]);
 
-  const novas = criancas.filter(c => !existentes.has(c.planning_center_id));
-  const jaExistem = criancas.filter(c => existentes.has(c.planning_center_id));
+  // Quantas crianças do PCO compartilham cada nome (evita vincular quando o nome
+  // é ambíguo dos dois lados).
+  const pcoNomeCount = {};
+  for (const c of criancas) { const nm = normNome(c.nome); pcoNomeCount[nm] = (pcoNomeCount[nm] || 0) + 1; }
 
-  let criadas = 0;
-  let erros = 0;
+  const jaExistem = [];  // PCO id já vinculado → atualiza
+  const aVincular = [];  // casou por nome com 1 local sem vínculo → liga
+  const novas = [];      // não casou → cria
+
+  for (const c of criancas) {
+    if (porPco.has(c.planning_center_id)) { jaExistem.push(c); continue; }
+    const nm = normNome(c.nome);
+    const candidatos = semPcoPorNome.get(nm);
+    if (candidatos && candidatos.length === 1 && pcoNomeCount[nm] === 1) {
+      aVincular.push({ localId: candidatos.shift(), pco: c }); // consome o candidato
+    } else {
+      novas.push(c);
+    }
+  }
+
+  // (1) Vincula os existentes (planilha) à pessoa do PCO por nome → grava o
+  // planning_center_id pra ligar o histórico de frequência.
+  let vinculadas = 0;
+  for (const v of aVincular) {
+    const { error } = await supabase.from('kids_criancas')
+      .update({ planning_center_id: v.pco.planning_center_id, data_nascimento: v.pco.data_nascimento, sexo: v.pco.sexo, updated_at: new Date().toISOString() })
+      .eq('id', v.localId);
+    if (!error) vinculadas++;
+  }
+
+  // (2) Cria as que não casaram.
+  let criadas = 0, erros = 0;
   for (const lote of chunk(novas, 500)) {
     const rows = lote.map(c => ({ ...c, visitante: true, ativo: true }));
-    const { error, count } = await supabase
-      .from('kids_criancas')
-      .insert(rows, { count: 'exact' });
+    const { error, count } = await supabase.from('kids_criancas').insert(rows, { count: 'exact' });
     if (error) { erros += rows.length; continue; }
     criadas += count ?? rows.length;
   }
 
-  // Atualiza nome/nascimento/sexo das já existentes (mantém o resto intacto).
+  // (3) Atualiza nome/nascimento/sexo das já vinculadas (mantém o resto intacto).
   let atualizadas = 0;
   for (const c of jaExistem) {
-    const id = existentes.get(c.planning_center_id);
-    const { error } = await supabase
-      .from('kids_criancas')
+    const id = porPco.get(c.planning_center_id);
+    const { error } = await supabase.from('kids_criancas')
       .update({ nome: c.nome, data_nascimento: c.data_nascimento, sexo: c.sexo, updated_at: new Date().toISOString() })
       .eq('id', id);
     if (!error) atualizadas++;
@@ -137,6 +174,7 @@ async function syncCriancasPCO({ maxIdade = 12 } = {}) {
   return {
     total_pessoas_pco: totalPessoas,
     criancas_no_pco: criancas.length,
+    vinculadas,
     criadas,
     atualizadas,
     erros,
