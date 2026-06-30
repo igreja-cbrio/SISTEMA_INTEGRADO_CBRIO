@@ -515,15 +515,26 @@ router.get('/turmas', async (req, res) => {
       const c = cont[m.turma_id] || (cont[m.turma_id] = { total: 0, formado: 0, matriculado: 0, incompleto: 0, desistiu: 0, encontros: 0 });
       c.total += 1; if (c[m.status] !== undefined) c[m.status] += 1;
     });
-    const { data: encs } = await supabase.from('next_encontros').select('turma_id').in('turma_id', ids);
-    (encs || []).forEach(e => { const c = cont[e.turma_id] || (cont[e.turma_id] = { total: 0, encontros: 0 }); c.encontros = (c.encontros || 0) + 1; });
+    const { data: encs } = await supabase.from('next_encontros').select('turma_id, data').in('turma_id', ids);
+    (encs || []).forEach(e => {
+      const c = cont[e.turma_id] || (cont[e.turma_id] = { total: 0, encontros: 0 });
+      c.encontros = (c.encontros || 0) + 1;
+      // guarda a data do 1º encontro (competência de fallback p/ ordenação)
+      if (e.data && (!c.primeiro_encontro || e.data < c.primeiro_encontro)) c.primeiro_encontro = e.data;
+    });
   }
   const lista = (turmas || []).map(t => ({ ...t, contagem: cont[t.id] || { total: 0, encontros: 0 } }));
-  // ordem por data (mês mais recente primeiro); manuais sem origem_mes caem por created_at
+  // Ordem por DATA DE COMPETÊNCIA (mês mais recente primeiro). Chave: origem_mes →
+  // se nulo, o mês do 1º encontro (cobre a 2ª turma do mês, que não pode repetir
+  // origem_mes pela constraint única) → por fim a data de criação. Desempate por
+  // nome (mantém "Julho/01" antes de "Julho/02" no mesmo mês).
+  const chave = t => t.origem_mes
+    || (t.contagem?.primeiro_encontro ? String(t.contagem.primeiro_encontro).slice(0, 7) : '')
+    || String(t.created_at || '').slice(0, 7);
   lista.sort((a, b) => {
-    const ka = a.origem_mes || String(a.created_at || '').slice(0, 7);
-    const kb = b.origem_mes || String(b.created_at || '').slice(0, 7);
-    return kb < ka ? -1 : kb > ka ? 1 : 0;
+    const ka = chave(a), kb = chave(b);
+    if (ka !== kb) return kb < ka ? -1 : 1;
+    return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt');
   });
   res.json(lista);
 });
