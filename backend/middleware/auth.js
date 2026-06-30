@@ -419,6 +419,21 @@ function authorize(...roles) {
   };
 }
 
+// Autoriza qualquer COLABORADOR: admin/diretor OU usuário com nível >= 1 em
+// QUALQUER módulo. Bloqueia membro-comum (is_membro_only sem módulo), voluntário
+// puro e não-autenticado. Serve pra recursos COMPARTILHADOS entre módulos — ex.:
+// leitura do registro de membros, que Grupos/Cuidados/Reconhecimento Facial leem.
+// Travar num módulo único quebraria o cross-módulo; deixar só `authenticate`
+// vaza PII (nome/CPF) pra quem só loga no app. Isto NÃO retira acesso de staff.
+function authorizeColaborador(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+  if (['admin', 'diretor'].includes(req.user.role)) return next();
+  const perms = req.user.granular?.modulePerms;
+  const temAlgumModulo = !!perms && Object.values(perms).some((p) => p && (p.leitura || 0) >= 1);
+  if (temAlgumModulo) return next();
+  return res.status(403).json({ error: 'Acesso restrito a colaboradores.' });
+}
+
 // Autoriza edicao/preenchimento de KPI por área:
 // - admin/diretor sempre podem (qualquer area/valor)
 // - líder de área (kpi_areas inclui a área do KPI) pode
@@ -688,7 +703,7 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
   return query.eq('id', '00000000-0000-0000-0000-000000000000');
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
+module.exports = { authenticate, authorize, authorizeColaborador, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
   // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias,
   // grade de acesso efetivo por módulo na tela de Permissões > Usuários)
   resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea };

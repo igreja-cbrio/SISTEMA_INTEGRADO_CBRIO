@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
-const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
+const { authenticate, authorize, authorizeColaborador, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -17,6 +17,20 @@ const uploadMw = multer({
 });
 
 router.use(authenticate);
+
+// Leitura de dados de PESSOAS é recurso compartilhado entre módulos (Grupos,
+// Cuidados, Reconhecimento Facial etc. leem o registro de membros). Toda LEITURA
+// (GET) passa a exigir ser COLABORADOR (qualquer módulo) — fecha o vazamento de
+// PII pra membro-comum que loga no app e hoje conseguia baixar a base com CPF.
+// NÃO afeta nenhum staff (todos têm pelo menos 1 módulo). Exceções: lookup por
+// token (QR), utilitário de CEP e o fluxo de totem (kiosk self-service).
+// Escritas (POST/PUT/PATCH/DELETE) seguem com authorize('admin','diretor') por rota.
+const LEITURA_ABERTA_INTERNA = [/^\/qr-lookup\//, /^\/geocode-cep/, /^\/totem\//];
+router.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if (LEITURA_ABERTA_INTERNA.some((re) => re.test(req.path))) return next();
+  return authorizeColaborador(req, res, next);
+});
 
 // Autoriza edicao de um membro especifico pelas rotas "totem":
 //   - staff de membresia (nivel >= 3) ou admin/diretor → qualquer membro
@@ -1534,7 +1548,7 @@ router.patch('/grupo-membros/:id/sair', authorize('admin', 'diretor'), async (re
 // ── Contribuições (Generosidade) ──
 
 // GET /api/membresia/contribuicoes (lista com filtros)
-router.get('/contribuicoes', async (req, res) => {
+router.get('/contribuicoes', authorizeModule('membresia', 2), async (req, res) => {
   try {
     const { membro_id, tipo, data_inicio, data_fim, limit } = req.query;
     let query = supabase
@@ -1621,7 +1635,7 @@ router.delete('/contribuicoes/:id', authorize('admin', 'diretor'), async (req, r
 });
 
 // GET /api/membresia/contribuicoes/kpis — agregados gerais
-router.get('/contribuicoes/kpis', async (req, res) => {
+router.get('/contribuicoes/kpis', authorizeModule('membresia', 2), async (req, res) => {
   try {
     const hoje = new Date();
     const anoAtual = hoje.getFullYear();
