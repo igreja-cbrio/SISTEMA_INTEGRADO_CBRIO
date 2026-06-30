@@ -12,9 +12,10 @@ import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Checkbox } from '../../components/ui/checkbox';
 import {
   Droplets, Loader2, Search, Plus, Calendar, Phone, Mail, AlertCircle,
-  CheckCircle2, Clock, XCircle, ChevronRight, User, IdCard, FileText, BarChart3,
+  CheckCircle2, Clock, XCircle, ChevronRight, ChevronDown, User, IdCard, FileText, BarChart3,
   Share2, Copy, Check, Hourglass, Printer, MapPin,
 } from 'lucide-react';
 import { imprimirListaPresencaBatismo } from '../../lib/imprimirListaPresencaBatismo';
@@ -154,6 +155,7 @@ function BatismoHorarios() {
   const [busy, setBusy] = useState<string | null>(null);
   const [grupoUrl, setGrupoUrl] = useState('');
   const [savingGrupo, setSavingGrupo] = useState(false);
+  const [aberto, setAberto] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -195,14 +197,21 @@ function BatismoHorarios() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Clock className="h-4 w-4 text-primary" /> Horários do batismo
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Próximo batismo: <strong>{dataFmt || '—'}</strong>. Abra/feche os horários que aparecem no formulário público e defina o limite de vagas de cada um (vazio = sem limite). Ao lotar, o horário some do formulário sozinho.
-        </p>
+      <CardHeader className="cursor-pointer select-none" onClick={() => setAberto(v => !v)}>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Clock className="h-4 w-4 text-primary" /> Horários do batismo
+            <span className="text-xs font-normal text-muted-foreground">· próximo: {dataFmt || '—'}</span>
+          </CardTitle>
+          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${aberto ? 'rotate-180' : ''}`} />
+        </div>
+        {aberto && (
+          <p className="text-xs text-muted-foreground">
+            Abra/feche os horários que aparecem no formulário público e defina o limite de vagas de cada um (vazio = sem limite). Ao lotar, o horário some do formulário sozinho.
+          </p>
+        )}
       </CardHeader>
+      {aberto && (
       <CardContent className="space-y-2">
         {loading ? (
           <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
@@ -248,6 +257,7 @@ function BatismoHorarios() {
           </div>
         </div>
       </CardContent>
+      )}
     </Card>
   );
 }
@@ -288,6 +298,16 @@ export default function Batismos() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Marca presença direto na lista (= status 'realizado' = compareceu/batizou).
+  const marcarPresenca = async (b: BatismoInscricao, presente: boolean) => {
+    const novo: Status = presente ? 'realizado' : 'confirmado';
+    setList(prev => prev.map(x => x.id === b.id ? { ...x, status: novo } : x));
+    try {
+      await kpisApi.batismos.update(b.id, { status: novo });
+      toast.success(presente ? `${b.nome}: presente ✓` : `${b.nome}: presença desmarcada`);
+    } catch (e: any) { toast.error('Erro ao marcar presença'); load(); }
+  };
 
   // Deep-link: ?inscricao=<id> (vindo da notificação) abre a ficha direto.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -748,6 +768,7 @@ export default function Batismos() {
                 <TableHead className="text-center hidden sm:table-cell">Categoria</TableHead>
                 <TableHead className="text-center hidden md:table-cell">Camisa</TableHead>
                 <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-center">Presença</TableHead>
                 <TableHead className="text-center hidden sm:table-cell">Data batismo</TableHead>
                 <TableHead className="text-center hidden sm:table-cell">Horário</TableHead>
                 <TableHead className="text-center hidden lg:table-cell">Origem</TableHead>
@@ -812,6 +833,14 @@ export default function Batismos() {
                         <Icon className="h-3 w-3" />
                         {STATUS_LABEL[b.status]}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={b.status === 'realizado'}
+                        onCheckedChange={(v) => marcarPresenca(b, !!v)}
+                        title="Marcar presença (compareceu/batizou)"
+                        aria-label="Marcar presença"
+                      />
                     </TableCell>
                     <TableCell className="text-center hidden sm:table-cell text-sm text-muted-foreground">
                       {b.data_batismo ? ymdLocal(b.data_batismo) : '—'}
