@@ -111,46 +111,50 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
   }
 
   const porKind = {};
-  const porHora = {}; // 'HH:MM' -> { total, criancas } (histograma do horário do check-in)
   let totalCriancas = 0;
-  const porCulto = {}; // cultoId -> { nome, total }
+  const porCulto = {}; // cultoId -> { culto_id, nome, hhmm, total, criancas:[{nome,hora,kind}] }
+  const naoContadas = []; // check-ins não-criança (pra validação: ver quem ficou de fora)
   let semCulto = 0;
 
   for (const ci of checkins) {
     const kind = ci.attributes?.kind || '—';
     porKind[kind] = (porKind[kind] || 0) + 1;
     const personId = ci.relationships?.person?.data?.id;
-    const ehCrianca = personId ? persons.get(personId)?.child === true : false;
+    const pessoa = personId ? persons.get(personId) : null;
+    const ehCrianca = pessoa?.child === true;
+    const nome = (pessoa?.name || ci.attributes?.name || `${pessoa?.first_name || ''} ${pessoa?.last_name || ''}`).trim() || 'Sem nome';
     // Horário do check-in: o event_time costuma não vir na lista; o created_at do
     // PRÓPRIO check-in (momento da entrada) é o sinal confiável → casa com o culto.
     const etId = ci.relationships?.event_time?.data?.id;
     const et = etId ? eventTimes.get(etId) : null;
     const hora = horaBRT(et?.starts_at || et?.shows_at || ci.attributes?.created_at);
-    const hk = hora || '—';
-    const slot = porHora[hk] || (porHora[hk] = { total: 0, criancas: 0 });
-    slot.total += 1;
-    if (!ehCrianca) continue;
-    slot.criancas += 1;
-    totalCriancas += 1;
     const culto = cultoMaisProximo(hora);
+    if (!ehCrianca) {
+      naoContadas.push({ nome, hora, kind, culto: culto?.nome || null });
+      continue;
+    }
+    totalCriancas += 1;
     if (culto) {
-      const acc = porCulto[culto.id] || (porCulto[culto.id] = { culto_id: culto.id, nome: culto.nome, total: 0 });
+      const acc = porCulto[culto.id] || (porCulto[culto.id] = { culto_id: culto.id, nome: culto.nome, hhmm: culto.hhmm, total: 0, criancas: [] });
       acc.total += 1;
+      acc.criancas.push({ nome, hora, kind });
     } else {
       semCulto += 1;
     }
   }
+  // ordena crianças por nome dentro de cada culto
+  Object.values(porCulto).forEach(c => c.criancas.sort((a, b) => a.nome.localeCompare(b.nome, 'pt')));
 
   return {
     data: dataBRT,
     total_checkins: checkins.length,
     total_criancas: totalCriancas,
     sem_culto_casado: semCulto,
-    por_culto: Object.values(porCulto),
+    por_culto: Object.values(porCulto).sort((a, b) => (a.hhmm || '').localeCompare(b.hhmm || '')),
+    nao_contadas: naoContadas.sort((a, b) => a.nome.localeCompare(b.nome, 'pt')),
     diagnostico: {
       cultos_do_dia: cultosDoDia,
       por_kind: porKind,
-      por_hora_checkin: Object.entries(porHora).sort().map(([hora, v]) => ({ hora, ...v })),
     },
   };
 }

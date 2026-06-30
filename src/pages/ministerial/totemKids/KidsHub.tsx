@@ -16,6 +16,7 @@ import {
 const ACESSOS = [
   { titulo: 'Check-in (Totem)', desc: 'Entrada e saída das crianças no culto', icon: ScanLine, path: '/ministerial/totem-kids', cor: '#ec4899' },
   { titulo: 'Crianças', desc: 'Gestão, ficha, atendimentos e frequência', icon: Users, path: '/ministerial/totem-kids/criancas', cor: '#00B39D' },
+  { titulo: 'Frequência (PCO)', desc: 'Validar check-ins das crianças por culto', icon: BarChart3, path: '/ministerial/totem-kids/frequencia', cor: '#0ea5e9' },
   { titulo: 'Vínculos', desc: 'Pedidos de vínculo criança ↔ responsável', icon: ShieldCheck, path: '/ministerial/totem-kids/vinculos', cor: '#3b82f6' },
   { titulo: 'Equipe do Kids', desc: 'Voluntários por posição (salas, recepção...) + ficha', icon: UserCheck, path: '/ministerial/totem-kids/voluntarios', cor: '#14b8a6' },
   { titulo: 'Estoque por sala', desc: 'O que tem e o que deve ter em cada sala (Patrimônio)', icon: Boxes, path: '/ministerial/totem-kids/estoque', cor: '#f97316' },
@@ -44,8 +45,6 @@ export default function KidsHub() {
   const [d, setD] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [enviandoResumo, setEnviandoResumo] = useState(false);
-  const [testandoPco, setTestandoPco] = useState(false);
-  const [pcoResultado, setPcoResultado] = useState<any>(null);
   async function testarResumo() {
     setEnviandoResumo(true);
     try {
@@ -54,17 +53,6 @@ export default function KidsHub() {
     } catch (e: any) {
       toast.error(e?.message || 'Não foi possível enviar o exemplo.');
     } finally { setEnviandoResumo(false); }
-  }
-  async function testarPco() {
-    setTestandoPco(true);
-    setPcoResultado(null);
-    try {
-      const r: any = await api.resumoPcoTestar();
-      setPcoResultado(r);
-      toast.success(`PCO (${r?.data}): ${r?.total_criancas ?? 0} crianças no check-in.`);
-    } catch (e: any) {
-      toast.error(e?.message || 'Não foi possível consultar o Planning Center.');
-    } finally { setTestandoPco(false); }
   }
 
   useEffect(() => {
@@ -90,38 +78,10 @@ export default function KidsHub() {
           <h1 className="text-3xl font-extrabold flex items-center gap-2 text-white drop-shadow-lg"><Baby className="h-7 w-7 text-pink-200" /> Kids</h1>
           <p className="text-sm text-white/85 drop-shadow">Dashboard do ministério infantil — tudo num lugar só.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={testarPco} disabled={testandoPco} className="glass-solid text-xs px-3 py-2 rounded-lg border border-border inline-flex items-center gap-1.5 hover:border-primary/40 disabled:opacity-60">
-            {testandoPco ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BarChart3 className="h-3.5 w-3.5 text-sky-500" />} Testar frequência do PCO
-          </button>
-          <button onClick={testarResumo} disabled={enviandoResumo} className="glass-solid text-xs px-3 py-2 rounded-lg border border-border inline-flex items-center gap-1.5 hover:border-primary/40 disabled:opacity-60">
-            {enviandoResumo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5 text-emerald-500" />} Testar resumo no WhatsApp
-          </button>
-        </div>
+        <button onClick={testarResumo} disabled={enviandoResumo} className="glass-solid text-xs px-3 py-2 rounded-lg border border-border inline-flex items-center gap-1.5 hover:border-primary/40 disabled:opacity-60">
+          {enviandoResumo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5 text-emerald-500" />} Testar resumo no WhatsApp
+        </button>
       </div>
-
-      {pcoResultado && (
-        <Card className="glass-solid p-4 text-sm">
-          <div className="font-semibold mb-2 flex items-center gap-2"><BarChart3 className="h-4 w-4 text-sky-500" /> Teste de frequência do PCO · {pcoResultado.data}</div>
-          <div className="text-muted-foreground mb-2">
-            {pcoResultado.total_checkins} check-ins no dia · <b className="text-foreground">{pcoResultado.total_criancas}</b> crianças
-            {pcoResultado.sem_culto_casado ? ` · ${pcoResultado.sem_culto_casado} sem culto casado` : ''}
-          </div>
-          {(pcoResultado.por_culto || []).length > 0 ? (
-            <div className="space-y-1">
-              {pcoResultado.por_culto.map((c: any) => (
-                <div key={c.culto_id} className="flex justify-between border-b border-border/50 py-1">
-                  <span>{c.nome}</span><span className="font-semibold tabular-nums">{c.total}</span>
-                </div>
-              ))}
-            </div>
-          ) : <div className="text-muted-foreground">Nenhuma criança casada com culto neste dia.</div>}
-          <details className="mt-3">
-            <summary className="cursor-pointer text-xs text-muted-foreground">Diagnóstico (estrutura do PCO)</summary>
-            <pre className="mt-2 text-[11px] overflow-x-auto bg-black/20 rounded p-2">{JSON.stringify(pcoResultado.diagnostico, null, 2)}</pre>
-          </details>
-        </Card>
-      )}
 
       {/* Cards de resumo */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
