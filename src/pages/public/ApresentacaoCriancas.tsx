@@ -81,12 +81,20 @@ export default function ApresentacaoCriancas() {
   const { C } = usePublicTheme();
   const [proximaData, setProximaData] = useState('');
   const [form, setForm] = useState({
-    nome_pai: '', nome_mae: '', crianca_nome: '', crianca_idade: '', telefone: '',
+    nome_pai: '', nome_mae: '', telefone: '',
     website: '', // honeypot
   });
+  const [criancas, setCriancas] = useState<{ nome: string; idade: string }[]>([{ nome: '', idade: '' }]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+
+  const setCrianca = (i: number, k: 'nome' | 'idade') => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const v = e.target.value;
+    setCriancas(cs => cs.map((c, idx) => (idx === i ? { ...c, [k]: v } : c)));
+  };
+  const addCrianca = () => setCriancas(cs => [...cs, { nome: '', idade: '' }]);
+  const removeCrianca = (i: number) => setCriancas(cs => (cs.length > 1 ? cs.filter((_, idx) => idx !== i) : cs));
 
   useEffect(() => {
     apresentacaoCriancasPublico.proximaData()
@@ -105,7 +113,10 @@ export default function ApresentacaoCriancas() {
     setError('');
     if (form.website) return; // honeypot
     if (!form.nome_pai.trim() && !form.nome_mae.trim()) return setError('Informe o nome do pai ou da mãe.');
-    if (form.crianca_nome.trim().length < 2) return setError('Informe o nome completo da criança.');
+    const criancasValidas = criancas
+      .map(c => ({ nome: c.nome.trim(), idade: c.idade.trim() || null }))
+      .filter(c => c.nome.length >= 2);
+    if (!criancasValidas.length) return setError('Informe o nome completo de ao menos uma criança.');
     if (soDigitos(form.telefone).length < 10) return setError('Telefone inválido.');
 
     setLoading(true);
@@ -113,8 +124,7 @@ export default function ApresentacaoCriancas() {
       await apresentacaoCriancasPublico.inscrever({
         nome_pai: form.nome_pai.trim() || null,
         nome_mae: form.nome_mae.trim() || null,
-        crianca_nome: form.crianca_nome.trim(),
-        crianca_idade: form.crianca_idade.trim() || null,
+        criancas: criancasValidas,
         telefone: form.telefone,
       });
       setSent(true);
@@ -202,8 +212,25 @@ export default function ApresentacaoCriancas() {
                 <Field id="nome_pai" label="Nome completo do pai" value={form.nome_pai} onChange={set('nome_pai')} autoComplete="name" />
                 <Field id="nome_mae" label="Nome completo da mãe" value={form.nome_mae} onChange={set('nome_mae')} autoComplete="name" />
               </Row>
-              <Field id="crianca_nome" label="Nome completo da criança (ou das crianças)" value={form.crianca_nome} onChange={set('crianca_nome')} required />
-              <Field id="crianca_idade" label="Idade da criança (ou das crianças)" value={form.crianca_idade} onChange={set('crianca_idade')} />
+
+              <div style={{ marginBottom: 8, marginTop: 4, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: '#00B39D' }}>
+                Crianças
+              </div>
+              {criancas.map((c, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 110px auto', gap: 12, alignItems: 'end' }}>
+                  <Field id={`crianca_nome_${i}`} label={`Nome completo da criança ${criancas.length > 1 ? i + 1 : ''}`.trim()} value={c.nome} onChange={setCrianca(i, 'nome')} required={i === 0} />
+                  <Field id={`crianca_idade_${i}`} label="Idade" value={c.idade} onChange={setCrianca(i, 'idade')} inputMode="numeric" />
+                  {criancas.length > 1 ? (
+                    <button type="button" onClick={() => removeCrianca(i)} title="Remover criança"
+                      style={{ marginBottom: 22, background: 'transparent', border: 'none', color: '#ef4444', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                  ) : <span />}
+                </div>
+              ))}
+              <button type="button" onClick={addCrianca}
+                style={{ marginBottom: 20, marginTop: -4, background: 'transparent', border: 'none', color: '#00B39D', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: 0 }}>
+                + Adicionar outra criança
+              </button>
+
               <Field id="telefone" label="Telefone para contato" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
 
               <button type="submit" disabled={loading} style={{

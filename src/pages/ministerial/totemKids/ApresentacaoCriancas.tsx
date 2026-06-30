@@ -9,7 +9,7 @@ import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { toast } from 'sonner';
-import { ArrowLeft, Baby, Loader2, Phone, Search } from 'lucide-react';
+import { ArrowLeft, Baby, Loader2, Phone, Search, Copy, Share2, Check } from 'lucide-react';
 
 const fmt = (d?: string | null) => { if (!d) return '—'; try { return new Date(d + (String(d).length === 10 ? 'T00:00:00' : '')).toLocaleDateString('pt-BR'); } catch { return d || '—'; } };
 const STATUS_COR: Record<string, string> = {
@@ -43,6 +43,26 @@ export default function ApresentacaoCriancas() {
     } catch { toast.error('Erro ao atualizar'); }
   };
 
+  const mudarData = async (id: string, data_apresentacao: string) => {
+    if (!data_apresentacao) return;
+    try {
+      await api.apresentacaoUpdate(id, { data_apresentacao });
+      setLista(l => l.map(x => (x.id === id ? { ...x, data_apresentacao } : x)));
+      toast.success('Turma (data) atualizada');
+    } catch { toast.error('Erro ao atualizar data'); }
+  };
+
+  const formUrl = `${window.location.origin}/apresentacao-criancas`;
+  const [copiado, setCopiado] = useState(false);
+  const copiarLink = async () => {
+    try { await navigator.clipboard.writeText(formUrl); setCopiado(true); setTimeout(() => setCopiado(false), 2000); toast.success('Link copiado'); }
+    catch { toast.error('Não consegui copiar'); }
+  };
+  const compartilharWpp = () => {
+    const texto = `Inscreva sua criança para a Apresentação de Crianças na CBRio: ${formUrl}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
+  };
+
   const t = busca.trim().toLowerCase();
   const filtradas = lista.filter((b) =>
     !t || `${b.crianca_nome || ''} ${b.nome_pai || ''} ${b.nome_mae || ''} ${b.telefone || ''}`.toLowerCase().includes(t));
@@ -65,6 +85,21 @@ export default function ApresentacaoCriancas() {
         <h1 className="text-xl font-bold flex items-center gap-2"><Baby className="h-5 w-5 text-fuchsia-500" /> Apresentação de Crianças</h1>
         <p className="text-sm text-muted-foreground">Respostas do formulário público (sempre no 2º domingo do mês), separadas por turma. Entre em contato com a família para agendar o horário.</p>
       </div>
+
+      <Card className="p-3 flex flex-col sm:flex-row sm:items-center gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-medium">Link do formulário de inscrição</div>
+          <a href={formUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary truncate block">{formUrl}</a>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={copiarLink} className="inline-flex items-center gap-1.5 text-xs border border-border rounded-md px-2.5 py-1.5 hover:bg-muted transition-colors">
+            {copiado ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />} {copiado ? 'Copiado' : 'Copiar link'}
+          </button>
+          <button onClick={compartilharWpp} className="inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1.5 text-white transition-opacity hover:opacity-90" style={{ background: '#25D366' }}>
+            <Share2 className="h-3.5 w-3.5" /> Compartilhar no WhatsApp
+          </button>
+        </div>
+      </Card>
 
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -95,13 +130,20 @@ export default function ApresentacaoCriancas() {
                     {b.observacoes && <div className="text-[11px] text-muted-foreground truncate mt-0.5">{b.observacoes}</div>}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      type="date"
+                      value={b.data_apresentacao || ''}
+                      onChange={(e) => mudarData(b.id, e.target.value)}
+                      title="Data da apresentação (turma)"
+                      className="h-7 text-[11px] rounded-md border border-border bg-background px-1.5 text-muted-foreground"
+                    />
                     <Select value={b.status || 'pendente'} onValueChange={(v) => mudarStatus(b.id, v)}>
                       <SelectTrigger className={`h-7 text-[11px] w-[120px] ${STATUS_COR[b.status] || ''}`}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {STATUS_OPCOES.map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    {b.telefone && <a href={`https://wa.me/55${String(b.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary" title="Falar com a família"><Phone className="h-4 w-4" /></a>}
+                    {b.telefone && <a href={`https://wa.me/55${String(b.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-emerald-600" title="Falar com a família no WhatsApp"><Phone className="h-4 w-4" /></a>}
                   </div>
                 </Card>
               ))}
