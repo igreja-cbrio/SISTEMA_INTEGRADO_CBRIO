@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { nps as api } from '../api';
 import { toast } from 'sonner';
 import {
-  Plus, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
+  Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
   TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit,
 } from 'lucide-react';
 
@@ -301,6 +301,9 @@ function CreateModal({ onClose, onCreated }) {
   const [area, setArea] = useState('geral');
   const [permitePublico, setPermitePublico] = useState(true);
   const [dataFim, setDataFim] = useState('');
+  const [modo, setModo] = useState('ia'); // 'ia' | 'manual'
+  const [npsTexto, setNpsTexto] = useState('De 0 a 10, o quanto você recomendaria a CBRio para um amigo ou familiar?');
+  const [extras, setExtras] = useState([{ texto: '', tipo: 'texto_longo' }]);
 
   const [gerando, setGerando] = useState(false);
   const [perguntas, setPerguntas] = useState(null);
@@ -355,6 +358,33 @@ function CreateModal({ onClose, onCreated }) {
     setSalvando(false);
   }
 
+  async function criarManual() {
+    if (!escopoOk) return toast.error('Escolha um valor da CBRio ou uma área específica (não "Geral").');
+    if (!titulo.trim()) return toast.error('Defina um título pra pesquisa.');
+    if (!npsTexto.trim()) return toast.error('Defina a pergunta principal (nota 0 a 10).');
+    const extrasLimpos = extras.filter(e => e.texto.trim());
+    setSalvando(true);
+    try {
+      await api.create({
+        titulo: titulo.trim(),
+        valor,
+        objetivo: objetivo.trim() || titulo.trim(),
+        contexto_kpi: contextoKpi,
+        area,
+        permite_publico: permitePublico,
+        data_fim: dataFim || null,
+        perguntas: {
+          descricao_curta: objetivo.trim() || null,
+          pergunta_nps: { tipo: 'nps', texto: npsTexto.trim() },
+          perguntas_extras: extrasLimpos.map((e, i) => ({ id: `q${i + 1}`, tipo: e.tipo, texto: e.texto.trim() })),
+        },
+      });
+      toast.success('Pesquisa criada e notificada para os colaboradores');
+      onCreated();
+    } catch (e) { toast.error(e.message || 'Erro ao salvar'); }
+    setSalvando(false);
+  }
+
   return (
     <Modal
       open
@@ -364,9 +394,15 @@ function CreateModal({ onClose, onCreated }) {
       footer={step === 1 ? (
         <>
           <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
-          <Btn onClick={gerar} disabled={gerando} variant="cyan">
-            {gerando ? <><Loader2 size={14} className="animate-spin" />Gerando...</> : <><Sparkles size={14} />Gerar perguntas com IA</>}
-          </Btn>
+          {modo === 'manual' ? (
+            <Btn onClick={criarManual} disabled={salvando} variant="cyan">
+              {salvando ? <><Loader2 size={14} className="animate-spin" />Criando...</> : <><Send size={14} />Criar pesquisa</>}
+            </Btn>
+          ) : (
+            <Btn onClick={gerar} disabled={gerando} variant="cyan">
+              {gerando ? <><Loader2 size={14} className="animate-spin" />Gerando...</> : <><Sparkles size={14} />Gerar perguntas com IA</>}
+            </Btn>
+          )}
         </>
       ) : (
         <>
@@ -379,6 +415,14 @@ function CreateModal({ onClose, onCreated }) {
     >
       {step === 1 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[['ia', '✨ Gerar com IA'], ['manual', '✍️ Escrever manualmente']].map(([m, lbl]) => (
+              <button key={m} type="button" onClick={() => setModo(m)}
+                style={{ flex: 1, padding: '9px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${modo === m ? C.primary : C.border}`, background: modo === m ? C.primaryBg : 'transparent', color: modo === m ? C.primary : C.t3 }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
           <div>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>
               Valor da CBRio <span style={{ fontWeight: 400, color: C.t3 }}>(opcional se escolher uma área específica)</span>
@@ -407,8 +451,50 @@ function CreateModal({ onClose, onCreated }) {
             <textarea value={objetivo} onChange={e => setObjetivo(e.target.value)}
               rows={4} placeholder="Ex: A clareza do treinamento de novos voluntários no último ciclo — sentem que estão preparados para servir?"
               style={{ ...inp, resize: 'vertical', minHeight: 90 }} />
-            <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0' }}>A IA usa essa descrição para criar as perguntas certas.</p>
+            <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0' }}>{modo === 'ia' ? 'A IA usa essa descrição para criar as perguntas certas.' : 'Descrição interna da pesquisa (opcional).'}</p>
           </div>
+
+          {modo === 'manual' && (
+            <>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Título da pesquisa *</label>
+                <input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex: NPS · Treinamento de voluntários" style={inp} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Pergunta principal · nota 0 a 10 *</label>
+                <input value={npsTexto} onChange={e => setNpsTexto(e.target.value)} style={inp} />
+                <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0' }}>É a pergunta NPS — a resposta é uma nota de 0 a 10.</p>
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Perguntas adicionais</label>
+                  <button type="button" onClick={() => setExtras([...extras, { texto: '', tipo: 'texto_longo' }])}
+                    style={{ fontSize: 12, fontWeight: 600, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <Plus size={13} /> Adicionar
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {extras.map((ex, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <input value={ex.texto} onChange={e => setExtras(extras.map((x, j) => j === i ? { ...x, texto: e.target.value } : x))}
+                        placeholder={`Pergunta ${i + 1}`} style={{ ...inp, flex: 1 }} />
+                      <select value={ex.tipo} onChange={e => setExtras(extras.map((x, j) => j === i ? { ...x, tipo: e.target.value } : x))}
+                        style={{ ...inp, width: 150, flex: 'none' }}>
+                        <option value="texto_longo">Texto longo</option>
+                        <option value="texto_curto">Texto curto</option>
+                        <option value="escala_5">Escala 1 a 5</option>
+                      </select>
+                      <button type="button" onClick={() => setExtras(extras.filter((_, j) => j !== i))}
+                        title="Remover" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }}>
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                  {extras.length === 0 && <p style={{ fontSize: 12, color: C.t3, margin: 0 }}>Sem perguntas adicionais — só a nota 0 a 10.</p>}
+                </div>
+              </div>
+            </>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
