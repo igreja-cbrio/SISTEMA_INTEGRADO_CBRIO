@@ -111,7 +111,7 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
   }
 
   const porKind = {};
-  const porEventTime = {}; // etId -> { hora, total, criancas }
+  const porHora = {}; // 'HH:MM' -> { total, criancas } (histograma do horário do check-in)
   let totalCriancas = 0;
   const porCulto = {}; // cultoId -> { nome, total }
   let semCulto = 0;
@@ -121,10 +121,13 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
     porKind[kind] = (porKind[kind] || 0) + 1;
     const personId = ci.relationships?.person?.data?.id;
     const ehCrianca = personId ? persons.get(personId)?.child === true : false;
+    // Horário do check-in: o event_time costuma não vir na lista; o created_at do
+    // PRÓPRIO check-in (momento da entrada) é o sinal confiável → casa com o culto.
     const etId = ci.relationships?.event_time?.data?.id;
     const et = etId ? eventTimes.get(etId) : null;
-    const hora = horaBRT(et?.starts_at || et?.shows_at);
-    const slot = porEventTime[etId] || (porEventTime[etId] = { hora, total: 0, criancas: 0 });
+    const hora = horaBRT(et?.starts_at || et?.shows_at || ci.attributes?.created_at);
+    const hk = hora || '—';
+    const slot = porHora[hk] || (porHora[hk] = { total: 0, criancas: 0 });
     slot.total += 1;
     if (!ehCrianca) continue;
     slot.criancas += 1;
@@ -147,7 +150,7 @@ async function coletarFrequenciaKidsPCO(dataBRT) {
     diagnostico: {
       cultos_do_dia: cultosDoDia,
       por_kind: porKind,
-      por_event_time: Object.entries(porEventTime).map(([id, v]) => ({ event_time_id: id, ...v })),
+      por_hora_checkin: Object.entries(porHora).sort().map(([hora, v]) => ({ hora, ...v })),
     },
   };
 }
