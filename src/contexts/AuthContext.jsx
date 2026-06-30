@@ -45,15 +45,20 @@ export function AuthProvider({ children }) {
   // SIGNED_IN por foco de aba (Alt+Tab) — ver onAuthStateChange abaixo.
   const sessaoAtivaRef = useRef(false);
 
+  // fetchProfile/fetchPermissions retornam { ok } pra o chamador saber se os
+  // dados REALMENTE carregaram (antes engoliam o erro e retornavam undefined →
+  // o Promise.all "resolvia" mesmo vazio e o setLoading(false) liberava a tela
+  // em branco com "—". Causa raiz do "tela vazia exige refresh" · 2026-06-30).
+  // Em falha, NÃO apagam o estado já carregado (regra anti-"?").
   async function fetchProfile(userId, tentativa = 1) {
-    if (!supabase) return;
+    if (!supabase) return { ok: false, error: 'sem_supabase' };
     try {
       const { data, error } = await supabase
         .from('profiles')
         .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
         .eq('id', userId)
         .single();
-      if (!error && data) { setProfile(data); return; }
+      if (!error && data) { setProfile(data); return { ok: true, data }; }
       // Falha transitória (token renovando no resume, race do no-op lock, blip de
       // rede). Tenta de novo depois que o token assenta.
       if (tentativa < 2) {
@@ -62,20 +67,22 @@ export function AuthProvider({ children }) {
       }
       // Esgotou · NÃO apaga o perfil já carregado — senão o /perfil vira "?".
       console.warn('[Auth] fetchProfile falhou · mantendo perfil atual:', error?.message);
+      return { ok: false, error: error?.message || 'falha' };
     } catch (e) {
       if (tentativa < 2) {
         await new Promise((r) => setTimeout(r, 1200));
         return fetchProfile(userId, tentativa + 1);
       }
       console.warn('[Auth] fetchProfile erro · mantendo perfil atual:', e?.message);
+      return { ok: false, error: e?.message || 'erro' };
     }
   }
 
   async function fetchPermissions(tentativa = 1) {
     try {
-      if (!supabase) return;
+      if (!supabase) return { ok: false, error: 'sem_supabase' };
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
+      if (!session?.access_token) return { ok: false, error: 'sem_token' };
       const res = await fetch(`${API}/auth/my-permissions`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
@@ -83,7 +90,7 @@ export function AuthProvider({ children }) {
         const data = await res.json();
         setModulePerms(data.granular?.modulePerms ?? null);
         setPermData(data.granular ?? null);
-        return;
+        return { ok: true };
       }
       // Resposta não-ok (ex.: 401 com token renovando no resume) · tenta 1x.
       // Em falha NÃO apaga o que já tem (mantém o estado atual).
@@ -91,12 +98,28 @@ export function AuthProvider({ children }) {
         await new Promise((r) => setTimeout(r, 1200));
         return fetchPermissions(tentativa + 1);
       }
+      return { ok: false, error: `http_${res.status}` };
     } catch (e) {
       if (tentativa < 2) {
         await new Promise((r) => setTimeout(r, 1200));
         return fetchPermissions(tentativa + 1);
       }
       console.warn('[Auth] Erro ao buscar permissões · mantendo as atuais:', e?.message);
+      return { ok: false, error: e?.message || 'erro' };
+    }
+  }
+
+  // Carrega perfil + permissões e, se algum vier vazio numa sessão real (race de
+  // refresh de token / no-op lock), faz UMA re-tentativa após o token assentar —
+  // em vez de liberar a tela em branco e depender de F5. Bounded (1 retry).
+  async function carregarDadosUsuario(userId) {
+    const [pRes, permRes] = await Promise.all([fetchProfile(userId), fetchPermissions()]);
+    if (!pRes?.ok || !permRes?.ok) {
+      await new Promise((r) => setTimeout(r, 1500));
+      await Promise.all([
+        pRes?.ok ? Promise.resolve() : fetchProfile(userId),
+        permRes?.ok ? Promise.resolve() : fetchPermissions(),
+      ]);
     }
   }
 
@@ -123,7 +146,7 @@ export function AuthProvider({ children }) {
       sessaoAtivaRef.current = !!session?.user;
       setUser(session?.user ?? null);
       if (session?.user) {
-        await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
+        await carregarDadosUsuario(session.user.id);
       }
     }).catch((e) => {
       console.warn('[Auth] Erro ao obter sessão:', e?.message);
@@ -157,7 +180,7 @@ export function AuthProvider({ children }) {
         const loginReal = !tinhaSessao;
         if (loginReal) {
           setLoading(true);
-          await Promise.all([fetchProfile(session.user.id), fetchPermissions()]);
+          await carregarDadosUsuario(session.user.id);
           setLoading(false);
         }
       } else {
