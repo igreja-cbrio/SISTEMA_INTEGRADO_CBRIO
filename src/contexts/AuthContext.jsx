@@ -65,6 +65,13 @@ export function AuthProvider({ children }) {
         await new Promise((r) => setTimeout(r, 1200));
         return fetchProfile(userId, tentativa + 1);
       }
+      // Fallback pelo backend (Bearer token · service_role · sem depender do RLS +
+      // token do client, que pode ir stale no resume/no-op lock e a policy
+      // auth.role()='authenticated' falhar fechado → 0 linhas → /perfil "conexão
+      // instável"). É o mesmo caminho confiável do my-permissions (que faz o menu
+      // carregar). 2026-06-30.
+      const viaBackend = await fetchProfileBackend();
+      if (viaBackend.ok) return viaBackend;
       // Esgotou · NÃO apaga o perfil já carregado — senão o /perfil vira "?".
       console.warn('[Auth] fetchProfile falhou · mantendo perfil atual:', error?.message);
       return { ok: false, error: error?.message || 'falha' };
@@ -73,7 +80,28 @@ export function AuthProvider({ children }) {
         await new Promise((r) => setTimeout(r, 1200));
         return fetchProfile(userId, tentativa + 1);
       }
+      const viaBackend = await fetchProfileBackend();
+      if (viaBackend.ok) return viaBackend;
       console.warn('[Auth] fetchProfile erro · mantendo perfil atual:', e?.message);
+      return { ok: false, error: e?.message || 'erro' };
+    }
+  }
+
+  // Busca o perfil pelo backend (valida o Bearer token e lê via service_role,
+  // ignorando o RLS do client). Rede de segurança pro fetchProfile direto.
+  async function fetchProfileBackend() {
+    try {
+      if (!supabase) return { ok: false, error: 'sem_supabase' };
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return { ok: false, error: 'sem_token' };
+      const res = await fetch(`${API}/auth/me`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) return { ok: false, error: `http_${res.status}` };
+      const data = await res.json();
+      if (data?.id) { setProfile(data); return { ok: true, data }; }
+      return { ok: false, error: 'sem_dados' };
+    } catch (e) {
       return { ok: false, error: e?.message || 'erro' };
     }
   }
