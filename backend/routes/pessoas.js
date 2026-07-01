@@ -6,7 +6,7 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { acharOuCriar, buscarCandidatos } = require('../services/membroMatch');
@@ -30,7 +30,7 @@ const findOrCreateMembro = acharOuCriar;
 // Retorna pessoa em mem_membros + papéis ativos (voluntário, visitante,
 // inscrito_next).
 // ---------------------------------------------------------------------------
-router.get('/lookup', async (req, res) => {
+router.get('/lookup', authorizeModule('membros', 1), async (req, res) => {
   try {
     const cpf = cleanCpf(req.query.cpf);
     const email = req.query.email ? String(req.query.email).trim().toLowerCase() : null;
