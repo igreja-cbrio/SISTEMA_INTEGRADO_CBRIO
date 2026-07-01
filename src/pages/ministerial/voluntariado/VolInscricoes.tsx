@@ -197,6 +197,8 @@ export default function VolInscricoes() {
   });
   const check = bg?.check || null;
   const integracaoBloqueada = selKidsBridge && (!check || !BG_LIBERADO.has(check.status));
+  // Integrar exige a área direcionada definida (onde a pessoa vai servir).
+  const semDirecionada = !!selected && !(selected.area_direcionada && selected.area_direcionada.length);
 
   const consultarBg = useMutation({
     mutationFn: () => voluntariado.consultarAntecedentes(selected!.id),
@@ -282,6 +284,11 @@ export default function VolInscricoes() {
       limit: pageSize,
       offset: page * pageSize,
     }),
+  });
+
+  const { data: distDir } = useQuery<{ rows: Array<{ ministerio: string; total: number }>; pessoas: number }>({
+    queryKey: ['vol', 'por-direcionada', ano],
+    queryFn: () => voluntariado.distribuicaoDirecionada({ ano }),
   });
 
   const chartData = useMemo(() => {
@@ -455,6 +462,38 @@ export default function VolInscricoes() {
               </div>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Onde estão · distribuição por área direcionada (o que a coordenação registrou) */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Onde estão · por área direcionada</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!distDir?.rows?.length ? (
+            <p className="text-sm text-muted-foreground">
+              Nenhuma pessoa direcionada ainda. A "Área direcionada" é definida na ficha e passa a ser exigida ao integrar.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {distDir.pessoas} pessoa(s) direcionada(s) · quem foi para mais de um ministério conta em cada.
+              </p>
+              {(() => {
+                const max = Math.max(...distDir.rows.map((r) => r.total), 1);
+                return distDir.rows.map((r) => (
+                  <div key={r.ministerio} className="flex items-center gap-3">
+                    <div className="w-32 shrink-0 text-sm truncate" title={r.ministerio}>{r.ministerio}</div>
+                    <div className="flex-1 h-5 rounded bg-muted overflow-hidden">
+                      <div className="h-full bg-[#00B39D]" style={{ width: `${Math.round((r.total / max) * 100)}%` }} />
+                    </div>
+                    <div className="w-8 shrink-0 text-sm font-semibold text-right">{r.total}</div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -830,6 +869,14 @@ export default function VolInscricoes() {
                 </div>
               )}
 
+              {/* Aviso: integrar exige a área direcionada */}
+              {semDirecionada && (selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
+                <p className="text-xs text-amber-600 pt-3">
+                  Para integrar, defina a <b>Área direcionada</b> (onde a pessoa vai servir) em{' '}
+                  <button type="button" className="underline font-medium" onClick={abrirEdicao}>Editar dados</button>.
+                </p>
+              )}
+
               {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
               <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
                 {selected.status === 'inscrito' && (
@@ -840,8 +887,12 @@ export default function VolInscricoes() {
                 )}
                 {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
                   <Button size="sm" variant="default"
-                    disabled={mudarStatus.isPending || integracaoBloqueada}
-                    title={integracaoBloqueada ? 'Triagem de antecedentes pendente — libere a verificação antes de integrar' : undefined}
+                    disabled={mudarStatus.isPending || integracaoBloqueada || semDirecionada}
+                    title={integracaoBloqueada
+                      ? 'Triagem de antecedentes pendente — libere a verificação antes de integrar'
+                      : semDirecionada
+                        ? 'Defina a Área direcionada (em "Editar dados") antes de integrar'
+                        : undefined}
                     onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
                     Integrar
                   </Button>

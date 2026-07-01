@@ -3061,6 +3061,52 @@ router.get('/inscricoes', async (req, res) => {
   }
 });
 
+// GET /inscricoes/por-direcionada — distribuição de voluntários por área
+// direcionada (onde a coordenação de fato encaminhou cada pessoa). Alimenta a
+// estatística "onde estão os voluntários" da equipe. Filtros opcionais: ano,
+// status. A pessoa direcionada a N ministérios conta em cada um deles.
+router.get('/inscricoes/por-direcionada', async (req, res) => {
+  try {
+    const ano = req.query.ano ? String(req.query.ano) : null;
+    const status = req.query.status ? String(req.query.status) : null;
+    let all = [];
+    let offset = 0;
+    const page = 1000;
+    // Pagina pra não bater no cap de 1000 linhas do PostgREST.
+    while (true) {
+      let q = supabase.from('vol_inscricoes')
+        .select('area_direcionada, status')
+        .not('area_direcionada', 'is', null)
+        .order('data_inscricao', { ascending: false })
+        .range(offset, offset + page - 1);
+      if (ano) q = q.gte('data_inscricao', `${ano}-01-01`).lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+      if (status) q = q.eq('status', status);
+      const { data, error } = await q;
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < page) break;
+      offset += page;
+    }
+    const counts = {};
+    let pessoas = 0;
+    for (const r of all) {
+      const arr = Array.isArray(r.area_direcionada) ? r.area_direcionada : [];
+      if (arr.length) pessoas += 1;
+      for (const m of arr) {
+        const k = String(m).trim();
+        if (k) counts[k] = (counts[k] || 0) + 1;
+      }
+    }
+    const rows = Object.entries(counts)
+      .map(([ministerio, total]) => ({ ministerio, total }))
+      .sort((a, b) => b.total - a.total);
+    res.json({ rows, pessoas });
+  } catch (e) {
+    console.error('[inscricoes por-direcionada]', e.message);
+    res.status(500).json({ error: 'Erro ao calcular distribuição' });
+  }
+});
+
 // PATCH /api/voluntariado/inscricoes/:id — triagem: muda o status
 // inscrito → enviado_ministerio → integrado (ou volta). Ação da coordenação.
 const VOL_INSCRICAO_STATUS = ['inscrito', 'enviado_ministerio', 'integrado'];
@@ -3080,7 +3126,17 @@ router.patch('/inscricoes/:id', async (req, res) => {
     // liberada (nada consta / aprovação manual / dispensa registrada).
     if (status === 'integrado') {
       const { data: insc } = await supabase.from('vol_inscricoes')
-        .select('area').eq('id', req.params.id).maybeSingle();
+        .select('area, area_direcionada').eq('id', req.params.id).maybeSingle();
+
+      // Exige a área direcionada — não integra sem registrar onde a pessoa vai
+      // de fato servir (é o que alimenta a estatística "onde estão os voluntários").
+      if (!Array.isArray(insc?.area_direcionada) || insc.area_direcionada.length === 0) {
+        return res.status(400).json({
+          error: 'Defina a área direcionada (onde a pessoa vai servir) antes de integrar.',
+          code: 'direcionada_obrigatoria',
+        });
+      }
+
       const areaInsc = String(insc?.area || '').toLowerCase();
       if (areaInsc === 'kids' || areaInsc === 'bridge') {
         const { data: chk } = await supabase.from('vol_background_checks')

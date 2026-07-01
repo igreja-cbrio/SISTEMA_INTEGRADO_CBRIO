@@ -2204,6 +2204,8 @@ export const voluntariado = {
   atualizarInscricao: (id, status) => patch(`/voluntariado/inscricoes/${id}`, { status }),
   // Edita os dados da ficha (CPF, nascimento, nome da mãe, interesse, área direcionada)
   editarInscricao: (id, dados) => patch(`/voluntariado/inscricoes/${id}/dados`, dados),
+  // Distribuição de voluntários por área direcionada ("onde estão as pessoas")
+  distribuicaoDirecionada: (params) => get('/voluntariado/inscricoes/por-direcionada' + (params ? '?' + new URLSearchParams(params) : '')),
   // Triagem de antecedentes criminais (Kids/Bridge)
   antecedentes: (inscricaoId) => get(`/voluntariado/inscricoes/${inscricaoId}/antecedentes`),
   consultarAntecedentes: (inscricaoId) => post(`/voluntariado/inscricoes/${inscricaoId}/antecedentes/consultar`, {}),
