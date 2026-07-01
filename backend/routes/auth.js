@@ -13,7 +13,7 @@ router.get('/me', authenticate, async (req, res) => {
   try {
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('id, name, email, role, area, kpi_areas, kpi_valores, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria')
+      .select('id, name, email, role, area, kpi_areas, kpi_valores, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
       .eq('id', req.user.userId)
       .single();
 
