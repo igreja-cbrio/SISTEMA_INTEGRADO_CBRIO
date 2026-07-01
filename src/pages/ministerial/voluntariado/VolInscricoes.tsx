@@ -784,7 +784,7 @@ export default function VolInscricoes() {
                       <button type="button" className="underline font-medium" onClick={abrirEdicao}>Completar agora</button>
                     </p>
                   )}
-                  {check?.consulta_erro && (
+                  {check?.status === 'erro' && check?.consulta_erro && (
                     <p className="text-xs text-orange-600">Erro na consulta: {check.consulta_erro}</p>
                   )}
                   {check?.certidao_url && (

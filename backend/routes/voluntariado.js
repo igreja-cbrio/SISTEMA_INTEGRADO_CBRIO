@@ -3300,6 +3300,10 @@ router.patch('/antecedentes/:id', async (req, res) => {
     if (!MAP[acao]) return res.status(400).json({ error: 'Ação inválida' });
     const patch = {
       status: MAP[acao],
+      // A revisão humana resolve o resultado — zera o erro da consulta
+      // automática anterior (não deixa "Parâmetro(s) inválido(s)." pendurado
+      // numa triagem já aprovada/dispensada).
+      consulta_erro: null,
       observacoes: observacoes !== undefined ? (observacoes || null) : undefined,
       revisado_por: req.user.userId || null,
       revisado_por_nome: req.user.name || req.user.email || null,
