@@ -1027,41 +1027,43 @@ router.get('/kpi/:id', async (req, res) => {
     if (ek) throw ek;
     if (!kpi) return res.status(404).json({ error: 'KPI não encontrado' });
 
-    // Trajetoria atual (status calculado)
-    const { data: trajAtual } = await supabase
-      .from('vw_kpi_trajetoria_atual')
-      .select('*')
-      .eq('kpi_id', id)
-      .maybeSingle();
-
-    // Trajetoria completa (todos checkpoints)
-    const { data: checkpoints } = await supabase
-      .from('kpi_trajetoria')
-      .select('id, periodo_referencia, meta_valor, meta_texto, observacao, ativa, created_at')
-      .eq('kpi_id', id)
-      .order('periodo_referencia', { ascending: true });
-
-    // Histórico de registros (últimos 12)
-    // Colunas reais: observações (plural) e user_id · antes estavam erradas
-    // (`observação` e `preenchido_por_user_id`) e o SELECT silenciava com
-    // registros=null · histórico aparecia vazio no /painel/kpi/:id.
-    const { data: registros } = await supabase
-      .from('kpi_registros')
-      .select('id, periodo_referencia, valor_realizado, valor_texto, observacoes, origem, data_preenchimento, user_id')
-      .eq('indicador_id', id)
-      .order('periodo_referencia', { ascending: false })
-      .limit(12);
-
-    // Líder (rh_funcionarios)
-    let lider = null;
-    if (kpi.lider_funcionario_id) {
-      const { data: l } = await supabase
-        .from('rh_funcionarios')
-        .select('id, nome, cargo, email')
-        .eq('id', kpi.lider_funcionario_id)
-        .maybeSingle();
-      lider = l || null;
-    }
+    // As 4 leituras abaixo só dependem do `id` (ou de `kpi`, já buscado) e são
+    // independentes entre si → rodam em paralelo (colapsa ~4 round-trips REST em
+    // ~1). supabase-js resolve com {data,error} e NÃO rejeita em erro de query,
+    // então o Promise.all preserva o comportamento silencioso anterior.
+    // Colunas de kpi_registros: observacoes (plural) + user_id (não regredir).
+    const [
+      { data: trajAtual },
+      { data: checkpoints },
+      { data: registros },
+      liderRes,
+    ] = await Promise.all([
+      supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('*')
+        .eq('kpi_id', id)
+        .maybeSingle(),
+      supabase
+        .from('kpi_trajetoria')
+        .select('id, periodo_referencia, meta_valor, meta_texto, observacao, ativa, created_at')
+        .eq('kpi_id', id)
+        .order('periodo_referencia', { ascending: true }),
+      supabase
+        .from('kpi_registros')
+        .select('id, periodo_referencia, valor_realizado, valor_texto, observacoes, origem, data_preenchimento, user_id')
+        .eq('indicador_id', id)
+        .order('periodo_referencia', { ascending: false })
+        .limit(12),
+      // Líder (rh_funcionarios) · depende só de kpi.lider_funcionario_id (já buscado acima)
+      kpi.lider_funcionario_id
+        ? supabase
+            .from('rh_funcionarios')
+            .select('id, nome, cargo, email')
+            .eq('id', kpi.lider_funcionario_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    const lider = liderRes?.data || null;
 
     // Última revisão OKR (se existir tabela e KPI eh OKR)
     let revisoes = [];

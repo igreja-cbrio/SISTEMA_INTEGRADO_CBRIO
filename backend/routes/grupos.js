@@ -601,7 +601,8 @@ router.get('/kpis/sem-relato', async (req, res) => {
     const nomes = {};
     for (let i = 0; i < liderIds.length; i += 400) {
       const { data: ms } = await supabase
-        .from('mem_membros').select('id, nome').in('id', liderIds.slice(i, i + 400));
+        .from('mem_membros').select('id, nome').in('id', liderIds.slice(i, i + 400))
+        .is('deleted_at', null);
       (ms || []).forEach(m => { nomes[m.id] = m.nome; });
     }
 
@@ -2382,7 +2383,7 @@ router.post('/importar-lideres/analisar', authorizeModule('grupos', 3), uploadMw
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     const liderNomes = new Map();
     for (let i = 0; i < liderIds.length; i += 400) {
-      const { data } = await supabase.from('mem_membros').select('id, nome').in('id', liderIds.slice(i, i + 400));
+      const { data } = await supabase.from('mem_membros').select('id, nome').in('id', liderIds.slice(i, i + 400)).is('deleted_at', null);
       for (const m of data || []) liderNomes.set(m.id, m.nome);
     }
 
