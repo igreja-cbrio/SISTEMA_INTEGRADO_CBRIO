@@ -55,7 +55,7 @@ router.get('/', authorizeModule('eventos-externos', 1), async (req, res) => {
 // POST / — cria evento
 router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const { nome, data, hora, local, descricao, form_ativo, tem_sorteio, campos, capa_url } = req.body || {};
+    const { nome, data, hora, local, descricao, form_ativo, tem_sorteio, campos, capa_url, premios } = req.body || {};
     if (!nome || nome.trim().length < 2) return res.status(400).json({ error: 'Nome obrigatório' });
     // slug único
     let base = slugify(nome), slug = base, n = 1;
@@ -69,6 +69,7 @@ router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
       local: local || null, descricao: descricao || null,
       form_ativo: form_ativo !== false, tem_sorteio: tem_sorteio !== false,
       campos: Array.isArray(campos) ? campos : [], capa_url: capa_url || null,
+      premios: Array.isArray(premios) ? premios : [],
       created_by: req.user?.userId || null,
     }).select('*').single();
     if (error) throw error;
@@ -94,7 +95,7 @@ router.get('/:id', authorizeModule('eventos-externos', 1), async (req, res) => {
 // PUT /:id — atualizar
 router.put('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo', 'tem_sorteio', 'campos', 'capa_url'];
+    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo', 'tem_sorteio', 'campos', 'capa_url', 'premios'];
     const patch = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     const { data, error } = await supabase.from('ext_eventos')
@@ -115,18 +116,23 @@ router.delete('/:id', authorizeModule('eventos-externos', 3), async (req, res) =
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /:id/sortear — sorteia um inscrito ainda não premiado. Body: { premio }
+// POST /:id/sortear — sorteia um inscrito. Body: { premio, permitir_repetir }.
+// Vários sorteios por evento (1 por prêmio). Por padrão exclui quem já ganhou;
+// com permitir_repetir=true sorteia do pool inteiro (pode repetir ganhador).
 router.post('/:id/sortear', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const { premio } = req.body || {};
+    const { premio, permitir_repetir } = req.body || {};
     const { data: inscritos } = await supabase.from('ext_inscricoes')
       .select('id, nome, numero_sorte').eq('evento_id', req.params.id).is('deleted_at', null);
     if (!inscritos || !inscritos.length) return res.status(400).json({ error: 'Sem inscritos pra sortear' });
-    const { data: jaSorteados } = await supabase.from('ext_sorteios')
-      .select('inscricao_id').eq('evento_id', req.params.id);
-    const ganhos = new Set((jaSorteados || []).map(s => s.inscricao_id));
-    const elegiveis = inscritos.filter(i => !ganhos.has(i.id));
-    if (!elegiveis.length) return res.status(400).json({ error: 'Todos os inscritos já foram sorteados' });
+    let elegiveis = inscritos;
+    if (!permitir_repetir) {
+      const { data: jaSorteados } = await supabase.from('ext_sorteios')
+        .select('inscricao_id').eq('evento_id', req.params.id);
+      const ganhos = new Set((jaSorteados || []).map(s => s.inscricao_id));
+      elegiveis = inscritos.filter(i => !ganhos.has(i.id));
+    }
+    if (!elegiveis.length) return res.status(400).json({ error: 'Todos os inscritos já foram sorteados (marque "permitir repetir" pra sortear de novo)' });
     const g = elegiveis[Math.floor(Math.random() * elegiveis.length)];
     const { data: sorteio, error } = await supabase.from('ext_sorteios').insert({
       evento_id: req.params.id, premio: premio ? String(premio).trim().slice(0, 200) : null,
