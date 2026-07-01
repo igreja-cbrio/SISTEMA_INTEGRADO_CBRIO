@@ -487,6 +487,70 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
   return { count: upserted, dbError: firstError };
 }
 
+// ── Reconciliacao com o roster atual do Planning Center ─────────────────────
+// Chamar APENAS apos um sync COMPLETO (todos os service types + fetchAllServicesPeople,
+// i.e. executarSyncCompleto) · NUNCA apos sync historico/range (senao arquiva quem
+// so nao serviu no intervalo). O sync so fazia UPSERT (nunca removia), entao
+// vol_profiles so crescia. Aqui: arquiva perfis origem='planning_center' que NAO
+// vieram no roster atual (sairam do PCO) e desarquiva os que reapareceram. Internos
+// (origem<>planning_center) nunca sao tocados.
+// Guarda de seguranca: nao reconcilia se o roster veio pequeno (pull parcial/falho) —
+// exige cobrir >= metade dos ativos atuais e >= 100 pessoas.
+async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
+  const pcIds = new Set(Array.from(volunteersMap.keys()).filter(Boolean).map(String));
+
+  // Le os perfis PC do sistema, paginado (cap de 1000 do PostgREST).
+  const fetchAll = async (arquivado) => {
+    let all = [], offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('vol_profiles')
+        .select('id, planning_center_id')
+        .eq('origem', 'planning_center')
+        .eq('arquivado', arquivado)
+        .range(offset, offset + 999);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    return all;
+  };
+
+  const ativos = await fetchAll(false);
+  const minRoster = Math.max(100, Math.floor(ativos.length * 0.5));
+  if (pcIds.size < minRoster) {
+    return { skipped: true, motivo: 'roster_pequeno', roster: pcIds.size, minRoster, arquivados: 0, desarquivados: 0 };
+  }
+
+  const nowIso = new Date().toISOString();
+  const updateInChunks = async (ids, patch) => {
+    let n = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const { error } = await supabase.from('vol_profiles').update(patch).in('id', lote);
+      if (!error) n += lote.length;
+    }
+    return n;
+  };
+
+  const paraArquivar = ativos
+    .filter(p => p.planning_center_id && !pcIds.has(String(p.planning_center_id)))
+    .map(p => p.id);
+  const arquivados = paraArquivar.length
+    ? await updateInChunks(paraArquivar, { arquivado: true, arquivado_em: nowIso }) : 0;
+
+  const arquivadosDb = await fetchAll(true);
+  const paraDesarquivar = arquivadosDb
+    .filter(p => p.planning_center_id && pcIds.has(String(p.planning_center_id)))
+    .map(p => p.id);
+  const desarquivados = paraDesarquivar.length
+    ? await updateInChunks(paraDesarquivar, { arquivado: false, arquivado_em: null }) : 0;
+
+  return { skipped: false, roster: pcIds.size, arquivados, desarquivados };
+}
+
 // ── Sync team members from vol_schedules ────────────────────────────────────
 // Reads vol_schedules (source of truth) and populates vol_teams, vol_positions,
 // and vol_team_members. Supports both membresia-linked (volunteer_profile_id)
@@ -755,6 +819,7 @@ module.exports = {
   fetchAllServicesPeople,
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
+  reconcilePlanningCenterProfiles,
   assignVolunteersToTeams,
   syncTeamMembersFromSchedules,
   fetchPcoCpfMap,

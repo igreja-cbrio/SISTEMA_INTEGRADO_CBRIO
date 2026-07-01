@@ -2324,7 +2324,9 @@ export const voluntariado = {
   // Sync logs
   syncLogs: () => get('/voluntariado/sync-logs'),
   // Volunteers pool (all vol_profiles with team memberships, cached 5 min on client)
-  volunteersPool: () => get('/voluntariado/volunteers-pool'),
+  // incluirArquivados=true traz também os arquivados (saíram do PCO na reconciliação).
+  volunteersPool: (incluirArquivados = false) =>
+    get(`/voluntariado/volunteers-pool${incluirArquivados ? '?incluir_arquivados=1' : ''}`),
   // CPF / Membresia unification
   volByMembro: (membroId) => get(`/voluntariado/vol-by-membro/${membroId}`),
   queroServir: (membroId) => post('/voluntariado/quero-servir', { membro_id: membroId }),

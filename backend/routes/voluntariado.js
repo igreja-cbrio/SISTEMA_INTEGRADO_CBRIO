@@ -1360,13 +1360,16 @@ router.post('/allocate/:id', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 router.get('/volunteers-pool', async (req, res) => {
   try {
+    // Arquivados (saíram do PCO na reconciliação) ficam FORA por padrão;
+    // ?incluir_arquivados=1 traz todos (a VolLista usa isso pra o card/filtro).
+    const incluirArquivados = ['1', 'true'].includes(String(req.query.incluir_arquivados || ''));
     // Pagina pra contornar o cap de 1000 do PostgREST (número real · 1 a 1).
     let all = []; let offset = 0;
     while (true) {
-      const { data, error } = await supabase
+      let q = supabase
         .from('vol_profiles')
         .select(`
-          id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf,
+          id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado,
           team_members:vol_team_members(
             id, team_id, position_id,
             team:vol_teams(id, name, color),
@@ -1374,6 +1377,8 @@ router.get('/volunteers-pool', async (req, res) => {
           )
         `)
         .order('full_name').range(offset, offset + 999);
+      if (!incluirArquivados) q = q.eq('arquivado', false);
+      const { data, error } = await q;
       if (error) return res.status(400).json({ error: error.message });
       if (!data || !data.length) break;
       all = all.concat(data);
