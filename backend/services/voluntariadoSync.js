@@ -7,7 +7,7 @@ const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchAllServiceTypes, fetchAllPlans, fetchAllTeamPersons,
   fetchAllServicesPeople, processServiceType, PC_SERVICES_BASE,
-  upsertVolunteerQrCodes, upsertVolunteerProfiles,
+  upsertVolunteerQrCodes, upsertVolunteerProfiles, reconcilePlanningCenterProfiles,
 } = require('./planningCenter');
 
 async function executarSyncCompleto() {
@@ -65,6 +65,15 @@ async function executarSyncCompleto() {
   const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
   const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
+  // Reconciliacao: arquiva quem saiu do PCO (allVolunteers = roster COMPLETO do
+  // Planning Center · inclui fetchAllServicesPeople). So roda aqui, no sync completo.
+  let reconciliacao = { arquivados: 0, desarquivados: 0, skipped: true };
+  try {
+    reconciliacao = await reconcilePlanningCenterProfiles(supabase, allVolunteers);
+  } catch (e) {
+    console.error('[VOL SYNC] reconcilePlanningCenterProfiles:', e.message);
+  }
+
   // Materializa as escalas recentes do PCO na Frequência (quem serviu nos
   // últimos ~100 dias) — assim cada culto reflete sozinho, sem a planilha.
   let freqPco = 0;
@@ -87,6 +96,7 @@ async function executarSyncCompleto() {
     avatarsImported,
     totalMembersFound,
     totalMembersProcessed,
+    reconciliacao,
     dbError,
   };
 }

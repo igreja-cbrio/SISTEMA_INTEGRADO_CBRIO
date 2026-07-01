@@ -3,10 +3,11 @@ import { voluntariado } from '@/api';
 import type { VolProfile, VolUserRole } from '../types';
 
 // All vol_profiles with their team memberships. 5-min stale cache.
-export function useVolunteersPool() {
+// incluirArquivados=true também traz os que saíram do PCO (reconciliação).
+export function useVolunteersPool(incluirArquivados = false) {
   return useQuery({
-    queryKey: ['vol', 'volunteers-pool'],
-    queryFn: () => voluntariado.volunteersPool(),
+    queryKey: ['vol', 'volunteers-pool', incluirArquivados],
+    queryFn: () => voluntariado.volunteersPool(incluirArquivados),
     staleTime: 5 * 60 * 1000,
   });
 }

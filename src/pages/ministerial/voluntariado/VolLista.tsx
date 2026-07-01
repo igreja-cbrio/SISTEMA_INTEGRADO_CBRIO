@@ -51,7 +51,7 @@ export default function VolLista() {
 
 // ── Lista principal ──────────────────────────────────────────────────────────
 function TodosList() {
-  const { data: pool = [], isLoading } = useVolunteersPool();
+  const { data: pool = [], isLoading } = useVolunteersPool(true); // inclui arquivados p/ o card/filtro
   const sync = useSyncPlanningCenter();
   const queryClient = useQueryClient();
 
@@ -83,8 +83,13 @@ function TodosList() {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [pool]);
 
+  // Ativos = roster atual do PCO + internos. Arquivados = saíram do PCO (reconciliação).
+  const ativos = useMemo(() => (pool as any[]).filter(v => !v.arquivado), [pool]);
+  const arquivados = useMemo(() => (pool as any[]).filter(v => v.arquivado), [pool]);
+
   const filtered = useMemo(() => {
-    let list = pool as any[];
+    // O filtro "arquivados" mostra os que saíram do PCO; os demais operam sobre os ativos.
+    let list = sourceFilter === 'arquivados' ? arquivados : ativos;
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(v =>
@@ -101,7 +106,7 @@ function TodosList() {
     if (sourceFilter === 'pc') list = list.filter(v => !!v.planning_center_id);
     else if (sourceFilter === 'sistema') list = list.filter(v => !v.planning_center_id);
     return list;
-  }, [pool, search, teamFilter, sourceFilter]);
+  }, [ativos, arquivados, search, teamFilter, sourceFilter]);
 
   const { pageItems: filteredPag, paginacaoProps: volPagProps } = usePaginacaoLocal(filtered, 25);
 
@@ -112,7 +117,10 @@ function TodosList() {
         if (data.dbError) {
           toast.error(`Erro no banco: ${data.dbError}`);
         } else {
-          toast.success(`Sincronizado: ${data.volunteersSynced ?? 0} voluntarios, ${data.services ?? 0} cultos, ${data.newSchedules ?? 0} escalas`);
+          const rec = data.reconciliacao;
+          const recMsg = rec && !rec.skipped && (rec.arquivados || rec.desarquivados)
+            ? ` · ${rec.arquivados} arquivado(s), ${rec.desarquivados} reativado(s)` : '';
+          toast.success(`Sincronizado: ${data.volunteersSynced ?? 0} voluntarios, ${data.services ?? 0} cultos, ${data.newSchedules ?? 0} escalas${recMsg}`);
         }
       },
       onError: (err: any) => toast.error(err.message || 'Erro ao sincronizar'),
@@ -124,7 +132,10 @@ function TodosList() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-foreground">Voluntários</h1>
-          <p className="text-sm text-muted-foreground">{pool.length} voluntario(s) no sistema</p>
+          <p className="text-sm text-muted-foreground">
+            {ativos.length} voluntario(s) ativo(s)
+            {arquivados.length > 0 && ` · ${arquivados.length} arquivado(s) (saíram do PCO)`}
+          </p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <Button size="sm" className="gap-2 flex-1 sm:flex-none bg-[#00B39D] hover:bg-[#00B39D]/80" onClick={() => setShowAdd(true)}>
@@ -155,14 +166,18 @@ function TodosList() {
             <SelectItem value="all">Todas origens</SelectItem>
             <SelectItem value="pc">Planning Center</SelectItem>
             <SelectItem value="sistema">Cadastro interno</SelectItem>
+            {arquivados.length > 0 && <SelectItem value="arquivados">Arquivados (saíram do PCO)</SelectItem>}
           </SelectContent>
         </Select>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold">{pool.length}</p><p className="text-xs text-muted-foreground">Total</p></CardContent></Card>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-blue-600">{(pool as any[]).filter(v => v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Planning Center</p></CardContent></Card>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-[#00B39D]">{(pool as any[]).filter(v => !v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Internos</p></CardContent></Card>
+      <div className={`grid gap-3 ${arquivados.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold">{ativos.length}</p><p className="text-xs text-muted-foreground">Total ativos</p></CardContent></Card>
+        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-blue-600">{ativos.filter(v => v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Planning Center</p></CardContent></Card>
+        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-[#00B39D]">{ativos.filter(v => !v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Internos</p></CardContent></Card>
+        {arquivados.length > 0 && (
+          <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-muted-foreground">{arquivados.length}</p><p className="text-xs text-muted-foreground">Arquivados</p></CardContent></Card>
+        )}
       </div>
 
       {isLoading ? (
