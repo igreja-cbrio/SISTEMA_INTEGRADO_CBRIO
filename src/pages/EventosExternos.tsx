@@ -161,6 +161,7 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
     capa_url: evento?.capa_url || '',
   });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
+  const [premios, setPremios] = useState<string[]>(evento?.premios || []);
   const [salvando, setSalvando] = useState(false);
   const [enviandoCapa, setEnviandoCapa] = useState(false);
   async function enviarCapa(file?: File) {
@@ -174,7 +175,7 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
     for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo precisa de uma pergunta'); return; } if (c.tipo === 'select' && !(c.opcoes || []).length) { toast.error(`Adicione opções em "${c.label}"`); return; } }
     setSalvando(true);
     try {
-      const payload = { ...f, campos };
+      const payload = { ...f, campos, premios: premios.map(p => p.trim()).filter(Boolean) };
       const ev: any = ed ? await api.atualizar(evento.id, payload) : await api.criar(payload);
       toast.success(ed ? 'Evento atualizado' : 'Evento criado');
       onSaved(ed ? evento.id : ev.id);
@@ -213,6 +214,18 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
             <input type="checkbox" checked={f.tem_sorteio} onChange={e => setF({ ...f, tem_sorteio: e.target.checked })} />
             Tem sorteio (mostra o número da sorte com confete ao confirmar)
           </label>
+          {f.tem_sorteio && (
+            <div className="space-y-2 rounded-lg border border-border p-2">
+              <div className="text-xs font-medium text-muted-foreground">Prêmios do sorteio <span className="font-normal">(1 ganhador por prêmio)</span></div>
+              {premios.map((p, i) => (
+                <div key={i} className="flex gap-2">
+                  <Input placeholder={`${i + 1}º prêmio`} value={p} onChange={e => { const a = [...premios]; a[i] = e.target.value; setPremios(a); }} className="h-8 text-sm" />
+                  <button onClick={() => setPremios(premios.filter((_, j) => j !== i))} className="text-red-500 px-1"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              ))}
+              <Button size="sm" variant="outline" onClick={() => setPremios([...premios, ''])}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar prêmio</Button>
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={f.form_ativo} onChange={e => setF({ ...f, form_ativo: e.target.checked })} />
             Inscrições abertas
@@ -244,6 +257,20 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
     setSorteando(true);
     try { const s: any = await api.sortear(id, premio); setUltimo(s); setPremio(''); carregar(); }
     catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
+  }
+  const sorteioDoPremio = (nome: string) => (ev?.sorteios || []).find((s: any) => (s.premio || '') === nome);
+  async function sortearPremio(nome: string) {
+    setSorteando(true);
+    try { const s: any = await api.sortear(id, nome); setUltimo(s); carregar(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
+  }
+  async function sortearTodos() {
+    setSorteando(true);
+    try {
+      const pendentes = (ev?.premios || []).filter((p: string) => !sorteioDoPremio(p));
+      for (const p of pendentes) { await api.sortear(id, p); }
+      carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
   }
   async function excluir() {
     if (!window.confirm('Excluir este evento? (some da lista · reversível por super-admin)')) return;
@@ -285,27 +312,62 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
 
               {/* Sorteio */}
               <div className="rounded-lg border border-border p-3">
-                <div className="text-xs font-medium mb-2 flex items-center gap-1.5"><Gift className="h-4 w-4 text-primary" /> Sorteio</div>
-                <div className="flex gap-2">
-                  <Input placeholder="Prêmio (opcional)" value={premio} onChange={e => setPremio(e.target.value)} className="h-9" />
-                  <Button size="sm" onClick={sortear} disabled={sorteando || !(ev.inscritos?.length)}>{sorteando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Sortear'}</Button>
+                <div className="text-xs font-medium mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5"><Gift className="h-4 w-4 text-primary" /> Sorteio</span>
+                  {(ev.premios || []).length > 0 && (ev.premios || []).some((p: string) => !sorteioDoPremio(p)) && (
+                    <Button size="sm" variant="outline" onClick={sortearTodos} disabled={sorteando || !(ev.inscritos?.length)}>
+                      {sorteando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Sortear todos'}
+                    </Button>
+                  )}
                 </div>
-                {ultimo && (
-                  <div className="mt-3 rounded-lg bg-primary/10 border border-primary/30 p-3 text-center">
-                    <PartyPopper className="h-6 w-6 text-primary mx-auto" />
-                    <div className="text-lg font-bold mt-1">Nº {ultimo.numero_sorteado} · {ultimo.ganhador_nome}</div>
-                    {ultimo.premio && <div className="text-xs text-muted-foreground">{ultimo.premio}</div>}
+
+                {(ev.premios || []).length > 0 ? (
+                  <div className="space-y-1.5">
+                    {(ev.premios || []).map((p: string, i: number) => {
+                      const s = sorteioDoPremio(p);
+                      return (
+                        <div key={i} className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-1.5">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate">{p || `${i + 1}º prêmio`}</div>
+                            {s && <div className="text-xs text-primary">🎉 Nº {s.numero_sorteado} · {s.ganhador_nome}</div>}
+                          </div>
+                          {s ? (
+                            <Button size="sm" variant="ghost" onClick={() => sortearPremio(p)} disabled={sorteando} className="text-xs">Re-sortear</Button>
+                          ) : (
+                            <Button size="sm" onClick={() => sortearPremio(p)} disabled={sorteando || !(ev.inscritos?.length)}>
+                              {sorteando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Sortear'}
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <p className="text-[11px] text-muted-foreground">Defina/edite os prêmios em "Editar".</p>
                   </div>
-                )}
-                {(ev.sorteios || []).length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {ev.sorteios.map((s: any) => (
-                      <div key={s.id} className="flex justify-between text-xs border-b border-border/40 py-1">
-                        <span><b>Nº {s.numero_sorteado}</b> · {s.ganhador_nome}{s.premio ? ` · ${s.premio}` : ''}</span>
-                        <span className="text-muted-foreground">{new Date(s.sorteado_em).toLocaleDateString('pt-BR')}</span>
+                ) : (
+                  <>
+                    <div className="flex gap-2">
+                      <Input placeholder="Prêmio (opcional)" value={premio} onChange={e => setPremio(e.target.value)} className="h-9" />
+                      <Button size="sm" onClick={sortear} disabled={sorteando || !(ev.inscritos?.length)}>{sorteando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Sortear'}</Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">Dica: defina os prêmios em "Editar" pra sortear um ganhador por prêmio.</p>
+                    {ultimo && (
+                      <div className="mt-3 rounded-lg bg-primary/10 border border-primary/30 p-3 text-center">
+                        <PartyPopper className="h-6 w-6 text-primary mx-auto" />
+                        <div className="text-lg font-bold mt-1">Nº {ultimo.numero_sorteado} · {ultimo.ganhador_nome}</div>
+                        {ultimo.premio && <div className="text-xs text-muted-foreground">{ultimo.premio}</div>}
                       </div>
-                    ))}
-                  </div>
+                    )}
+                    {(ev.sorteios || []).length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {ev.sorteios.map((s: any) => (
+                          <div key={s.id} className="flex justify-between text-xs border-b border-border/40 py-1">
+                            <span><b>Nº {s.numero_sorteado}</b> · {s.ganhador_nome}{s.premio ? ` · ${s.premio}` : ''}</span>
+                            <span className="text-muted-foreground">{new Date(s.sorteado_em).toLocaleDateString('pt-BR')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
