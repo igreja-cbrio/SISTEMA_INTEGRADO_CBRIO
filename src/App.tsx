@@ -277,6 +277,8 @@ const Governanca = lazyWithRetry(() => import('./pages/governanca/Governanca'));
 // Jornada virou aba dentro de Membresia (componente MembersJornadaPanel).
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
+const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
+const EventosExternos = lazyWithRetry(() => import('./pages/EventosExternos'));
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
@@ -441,6 +443,7 @@ function AppRoutes() {
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
       <Route path="/inscricao-batismo" element={<Suspense fallback={<Loading />}><InscricaoBatismo /></Suspense>} />
       <Route path="/apresentacao-criancas" element={<Suspense fallback={<Loading />}><ApresentacaoCriancasPublica /></Suspense>} />
+      <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
       <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
@@ -555,6 +558,7 @@ function AppRoutes() {
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
         <Route path="/next-batismo" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
+        <Route path="/eventos-externos" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventosExternos /></Suspense></ModuleGuard>} />
         <Route path="/governanca" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><Governanca /></Suspense></ModuleGuard>} />
         <Route path="/entradas" element={<Navigate to="/next-batismo" replace />} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}

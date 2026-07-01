@@ -118,6 +118,7 @@ app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentacao'));
+app.use('/api/public/evento', require('./routes/publicEventoExterno'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // Webhook WhatsApp (público · sem auth, fora do publicLimiter pra não
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
@@ -148,6 +149,7 @@ app.use('/api/agente-voluntariado', require('./routes/agenteVoluntariado'));
 app.use('/api/agente-batismo-next', require('./routes/agenteBatismoNext'));
 app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/relatorios', require('./routes/relatorios'));
+app.use('/api/eventos-externos', require('./routes/eventosExternos'));
 app.use('/api/next', require('./routes/next'));
 app.use('/api/next-batismo', require('./routes/nextBatismo'));
 app.use('/api/governanca', require('./routes/governanca'));

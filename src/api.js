@@ -281,6 +281,26 @@ export const expansion = {
   removePlano: (id) => del(`/expansion/planos/${id}`),
 };
 
+// Eventos Externos · gestão (autenticado)
+export const eventosExternos = {
+  list: () => get('/eventos-externos'),
+  get: (id) => get(`/eventos-externos/${id}`),
+  criar: (data) => post('/eventos-externos', data),
+  atualizar: (id, data) => put(`/eventos-externos/${id}`, data),
+  remover: (id) => del(`/eventos-externos/${id}`),
+  sortear: (id, premio) => post(`/eventos-externos/${id}/sortear`, { premio }),
+};
+
+// Eventos Externos · formulário público de confirmação de presença (sem auth)
+export const eventoPublico = {
+  get: (slug) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
+  inscrever: (slug, data) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}/inscrever`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+};
+
 // Decisão online · formulário público "Eu aceito Jesus" (sem auth)
 export const decisaoOnline = {
   ativo: () => fetch(`${API}/public/decisao-online/ativo`).then(r => r.json()),

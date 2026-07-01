@@ -103,6 +103,7 @@ const NAV_ITEMS = [
         title: 'Execução',
         items: [
           { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
+          { label: 'Eventos Externos', description: 'Confirmação de presença + sorteio · formulário público e calendário', icon: CalendarDays, path: '/eventos-externos', module: 'eventos-externos' },
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
         ],

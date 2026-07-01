@@ -1,0 +1,118 @@
+// ============================================================================
+// Eventos Externos · gestão (autenticado)
+// Eventos grandes com formulário público de confirmação de presença + sorteio.
+// ============================================================================
+const express = require('express');
+const router = express.Router();
+const { authenticate, authorizeModule } = require('../middleware/auth');
+const { supabase } = require('../utils/supabase');
+
+router.use(authenticate);
+
+function slugify(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'evento';
+}
+
+// GET / — lista eventos (com contagem de inscritos)
+router.get('/', authorizeModule('eventos-externos', 1), async (req, res) => {
+  try {
+    const { data: eventos, error } = await supabase.from('ext_eventos')
+      .select('*').is('deleted_at', null).order('data', { ascending: false, nullsFirst: false });
+    if (error) throw error;
+    const ids = (eventos || []).map(e => e.id);
+    const cont = {};
+    if (ids.length) {
+      const { data: ins } = await supabase.from('ext_inscricoes')
+        .select('evento_id').in('evento_id', ids).is('deleted_at', null);
+      (ins || []).forEach(i => { cont[i.evento_id] = (cont[i.evento_id] || 0) + 1; });
+    }
+    res.json((eventos || []).map(e => ({ ...e, inscritos: cont[e.id] || 0 })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST / — cria evento
+router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
+  try {
+    const { nome, data, hora, local, descricao, form_ativo } = req.body || {};
+    if (!nome || nome.trim().length < 2) return res.status(400).json({ error: 'Nome obrigatório' });
+    // slug único
+    let base = slugify(nome), slug = base, n = 1;
+    while (true) {
+      const { data: ex } = await supabase.from('ext_eventos').select('id').eq('slug', slug).maybeSingle();
+      if (!ex) break;
+      slug = `${base}-${++n}`;
+    }
+    const { data: ev, error } = await supabase.from('ext_eventos').insert({
+      nome: nome.trim(), slug, data: data || null, hora: hora || null,
+      local: local || null, descricao: descricao || null,
+      form_ativo: form_ativo !== false, created_by: req.user?.userId || null,
+    }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(ev);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /:id — detalhe + inscritos + sorteios
+router.get('/:id', authorizeModule('eventos-externos', 1), async (req, res) => {
+  try {
+    const { data: evento } = await supabase.from('ext_eventos')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!evento) return res.status(404).json({ error: 'Evento não encontrado' });
+    const { data: inscritos } = await supabase.from('ext_inscricoes')
+      .select('id, nome, telefone, email, numero_sorte, created_at')
+      .eq('evento_id', evento.id).is('deleted_at', null).order('created_at');
+    const { data: sorteios } = await supabase.from('ext_sorteios')
+      .select('*').eq('evento_id', evento.id).order('sorteado_em', { ascending: false });
+    res.json({ ...evento, inscritos: inscritos || [], sorteios: sorteios || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /:id — atualizar
+router.put('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
+  try {
+    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo'];
+    const patch = { updated_at: new Date().toISOString() };
+    for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
+    const { data, error } = await supabase.from('ext_eventos')
+      .update(patch).eq('id', req.params.id).is('deleted_at', null).select('*').maybeSingle();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /:id — soft delete
+router.delete('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'ext_eventos', p_row_id: req.params.id, p_deleted_by: req.user?.userId ?? null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /:id/sortear — sorteia um inscrito ainda não premiado. Body: { premio }
+router.post('/:id/sortear', authorizeModule('eventos-externos', 3), async (req, res) => {
+  try {
+    const { premio } = req.body || {};
+    const { data: inscritos } = await supabase.from('ext_inscricoes')
+      .select('id, nome, numero_sorte').eq('evento_id', req.params.id).is('deleted_at', null);
+    if (!inscritos || !inscritos.length) return res.status(400).json({ error: 'Sem inscritos pra sortear' });
+    const { data: jaSorteados } = await supabase.from('ext_sorteios')
+      .select('inscricao_id').eq('evento_id', req.params.id);
+    const ganhos = new Set((jaSorteados || []).map(s => s.inscricao_id));
+    const elegiveis = inscritos.filter(i => !ganhos.has(i.id));
+    if (!elegiveis.length) return res.status(400).json({ error: 'Todos os inscritos já foram sorteados' });
+    const g = elegiveis[Math.floor(Math.random() * elegiveis.length)];
+    const { data: sorteio, error } = await supabase.from('ext_sorteios').insert({
+      evento_id: req.params.id, premio: premio ? String(premio).trim().slice(0, 200) : null,
+      numero_sorteado: g.numero_sorte, inscricao_id: g.id, ganhador_nome: g.nome,
+      sorteado_por: req.user?.userId || null,
+    }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(sorteio);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+module.exports = router;

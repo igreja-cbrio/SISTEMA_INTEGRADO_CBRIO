@@ -22,6 +22,7 @@ const ROUTE_MODULE_MAP = {
   'patrimonio':   ['patrimonio'],
   'eventos':      ['eventos'],
   'events':       ['eventos'],
+  'eventos-externos': ['eventos-externos'],
   'projects':     ['projetos'],
   'expansion':    ['expansao'],
   'solicitacoes': ['solicitacoes'],
