@@ -279,6 +279,10 @@ const TAG_COLORS: Record<string, string> = {
 // Lista fixa de quem faz o atendimento do convertido. Essas pessoas NÃO logam no
 // Cuidados — o Marcelo registra quem ficou responsável. Editável aqui se a equipe mudar.
 const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Paiva', 'Wesley Ramos'];
+// Responsáveis antigos (estavam na planilha do Marcelo, não são mais acionados p/ atendimento):
+// mantêm o histórico nos registros e aparecem no dropdown, mas DESABILITADOS — não podem ser
+// selecionados em novos lançamentos (Marcos 2026-07-01).
+const RESPONSAVEIS_ANTIGOS = ['Lorena', 'Lilian', 'Sebastião', 'Natasha', 'Mariane', 'Carmet', 'Carmet/Arthur', 'Léia', 'Kevin', 'Kevin/Arthur', 'Arthur/Kevin', 'Mari', 'Naná'];
 
 // Pra NOVO CONVERTIDO o único próximo passo direcionável no Cuidados é o NEXT (decisão
 // Marcos · 2026-06-25 · o direcionamento pros valores — Grupos/Voluntários/Batismo/Devocional —
@@ -1539,6 +1543,12 @@ export default function Cuidados() {
                             {RESPONSAVEIS_ATENDIMENTO.map(n => (
                               <option key={n} value={n}>{n}</option>
                             ))}
+                            {/* Antigos: histórico · desabilitados (o próprio valor do registro fica habilitado pra exibir) */}
+                            <optgroup label="Antigos (histórico · não selecionável)">
+                              {RESPONSAVEIS_ANTIGOS.map(n => (
+                                <option key={n} value={n} disabled={c.responsavel_atendimento !== n}>{n}</option>
+                              ))}
+                            </optgroup>
                           </select>
                         ) : (
                           <span className="text-xs">{c.responsavel_atendimento || <span className="text-muted-foreground">—</span>}</span>
