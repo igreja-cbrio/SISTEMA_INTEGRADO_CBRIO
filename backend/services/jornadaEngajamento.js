@@ -1,22 +1,25 @@
 // ============================================================================
-// jornadaEngajamento · motor único da "Jornada da Igreja" (Fase 2 · 2026-06-20)
+// jornadaEngajamento · motor ÚNICO de engajamento (Jornada da Igreja + NSM)
+// Unificado 2026-06-30 (decisão do Marcos): NSM e Jornada medem A MESMA COISA.
 //
-// Mede os 5 valores sobre TODOS os membros formais (status='membro_ativo'),
-// parametrizado por JANELA de tempo. Decisão do Marcos (2026-06-20):
-//   - PROFUNDIDADE por ESTADO ATUAL: seguir/conectar/servir não têm corte de
-//     recência (pertencer ao valor é estado, não atividade do mês).
-//   - A janela corta SÓ as atividades recorrentes: investir (devocional) e
-//     generosidade (dízimo/oferta). 'atual' = sem corte (qualquer época).
+//   ENGAJADO = convertido + ≥1 sinal entre os 6 módulos:
+//     { Batismo, Next, Grupos, Voluntariado, Dízimos/Ofertas, Devocional }
 //
-// "Membro Modelo" = membro com >= 2 dos 5 valores (derivado, nunca persistido).
+// "≥1 valor" puro daria 100% trivial (todo membro já converteu = "Seguir"), por
+// isso a régua é "conversão + 1": a CONVERSÃO é o piso (= ser membro ativo) e os
+// 6 módulos são o "+1". Espelha fn_nsm_sinais_engajados (a mesma régua que o NSM
+// aplica ±60d sobre a coorte de convertidos · aqui é a igreja toda).
 //
-// É fonte única: o /painel (estrela Jornada), a página /jornada e o KPI CUID-06
-// (cuidados.membros_2mais_valores) leem daqui — uma definição só, sem divergir.
+// Dobra os 6 sinais nos 5 valores da CBRio p/ exibição (igual ao NSM):
+//   seguir = Batismo OU Next · conectar = Grupos · investir = Devocional ·
+//   servir = Voluntariado · generosidade = Dízimos/Ofertas
 //
-// Difere do NSM (fn_nsm_sinais_engajados · ±60d sobre recém-convertidos): ali a
-// população é a coorte de conversão e a janela é relativa à decisão. Aqui é a
-// igreja toda e a janela é absoluta (escolhida na tela). São métricas-irmãs com
-// populações diferentes — o /painel mostra as duas como "2 estrelas".
+// Estado vs janela: batismo/next/grupo/servir = ESTADO ATUAL (sem corte · pertencer
+// é estado). devocional e dízimo/oferta = ATIVIDADE recorrente (cortada pela janela
+// escolhida · 'atual' = sem corte).
+//
+// "investir" = SÓ devocional (decisão do Marcos · "pra cuidados deve ser devocionais").
+// "Membro Modelo"/engajado = derivado, nunca persistido.
 // ============================================================================
 
 const { supabase } = require('../utils/supabase');
@@ -33,7 +36,6 @@ function janelaDias(janela) {
 function normalizaJanela(janela) {
   return Object.prototype.hasOwnProperty.call(JANELAS, janela) ? janela : JANELA_PADRAO;
 }
-
 function daysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
 // Lê todas as linhas contornando o cap de 1000 do PostgREST (paginação).
@@ -51,13 +53,16 @@ async function fetchAllRows(table, build) {
   return out;
 }
 
+// Set de membro_id de uma tabela. O caller aplica os filtros (inclusive
+// deleted_at quando a tabela tiver · next_inscricoes NÃO tem a coluna).
 async function fetchMembroSet(table, build) {
-  const rows = await fetchAllRows(table, (q) => build(q.select('membro_id').is('deleted_at', null)));
+  const rows = await fetchAllRows(table, (q) => build(q.select('membro_id')));
   return new Set(rows.map((r) => r.membro_id).filter(Boolean));
 }
 
-// Calcula, pra base de membros ativos, os 5 valores de cada um na janela dada.
-// Retorna { janela, dias, total_base, membros:[{id,nome,...,valores,total_valores}] }.
+// Calcula, pra base de membros ativos, os 5 valores (dobrados dos 6 sinais) de
+// cada um na janela dada. engajado = ≥1 valor (= conversão + ≥1 dos 6 módulos).
+// Retorna { janela, dias, total_base, membros:[{id,nome,...,valores,total_valores,engajado}] }.
 async function computeJornada(janelaIn = JANELA_PADRAO) {
   const janela = normalizaJanela(janelaIn);
   const dias = janelaDias(janela);
@@ -68,32 +73,39 @@ async function computeJornada(janelaIn = JANELA_PADRAO) {
     q.select('id, nome, email, telefone, foto_url, status')
       .is('deleted_at', null).eq('active', true).eq('status', 'membro_ativo'));
 
-  // Ordem (e nomes) na MESMA sequência dos valores: seguir, conectar, investir, servir, generosidade.
-  const [seguirSet, conectarSet, investirSet, servirSet, genSet] = await Promise.all([
-    // Estado atual (sem janela): seguir, conectar
-    fetchMembroSet('mem_trilha_valores', (q) => q.in('etapa', ['conversao', 'primeiro_contato', 'batismo']).eq('concluida', true)),
-    fetchMembroSet('mem_grupo_membros', (q) => q.is('saiu_em', null)),
-    // Atividade recorrente (cortada pela janela): investir
-    fetchMembroSet('mem_devocionais', (q) => comJanela(q.eq('concluida', true), 'data_devocional')),
-    // Estado atual (sem janela): servir
-    fetchMembroSet('mem_voluntarios', (q) => q.is('ate', null)),
-    // Atividade recorrente (cortada pela janela): generosidade
-    fetchMembroSet('mem_contribuicoes', (q) => comJanela(q.in('tipo', ['dizimo', 'oferta']), 'data')),
+  // 6 sinais (espelham fn_nsm_sinais_engajados). Estado atual: batismo, next,
+  // grupo, servir. Atividade na janela: investir (devocional), generosidade.
+  const [batismoSet, nextMatSet, nextInscSet, grupoSet, investirSet, servirSet, genSet] = await Promise.all([
+    // Batismo · inscrição realizada (estado)
+    fetchMembroSet('batismo_inscricoes', (q) => q.is('deleted_at', null).eq('status', 'realizado')),
+    // Next · matrícula formada (estado)
+    fetchMembroSet('next_matriculas', (q) => q.is('deleted_at', null).eq('status', 'formado')),
+    // Next · check-in legado (estado · next_inscricoes NÃO tem deleted_at)
+    fetchMembroSet('next_inscricoes', (q) => q.not('check_in_at', 'is', null)),
+    // Conectar · em grupo ativo (estado)
+    fetchMembroSet('mem_grupo_membros', (q) => q.is('deleted_at', null).is('saiu_em', null)),
+    // Investir · devocional concluído (atividade · na janela)
+    fetchMembroSet('mem_devocionais', (q) => comJanela(q.is('deleted_at', null).eq('concluida', true), 'data_devocional')),
+    // Servir · voluntário ativo (estado)
+    fetchMembroSet('mem_voluntarios', (q) => q.is('deleted_at', null).is('ate', null)),
+    // Generosidade · dízimo/oferta (atividade · na janela · empréstimo fora)
+    fetchMembroSet('mem_contribuicoes', (q) => comJanela(q.is('deleted_at', null).in('tipo', ['dizimo', 'oferta']), 'data')),
   ]);
-  const sets = { seguir: seguirSet, conectar: conectarSet, investir: investirSet, servir: servirSet, generosidade: genSet };
 
   const lista = membros.map((m) => {
+    // seguir = Batismo OU Next (o "passo de fé" além da conversão · = sinal seguir do NSM)
     const v = {
-      seguir: sets.seguir.has(m.id),
-      conectar: sets.conectar.has(m.id),
-      investir: sets.investir.has(m.id),
-      servir: sets.servir.has(m.id),
-      generosidade: sets.generosidade.has(m.id),
+      seguir: batismoSet.has(m.id) || nextMatSet.has(m.id) || nextInscSet.has(m.id),
+      conectar: grupoSet.has(m.id),
+      investir: investirSet.has(m.id),
+      servir: servirSet.has(m.id),
+      generosidade: genSet.has(m.id),
     };
     const total_valores = VALORES.reduce((acc, k) => acc + (v[k] ? 1 : 0), 0);
     return {
       id: m.id, nome: m.nome, email: m.email, telefone: m.telefone,
-      foto_url: m.foto_url, status: m.status, valores: v, total_valores,
+      foto_url: m.foto_url, status: m.status,
+      valores: v, total_valores, engajado: total_valores >= 1,
     };
   });
 
@@ -109,10 +121,10 @@ function agregar(lista) {
     const n = lista.reduce((acc, m) => acc + (m.valores[k] ? 1 : 0), 0);
     por_valor[k] = { total: n, pct: Math.round((n / denom) * 100) };
   }
-  const mm = lista.reduce((acc, m) => acc + (m.total_valores >= 2 ? 1 : 0), 0);
+  const eng = lista.reduce((acc, m) => acc + (m.engajado ? 1 : 0), 0);
   return {
     total_membros: total,
-    membro_modelo: { total: mm, pct: Math.round((mm / denom) * 100) },
+    engajados: { total: eng, pct: Math.round((eng / denom) * 100) },
     valores: por_valor,
   };
 }
