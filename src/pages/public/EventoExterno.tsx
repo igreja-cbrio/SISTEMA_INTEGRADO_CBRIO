@@ -1,93 +1,178 @@
-// Página pública · confirmação de presença de um evento externo.
-// Ao enviar, mostra o "número da sorte" (aleatório) que vale pro sorteio.
+// Página pública · confirmação de presença de um evento externo (Celebra etc.).
+// Segue o layout dos outros formulários públicos (AnimatedBackground + tema).
+// Se o evento tem sorteio, revela o "número da sorte" com confete.
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
-import { Loader2, PartyPopper, CalendarDays, MapPin } from 'lucide-react';
+import AnimatedBackground from './AnimatedBackground';
+import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+
+function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
+function mascaraTelefone(v: string) {
+  const d = soDigitos(v).slice(0, 11);
+  if (d.length <= 2) return d.length ? `(${d}` : '';
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+function dataLonga(iso?: string | null) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return `${d.getDate()} de ${MESES[d.getMonth()]}`;
+}
+
+function Field({ id, label, value, onChange, required, as = 'input', inputMode }: {
+  id: string; label: string; value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  required?: boolean; as?: 'input' | 'textarea'; inputMode?: any;
+}) {
+  const [focused, setFocused] = useState(false);
+  const active = focused || (value && String(value).length > 0);
+  const Tag: any = as;
+  return (
+    <div style={{ position: 'relative', marginBottom: 22 }}>
+      <Tag
+        id={id} name={id} value={value} inputMode={inputMode} rows={as === 'textarea' ? 3 : undefined}
+        onChange={onChange} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} required={required}
+        style={{
+          display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)',
+          background: 'transparent', border: 'none', borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
+          outline: 'none', resize: 'vertical', transition: 'border-color .2s',
+        }}
+      />
+      <label htmlFor={id} style={{
+        position: 'absolute', left: 0, pointerEvents: 'none', transition: 'all .2s',
+        top: active ? -14 : 10, fontSize: active ? 11 : 14,
+        color: focused ? '#00B39D' : 'var(--cbrio-text3)',
+      }}>{label}{required ? ' *' : ''}</label>
+    </div>
+  );
+}
 
 export default function EventoExterno() {
   const { slug = '' } = useParams();
+  const { C } = usePublicTheme();
   const [evento, setEvento] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);
-  const [erro, setErro] = useState('');
   const [nome, setNome] = useState('');
   const [telefone, setTelefone] = useState('');
-  const [email, setEmail] = useState('');
-  const [website, setWebsite] = useState(''); // honeypot
+  const [dados, setDados] = useState<Record<string, string>>({});
+  const [website, setWebsite] = useState('');
+  const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
-  const [resultado, setResultado] = useState<{ numero: number; jaInscrito?: boolean } | null>(null);
+  const [resultado, setResultado] = useState<{ numero: number; jaInscrito?: boolean; temSorteio?: boolean } | null>(null);
 
   useEffect(() => {
     eventoPublico.get(slug).then(setEvento).catch(e => setErro(e.message || 'Evento não encontrado')).finally(() => setCarregando(false));
   }, [slug]);
 
+  function confete() {
+    const cores = ['#00B39D', '#00d9bd', '#ffd166', '#ef476f', '#118ab2'];
+    confetti({ particleCount: 110, spread: 75, startVelocity: 45, origin: { y: 0.6 }, colors: cores });
+    setTimeout(() => confetti({ particleCount: 60, angle: 60, spread: 65, origin: { x: 0, y: 0.7 }, colors: cores }), 150);
+    setTimeout(() => confetti({ particleCount: 60, angle: 120, spread: 65, origin: { x: 1, y: 0.7 }, colors: cores }), 150);
+  }
+
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     setErro('');
     if (nome.trim().length < 2) { setErro('Informe seu nome.'); return; }
-    if (telefone.replace(/\D/g, '').length < 10) { setErro('Informe um telefone válido (com DDD).'); return; }
+    if (soDigitos(telefone).length < 10) { setErro('Informe um telefone válido (com DDD).'); return; }
+    for (const c of (evento?.campos || [])) {
+      if (c.obrigatorio && !String(dados[c.key] || '').trim()) { setErro(`Preencha: ${c.label}`); return; }
+    }
     setEnviando(true);
     try {
-      const r = await eventoPublico.inscrever(slug, { nome, telefone, email, website });
-      setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito });
+      const r = await eventoPublico.inscrever(slug, { nome, telefone, dados, website });
+      setResultado({ numero: r.numero_sorte, jaInscrito: r.ja_inscrito, temSorteio: r.tem_sorteio });
+      if (r.tem_sorteio) setTimeout(confete, 200);
     } catch (e: any) { setErro(e.message || 'Erro ao confirmar presença.'); }
     finally { setEnviando(false); }
   }
 
-  const dataFmt = evento?.data ? new Date(evento.data + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' }) : '';
+  const setCampo = (key: string) => (e: any) => setDados(d => ({ ...d, [key]: e.target.value }));
+  const subInfo = [dataLonga(evento?.data), evento?.hora, evento?.local].filter(Boolean).join(' · ');
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(160deg,#0b3b45,#00B39D 140%)' }} className="flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-xl p-6 sm:p-8">
-        {carregando ? (
-          <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-teal-600" /></div>
-        ) : erro && !evento ? (
-          <div className="text-center py-12 text-gray-600">{erro}</div>
-        ) : resultado ? (
-          <div className="text-center py-6">
-            <PartyPopper className="h-12 w-12 text-teal-600 mx-auto mb-3" />
-            <h1 className="text-xl font-bold text-gray-900">Presença confirmada!</h1>
-            <p className="text-gray-500 mt-1 text-sm">{resultado.jaInscrito ? 'Você já estava confirmado(a).' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}.`}</p>
-            <div className="mt-6 rounded-xl bg-teal-50 border border-teal-200 py-6">
-              <div className="text-sm text-teal-700 font-medium">Seu número da sorte</div>
-              <div className="text-6xl font-extrabold text-teal-700 tabular-nums mt-1">{resultado.numero}</div>
-              <div className="text-xs text-teal-600 mt-2">Guarde este número — vale pro sorteio!</div>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="text-center mb-6">
-              <h1 className="text-2xl font-extrabold text-gray-900">{evento?.nome}</h1>
-              {(dataFmt || evento?.hora || evento?.local) && (
-                <div className="mt-2 space-y-1 text-sm text-gray-500">
-                  {dataFmt && <div className="flex items-center justify-center gap-1.5"><CalendarDays className="h-4 w-4" /> {dataFmt}{evento?.hora ? ` · ${evento.hora}` : ''}</div>}
-                  {evento?.local && <div className="flex items-center justify-center gap-1.5"><MapPin className="h-4 w-4" /> {evento.local}</div>}
-                </div>
-              )}
-              {evento?.descricao && <p className="mt-3 text-sm text-gray-600 whitespace-pre-line">{evento.descricao}</p>}
-              <p className="mt-4 text-sm font-medium text-teal-700">Confirme sua presença</p>
-            </div>
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      position: 'relative', overflow: 'hidden', padding: '40px 16px', background: C.pageBg,
+    }}>
+      <AnimatedBackground />
+      <PublicThemeToggle />
 
-            {!evento?.form_ativo ? (
-              <div className="text-center py-8 text-gray-500">As inscrições deste evento estão encerradas.</div>
-            ) : (
-              <form onSubmit={enviar} className="space-y-3">
-                <input value={nome} onChange={e => setNome(e.target.value)} placeholder="Nome completo"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-3 text-gray-900" />
-                <input value={telefone} onChange={e => setTelefone(e.target.value)} placeholder="Telefone (WhatsApp, com DDD)" inputMode="tel"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-3 text-gray-900" />
-                <input value={email} onChange={e => setEmail(e.target.value)} placeholder="E-mail (opcional)" inputMode="email"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-3 text-gray-900" />
-                <input value={website} onChange={e => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off"
-                  className="hidden" aria-hidden="true" />
-                {erro && <div className="text-sm text-red-600">{erro}</div>}
-                <button type="submit" disabled={enviando}
-                  className="w-full rounded-lg bg-teal-600 text-white font-semibold py-3 hover:bg-teal-700 disabled:opacity-60 inline-flex items-center justify-center gap-2">
-                  {enviando ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Confirmar presença'}
-                </button>
-              </form>
-            )}
-          </>
+      <div style={{
+        position: 'relative', zIndex: 1, width: '100%', maxWidth: 560,
+        background: C.card, backdropFilter: 'blur(24px)',
+        border: `1px solid ${C.cardBorder}`, borderRadius: 20,
+        padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
+      }}>
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />
+          {carregando ? (
+            <p style={{ color: C.text3, fontSize: 14 }}>Carregando…</p>
+          ) : erro && !evento ? (
+            <p style={{ color: C.text3, fontSize: 14 }}>{erro}</p>
+          ) : (
+            <>
+              <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
+                {evento?.nome}
+              </h1>
+              {subInfo && <p style={{ fontSize: 13, color: '#00B39D', fontWeight: 600, marginTop: 8 }}>{subInfo}</p>}
+              {evento?.descricao && <p style={{ fontSize: 13, color: C.text3, marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{evento.descricao}</p>}
+            </>
+          )}
+        </div>
+
+        {!carregando && evento && (
+          resultado ? (
+            <div style={{ padding: '32px 20px', textAlign: 'center', background: '#00B39D18', border: '1px solid #00B39D40', borderRadius: 14 }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#00B39D', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, marginBottom: 14 }}>&#10003;</div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>Presença confirmada!</h2>
+              {resultado.temSorteio ? (
+                <>
+                  <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{resultado.jaInscrito ? 'Você já estava confirmado(a).' : 'Anota aí o seu número da sorte:'}</p>
+                  <div style={{ marginTop: 12, fontSize: 13, color: '#00B39D', fontWeight: 600 }}>Seu número da sorte</div>
+                  <div style={{ fontSize: 64, fontWeight: 800, color: '#00B39D', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{resultado.numero}</div>
+                  <p style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>Guarde este número — vale pro sorteio!</p>
+                </>
+              ) : (
+                <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{resultado.jaInscrito ? 'Você já estava confirmado(a).' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}</p>
+              )}
+            </div>
+          ) : !evento.form_ativo ? (
+            <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>As inscrições deste evento estão encerradas.</p>
+          ) : (
+            <form onSubmit={enviar}>
+              {erro && <div style={{ background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#ef4444' }}>{erro}</div>}
+              <Field id="nome" label="Qual é o seu nome?" value={nome} onChange={e => setNome(e.target.value)} required />
+              <Field id="telefone" label="WhatsApp" value={telefone} onChange={e => setTelefone(mascaraTelefone(e.target.value))} required inputMode="tel" />
+              {(evento.campos || []).map((c: any) => (
+                c.tipo === 'select' ? (
+                  <div key={c.key} style={{ position: 'relative', marginBottom: 22 }}>
+                    <label htmlFor={c.key} style={{ position: 'absolute', left: 0, top: -14, fontSize: 11, color: 'var(--cbrio-text3)' }}>{c.label}{c.obrigatorio ? ' *' : ''}</label>
+                    <select id={c.key} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio}
+                      style={{ display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: '2px solid var(--cbrio-border)', outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}>
+                      <option value="">Selecione…</option>
+                      {(c.opcoes || []).map((o: string, i: number) => <option key={i} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
+                    required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'}
+                    inputMode={c.tipo === 'email' ? 'email' : undefined} />
+                )
+              ))}
+              <input value={website} onChange={e => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" style={{ display: 'none' }} aria-hidden="true" />
+              <button type="submit" disabled={enviando} style={{
+                width: '100%', marginTop: 8, padding: '13px', borderRadius: 12,
+                background: enviando ? '#00B39D80' : 'linear-gradient(90deg, #00B39D, #00d9bd)',
+                color: '#fff', fontSize: 15, fontWeight: 700, border: 'none', cursor: enviando ? 'default' : 'pointer',
+              }}>{enviando ? 'Enviando…' : 'Confirmar presença'}</button>
+            </form>
+          )
         )}
       </div>
     </div>

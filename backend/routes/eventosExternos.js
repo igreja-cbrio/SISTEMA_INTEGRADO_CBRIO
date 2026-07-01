@@ -34,7 +34,7 @@ router.get('/', authorizeModule('eventos-externos', 1), async (req, res) => {
 // POST / — cria evento
 router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const { nome, data, hora, local, descricao, form_ativo } = req.body || {};
+    const { nome, data, hora, local, descricao, form_ativo, tem_sorteio, campos } = req.body || {};
     if (!nome || nome.trim().length < 2) return res.status(400).json({ error: 'Nome obrigatório' });
     // slug único
     let base = slugify(nome), slug = base, n = 1;
@@ -46,7 +46,9 @@ router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
     const { data: ev, error } = await supabase.from('ext_eventos').insert({
       nome: nome.trim(), slug, data: data || null, hora: hora || null,
       local: local || null, descricao: descricao || null,
-      form_ativo: form_ativo !== false, created_by: req.user?.userId || null,
+      form_ativo: form_ativo !== false, tem_sorteio: tem_sorteio !== false,
+      campos: Array.isArray(campos) ? campos : [],
+      created_by: req.user?.userId || null,
     }).select('*').single();
     if (error) throw error;
     res.status(201).json(ev);
@@ -60,7 +62,7 @@ router.get('/:id', authorizeModule('eventos-externos', 1), async (req, res) => {
       .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!evento) return res.status(404).json({ error: 'Evento não encontrado' });
     const { data: inscritos } = await supabase.from('ext_inscricoes')
-      .select('id, nome, telefone, email, numero_sorte, created_at')
+      .select('id, nome, telefone, email, numero_sorte, dados, created_at')
       .eq('evento_id', evento.id).is('deleted_at', null).order('created_at');
     const { data: sorteios } = await supabase.from('ext_sorteios')
       .select('*').eq('evento_id', evento.id).order('sorteado_em', { ascending: false });
@@ -71,7 +73,7 @@ router.get('/:id', authorizeModule('eventos-externos', 1), async (req, res) => {
 // PUT /:id — atualizar
 router.put('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo'];
+    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo', 'tem_sorteio', 'campos'];
     const patch = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     const { data, error } = await supabase.from('ext_eventos')
