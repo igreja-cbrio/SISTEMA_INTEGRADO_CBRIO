@@ -292,15 +292,18 @@ const DIRECIONAMENTO_LABEL: Record<string, string> = {
   batismo: 'Batismo',
 };
 
-// Status do PRIMEIRO CONTATO. O Marcelo simplificou pra 3 (decisão Marcos · 2026-06-23):
-// Não respondeu · Não atendido · Atendido e respondido — os 3 contam como 1º CONTATO
-// FEITO (o contato foi realizado; a pessoa só não respondeu/atendeu). A meta é 100%
-// contatado → o que falta pra 100% é quem está SEM marcação. "Atendeu e respondeu"
-// (conversa com o pastor) = só "Atendido e respondido". Número errado o Marcelo marca
-// como "Não respondeu" (entra como tentativa). Ordem do pior desfecho ao melhor.
+// Status do PRIMEIRO CONTATO · 4 opções (decisão Marcos · 2026-06-30):
+// Não respondeu · Não atendido · Número errado · Atendido e respondido.
+// "Não respondeu/Não atendido/Atendido e respondido" contam como 1º CONTATO FEITO
+// (a tentativa foi realizada). "Número errado" também conta como contato RESOLVIDO
+// (a equipe tentou; o número é que estava errado) → entra no "Contato feito", mas fica
+// FORA do denominador de "Atendido e respondido" pra não penalizar a equipe por um
+// número errado. A meta é 100% contatado → o que falta pra 100% é quem está SEM
+// marcação ("—"). Ordem do pior desfecho ao melhor.
 const PCONTATO_OPCOES: { v: string; label: string; positivo?: boolean }[] = [
   { v: 'nao_respondeu',       label: 'Não respondeu' },
   { v: 'nao_atendido',        label: 'Não atendido' },
+  { v: 'numero_errado',       label: 'Número errado' },
   { v: 'atendido_respondido', label: 'Atendido e respondido', positivo: true },
 ];
 // Labels de TODOS os status (inclui os legados da planilha antiga já importada) ·
@@ -913,7 +916,9 @@ export default function Cuidados() {
 
   // Status do primeiro contato (otimista). O 1º contato NÃO se marca à mão — se FAZ:
   // ao selecionar uma opção de contato feito, carimba primeiro_contato_em (balão verde
-  // em todas as telas + KPI). "Sem retorno"/"Número errado"/vazio limpam (não-feito).
+  // em todas as telas + KPI). "Número errado" conta como contato RESOLVIDO nos cards,
+  // mas NÃO carimba primeiro_contato_em (fica fora do KPI/denominador de atendido) e
+  // zera atendido_apos_culto. Vazio limpa (não-feito).
   // O responsável e o direcionamento são definidos nas colunas ao lado.
   async function setPcStatus(id: string, value: string) {
     const v = value || null;
@@ -921,6 +926,7 @@ export default function Cuidados() {
     const cur: any = convertidos.find((x: any) => x.id === id);
     const patch: any = { primeiro_contato_status: v };
     if (v === 'atendido_respondido') patch.atendido_apos_culto = true;
+    if (v === 'numero_errado') patch.atendido_apos_culto = false; // número errado nunca é "atendido"
     if (v && CONTATO_FEITO.has(v)) {
       if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString();
     } else {
@@ -993,25 +999,32 @@ export default function Cuidados() {
     });
   }, [convertidos, convertSearch, convertFilter, convertFilterStatus, convertPeriodoCorte, jMap]);
 
-  // Resumo de Contato calculado AO VIVO do estado (atualiza ao mexer no dropdown).
   // Resumo dos 4 cards · AO VIVO do estado (atualiza ao mexer no dropdown) e respeitando
-  // o PERÍODO selecionado. Denominador = contatáveis (exclui "número errado"). Pendentes =
-  // só os "—" (sem status e sem contato). Batismo/Next vêm do jornadaData por id.
+  // o PERÍODO selecionado. DOIS denominadores (decisão Marcos · 2026-06-30):
+  //  • "Contato feito" usa TODOS do período, incl. "número errado" (= contato resolvido:
+  //    a equipe tentou; o número é que estava errado → conta como feito, não fica pendente).
+  //  • "Atendido e respondido", "Batismo" e "Next" usam só os CONTATÁVEIS (excluem "número
+  //    errado") pra não penalizar a equipe por um número errado.
+  // Pendentes = só os "—" (sem status e sem contato). Batismo/Next vêm do jornadaData por id.
   const cardsResumo = useMemo(() => {
     const corte = convertPeriodoCorte;
     const jById = new Map<string, any>((jornadaData?.itens || []).map((i: any) => [i.id, i]));
     const periodo = convertidos.filter((c: any) => !corte || (c.data_culto || '') >= corte);
     const contataveis = periodo.filter((c: any) => c.primeiro_contato_status !== 'numero_errado');
-    const total = contataveis.length;
-    const feitos = contataveis.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
+    const numErrado = periodo.length - contataveis.length;
+    const total = contataveis.length;        // denominador de atendido/batismo/next (exclui número errado)
+    const totalContato = periodo.length;      // denominador de "contato feito" (inclui número errado)
+    const feitosOk = contataveis.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
+    const feitos = feitosOk + numErrado;      // número errado conta como contato resolvido
     const pendentes = periodo.filter((c: any) => !c.primeiro_contato_status && !c.primeiro_contato_em).length; // só "—"
     const atendidos = periodo.filter((c: any) => c.primeiro_contato_status === 'atendido_respondido').length;
     const batismos = contataveis.filter((c: any) => jById.get(c.id)?.batismo?.feito).length;
     const nexts = contataveis.filter((c: any) => jById.get(c.id)?.next?.feito).length;
-    const pct = (n: number) => total ? Math.round((n / total) * 100) : 0;
+    const pct = (n: number, d: number) => d ? Math.round((n / d) * 100) : 0;
     return {
-      total, feitos, pendentes, atendidos, batismos, nexts,
-      contato_pct: pct(feitos), atendido_pct: pct(atendidos), batismo_pct: pct(batismos), next_pct: pct(nexts),
+      total, totalContato, feitos, pendentes, atendidos, batismos, nexts, numErrado,
+      contato_pct: pct(feitos, totalContato), atendido_pct: pct(atendidos, total),
+      batismo_pct: pct(batismos, total), next_pct: pct(nexts, total),
     };
   }, [convertidos, jornadaData, convertPeriodoCorte]);
 
@@ -1308,7 +1321,7 @@ export default function Cuidados() {
               <div>
                 <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Contato feito</p>
                 <span className="text-2xl font-bold text-foreground">{cardsResumo.contato_pct}%</span>
-                <p className="text-[11px] text-muted-foreground">{cardsResumo.feitos}/{cardsResumo.total} feitos · {cardsResumo.pendentes} pendentes</p>
+                <p className="text-[11px] text-muted-foreground">{cardsResumo.feitos}/{cardsResumo.totalContato} feitos · {cardsResumo.pendentes} pendentes</p>
               </div>
             </div>
             <div className="rounded-lg border border-border bg-card p-3 flex items-center gap-3">
