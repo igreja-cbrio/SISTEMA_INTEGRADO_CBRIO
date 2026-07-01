@@ -6,7 +6,7 @@ import { nps as api } from '../api';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
-  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit,
+  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil,
 } from 'lucide-react';
 
 const C = {
@@ -625,6 +625,144 @@ function CreateModal({ onClose, onCreated }) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// Modal de EDIÇÃO · alterar pesquisa já lançada (metadados + perguntas)
+// Respostas coletadas são preservadas (NPS 0-10 independe das perguntas; texto
+// fica ligado ao id da pergunta). Escopo por área garantido no backend.
+// ════════════════════════════════════════════════════════════════════
+function EditModal({ pesquisa, onClose, onSaved }) {
+  const { isAdmin, isDiretor, userAreas } = useAuth();
+  const restringeArea = !isAdmin && !isDiretor;
+  const minhasAreas = (userAreas || []).map(normArea).filter(Boolean);
+  const gruposArea = restringeArea
+    ? AREAS_NPS.map(g => ({ ...g, opcoes: g.opcoes.filter(o => minhasAreas.includes(o.id)) })).filter(g => g.opcoes.length)
+    : AREAS_NPS;
+
+  const [titulo, setTitulo] = useState(pesquisa.titulo || '');
+  const [objetivo, setObjetivo] = useState(pesquisa.objetivo || '');
+  const [dataFim, setDataFim] = useState(pesquisa.data_fim ? String(pesquisa.data_fim).slice(0, 10) : '');
+  const [area, setArea] = useState(pesquisa.area || 'geral');
+  const [permitePublico, setPermitePublico] = useState(pesquisa.permite_publico !== false);
+  const [npsTexto, setNpsTexto] = useState(pesquisa.perguntas?.pergunta_nps?.texto || 'De 0 a 10, o quanto você recomendaria a CBRio para um amigo ou familiar?');
+  const [extras, setExtras] = useState(
+    (pesquisa.perguntas?.perguntas_extras || []).map(p => ({ id: p.id, texto: p.texto || '', tipo: p.tipo || 'texto_longo' }))
+  );
+  const [salvando, setSalvando] = useState(false);
+  const temRespostas = (pesquisa.stats?.total_respostas || 0) > 0;
+  const lbl = { display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 };
+  const novoId = () => 'q' + Math.random().toString(36).slice(2, 9);
+
+  async function salvar() {
+    if (!titulo.trim()) return toast.error('Defina um título.');
+    if (!npsTexto.trim()) return toast.error('Defina a pergunta principal (nota 0 a 10).');
+    if (restringeArea && !minhasAreas.includes(normArea(area))) return toast.error('Escolha uma área da sua responsabilidade.');
+    setSalvando(true);
+    try {
+      await api.update(pesquisa.id, {
+        titulo: titulo.trim(),
+        objetivo: objetivo.trim() || titulo.trim(),
+        data_fim: dataFim || null,
+        area,
+        permite_publico: permitePublico,
+        perguntas: {
+          descricao_curta: objetivo.trim() || pesquisa.perguntas?.descricao_curta || null,
+          pergunta_nps: { tipo: 'nps', texto: npsTexto.trim() },
+          // Preserva o id das perguntas existentes (respostas de texto ficam
+          // ligadas por id); perguntas novas ganham id fresco.
+          perguntas_extras: extras.filter(e => e.texto.trim()).map(e => ({
+            id: e.id || novoId(), tipo: e.tipo, texto: e.texto.trim(),
+          })),
+        },
+      });
+      toast.success('Pesquisa atualizada.');
+      onSaved();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar');
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Editar pesquisa" width={640}
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+          <Btn variant="cyan" onClick={salvar} disabled={salvando}>
+            {salvando ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}Salvar
+          </Btn>
+        </div>
+      }>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {temRespostas && (
+          <div style={{ padding: 10, borderRadius: 8, background: '#f59e0b18', border: '1px solid #f59e0b45', fontSize: 12, color: C.t2, lineHeight: 1.5 }}>
+            Esta pesquisa já tem <strong>{pesquisa.stats.total_respostas} resposta(s)</strong>. As respostas coletadas são <strong>mantidas</strong> e a nota NPS (0-10) continua válida. Ao mudar o texto de uma pergunta, as respostas anteriores continuam ligadas a ela.
+          </div>
+        )}
+        <div>
+          <label style={lbl}>Título</label>
+          <input value={titulo} onChange={e => setTitulo(e.target.value)} style={inp} />
+        </div>
+        <div>
+          <label style={lbl}>Objetivo</label>
+          <textarea value={objetivo} onChange={e => setObjetivo(e.target.value)} style={{ ...inp, minHeight: 60 }} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={lbl}>Área</label>
+            <select value={area} onChange={e => setArea(e.target.value)} style={inp} disabled={restringeArea && minhasAreas.length <= 1}>
+              {gruposArea.map(grp => (
+                <optgroup key={grp.grupo} label={grp.grupo}>
+                  {grp.opcoes.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Encerramento (opcional)</label>
+            <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} style={inp} />
+          </div>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+          <input type="checkbox" checked={permitePublico} onChange={e => setPermitePublico(e.target.checked)} />
+          Permitir link público
+        </label>
+        <div>
+          <label style={lbl}>Pergunta principal (nota 0 a 10)</label>
+          <input value={npsTexto} onChange={e => setNpsTexto(e.target.value)} style={inp} />
+        </div>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Perguntas adicionais</label>
+            <button type="button" onClick={() => setExtras([...extras, { id: novoId(), texto: '', tipo: 'texto_longo' }])}
+              style={{ fontSize: 12, fontWeight: 600, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Plus size={13} /> Adicionar
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {extras.map((ex, i) => (
+              <div key={ex.id || i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <input value={ex.texto} onChange={e => setExtras(extras.map((x, j) => j === i ? { ...x, texto: e.target.value } : x))}
+                  placeholder={`Pergunta ${i + 1}`} style={{ ...inp, flex: 1 }} />
+                <select value={ex.tipo} onChange={e => setExtras(extras.map((x, j) => j === i ? { ...x, tipo: e.target.value } : x))}
+                  style={{ ...inp, width: 150, flex: 'none' }}>
+                  <option value="texto_longo">Texto longo</option>
+                  <option value="texto_curto">Texto curto</option>
+                  <option value="escala_5">Escala 1 a 5</option>
+                </select>
+                <button type="button" onClick={() => setExtras(extras.filter((_, j) => j !== i))}
+                  title="Remover" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }}>
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
+            {extras.length === 0 && <p style={{ fontSize: 12, color: C.t3, margin: 0 }}>Sem perguntas adicionais — só a nota 0 a 10.</p>}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
 // Modal de detalhe
 // ════════════════════════════════════════════════════════════════════
 function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
@@ -635,6 +773,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [analisando, setAnalisando] = useState(false);
   const [notificando, setNotificando] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -771,10 +910,21 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
             {analisando ? <Loader2 size={12} className="animate-spin" /> : <BrainCircuit size={12} />}
             Analisar com IA
           </Btn>
+          <Btn variant="ghost" size="sm" onClick={() => setEditOpen(true)}>
+            <Pencil size={12} />Editar
+          </Btn>
           {pesquisa.status === 'ativa' && (
             <Btn variant="danger" size="sm" onClick={encerrar}>Encerrar</Btn>
           )}
         </div>
+      )}
+
+      {editOpen && (
+        <EditModal
+          pesquisa={pesquisa}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => { setEditOpen(false); load(); onChanged?.(); }}
+        />
       )}
 
       {/* Tabs */}

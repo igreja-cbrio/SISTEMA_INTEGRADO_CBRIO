@@ -238,6 +238,10 @@ router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
     if (d.data_fim !== undefined) update.data_fim = d.data_fim;
     if (d.permite_publico !== undefined) update.permite_publico = d.permite_publico;
     if (d.area !== undefined) update.area = String(d.area).toLowerCase();
+    // Editar perguntas após lançada · as respostas JÁ coletadas são preservadas
+    // (a nota NPS 0-10 não depende das perguntas; respostas de texto ficam ligadas
+    // ao id da pergunta). O frontend mantém os ids das perguntas existentes.
+    if (d.perguntas !== undefined) update.perguntas = d.perguntas;
 
     const { data, error } = await supabase
       .from('nps_pesquisas')
