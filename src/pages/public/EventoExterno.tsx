@@ -51,6 +51,7 @@ function Field({ id, label, value, onChange, required, as = 'input', inputMode }
   );
 }
 
+// Lista suspensa (dropdown) · label flutuante + seta ▾.
 function SelectFloat({ id, label, value, onChange, required, opcoes }: {
   id: string; label: string; value: string;
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void; required?: boolean; opcoes: string[];
@@ -69,11 +70,41 @@ function SelectFloat({ id, label, value, onChange, required, opcoes }: {
         <option value=""></option>
         {opcoes.map((o, i) => <option key={i} value={o} style={{ background: 'var(--cbrio-modal-bg)', color: 'var(--cbrio-text)' }}>{o}</option>)}
       </select>
-      <label htmlFor={id} style={{
-        position: 'absolute', left: 0, pointerEvents: 'none', transition: 'all .2s',
-        top: active ? -14 : 10, fontSize: active ? 11 : 14, color: focused ? '#00B39D' : 'var(--cbrio-text3)',
-      }}>{label}{required ? ' *' : ''}</label>
+      <label htmlFor={id} style={{ position: 'absolute', left: 0, pointerEvents: 'none', transition: 'all .2s', top: active ? -14 : 10, fontSize: active ? 11 : 14, color: focused ? '#00B39D' : 'var(--cbrio-text3)' }}>{label}{required ? ' *' : ''}</label>
       <span style={{ position: 'absolute', right: 4, bottom: 12, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
+    </div>
+  );
+}
+
+// Escolha em "pills" (botões clicáveis). multi=true permite marcar várias.
+function PillSelect({ label, value, onPick, required, opcoes, multi }: {
+  label: string; value: string; onPick: (v: string) => void; required?: boolean; opcoes: string[]; multi?: boolean;
+}) {
+  const sels = multi ? String(value || '').split(',').map(s => s.trim()).filter(Boolean) : [];
+  const isSel = (o: string) => multi ? sels.includes(o) : value === o;
+  function pick(o: string) {
+    if (!multi) { onPick(o); return; }
+    const novo = sels.includes(o) ? sels.filter(x => x !== o) : [...sels, o];
+    onPick(novo.join(', '));
+  }
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>{label}{required ? ' *' : ''}{multi ? ' (pode marcar mais de uma)' : ''}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {opcoes.map((o, i) => {
+          const sel = isSel(o);
+          return (
+            <button key={i} type="button" onClick={() => pick(o)}
+              style={{
+                padding: '9px 15px', borderRadius: 999, fontSize: 13.5, cursor: 'pointer', lineHeight: 1.1,
+                border: `1.5px solid ${sel ? '#00B39D' : 'var(--cbrio-border)'}`,
+                background: sel ? 'linear-gradient(90deg,#00B39D,#00d9bd)' : 'transparent',
+                color: sel ? '#fff' : 'var(--cbrio-text)', fontWeight: sel ? 700 : 500,
+                boxShadow: sel ? '0 4px 14px rgba(0,179,157,0.35)' : 'none', transition: 'all .15s',
+              }}>{o}</button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -187,6 +218,9 @@ export default function EventoExterno() {
               {(evento.campos || []).map((c: any) => (
                 c.tipo === 'select' ? (
                   <SelectFloat key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio} opcoes={c.opcoes || []} />
+                ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
+                  <PillSelect key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio} opcoes={c.opcoes || []} multi={c.tipo === 'multi'}
+                    onPick={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
                 ) : (
                   <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
                     required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'}

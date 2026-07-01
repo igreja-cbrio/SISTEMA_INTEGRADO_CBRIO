@@ -137,10 +137,12 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
               <option value="textarea">Parágrafo</option>
               <option value="email">E-mail</option>
               <option value="select">Lista suspensa</option>
+              <option value="escolha">Escolha</option>
+              <option value="multi">Múltipla escolha</option>
             </select>
             <button onClick={() => setCampos(campos.filter((_, j) => j !== i))} className="text-red-500 px-1"><Trash2 className="h-4 w-4" /></button>
           </div>
-          {c.tipo === 'select' && (
+          {(c.tipo === 'select' || c.tipo === 'escolha' || c.tipo === 'multi') && (
             <textarea placeholder="Opções (uma por linha)" value={(c.opcoes || []).join('\n')} onChange={e => upd(i, { opcoes: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })}
               className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-xs min-h-[110px]" />
           )}
@@ -173,7 +175,7 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
   }
   async function salvar() {
     if (f.nome.trim().length < 2) { toast.error('Informe o nome do evento'); return; }
-    for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo precisa de uma pergunta'); return; } if (c.tipo === 'select' && !(c.opcoes || []).length) { toast.error(`Adicione opções em "${c.label}"`); return; } }
+    for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo precisa de uma pergunta'); return; } if (['select', 'escolha', 'multi'].includes(c.tipo) && !(c.opcoes || []).length) { toast.error(`Adicione opções em "${c.label}"`); return; } }
     setSalvando(true);
     try {
       const payload = { ...f, campos, premios: premios.map(p => p.trim()).filter(Boolean) };
