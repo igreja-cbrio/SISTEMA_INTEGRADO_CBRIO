@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
-const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule, getUserAreas } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const npsService = require('../services/npsService');
@@ -20,6 +20,33 @@ const iaLimiter = rateLimit({
 
 router.use(authenticate);
 
+// ── Escopo por ÁREA ──────────────────────────────────────────────────
+// Líder de área (ex.: coordenador-ami com área AMI) vê/edita SÓ a NPS da sua
+// área. admin/diretor veem tudo (inclusive 'geral'). As áreas do usuário vêm
+// de usuario_areas (getUserAreas) e são normalizadas (lowercase, sem acento)
+// pra casar com nps_pesquisas.area (ex.: "KIDS" → "kids", "Integração" →
+// "integracao"). Sem área e sem ser admin → não vê nada.
+function ehAdminDiretor(req) {
+  return ['admin', 'diretor'].includes(req.user?.role);
+}
+function _norm(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+function areasDoUsuario(req) {
+  return getUserAreas(req).map(_norm).filter(Boolean);
+}
+// Pode ver/agir na NPS desta área? admin/diretor sempre; senão só se for a dele.
+function podeNaArea(req, area) {
+  if (ehAdminDiretor(req)) return true;
+  return areasDoUsuario(req).includes(_norm(area));
+}
+// Busca a área da pesquisa e checa o escopo (usado em PUT/DELETE/analisar/notificar).
+async function guardArea(req, id) {
+  if (ehAdminDiretor(req)) return true;
+  const { data } = await supabase.from('nps_pesquisas').select('area').eq('id', id).single();
+  return !!data && podeNaArea(req, data.area);
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Geração de perguntas (preview antes de criar)
 // POST /api/nps/gerar-perguntas
@@ -34,6 +61,10 @@ router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req
     if (!valor && !areaInformada) {
       return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
     }
+    // Líder de área só gera perguntas para a própria área (admin/diretor: qualquer).
+    if (!ehAdminDiretor(req) && !podeNaArea(req, area)) {
+      return res.status(403).json({ error: 'Você só pode gerar perguntas para a sua área.' });
+    }
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(contexto_kpi) ? contexto_kpi : 'nps_geral';
     const result = await npsService.gerarPerguntas({ valor: valor || null, objetivo, contextoKpi, area });
     res.json(result);
@@ -47,8 +78,8 @@ router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req
 // CRUD pesquisas
 // ────────────────────────────────────────────────────────────────────
 
-// GET /api/nps  → lista pesquisas (todas para autenticados)
-router.get('/', async (req, res) => {
+// GET /api/nps  → lista pesquisas (escopadas por área p/ não-admin)
+router.get('/', authorizeModule('nps', 1), async (req, res) => {
   try {
     const { status, valor } = req.query;
     let q = supabase
@@ -57,6 +88,12 @@ router.get('/', async (req, res) => {
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (valor) q = q.eq('valor', valor);
+    // Escopo por área · líder vê só a(s) sua(s); admin/diretor vê tudo (+ 'geral').
+    if (!ehAdminDiretor(req)) {
+      const areas = areasDoUsuario(req);
+      if (!areas.length) return res.json([]);
+      q = q.in('area', areas);
+    }
     const { data, error } = await q;
     if (error) throw error;
 
@@ -79,6 +116,9 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/nps/:id  → detalhe + stats
+// NÃO gated por área/módulo: também é usado por quem vai RESPONDER a pesquisa
+// (/nps/:id/responder · qualquer colaborador). Os dados sensíveis (respostas
+// individuais) ficam em /:id/respostas, que é escopado. Stats aqui são agregados.
 router.get('/:id', async (req, res) => {
   try {
     const { data: pesquisa, error } = await supabase
@@ -112,6 +152,10 @@ router.post('/', authorizeModule('nps', 3), async (req, res) => {
     const valorNormalizado = d.valor || null;
     if (!valorNormalizado && areaNormalizada === 'geral') {
       return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
+    }
+    // Líder de área só cria pesquisa da própria área (admin/diretor: qualquer, incl. 'geral').
+    if (!podeNaArea(req, areaNormalizada)) {
+      return res.status(403).json({ error: 'Você só pode criar pesquisas para a sua área.' });
     }
 
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(d.contexto_kpi) ? d.contexto_kpi : 'nps_geral';
@@ -180,6 +224,13 @@ router.post('/', authorizeModule('nps', 3), async (req, res) => {
 router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
   try {
     const d = req.body || {};
+    // Escopo por área: só mexe na NPS da própria área e não pode movê-la pra fora.
+    if (!(await guardArea(req, req.params.id))) {
+      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    }
+    if (d.area !== undefined && !podeNaArea(req, d.area)) {
+      return res.status(403).json({ error: 'Não pode mover a pesquisa para fora da sua área.' });
+    }
     const update = {};
     if (d.titulo !== undefined) update.titulo = d.titulo;
     if (d.objetivo !== undefined) update.objetivo = d.objetivo;
@@ -205,6 +256,9 @@ router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
 // DELETE /api/nps/:id  → soft delete (arquivar)
 router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
   try {
+    if (!(await guardArea(req, req.params.id))) {
+      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    }
     const { error } = await supabase
       .from('nps_pesquisas')
       .update({ status: 'arquivada' })
@@ -225,10 +279,11 @@ router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
 router.get('/:id/respostas', async (req, res) => {
   try {
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('criado_por').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('criado_por, area').eq('id', req.params.id).single();
     const isPrivileged = ['admin', 'diretor'].includes(req.user.role);
     const isOwner = pesquisa?.criado_por === req.user.userId;
-    if (!isPrivileged && !isOwner) {
+    const naArea = !!pesquisa && podeNaArea(req, pesquisa.area);
+    if (!isPrivileged && !isOwner && !naArea) {
       return res.status(403).json({ error: 'Sem permissão' });
     }
 
@@ -296,6 +351,9 @@ router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, r
     const { data: pesquisa, error: pErr } = await supabase
       .from('nps_pesquisas').select('*').eq('id', req.params.id).single();
     if (pErr || !pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
+    if (!podeNaArea(req, pesquisa.area)) {
+      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    }
 
     const { data: stats } = await supabase
       .from('vw_nps_pesquisa_stats').select('*').eq('pesquisa_id', pesquisa.id).single();
@@ -328,6 +386,9 @@ router.post('/:id/notificar', authorizeModule('nps', 3), async (req, res) => {
     const { data: pesquisa } = await supabase
       .from('nps_pesquisas').select('*').eq('id', req.params.id).single();
     if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
+    if (!podeNaArea(req, pesquisa.area)) {
+      return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
+    }
 
     const { data: profiles } = await supabase
       .from('profiles').select('id').eq('active', true);

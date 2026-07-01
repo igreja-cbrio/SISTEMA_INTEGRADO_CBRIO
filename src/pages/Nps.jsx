@@ -80,6 +80,10 @@ const AREA_LABEL = (() => {
   return map;
 })();
 
+// Normaliza nome de área (usuario_areas) pro id do NPS: "KIDS"→"kids",
+// "Integração"→"integracao". Casa com nps_pesquisas.area (lowercase, sem acento).
+const normArea = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
 const STATUS_MAP = {
   rascunho:  { label: 'Rascunho',  color: '#6b7280', bg: '#6b728020' },
   ativa:     { label: 'Ativa',     color: C.green,   bg: '#10b98120' },
@@ -153,8 +157,9 @@ function ScoreCard({ stats }) {
 
 // ════════════════════════════════════════════════════════════════════
 export default function Nps() {
-  const { isAdmin, isDiretor } = useAuth();
-  const canWrite = isAdmin || isDiretor;
+  const { isAdmin, isDiretor, getAccessLevel } = useAuth();
+  // Líder de área com nível 3 no módulo NPS edita (o backend restringe à área dele).
+  const canWrite = isAdmin || isDiretor || getAccessLevel(['nps']) >= 3;
   const navigate = useNavigate();
 
   const [lista, setLista] = useState([]);
@@ -331,11 +336,20 @@ function RespostaCard({ r, perguntasMap }) {
 }
 
 function CreateModal({ onClose, onCreated }) {
+  const { isAdmin, isDiretor, userAreas } = useAuth();
+  // Líder de área (não admin/diretor) só cria pra própria área.
+  const restringeArea = !isAdmin && !isDiretor;
+  const minhasAreas = (userAreas || []).map(normArea).filter(Boolean);
+  const gruposArea = restringeArea
+    ? AREAS_NPS.map(g => ({ ...g, opcoes: g.opcoes.filter(o => minhasAreas.includes(o.id)) })).filter(g => g.opcoes.length)
+    : AREAS_NPS;
+  const areaInicial = restringeArea ? (minhasAreas[0] || '') : 'geral';
+
   const [step, setStep] = useState(1); // 1: definir · 2: revisar perguntas
   const [valor, setValor] = useState(null);
   const [objetivo, setObjetivo] = useState('');
   const [contextoKpi, setContextoKpi] = useState('nps_geral');
-  const [area, setArea] = useState('geral');
+  const [area, setArea] = useState(areaInicial);
   const [permitePublico, setPermitePublico] = useState(true);
   const [dataFim, setDataFim] = useState('');
   const [modo, setModo] = useState('ia'); // 'ia' | 'manual'
@@ -549,8 +563,8 @@ function CreateModal({ onClose, onCreated }) {
                 if (['kids', 'ami', 'bridge', 'sede', 'online'].includes(novaArea) && contextoKpi === 'nps_geral') {
                   setContextoKpi('nps_culto');
                 }
-              }} style={inp}>
-                {AREAS_NPS.map(grp => (
+              }} style={inp} disabled={restringeArea && minhasAreas.length <= 1}>
+                {gruposArea.map(grp => (
                   <optgroup key={grp.grupo} label={grp.grupo}>
                     {grp.opcoes.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                   </optgroup>
