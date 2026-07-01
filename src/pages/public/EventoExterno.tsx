@@ -109,6 +109,48 @@ function PillSelect({ label, value, onPick, required, opcoes, multi }: {
   );
 }
 
+// Campo de upload de imagem (ex.: logo da empresa parceira). Sobe pro Storage
+// via endpoint público e guarda a URL; avisa o pai enquanto está enviando pra
+// travar o "Confirmar" até terminar.
+function ImagemField({ slug, label, value, onChange, onBusy, required }: {
+  slug: string; label: string; value: string;
+  onChange: (url: string) => void; onBusy: (busy: boolean) => void; required?: boolean;
+}) {
+  const [subindo, setSubindo] = useState(false);
+  const [erroLocal, setErroLocal] = useState('');
+  async function enviar(file?: File) {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { setErroLocal('Imagem muito grande (máximo 5MB).'); return; }
+    setErroLocal(''); setSubindo(true); onBusy(true);
+    try { const r: any = await eventoPublico.uploadImagem(slug, file); onChange(r.url); }
+    catch (e: any) { setErroLocal(e?.message || 'Erro ao enviar a imagem.'); }
+    finally { setSubindo(false); onBusy(false); }
+  }
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>{label}{required ? ' *' : ''}</div>
+      {value ? (
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <img src={value} alt={label} style={{ maxHeight: 130, maxWidth: '100%', borderRadius: 12, border: '1px solid var(--cbrio-border)', display: 'block', background: '#fff' }} />
+          <button type="button" onClick={() => onChange('')} aria-label="Remover imagem"
+            style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: 999, width: 26, height: 26, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>×</button>
+        </div>
+      ) : (
+        <label style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center',
+          cursor: subindo ? 'default' : 'pointer', border: '1.5px dashed var(--cbrio-border)', borderRadius: 12,
+          padding: '22px 14px', fontSize: 13.5, color: 'var(--cbrio-text3)',
+        }}>
+          {subindo ? 'Enviando…' : '📷 Enviar imagem (PNG, JPG, WEBP)'}
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={subindo}
+            style={{ display: 'none' }} onChange={e => enviar(e.target.files?.[0])} />
+        </label>
+      )}
+      {erroLocal && <div style={{ color: '#ef4444', fontSize: 12, marginTop: 6 }}>{erroLocal}</div>}
+    </div>
+  );
+}
+
 export default function EventoExterno() {
   const { slug = '' } = useParams();
   const { C } = usePublicTheme();
@@ -120,7 +162,9 @@ export default function EventoExterno() {
   const [website, setWebsite] = useState('');
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const [subindoImg, setSubindoImg] = useState(0);
   const [resultado, setResultado] = useState<{ numero: number; jaInscrito?: boolean; temSorteio?: boolean } | null>(null);
+  const marcarBusy = (b: boolean) => setSubindoImg(n => Math.max(0, n + (b ? 1 : -1)));
 
   useEffect(() => {
     eventoPublico.get(slug).then(setEvento).catch(e => setErro(e.message || 'Evento não encontrado')).finally(() => setCarregando(false));
@@ -138,6 +182,7 @@ export default function EventoExterno() {
     setErro('');
     if (nome.trim().length < 2) { setErro('Informe seu nome.'); return; }
     if (soDigitos(telefone).length < 10) { setErro('Informe um telefone válido (com DDD).'); return; }
+    if (subindoImg > 0) { setErro('Aguarde o envio da imagem terminar.'); return; }
     for (const c of (evento?.campos || [])) {
       if (c.obrigatorio && !String(dados[c.key] || '').trim()) { setErro(`Preencha: ${c.label}`); return; }
     }
@@ -221,6 +266,9 @@ export default function EventoExterno() {
                 ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
                   <PillSelect key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio} opcoes={c.opcoes || []} multi={c.tipo === 'multi'}
                     onPick={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
+                ) : c.tipo === 'imagem' ? (
+                  <ImagemField key={c.key} slug={slug} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
+                    onChange={(url) => setDados(d => ({ ...d, [c.key]: url }))} onBusy={marcarBusy} />
                 ) : (
                   <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
                     required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'}
@@ -228,11 +276,11 @@ export default function EventoExterno() {
                 )
               ))}
               <input value={website} onChange={e => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" style={{ display: 'none' }} aria-hidden="true" />
-              <button type="submit" disabled={enviando} style={{
+              <button type="submit" disabled={enviando || subindoImg > 0} style={{
                 width: '100%', marginTop: 8, padding: '13px', borderRadius: 12,
-                background: enviando ? '#00B39D80' : 'linear-gradient(90deg, #00B39D, #00d9bd)',
-                color: '#fff', fontSize: 15, fontWeight: 700, border: 'none', cursor: enviando ? 'default' : 'pointer',
-              }}>{enviando ? 'Enviando…' : 'Confirmar presença'}</button>
+                background: (enviando || subindoImg > 0) ? '#00B39D80' : 'linear-gradient(90deg, #00B39D, #00d9bd)',
+                color: '#fff', fontSize: 15, fontWeight: 700, border: 'none', cursor: (enviando || subindoImg > 0) ? 'default' : 'pointer',
+              }}>{enviando ? 'Enviando…' : subindoImg > 0 ? 'Aguarde a imagem…' : 'Confirmar presença'}</button>
             </form>
           )
         )}
