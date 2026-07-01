@@ -98,12 +98,18 @@ A decisão #2 ("configurável por módulo") vira uma coluna
 via helper: módulo isolado → filtra por `current_user_igreja_ids()`; compartilhado
 → sem filtro de campus.
 
-Defaults propostos (ajustáveis na UI de permissões):
+Mapa **efetivo** (decidido pela gestão em 2026-07-01, já aplicado em
+`modulos.escopo_campus`):
 
 | Escopo | Módulos |
 |---|---|
-| **Isolado** (leva `igreja_id`) | integracao, cultos, cuidados, grupos, voluntariado, membresia, next, financeiro, rh, logistica, patrimonio, solicitacoes, dados-brutos, kids, producao |
-| **Compartilhado** (sem `igreja_id`) | catálogos (`modulos`, `cargos`, `areas`, `vol_service_types`), plano de contas, matriz `cargo_modulo_permissao`, eventos, comunicados, marketing, cerebro, expansao/planejamento |
+| **Isolado** (leva `igreja_id`) | integracao, cultos, cuidados, grupos, voluntariado, membresia, next, online, ami, bridge, logistica (compras), solicitacoes, dados-brutos, kids, producao, minha-area |
+| **Compartilhado** (sem `igreja_id`) | **patrimonio** (bem é da igreja · direcionamento por setor), **financeiro**, **rh** (Central · um DRE/folha pra rede), catálogos (`modulos`, `cargos`, `areas`, `vol_service_types`), plano de contas, matriz `cargo_modulo_permissao`, eventos, comunicados, marketing, cerebro, expansao/planejamento |
+
+> ⚠️ Revisões da gestão (2026-07-01) vs. as decisões iniciais: **Patrimônio** e
+> **Financeiro/RH** viraram **Central** (a decisão #3 "separado+consolidado" foi
+> revista para Central). **Compras/Logística** é **por campus** (cada setor faz o
+> próprio pedido; fornecedores seguem como catálogo compartilhado).
 
 ### 4.3 Membro é multi-campus por natureza
 O membro tem campus-base, mas o **ato** carimba o campus onde ocorreu: uma
@@ -199,7 +205,7 @@ Suíte de **não-vazamento** obrigatória no CI antes de o Campus 2 entrar em pr
 | Fase | Janela | Entregas | Pré-req |
 |---|---|---|---|
 | **0 · Fundação** ✅ | ~~Jul (1ª quinz.)~~ **feito 2026-07-01** | `usuario_igrejas` + `current_user_igreja_ids()` + `escopo_campus` em `modulos` (migration `20260701050000`, em prod). `igrejas` já estava travada (fix desnecessário). `req.user.igrejas[]` no `auth.js` movido p/ Fase 2 | — |
-| **1 · Propagar `igreja_id`** | Jul (2ª) → Ago | Carimbar campus nas tabelas isoladas (cultos + UNIQUE novo → decisões → grupos/voluntários/`cui_*` → `dados_brutos`/`kpi_taticos` → eventos/projetos/solicitações → financeiro/RH), backfill default Sede | Fase 0 |
+| **1 · Propagar `igreja_id`** 🟡 | 2026-07-01 (levas 1-4, em prod) | ✅ Feito nas tabelas isoladas não-agregadas: `cui_*`, batismo, next, `mem_grupos`, `mem_grupo_membros`, `mem_voluntarios`, `solicitacoes`, `log_*` (compras). Financeiro/RH/patrimônio ficaram **centrais** (sem `igreja_id`). **Falta o grupo C** (agregadas: `cultos`, `cultos_decisoes_pessoas`, `kpi_*`, `dados_brutos`, `mem_contribuicoes` + o `UNIQUE` novo do `cultos`) — exige varredura de read-sites/funções SQL antes de filtrar. | Fase 0 |
 | **2 · RLS por campus + CI** | Set → Out | Reescrever policies por campus (via `escopo_campus`) + suíte de não-vazamento no CI. **PORTÃO: Campus 2 não vai a prod antes daqui** | Fase 1 completa |
 | **3 · Experiência multi-campus** | Nov → meados Dez | NSM/KPIs por campus + consolidado, mandala com seletor de campus, app/push/comunicados por campus, dashboards comparativos + 2 semanas de estabilização/treino | Fase 2 |
 
