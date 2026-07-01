@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { toast } from 'sonner';
 import {
   CalendarDays, Plus, Loader2, ChevronLeft, ChevronRight, Users, Gift, Link2, MessageCircle,
-  Trash2, MapPin, Clock, PartyPopper,
+  Trash2, MapPin, Clock, PartyPopper, Pencil,
 } from 'lucide-react';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -113,36 +113,89 @@ export default function EventosExternos() {
         </Card>
       </div>
 
-      {novoOpen && <NovoEventoModal onClose={() => setNovoOpen(false)} onCriado={(id) => { setNovoOpen(false); carregar(); setDetId(id); }} />}
+      {novoOpen && <EventoFormModal onClose={() => setNovoOpen(false)} onSaved={(id) => { setNovoOpen(false); carregar(); setDetId(id); }} />}
       {detId && <EventoDetalhe id={detId} onClose={() => setDetId(null)} onChanged={carregar} />}
     </div>
   );
 }
 
-function NovoEventoModal({ onClose, onCriado }: { onClose: () => void; onCriado: (id: string) => void }) {
-  const [f, setF] = useState({ nome: '', data: '', hora: '', local: '', descricao: '' });
+const slugCampo = (s: string) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30) || `campo_${Date.now() % 1000}`;
+
+function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any[]) => void }) {
+  function add() { setCampos([...campos, { key: slugCampo(`campo ${campos.length + 1}`), label: '', tipo: 'texto', obrigatorio: true, opcoes: [] }]); }
+  function upd(i: number, patch: any) { const c = [...campos]; c[i] = { ...c[i], ...patch }; if (patch.label) c[i].key = slugCampo(patch.label); setCampos(c); }
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">Campos do formulário <span className="font-normal">(além de Nome e WhatsApp, que são fixos)</span></div>
+      {campos.map((c, i) => (
+        <div key={i} className="rounded-lg border border-border p-2 space-y-2">
+          <div className="flex gap-2">
+            <Input placeholder="Pergunta (ex.: Em qual área você serve?)" value={c.label} onChange={e => upd(i, { label: e.target.value })} className="h-8 text-sm" />
+            <select value={c.tipo} onChange={e => upd(i, { tipo: e.target.value })} className="h-8 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-1">
+              <option value="texto">Texto</option>
+              <option value="textarea">Parágrafo</option>
+              <option value="email">E-mail</option>
+              <option value="select">Lista suspensa</option>
+            </select>
+            <button onClick={() => setCampos(campos.filter((_, j) => j !== i))} className="text-red-500 px-1"><Trash2 className="h-4 w-4" /></button>
+          </div>
+          {c.tipo === 'select' && (
+            <textarea placeholder="Opções (uma por linha)" value={(c.opcoes || []).join('\n')} onChange={e => upd(i, { opcoes: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })}
+              className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1 text-xs min-h-[60px]" />
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" checked={c.obrigatorio !== false} onChange={e => upd(i, { obrigatorio: e.target.checked })} /> Obrigatório
+          </label>
+        </div>
+      ))}
+      <Button size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar campo</Button>
+    </div>
+  );
+}
+
+function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: () => void; onSaved: (id: string) => void }) {
+  const ed = !!evento;
+  const [f, setF] = useState({
+    nome: evento?.nome || '', data: evento?.data || '', hora: evento?.hora || '', local: evento?.local || '',
+    descricao: evento?.descricao || '', tem_sorteio: evento?.tem_sorteio !== false, form_ativo: evento?.form_ativo !== false,
+  });
+  const [campos, setCampos] = useState<any[]>(evento?.campos || []);
   const [salvando, setSalvando] = useState(false);
   async function salvar() {
     if (f.nome.trim().length < 2) { toast.error('Informe o nome do evento'); return; }
+    for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo precisa de uma pergunta'); return; } if (c.tipo === 'select' && !(c.opcoes || []).length) { toast.error(`Adicione opções em "${c.label}"`); return; } }
     setSalvando(true);
-    try { const ev: any = await api.criar(f); toast.success('Evento criado'); onCriado(ev.id); }
-    catch (e: any) { toast.error(e?.message || 'Erro ao criar'); } finally { setSalvando(false); }
+    try {
+      const payload = { ...f, campos };
+      const ev: any = ed ? await api.atualizar(evento.id, payload) : await api.criar(payload);
+      toast.success(ed ? 'Evento atualizado' : 'Evento criado');
+      onSaved(ed ? evento.id : ev.id);
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); } finally { setSalvando(false); }
   }
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Novo evento</DialogTitle></DialogHeader>
-        <div className="space-y-3 text-sm">
+      <DialogContent className="max-w-md flex flex-col max-h-[88vh]">
+        <DialogHeader><DialogTitle>{ed ? 'Editar evento' : 'Novo evento'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm flex-1 overflow-y-auto min-h-0">
           <Input placeholder="Nome do evento (ex.: Celebra)" value={f.nome} onChange={e => setF({ ...f, nome: e.target.value })} />
           <div className="grid grid-cols-2 gap-2">
-            <Input type="date" value={f.data} onChange={e => setF({ ...f, data: e.target.value })} />
-            <Input placeholder="Horário (ex.: 19h)" value={f.hora} onChange={e => setF({ ...f, hora: e.target.value })} />
+            <Input type="date" value={f.data || ''} onChange={e => setF({ ...f, data: e.target.value })} />
+            <Input placeholder="Horário (ex.: 8h30)" value={f.hora} onChange={e => setF({ ...f, hora: e.target.value })} />
           </div>
           <Input placeholder="Local" value={f.local} onChange={e => setF({ ...f, local: e.target.value })} />
           <textarea placeholder="Descrição (opcional)" value={f.descricao} onChange={e => setF({ ...f, descricao: e.target.value })}
             className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-3 py-2 text-sm min-h-[70px]" />
-          <Button onClick={salvar} disabled={salvando} className="w-full">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Criar evento'}</Button>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={f.tem_sorteio} onChange={e => setF({ ...f, tem_sorteio: e.target.checked })} />
+            Tem sorteio (mostra o número da sorte com confete ao confirmar)
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={f.form_ativo} onChange={e => setF({ ...f, form_ativo: e.target.checked })} />
+            Inscrições abertas
+          </label>
+          <CamposEditor campos={campos} setCampos={setCampos} />
         </div>
+        <Button onClick={salvar} disabled={salvando} className="w-full mt-2">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : (ed ? 'Salvar' : 'Criar evento')}</Button>
       </DialogContent>
     </Dialog>
   );
@@ -154,6 +207,7 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
   const [premio, setPremio] = useState('');
   const [sorteando, setSorteando] = useState(false);
   const [ultimo, setUltimo] = useState<any>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   function carregar() { setLoading(true); api.get(id).then(setEv).catch(() => toast.error('Erro')).finally(() => setLoading(false)); }
   useEffect(() => { carregar(); }, [id]);
@@ -181,8 +235,12 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">{ev.nome}</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                {ev.nome}
+                <Button size="sm" variant="outline" className="ml-auto mr-6" onClick={() => setEditOpen(true)}><Pencil className="h-3.5 w-3.5 mr-1" /> Editar</Button>
+              </DialogTitle>
             </DialogHeader>
+            {editOpen && <EventoFormModal evento={ev} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); carregar(); onChanged(); }} />}
             <div className="flex-1 overflow-y-auto min-h-0 space-y-4 text-sm">
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
                 {ev.data && <span className="inline-flex items-center gap-1"><CalendarDays className="h-4 w-4" />{new Date(ev.data + 'T00:00:00').toLocaleDateString('pt-BR')}</span>}
@@ -235,13 +293,17 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
                 ) : (
                   <div className="max-h-[220px] overflow-y-auto rounded-lg border border-border">
                     <table className="w-full text-xs">
-                      <thead className="bg-foreground/5 text-muted-foreground"><tr><th className="text-left p-1.5">Nº</th><th className="text-left p-1.5">Nome</th><th className="text-left p-1.5">Telefone</th></tr></thead>
+                      <thead className="bg-foreground/5 text-muted-foreground"><tr>
+                        <th className="text-left p-1.5">Nº</th><th className="text-left p-1.5">Nome</th><th className="text-left p-1.5">Telefone</th>
+                        {(ev.campos || []).map((c: any) => <th key={c.key} className="text-left p-1.5">{c.label}</th>)}
+                      </tr></thead>
                       <tbody>
                         {ev.inscritos.map((i: any) => (
                           <tr key={i.id} className="border-t border-border/40">
                             <td className="p-1.5 font-semibold tabular-nums">{i.numero_sorte}</td>
                             <td className="p-1.5">{i.nome}</td>
                             <td className="p-1.5 text-muted-foreground">{i.telefone || ''}</td>
+                            {(ev.campos || []).map((c: any) => <td key={c.key} className="p-1.5 text-muted-foreground">{i.dados?.[c.key] || ''}</td>)}
                           </tr>
                         ))}
                       </tbody>
