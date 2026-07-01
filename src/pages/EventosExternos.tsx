@@ -325,7 +325,17 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
                         {ev.inscritos.map((i: any) => (
                           <tr key={i.id} className="border-t border-border/40">
                             <td className="p-1.5 font-semibold tabular-nums">{i.numero_sorte}</td>
-                            <td className="p-1.5">{i.nome}</td>
+                            <td className="p-1.5">
+                              <span className="inline-flex items-center gap-1.5">
+                                {i.nome}
+                                {i.telefone && (
+                                  <a href={`https://wa.me/55${String(i.telefone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
+                                    title="Enviar WhatsApp" className="text-emerald-500 hover:text-emerald-600">
+                                    <MessageCircle className="h-3.5 w-3.5" />
+                                  </a>
+                                )}
+                              </span>
+                            </td>
                             <td className="p-1.5 text-muted-foreground">{i.telefone || ''}</td>
                             {(ev.campos || []).map((c: any) => <td key={c.key} className="p-1.5 text-muted-foreground">{i.dados?.[c.key] || ''}</td>)}
                           </tr>
