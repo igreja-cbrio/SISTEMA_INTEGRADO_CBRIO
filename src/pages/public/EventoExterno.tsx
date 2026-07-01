@@ -20,7 +20,7 @@ const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julh
 function dataLonga(iso?: string | null) {
   if (!iso) return '';
   const d = new Date(iso + 'T12:00:00');
-  return `${d.getDate()} de ${MESES[d.getMonth()]}`;
+  return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
 }
 
 function Field({ id, label, value, onChange, required, as = 'input', inputMode }: {
@@ -93,7 +93,6 @@ export default function EventoExterno() {
   }
 
   const setCampo = (key: string) => (e: any) => setDados(d => ({ ...d, [key]: e.target.value }));
-  const subInfo = [dataLonga(evento?.data), evento?.hora, evento?.local].filter(Boolean).join(' · ');
 
   return (
     <div style={{
@@ -109,8 +108,12 @@ export default function EventoExterno() {
         border: `1px solid ${C.cardBorder}`, borderRadius: 20,
         padding: 'clamp(28px, 6vw, 40px) clamp(18px, 5vw, 36px)',
       }}>
+        {evento?.capa_url && (
+          <img src={evento.capa_url} alt={evento?.nome || 'capa'}
+            style={{ width: '100%', maxHeight: 200, objectFit: 'cover', borderRadius: 14, marginBottom: 20, display: 'block' }} />
+        )}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />
+          {!evento?.capa_url && <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }} />}
           {carregando ? (
             <p style={{ color: C.text3, fontSize: 14 }}>Carregando…</p>
           ) : erro && !evento ? (
@@ -120,7 +123,12 @@ export default function EventoExterno() {
               <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
                 {evento?.nome}
               </h1>
-              {subInfo && <p style={{ fontSize: 13, color: '#00B39D', fontWeight: 600, marginTop: 8 }}>{subInfo}</p>}
+              {(dataLonga(evento?.data) || evento?.hora) && (
+                <div style={{ display: 'inline-block', marginTop: 12, padding: '6px 16px', borderRadius: 999, background: 'rgba(0,179,157,0.12)', border: '1px solid rgba(0,179,157,0.3)', color: '#00B39D', fontSize: 14, fontWeight: 700 }}>
+                  {[dataLonga(evento?.data), evento?.hora].filter(Boolean).join(' · ')}
+                </div>
+              )}
+              {evento?.local && <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{evento.local}</p>}
               {evento?.descricao && <p style={{ fontSize: 13, color: C.text3, marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{evento.descricao}</p>}
             </>
           )}

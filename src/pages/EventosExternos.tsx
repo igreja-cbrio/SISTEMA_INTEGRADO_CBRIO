@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { toast } from 'sonner';
 import {
   CalendarDays, Plus, Loader2, ChevronLeft, ChevronRight, Users, Gift, Link2, MessageCircle,
-  Trash2, MapPin, Clock, PartyPopper, Pencil,
+  Trash2, MapPin, Clock, PartyPopper, Pencil, Image as ImageIcon,
 } from 'lucide-react';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -158,9 +158,17 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
   const [f, setF] = useState({
     nome: evento?.nome || '', data: evento?.data || '', hora: evento?.hora || '', local: evento?.local || '',
     descricao: evento?.descricao || '', tem_sorteio: evento?.tem_sorteio !== false, form_ativo: evento?.form_ativo !== false,
+    capa_url: evento?.capa_url || '',
   });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
   const [salvando, setSalvando] = useState(false);
+  const [enviandoCapa, setEnviandoCapa] = useState(false);
+  async function enviarCapa(file?: File) {
+    if (!file) return;
+    setEnviandoCapa(true);
+    try { const r: any = await api.uploadCapa(file); setF(s => ({ ...s, capa_url: r.url })); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao enviar a capa'); } finally { setEnviandoCapa(false); }
+  }
   async function salvar() {
     if (f.nome.trim().length < 2) { toast.error('Informe o nome do evento'); return; }
     for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo precisa de uma pergunta'); return; } if (c.tipo === 'select' && !(c.opcoes || []).length) { toast.error(`Adicione opções em "${c.label}"`); return; } }
@@ -177,6 +185,22 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
       <DialogContent className="max-w-md flex flex-col max-h-[88vh]">
         <DialogHeader><DialogTitle>{ed ? 'Editar evento' : 'Novo evento'}</DialogTitle></DialogHeader>
         <div className="space-y-3 text-sm flex-1 overflow-y-auto min-h-0">
+          {/* Foto de capa */}
+          <div>
+            <div className="text-xs font-medium text-muted-foreground mb-1">Foto de capa (aparece no topo do formulário)</div>
+            {f.capa_url ? (
+              <div className="relative rounded-lg overflow-hidden border border-border">
+                <img src={f.capa_url} alt="capa" className="w-full h-32 object-cover" />
+                <button type="button" onClick={() => setF({ ...f, capa_url: '' })} className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1"><Trash2 className="h-3.5 w-3.5" /></button>
+              </div>
+            ) : (
+              <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-4 cursor-pointer hover:border-primary/40 text-muted-foreground">
+                {enviandoCapa ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
+                {enviandoCapa ? 'Enviando…' : 'Enviar foto de capa'}
+                <input type="file" accept="image/*" className="hidden" onChange={e => enviarCapa(e.target.files?.[0])} />
+              </label>
+            )}
+          </div>
           <Input placeholder="Nome do evento (ex.: Celebra)" value={f.nome} onChange={e => setF({ ...f, nome: e.target.value })} />
           <div className="grid grid-cols-2 gap-2">
             <Input type="date" value={f.data || ''} onChange={e => setF({ ...f, data: e.target.value })} />

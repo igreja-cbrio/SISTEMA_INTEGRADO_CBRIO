@@ -16,7 +16,7 @@ function ehEmailValido(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s ||
 
 async function eventoPorSlug(slug) {
   const { data } = await supabase.from('ext_eventos')
-    .select('id, nome, slug, data, hora, local, descricao, form_ativo, tem_sorteio, campos')
+    .select('id, nome, slug, data, hora, local, descricao, form_ativo, tem_sorteio, campos, capa_url')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   return data || null;
 }
@@ -28,7 +28,7 @@ router.get('/:slug', async (req, res) => {
   res.json({
     nome: ev.nome, slug: ev.slug, data: ev.data, hora: ev.hora, local: ev.local,
     descricao: ev.descricao, form_ativo: ev.form_ativo, tem_sorteio: ev.tem_sorteio,
-    campos: Array.isArray(ev.campos) ? ev.campos : [],
+    campos: Array.isArray(ev.campos) ? ev.campos : [], capa_url: ev.capa_url || null,
   });
 });
 
