@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -22,7 +22,9 @@ import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
 import GruposOrganograma from './GruposOrganograma';
 import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
-import { GruposMapView } from '@/components/grupos/GruposMapView';
+// GruposMapView traz maplibre-gl (~290KB gzip). Carregado sob demanda (React.lazy)
+// só quando a aba Mapa abre — não pesa no carregamento inicial de /grupos.
+const GruposMapView = lazy(() => import('@/components/grupos/GruposMapView'));
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -1121,13 +1123,15 @@ export default function Grupos() {
           {loading ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
           ) : (
-            <GruposMapView
-              grupos={gruposList.filter(g => g.ativo)}
-              variant="admin"
-              defaultTheme="dark"
-              temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
-              mostrarBotaoInscricao={true}
-            />
+            <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando mapa...</div>}>
+              <GruposMapView
+                grupos={gruposList.filter(g => g.ativo)}
+                variant="admin"
+                defaultTheme="dark"
+                temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
+                mostrarBotaoInscricao={true}
+              />
+            </Suspense>
           )}
         </div>
       )}

@@ -49,17 +49,24 @@ router.get('/projects-kanban', async (req, res) => {
     const { data: tasks } = await supabase.from('project_tasks').select('*');
     const { data: milestones } = await supabase.from('project_milestones').select('*').order('sort_order');
 
+    // Agrupa tasks/milestones por project_id numa passada (O(P+T) em vez de
+    // O(P*T) de filter-por-projeto). Milestones preservam a ordem sort_order.
+    const tasksByProject = {};
+    for (const t of (tasks || [])) (tasksByProject[t.project_id] = tasksByProject[t.project_id] || []).push(t);
+    const milestonesByProject = {};
+    for (const m of (milestones || [])) (milestonesByProject[m.project_id] = milestonesByProject[m.project_id] || []).push(m);
+
     // Agrupar por área (da categoria)
     const AREA_MAP = { 'Infraestrutura': 'Gestão', 'Administrativo': 'Gestão', 'Tecnologia': 'Gestão', 'Ministerial': 'Ministerial', 'Social': 'Ministerial' };
     const result = (projects || []).map(p => {
-      const pTasks = (tasks || []).filter(t => t.project_id === p.id);
+      const pTasks = tasksByProject[p.id] || [];
       const done = pTasks.filter(t => t.status === 'concluida').length;
       const catName = p.project_categories?.name || '';
       return {
         ...p, category_name: catName, category_color: p.project_categories?.color,
         area_group: AREA_MAP[catName] || 'Criativo',
         tasks_total: pTasks.length, tasks_done: done,
-        milestones: (milestones || []).filter(m => m.project_id === p.id),
+        milestones: milestonesByProject[p.id] || [],
       };
     });
     res.json(result);
@@ -74,16 +81,22 @@ router.get('/strategic-kanban', async (req, res) => {
     const { data: tasks } = await supabase.from('strategic_tasks').select('*');
     const { data: milestones } = await supabase.from('strategic_milestones').select('*').order('sort_order');
 
+    // Agrupa tasks/milestones por plan_id numa passada (O(P+T) em vez de O(P*T)).
+    const tasksByPlan = {};
+    for (const t of (tasks || [])) (tasksByPlan[t.plan_id] = tasksByPlan[t.plan_id] || []).push(t);
+    const milestonesByPlan = {};
+    for (const m of (milestones || [])) (milestonesByPlan[m.plan_id] = milestonesByPlan[m.plan_id] || []).push(m);
+
     const AREA_MAP = { 'Crescimento': 'Ministerial', 'Expansão Física': 'Gestão', 'Capacitação': 'Gestão', 'Financeiro': 'Gestão', 'Missões': 'Ministerial' };
     const result = (plans || []).map(p => {
-      const pTasks = (tasks || []).filter(t => t.plan_id === p.id);
+      const pTasks = tasksByPlan[p.id] || [];
       const done = pTasks.filter(t => t.status === 'concluida').length;
       const catName = p.strategic_categories?.name || '';
       return {
         ...p, category_name: catName, category_color: p.strategic_categories?.color,
         area_group: AREA_MAP[catName] || 'Gestão',
         tasks_total: pTasks.length, tasks_done: done,
-        milestones: (milestones || []).filter(m => m.plan_id === p.id),
+        milestones: milestonesByPlan[p.id] || [],
       };
     });
     res.json(result);
