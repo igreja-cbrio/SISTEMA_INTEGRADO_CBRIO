@@ -1380,7 +1380,8 @@ router.get('/jornada-convertidos', async (req, res) => {
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
     );
     const batismos = await fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome', (q) => q.is('deleted_at', null));
-    const nextMats = await fetchAll('next_matriculas', 'membro_id, cpf, nome, status', (q) => q.is('deleted_at', null)); // fonte única (formado · legado backfillado em 20260626180000)
+    const nextMats = await fetchAll('next_matriculas', 'membro_id, cpf, nome', (q) => q.is('deleted_at', null)); // matrícula = "inscrito"
+    const nextFormados = await fetchAll('vw_next_formado_pessoa', 'membro_id, cpf, nome', (q) => q); // "fez Next" POR PESSOA (cross-turma)
 
     // índices de batismo (realizado > inscrito) e de Next (fez check-in > só inscrito)
     const bM = new Map(), bC = new Map(), bN = new Map();
@@ -1402,26 +1403,30 @@ router.get('/jornada-convertidos', async (req, res) => {
       const hit = bN.get(String(c.nome || '').trim().toLowerCase());
       return hit ? { real: hit.real } : null;
     };
-    // "fez Next" = formado na turma (fonte única next_matriculas · o check-in
-    // legado foi backfillado pra formado na migration 20260626180000)
-    const nM = new Map(), nC = new Map(), nN = new Map();
-    const putN = (m, k, fez) => { if (!k) return; const c = m.get(k); const r = fez ? 2 : 1; if (!c || r > c.r) m.set(k, { r, fez }); };
+    // "fez Next" = formado POR PESSOA (fonte única vw_next_formado_pessoa · cross-turma);
+    // "inscrito" = tem matrícula (qualquer). Casa por chave forte (membro/CPF); nome só sem id.
+    const insM = new Set(), insC = new Set(), insN = new Set();
     for (const m of nextMats) {
-      const fez = m.status === 'formado';
-      putN(nM, m.membro_id, fez);
-      putN(nC, onlyDigits(m.cpf).length === 11 ? onlyDigits(m.cpf) : null, fez);
-      putN(nN, String(m.nome || '').trim().toLowerCase() || null, fez);
+      if (m.membro_id) insM.add(m.membro_id);
+      const cc = onlyDigits(m.cpf); if (cc.length === 11) insC.add(cc);
+      const nn = String(m.nome || '').trim().toLowerCase(); if (nn) insN.add(nn);
     }
-    const nextOf = (c) => {
-      // Com membro_id/CPF casa SÓ por chave forte — cruzar por nome aqui gera
-      // falso positivo (homônimo). Nome só quando não há identificação.
+    const fezM = new Set(), fezC = new Set(), fezN = new Set();
+    for (const v of nextFormados) {
+      if (v.membro_id) fezM.add(v.membro_id);
+      const cc = onlyDigits(v.cpf); if (cc.length === 11) fezC.add(cc);
+      const nn = String(v.nome || '').trim().toLowerCase(); if (nn) fezN.add(nn);
+    }
+    const matchPessoa = (c, M, C, N) => {
       const temCpf = onlyDigits(c.cpf).length === 11;
-      if (c.membro_id || temCpf) {
-        const cs = [c.membro_id ? nM.get(c.membro_id) : null, temCpf ? nC.get(onlyDigits(c.cpf)) : null].filter(Boolean);
-        return cs.length ? { fez: cs.some(x => x.fez) } : null;
-      }
-      const hit = nN.get(String(c.nome || '').trim().toLowerCase());
-      return hit ? { fez: hit.fez } : null;
+      if (c.membro_id || temCpf) return (c.membro_id && M.has(c.membro_id)) || (temCpf && C.has(onlyDigits(c.cpf)));
+      const nn = String(c.nome || '').trim().toLowerCase();
+      return !!nn && N.has(nn);
+    };
+    const nextOf = (c) => {
+      if (matchPessoa(c, fezM, fezC, fezN)) return { fez: true };
+      if (matchPessoa(c, insM, insC, insN)) return { fez: false };
+      return null;
     };
 
     const itens = convertidos.map((c) => {
