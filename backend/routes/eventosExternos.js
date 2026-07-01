@@ -4,10 +4,31 @@
 // ============================================================================
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+
 router.use(authenticate);
+
+// POST /upload-capa — foto de capa do formulário (bucket público). Devolve a URL.
+router.post('/upload-capa', authorizeModule('eventos-externos', 3), upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não enviado' });
+    const ext = (req.file.originalname.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('evento-capas').upload(path, req.file.buffer, {
+      contentType: req.file.mimetype || 'image/jpeg', upsert: false,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('evento-capas').getPublicUrl(path);
+    res.json({ url: data.publicUrl });
+  } catch (e) {
+    console.error('[eventos-externos] upload-capa:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar a capa' });
+  }
+});
 
 function slugify(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -34,7 +55,7 @@ router.get('/', authorizeModule('eventos-externos', 1), async (req, res) => {
 // POST / — cria evento
 router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const { nome, data, hora, local, descricao, form_ativo, tem_sorteio, campos } = req.body || {};
+    const { nome, data, hora, local, descricao, form_ativo, tem_sorteio, campos, capa_url } = req.body || {};
     if (!nome || nome.trim().length < 2) return res.status(400).json({ error: 'Nome obrigatório' });
     // slug único
     let base = slugify(nome), slug = base, n = 1;
@@ -47,7 +68,7 @@ router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
       nome: nome.trim(), slug, data: data || null, hora: hora || null,
       local: local || null, descricao: descricao || null,
       form_ativo: form_ativo !== false, tem_sorteio: tem_sorteio !== false,
-      campos: Array.isArray(campos) ? campos : [],
+      campos: Array.isArray(campos) ? campos : [], capa_url: capa_url || null,
       created_by: req.user?.userId || null,
     }).select('*').single();
     if (error) throw error;
@@ -73,7 +94,7 @@ router.get('/:id', authorizeModule('eventos-externos', 1), async (req, res) => {
 // PUT /:id — atualizar
 router.put('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo', 'tem_sorteio', 'campos'];
+    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo', 'tem_sorteio', 'campos', 'capa_url'];
     const patch = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     const { data, error } = await supabase.from('ext_eventos')

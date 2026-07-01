@@ -289,6 +289,7 @@ export const eventosExternos = {
   atualizar: (id, data) => put(`/eventos-externos/${id}`, data),
   remover: (id) => del(`/eventos-externos/${id}`),
   sortear: (id, premio) => post(`/eventos-externos/${id}/sortear`, { premio }),
+  uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/eventos-externos/upload-capa', fd); },
 };
 
 // Eventos Externos · formulário público de confirmação de presença (sem auth)
