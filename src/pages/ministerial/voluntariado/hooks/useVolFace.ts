@@ -1,17 +1,28 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
-import * as faceapi from '@vladmandic/face-api';
+// face-api (~1,3MB / ~338KB gzip) é carregado SOB DEMANDA via import() dinâmico.
+// O `import type` é apagado no build (não bundla nada), então as telas de
+// voluntariado (VolCheckin/VolMeuPerfil/VolTotem) não baixam mais o face-api no
+// load — ele só entra quando a câmera/detecção é acionada (recurso opt-in).
+import type * as FaceApi from '@vladmandic/face-api';
 
 const MODEL_URL = '/models/face-api';
 let modelsLoaded = false;
+let faceapi: typeof FaceApi | null = null;
+
+async function getFaceApi(): Promise<typeof FaceApi> {
+  if (!faceapi) faceapi = await import('@vladmandic/face-api');
+  return faceapi;
+}
 
 async function loadModels() {
   if (modelsLoaded) return;
+  const fa = await getFaceApi();
   await Promise.all([
-    faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    fa.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+    fa.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+    fa.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
   ]);
   modelsLoaded = true;
 }
@@ -56,7 +67,8 @@ export function useFaceDetection(options?: { autoDetect?: boolean }) {
     if (!videoRef.current || isDetecting) return null;
     setIsDetecting(true);
     try {
-      const detection = await faceapi
+      const fa = await getFaceApi();
+      const detection = await fa
         .detectSingleFace(videoRef.current)
         .withFaceLandmarks()
         .withFaceDescriptor();
@@ -64,9 +76,9 @@ export function useFaceDetection(options?: { autoDetect?: boolean }) {
         setDescriptor(detection.descriptor);
         // Draw on canvas
         if (canvasRef.current && videoRef.current) {
-          const dims = faceapi.matchDimensions(canvasRef.current, videoRef.current, true);
-          const resized = faceapi.resizeResults(detection, dims);
-          faceapi.draw.drawDetections(canvasRef.current, resized);
+          const dims = fa.matchDimensions(canvasRef.current, videoRef.current, true);
+          const resized = fa.resizeResults(detection, dims);
+          fa.draw.drawDetections(canvasRef.current, resized);
         }
         return detection.descriptor;
       }

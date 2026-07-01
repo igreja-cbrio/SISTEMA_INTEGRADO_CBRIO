@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import * as faceapi from '@vladmandic/face-api';
+import type * as FaceApi from '@vladmandic/face-api';
 import { Camera, Scan, SwitchCamera, Loader2, UserPlus, Link2, Trash2, ShieldAlert, Users, UserCheck, Repeat, Maximize2, Zap, ZapOff, ScanFace, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,12 +16,20 @@ const MODEL_URL = '/models/face-api';
 const COOLDOWN_MS = 2500; // evita recontar a mesma pessoa parada na frente
 
 let modelosProntos = false;
+// face-api (~1,3MB) carregado sob demanda via import() dinâmico · não pesa no
+// load da tela de reconhecimento; só baixa quando os modelos são acionados.
+let faceapi: typeof FaceApi | null = null;
+async function getFaceApi(): Promise<typeof FaceApi> {
+  if (!faceapi) faceapi = await import('@vladmandic/face-api');
+  return faceapi;
+}
 async function garantirModelos() {
   if (modelosProntos) return;
+  const fa = await getFaceApi();
   await Promise.all([
-    faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    fa.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+    fa.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+    fa.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
   ]);
   modelosProntos = true;
 }
@@ -37,7 +45,8 @@ function carregarImagem(url: string): Promise<HTMLImageElement> {
 async function descritorDaFoto(url: string): Promise<number[] | null> {
   await garantirModelos();
   const img = await carregarImagem(url);
-  const det = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+  const fa = await getFaceApi();
+  const det = await fa.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
   return det ? Array.from(det.descriptor) : null;
 }
 // Gera o vetor a partir da foto do membro, carregada via PROXY (mesmo domínio /
@@ -109,7 +118,7 @@ function rostoFrontalOk(det: any, video: HTMLVideoElement): boolean {
   return true;
 }
 function desenharBox(canvas: HTMLCanvasElement | null, video: HTMLVideoElement, det: any, ok: boolean) {
-  if (!canvas) return;
+  if (!canvas || !faceapi) return;
   try {
     const dims = faceapi.matchDimensions(canvas, video, true);
     const resized = faceapi.resizeResults(det, dims);
@@ -176,7 +185,8 @@ function AbaReconhecer() {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return false;
     // Detecção própria com landmarks → gate de ROSTO INTEIRO e DE FRENTE.
-    const det: any = await faceapi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
+    const fa = await getFaceApi();
+    const det: any = await fa.detectSingleFace(video).withFaceLandmarks().withFaceDescriptor();
     if (!det) { limparCanvas(canvasRef.current); return false; }
     const ok = rostoFrontalOk(det, video);
     desenharBox(canvasRef.current, video, det, ok);
