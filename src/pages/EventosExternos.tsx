@@ -141,7 +141,7 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
           </div>
           {c.tipo === 'select' && (
             <textarea placeholder="Opções (uma por linha)" value={(c.opcoes || []).join('\n')} onChange={e => upd(i, { opcoes: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })}
-              className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1 text-xs min-h-[60px]" />
+              className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-xs min-h-[110px]" />
           )}
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={c.obrigatorio !== false} onChange={e => upd(i, { obrigatorio: e.target.checked })} /> Obrigatório
@@ -183,9 +183,9 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
   }
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md flex flex-col max-h-[88vh]">
+      <DialogContent className="max-w-2xl flex flex-col max-h-[90vh]">
         <DialogHeader><DialogTitle>{ed ? 'Editar evento' : 'Novo evento'}</DialogTitle></DialogHeader>
-        <div className="space-y-3 text-sm flex-1 overflow-y-auto min-h-0">
+        <div className="space-y-4 text-sm flex-1 overflow-y-auto min-h-0 px-0.5">
           {/* Foto de capa */}
           <div>
             <div className="text-xs font-medium text-muted-foreground mb-1">Foto de capa (aparece no topo do formulário)</div>
@@ -209,7 +209,7 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
           </div>
           <Input placeholder="Local" value={f.local} onChange={e => setF({ ...f, local: e.target.value })} />
           <textarea placeholder="Descrição (opcional)" value={f.descricao} onChange={e => setF({ ...f, descricao: e.target.value })}
-            className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-3 py-2 text-sm min-h-[70px]" />
+            className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-3 py-2 text-sm min-h-[90px]" />
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={f.tem_sorteio} onChange={e => setF({ ...f, tem_sorteio: e.target.checked })} />
             Tem sorteio (mostra o número da sorte com confete ao confirmar)
