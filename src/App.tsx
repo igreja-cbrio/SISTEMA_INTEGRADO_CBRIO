@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { TutorialProvider } from './contexts/TutorialContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { lazy, Suspense, Component } from 'react';
+import { lazy, Suspense, Component, useEffect } from 'react';
 import type { ReactNode, ComponentType } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
@@ -55,25 +55,33 @@ function getRetryCount(): number {
 // Reload com cache-buster + limpeza de caches do browser/SW · usado quando
 // um chunk lazy quebra (deploy novo invalidou o hash que o HTML em cache
 // referência). Limpa tudo que pode estar segurando o HTML antigo.
+let hardReloadFired = false;
 async function hardReload() {
-  try {
-    // Limpa Cache Storage (PWA / fetch cache)
-    if ('caches' in window) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-    }
-    // Desregistra Service Workers (vai re-registrar no próximo load se necessário)
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r => r.unregister()));
-    }
-    // Limpa flags antigos do retry baseado em sessionStorage (legado)
-    Object.keys(sessionStorage)
-      .filter(k => k.startsWith('chunk-retry-') || k === 'boundary-chunk-retry')
-      .forEach(k => sessionStorage.removeItem(k));
-  } catch {
-    // ignora — vamos recarregar de qualquer jeito
-  }
+  if (hardReloadFired) return; // vários chunk errors ao mesmo tempo → 1 reload só
+  hardReloadFired = true;
+  const limpar = (async () => {
+    try {
+      // Limpa Cache Storage (PWA / fetch cache)
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      // Desregistra Service Workers (re-registra no próximo load se necessário)
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+      // Limpa flags antigos do retry baseado em sessionStorage (legado)
+      Object.keys(sessionStorage)
+        .filter(k => k.startsWith('chunk-retry-') || k === 'boundary-chunk-retry')
+        .forEach(k => sessionStorage.removeItem(k));
+    } catch { /* ignora — vamos recarregar de qualquer jeito */ }
+  })();
+  // ⚠️ A limpeza NUNCA pode travar o reload: se caches.delete/getRegistrations
+  // pendurar, o location.replace nunca rodava e a tela ficava PRETA pra sempre
+  // (lazyWithRetry já retornou uma promise que nunca resolve). Timeout garante
+  // que recarrega em ≤1.2s de qualquer jeito. 2026-06-30.
+  try { await Promise.race([limpar, new Promise((r) => setTimeout(r, 1200))]); } catch { /* ignora */ }
   try {
     const url = new URL(window.location.href);
     const next = getRetryCount() + 1;
@@ -83,6 +91,32 @@ async function hardReload() {
   } catch {
     window.location.reload();
   }
+}
+
+// Chunk errors surgem muitas vezes FORA do ciclo de render do React — um import
+// dinâmico que rejeita numa navegação, ou o <script>/<link> do chunk dando 404
+// depois de um deploy novo (o HTML em cache aponta pra um hash que já não existe).
+// Nesses casos o ErrorBoundary NÃO é acionado e a tela fica PRETA (o usuário tem
+// que recarregar na mão). Handlers globais recuperam: detectam o erro de chunk e
+// recarregam com cache-bust, respeitando o teto de retries. 2026-06-30.
+if (typeof window !== 'undefined') {
+  const recuperarSeChunk = (msg: string) => {
+    if (CHUNK_ERROR_RE.test(msg || '') && getRetryCount() < MAX_RETRIES) hardReload();
+  };
+  // capture:true pega erro de CARREGAMENTO de recurso (<script>/<link>), que não borbulha
+  window.addEventListener('error', (e: ErrorEvent) => {
+    const alvo = e.target as (HTMLScriptElement & HTMLLinkElement) | null;
+    const src = alvo ? (alvo.src || alvo.href || '') : '';
+    if (src && /\/assets\/.*\.(js|mjs|css)(\?|$)/.test(src)) {
+      if (getRetryCount() < MAX_RETRIES) hardReload();
+      return;
+    }
+    recuperarSeChunk(e.message || e.error?.message || '');
+  }, true);
+  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+    const r: unknown = e.reason;
+    recuperarSeChunk(typeof r === 'string' ? r : (r as Error)?.message || '');
+  });
 }
 
 function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: () => Promise<{ default: T }>) {
@@ -631,6 +665,24 @@ function AppRoutes() {
 }
 
 export default function App() {
+  // Se o app rodar estável por 5s, a navegação deu certo → tira _chunk_retry/_cb
+  // da URL pra ZERAR o contador de retries (senão um retry grudado come as
+  // tentativas do próximo incidente) e deixa a URL limpa. O atraso de 5s é o que
+  // preserva o teto anti-loop: se um chunk falhar antes disso, o hardReload roda
+  // com o contador intacto. 2026-06-30.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has(RETRY_PARAM) || url.searchParams.has('_cb')) {
+          url.searchParams.delete(RETRY_PARAM);
+          url.searchParams.delete('_cb');
+          window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+        }
+      } catch { /* ignora */ }
+    }, 5000);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
