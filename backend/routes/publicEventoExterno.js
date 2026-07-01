@@ -6,10 +6,20 @@
 const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 
 const limiter = rateLimit({ windowMs: 60 * 1000, max: 15, message: { error: 'Muitas requisições. Aguarde um minuto.' } });
 router.use(limiter);
+
+// Upload de imagem enviada NO formulário público (ex.: logo da empresa parceira).
+// Só imagens, 5MB, memória → bucket público `evento-capas` (o mesmo da capa).
+const MIME_IMG = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+const uploadImg = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, MIME_IMG.includes(file.mimetype)),
+});
 
 function soDigitos(s) { return String(s || '').replace(/\D/g, ''); }
 function ehEmailValido(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || '')); }
@@ -88,6 +98,31 @@ router.post('/:slug/inscrever', async (req, res) => {
   } catch (e) {
     console.error('[publicEventoExterno] inscrever:', e.message);
     res.status(500).json({ error: 'Erro ao confirmar presença.' });
+  }
+});
+
+// POST /:slug/upload-imagem — imagem enviada num campo do formulário (ex.: logo
+// da empresa). Só funciona se o evento existe e está com inscrições abertas
+// (não é um bucket aberto pra qualquer um). Devolve a URL pública pra ser
+// gravada em `dados[campo]` no submit.
+router.post('/:slug/upload-imagem', uploadImg.single('arquivo'), async (req, res) => {
+  try {
+    const ev = await eventoPorSlug(req.params.slug);
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    if (!ev.form_ativo) return res.status(403).json({ error: 'As inscrições deste evento estão encerradas.' });
+    if (!req.file) return res.status(400).json({ error: 'Envie uma imagem (PNG, JPG, WEBP ou GIF, até 5MB).' });
+
+    const ext = (req.file.originalname.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+    const path = `inscricoes/${ev.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('evento-capas').upload(path, req.file.buffer, {
+      contentType: req.file.mimetype || 'image/png', upsert: false,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('evento-capas').getPublicUrl(path);
+    res.json({ url: data.publicUrl });
+  } catch (e) {
+    console.error('[publicEventoExterno] upload-imagem:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar a imagem.' });
   }
 });
 

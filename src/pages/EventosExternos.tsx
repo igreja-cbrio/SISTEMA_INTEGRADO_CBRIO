@@ -139,12 +139,16 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
               <option value="select">Lista suspensa</option>
               <option value="escolha">Escolha</option>
               <option value="multi">Múltipla escolha</option>
+              <option value="imagem">Imagem / Logo (upload)</option>
             </select>
             <button onClick={() => setCampos(campos.filter((_, j) => j !== i))} className="text-red-500 px-1"><Trash2 className="h-4 w-4" /></button>
           </div>
           {(c.tipo === 'select' || c.tipo === 'escolha' || c.tipo === 'multi') && (
             <textarea placeholder="Opções (uma por linha)" value={(c.opcoes || []).join('\n')} onChange={e => upd(i, { opcoes: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })}
               className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-xs min-h-[110px]" />
+          )}
+          {c.tipo === 'imagem' && (
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1"><ImageIcon className="h-3 w-3" /> A pessoa envia uma imagem (ex.: a logo da empresa). Aceita PNG, JPG, WEBP ou GIF, até 5MB.</p>
           )}
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={c.obrigatorio !== false} onChange={e => upd(i, { obrigatorio: e.target.checked })} /> Obrigatório
@@ -430,7 +434,17 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
                               </span>
                             </td>
                             <td className="p-1.5 text-muted-foreground">{i.telefone || ''}</td>
-                            {(ev.campos || []).map((c: any) => <td key={c.key} className="p-1.5 text-muted-foreground">{i.dados?.[c.key] || ''}</td>)}
+                            {(ev.campos || []).map((c: any) => (
+                              <td key={c.key} className="p-1.5 text-muted-foreground">
+                                {c.tipo === 'imagem' ? (
+                                  i.dados?.[c.key] ? (
+                                    <a href={i.dados[c.key]} target="_blank" rel="noreferrer" title="Abrir imagem">
+                                      <img src={i.dados[c.key]} alt={c.label} className="h-8 w-auto max-w-[80px] object-contain rounded border border-border" />
+                                    </a>
+                                  ) : ''
+                                ) : (i.dados?.[c.key] || '')}
+                              </td>
+                            ))}
                           </tr>
                         ))}
                       </tbody>
