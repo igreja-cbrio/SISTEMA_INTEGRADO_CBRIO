@@ -1166,7 +1166,7 @@ export default function Solicitacoes() {
             <Card className="p-8 text-center">
               <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-3" />
               <p className="text-muted-foreground">Sem solicitações aguardando aprovação.</p>
-              <p className="text-sm text-muted-foreground mt-1">Quando alguém do seu setor solicitar algo, aparecerá aqui.</p>
+              <p className="text-sm text-muted-foreground mt-1">Quando houver uma solicitação pendente de aprovação, aparecerá aqui.</p>
             </Card>
           ) : (
             filtered.map(item => (
