@@ -1,6 +1,7 @@
 // Eventos Externos · calendário + eventos com formulário público de confirmação
 // de presença e sorteio (número da sorte aleatório por inscrito).
 import { useEffect, useMemo, useState } from 'react';
+import confetti from 'canvas-confetti';
 import { eventosExternos as api } from '../api';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -241,10 +242,10 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
 function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
   const [ev, setEv] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [premio, setPremio] = useState('');
   const [sorteando, setSorteando] = useState(false);
-  const [ultimo, setUltimo] = useState<any>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
+  const [rolNum, setRolNum] = useState(0);
 
   function carregar() { setLoading(true); api.get(id).then(setEv).catch(() => toast.error('Erro')).finally(() => setLoading(false)); }
   useEffect(() => { carregar(); }, [id]);
@@ -253,16 +254,33 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
   function copiar() { navigator.clipboard.writeText(link); toast.success('Link copiado'); }
   const wa = `https://wa.me/?text=${encodeURIComponent(`Confirme sua presença no ${ev?.nome || 'evento'}: ${link}`)}`;
 
-  async function sortear() {
-    setSorteando(true);
-    try { const s: any = await api.sortear(id, premio); setUltimo(s); setPremio(''); carregar(); }
-    catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
+  function confeteBig() {
+    const cores = ['#00B39D', '#00d9bd', '#ffd166', '#ef476f', '#118ab2', '#ffffff'];
+    const raja = (x: number) => confetti({ particleCount: 80, spread: 80, startVelocity: 55, origin: { x, y: 0.55 }, colors: cores });
+    raja(0.5); setTimeout(() => raja(0.2), 200); setTimeout(() => raja(0.8), 400);
+    setTimeout(() => confetti({ particleCount: 140, spread: 120, startVelocity: 45, origin: { y: 0.5 }, colors: cores }), 250);
   }
+
   const sorteioDoPremio = (nome: string) => (ev?.sorteios || []).find((s: any) => (s.premio || '') === nome);
+
+  // Sorteio com animação cinematográfica: números "rolando" + revelação do ganhador.
   async function sortearPremio(nome: string) {
+    if (anim) return;
     setSorteando(true);
-    try { const s: any = await api.sortear(id, nome); setUltimo(s); carregar(); }
-    catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
+    setAnim({ fase: 'rolando', premio: nome });
+    const iv = setInterval(() => setRolNum(1000 + Math.floor(Math.random() * 9000)), 65);
+    try {
+      const s: any = await api.sortear(id, nome);
+      await new Promise(r => setTimeout(r, 2400)); // suspense
+      clearInterval(iv);
+      setRolNum(s.numero_sorteado);
+      setAnim({ fase: 'fim', premio: nome, ganhador: { numero: s.numero_sorteado, nome: s.ganhador_nome } });
+      confeteBig();
+      carregar();
+    } catch (e: any) {
+      clearInterval(iv); setAnim(null);
+      toast.error(e?.message || 'Erro ao sortear');
+    } finally { setSorteando(false); }
   }
   async function sortearTodos() {
     setSorteando(true);
@@ -270,6 +288,7 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
       const pendentes = (ev?.premios || []).filter((p: string) => !sorteioDoPremio(p));
       for (const p of pendentes) { await api.sortear(id, p); }
       carregar();
+      toast.success(`${pendentes.length} prêmio(s) sorteado(s)`);
     } catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
   }
   async function excluir() {
@@ -279,6 +298,37 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
   }
 
   return (
+    <>
+    {anim && (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-hidden"
+        style={{ background: 'radial-gradient(circle at 50% 40%, rgba(0,60,55,0.92), rgba(4,10,12,0.97))', backdropFilter: 'blur(6px)' }}>
+        <div className="absolute inset-0 opacity-30" style={{ background: 'conic-gradient(from 0deg at 50% 45%, transparent, rgba(0,179,157,0.25), transparent 60%)', animation: anim.fase === 'rolando' ? 'spin 8s linear infinite' : undefined }} />
+        <div className="relative text-center px-6">
+          <div className="uppercase tracking-[0.35em] text-white/60 text-sm mb-4">{anim.premio || 'Sorteio'}</div>
+          <div className="font-black tabular-nums leading-none"
+            style={{
+              fontSize: 'clamp(72px, 18vw, 180px)',
+              background: 'linear-gradient(90deg,#00d9bd,#00B39D,#7CF5E4)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
+              filter: anim.fase === 'fim' ? 'drop-shadow(0 0 30px rgba(0,217,189,0.6))' : 'none',
+              transform: anim.fase === 'fim' ? 'scale(1)' : 'scale(0.96)', transition: 'transform .3s ease',
+            }}>
+            {String(rolNum).padStart(4, '0')}
+          </div>
+          {anim.fase === 'rolando' ? (
+            <div className="mt-6 text-white/80 text-lg tracking-wide animate-pulse">Sorteando…</div>
+          ) : (
+            <div className="mt-4">
+              <div className="text-white text-3xl sm:text-4xl font-bold">{anim.ganhador?.nome}</div>
+              <div className="text-teal-300 mt-1">🎉 Ganhador(a) do sorteio</div>
+              <button onClick={() => setAnim(null)}
+                className="mt-8 rounded-full bg-white/10 hover:bg-white/20 text-white px-8 py-2.5 text-sm font-semibold border border-white/20">
+                Fechar
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl flex flex-col max-h-[88vh]">
         {loading || !ev ? (
@@ -344,30 +394,9 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
                     <p className="text-[11px] text-muted-foreground">Defina/edite os prêmios em "Editar".</p>
                   </div>
                 ) : (
-                  <>
-                    <div className="flex gap-2">
-                      <Input placeholder="Prêmio (opcional)" value={premio} onChange={e => setPremio(e.target.value)} className="h-9" />
-                      <Button size="sm" onClick={sortear} disabled={sorteando || !(ev.inscritos?.length)}>{sorteando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Sortear'}</Button>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-1">Dica: defina os prêmios em "Editar" pra sortear um ganhador por prêmio.</p>
-                    {ultimo && (
-                      <div className="mt-3 rounded-lg bg-primary/10 border border-primary/30 p-3 text-center">
-                        <PartyPopper className="h-6 w-6 text-primary mx-auto" />
-                        <div className="text-lg font-bold mt-1">Nº {ultimo.numero_sorteado} · {ultimo.ganhador_nome}</div>
-                        {ultimo.premio && <div className="text-xs text-muted-foreground">{ultimo.premio}</div>}
-                      </div>
-                    )}
-                    {(ev.sorteios || []).length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {ev.sorteios.map((s: any) => (
-                          <div key={s.id} className="flex justify-between text-xs border-b border-border/40 py-1">
-                            <span><b>Nº {s.numero_sorteado}</b> · {s.ganhador_nome}{s.premio ? ` · ${s.premio}` : ''}</span>
-                            <span className="text-muted-foreground">{new Date(s.sorteado_em).toLocaleDateString('pt-BR')}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
+                  <p className="text-xs text-muted-foreground py-1">
+                    Nenhum prêmio definido. Clique em <b>"Editar"</b> e adicione os prêmios do sorteio pra sortear um ganhador por prêmio.
+                  </p>
                 )}
               </div>
 
@@ -416,5 +445,6 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
         )}
       </DialogContent>
     </Dialog>
+    </>
   );
 }
