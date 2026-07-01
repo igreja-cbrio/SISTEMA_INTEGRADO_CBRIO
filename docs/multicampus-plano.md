@@ -44,7 +44,17 @@ diretoria). Por isso `usuario_igrejas` (acesso) é **M:N**, separado do
 
 ## 3. Estado atual (verificado contra o repo · 2026-07-01)
 
-Fundação **~30% pronta e majoritariamente decorativa**:
+> **✅ FASE 0 CONCLUÍDA (2026-07-01)** — migration `20260701050000` aplicada em
+> produção: `usuario_igrejas` + helper `current_user_igreja_ids()` +
+> `modulos.escopo_campus` (18 isolados / 34 compartilhados). **Correção do
+> diagnóstico abaixo:** a tabela `igrejas` **NÃO** está com `USING(true)` —
+> verificado em prod, as policies de escrita já são super-admin (read
+> autenticado / write super-admin / service), então esse "fix" era desnecessário.
+> Resta a Fase 0b (`req.user.igrejas[]` no `auth.js`) — foi adiada para junto da
+> Fase 2, quando as policies/rotas realmente consumirem o escopo (evita query
+> por request sem consumidor).
+
+Diagnóstico original (fundação **~30% pronta e majoritariamente decorativa**):
 
 **✅ Existe:**
 - Tabela `public.igrejas` (`20260507100000_fase1_igrejas.sql`): `id` UUID, `nome`,
@@ -188,7 +198,7 @@ Suíte de **não-vazamento** obrigatória no CI antes de o Campus 2 entrar em pr
 
 | Fase | Janela | Entregas | Pré-req |
 |---|---|---|---|
-| **0 · Fundação** | Jul (1ª quinz.) | `usuario_igrejas` + `current_user_igreja_ids()` + `escopo_campus` em `modulos` + `req.user.igrejas[]` no `auth.js` (default Sede → **sem mudança de comportamento**) + fix do `USING(true)` da `igrejas` | — |
+| **0 · Fundação** ✅ | ~~Jul (1ª quinz.)~~ **feito 2026-07-01** | `usuario_igrejas` + `current_user_igreja_ids()` + `escopo_campus` em `modulos` (migration `20260701050000`, em prod). `igrejas` já estava travada (fix desnecessário). `req.user.igrejas[]` no `auth.js` movido p/ Fase 2 | — |
 | **1 · Propagar `igreja_id`** | Jul (2ª) → Ago | Carimbar campus nas tabelas isoladas (cultos + UNIQUE novo → decisões → grupos/voluntários/`cui_*` → `dados_brutos`/`kpi_taticos` → eventos/projetos/solicitações → financeiro/RH), backfill default Sede | Fase 0 |
 | **2 · RLS por campus + CI** | Set → Out | Reescrever policies por campus (via `escopo_campus`) + suíte de não-vazamento no CI. **PORTÃO: Campus 2 não vai a prod antes daqui** | Fase 1 completa |
 | **3 · Experiência multi-campus** | Nov → meados Dez | NSM/KPIs por campus + consolidado, mandala com seletor de campus, app/push/comunicados por campus, dashboards comparativos + 2 semanas de estabilização/treino | Fase 2 |
