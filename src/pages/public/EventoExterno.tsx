@@ -51,6 +51,33 @@ function Field({ id, label, value, onChange, required, as = 'input', inputMode }
   );
 }
 
+function SelectFloat({ id, label, value, onChange, required, opcoes }: {
+  id: string; label: string; value: string;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void; required?: boolean; opcoes: string[];
+}) {
+  const [focused, setFocused] = useState(false);
+  const active = focused || (value && String(value).length > 0);
+  return (
+    <div style={{ position: 'relative', marginBottom: 22 }}>
+      <select id={id} name={id} value={value || ''} onChange={onChange} required={required}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        style={{
+          display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)',
+          background: 'transparent', border: 'none', borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
+          outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer', transition: 'border-color .2s',
+        }}>
+        <option value=""></option>
+        {opcoes.map((o, i) => <option key={i} value={o} style={{ background: 'var(--cbrio-modal-bg)', color: 'var(--cbrio-text)' }}>{o}</option>)}
+      </select>
+      <label htmlFor={id} style={{
+        position: 'absolute', left: 0, pointerEvents: 'none', transition: 'all .2s',
+        top: active ? -14 : 10, fontSize: active ? 11 : 14, color: focused ? '#00B39D' : 'var(--cbrio-text3)',
+      }}>{label}{required ? ' *' : ''}</label>
+      <span style={{ position: 'absolute', right: 4, bottom: 12, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
+    </div>
+  );
+}
+
 export default function EventoExterno() {
   const { slug = '' } = useParams();
   const { C } = usePublicTheme();
@@ -159,14 +186,7 @@ export default function EventoExterno() {
               <Field id="telefone" label="WhatsApp" value={telefone} onChange={e => setTelefone(mascaraTelefone(e.target.value))} required inputMode="tel" />
               {(evento.campos || []).map((c: any) => (
                 c.tipo === 'select' ? (
-                  <div key={c.key} style={{ position: 'relative', marginBottom: 22 }}>
-                    <label htmlFor={c.key} style={{ position: 'absolute', left: 0, top: -14, fontSize: 11, color: 'var(--cbrio-text3)' }}>{c.label}{c.obrigatorio ? ' *' : ''}</label>
-                    <select id={c.key} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio}
-                      style={{ display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: '2px solid var(--cbrio-border)', outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}>
-                      <option value="">Selecione…</option>
-                      {(c.opcoes || []).map((o: string, i: number) => <option key={i} value={o}>{o}</option>)}
-                    </select>
-                  </div>
+                  <SelectFloat key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio} opcoes={c.opcoes || []} />
                 ) : (
                   <Field key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)}
                     required={c.obrigatorio} as={c.tipo === 'textarea' ? 'textarea' : 'input'}
