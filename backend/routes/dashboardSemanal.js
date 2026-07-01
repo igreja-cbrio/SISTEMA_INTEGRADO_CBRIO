@@ -252,6 +252,18 @@ router.get('/semanal', async (req, res) => {
 
     const { inicio, fim } = isoWeekRange(ano, semana);
 
+    // Voluntariado: as barras mostram CHECK-INS por bloco (view = count(*)), então
+    // o "total" superconta quem serve em >1 bloco. Cards dedicados trazem as
+    // pessoas ÚNICAS da semana (dedup) + o total de check-ins (via RPC).
+    let volResumo = {};
+    if (indicadorKey === 'voluntariado') {
+      try {
+        const { data: vr } = await supabase.rpc('fn_dashboard_voluntariado_resumo', { p_ano_iso: ano, p_semana_iso: semana });
+        const row = Array.isArray(vr) ? vr[0] : vr;
+        if (row) volResumo = { pessoas_unicas: Number(row.pessoas_unicas) || 0, checkins_total: Number(row.checkins_total) || 0 };
+      } catch (e) { console.error('[DASH-SEM] vol resumo', e.message); }
+    }
+
     res.json({
       ano,
       semana,
@@ -266,6 +278,7 @@ router.get('/semanal', async (req, res) => {
         media_geral: mediaGeral,
         variacao_pct,
         taxa_ocupacao_geral,
+        ...volResumo,
       },
       meta: meta ? { id: meta.id, meta_valor: Number(meta.meta_valor), rotulo: meta.rotulo } : null,
     });

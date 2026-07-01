@@ -150,7 +150,13 @@ export default function DashSemanalAba() {
       indDef,
       data: {
         ...r.data,
-        resumo: { total, media_geral: mediaGeral, variacao_pct, taxa_ocupacao_geral },
+        resumo: {
+          total, media_geral: mediaGeral, variacao_pct, taxa_ocupacao_geral,
+          // Voluntariado: pessoas únicas da semana + total de check-ins (do backend,
+          // nível semana · não mudam com o filtro de culto).
+          pessoas_unicas: r.data.resumo?.pessoas_unicas,
+          checkins_total: r.data.resumo?.checkins_total,
+        },
       },
       cor: PALETA_MULTI[i % PALETA_MULTI.length],
     };
@@ -315,6 +321,29 @@ export default function DashSemanalAba() {
         {isSingle && primario?.indDef?.usa_ocupacao && primario.data && (
           <div className="pt-4">
             <OcupacaoGauge taxa={primario.data.resumo.taxa_ocupacao_geral} capacidade={capacidadeFiltro} />
+          </div>
+        )}
+
+        {isSingle && primario?.indicador === 'voluntariado' && primario.data && (
+          <div className="pt-4 grid grid-cols-2 gap-2">
+            <div className="rounded-xl border bg-card p-4 text-center">
+              <p className="text-2xl font-bold" style={{ color: C.primary }}>
+                {primario.data.resumo.pessoas_unicas ?? '—'}
+              </p>
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">
+                Pessoas únicas
+              </p>
+              <p className="text-[10px] text-muted-foreground">na semana (sem repetir)</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4 text-center">
+              <p className="text-2xl font-bold" style={{ color: C.media }}>
+                {primario.data.resumo.checkins_total ?? '—'}
+              </p>
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">
+                Total de check-ins
+              </p>
+              <p className="text-[10px] text-muted-foreground">eventos na semana</p>
+            </div>
           </div>
         )}
       </div>
