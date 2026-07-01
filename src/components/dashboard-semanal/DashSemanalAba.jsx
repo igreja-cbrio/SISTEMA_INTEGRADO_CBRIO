@@ -120,6 +120,14 @@ export default function DashSemanalAba() {
   const isLoading = results.some(r => r.isLoading);
   const isFetching = results.some(r => r.isFetching);
 
+  // Capacidade de assentos p/ o gauge geral. O Bridge acontece em outro espaço
+  // (100 lugares); quando o filtro isola o Bridge, a ocupação usa essa base.
+  const capacidadeFiltro = (() => {
+    if (culto === 'todos') return 1050;
+    const c = (cultos || []).find(x => x.id === culto);
+    return c && /bridge/i.test(c.name || '') ? 100 : 1050;
+  })();
+
   // Recalcula resumo client-side aplicando o filtro `culto`
   const datasets = results.map((r, i) => {
     const indDef = INDICADORES.find(x => x.key === indicadoresSel[i]);
@@ -134,8 +142,8 @@ export default function DashSemanalAba() {
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsFiltrados.reduce((s, it) => s + (it.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef?.usa_ocupacao
-      ? Math.round((total / 1050) * 1000) / 10
-      : Math.round((totalPresencial / 1050) * 1000) / 10;
+      ? Math.round((total / capacidadeFiltro) * 1000) / 10
+      : Math.round((totalPresencial / capacidadeFiltro) * 1000) / 10;
 
     return {
       indicador: indicadoresSel[i],
@@ -306,7 +314,7 @@ export default function DashSemanalAba() {
 
         {isSingle && primario?.indDef?.usa_ocupacao && primario.data && (
           <div className="pt-4">
-            <OcupacaoGauge taxa={primario.data.resumo.taxa_ocupacao_geral} />
+            <OcupacaoGauge taxa={primario.data.resumo.taxa_ocupacao_geral} capacidade={capacidadeFiltro} />
           </div>
         )}
       </div>

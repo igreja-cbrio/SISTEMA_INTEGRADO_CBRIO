@@ -23,6 +23,11 @@ const Anthropic = require('@anthropic-ai/sdk');
 router.use(authenticate);
 
 const CAPACIDADE_TEMPLO = 1050;
+// O Bridge acontece em outro espaço da igreja, com capacidade de 100 lugares.
+// A taxa de ocupação dele usa essa base (não a do templo).
+const CAPACIDADE_BRIDGE = 100;
+const ehBridge = (nome) => /bridge/i.test(nome || '');
+const capacidadeCulto = (nome) => (ehBridge(nome) ? CAPACIDADE_BRIDGE : CAPACIDADE_TEMPLO);
 
 const INDICADORES = {
   frequencia:        { coluna: 'frequencia',        rotulo: 'Frequência',        usa_ocupacao: true },
@@ -200,7 +205,7 @@ router.get('/semanal', async (req, res) => {
         media,
         total_presencial: r.total_presencial,
         taxa_ocupacao: indDef.usa_ocupacao && valor_absoluto > 0
-          ? Math.round((valor_absoluto / CAPACIDADE_TEMPLO) * 1000) / 10
+          ? Math.round((valor_absoluto / capacidadeCulto(r.service_type_name)) * 1000) / 10
           : null,
       };
     });
