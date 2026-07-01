@@ -27,6 +27,11 @@ import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
+// Cor por status do 1º contato (dashboard · Próximos passos)
+const PP_COR: Record<string, string> = {
+  atendido_respondido: '#10b981', nao_respondeu: '#f59e0b', nao_atendido: '#64748b',
+  numero_errado: '#94a3b8', pendente: '#ef476f',
+};
 
 // Filtro de período do dashboard (bate com DASH_DIAS_VALIDOS no backend)
 const DASH_PERIODOS = [
@@ -1111,9 +1116,62 @@ export default function Cuidados() {
                     <Legend />
                     <Line type="monotone" dataKey="convertidos" name="Convertidos" stroke={C.primary} strokeWidth={2} dot={false} />
                     <Line type="monotone" dataKey="contato" name="1º contato" stroke={C.info} strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="atendido" name="Atendido e respondido" stroke="#10b981" strokeWidth={2} dot={false} />
                     <Line type="monotone" dataKey="engajados" name="Engajados +1 valor" stroke={C.purple} strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
+              </div>
+
+              {/* Próximos passos · status do 1º contato */}
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="font-semibold text-sm mb-1">Próximos passos · status do 1º contato</h3>
+                <p className="text-xs text-muted-foreground mb-3">Status do primeiro contato dos convertidos do período. "Número errado" conta como contato feito (a mensagem foi enviada) e fica fora do cálculo de "atendido e respondido".</p>
+                <div className="space-y-2">
+                  {(() => {
+                    const totalPP = (dashSeries.statusDist || []).reduce((s: number, d: any) => s + d.n, 0) || 1;
+                    return (dashSeries.statusDist || []).map((d: any) => (
+                      <div key={d.status} className="flex items-center gap-3">
+                        <span className="w-40 shrink-0 text-xs text-muted-foreground">{d.label}</span>
+                        <div className="flex-1 h-5 rounded bg-muted/50 overflow-hidden">
+                          <div className="h-full rounded" style={{ width: `${Math.round((d.n / totalPP) * 100)}%`, background: PP_COR[d.status] || '#94a3b8' }} />
+                        </div>
+                        <span className="w-24 shrink-0 text-right text-xs"><strong className="text-foreground">{d.n}</strong> <span className="text-muted-foreground">({Math.round((d.n / totalPP) * 100)}%)</span></span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              {/* Relatório por responsável do atendimento */}
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="font-semibold text-sm mb-1">Relatório por responsável</h3>
+                <p className="text-xs text-muted-foreground mb-3">Quem ficou responsável pelo atendimento e a cobertura de cada um. "Contato feito" inclui número errado; "atendido e respondido" exclui número errado do denominador.</p>
+                <div className="rounded-lg border border-border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Responsável</TableHead>
+                        <TableHead className="text-right">Convertidos</TableHead>
+                        <TableHead className="text-right">Contato feito</TableHead>
+                        <TableHead className="text-right">Atendido e respondido</TableHead>
+                        <TableHead className="text-right">Número errado</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(dashSeries.porResponsavel || []).length === 0 ? (
+                        <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Sem dados no período.</TableCell></TableRow>
+                      ) : (dashSeries.porResponsavel || []).map((r: any) => (
+                        <TableRow key={r.responsavel}>
+                          <TableCell className="font-medium">{r.responsavel}</TableCell>
+                          <TableCell className="text-right">{r.total}</TableCell>
+                          <TableCell className="text-right">{r.contato} <span className="text-muted-foreground text-xs">({r.contato_pct}%)</span></TableCell>
+                          <TableCell className="text-right">{r.atendido} <span className="text-muted-foreground text-xs">({r.atendido_pct}%)</span></TableCell>
+                          <TableCell className="text-right">{r.numero_errado || 0}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
 
               {/* Gráfico 2 · processos pastorais */}
