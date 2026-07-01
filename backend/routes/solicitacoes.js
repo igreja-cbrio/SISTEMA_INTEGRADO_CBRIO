@@ -258,7 +258,11 @@ router.get('/', async (req, res) => {
       const isSuper = await isAdminFallback(req);
       const aprovarIds = await diretorIdsQuePodeAprovar(userId);
       if (isSuper) {
-        q = q.or(`and(aprovacao_origem_diretor_id.in.(${aprovarIds.join(',')}),aprovacao_origem_status.eq.pendente),aprovacao_origem_status.eq.triagem`)
+        // Super-admin ve a fila INTEIRA de aprovação de origem: TODOS os pendentes
+        // (inclusive os atribuídos a outros diretores · fallback pra quando o
+        // diretor demora ou esta ausente · o endpoint aprovar-origem ja concede
+        // esse poder) + a triagem (sem setor resolvido · Fase 0).
+        q = q.in('aprovacao_origem_status', ['pendente', 'triagem'])
              .is('deleted_at', null);
       } else {
         q = q.in('aprovacao_origem_diretor_id', aprovarIds)
@@ -428,9 +432,21 @@ router.get('/meu-papel', async (req, res) => {
     const coSetores = await setoresQueCoaprova(userId);
     const ehAprovadorOrigem = !!setorRow || coSetores.length > 0;
 
-    // Contador de pendentes na fila de aprovacao (diretor + setores co-aprovados)
+    // Super-admin? Define antes do contador · ele ve/aprova a fila inteira.
+    const isSuper = await isAdminFallback(req);
+
+    // Contador de pendentes na fila de aprovacao.
+    // · super-admin: TODOS os pendentes (fallback · mesma fila da aba Aprovar).
+    // · diretor/co-aprovador: só os seus setores (diretor + co-aprovados).
     let pendentesOrigem = 0;
-    if (ehAprovadorOrigem) {
+    if (isSuper) {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('aprovacao_origem_status', 'pendente')
+        .is('deleted_at', null);
+      pendentesOrigem = count || 0;
+    } else if (ehAprovadorOrigem) {
       const aprovarIds = await diretorIdsQuePodeAprovar(userId);
       const { count } = await supabase
         .from('solicitacoes')
@@ -442,7 +458,6 @@ router.get('/meu-papel', async (req, res) => {
     }
 
     // Triagem · super-admins veem solicitacoes sem setor resolvido (Fase 0)
-    const isSuper = await isAdminFallback(req);
     let pendentesTriagem = 0;
     if (isSuper) {
       const { count } = await supabase
