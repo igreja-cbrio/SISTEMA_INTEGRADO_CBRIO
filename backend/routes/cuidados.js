@@ -11,7 +11,9 @@ router.use(authenticate);
 // Contato FEITO = o contato foi realizado, independente da resposta da pessoa
 // (regra do Marcos · 2026-06-17). Vale pelo status do dropdown OU pelo
 // primeiro_contato_em legado. "sem_retorno"/"numero_errado"/vazio NÃO contam.
-const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+// "Contato feito" = a mensagem foi enviada (independe da resposta). numero_errado
+// entra aqui: a equipe mandou a mensagem, o número é que estava errado (Marcos 2026-07-01).
+const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
 const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
 
 // Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
@@ -163,7 +165,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     // ── Convertidos na janela (bucket pela data do culto) ──
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, data_culto, primeiro_contato_em, primeiro_contato_status, area, telefone',
+      'id, data_culto, primeiro_contato_em, primeiro_contato_status, responsavel_atendimento, area, telefone',
       (q) => q.is('deleted_at', null).gte('data_culto', inicio),
     );
 
@@ -187,15 +189,39 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     for (const c of convertidos) {
       const b = dashBucket(c.data_culto, granTrend);
       if (!b) continue;
-      const o = funilMap.get(b) || { convertidos: 0, contato: 0, engajados: 0 };
+      const o = funilMap.get(b) || { convertidos: 0, contato: 0, atendido: 0, engajados: 0 };
       o.convertidos++;
       if (contatoFoiFeito(c)) o.contato++;
+      if (c.primeiro_contato_status === 'atendido_respondido') o.atendido++;
       if (engajadosSet.has(c.id)) o.engajados++;
       funilMap.set(b, o);
     }
     const funil = dashBucketsIntervalo(inicio, granTrend).map(b => ({
-      periodo: b, ...(funilMap.get(b) || { convertidos: 0, contato: 0, engajados: 0 }),
+      periodo: b, ...(funilMap.get(b) || { convertidos: 0, contato: 0, atendido: 0, engajados: 0 }),
     }));
+
+    // ── Próximos passos · distribuição por status do 1º contato + relatório por responsável (janela toda) ──
+    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', pendente: 'Pendente' };
+    const ppCount = { atendido_respondido: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, pendente: 0 };
+    const respMap = new Map();
+    for (const c of convertidos) {
+      const k = (c.primeiro_contato_status && ppCount[c.primeiro_contato_status] !== undefined) ? c.primeiro_contato_status : 'pendente';
+      ppCount[k]++;
+      const r = (c.responsavel_atendimento || '').trim() || '— sem responsável';
+      const o = respMap.get(r) || { responsavel: r, total: 0, contato: 0, atendido: 0, numero_errado: 0 };
+      o.total++;
+      if (contatoFoiFeito(c)) o.contato++;
+      if (c.primeiro_contato_status === 'atendido_respondido') o.atendido++;
+      if (c.primeiro_contato_status === 'numero_errado') o.numero_errado++;
+      respMap.set(r, o);
+    }
+    const statusDist = Object.keys(PP_STATUS_LABEL).map(k => ({ status: k, label: PP_STATUS_LABEL[k], n: ppCount[k] }));
+    // contato_pct = feitos ÷ todos (número errado conta como feito); atendido_pct exclui número errado do denominador
+    const porResponsavel = [...respMap.values()].map(o => ({
+      ...o,
+      contato_pct: o.total ? Math.round(o.contato / o.total * 100) : 0,
+      atendido_pct: (o.total - o.numero_errado) > 0 ? Math.round(o.atendido / (o.total - o.numero_errado) * 100) : 0,
+    })).sort((a, b) => b.total - a.total);
 
     // Cards de cobertura (toda a janela) · "com dados" = telefone preenchido (dá pra contatar)
     const ehOnline = (a) => String(a || '').toLowerCase() === 'online';
@@ -239,7 +265,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       periodo: b, leitores: devMap.get(b) ? devMap.get(b).size : 0,
     }));
 
-    res.json({ dias, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, processos, devocional });
+    res.json({ dias, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, processos, devocional, statusDist, porResponsavel });
   } catch (e) {
     console.error('[CUIDADOS] dashboard-series:', e.message);
     res.status(500).json({ error: e.message });
