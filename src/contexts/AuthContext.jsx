@@ -35,6 +35,17 @@ const FAKE_PROFILE = {
   avatar_url: null,
 };
 
+// Limita o tempo de uma promise (fetch/query). No cold-start do Vercel o
+// my-permissions pode demorar; sem teto, a carga fica "em progresso" além do
+// timer de segurança e a tela era liberada com modulePerms=null. Com teto, cada
+// tentativa termina em tempo previsível → a lógica de retry decide (sucesso ou
+// falha definitiva), a carga é SEMPRE limitada e nunca pendura.
+function comTimeout(promise, ms, label) {
+  let t;
+  const limite = new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`timeout_${label}`)), ms); });
+  return Promise.race([promise, limite]).finally(() => clearTimeout(t));
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(DEV_BYPASS_AUTH ? FAKE_USER : null);
   const [profile, setProfile] = useState(DEV_BYPASS_AUTH ? FAKE_PROFILE : null);
@@ -53,11 +64,13 @@ export function AuthProvider({ children }) {
   async function fetchProfile(userId, tentativa = 1) {
     if (!supabase) return { ok: false, error: 'sem_supabase' };
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
-        .eq('id', userId)
-        .single();
+      const { data, error } = await comTimeout(
+        supabase
+          .from('profiles')
+          .select('id, name, email, role, area, kpi_areas, avatar_url, ministerio_id, ministerio_papel, is_diretoria_geral, funcao_diretoria, telefone, membro_id, is_membro_only, password_changed_at')
+          .eq('id', userId)
+          .single(),
+        7000, 'profile');
       if (!error && data) { setProfile(data); return { ok: true, data }; }
       // Falha transitória (token renovando no resume, race do no-op lock, blip de
       // rede). Tenta de novo depois que o token assenta.
@@ -94,9 +107,9 @@ export function AuthProvider({ children }) {
       if (!supabase) return { ok: false, error: 'sem_supabase' };
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) return { ok: false, error: 'sem_token' };
-      const res = await fetch(`${API}/auth/me`, {
+      const res = await comTimeout(fetch(`${API}/auth/me`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      }), 7000, 'profile_backend');
       if (!res.ok) return { ok: false, error: `http_${res.status}` };
       const data = await res.json();
       if (data?.id) { setProfile(data); return { ok: true, data }; }
@@ -111,9 +124,9 @@ export function AuthProvider({ children }) {
       if (!supabase) return { ok: false, error: 'sem_supabase' };
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) return { ok: false, error: 'sem_token' };
-      const res = await fetch(`${API}/auth/my-permissions`, {
+      const res = await comTimeout(fetch(`${API}/auth/my-permissions`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      }), 7000, 'perms');
       if (res.ok) {
         const data = await res.json();
         setModulePerms(data.granular?.modulePerms ?? null);
@@ -158,19 +171,24 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // Rede de segurança · se getSession()/perfil pendurar (ex.: lock de auth
-    // travado de uma aba/refresh órfão), NUNCA deixa o app preso no "carregando"
-    // pra sempre — libera após 8s. O lock no-op (supabaseClient.js) já evita o
-    // deadlock; isto é o cinto de segurança caso algo trave por outro motivo.
-    let initDone = false;
+    // Rede de segurança · protege APENAS o getSession() (caso o lock de auth de
+    // uma aba/refresh órfão trave — o lock no-op já evita o deadlock, isto é o
+    // cinto). Assim que o getSession RESOLVE, cancelamos o timer: a carga de
+    // perfil/permissões (carregarDadosUsuario) é limitada por timeout POR REQUEST
+    // (comTimeout) + retries, então SEMPRE termina e o `.finally` libera a tela —
+    // sem o timer soltar no meio da carga e deixar modulePerms=null (a raiz do
+    // "menu cheio, clica e volta pro dashboard" no cold-start · 2026-07-01).
+    let sessionResolvida = false;
     const safetyTimer = setTimeout(() => {
-      if (!initDone) {
-        console.warn('[Auth] getSession demorou demais — liberando o carregamento (rede de segurança).');
+      if (!sessionResolvida) {
+        console.warn('[Auth] getSession travou — liberando o carregamento (rede de segurança).');
         setLoading(false);
       }
     }, 8000);
 
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      sessionResolvida = true;
+      clearTimeout(safetyTimer); // getSession OK · deixa a carga (limitada) terminar sem ser cortada
       sessaoAtivaRef.current = !!session?.user;
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -179,7 +197,6 @@ export function AuthProvider({ children }) {
     }).catch((e) => {
       console.warn('[Auth] Erro ao obter sessão:', e?.message);
     }).finally(() => {
-      initDone = true;
       clearTimeout(safetyTimer);
       setLoading(false);
     });
