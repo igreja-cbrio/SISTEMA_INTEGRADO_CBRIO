@@ -413,6 +413,9 @@ export function AuthProvider({ children }) {
     updatePasswordOnly,
     signOut,
     refreshProfile: () => user?.id && fetchProfile(user.id),
+    // Recarrega perfil + permissões (usado pelo ModuleGuard quando o estado não
+    // hidratou — carga lenta / falha transitória / rede de segurança de 8s).
+    recarregarAuth: () => (user?.id ? carregarDadosUsuario(user.id) : Promise.resolve()),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -433,6 +436,8 @@ export function useAuth() {
       canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
       cargoNome: null, cargoSlug: null,
+      recarregarAuth: async () => {},
+      refreshProfile: async () => {},
       signInWithMicrosoft: async () => ({}),
       signInWithGoogle: async () => ({}),
       signInWithEmail: async () => ({}),

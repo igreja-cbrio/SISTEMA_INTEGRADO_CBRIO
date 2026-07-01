@@ -369,7 +369,22 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
  */
 function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; nivelMinimo?: number; children: ReactNode }) {
   const auth = useAuth();
+  const a = auth as Record<string, unknown>;
+
+  // Autenticado mas perfil/permissões ainda NÃO hidrataram (carga lenta, falha
+  // transitória do my-permissions, ou a rede de segurança de 8s soltou o loading
+  // antes das permissões chegarem). Não dá pra decidir acesso com estado nulo →
+  // NÃO expulsa pro dashboard achando "sem acesso" (isso tirava líderes de área
+  // da própria tela · Arthur/Marcelo · 2026-07-01). Espera e dispara UMA recarga;
+  // quando perfil+permissões chegam, o guard reavalia corretamente.
+  const naoHidratou = !auth.loading && !!a.user && (a.profile == null || a.modulePerms == null);
+  useEffect(() => {
+    if (naoHidratou && typeof a.recarregarAuth === 'function') (a.recarregarAuth as () => void)();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [naoHidratou]);
+
   if (auth.loading) return <Loading />;
+  if (naoHidratou) return <Loading />;
 
   // Deny explícito de módulo (override nível 0) · vence até o bypass de admin.
   const PERM_SLUG: Record<string, string> = {
