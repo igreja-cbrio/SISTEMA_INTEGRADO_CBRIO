@@ -1,6 +1,5 @@
 {
   "mcpServers": {
-<<<<<<< HEAD
     "magic": {
       "type": "stdio",
       "command": "npx",
@@ -8,14 +7,10 @@
       "env": {
         "API_KEY": "${MAGIC_API_KEY}"
       }
-    }
-  }
-}
-=======
+    },
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp?project_ref=hhntwfawfnxvuobhdfkb"
     }
   }
 }
->>>>>>> origin/main

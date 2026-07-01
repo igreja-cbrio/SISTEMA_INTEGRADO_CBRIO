@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 
-export default function OcupacaoGauge({ taxa }) {
+export default function OcupacaoGauge({ taxa, capacidade = 1050 }) {
   const valor = Math.max(0, Math.min(200, Number(taxa) || 0));
   const pct = Math.min(100, valor);
   const cor = valor >= 100 ? '#ef4444' : valor >= 70 ? '#10b981' : '#3b82f6';
@@ -52,7 +52,7 @@ export default function OcupacaoGauge({ taxa }) {
             {valor}%
           </motion.div>
           <div className="text-[10px] text-muted-foreground">
-            de 1.050 lugares
+            de {capacidade.toLocaleString('pt-BR')} lugares
           </div>
         </div>
       </div>
