@@ -353,7 +353,29 @@ function AddMatriculaModal({ turmaId, onClose, onAdded }: { turmaId: string; onC
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// PESSOAS · funil unificado (convertidos + matrículas · 1 linha por pessoa)
+// PESSOAS · sub-abas Funil | Curso
+//   Funil = quem converteu/entrou e onde está no caminho até o Next (por prazo).
+//   Curso = quem passou pelo Next (aula 1/2, concluiu), 1 linha por pessoa.
+// ──────────────────────────────────────────────────────────────────────────
+function PessoasView() {
+  const [sub, setSub] = useState<'funil' | 'curso'>('funil');
+  return (
+    <div className="space-y-3">
+      <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 w-fit">
+        {([['funil', 'Funil'], ['curso', 'Curso']] as const).map(([v, label]) => (
+          <button key={v} onClick={() => setSub(v)}
+            className={`px-4 py-1.5 text-xs rounded-lg transition-colors whitespace-nowrap ${sub === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {sub === 'funil' ? <FunilView /> : <CursoView />}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// FUNIL · unificado (convertidos + matrículas · 1 linha por pessoa · por prazo)
 // ──────────────────────────────────────────────────────────────────────────
 type Pessoa = {
   tipo: 'convertido' | 'externo';
@@ -422,7 +444,7 @@ function DirecionarValoresModal({ m, onClose, onDone }: { m: { id: string; nome:
   );
 }
 
-function PessoasView() {
+function FunilView() {
   const [itens, setItens] = useState<Pessoa[]>([]);
   const [resumo, setResumo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -660,6 +682,175 @@ function MatricularModal({ pessoa, onClose, onDone }: { pessoa: Pessoa; onClose:
       </DialogContent>
     </Dialog>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CURSO · 1 linha por pessoa (colapsa re-inscrições) · aula 1/2 · concluiu · sem-CPF
+//   O responsável corrige a presença marcando aula 1/2 (override) direto na linha.
+//   Uma presença já registrada na turma vem travada (não se desmarca aqui).
+// ──────────────────────────────────────────────────────────────────────────
+type PessoaCurso = {
+  membro_id: string | null; nome: string; cpf?: string | null; telefone?: string | null;
+  sem_cpf: boolean; sem_vinculo: boolean; n_matriculas: number; primeira_em?: string | null; dias?: number | null;
+  fez_aula1: boolean; fez_aula2: boolean; a1_presenca: boolean; a2_presenca: boolean; a1_manual: boolean; a2_manual: boolean;
+  override: boolean; concluiu: boolean; nao_concluiu_90d: boolean;
+  status_curso: 'formado' | 'nao_concluiu' | 'em_andamento';
+};
+
+function CursoView() {
+  const [itens, setItens] = useState<PessoaCurso[]>([]);
+  const [resumo, setResumo] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [busca, setBusca] = useState('');
+  const [fAula, setFAula] = useState<'todas' | 'a1' | 'a2' | 'ambas'>('todas');
+  const [soNaoConcluidos, setSoNaoConcluidos] = useState(false);
+  const [vinculando, setVinculando] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const r = await nextApi.curso(); setItens(r.itens || []); setResumo(r.resumo || null); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao carregar curso'); }
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const vincularPendentes = async () => {
+    setVinculando(true);
+    try {
+      const r = await nextApi.matriculas.backfillMembros();
+      toast.success(`Vínculo: ${r.vinculados} ligado(s) + ${r.criados} novo(s)${r.falhas ? ` · ${r.falhas} falha(s)` : ''}`);
+      load();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao vincular'); }
+    setVinculando(false);
+  };
+
+  const toggleAula = async (p: PessoaCurso, campo: 'fez_aula1' | 'fez_aula2', val: boolean) => {
+    if (!p.membro_id) { toast.error('Pessoa sem vínculo — vincule antes de corrigir a presença'); return; }
+    try { await nextApi.pessoaAulas(p.membro_id, { [campo]: val }); load(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
+  };
+
+  const filtrada = itens.filter(p => {
+    if (fAula === 'a1' && !p.fez_aula1) return false;
+    if (fAula === 'a2' && !p.fez_aula2) return false;
+    if (fAula === 'ambas' && !(p.fez_aula1 && p.fez_aula2)) return false;
+    if (soNaoConcluidos && !p.nao_concluiu_90d) return false;
+    if (busca) {
+      const q = busca.toLowerCase();
+      if (!`${p.nome} ${p.telefone || ''} ${p.cpf || ''}`.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-3">
+      {resumo && (
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Pill label="Pessoas" v={resumo.total} />
+          <Pill label="Formados" v={resumo.formados} color={C.primary} />
+          <Pill label="Em andamento" v={resumo.em_andamento} color={C.info} />
+          <Pill label="Não concluíram (90d)" v={resumo.nao_concluiu} color={C.warn} />
+          <Pill label="Sem CPF" v={resumo.sem_cpf} color={C.gray} />
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Select value={fAula} onValueChange={(v: any) => setFAula(v)}>
+          <SelectTrigger className="h-9 w-[160px] text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as aulas</SelectItem>
+            <SelectItem value="a1">Fez a Aula 1</SelectItem>
+            <SelectItem value="a2">Fez a Aula 2</SelectItem>
+            <SelectItem value="ambas">As duas</SelectItem>
+          </SelectContent>
+        </Select>
+        <button onClick={() => setSoNaoConcluidos(s => !s)}
+          className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${soNaoConcluidos ? 'bg-amber-500/10 border-amber-500/50 text-amber-600' : 'border-border text-muted-foreground hover:text-foreground'}`}>
+          Só não concluídos (90d)
+        </button>
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar nome, telefone ou CPF" className="pl-9" />
+        </div>
+        {resumo?.sem_vinculo > 0 && (
+          <Button variant="outline" size="sm" onClick={vincularPendentes} disabled={vinculando} className="gap-2">
+            {vinculando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
+            Vincular {resumo.sem_vinculo} sem vínculo
+          </Button>
+        )}
+      </div>
+
+      {!loading && (
+        <div className="text-xs text-muted-foreground">
+          Mostrando <strong className="text-foreground">{filtrada.length}</strong> de {itens.length} pessoa{itens.length !== 1 ? 's' : ''} · 1 linha por pessoa (re-inscrições colapsadas)
+        </div>
+      )}
+
+      {loading ? (
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
+      ) : filtrada.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">Ninguém nesse filtro.</div>
+      ) : (
+        <div className="rounded-2xl border border-border overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/30">
+                <th className="text-left p-2.5 font-medium">Nome</th>
+                <th className="text-center p-2.5 font-medium">Aula 1</th>
+                <th className="text-center p-2.5 font-medium">Aula 2</th>
+                <th className="text-left p-2.5 font-medium">Status</th>
+                <th className="text-left p-2.5 font-medium">CPF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrada.map((p, i) => (
+                <tr key={(p.membro_id || p.nome) + i} className="border-b border-border last:border-0">
+                  <td className="p-2.5">
+                    <span className="font-medium">{p.nome}</span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      {p.telefone || '—'}
+                      {p.n_matriculas > 1 ? ` · ${p.n_matriculas} inscrições` : ''}
+                      {p.dias != null ? ` · há ${p.dias}d` : ''}
+                    </span>
+                  </td>
+                  <td className="text-center p-2.5"><AulaCheck p={p} campo="fez_aula1" pres={p.a1_presenca} onToggle={toggleAula} /></td>
+                  <td className="text-center p-2.5"><AulaCheck p={p} campo="fez_aula2" pres={p.a2_presenca} onToggle={toggleAula} /></td>
+                  <td className="p-2.5"><CursoStatusBadge p={p} /></td>
+                  <td className="p-2.5">
+                    {p.sem_cpf
+                      ? <Badge variant="outline" className="text-[10px] gap-1" style={{ color: C.warn, borderColor: C.warn + '60' }}><AlertTriangle className="h-3 w-3" /> sem CPF</Badge>
+                      : <span className="text-xs text-muted-foreground font-mono">{p.cpf}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AulaCheck({ p, campo, pres, onToggle }: {
+  p: PessoaCurso; campo: 'fez_aula1' | 'fez_aula2'; pres: boolean;
+  onToggle: (p: PessoaCurso, campo: 'fez_aula1' | 'fez_aula2', val: boolean) => void;
+}) {
+  const feito = campo === 'fez_aula1' ? p.fez_aula1 : p.fez_aula2;
+  const disabled = pres || p.sem_vinculo; // presença real não se desmarca aqui; sem vínculo não permite override
+  const title = pres ? 'Presença registrada na turma' : p.sem_vinculo ? 'Sem vínculo — vincule a pessoa antes' : 'Marcar/desmarcar manualmente';
+  return (
+    <input type="checkbox" checked={feito} disabled={disabled} title={title}
+      onChange={e => onToggle(p, campo, e.target.checked)}
+      className="h-4 w-4 cursor-pointer accent-[#00B39D] disabled:cursor-not-allowed disabled:opacity-60" />
+  );
+}
+
+function CursoStatusBadge({ p }: { p: PessoaCurso }) {
+  if (p.concluiu)
+    return <Badge variant="outline" className="text-[10px] gap-1" style={{ color: C.primary, borderColor: C.primary + '60' }}><GraduationCap className="h-3 w-3" /> Formado</Badge>;
+  if (p.nao_concluiu_90d)
+    return <Badge variant="outline" className="text-[10px]" style={{ color: C.warn, borderColor: C.warn + '60' }}>Não concluiu</Badge>;
+  return <Badge variant="outline" className="text-[10px]" style={{ color: C.info, borderColor: C.info + '60' }}>Em andamento</Badge>;
 }
 
 function Pill({ label, v, color }: { label: string; v: number; color?: string }) {

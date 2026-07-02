@@ -687,12 +687,26 @@ router.get('/matriculas', async (req, res) => {
 router.post('/matriculas', async (req, res) => {
   const b = req.body || {};
   if (!b.nome || !String(b.nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
+  // Porta guardada: sem membro_id explícito, resolve/cria via matcher forte
+  // (cpf>email>tel+nome>nome+nasc · cria stub se não achar). Não deixa órfão —
+  // toda matrícula fica ligada a um mem_membros e acessível em /membresia.
+  let membro_id = b.membro_id || null;
+  if (!membro_id) {
+    try {
+      const r = await acharOuCriarGuardado({
+        cpf: b.cpf, email: b.email, telefone: b.telefone,
+        nome: [b.nome, b.sobrenome].filter(Boolean).join(' '),
+        dataNascimento: b.data_nascimento || null, status: 'visitante',
+      });
+      membro_id = r.membro_id;
+    } catch (e) { console.error('[next/matriculas] matcher:', e.message); /* segue sem — não perde a matrícula */ }
+  }
   const row = {
     turma_id: b.turma_id || null,
     nome: String(b.nome).trim(), sobrenome: b.sobrenome || null,
     cpf: b.cpf || null, telefone: b.telefone || null, email: b.email || null,
     data_nascimento: b.data_nascimento || null, observacoes: b.observacoes || null,
-    membro_id: b.membro_id || null,
+    membro_id,
     ja_batizado: !!b.ja_batizado, ja_voluntario: !!b.ja_voluntario, ja_doador: !!b.ja_doador,
     indicou_batismo: !!b.indicou_batismo, indicou_servir: !!b.indicou_servir,
     indicou_grupo: !!b.indicou_grupo, indicou_dizimo: !!b.indicou_dizimo,
@@ -702,6 +716,46 @@ router.post('/matriculas', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   recalcularKpisNext();
   res.status(201).json(data);
+});
+
+// Quem pode rodar o backfill de vínculos (mutação em lote que cria membros).
+function podeBackfillNext(req) {
+  const r = req.user?.role;
+  if (r === 'admin' || r === 'diretor') return true;
+  const mp = req.user?.granular?.modulePerms || {};
+  return (mp.next?.escrita || 0) >= 3 || (mp.integracao?.escrita || 0) >= 3;
+}
+
+// POST /matriculas/backfill-membros — liga as matrículas órfãs (membro_id NULL) a
+// um membro via o matcher forte (cpf>email>tel+nome>nome+nasc · cria stub se não achar).
+// Fecha o buraco dos "órfãos sem membro_id" no funil. Idempotente (re-rodar é seguro).
+router.post('/matriculas/backfill-membros', async (req, res) => {
+  if (!podeBackfillNext(req)) return res.status(403).json({ error: 'Sem permissão para vincular em lote' });
+  try {
+    const orfas = await fetchAllNext('next_matriculas',
+      'id, nome, sobrenome, cpf, telefone, email, data_nascimento',
+      (q) => q.is('deleted_at', null).is('membro_id', null));
+    let vinculados = 0, criados = 0, falhas = 0;
+    for (const m of orfas) {
+      try {
+        const r = await acharOuCriarGuardado({
+          cpf: m.cpf, email: m.email, telefone: m.telefone,
+          nome: [m.nome, m.sobrenome].filter(Boolean).join(' '),
+          dataNascimento: m.data_nascimento || null, status: 'visitante',
+        });
+        if (!r?.membro_id) { falhas += 1; continue; }
+        const { error } = await supabase.from('next_matriculas')
+          .update({ membro_id: r.membro_id, updated_at: new Date().toISOString() })
+          .eq('id', m.id).is('membro_id', null);
+        if (error) { falhas += 1; continue; }
+        if (r.created) criados += 1; else vinculados += 1;
+      } catch { falhas += 1; }
+    }
+    recalcularKpisNext();
+    res.json({ total: orfas.length, vinculados, criados, falhas });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // PATCH /matriculas/:id — editar / mover de turma (re-encaixe) / status / indicações
@@ -866,6 +920,126 @@ router.delete('/convertidos/:id/resolver', async (req, res) => {
     .eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
+});
+
+// ----------------------------------------------------------------------------
+// CURSO · visão POR PESSOA de quem passou pelo Next (colapsa re-inscrições)
+//   1 linha/pessoa (membro_id > cpf > nome). Traz aula 1 / aula 2 (presença OU
+//   override manual), se concluiu ("fez Next" = as 2 aulas · qualquer turma OU
+//   status=formado legado), "não concluiu" (>90d sem as 2) e flag sem-CPF.
+//   Espelha a definição de vw_next_formado_pessoa pra bater com a NSM.
+// ----------------------------------------------------------------------------
+router.get('/curso', async (_req, res) => {
+  try {
+    const DIA = 86400000, agora = Date.now();
+    const digits = (v) => String(v || '').replace(/\D/g, '');
+    const nomeKey = (s) => String(s || '').trim().toLowerCase() || null;
+
+    const matriculas = await fetchAllNext('next_matriculas',
+      'id, membro_id, cpf, nome, sobrenome, telefone, status, created_at',
+      (q) => q.is('deleted_at', null));
+    const encontros = await fetchAllNext('next_encontros', 'id, numero', null);
+    const numByEnc = new Map(encontros.map(e => [e.id, e.numero]));
+    const presencas = await fetchAllNext('next_presencas', 'matricula_id, encontro_id, presente', null);
+    const a1ByMat = new Set(), a2ByMat = new Set();
+    for (const p of presencas) {
+      if (!p.presente) continue;
+      const num = numByEnc.get(p.encontro_id);
+      if (num === 1) a1ByMat.add(p.matricula_id);
+      else if (num === 2) a2ByMat.add(p.matricula_id);
+    }
+    const manual = await fetchAllNext('next_pessoa_aula_manual', 'membro_id, fez_aula1, fez_aula2, observacao', null);
+    const manByMembro = new Map(manual.map(m => [m.membro_id, m]));
+
+    // pré-pass: mapeia cpf/nome -> membro_id (das matrículas JÁ vinculadas), pra
+    // colapsar um órfão no seu "gêmeo" vinculado (dedup robusto mesmo antes do backfill).
+    const cpfToMembro = new Map(), nomeToMembro = new Map();
+    for (const m of matriculas) {
+      if (!m.membro_id) continue;
+      const c = digits(m.cpf); if (c.length === 11 && !cpfToMembro.has(c)) cpfToMembro.set(c, m.membro_id);
+      const nk = nomeKey(`${m.nome || ''} ${m.sobrenome || ''}`); if (nk && !nomeToMembro.has(nk)) nomeToMembro.set(nk, m.membro_id);
+    }
+
+    // agrupa matrículas por pessoa (identidade: membro_id > cpf-vinculado > nome-vinculado > cpf > nome)
+    const byKey = new Map();
+    for (const m of matriculas) {
+      const c = digits(m.cpf);
+      const nk = nomeKey(`${m.nome || ''} ${m.sobrenome || ''}`);
+      const key = m.membro_id
+        || (c.length === 11 && cpfToMembro.get(c))
+        || (nk && nomeToMembro.get(nk))
+        || (c.length === 11 ? 'cpf:' + c : 'nome:' + (nk || m.id));
+      let g = byKey.get(key);
+      if (!g) { g = { membro_id: null, cpf: null, nome: null, telefone: null, n: 0, primeira: null, a1p: false, a2p: false, formado_legacy: false }; byKey.set(key, g); }
+      g.n += 1;
+      if (!g.membro_id && m.membro_id) g.membro_id = m.membro_id;
+      const temCpf = c.length === 11;
+      if (!g.cpf && temCpf) g.cpf = c;
+      if (!g.nome || temCpf) g.nome = `${m.nome || ''}${m.sobrenome ? ' ' + m.sobrenome : ''}`.trim() || g.nome;
+      if (!g.telefone && m.telefone) g.telefone = m.telefone;
+      const dt = m.created_at ? String(m.created_at).slice(0, 10) : null;
+      if (dt && (!g.primeira || dt < g.primeira)) g.primeira = dt;
+      if (a1ByMat.has(m.id)) g.a1p = true;
+      if (a2ByMat.has(m.id)) g.a2p = true;
+      if (m.status === 'formado') g.formado_legacy = true;
+    }
+
+    const itens = [];
+    for (const g of byKey.values()) {
+      const man = g.membro_id ? manByMembro.get(g.membro_id) : null;
+      const a1m = !!(man && man.fez_aula1), a2m = !!(man && man.fez_aula2);
+      const fez_aula1 = g.a1p || a1m, fez_aula2 = g.a2p || a2m;
+      const concluiu = (fez_aula1 && fez_aula2) || g.formado_legacy;
+      const dias = g.primeira ? Math.floor((agora - new Date(g.primeira + 'T12:00:00').getTime()) / DIA) : null;
+      const nao_concluiu_90d = !concluiu && dias != null && dias >= 90;
+      itens.push({
+        membro_id: g.membro_id, nome: g.nome || 'Sem nome', cpf: g.cpf, telefone: g.telefone,
+        sem_cpf: !g.cpf, sem_vinculo: !g.membro_id, n_matriculas: g.n,
+        primeira_em: g.primeira, dias,
+        fez_aula1, fez_aula2, a1_presenca: g.a1p, a2_presenca: g.a2p, a1_manual: a1m, a2_manual: a2m,
+        override: !!man, concluiu, nao_concluiu_90d,
+        status_curso: concluiu ? 'formado' : nao_concluiu_90d ? 'nao_concluiu' : 'em_andamento',
+      });
+    }
+    itens.sort((a, b) => String(b.primeira_em || '').localeCompare(String(a.primeira_em || '')));
+    const resumo = {
+      total: itens.length,
+      formados: itens.filter(i => i.concluiu).length,
+      em_andamento: itens.filter(i => i.status_curso === 'em_andamento').length,
+      nao_concluiu: itens.filter(i => i.nao_concluiu_90d).length,
+      sem_cpf: itens.filter(i => i.sem_cpf).length,
+      sem_vinculo: itens.filter(i => i.sem_vinculo).length,
+    };
+    res.json({ itens, resumo });
+  } catch (e) {
+    console.error('[next/curso]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /pessoa/:membroId/aulas — override manual de aula 1/2 (o responsável corrige
+// presença que não foi computada). Merge com o existente (não zera o outro campo).
+// Chave = membro_id (só pessoas já vinculadas · use o backfill pra vincular órfãos).
+router.put('/pessoa/:membroId/aulas', async (req, res) => {
+  const membroId = req.params.membroId;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(membroId)) {
+    return res.status(400).json({ error: 'membro_id inválido' });
+  }
+  const b = req.body || {};
+  const { data: cur } = await supabase.from('next_pessoa_aula_manual').select('*').eq('membro_id', membroId).maybeSingle();
+  const row = {
+    membro_id: membroId,
+    fez_aula1: 'fez_aula1' in b ? !!b.fez_aula1 : !!(cur && cur.fez_aula1),
+    fez_aula2: 'fez_aula2' in b ? !!b.fez_aula2 : !!(cur && cur.fez_aula2),
+    observacao: 'observacao' in b ? (b.observacao || null) : (cur ? cur.observacao : null),
+    marcado_por: req.user?.id ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await supabase.from('next_pessoa_aula_manual')
+    .upsert(row, { onConflict: 'membro_id' }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  recalcularKpisNext();
+  res.json(data);
 });
 
 module.exports = router;
