@@ -4,14 +4,17 @@ const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 
 // Rate limit do link público de NPS · teto ALTO de propósito: no culto o link é
-// aberto por dezenas de pessoas AO MESMO TEMPO e, no WiFi da igreja, todas saem
+// aberto por centenas de pessoas AO MESMO TEMPO e, no WiFi da igreja, todas saem
 // pelo MESMO IP público (NAT) — um teto baixo por-IP (como 20) derruba o evento
-// com 429. Cada pessoa faz ~2-3 req (abrir + enviar). 2000/15min cobre ~600
-// pessoas por IP com folga, mantendo um backstop contra abuso real. Ajustável
-// por env se precisar de mais. (Fora do publicLimiter estrito · ver server.js.)
+// com 429. Cada pessoa faz ~2-3 req (abrir + enviar). Culto de domingo ~700
+// pessoas × 3 ≈ 2100 num único IP → 10000/15min cobre com folga grande, mantendo
+// um backstop contra abuso real. Ajustável por env. (Fora do publicLimiter
+// estrito · ver server.js.) ⚠️ Este é o limite do NOSSO app; a proteção anti-DDoS
+// da BORDA do Vercel (Security Checkpoint) é separada e pode desafiar uma rajada
+// concentrada no mesmo IP · mitigar via Firewall do Vercel / dados móveis.
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.PUBLIC_NPS_RATE_LIMIT_MAX) || 2000,
+  max: parseInt(process.env.PUBLIC_NPS_RATE_LIMIT_MAX) || 10000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Muitas tentativas. Tente novamente em alguns minutos.' },
