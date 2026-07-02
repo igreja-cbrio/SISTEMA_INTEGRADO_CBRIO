@@ -77,11 +77,17 @@ export default function NpsPublica() {
     const payload = { nome: anonimo ? null : nome.trim(), email: anonimo ? null : email.trim(), anonimo, score, respostas, comentario };
     // Enfileira no aparelho e mostra "Obrigado" IMEDIATAMENTE · o upload roda em
     // segundo plano (com re-tentativa). Nunca perde a resposta no pico.
+    const item = { _id: (globalThis.crypto?.randomUUID?.() || (String(Date.now()) + Math.random())), payload, ts: Date.now() };
     const fila = lerFila();
-    fila.push({ _id: (globalThis.crypto?.randomUUID?.() || (String(Date.now()) + Math.random())), payload, ts: Date.now() });
+    fila.push(item);
     salvarFila(fila);
     setEnviado(true);
-    subirFila();
+    // Se o localStorage NÃO persistiu (aba anônima / armazenamento bloqueado), a
+    // fila não guardou nada → sobe ESTE item direto (melhor esforço), pra não
+    // perder a resposta silenciosamente. Caso normal: drena pela fila.
+    const persistiu = lerFila().some((x) => x._id === item._id);
+    if (persistiu) subirFila();
+    else api.publicResponder(token, item.payload).catch(() => {});
   }
 
   return (
