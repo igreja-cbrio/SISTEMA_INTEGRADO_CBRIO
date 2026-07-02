@@ -10,8 +10,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { toast } from 'sonner';
 import {
   CalendarDays, Plus, Loader2, ChevronLeft, ChevronRight, Users, Gift, Link2, MessageCircle,
-  Trash2, MapPin, Clock, PartyPopper, Pencil, Image as ImageIcon,
+  Trash2, MapPin, Clock, PartyPopper, Pencil, Image as ImageIcon, QrCode,
 } from 'lucide-react';
+import QrLinkDialog from '../components/QrLinkDialog';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const DIAS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
@@ -252,6 +253,7 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
   const [editOpen, setEditOpen] = useState(false);
   const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
   const [rolNum, setRolNum] = useState(0);
+  const [qrOpen, setQrOpen] = useState(false);
 
   function carregar() { setLoading(true); api.get(id).then(setEv).catch(() => toast.error('Erro')).finally(() => setLoading(false)); }
   useEffect(() => { carregar(); }, [id]);
@@ -348,6 +350,15 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
               </DialogTitle>
             </DialogHeader>
             {editOpen && <EventoFormModal evento={ev} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); carregar(); onChanged(); }} />}
+            {qrOpen && (
+              <QrLinkDialog
+                link={link}
+                titulo={ev.nome}
+                nomeArquivo={`qr-${ev.slug}`}
+                descricao="Imprima ou projete no telão — quem escanear cai direto no formulário de confirmação."
+                onClose={() => setQrOpen(false)}
+              />
+            )}
             <div className="flex-1 overflow-y-auto min-h-0 space-y-4 text-sm">
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
                 {ev.data && <span className="inline-flex items-center gap-1"><CalendarDays className="h-4 w-4" />{new Date(ev.data + 'T00:00:00').toLocaleDateString('pt-BR')}</span>}
@@ -362,6 +373,7 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="outline" onClick={copiar}><Link2 className="h-3.5 w-3.5 mr-1" /> Copiar link</Button>
                   <a href={wa} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><MessageCircle className="h-3.5 w-3.5 mr-1 text-emerald-500" /> WhatsApp</Button></a>
+                  <Button size="sm" variant="outline" onClick={() => setQrOpen(true)}><QrCode className="h-3.5 w-3.5 mr-1" /> QR Code</Button>
                   <a href={link} target="_blank" rel="noreferrer" className="text-xs text-primary self-center truncate max-w-[220px]">{link}</a>
                 </div>
               </div>
