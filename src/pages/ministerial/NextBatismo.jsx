@@ -49,6 +49,7 @@ const ORIGEM_META = {
   next:       { label: 'Next',      cor: '#0EA5E9' },
   batismo:    { label: 'Batismo',   cor: '#2563EB' },
   convertido: { label: 'Decisão',   cor: '#DB2777' },
+  visita:     { label: 'Visita',    cor: '#0D9488' },
 };
 
 function maskCpf(v) {
@@ -329,7 +330,7 @@ function SemVinculoTab({ onVerFicha }) {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <p className="text-xs text-muted-foreground max-w-2xl">
-          Inscrições do Next/Batismo e decisões que <strong>ainda não estão ligadas a um cadastro</strong>.
+          Inscrições do Next/Batismo, decisões e visitas que <strong>ainda não estão ligadas a um cadastro</strong>.
           Ligue à pessoa certa (a busca sugere quem já existe) ou crie o cadastro se for alguém novo.
         </p>
         <Button onClick={() => refetch()} disabled={isFetching} variant="outline" size="sm" className="gap-1.5">

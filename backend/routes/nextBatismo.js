@@ -20,7 +20,7 @@ const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../ser
 
 router.use(authenticate);
 
-const TABELA = { next: 'next_inscricoes', batismo: 'batismo_inscricoes', convertido: 'cui_convertidos' };
+const TABELA = { next: 'next_inscricoes', batismo: 'batismo_inscricoes', convertido: 'cui_convertidos', visita: 'cui_visitas' };
 
 // ── Reshape da view de duplicatas → mesma forma do /membresia/duplicados ──
 function reshapeDuplicados(data) {
@@ -91,18 +91,32 @@ function rowConvertido(r) {
     contexto: `Decisão${r.area ? ' · ' + String(r.area).toUpperCase() : ''}`,
   };
 }
+// Visitas pastorais (cui_visitas) sem cadastro ligado. Vêm pra cá só pra RESOLVER a
+// identidade (quem é essa pessoa no sistema) — visita NÃO é sinal de NSM nem marco de
+// jornada; ligar só carimba cui_visitas.membro_id (Marcos 2026-07-02).
+const NB_VISITA_LABEL = { visita_domiciliar: 'Visita domiciliar', visita_hospitalar: 'Visita hospitalar', funeral: 'Funeral', casamento: 'Casamento', aconselhamento: 'Aconselhamento', outro: 'Outro' };
+function rowVisita(r) {
+  const t = r.tipo === 'outro' && r.tipo_outro ? `Outro · ${r.tipo_outro}` : (NB_VISITA_LABEL[r.tipo] || r.tipo || 'Visita');
+  return {
+    tipo: 'visita', id: r.id,
+    nome: r.nome, cpf: null, telefone: r.telefone, email: null, data_nascimento: null,
+    quando: r.data_visita || r.created_at,
+    contexto: `Visita/atendimento · ${t}`,
+  };
+}
 
 // ── GET /resumo · contadores pros badges ─────────────────────────────────────
 router.get('/resumo', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     const cnt = async (q) => { const { count } = await q; return count || 0; };
-    const [dup, semNext, semBat, semConv] = await Promise.all([
+    const [dup, semNext, semBat, semConv, semVis] = await Promise.all([
       cnt(supabase.from('vw_nb_duplicados_suspeitos').select('*', { count: 'exact', head: true })),
       cnt(supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }).is('membro_id', null)),
       cnt(supabase.from('batismo_inscricoes').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null).neq('status', 'cancelado')),
       cnt(supabase.from('cui_convertidos').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null)),
+      cnt(supabase.from('cui_visitas').select('id', { count: 'exact', head: true }).is('membro_id', null).is('deleted_at', null)),
     ]);
-    res.json({ duplicatas: dup, sem_vinculo: semNext + semBat + semConv, por_origem: { next: semNext, batismo: semBat, convertido: semConv } });
+    res.json({ duplicatas: dup, sem_vinculo: semNext + semBat + semConv + semVis, por_origem: { next: semNext, batismo: semBat, convertido: semConv, visita: semVis } });
   } catch (e) {
     console.error('[next-batismo/resumo]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao montar resumo' });
@@ -131,7 +145,7 @@ router.get('/duplicados', authorizeModule('next-batismo', 1), async (req, res) =
 router.get('/sem-vinculo', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     const cap = 300;
-    const [next, bat, conv] = await Promise.all([
+    const [next, bat, conv, visita] = await Promise.all([
       supabase.from('next_inscricoes')
         .select('id, evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, created_at')
         .is('membro_id', null).order('created_at', { ascending: false }).limit(cap),
@@ -143,19 +157,25 @@ router.get('/sem-vinculo', authorizeModule('next-batismo', 1), async (req, res) 
         .select('id, nome, cpf, telefone, area, data_culto, created_at')
         .is('membro_id', null).is('deleted_at', null)
         .order('created_at', { ascending: false }).limit(cap),
+      supabase.from('cui_visitas')
+        .select('id, nome, telefone, tipo, tipo_outro, data_visita, created_at')
+        .is('membro_id', null).is('deleted_at', null)
+        .order('created_at', { ascending: false }).limit(cap),
     ]);
     if (next.error) throw next.error;
     if (bat.error) throw bat.error;
     if (conv.error) throw conv.error;
+    if (visita.error) throw visita.error;
     const itens = [
       ...(next.data || []).map(rowNext),
       ...(bat.data || []).map(rowBatismo),
       ...(conv.data || []).map(rowConvertido),
+      ...(visita.data || []).map(rowVisita),
     ].sort((a, b) => new Date(b.quando || 0) - new Date(a.quando || 0));
     res.json({
       total: itens.length,
       itens,
-      por_origem: { next: (next.data || []).length, batismo: (bat.data || []).length, convertido: (conv.data || []).length },
+      por_origem: { next: (next.data || []).length, batismo: (bat.data || []).length, convertido: (conv.data || []).length, visita: (visita.data || []).length },
     });
   } catch (e) {
     console.error('[next-batismo/sem-vinculo]', e.message);
