@@ -617,12 +617,12 @@ function ConvertidoDetailDialog({
 
 // Visitas e atendimentos avulsos · tipos/status/labels da lista da aba homônima.
 const VISITA_TIPOS_UI: { v: string; l: string }[] = [
-  { v: 'visita',      l: 'Visita' },
-  { v: 'atendimento', l: 'Atendimento' },
-  { v: 'hospital',    l: 'Hospital' },
-  { v: 'luto',        l: 'Luto' },
-  { v: 'oracao',      l: 'Oração' },
-  { v: 'outro',       l: 'Outro' },
+  { v: 'visita_domiciliar', l: 'Visita domiciliar' },
+  { v: 'visita_hospitalar', l: 'Visita hospitalar' },
+  { v: 'funeral',           l: 'Funeral' },
+  { v: 'casamento',         l: 'Casamento' },
+  { v: 'aconselhamento',    l: 'Aconselhamento' },
+  { v: 'outro',             l: 'Outro' },
 ];
 const VISITA_TIPO_LABEL: Record<string, string> = Object.fromEntries(VISITA_TIPOS_UI.map(t => [t.v, t.l]));
 const VISITA_STATUS_UI: { v: string; l: string; color: string }[] = [
@@ -632,7 +632,7 @@ const VISITA_STATUS_UI: { v: string; l: string; color: string }[] = [
 ];
 
 function emptyVisitaForm() {
-  return { nome: '', telefone: '', data_visita: new Date().toISOString().slice(0, 10), tipo: 'visita', responsavel: '', status: 'realizada', observacao: '' };
+  return { nome: '', telefone: '', data_visita: new Date().toISOString().slice(0, 10), tipo: 'visita_domiciliar', tipo_outro: '', responsavel: '', status: 'realizada', observacao: '' };
 }
 
 // Registrar/editar uma visita pastoral ou atendimento avulso (fora dos convertidos).
@@ -650,7 +650,8 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
       nome: initial.nome || '',
       telefone: initial.telefone || '',
       data_visita: initial.data_visita || new Date().toISOString().slice(0, 10),
-      tipo: initial.tipo || 'visita',
+      tipo: initial.tipo || 'visita_domiciliar',
+      tipo_outro: initial.tipo_outro || '',
       responsavel: initial.responsavel || '',
       status: initial.status || 'realizada',
       observacao: initial.observacao || '',
@@ -665,6 +666,7 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
   async function save() {
     if (!form.nome.trim()) return toast.error('Nome obrigatório');
     if (!form.data_visita) return toast.error('Escolha a data');
+    if (form.tipo === 'outro' && !form.tipo_outro.trim()) return toast.error('Descreva o tipo (Outro)');
     setSaving(true);
     try {
       if (editing) {
@@ -692,7 +694,7 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Tipo</Label>
-              <Select value={form.tipo} onValueChange={v => setForm({ ...form, tipo: v })}>
+              <Select value={form.tipo} onValueChange={v => setForm({ ...form, tipo: v, tipo_outro: v === 'outro' ? form.tipo_outro : '' })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{VISITA_TIPOS_UI.map(t => <SelectItem key={t.v} value={t.v}>{t.l}</SelectItem>)}</SelectContent>
               </Select>
@@ -705,6 +707,9 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
               </Select>
             </div>
           </div>
+          {form.tipo === 'outro' && (
+            <div><Label>Qual? *</Label><Input value={form.tipo_outro} onChange={e => setForm({ ...form, tipo_outro: e.target.value })} placeholder="Escreva o tipo de visita / atendimento" /></div>
+          )}
           <div><Label>Quem visitou / atendeu</Label><Input value={form.responsavel} onChange={e => setForm({ ...form, responsavel: e.target.value })} placeholder="Pastor / líder" /></div>
           <div>
             <Label>Observação</Label>
@@ -791,7 +796,7 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
                     {v.telefone && <div className="text-xs text-muted-foreground">{v.telefone}</div>}
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-sm">{fmtData(v.data_visita)}</TableCell>
-                  <TableCell className="text-sm">{VISITA_TIPO_LABEL[v.tipo] || v.tipo}</TableCell>
+                  <TableCell className="text-sm">{v.tipo === 'outro' && v.tipo_outro ? `Outro · ${v.tipo_outro}` : (VISITA_TIPO_LABEL[v.tipo] || v.tipo)}</TableCell>
                   <TableCell className="text-sm">{v.responsavel || '—'}</TableCell>
                   <TableCell>
                     <span className="text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap" style={{ background: cor + '22', color: cor, border: `1px solid ${cor}40` }}>{st?.l || v.status}</span>

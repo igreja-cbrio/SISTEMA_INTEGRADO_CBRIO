@@ -1252,7 +1252,7 @@ router.post('/convertidos/:id/direcionar', authorizeModule('cuidados', 3), async
 // Lista da aba "Visitas e atendimentos" · visitas pastorais e atendimentos FORA
 // do funil de novos convertidos (substituiu o calendário da aba "Visitas agendadas").
 // ─────────────────────────────────────────────────────────────
-const VISITA_TIPOS = ['visita', 'atendimento', 'hospital', 'luto', 'oracao', 'outro'];
+const VISITA_TIPOS = ['visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'aconselhamento', 'outro'];
 const VISITA_STATUS = ['agendada', 'realizada', 'cancelada'];
 
 router.get('/visitas', authorizeModule('cuidados', 1), async (req, res) => {
@@ -1278,7 +1278,8 @@ router.post('/visitas', authorizeModule('cuidados', 3), async (req, res) => {
       membro_id: b.membro_id || null,
       telefone: b.telefone || null,
       data_visita: b.data_visita || new Date().toISOString().slice(0, 10),
-      tipo: VISITA_TIPOS.includes(b.tipo) ? b.tipo : 'visita',
+      tipo: VISITA_TIPOS.includes(b.tipo) ? b.tipo : 'visita_domiciliar',
+      tipo_outro: b.tipo === 'outro' ? (b.tipo_outro || null) : null,
       responsavel: b.responsavel || null,
       status: VISITA_STATUS.includes(b.status) ? b.status : 'realizada',
       observacao: b.observacao || null,
@@ -1298,11 +1299,12 @@ router.patch('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) =>
   try {
     const b = req.body || {};
     const patch = {};
-    for (const k of ['nome', 'telefone', 'data_visita', 'tipo', 'responsavel', 'status', 'observacao', 'membro_id']) {
+    for (const k of ['nome', 'telefone', 'data_visita', 'tipo', 'tipo_outro', 'responsavel', 'status', 'observacao', 'membro_id']) {
       if (k in b) patch[k] = b[k];
     }
     if (patch.tipo && !VISITA_TIPOS.includes(patch.tipo)) delete patch.tipo;
     if (patch.status && !VISITA_STATUS.includes(patch.status)) delete patch.status;
+    if (patch.tipo && patch.tipo !== 'outro') patch.tipo_outro = null; // limpa descrição livre se não for "Outro"
     patch.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('cui_visitas')
       .update(patch).eq('id', req.params.id).is('deleted_at', null).select().single();
