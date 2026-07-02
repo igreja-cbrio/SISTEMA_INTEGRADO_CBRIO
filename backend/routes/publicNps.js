@@ -3,10 +3,15 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 
-// Rate limit para link público: 20 acessos / 15 min por IP.
+// Rate limit do link público de NPS · teto ALTO de propósito: no culto o link é
+// aberto por dezenas de pessoas AO MESMO TEMPO e, no WiFi da igreja, todas saem
+// pelo MESMO IP público (NAT) — um teto baixo por-IP (como 20) derruba o evento
+// com 429. Cada pessoa faz ~2-3 req (abrir + enviar). 2000/15min cobre ~600
+// pessoas por IP com folga, mantendo um backstop contra abuso real. Ajustável
+// por env se precisar de mais. (Fora do publicLimiter estrito · ver server.js.)
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: parseInt(process.env.PUBLIC_NPS_RATE_LIMIT_MAX) || 2000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Muitas tentativas. Tente novamente em alguns minutos.' },
