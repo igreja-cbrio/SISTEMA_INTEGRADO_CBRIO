@@ -2,7 +2,7 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const painelCache = require('../services/painelCache');
-const { computeJornada, agregar, normalizaJanela, janelaDias } = require('../services/jornadaEngajamento');
+const { computeJornada, agregar, normalizaJanela } = require('../services/jornadaEngajamento');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -40,8 +40,6 @@ router.use(authenticate);
  * 4. Servir em Comunidade: voluntário ativo (mem_voluntarios até IS NULL)
  * 5. Viver Generosamente: contribuição nos últimos 90 dias (mem_contribuicoes)
  */
-
-function daysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
 // ── GET /api/jornada/dashboard?janela= ──
 // Agregado dos 5 valores + Membro Modelo (>=2 valores) sobre os membros ativos,
@@ -98,54 +96,24 @@ router.get('/visao', async (req, res) => {
 router.get('/membros', async (req, res) => {
   try {
     const { search, valor, janela: janelaQ, page = 1, limit = 50 } = req.query;
-    const offset = (page - 1) * limit;
-    // Mesma janela do motor único: corta só investir/generosidade (atual = sem corte).
-    const dias = janelaDias(normalizaJanela(janelaQ));
-    const comJanela = (q, col) => (dias == null ? q : q.gte(col, daysAgo(dias)));
 
-    // Base = membros formais (consistente com o dashboard 5 valores · 2026-06-19)
-    let q = supabase.from('mem_membros').select('id, nome, email, telefone, status, foto_url', { count: 'exact' })
-      .is('deleted_at', null)
-      .eq('active', true).eq('status', 'membro_ativo').order('nome').range(offset, offset + parseInt(limit) - 1);
-    if (search) q = q.ilike('nome', `%${search}%`);
+    // Motor único (mesma régua do /dashboard, /visao e do NSM): seguir = Batismo
+    // OU Next, investir = devocional, engajado = conversão + >=1. Base pequena
+    // (membros ativos) → 1 fetch e filtra/pagina em JS. Alinhado 2026-07-02.
+    const { membros } = await computeJornada(normalizaJanela(janelaQ));
 
-    const { data: membros, count: totalCount, error } = await q;
-    if (error) throw error;
-    if (!membros || membros.length === 0) return res.json({ membros: [], total: 0 });
+    let result = membros;
+    if (search) {
+      const s = String(search).toLowerCase();
+      result = result.filter(m => (m.nome || '').toLowerCase().includes(s));
+    }
+    // Filtro "Sem: X" = membros que NÃO têm o valor (mantém a semântica anterior)
+    if (valor) result = result.filter(m => !m.valores[valor]);
 
-    const ids = membros.map(m => m.id);
-
-    const [trilha, grupos, j180, voluntarios, contribuicoes] = await Promise.all([
-      supabase.from('mem_trilha_valores').select('membro_id, etapa, concluida').is('deleted_at', null).in('membro_id', ids).eq('concluida', true),
-      supabase.from('mem_grupo_membros').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('saiu_em', null),
-      comJanela(supabase.from('mem_devocionais').select('membro_id').is('deleted_at', null).in('membro_id', ids).eq('concluida', true), 'data_devocional'),
-      supabase.from('mem_voluntarios').select('membro_id').is('deleted_at', null).in('membro_id', ids).is('ate', null),
-      comJanela(supabase.from('mem_contribuicoes').select('membro_id').is('deleted_at', null).in('membro_id', ids).in('tipo', ['dizimo', 'oferta']), 'data'),
-    ]);
-
-    const trilhaSet = new Set((trilha.data || []).filter(t => ['conversao', 'primeiro_contato', 'batismo'].includes(t.etapa)).map(t => t.membro_id));
-    const grupoSet = new Set((grupos.data || []).map(g => g.membro_id));
-    const j180Set = new Set((j180.data || []).map(j => j.membro_id));
-    const volSet = new Set((voluntarios.data || []).map(v => v.membro_id));
-    const genSet = new Set((contribuicoes.data || []).map(c => c.membro_id));
-
-    const result = membros.map(m => {
-      const v = {
-        seguir: trilhaSet.has(m.id),
-        conectar: grupoSet.has(m.id),
-        investir: j180Set.has(m.id),
-        servir: volSet.has(m.id),
-        generosidade: genSet.has(m.id),
-      };
-      return { ...m, valores: v, total_valores: Object.values(v).filter(Boolean).length };
-    });
-
-    // FIX: filtro "Sem: X" = membros que NÃO tem o valor (! correto)
-    let filtered = result;
-    if (valor) filtered = result.filter(m => !m.valores[valor]);
-
-    // FIX: total reflete resultado filtrado, não o total geral
-    res.json({ membros: filtered, total: valor ? filtered.length : (totalCount || 0) });
+    result = [...result].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const total = result.length;
+    const off = (Number(page) - 1) * Number(limit);
+    res.json({ membros: result.slice(off, off + Number(limit)), total });
   } catch (e) {
     console.error('jornada membros:', e.message);
     res.status(500).json({ error: 'Erro ao listar membros' });
@@ -157,7 +125,7 @@ router.get('/membro/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [membro, trilha, grupo, j180, vol, contrib, devocional] = await Promise.all([
+    const [membro, trilha, grupo, j180, vol, contrib, devocional, batismos, nextMat, nextInsc] = await Promise.all([
       supabase.from('mem_membros').select('*').eq('id', id).single(),
       supabase.from('mem_trilha_valores').select('*').is('deleted_at', null).eq('membro_id', id).order('created_at'),
       supabase.from('mem_grupo_membros').select('*, mem_grupos(nome)').is('deleted_at', null).eq('membro_id', id).order('entrou_em', { ascending: false }),
@@ -166,6 +134,10 @@ router.get('/membro/:id', async (req, res) => {
       supabase.from('mem_contribuicoes').select('*').is('deleted_at', null).eq('membro_id', id).order('data', { ascending: false }).limit(10),
       // Investir = devocional concluído · mesma fonte do motor jornadaEngajamento (alinhado 2026-06-30)
       supabase.from('mem_devocionais').select('*').is('deleted_at', null).eq('membro_id', id).eq('concluida', true).order('data_devocional', { ascending: false }).limit(10),
+      // Seguir = Batismo OU Next (mesma régua do motor · alinhado 2026-07-02)
+      supabase.from('batismo_inscricoes').select('id, data_batismo, status').is('deleted_at', null).eq('membro_id', id).eq('status', 'realizado').order('data_batismo', { ascending: false }).limit(5),
+      supabase.from('next_matriculas').select('id, status, created_at').is('deleted_at', null).eq('membro_id', id).eq('status', 'formado').order('created_at', { ascending: false }).limit(5),
+      supabase.from('next_inscricoes').select('id, check_in_at').not('check_in_at', 'is', null).eq('membro_id', id).limit(5),
     ]);
 
     if (membro.error || !membro.data) return res.status(404).json({ error: 'Membro não encontrado' });
@@ -183,12 +155,16 @@ router.get('/membro/:id', async (req, res) => {
       const diff = (Date.now() - new Date(d.data_devocional).getTime()) / 86400000;
       return diff <= 90;
     });
+    // Seguir = Batismo OU Next (passo de fé além da conversão · régua do motor)
+    const seguirBatismo = (batismos.data || [])[0] || null;
+    const seguirNext = (nextMat.data || [])[0] || (nextInsc.data || [])[0] || null;
+    const seguirAtivo = !!(seguirBatismo || seguirNext);
     const trilhaConversao = (trilha.data || []).find(t => ['conversao', 'primeiro_contato', 'batismo'].includes(t.etapa) && t.concluida);
 
     res.json({
       membro: membro.data,
       valores: {
-        seguir:       { ativo: !!trilhaConversao, dados: trilhaConversao || null },
+        seguir:       { ativo: seguirAtivo, dados: seguirBatismo || seguirNext || trilhaConversao || null },
         conectar:     { ativo: !!grupoAtivo, dados: grupoAtivo || null },
         investir:     { ativo: !!devocionalRecente, dados: devocionalRecente || null },
         servir:       { ativo: !!volAtivo, dados: volAtivo || null },
