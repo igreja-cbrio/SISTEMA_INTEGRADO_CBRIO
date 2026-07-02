@@ -387,9 +387,15 @@ export const next = {
     // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
     // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
     direcionar: (id, destinos) => post(`/next/matriculas/${id}/direcionar`, { destinos }),
+    // Liga as matrículas órfãs (sem membro_id) via matcher forte (fecha o funil).
+    backfillMembros: () => post('/next/matriculas/backfill-membros', {}),
   },
   // Pessoas — funil unificado (convertidos + matrículas, 1 linha/pessoa)
   pessoas: (params) => get('/next/pessoas' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Curso — visão por pessoa de quem passou pelo Next (aula 1/2, concluiu, sem-CPF)
+  curso: () => get('/next/curso'),
+  // Override manual de aula 1/2 (o responsável corrige a presença não computada)
+  pessoaAulas: (membroId, data) => put(`/next/pessoa/${membroId}/aulas`, data),
   convertidos: {
     resolver: (id, resolucao) => post(`/next/convertidos/${id}/resolver`, { resolucao }),
     desresolver: (id) => del(`/next/convertidos/${id}/resolver`),
