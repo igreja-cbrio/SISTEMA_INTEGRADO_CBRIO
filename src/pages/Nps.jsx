@@ -643,13 +643,18 @@ function EditModal({ pesquisa, onClose, onSaved }) {
   const [area, setArea] = useState(pesquisa.area || 'geral');
   const [permitePublico, setPermitePublico] = useState(pesquisa.permite_publico !== false);
   const [npsTexto, setNpsTexto] = useState(pesquisa.perguntas?.pergunta_nps?.texto || 'De 0 a 10, o quanto você recomendaria a CBRio para um amigo ou familiar?');
+  // Preserva o objeto INTEIRO de cada pergunta (id, tipo, texto, opcoes e
+  // quaisquer outros campos) — antes reduzíamos a {id,tipo,texto} e o save
+  // APAGAVA as opções de escolha_única/múltipla. Garante opcoes como array.
   const [extras, setExtras] = useState(
-    (pesquisa.perguntas?.perguntas_extras || []).map(p => ({ id: p.id, texto: p.texto || '', tipo: p.tipo || 'texto_longo' }))
+    (pesquisa.perguntas?.perguntas_extras || []).map(p => ({ ...p, texto: p.texto || '', tipo: p.tipo || 'texto_longo', opcoes: Array.isArray(p.opcoes) ? p.opcoes : [] }))
   );
   const [salvando, setSalvando] = useState(false);
   const temRespostas = (pesquisa.stats?.total_respostas || 0) > 0;
   const lbl = { display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 };
   const novoId = () => 'q' + Math.random().toString(36).slice(2, 9);
+  const COM_OPCOES = ['opcao_unica', 'multipla'];
+  const patchExtra = (i, patch) => setExtras(extras.map((x, j) => j === i ? { ...x, ...patch } : x));
 
   async function salvar() {
     if (!titulo.trim()) return toast.error('Defina um título.');
@@ -666,11 +671,20 @@ function EditModal({ pesquisa, onClose, onSaved }) {
         perguntas: {
           descricao_curta: objetivo.trim() || pesquisa.perguntas?.descricao_curta || null,
           pergunta_nps: { tipo: 'nps', texto: npsTexto.trim() },
-          // Preserva o id das perguntas existentes (respostas de texto ficam
-          // ligadas por id); perguntas novas ganham id fresco.
-          perguntas_extras: extras.filter(e => e.texto.trim()).map(e => ({
-            id: e.id || novoId(), tipo: e.tipo, texto: e.texto.trim(),
-          })),
+          // Preserva o OBJETO inteiro de cada pergunta (id, opcoes, etc.) — só
+          // ajusta texto/opcoes editados. Mantém o id (respostas ligadas por id).
+          // Só descarta linha REALMENTE vazia (sem texto e sem opções).
+          perguntas_extras: extras
+            .filter(e => (e.texto && e.texto.trim()) || (COM_OPCOES.includes(e.tipo) && (e.opcoes || []).some(o => String(o).trim())))
+            .map(e => {
+              const q = { ...e, id: e.id || novoId(), texto: (e.texto || '').trim() };
+              if (COM_OPCOES.includes(e.tipo)) {
+                q.opcoes = (e.opcoes || []).map(o => String(o).trim()).filter(Boolean);
+              } else {
+                delete q.opcoes; // tipo sem opções não carrega o campo
+              }
+              return q;
+            }),
         },
       });
       toast.success('Pesquisa atualizada.');
@@ -739,19 +753,44 @@ function EditModal({ pesquisa, onClose, onSaved }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {extras.map((ex, i) => (
-              <div key={ex.id || i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                <input value={ex.texto} onChange={e => setExtras(extras.map((x, j) => j === i ? { ...x, texto: e.target.value } : x))}
-                  placeholder={`Pergunta ${i + 1}`} style={{ ...inp, flex: 1 }} />
-                <select value={ex.tipo} onChange={e => setExtras(extras.map((x, j) => j === i ? { ...x, tipo: e.target.value } : x))}
-                  style={{ ...inp, width: 150, flex: 'none' }}>
-                  <option value="texto_longo">Texto longo</option>
-                  <option value="texto_curto">Texto curto</option>
-                  <option value="escala_5">Escala 1 a 5</option>
-                </select>
-                <button type="button" onClick={() => setExtras(extras.filter((_, j) => j !== i))}
-                  title="Remover" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }}>
-                  <X size={15} />
-                </button>
+              <div key={ex.id || i} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input value={ex.texto} onChange={e => patchExtra(i, { texto: e.target.value })}
+                    placeholder={ex.tipo === 'secao' ? 'Título da seção' : `Pergunta ${i + 1}`} style={{ ...inp, flex: 1 }} />
+                  <select value={ex.tipo} onChange={e => patchExtra(i, { tipo: e.target.value })}
+                    style={{ ...inp, width: 160, flex: 'none' }}>
+                    <option value="secao">Seção (título)</option>
+                    <option value="texto_longo">Texto longo</option>
+                    <option value="texto_curto">Texto curto</option>
+                    <option value="escala_5">Escala 1 a 5</option>
+                    <option value="sim_nao">Sim / Não</option>
+                    <option value="opcao_unica">Escolha única</option>
+                    <option value="multipla">Múltipla escolha</option>
+                  </select>
+                  <button type="button" onClick={() => setExtras(extras.filter((_, j) => j !== i))}
+                    title="Remover" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 6 }}>
+                    <X size={15} />
+                  </button>
+                </div>
+                {COM_OPCOES.includes(ex.tipo) && (
+                  <div style={{ paddingLeft: 10, borderLeft: `2px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.t3 }}>Opções ({ex.tipo === 'multipla' ? 'múltipla escolha' : 'escolha única'})</div>
+                    {(ex.opcoes || []).map((op, k) => (
+                      <div key={k} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input value={op} onChange={e => patchExtra(i, { opcoes: ex.opcoes.map((o, m) => m === k ? e.target.value : o) })}
+                          placeholder={`Opção ${k + 1}`} style={{ ...inp, flex: 1 }} />
+                        <button type="button" onClick={() => patchExtra(i, { opcoes: ex.opcoes.filter((_, m) => m !== k) })}
+                          title="Remover opção" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.red, padding: 4 }}>
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => patchExtra(i, { opcoes: [...(ex.opcoes || []), ''] })}
+                      style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, color: C.cyan, background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Plus size={11} /> Adicionar opção
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
             {extras.length === 0 && <p style={{ fontSize: 12, color: C.t3, margin: 0 }}>Sem perguntas adicionais — só a nota 0 a 10.</p>}
