@@ -17,6 +17,7 @@ export default function VolDashboard() {
   const sync = useSyncPlanningCenter();
 
   const handleSync = async () => {
+    toast.info('Sincronizando com o Planning Center… pode levar até 1 minuto.');
     try {
       const result = await sync.mutateAsync();
       toast.success(`Sincronizado: ${result.services} cultos, ${result.newSchedules} escalas`);
