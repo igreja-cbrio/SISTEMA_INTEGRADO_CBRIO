@@ -285,29 +285,31 @@ function TeamDetailDialog({ teamId, team, onClose }: { teamId: string | null; te
 
   return (
     <Dialog open={!!teamId} onOpenChange={open => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {team?.color && <div className="h-4 w-4 rounded-full shrink-0" style={{ backgroundColor: team.color }} />}
             {team?.name}
           </DialogTitle>
         </DialogHeader>
-        {team && (
-          <Tabs defaultValue="members">
-            <TabsList>
-              <TabsTrigger value="members">Membros ({members.length})</TabsTrigger>
-              <TabsTrigger value="positions">Posicoes ({positions.length})</TabsTrigger>
-            </TabsList>
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {team && (
+            <Tabs defaultValue="members">
+              <TabsList>
+                <TabsTrigger value="members">Membros ({members.length})</TabsTrigger>
+                <TabsTrigger value="positions">Posicoes ({positions.length})</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="members" className="mt-4">
-              <TeamMembersList teamId={team.id} members={members} loading={membersLoading} positions={positions} />
-            </TabsContent>
+              <TabsContent value="members" className="mt-4">
+                <TeamMembersList teamId={team.id} members={members} loading={membersLoading} positions={positions} />
+              </TabsContent>
 
-            <TabsContent value="positions" className="mt-4">
-              <PositionsList teamId={team.id} positions={positions} />
-            </TabsContent>
-          </Tabs>
-        )}
+              <TabsContent value="positions" className="mt-4">
+                <PositionsList teamId={team.id} positions={positions} />
+              </TabsContent>
+            </Tabs>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -211,6 +211,7 @@ export default function TabAvaliacoes({ funcionarios = [] }) {
               Nenhuma avaliação para esse filtro. Inicie o ciclo para criar uma por colaborador ativo.
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40">
                 <tr>
@@ -243,6 +244,7 @@ export default function TabAvaliacoes({ funcionarios = [] }) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

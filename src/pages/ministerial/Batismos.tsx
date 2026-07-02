@@ -956,7 +956,7 @@ function ModalTurmaBatismo({
   const cultos = [...porCulto.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : labelHorario(a).localeCompare(labelHorario(b))));
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             <Droplets className="h-5 w-5" style={{ color: C.primary }} />
@@ -967,7 +967,7 @@ function ModalTurmaBatismo({
             </Button>
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-4 flex-1 overflow-y-auto min-h-0">
           {cultos.map(([hc, lista]) => (
             <div key={hc || 'sem-horario'}>
               <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground mb-1.5">
@@ -1098,7 +1098,7 @@ function ModalDetalheBatismo({ batismo, labelHorario, onClose, onSaved }: {
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) tentarFechar(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Droplets className="h-5 w-5" style={{ color: C.primary }} />
@@ -1106,7 +1106,7 @@ function ModalDetalheBatismo({ batismo, labelHorario, onClose, onSaved }: {
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3 pt-2">
+        <div className="space-y-3 pt-2 flex-1 overflow-y-auto min-h-0">
           <div className="rounded-xl border border-border p-4 space-y-2 text-sm bg-muted/20">
             {batismo.cpf && (
               <div className="flex items-center gap-2 text-muted-foreground">
@@ -1410,7 +1410,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) tentarFechar(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Plus className="h-5 w-5" style={{ color: C.primary }} />
@@ -1418,7 +1418,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3 pt-2">
+        <div className="space-y-3 pt-2 flex-1 overflow-y-auto min-h-0">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <Label htmlFor="bn-nome" className="text-xs">Nome *</Label>

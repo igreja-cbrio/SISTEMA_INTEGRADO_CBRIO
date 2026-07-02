@@ -521,6 +521,7 @@ export default function Financeiro() {
       {contas.length === 0 ? (
         <div style={styles.empty}>Nenhuma conta cadastrada.</div>
       ) : (
+        <div style={{ overflowX: 'auto' }}>
         <table style={styles.table}>
           <thead>
             <tr>
@@ -558,6 +559,7 @@ export default function Financeiro() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -723,6 +725,7 @@ export default function Financeiro() {
         ) : transacoes.length === 0 ? (
           <div style={styles.empty}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhuma transacao encontrada.</span></div></div>
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -769,6 +772,7 @@ export default function Financeiro() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>
@@ -849,6 +853,7 @@ export default function Financeiro() {
           <div style={styles.empty}><div className="flex flex-col items-center py-10 gap-2"><span className="text-sm font-medium text-foreground">Nenhuma conta a pagar encontrada. Use "Importar planilha" pra trazer do sistema externo.</span></div></div>
         ) : (
           <>
+          <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -891,6 +896,7 @@ export default function Financeiro() {
               })}
             </tbody>
           </table>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 4px', fontSize: 13, color: C.text2 }}>
             <span>{cpTotal} título(s) · página {cpPage} de {cpTotalPaginas}</span>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -930,6 +936,7 @@ export default function Financeiro() {
         ) : reembolsos.length === 0 ? (
           <div style={styles.empty}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum reembolso encontrado</span></div></div>
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -963,6 +970,7 @@ export default function Financeiro() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>
@@ -1314,6 +1322,7 @@ export default function Financeiro() {
         </div>
 
         <div style={styles.card}>
+          <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -1370,6 +1379,7 @@ export default function Financeiro() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       </>
     );

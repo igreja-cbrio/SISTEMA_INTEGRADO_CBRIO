@@ -335,7 +335,7 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
 
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <Avatar className="h-10 w-10">
@@ -351,6 +351,7 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
           </DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto min-h-0">
         {carregando ? (
           <div className="py-12 flex items-center justify-center">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
@@ -468,6 +469,7 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
             </section>
           </div>
         )}
+        </div>
 
         <div className="flex justify-end pt-4 mt-2 border-t border-border">
           <Button variant="outline" onClick={onClose}>

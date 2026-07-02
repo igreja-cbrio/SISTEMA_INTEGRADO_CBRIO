@@ -839,7 +839,7 @@ function DetalheCriancaModal({ id, onClose }: { id: string | null; onClose: () =
 
   return (
     <Dialog open={!!id} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Baby className="h-5 w-5 text-pink-500" />
@@ -848,6 +848,7 @@ function DetalheCriancaModal({ id, onClose }: { id: string | null; onClose: () =
           </DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto min-h-0">
         {carregando ? (
           <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-8" />
         ) : !crianca ? (
@@ -907,6 +908,7 @@ function DetalheCriancaModal({ id, onClose }: { id: string | null; onClose: () =
             </div>
           </div>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -959,7 +961,7 @@ function ImportarCriancasModal({ open, onClose, onImportado }: { open: boolean; 
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileSpreadsheet className="h-5 w-5" /> Importar planilha de crianças
@@ -970,7 +972,7 @@ function ImportarCriancasModal({ open, onClose, onImportado }: { open: boolean; 
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 flex-1 overflow-y-auto min-h-0">
           <div className="bg-pink-50 dark:bg-pink-950/30 border border-pink-200 dark:border-pink-900 rounded-lg p-3 text-sm">
             <p className="font-semibold mb-1">Colunas esperadas:</p>
             <p className="text-xs text-muted-foreground">

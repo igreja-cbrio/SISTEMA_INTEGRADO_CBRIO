@@ -1069,7 +1069,7 @@ export default function Cuidados() {
       />
 
       <Tabs value={tab} onValueChange={handleTabChange}>
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
           <TabsTrigger value="acomp">Aconselhamento</TabsTrigger>
           <TabsTrigger value="jornada">Jornada 180</TabsTrigger>

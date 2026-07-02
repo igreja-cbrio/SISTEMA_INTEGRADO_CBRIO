@@ -87,7 +87,7 @@ export default function DoadoresListDialog({ open, onClose, ano }) {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto min-h-0">
             {loading && (
               <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">
                 <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando lista…

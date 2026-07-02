@@ -440,7 +440,7 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
 
       {/* Detalhe do culto · quem fez check-in e quem faltou */}
       <Dialog open={!!openServiceId} onOpenChange={(o) => !o && setOpenServiceId(null)}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{serviceDetail?.svc?.name || 'Culto'}</DialogTitle>
             {serviceDetail?.svc && (
@@ -451,7 +451,7 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
           </DialogHeader>
 
           {serviceDetail && (
-            <div className="space-y-5">
+            <div className="space-y-5 flex-1 overflow-y-auto min-h-0">
               {/* Resumo */}
               <div className="flex gap-2 text-xs">
                 <Badge className="bg-green-600 text-white hover:bg-green-600">{serviceDetail.present.length} presente(s)</Badge>

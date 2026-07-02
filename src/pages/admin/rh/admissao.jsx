@@ -228,7 +228,7 @@ export function AdmissaoFormModal({ data, onClose, onSave, saving }) {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex' }}>
       <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={onClose} />
-      <div style={{ width: '55%', minWidth: 500, maxWidth: 700, background: 'var(--cbrio-modal-bg)', overflowY: 'auto', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: '55%', minWidth: 'min(500px, 100vw)', maxWidth: 700, background: 'var(--cbrio-modal-bg)', overflowY: 'auto', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out', display: 'flex', flexDirection: 'column' }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--cbrio-modal-bg)', padding: '20px 28px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{f.id ? 'Editar admissão' : 'Nova admissão'}</div>
           <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
@@ -334,7 +334,7 @@ export function ContratoEditorModal({ data, onClose, onSave, saving }) {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex' }}>
       <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={onClose} />
-      <div style={{ width: '65%', minWidth: 600, maxWidth: 900, background: 'var(--cbrio-modal-bg)', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: '65%', minWidth: 'min(600px, 100vw)', maxWidth: 900, background: 'var(--cbrio-modal-bg)', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out', display: 'flex', flexDirection: 'column' }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--cbrio-modal-bg)', padding: '20px 28px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Contrato — {adm.nome}</div>

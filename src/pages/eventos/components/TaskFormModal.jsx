@@ -63,7 +63,7 @@ export default function TaskFormModal({ task, onSave, onClose }) {
                 <SelectTrigger className="w-full h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[1001]">
                   <SelectItem value="pendente">Pendente</SelectItem>
                   <SelectItem value="em-andamento">Em andamento</SelectItem>
                   <SelectItem value="concluida">Concluída</SelectItem>
@@ -76,7 +76,7 @@ export default function TaskFormModal({ task, onSave, onClose }) {
                 <SelectTrigger className="w-full h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[1001]">
                   <SelectItem value="baixa">Baixa</SelectItem>
                   <SelectItem value="media">Média</SelectItem>
                   <SelectItem value="alta">Alta</SelectItem>

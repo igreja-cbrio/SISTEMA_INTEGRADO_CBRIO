@@ -219,7 +219,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <FotoAvatar crianca={c} onChanged={load} />
@@ -230,6 +230,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
           </DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto min-h-0">
         {/* Abas */}
         <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 text-xs">
           {(['dados', 'frequencia', 'atendimentos'] as const).map(a => (
@@ -315,6 +316,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
             ))}
           </div>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -378,8 +380,9 @@ function DuplicadosModal({ onClose, onMerged }: { onClose: () => void; onMerged:
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col">
         <DialogHeader><DialogTitle>Crianças duplicadas</DialogTitle></DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0">
         {loading ? (
           <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         ) : grupos.length === 0 ? (
@@ -404,6 +407,7 @@ function DuplicadosModal({ onClose, onMerged }: { onClose: () => void; onMerged:
             ))}
           </div>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -599,7 +603,7 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
           <div className="space-y-1">
             {j.familia_membros.map((m: any) => (
               <div key={m.id} className="flex items-center gap-2 rounded-md border border-border p-1.5 text-xs">
-                <button onClick={() => navigate(`/ministerial/membresia?membro=${m.id}`)} className="flex-1 truncate text-left text-primary hover:underline">{m.nome}</button>
+                <button onClick={() => navigate(`/ministerial/membresia?membro=${m.id}`)} className="flex-1 min-w-0 truncate text-left text-primary hover:underline">{m.nome}</button>
                 {m.telefone && <a href={`https://wa.me/55${String(m.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-3.5 w-3.5" /></a>}
               </div>
             ))}

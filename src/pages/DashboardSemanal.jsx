@@ -33,7 +33,7 @@ export default function DashboardSemanal() {
   const { isAdmin, canFinanceiro, getAccessLevel } = useAuth();
   const verFinanceiro = isAdmin || canFinanceiro;
   const verRelatorios = isAdmin || getAccessLevel(['relatorios']) >= 1;
-  const nColsCls = { 6: 'grid-cols-6', 7: 'grid-cols-7', 8: 'grid-cols-8' }[6 + (verFinanceiro ? 1 : 0) + (verRelatorios ? 1 : 0)] || 'grid-cols-8';
+  const nColsCls = { 6: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-6', 7: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-7', 8: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-8' }[6 + (verFinanceiro ? 1 : 0) + (verRelatorios ? 1 : 0)] || 'grid-cols-2 sm:grid-cols-4 md:grid-cols-8';
   const [tab, setTab] = useState('semanal');
   const wrapperRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
