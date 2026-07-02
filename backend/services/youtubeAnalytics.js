@@ -423,10 +423,14 @@ async function fetchLivePeakConcurrentViewers(channelId, videoId, startDate, end
     return d.toISOString().slice(0, 10);
   })();
 
+  // Doc oficial ("Concurrent viewers (for livestreams)"): filtro video obrigatório,
+  // dimensão OPCIONAL livestreamPosition, métricas average+peak. Na prática a forma
+  // sem dimensão 500a em prod · com livestreamPosition vem uma série por segmento
+  // da live (peak do vídeo = MAX dos segmentos).
   const shapes = [
-    { metrics: 'peakConcurrentViewers,averageConcurrentViewers', filters: `video==${videoId}` },
-    { metrics: 'peakConcurrentViewers,averageConcurrentViewers', dimensions: 'liveOrOnDemand', filters: `video==${videoId};liveOrOnDemand==LIVE` },
-    { metrics: 'peakConcurrentViewers', dimensions: 'liveOrOnDemand', filters: `video==${videoId};liveOrOnDemand==LIVE` },
+    { metrics: 'averageConcurrentViewers,peakConcurrentViewers', dimensions: 'livestreamPosition', filters: `video==${videoId}` },
+    { metrics: 'averageConcurrentViewers,peakConcurrentViewers', filters: `video==${videoId}` },
+    { metrics: 'peakConcurrentViewers', dimensions: 'livestreamPosition', filters: `video==${videoId}` },
   ];
 
   let lastErr = null;
@@ -446,14 +450,18 @@ async function fetchLivePeakConcurrentViewers(channelId, videoId, startDate, end
       continue; // tenta a próxima forma
     }
     const data = await res.json();
-    const temDim = !!shape.dimensions;
-    // Com dimensão a 1ª coluna é o valor da dimensão ('LIVE') · métricas depois.
-    const row = temDim
-      ? (data.rows || []).find(r => r[0] === 'LIVE') || (data.rows || [])[0]
-      : (data.rows || [])[0];
-    if (!row) return { peak: null, avg: null };
-    const base = temDim ? 1 : 0;
-    return { peak: row[base] || null, avg: row[base + 1] ?? null };
+    const rows = data.rows || [];
+    if (!rows.length) return { peak: null, avg: null };
+    // Parse robusto por columnHeaders (independe da ordem/dimensões da forma).
+    const headers = (data.columnHeaders || []).map(h => h.name);
+    const iPeak = headers.indexOf('peakConcurrentViewers');
+    const iAvg = headers.indexOf('averageConcurrentViewers');
+    if (iPeak === -1) continue; // resposta sem a métrica · tenta próxima forma
+    // Com livestreamPosition vem 1 linha por segmento · o pico do vídeo é o MAX.
+    const peak = Math.max(...rows.map(r => Number(r[iPeak]) || 0)) || null;
+    const avgVals = iAvg >= 0 ? rows.map(r => Number(r[iAvg]) || 0).filter(v => v > 0) : [];
+    const avg = avgVals.length ? Math.round(avgVals.reduce((s, v) => s + v, 0) / avgVals.length) : null;
+    return { peak, avg };
   }
   throw new Error(lastErr || 'Analytics peakConcurrentViewers falhou');
 }
