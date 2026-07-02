@@ -2181,6 +2181,22 @@ export const voluntariado = {
     testar: (telefone, nome) => post('/voluntariado/whatsapp-auto/testar', { telefone, nome }),
     envios: () => get('/voluntariado/whatsapp-auto/envios'),
   },
+  // Disparo de e-mails pros voluntários (composer + segmentos + histórico)
+  emails: {
+    list: () => get('/voluntariado/emails'),
+    get: (id) => get(`/voluntariado/emails/${id}`),
+    create: (data) => post('/voluntariado/emails', data),
+    update: (id, data) => put(`/voluntariado/emails/${id}`, data),
+    remove: (id) => del(`/voluntariado/emails/${id}`),
+    resolverDestinatarios: (segmento) => post('/voluntariado/emails/resolver-destinatarios', { segmento }),
+    uploadImagem: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/emails/upload-imagem', fd); },
+    gerarIa: (data) => post('/voluntariado/emails/gerar-ia', data, { timeout: 120_000 }),
+    preview: (corpo_html) => post('/voluntariado/emails/preview', { corpo_html }),
+    teste: (id) => post(`/voluntariado/emails/${id}/teste`, {}),
+    enviar: (id) => post(`/voluntariado/emails/${id}/enviar`, {}, { timeout: 300_000 }),
+    agendar: (id, agendado_para) => post(`/voluntariado/emails/${id}/agendar`, { agendado_para }),
+    cancelar: (id) => post(`/voluntariado/emails/${id}/cancelar`, {}),
+  },
   // Opções do formulário público ("Onde você quer servir")
   formOpcoes: {
     list: () => get('/voluntariado/form-opcoes'),

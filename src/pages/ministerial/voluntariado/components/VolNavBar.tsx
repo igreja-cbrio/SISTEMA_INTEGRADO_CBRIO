@@ -2,7 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, QrCode, ClipboardCheck, Calendar, BarChart3, Settings, Users, CalendarPlus,
   Church, CalendarOff, LayoutDashboard, List, ScanLine, User, History, CalendarCheck,
-  Inbox, UserPlus, Activity, ChevronDown, KeyRound,
+  Inbox, UserPlus, Activity, ChevronDown, KeyRound, Mail,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -30,6 +30,7 @@ const STAFF_GRUPOS: Grupo[] = [
       { label: 'Equipes', icon: Users, path: `${BASE}/equipes` },
       { label: 'Inscrições', icon: Inbox, path: `${BASE}/inscricoes` },
       { label: 'Encaminhados', icon: UserPlus, path: `${BASE}/encaminhados` },
+      { label: 'E-mails', icon: Mail, path: `${BASE}/emails` },
       { label: 'Acessos', icon: KeyRound, path: `${BASE}/acessos` },
     ],
   },
