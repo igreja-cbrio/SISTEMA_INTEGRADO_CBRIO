@@ -77,6 +77,8 @@ const EDITOR_CSS = `
 .vol-email-editor .ProseMirror a { color: #00B39D; text-decoration: underline; }
 .vol-email-editor .ProseMirror img { max-width: 100%; height: auto; border-radius: 6px; }
 .vol-email-editor .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--cbrio-text3, #9aa1ab); float: left; height: 0; pointer-events: none; }
+.vol-email-assinatura .ProseMirror { min-height: 120px; }
+.vol-email-assinatura .ProseMirror img { max-height: 64px; width: auto; vertical-align: middle; }
 `;
 
 export default function VolEmailComposer({ disparo, onVoltar }: Props) {
@@ -824,7 +826,7 @@ function AssinaturaDialog({ onClose, onSaved }: { onClose: () => void; onSaved: 
                 <ImagePlus className="h-4 w-4" />
               </Button>
             </div>
-            <div className="vol-email-editor" style={{ minHeight: 0 }}>
+            <div className="vol-email-editor vol-email-assinatura">
               <EditorContent editor={editorAss} />
             </div>
           </div>

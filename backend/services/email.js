@@ -32,7 +32,7 @@ function remetenteGraph() {
   return process.env.GRAPH_MAIL_SENDER || process.env.MERGE_MAIL_SENDER || 'noreply@cbrio.org';
 }
 
-async function enviarViaGraph({ to, subject, html, text, from }) {
+async function enviarViaGraph({ to, subject, html, text, from, fromName }) {
   const sender = from || remetenteGraph();
   const token = await getGraphToken();
   const recipients = (Array.isArray(to) ? to : [to])
@@ -48,6 +48,9 @@ async function enviarViaGraph({ to, subject, html, text, from }) {
           subject: String(subject || '(sem assunto)'),
           body: { contentType: html ? 'HTML' : 'Text', content: html || text || '' },
           toRecipients: recipients,
+          // fromName sobrescreve o display name da caixa (ex.: "Voluntariado CBRio"
+          // em vez de "Email Automático - CBRio") mantendo o mesmo endereço.
+          ...(fromName ? { from: { emailAddress: { address: sender, name: fromName } } } : {}),
         },
         saveToSentItems: true,
       }),
@@ -86,12 +89,12 @@ async function enviarViaResend({ to, subject, html, text, from }) {
   }
 }
 
-async function enviarEmail({ to, subject, html, text, from } = {}) {
+async function enviarEmail({ to, subject, html, text, from, fromName } = {}) {
   if (!to || (Array.isArray(to) && !to.length)) return { ok: false, error: 'destinatário ausente' };
 
   if (graphConfigurado()) {
     try {
-      const r = await enviarViaGraph({ to, subject, html, text, from });
+      const r = await enviarViaGraph({ to, subject, html, text, from, fromName });
       if (r.ok) return r;
       if (resendConfigurado()) return enviarViaResend({ to, subject, html, text, from });
       return r;

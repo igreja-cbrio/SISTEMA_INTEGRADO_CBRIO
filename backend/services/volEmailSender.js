@@ -129,7 +129,16 @@ function sanitizarHtml(html) {
 function montarHtmlEmail(corpoHtml, { nome, assinaturaHtml } = {}) {
   const primeiroNome = (nome || '').trim().split(/\s+/)[0] || 'voluntário';
   const corpo = sanitizarHtml(corpoHtml).replace(/\{\{\s*nome\s*\}\}/gi, primeiroNome);
-  const assinatura = assinaturaHtml ? sanitizarHtml(assinaturaHtml) : '';
+  // Logo da assinatura sempre pequena (padrão de assinatura corporativa):
+  // remove width/height/style que vierem no <img> e força max-height 64px.
+  const assinatura = assinaturaHtml
+    ? sanitizarHtml(assinaturaHtml).replace(/<img\b([^>]*?)\/?>/gi, (m, attrs) => {
+        const limpos = attrs
+          .replace(/\s(?:style|width|height)\s*=\s*"[^"]*"/gi, '')
+          .replace(/\s(?:style|width|height)\s*=\s*'[^']*'/gi, '');
+        return `<img${limpos} style="max-height:64px;width:auto;height:auto;vertical-align:middle;border-radius:4px">`;
+      })
+    : '';
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <body style="margin:0;padding:0;background:#f4f5f7">
@@ -228,10 +237,11 @@ async function enviarUm(disparo, dest, assinaturaHtml) {
   if (!claimed?.length) return 'pulado'; // outro processo pegou
 
   const html = montarHtmlEmail(disparo.corpo_html, { nome: dest.nome, assinaturaHtml });
-  let r = await enviarEmail({ to: dest.email, subject: disparo.assunto, html });
+  const REMETENTE_NOME = 'Voluntariado CBRio';
+  let r = await enviarEmail({ to: dest.email, subject: disparo.assunto, html, fromName: REMETENTE_NOME });
   if (!r?.ok && /429/.test(r?.error || '')) {
     await sleep(15000); // Retry-After não chega até aqui · espera conservadora
-    r = await enviarEmail({ to: dest.email, subject: disparo.assunto, html });
+    r = await enviarEmail({ to: dest.email, subject: disparo.assunto, html, fromName: REMETENTE_NOME });
   }
 
   if (!r?.ok) {

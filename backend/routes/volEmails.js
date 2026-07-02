@@ -249,6 +249,7 @@ router.post('/:id/teste', async (req, res) => {
       to: req.user.email,
       subject: `[TESTE] ${disparo.assunto || '(sem assunto)'}`,
       html,
+      fromName: 'Voluntariado CBRio',
     });
     if (!r?.ok) return res.status(502).json({ error: r?.error || 'Falha no envio de teste' });
     res.json({ ok: true, para: req.user.email });
