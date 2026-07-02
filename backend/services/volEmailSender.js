@@ -62,6 +62,20 @@ async function resolverSegmento(segmento = {}) {
       }
       if (!data || data.length < PAGE) break;
     }
+  } else if (tipo === 'manual') {
+    const ids = Array.isArray(segmento.vol_profile_ids) ? segmento.vol_profile_ids.filter(Boolean) : [];
+    if (!ids.length) throw new Error('Nenhum voluntário selecionado');
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase
+        .from('vol_profiles')
+        .select('id, full_name, email')
+        .in('id', ids.slice(i, i + 200));
+      if (error) throw error;
+      for (const p of data || []) {
+        if (p.email) brutos.push({ vol_profile_id: p.id, email: p.email, nome: p.full_name });
+        else semEmail += 1;
+      }
+    }
   } else if (tipo === 'escala') {
     if (!segmento.service_id) throw new Error('service_id obrigatório no segmento de escala');
     for (let from = 0; ; from += PAGE) {
@@ -111,9 +125,11 @@ function sanitizarHtml(html) {
 
 // Shell de e-mail (estilos inline · compatível com Outlook/Gmail) envolvendo o
 // corpo do Tiptap. {{nome}} é substituído pelo primeiro nome do destinatário.
-function montarHtmlEmail(corpoHtml, { nome } = {}) {
+// assinaturaHtml (opcional) entra entre o corpo e o rodapé.
+function montarHtmlEmail(corpoHtml, { nome, assinaturaHtml } = {}) {
   const primeiroNome = (nome || '').trim().split(/\s+/)[0] || 'voluntário';
   const corpo = sanitizarHtml(corpoHtml).replace(/\{\{\s*nome\s*\}\}/gi, primeiroNome);
+  const assinatura = assinaturaHtml ? sanitizarHtml(assinaturaHtml) : '';
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <body style="margin:0;padding:0;background:#f4f5f7">
@@ -124,6 +140,9 @@ function montarHtmlEmail(corpoHtml, { nome } = {}) {
         <tr><td style="padding:28px 30px;font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1a1a1a;line-height:1.6">
           ${corpo}
         </td></tr>
+        ${assinatura ? `<tr><td style="padding:0 30px 24px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1a1a;line-height:1.5">
+          <div style="border-top:1px solid #eceef1;padding-top:16px">${assinatura}</div>
+        </td></tr>` : ''}
         <tr><td style="padding:16px 30px;border-top:1px solid #eceef1;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#8a919c">
           Você recebe este e-mail por ser voluntário da CBRio.
         </td></tr>
@@ -132,6 +151,16 @@ function montarHtmlEmail(corpoHtml, { nome } = {}) {
   </table>
 </body>
 </html>`;
+}
+
+// Assinatura global do módulo (vol_email_config · linha única id=1).
+async function carregarAssinatura() {
+  const { data } = await supabase
+    .from('vol_email_config')
+    .select('assinatura_html')
+    .eq('id', 1)
+    .maybeSingle();
+  return data?.assinatura_html || '';
 }
 
 // ── Snapshot dos destinatários ──────────────────────────────────────────────
@@ -187,7 +216,7 @@ async function atualizarContadores(disparoId) {
 }
 
 // ── Envio de 1 destinatário (claim atômico + retry de 429) ─────────────────
-async function enviarUm(disparo, dest) {
+async function enviarUm(disparo, dest, assinaturaHtml) {
   // Claim: só envia quem ESTE processo conseguiu mover pendente→enviado.
   const { data: claimed, error: claimErr } = await supabase
     .from('vol_email_disparo_destinatarios')
@@ -198,7 +227,7 @@ async function enviarUm(disparo, dest) {
   if (claimErr) throw claimErr;
   if (!claimed?.length) return 'pulado'; // outro processo pegou
 
-  const html = montarHtmlEmail(disparo.corpo_html, { nome: dest.nome });
+  const html = montarHtmlEmail(disparo.corpo_html, { nome: dest.nome, assinaturaHtml });
   let r = await enviarEmail({ to: dest.email, subject: disparo.assunto, html });
   if (!r?.ok && /429/.test(r?.error || '')) {
     await sleep(15000); // Retry-After não chega até aqui · espera conservadora
@@ -252,6 +281,7 @@ async function drenarDisparos({ budgetMs = 250000, apenasDisparoId = null } = {}
   for (const disparo of ativas || []) {
     if (estourou()) break;
     await snapshotDestinatarios(disparo);
+    const assinaturaHtml = disparo.incluir_assinatura === false ? '' : await carregarAssinatura();
 
     let enviadosDesdeUpdate = 0;
     while (!estourou()) {
@@ -268,7 +298,7 @@ async function drenarDisparos({ budgetMs = 250000, apenasDisparoId = null } = {}
       for (const dest of pendentes) {
         if (estourou()) break;
         try {
-          const st = await enviarUm(disparo, dest);
+          const st = await enviarUm(disparo, dest, assinaturaHtml);
           if (st === 'enviado') resultado.enviados += 1;
           if (st === 'erro') resultado.erros += 1;
         } catch (e) {
@@ -317,4 +347,5 @@ module.exports = {
   sanitizarHtml,
   snapshotDestinatarios,
   drenarDisparos,
+  carregarAssinatura,
 };

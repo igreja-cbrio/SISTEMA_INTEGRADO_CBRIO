@@ -460,28 +460,36 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
   const entries = Array.from(volunteersMap.values());
   if (entries.length === 0) return { count: 0, dbError: null };
 
-  const profiles = entries.map(v => ({
+  // ⚠️ Email só entra no upsert quando o PCO trouxe um valor. A maioria dos
+  // payloads (fetchAllServicesPeople) vem com email null — incluir a coluna
+  // sobrescreveria com null os e-mails backfillados do People API a cada sync
+  // horário (bug corrigido 2026-07-02). PostgREST exige as mesmas colunas por
+  // batch, então separamos em dois grupos.
+  const base = v => ({
     planning_center_id: v.planning_center_person_id,
     full_name: v.volunteer_name,
-    email: v.email || null,
     avatar_url: v.avatar_url || null,
     origem: 'planning_center',
     allocation_status: 'active',
-  }));
+  });
+  const comEmail = entries.filter(v => v.email).map(v => ({ ...base(v), email: v.email }));
+  const semEmail = entries.filter(v => !v.email).map(base);
 
   let upserted = 0;
   let firstError = null;
   const batchSize = 100;
-  for (let i = 0; i < profiles.length; i += batchSize) {
-    const batch = profiles.slice(i, i + batchSize);
-    const { error, count } = await supabase
-      .from('vol_profiles')
-      .upsert(batch, { onConflict: 'planning_center_id', ignoreDuplicates: false, count: 'exact' });
-    if (error) {
-      console.error('[PC] upsert vol_profiles error:', error.message);
-      if (!firstError) firstError = error.message;
-    } else {
-      upserted += (count ?? batch.length);
+  for (const grupo of [comEmail, semEmail]) {
+    for (let i = 0; i < grupo.length; i += batchSize) {
+      const batch = grupo.slice(i, i + batchSize);
+      const { error, count } = await supabase
+        .from('vol_profiles')
+        .upsert(batch, { onConflict: 'planning_center_id', ignoreDuplicates: false, count: 'exact' });
+      if (error) {
+        console.error('[PC] upsert vol_profiles error:', error.message);
+        if (!firstError) firstError = error.message;
+      } else {
+        upserted += (count ?? batch.length);
+      }
     }
   }
   return { count: upserted, dbError: firstError };
@@ -800,6 +808,65 @@ async function backfillVolProfilesCpf(supabase, credentials) {
   }
 
   return { total_cpf_pco: totalCpfPco, matched, updated, skipped_existing: skippedExisting, errors };
+}
+
+// Retorna Map<planning_center_person_id, email> via People API (people/v2/emails).
+// Prioriza o e-mail marcado como primary; senão fica com o primeiro encontrado.
+async function fetchPcoEmailMap(credentials) {
+  const headers = { Authorization: `Basic ${credentials}` };
+  const map = new Map();
+  const perPage = 100;
+  let offset = 0;
+  while (true) {
+    const url = `${PC_PEOPLE_BASE}/emails?per_page=${perPage}&offset=${offset}`;
+    const r = await fetchWithRetry(url, headers);
+    if (!r.ok) break;
+    const j = await r.json();
+    for (const em of (j.data || [])) {
+      const personId = em.relationships?.person?.data?.id;
+      const address = (em.attributes?.address || '').trim().toLowerCase();
+      if (!personId || !address || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) continue;
+      if (em.attributes?.primary || !map.has(personId)) map.set(personId, address);
+    }
+    const total = j.meta?.total_count;
+    if (!j.data || j.data.length < perPage) break;
+    offset += perPage;
+    if (total && offset >= total) break;
+    if (offset > 50000) break; // safety
+  }
+  return map;
+}
+
+// Preenche vol_profiles.email onde estiver vazio, casando por planning_center_id.
+// NUNCA sobrescreve um e-mail já existente (mesma regra do backfill de CPF).
+async function backfillVolProfilesEmail(supabase, credentials) {
+  const emailMap = await fetchPcoEmailMap(credentials);
+  const totalEmailsPco = emailMap.size;
+  if (!totalEmailsPco) return { total_emails_pco: 0, matched: 0, updated: 0, skipped_existing: 0, errors: 0 };
+
+  const pcIds = [...emailMap.keys()];
+  let matched = 0, updated = 0, skippedExisting = 0, errors = 0;
+
+  for (let i = 0; i < pcIds.length; i += 200) {
+    const batch = pcIds.slice(i, i + 200);
+    const { data: profiles, error } = await supabase
+      .from('vol_profiles')
+      .select('id, planning_center_id, email')
+      .in('planning_center_id', batch);
+    if (error) { errors++; continue; }
+
+    for (const p of (profiles || [])) {
+      const email = emailMap.get(p.planning_center_id);
+      if (!email) continue;
+      matched++;
+      if (p.email) { skippedExisting++; continue; } // nunca sobrescreve
+      const { error: upErr } = await supabase
+        .from('vol_profiles').update({ email }).eq('id', p.id);
+      if (upErr) errors++; else updated++;
+    }
+  }
+
+  return { total_emails_pco: totalEmailsPco, matched, updated, skipped_existing: skippedExisting, errors };
 }
 
 module.exports = {
