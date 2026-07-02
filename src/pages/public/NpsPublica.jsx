@@ -30,6 +30,25 @@ export default function NpsPublica() {
   const [email, setEmail] = useState('');
   const [anonimo, setAnonimo] = useState(false);
 
+  // ── Fila offline (localStorage) ──────────────────────────────────────────
+  // A resposta é salva no próprio aparelho e sobe em segundo plano com re-tentativa.
+  // Assim a pessoa vê "Obrigado" NA HORA e não perdemos resposta se a borda do
+  // Vercel der um soluço no pico do culto (fila é drenada até zerar).
+  const QKEY = `nps_fila_${token}`;
+  function lerFila() { try { return JSON.parse(localStorage.getItem(QKEY) || '[]'); } catch { return []; } }
+  function salvarFila(arr) { try { localStorage.setItem(QKEY, JSON.stringify(arr)); } catch { /* quota/modo privado */ } }
+  async function subirFila() {
+    const fila = lerFila();
+    if (!fila.length) return;
+    const restante = [];
+    for (const item of fila) {
+      try { await api.publicResponder(token, item.payload); }   // 2xx → não re-enfileira
+      catch { restante.push(item); }                            // falhou → mantém pra re-tentar
+    }
+    salvarFila(restante);
+    if (restante.length) setTimeout(subirFila, 8000);           // re-tenta em 8s até zerar
+  }
+
   useEffect(() => {
     (async () => {
       try {
@@ -40,21 +59,29 @@ export default function NpsPublica() {
       }
       setLoading(false);
     })();
+    subirFila(); // sobe pendências que tenham sobrado de antes
+    // Última tentativa ao fechar/ocultar a aba · sendBeacon envia durante o unload.
+    const aoOcultar = () => { for (const it of lerFila()) api.publicResponderBeacon(token, it.payload); };
+    const onVis = () => { if (document.visibilityState === 'hidden') aoOcultar(); };
+    window.addEventListener('pagehide', aoOcultar);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.removeEventListener('pagehide', aoOcultar); document.removeEventListener('visibilitychange', onVis); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  async function enviar({ score, respostas, comentario }) {
+  function enviar({ score, respostas, comentario }) {
     if (!anonimo) {
       if (!nome.trim()) return alert('Informe seu nome (ou marque "responder como anônimo").');
       if (!email.trim()) return alert('Informe seu e-mail (ou marque "responder como anônimo").');
     }
-    setEnviando(true);
-    try {
-      await api.publicResponder(token, { nome: anonimo ? null : nome.trim(), email: anonimo ? null : email.trim(), anonimo, score, respostas, comentario });
-      setEnviado(true);
-    } catch (e) {
-      alert(e.message || 'Erro ao enviar resposta');
-    }
-    setEnviando(false);
+    const payload = { nome: anonimo ? null : nome.trim(), email: anonimo ? null : email.trim(), anonimo, score, respostas, comentario };
+    // Enfileira no aparelho e mostra "Obrigado" IMEDIATAMENTE · o upload roda em
+    // segundo plano (com re-tentativa). Nunca perde a resposta no pico.
+    const fila = lerFila();
+    fila.push({ _id: (globalThis.crypto?.randomUUID?.() || (String(Date.now()) + Math.random())), payload, ts: Date.now() });
+    salvarFila(fila);
+    setEnviado(true);
+    subirFila();
   }
 
   return (
