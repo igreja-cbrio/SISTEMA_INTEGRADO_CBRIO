@@ -891,4 +891,6 @@ module.exports = {
   syncTeamMembersFromSchedules,
   fetchPcoCpfMap,
   backfillVolProfilesCpf,
+  fetchPcoEmailMap,
+  backfillVolProfilesEmail,
 };
