@@ -4,7 +4,7 @@ const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
   processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
-  fetchAllServiceTypes, backfillVolProfilesCpf,
+  fetchAllServiceTypes, backfillVolProfilesCpf, backfillVolProfilesEmail,
 } = require('../services/planningCenter');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
 
@@ -407,6 +407,55 @@ router.post('/backfill-cpf', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (e) {
     console.error('[CPF-BACKFILL] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// BACKFILL · puxa e-mails do People (PCO) e grava em vol_profiles.email
+// onde estiver vazio (casa por planning_center_id). Nunca sobrescreve.
+// Complemento: preenche pelo mem_membros vinculado (membresia_id) o que
+// o PCO não tiver. POST /api/voluntariado/backfill-emails
+// ══════════════════════════════════════════════════════════════
+router.post('/backfill-emails', async (req, res) => {
+  try {
+    const { basic: credentials } = getPCCredentials();
+    const pco = await backfillVolProfilesEmail(supabase, credentials);
+
+    // Complemento via membresia: vol_profiles sem e-mail mas com vínculo
+    // (paginação defensiva contra o cap de 1000 do PostgREST).
+    let viaMembresia = 0;
+    for (let from = 0; ; from += 1000) {
+      const { data: pendentes, error } = await supabase
+        .from('vol_profiles')
+        .select('id, membresia_id')
+        .eq('arquivado', false)
+        .is('email', null)
+        .not('membresia_id', 'is', null)
+        .order('id')
+        .range(from, from + 999);
+      if (error) throw error;
+      if (!pendentes?.length) break;
+      const membroIds = [...new Set(pendentes.map(p => p.membresia_id))];
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, email')
+        .in('id', membroIds)
+        .is('deleted_at', null)
+        .not('email', 'is', null);
+      const emailPorMembro = new Map((membros || []).map(m => [m.id, (m.email || '').trim().toLowerCase()]));
+      for (const p of pendentes) {
+        const email = emailPorMembro.get(p.membresia_id);
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+        const { error: upErr } = await supabase.from('vol_profiles').update({ email }).eq('id', p.id);
+        if (!upErr) viaMembresia++;
+      }
+      if (pendentes.length < 1000) break;
+    }
+
+    res.json({ success: true, ...pco, via_membresia: viaMembresia });
+  } catch (e) {
+    console.error('[EMAIL-BACKFILL] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

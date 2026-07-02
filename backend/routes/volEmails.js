@@ -12,8 +12,10 @@ const { gerarEmail } = require('../services/volEmailIa');
 const {
   resolverSegmento,
   montarHtmlEmail,
+  sanitizarHtml,
   snapshotDestinatarios,
   drenarDisparos,
+  carregarAssinatura,
 } = require('../services/volEmailSender');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
@@ -24,10 +26,15 @@ const EDITAVEIS = ['rascunho', 'agendado'];
 
 function validarSegmento(seg) {
   if (!seg || typeof seg !== 'object') return { tipo: 'todos' };
-  const tipo = ['todos', 'equipe', 'escala'].includes(seg.tipo) ? seg.tipo : 'todos';
+  const tipo = ['todos', 'equipe', 'escala', 'manual'].includes(seg.tipo) ? seg.tipo : 'todos';
   const limpo = { tipo };
   if (tipo === 'equipe') limpo.team_id = seg.team_id || null;
   if (tipo === 'escala') limpo.service_id = seg.service_id || null;
+  if (tipo === 'manual') {
+    limpo.vol_profile_ids = (Array.isArray(seg.vol_profile_ids) ? seg.vol_profile_ids : [])
+      .filter(id => typeof id === 'string' && id)
+      .slice(0, 2000);
+  }
   return limpo;
 }
 
@@ -45,6 +52,31 @@ router.get('/', async (req, res) => {
   } catch (e) {
     console.error('[volEmails] list:', e.message);
     res.status(500).json({ error: 'Erro ao listar disparos' });
+  }
+});
+
+// GET /config — assinatura global do módulo (antes de /:id · rota fixa vence)
+router.get('/config', async (req, res) => {
+  try {
+    res.json({ assinatura_html: await carregarAssinatura() });
+  } catch (e) {
+    console.error('[volEmails] config get:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a assinatura' });
+  }
+});
+
+// PUT /config — salva a assinatura global
+router.put('/config', async (req, res) => {
+  try {
+    const assinatura = sanitizarHtml(req.body?.assinatura_html || '');
+    const { error } = await supabase
+      .from('vol_email_config')
+      .upsert({ id: 1, assinatura_html: assinatura, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (error) throw error;
+    res.json({ ok: true, assinatura_html: assinatura });
+  } catch (e) {
+    console.error('[volEmails] config put:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a assinatura' });
   }
 });
 
@@ -75,13 +107,14 @@ router.get('/:id', async (req, res) => {
 // POST / — cria rascunho
 router.post('/', async (req, res) => {
   try {
-    const { assunto, corpo_html, segmento } = req.body || {};
+    const { assunto, corpo_html, segmento, incluir_assinatura } = req.body || {};
     const { data, error } = await supabase
       .from('vol_email_disparos')
       .insert({
         assunto: (assunto || '').trim(),
         corpo_html: corpo_html || '',
         segmento: validarSegmento(segmento),
+        incluir_assinatura: incluir_assinatura !== false,
         criado_por: req.user.userId,
         criado_por_nome: req.user.name || req.user.email,
       })
@@ -98,11 +131,12 @@ router.post('/', async (req, res) => {
 // PUT /:id — edita (só rascunho/agendado)
 router.put('/:id', async (req, res) => {
   try {
-    const { assunto, corpo_html, segmento } = req.body || {};
+    const { assunto, corpo_html, segmento, incluir_assinatura } = req.body || {};
     const patch = {};
     if (assunto !== undefined) patch.assunto = (assunto || '').trim();
     if (corpo_html !== undefined) patch.corpo_html = corpo_html || '';
     if (segmento !== undefined) patch.segmento = validarSegmento(segmento);
+    if (incluir_assinatura !== undefined) patch.incluir_assinatura = incluir_assinatura !== false;
     const { data, error } = await supabase
       .from('vol_email_disparos')
       .update(patch)
@@ -136,7 +170,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// POST /resolver-destinatarios — preview {total, sem_email, amostra}
+// POST /resolver-destinatarios — preview {total, sem_email, lista completa}
 router.post('/resolver-destinatarios', async (req, res) => {
   try {
     const segmento = validarSegmento(req.body?.segmento);
@@ -144,13 +178,14 @@ router.post('/resolver-destinatarios', async (req, res) => {
     res.json({
       total: destinatarios.length,
       sem_email,
-      amostra: destinatarios.slice(0, 10).map((d) => ({ nome: d.nome, email: d.email })),
+      lista: destinatarios.map((d) => ({ nome: d.nome, email: d.email })),
     });
   } catch (e) {
     console.error('[volEmails] resolver:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao resolver destinatários' });
   }
 });
+
 
 // POST /upload-imagem — imagem do corpo (bucket público vol-emails)
 router.post('/upload-imagem', upload.single('arquivo'), async (req, res) => {
@@ -189,7 +224,8 @@ router.post('/gerar-ia', async (req, res) => {
 // POST /preview — shell final pro iframe do composer
 router.post('/preview', async (req, res) => {
   try {
-    const html = montarHtmlEmail(req.body?.corpo_html || '', { nome: req.user.name || 'Voluntário' });
+    const assinaturaHtml = req.body?.incluir_assinatura === false ? '' : await carregarAssinatura();
+    const html = montarHtmlEmail(req.body?.corpo_html || '', { nome: req.user.name || 'Voluntário', assinaturaHtml });
     res.json({ html });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao montar preview' });
@@ -207,7 +243,8 @@ router.post('/:id/teste', async (req, res) => {
       .maybeSingle();
     if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
     if (!req.user.email) return res.status(400).json({ error: 'Seu usuário não tem e-mail cadastrado' });
-    const html = montarHtmlEmail(disparo.corpo_html, { nome: req.user.name });
+    const assinaturaHtml = disparo.incluir_assinatura === false ? '' : await carregarAssinatura();
+    const html = montarHtmlEmail(disparo.corpo_html, { nome: req.user.name, assinaturaHtml });
     const r = await enviarEmail({
       to: req.user.email,
       subject: `[TESTE] ${disparo.assunto || '(sem assunto)'}`,

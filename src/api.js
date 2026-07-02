@@ -2191,12 +2191,17 @@ export const voluntariado = {
     resolverDestinatarios: (segmento) => post('/voluntariado/emails/resolver-destinatarios', { segmento }),
     uploadImagem: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/emails/upload-imagem', fd); },
     gerarIa: (data) => post('/voluntariado/emails/gerar-ia', data, { timeout: 120_000 }),
-    preview: (corpo_html) => post('/voluntariado/emails/preview', { corpo_html }),
+    preview: (corpo_html, incluir_assinatura) => post('/voluntariado/emails/preview', { corpo_html, incluir_assinatura }),
     teste: (id) => post(`/voluntariado/emails/${id}/teste`, {}),
     enviar: (id) => post(`/voluntariado/emails/${id}/enviar`, {}, { timeout: 300_000 }),
     agendar: (id, agendado_para) => post(`/voluntariado/emails/${id}/agendar`, { agendado_para }),
     cancelar: (id) => post(`/voluntariado/emails/${id}/cancelar`, {}),
+    // Assinatura global do módulo (texto + logo)
+    config: () => get('/voluntariado/emails/config'),
+    saveConfig: (assinatura_html) => put('/voluntariado/emails/config', { assinatura_html }),
   },
+  // Backfill de e-mails: Planning Center (People API) + complemento membresia
+  backfillEmails: () => post('/voluntariado/backfill-emails', {}, { timeout: 300_000 }),
   // Opções do formulário público ("Onde você quer servir")
   formOpcoes: {
     list: () => get('/voluntariado/form-opcoes'),

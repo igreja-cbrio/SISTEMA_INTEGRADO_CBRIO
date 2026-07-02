@@ -3,7 +3,7 @@
 // O corpo produzido aqui é envolvido num shell de e-mail (estilos inline) pelo
 // backend na hora do envio; {{nome}} vira o primeiro nome de cada destinatário.
 // ════════════════════════════════════════════════════════════════════════════
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -27,17 +27,25 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   ArrowLeft, Bold, Italic, Heading2, Heading3, List, ListOrdered, Link2, Unlink,
   ImagePlus, AlignLeft, AlignCenter, AlignRight, AtSign, Sparkles, Loader2,
-  Send, Clock, Eye, Save, FlaskConical, Users,
+  Send, Clock, Eye, Save, FlaskConical, Users, Search, RefreshCw, PenLine, UserPlus,
 } from 'lucide-react';
 
 export type VolEmailDisparo = {
   id: string;
   assunto: string;
   corpo_html: string;
-  segmento: { tipo: 'todos' | 'equipe' | 'escala'; team_id?: string | null; service_id?: string | null };
+  segmento: {
+    tipo: 'todos' | 'equipe' | 'escala' | 'manual';
+    team_id?: string | null;
+    service_id?: string | null;
+    vol_profile_ids?: string[];
+  };
+  incluir_assinatura?: boolean;
   status: string;
   agendado_para: string | null;
   total_destinatarios: number;
@@ -49,10 +57,11 @@ export type VolEmailDisparo = {
 };
 
 type Props = { disparo: VolEmailDisparo | null; onVoltar: () => void };
-type SegTipo = 'todos' | 'equipe' | 'escala';
+type SegTipo = 'todos' | 'equipe' | 'escala' | 'manual';
 type TeamOpt = { id: string; name: string };
 type ServiceOpt = { id: string; name: string; scheduled_at: string };
-type ResolucaoDest = { total: number; sem_email: number; amostra: { nome: string | null; email: string }[] };
+type ResolucaoDest = { total: number; sem_email: number; lista: { nome: string | null; email: string }[] };
+type PoolVol = { id: string; full_name: string; email: string | null };
 
 function msgErro(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -76,6 +85,13 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
   const [segTipo, setSegTipo] = useState<SegTipo>(disparo?.segmento?.tipo || 'todos');
   const [segTeamId, setSegTeamId] = useState<string>(disparo?.segmento?.team_id || '');
   const [segServiceId, setSegServiceId] = useState<string>(disparo?.segmento?.service_id || '');
+  const [segIds, setSegIds] = useState<string[]>(disparo?.segmento?.vol_profile_ids || []);
+  const [incluirAssinatura, setIncluirAssinatura] = useState(disparo?.incluir_assinatura !== false);
+  const [verListaOpen, setVerListaOpen] = useState(false);
+  const [buscaLista, setBuscaLista] = useState('');
+  const [selecionarOpen, setSelecionarOpen] = useState(false);
+  const [buscaSelecao, setBuscaSelecao] = useState('');
+  const [assinaturaOpen, setAssinaturaOpen] = useState(false);
   const [aba, setAba] = useState('editor');
   const [previewHtml, setPreviewHtml] = useState('');
   const [iaObjetivo, setIaObjetivo] = useState('');
@@ -102,9 +118,14 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
     tipo: segTipo,
     ...(segTipo === 'equipe' ? { team_id: segTeamId || null } : {}),
     ...(segTipo === 'escala' ? { service_id: segServiceId || null } : {}),
+    ...(segTipo === 'manual' ? { vol_profile_ids: segIds } : {}),
   });
 
-  const segmentoValido = segTipo === 'todos' || (segTipo === 'equipe' && segTeamId) || (segTipo === 'escala' && segServiceId);
+  const segmentoValido =
+    segTipo === 'todos' ||
+    (segTipo === 'equipe' && segTeamId) ||
+    (segTipo === 'escala' && segServiceId) ||
+    (segTipo === 'manual' && segIds.length > 0);
 
   // Equipes (com id) e cultos futuros pro seletor de segmento
   const { data: teams = [] } = useQuery<TeamOpt[]>({
@@ -116,15 +137,33 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
     queryFn: () => voluntariado.services.upcoming(),
   });
 
-  const { data: destinatarios, isFetching: resolvendo } = useQuery<ResolucaoDest>({
-    queryKey: ['vol', 'emails', 'resolver', segTipo, segTeamId, segServiceId],
+  const { data: destinatarios, isFetching: resolvendo, refetch: refetchDestinatarios } = useQuery<ResolucaoDest>({
+    queryKey: ['vol', 'emails', 'resolver', segTipo, segTeamId, segServiceId, segIds.join(',')],
     queryFn: () => voluntariado.emails.resolverDestinatarios(segmento()),
     enabled: !!segmentoValido,
   });
 
+  // Pool completo pra seleção manual (só carrega com o dialog aberto)
+  const { data: pool = [], isLoading: poolCarregando } = useQuery<PoolVol[]>({
+    queryKey: ['vol', 'volunteers-pool', false],
+    queryFn: () => voluntariado.volunteersPool(false),
+    enabled: selecionarOpen,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const backfillMut = useMutation({
+    mutationFn: (): Promise<{ updated: number; via_membresia: number; skipped_existing: number }> =>
+      voluntariado.backfillEmails(),
+    onSuccess: (r) => {
+      toast.success(`E-mails preenchidos: ${r.updated} do Planning Center + ${r.via_membresia || 0} da membresia`);
+      refetchDestinatarios();
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao buscar e-mails no Planning Center'),
+  });
+
   // ── Salvar rascunho (create ou update) · retorna o id ─────────────────────
   async function salvar(): Promise<string> {
-    const body = { assunto, corpo_html: editor?.getHTML() || '', segmento: segmento() };
+    const body = { assunto, corpo_html: editor?.getHTML() || '', segmento: segmento(), incluir_assinatura: incluirAssinatura };
     if (id) {
       await voluntariado.emails.update(id, body);
       return id;
@@ -189,7 +228,7 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
   async function abrirPreview() {
     setAba('preview');
     try {
-      const r = await voluntariado.emails.preview(editor?.getHTML() || '');
+      const r = await voluntariado.emails.preview(editor?.getHTML() || '', incluirAssinatura);
       setPreviewHtml(r.html || '');
     } catch (e) {
       toast.error(msgErro(e, 'Erro ao montar preview'));
@@ -387,9 +426,17 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                     <SelectItem value="todos">Todos os voluntários</SelectItem>
                     <SelectItem value="equipe">Uma equipe</SelectItem>
                     <SelectItem value="escala">Escalados de um culto</SelectItem>
+                    <SelectItem value="manual">Escolher voluntários</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+
+              {segTipo === 'manual' && (
+                <Button variant="outline" className="w-full" onClick={() => setSelecionarOpen(true)}>
+                  <UserPlus className="h-4 w-4 mr-1.5" />
+                  {segIds.length ? `${segIds.length} selecionado${segIds.length === 1 ? '' : 's'} · alterar` : 'Selecionar voluntários'}
+                </Button>
+              )}
 
               {segTipo === 'equipe' && (
                 <div>
@@ -431,6 +478,15 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                 ) : destinatarios ? (
                   <>
                     <strong>{destinatarios.total}</strong> voluntário{destinatarios.total === 1 ? '' : 's'} com e-mail
+                    {destinatarios.total > 0 && (
+                      <button
+                        type="button"
+                        className="block text-xs text-primary underline underline-offset-2 mt-1"
+                        onClick={() => { setBuscaLista(''); setVerListaOpen(true); }}
+                      >
+                        Ver quem vai receber
+                      </button>
+                    )}
                     {destinatarios.sem_email > 0 && (
                       <span className="block text-xs text-muted-foreground mt-0.5">
                         {destinatarios.sem_email} sem e-mail cadastrado ficam de fora
@@ -439,6 +495,42 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                   </>
                 ) : null}
               </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={backfillMut.isPending}
+                onClick={() => backfillMut.mutate()}
+                title="Puxa os e-mails cadastrados no Planning Center (e na membresia) pros voluntários que estão sem e-mail aqui"
+              >
+                {backfillMut.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+                Buscar e-mails no Planning Center
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <PenLine className="h-4 w-4 text-primary" /> Assinatura
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="incluir-assinatura" className="text-sm font-normal">
+                  Incluir assinatura neste e-mail
+                </Label>
+                <Switch id="incluir-assinatura" checked={incluirAssinatura} onCheckedChange={setIncluirAssinatura} />
+              </div>
+              <Button variant="outline" size="sm" className="w-full" onClick={() => setAssinaturaOpen(true)}>
+                <PenLine className="h-3.5 w-3.5 mr-1.5" /> Editar assinatura
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                A assinatura é única do voluntariado (texto + logo) e entra no final de todos os disparos que a incluírem.
+              </p>
             </CardContent>
           </Card>
 
@@ -535,6 +627,102 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
         </DialogContent>
       </Dialog>
 
+      {/* ── Dialog · quem vai receber ── */}
+      <Dialog open={verListaOpen} onOpenChange={setVerListaOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Quem vai receber ({destinatarios?.total ?? 0})</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={buscaLista}
+              onChange={(e) => setBuscaLista(e.target.value)}
+              placeholder="Buscar por nome ou e-mail…"
+              className="pl-9"
+            />
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
+            {(destinatarios?.lista || [])
+              .filter((d) => {
+                const q = buscaLista.trim().toLowerCase();
+                return !q || (d.nome || '').toLowerCase().includes(q) || d.email.toLowerCase().includes(q);
+              })
+              .map((d) => (
+                <div key={d.email} className="px-3 py-2 text-sm flex items-center justify-between gap-3">
+                  <span className="truncate">{d.nome || '(sem nome)'}</span>
+                  <span className="text-xs text-muted-foreground truncate">{d.email}</span>
+                </div>
+              ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog · seleção manual ── */}
+      <Dialog open={selecionarOpen} onOpenChange={setSelecionarOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Selecionar voluntários ({segIds.length})</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={buscaSelecao}
+              onChange={(e) => setBuscaSelecao(e.target.value)}
+              placeholder="Buscar voluntário…"
+              className="pl-9"
+            />
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
+            {poolCarregando ? (
+              <div className="py-8 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            ) : (
+              pool
+                .filter((v) => {
+                  const q = buscaSelecao.trim().toLowerCase();
+                  return !q || (v.full_name || '').toLowerCase().includes(q) || (v.email || '').toLowerCase().includes(q);
+                })
+                .slice(0, 200)
+                .map((v) => {
+                  const marcado = segIds.includes(v.id);
+                  const semEmail = !v.email;
+                  return (
+                    <label
+                      key={v.id}
+                      className={`px-3 py-2 text-sm flex items-center gap-3 cursor-pointer hover:bg-accent/50 ${semEmail ? 'opacity-50' : ''}`}
+                    >
+                      <Checkbox
+                        checked={marcado}
+                        disabled={semEmail}
+                        onCheckedChange={(c) =>
+                          setSegIds((prev) => (c ? [...prev, v.id] : prev.filter((id) => id !== v.id)))
+                        }
+                      />
+                      <span className="truncate flex-1">{v.full_name}</span>
+                      <span className="text-xs text-muted-foreground truncate">
+                        {v.email || 'sem e-mail'}
+                      </span>
+                    </label>
+                  );
+                })
+            )}
+          </div>
+          <DialogFooter className="flex-row justify-between sm:justify-between">
+            <Button variant="ghost" size="sm" onClick={() => setSegIds([])} disabled={!segIds.length}>
+              Limpar seleção
+            </Button>
+            <Button size="sm" onClick={() => setSelecionarOpen(false)}>Concluir</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {assinaturaOpen && (
+        <AssinaturaDialog
+          onClose={() => setAssinaturaOpen(false)}
+          onSaved={() => { setAssinaturaOpen(false); if (aba === 'preview') abrirPreview(); }}
+        />
+      )}
+
       {/* ── Confirmação de envio ── */}
       <AlertDialog open={confirmEnvio} onOpenChange={setConfirmEnvio}>
         <AlertDialogContent>
@@ -564,5 +752,102 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// ── Editor da assinatura global (texto + logo) · salva em vol_email_config ──
+function AssinaturaDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [carregando, setCarregando] = useState(true);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const editorAss = useEditor({
+    extensions: [
+      StarterKit.configure({ heading: false }),
+      Image,
+      Link.configure({ openOnClick: false, autolink: true }),
+      Placeholder.configure({ placeholder: 'Ex.: Coordenação de Voluntários · CBRio (adicione a logo pelo botão de imagem)' }),
+    ],
+    content: '',
+  });
+
+  useEffect(() => {
+    voluntariado.emails.config()
+      .then((r: { assinatura_html: string }) => {
+        if (r.assinatura_html) editorAss?.commands.setContent(r.assinatura_html);
+      })
+      .catch(() => toast.error('Erro ao carregar a assinatura'))
+      .finally(() => setCarregando(false));
+     
+  }, [editorAss]);
+
+  const salvarMut = useMutation({
+    mutationFn: () => voluntariado.emails.saveConfig(editorAss?.getHTML() || ''),
+    onSuccess: () => { toast.success('Assinatura salva'); onSaved(); },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao salvar a assinatura'),
+  });
+
+  async function subirLogo(file: File) {
+    try {
+      const r = await voluntariado.emails.uploadImagem(file);
+      editorAss?.chain().focus().setImage({ src: r.url }).run();
+    } catch (e) {
+      toast.error(msgErro(e, 'Erro ao enviar a imagem'));
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <PenLine className="h-5 w-5 text-primary" /> Assinatura do voluntariado
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          Essa assinatura é compartilhada por todos os disparos do módulo. Use o botão de imagem pra incluir a logo.
+        </p>
+        {carregando ? (
+          <div className="py-10 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <div className="rounded-lg border border-border bg-background">
+            <div className="flex items-center gap-0.5 flex-wrap border-b border-border px-2 py-1.5">
+              <Button type="button" variant="ghost" size="sm" className={`h-8 w-8 p-0 ${editorAss?.isActive('bold') ? 'bg-primary/15 text-primary' : ''}`} title="Negrito"
+                onClick={() => editorAss?.chain().focus().toggleBold().run()}>
+                <Bold className="h-4 w-4" />
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className={`h-8 w-8 p-0 ${editorAss?.isActive('italic') ? 'bg-primary/15 text-primary' : ''}`} title="Itálico"
+                onClick={() => editorAss?.chain().focus().toggleItalic().run()}>
+                <Italic className="h-4 w-4" />
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" title="Inserir logo/imagem"
+                onClick={() => fileRef.current?.click()}>
+                <ImagePlus className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="vol-email-editor" style={{ minHeight: 0 }}>
+              <EditorContent editor={editorAss} />
+            </div>
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) subirLogo(f);
+            e.target.value = '';
+          }}
+        />
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={() => salvarMut.mutate()} disabled={salvarMut.isPending || carregando}>
+            {salvarMut.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
+            Salvar assinatura
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

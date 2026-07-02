@@ -30,6 +30,7 @@ const STATUS_META: Record<string, { label: string; cls: string; icon: LucideIcon
 function segmentoLabel(seg: VolEmailDisparo['segmento'] | null | undefined): string {
   if (seg?.tipo === 'equipe') return 'Equipe';
   if (seg?.tipo === 'escala') return 'Escala (culto)';
+  if (seg?.tipo === 'manual') return `Seleção manual (${seg.vol_profile_ids?.length || 0})`;
   return 'Todos os voluntários';
 }
 
