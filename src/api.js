@@ -2907,26 +2907,51 @@ export const nps = {
   responder: (id, data) => post(`/nps/${id}/responder`, data),
   analisar: (id) => post(`/nps/${id}/analisar`, {}),
   notificar: (id) => post(`/nps/${id}/notificar`, {}),
-  // Públicas (sem auth)
+  // Públicas (sem auth) · com RETRY: num culto, a borda do Vercel pode dar um
+  // soluço/challenge momentâneo sob pico. Em vez de perder a resposta, o celular
+  // tenta de novo sozinho (backoff). Status "de borda" (403 challenge / 429 / 503)
+  // e erro de rede são retentados; 400/404 (dado inválido / pesquisa off) não.
   publicGet: (token) =>
-    fetch(`${API}/public/nps/${encodeURIComponent(token)}`, {
-      headers: { 'Content-Type': 'application/json' },
-    }).then(async (r) => {
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'Erro ao carregar pesquisa');
-      return data;
-    }),
+    npsFetchRetry(
+      () => fetch(`${API}/public/nps/${encodeURIComponent(token)}`, { headers: { 'Content-Type': 'application/json' } }),
+      { tentativas: 4, msg: 'Erro ao carregar pesquisa' },
+    ),
   publicResponder: (token, payload) =>
-    fetch(`${API}/public/nps/${encodeURIComponent(token)}/responder`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then(async (r) => {
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'Erro ao enviar resposta');
-      return data;
-    }),
+    npsFetchRetry(
+      () => fetch(`${API}/public/nps/${encodeURIComponent(token)}/responder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }),
+      { tentativas: 3, msg: 'Erro ao enviar resposta' },
+    ),
 };
+
+// Retry com backoff pras chamadas públicas do NPS (evento com pico).
+// Retenta em falha de rede e nos status de proteção de borda (403 challenge do
+// Vercel / 429 / 503) — que barram ANTES do servidor, então é seguro repetir.
+// Não retenta 400/404 (erro real de dado/pesquisa) nem estoura duplicata.
+async function npsFetchRetry(doFetch, { tentativas = 3, msg = 'Erro' } = {}) {
+  const RETRIABLE = new Set([403, 429, 502, 503, 504]);
+  let ultimo;
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      const r = await doFetch();
+      if (r.ok) return await r.json().catch(() => ({}));
+      if (!RETRIABLE.has(r.status) || i === tentativas - 1) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || msg);
+      }
+      ultimo = new Error(`http_${r.status}`);
+    } catch (e) {
+      ultimo = e;
+      if (i === tentativas - 1) throw e;
+    }
+    // backoff: ~0.5s, 1.2s, 2.5s + jitter · espalha as re-tentativas do pico
+    await new Promise((res) => setTimeout(res, (500 * Math.pow(2, i)) + Math.random() * 400));
+  }
+  throw ultimo || new Error(msg);
+}
 
 export const online = {
   dashboard: () => get('/online/dashboard'),
