@@ -240,16 +240,19 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       pct_com_dados: totalConv ? Math.round(((cpd + cod) / totalConv) * 100) : 0,
     };
 
-    // ── Processos pastorais (capelania entra de verdade na Fase 2) ──
-    const acomp = await fetchAll('cui_acompanhamentos', 'id, created_at, tipo', (q) => q.is('deleted_at', null).gte('created_at', inicio));
-    const jorn = await fetchAll('cui_jornada180', 'id, data_encontro', (q) => q.is('deleted_at', null).gte('data_encontro', inicio));
-    const procMap = new Map();
-    const bumpProc = (b, key) => { if (!b) return; const o = procMap.get(b) || { capelania: 0, acompanhamento: 0, jornada180: 0 }; o[key]++; procMap.set(b, o); };
-    for (const a of acomp) bumpProc(dashBucket(a.created_at, granTrend), a.tipo === 'capelania' ? 'capelania' : 'acompanhamento');
-    for (const j of jorn) bumpProc(dashBucket(j.data_encontro, granTrend), 'jornada180');
-    const processos = dashBucketsIntervalo(inicio, granTrend).map(b => ({
-      periodo: b, ...(procMap.get(b) || { capelania: 0, acompanhamento: 0, jornada180: 0 }),
-    }));
+    // ── Visitas e atendimentos por tipo (cui_visitas) · substitui o antigo "processos"/Jornada 180 ──
+    const VIS_TIPOS = ['visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'aconselhamento', 'outro'];
+    const zeroVis = () => Object.fromEntries(VIS_TIPOS.map(t => [t, 0]));
+    const vis = await fetchAll('cui_visitas', 'id, data_visita, tipo', (q) => q.is('deleted_at', null).gte('data_visita', inicio));
+    const visMap = new Map();
+    for (const v of vis) {
+      const b = dashBucket(v.data_visita, granTrend);
+      if (!b) continue;
+      const o = visMap.get(b) || zeroVis();
+      o[VIS_TIPOS.includes(v.tipo) ? v.tipo : 'outro']++;
+      visMap.set(b, o);
+    }
+    const visitas = dashBucketsIntervalo(inicio, granTrend).map(b => ({ periodo: b, ...(visMap.get(b) || zeroVis()) }));
 
     // ── Devocional · leitores distintos por bucket ──
     const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => q.gte('data_devocional', inicio));
@@ -265,7 +268,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       periodo: b, leitores: devMap.get(b) ? devMap.get(b).size : 0,
     }));
 
-    res.json({ dias, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, processos, devocional, statusDist, porResponsavel });
+    res.json({ dias, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, visitas, devocional, statusDist, porResponsavel });
   } catch (e) {
     console.error('[CUIDADOS] dashboard-series:', e.message);
     res.status(500).json({ error: e.message });
