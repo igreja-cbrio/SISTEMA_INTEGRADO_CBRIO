@@ -781,6 +781,7 @@ export const financeiro = {
   solicitacoesPendentesFinanceiro: () => get('/solicitacoes/pendentes-financeiro'),
   solicitacaoAprovarFinanceiro: (id, observacao) => post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao }),
   solicitacaoReprovarFinanceiro: (id, motivo) => post(`/solicitacoes/${id}/reprovar-financeiro`, { motivo }),
+  solicitacaoSobrestarFinanceiro: (id, motivo, revisao) => post(`/solicitacoes/${id}/sobrestar`, { motivo, revisao }),
   urgenciaFrequente: () => get('/solicitacoes/dashboard/urgencia-frequente'),
   recorrentes: {
     list: (params) => get('/financeiro/recorrentes' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1642,6 +1643,11 @@ export const solicitacoes = {
   alcadas:        () => get('/solicitacoes/alcadas'),
   aprovarOrigem:  (id) => patch(`/solicitacoes/${id}/aprovar-origem`, {}),
   rejeitarOrigem: (id, motivo) => patch(`/solicitacoes/${id}/rejeitar-origem`, { motivo }),
+  // Levas 2/3 · julgamento de mérito (Pastor Presidente) + sobrestar/retomar (em espera)
+  aprovarMerito:  (id) => post(`/solicitacoes/${id}/aprovar-merito`, {}),
+  reprovarMerito: (id, motivo) => post(`/solicitacoes/${id}/reprovar-merito`, { motivo }),
+  sobrestar:      (id, { motivo, revisao } = {}) => post(`/solicitacoes/${id}/sobrestar`, { motivo, revisao }),
+  retomar:        (id) => post(`/solicitacoes/${id}/retomar`, {}),
   // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
   registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
   areaResponsaveis: {

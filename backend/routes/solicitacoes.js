@@ -56,6 +56,12 @@ router.use((req, res, next) => {
 
 const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'pagamento', 'servico', 'producao', 'outro'];
 
+// Status que o PATCH genérico (kanban/drag/edição) pode definir. Os portões do
+// fluxo BPMN (aguardando_aprovacao_origem, aguardando_merito, sobrestada,
+// aguardando_ajuste, avaliado...) só transicionam pelos endpoints próprios —
+// senão um drag no kanban pularia aprovação/mérito/sobrestamento.
+const STATUS_PATCH_PERMITIDOS = ['pendente', 'em_analise', 'aprovado', 'rejeitado', 'concluido', 'em_atendimento', 'aguardando_entrega', 'em_cotacao', 'cancelado'];
+
 // Map categoria → notification module
 const CATEGORIA_MODULO = {
   ti: 'ti',
@@ -224,6 +230,132 @@ async function coaprovadorIdsParaDiretor(diretorId) {
   } catch { return []; }
 }
 
+// ══ Fluxo BPMN (Levas 2/3 · 2026-07-02) · 2º carimbo (Gestão) + mérito ═══════
+// Não-planejado = dupla aprovação: diretor da ÁREA do demandante (mecanismo
+// aprovacao_origem_* existente) E diretoria de GESTÃO (aprovacao_gestao_*).
+// Não-planejado COM CUSTO passa ainda pelo julgamento de MÉRITO (Pastor
+// Presidente). Planejado (checkbox do solicitante) pula tudo.
+const SETOR_GESTAO = 'Gestao';
+
+// IDs dos aprovadores do carimbo de GESTÃO = diretor do setor Gestao
+// (setor_diretor) + co-aprovadores do setor (setor_coaprovadores · Eduardo +
+// Juliana). Best-effort: tabela ausente → lista vazia (degrada sem 500).
+async function aprovadoresGestaoIds() {
+  const ids = new Set();
+  try {
+    const { data } = await supabase
+      .from('setor_diretor').select('diretor_id').eq('setor', SETOR_GESTAO);
+    (data || []).forEach(r => r.diretor_id && ids.add(r.diretor_id));
+  } catch { /* best-effort */ }
+  try {
+    const { data } = await supabase
+      .from('setor_coaprovadores').select('profile_id').eq('setor', SETOR_GESTAO);
+    (data || []).forEach(r => r.profile_id && ids.add(r.profile_id));
+  } catch { /* best-effort */ }
+  return [...ids];
+}
+
+// Nomes dos aprovadores de Gestão (pro front mostrar "Eduardo ou Juliana").
+async function aprovadoresGestaoNomes() {
+  const nomes = [];
+  try {
+    const { data } = await supabase
+      .from('setor_diretor').select('diretor_nome').eq('setor', SETOR_GESTAO);
+    (data || []).forEach(r => r.diretor_nome && nomes.push(r.diretor_nome));
+  } catch { /* best-effort */ }
+  try {
+    const { data } = await supabase
+      .from('setor_coaprovadores').select('nome').eq('setor', SETOR_GESTAO);
+    (data || []).forEach(r => r.nome && nomes.push(r.nome));
+  } catch { /* best-effort */ }
+  return [...new Set(nomes)];
+}
+
+// IDs dos aprovadores de MÉRITO (Pastor Presidente · seed na migration
+// 20260702150000). Best-effort: tabela ausente → lista vazia.
+async function aprovadoresMeritoIds() {
+  try {
+    const { data, error } = await supabase
+      .from('solicitacoes_merito_aprovadores')
+      .select('profile_id');
+    if (error) return [];
+    return (data || []).map(r => r.profile_id).filter(Boolean);
+  } catch { return []; }
+}
+
+// Próximo status quando os portões liberam (carimbos completos e/ou mérito
+// aprovado) · mesma régua histórica do aprovar-origem:
+//   compras/servico → em_cotacao (logística cota antes do Yago)
+//   precisa financeira → aguardando_aprovacao_financeira
+//   senão → pendente (fila da área alvo)
+function proximoStatusPosAprovacao(sol) {
+  if (['compras', 'servico'].includes(sol.categoria)) return 'em_cotacao';
+  if (sol.precisa_aprovacao_financeira && !sol.aprovado_financeiro_em) return 'aguardando_aprovacao_financeira';
+  return 'pendente';
+}
+
+// Não-planejado com custo → julgamento de mérito. Só no fluxo novo
+// (eh_planejado=false) · linha legada (NULL) segue o fluxo antigo.
+function precisaMerito(sol) {
+  return sol.eh_planejado === false
+    && sol.merito_status == null
+    && !!sol.precisa_aprovacao_financeira
+    && !sol.aprovado_financeiro_em;
+}
+
+// Evento explícito na timeline com o ATOR correto (o trigger genérico registra
+// a transição, mas com ator_id = responsavel_id · o evento explícito conserta
+// o tracking). Best-effort · nunca quebra o fluxo principal.
+async function registrarEvento(solicitacaoId, { statusAnterior, statusNovo, atorId, observacao }) {
+  try {
+    const { error } = await supabase.from('solicitacoes_eventos').insert({
+      solicitacao_id: solicitacaoId,
+      status_anterior: statusAnterior ?? null,
+      status_novo: statusNovo,
+      ator_id: atorId || null,
+      observacao: observacao || null,
+    });
+    if (error) console.error('[SOLICITACOES] evento timeline:', error.message);
+  } catch (e) { console.error('[SOLICITACOES] evento timeline:', e.message); }
+}
+
+// Notifica os aprovadores de mérito que há julgamento pendente (com e-mail ·
+// mesmo padrão do alerta de aprovação de origem).
+async function notificarMeritoPendente(sol) {
+  try {
+    const alvos = await aprovadoresMeritoIds();
+    if (!alvos.length) return;
+    await notificar({
+      modulo: 'administrativo',
+      tipo: 'solicitacao_merito',
+      titulo: `Julgamento de mérito: ${sol.titulo}`,
+      mensagem: 'A solicitação passou pelas aprovações e tem custo · aguarda seu julgamento de mérito.',
+      link: '/solicitacoes?aba=aprovar',
+      severidade: 'info',
+      chaveDedup: `solicitacao_merito_${sol.id}`,
+      targetIds: alvos,
+      email: true,
+    });
+  } catch (e) { console.error('[SOLICITACOES] notify merito:', e.message); }
+}
+
+// Gestão da fila (sobrestar/retomar fora do portão financeiro): admin/diretor,
+// responsável direto ou responsável cadastrado da área (mesma checagem do PATCH).
+async function podeGerirSolicitacao(req, sol) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  if (sol.responsavel_id === req.user.userId) return true;
+  if (sol.area_responsavel) {
+    const { data: rr } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('profile_id')
+      .eq('area', sol.area_responsavel)
+      .eq('profile_id', req.user.userId)
+      .maybeSingle();
+    return !!rr;
+  }
+  return false;
+}
+
 // ── LIST (filtered by role) ─────────────────────────────────
 router.get('/', async (req, res) => {
   try {
@@ -232,67 +364,116 @@ router.get('/', async (req, res) => {
     const granular = req.user.granular;
 
     const { categoria, status, mine, aba, periodo } = req.query;
-    let q = supabase
-      .from('solicitacoes')
-      .select('*, solicitacao_itens(*)')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false });
 
-    if (categoria) q = q.eq('categoria', categoria);
-    if (status) q = q.eq('status', status);
-
-    // Período padrão (Fase 2) · bound por updated_at pra não estourar o cap de
-    // 1000 linhas do PostgREST conforme o volume cresce. Filtra por updated_at
-    // (não created_at) pra manter visível o que teve atividade recente, mesmo
-    // criado há tempos. 'tudo' remove o limite. aba=aprovar não filtra (a fila
-    // de decisão é pequena e recente por natureza).
-    if (aba !== 'aprovar') {
-      const dias = periodo === 'tudo' ? 0 : (parseInt(periodo, 10) || 365);
-      if (dias > 0) q = q.gte('updated_at', new Date(Date.now() - dias * 86400000).toISOString());
-    }
+    let data;
+    let papeisPorId = null; // aba=aprovar · papel(is) de aprovação pendente(s) do ator por item
 
     if (aba === 'aprovar') {
-      // Aba do diretor de origem · so o que o user precisa aprovar. Inclui os
-      // setores onde ele e CO-APROVADOR (ex.: Juliana co-aprova Gestao).
-      // Super-admins tambem veem a fila de TRIAGEM (sem setor resolvido · Fase 0).
+      // Fila de decisão do ator · 3 papéis possíveis (fluxo BPMN 2026-07-02):
+      //   origem (diretor da área do demandante / co-aprovador do setor) ·
+      //   gestao (diretoria de Gestão · 2º carimbo do não-planejado) ·
+      //   merito (Pastor Presidente · aguardando_merito).
+      // Super-admin vê as 3 filas inteiras (fallback · inclusive a triagem).
+      // Consultas separadas + merge com dedup por id (or() cruzado no PostgREST
+      // é frágil) · a fila de decisão é pequena e recente por natureza.
       const isSuper = await isAdminFallback(req);
       const aprovarIds = await diretorIdsQuePodeAprovar(userId);
+      const gestaoIds = await aprovadoresGestaoIds();
+      const ehGestao = gestaoIds.includes(userId);
+      const meritoIds = await aprovadoresMeritoIds();
+      const ehMerito = meritoIds.includes(userId);
+
+      const mkBase = () => {
+        let b = supabase
+          .from('solicitacoes')
+          .select('*, solicitacao_itens(*)')
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false });
+        if (categoria) b = b.eq('categoria', categoria);
+        if (status) b = b.eq('status', status);
+        return b;
+      };
+      const queries = [];
       if (isSuper) {
-        // Super-admin ve a fila INTEIRA de aprovação de origem: TODOS os pendentes
-        // (inclusive os atribuídos a outros diretores · fallback pra quando o
-        // diretor demora ou esta ausente · o endpoint aprovar-origem ja concede
-        // esse poder) + a triagem (sem setor resolvido · Fase 0).
-        q = q.in('aprovacao_origem_status', ['pendente', 'triagem'])
-             .is('deleted_at', null);
-      } else {
-        q = q.in('aprovacao_origem_diretor_id', aprovarIds)
-             .eq('aprovacao_origem_status', 'pendente')
-             .is('deleted_at', null);
+        queries.push(mkBase().in('aprovacao_origem_status', ['pendente', 'triagem']));
+      } else if (aprovarIds.length) {
+        queries.push(mkBase().in('aprovacao_origem_diretor_id', aprovarIds).eq('aprovacao_origem_status', 'pendente'));
       }
-    } else if (mine === 'true') {
-      q = q.eq('solicitante_id', userId);
-    } else if (['admin', 'diretor'].includes(role)) {
-      // Admin/diretor sees all — no filter
+      if (isSuper || ehGestao) queries.push(mkBase().eq('aprovacao_gestao_status', 'pendente'));
+      if (isSuper || ehMerito) queries.push(mkBase().eq('status', 'aguardando_merito'));
+
+      const results = await Promise.all(queries);
+      const comErro = results.find(r => r.error);
+      if (comErro) throw comErro.error;
+
+      const vistos = new Set();
+      data = [];
+      for (const r of results) {
+        for (const row of (r.data || [])) {
+          if (vistos.has(row.id)) continue;
+          vistos.add(row.id);
+          data.push(row);
+        }
+      }
+      data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      // Marca em cada item QUAL(is) carimbo(s) o ator tem pendente(s) — o
+      // front usa pra saber o que mostrar (botão de origem, gestão ou mérito).
+      papeisPorId = {};
+      for (const d of data) {
+        const papeis = [];
+        const origemPend = ['pendente', 'triagem'].includes(d.aprovacao_origem_status);
+        if (origemPend && (isSuper || (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)))) {
+          papeis.push('origem');
+        }
+        if (d.aprovacao_gestao_status === 'pendente' && (isSuper || ehGestao)) papeis.push('gestao');
+        if (d.status === 'aguardando_merito' && (isSuper || ehMerito)) papeis.push('merito');
+        papeisPorId[d.id] = papeis;
+      }
     } else {
-      // Fila "Para Atender": SO quem eh responsável cadastrado em
-      // area_solicitacoes_responsaveis ve as solicitações da sua área.
-      // Colaborador comum (sem área responsável) ve apenas as próprias —
-      // acesso genérico a um módulo NÃO da direito de ver a fila dos outros.
-      const { data: respRows } = await supabase
-        .from('area_solicitacoes_responsaveis')
-        .select('area')
-        .eq('profile_id', userId);
-      const responsavelAreas = new Set((respRows || []).map(r => r.area));
+      let q = supabase
+        .from('solicitacoes')
+        .select('*, solicitacao_itens(*)')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
 
-      const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
-      if (responsavelAreas.size > 0) {
-        orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
+      if (categoria) q = q.eq('categoria', categoria);
+      if (status) q = q.eq('status', status);
+
+      // Período padrão (Fase 2) · bound por updated_at pra não estourar o cap de
+      // 1000 linhas do PostgREST conforme o volume cresce. Filtra por updated_at
+      // (não created_at) pra manter visível o que teve atividade recente, mesmo
+      // criado há tempos. 'tudo' remove o limite. aba=aprovar não filtra (a fila
+      // de decisão é pequena e recente por natureza).
+      const dias = periodo === 'tudo' ? 0 : (parseInt(periodo, 10) || 365);
+      if (dias > 0) q = q.gte('updated_at', new Date(Date.now() - dias * 86400000).toISOString());
+
+      if (mine === 'true') {
+        q = q.eq('solicitante_id', userId);
+      } else if (['admin', 'diretor'].includes(role)) {
+        // Admin/diretor sees all — no filter
+      } else {
+        // Fila "Para Atender": SO quem eh responsável cadastrado em
+        // area_solicitacoes_responsaveis ve as solicitações da sua área.
+        // Colaborador comum (sem área responsável) ve apenas as próprias —
+        // acesso genérico a um módulo NÃO da direito de ver a fila dos outros.
+        const { data: respRows } = await supabase
+          .from('area_solicitacoes_responsaveis')
+          .select('area')
+          .eq('profile_id', userId);
+        const responsavelAreas = new Set((respRows || []).map(r => r.area));
+
+        const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
+        if (responsavelAreas.size > 0) {
+          orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
+        }
+        q = q.or(orParts.join(','));
       }
-      q = q.or(orParts.join(','));
-    }
 
-    const { data, error } = await q;
-    if (error) throw error;
+      const { data: rows, error } = await q;
+      if (error) throw error;
+      data = rows;
+    }
 
     // Resolve profile names for solicitante/responsavel/diretor_origem
     const profileIds = [...new Set((data || []).flatMap(d => [
@@ -394,12 +575,21 @@ router.get('/', async (req, res) => {
       return [principal, ...[...new Set(coaps)]];
     };
 
+    // Nomes dos aprovadores do 2º carimbo (Gestão) · pro front mostrar
+    // "Aguardando aprovação de Eduardo ou Juliana". Best-effort.
+    let gestaoNomes = [];
+    if ((data || []).some(d => d.aprovacao_gestao_status)) {
+      gestaoNomes = await aprovadoresGestaoNomes();
+    }
+
     const enriched = (data || []).map(d => ({
       ...d,
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
       aprovacao_origem_aprovadores: nomesAprovadores(d),
+      aprovacao_gestao_aprovadores: d.aprovacao_gestao_status ? gestaoNomes : [],
+      ...(papeisPorId ? { aprovacao_papel_pendente: papeisPorId[d.id] || [] } : {}),
       marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
       marketing_destino: destinoMap[d.marketing_destino_id] || null,
       marketing_card: cardMap[d.id] || null,
@@ -468,6 +658,33 @@ router.get('/meu-papel', async (req, res) => {
       pendentesTriagem = count || 0;
     }
 
+    // Fluxo BPMN (2026-07-02) · 2º carimbo (Gestão) + julgamento de mérito.
+    // Flags = pertencimento real ao papel; contagens também pra super-admin
+    // (fallback · ele vê/decide as filas inteiras).
+    const gestaoIds = await aprovadoresGestaoIds();
+    const ehAprovadorGestao = gestaoIds.includes(userId);
+    const meritoIds = await aprovadoresMeritoIds();
+    const ehAprovadorMerito = meritoIds.includes(userId);
+
+    let pendentesGestao = 0;
+    if (ehAprovadorGestao || isSuper) {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('aprovacao_gestao_status', 'pendente')
+        .is('deleted_at', null);
+      pendentesGestao = count || 0;
+    }
+    let pendentesMerito = 0;
+    if (ehAprovadorMerito || isSuper) {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'aguardando_merito')
+        .is('deleted_at', null);
+      pendentesMerito = count || 0;
+    }
+
     if (['admin', 'diretor'].includes(role)) {
       return res.json({
         atende: true,
@@ -478,6 +695,10 @@ router.get('/meu-papel', async (req, res) => {
         pendentes_origem: pendentesOrigem,
         eh_triagem_admin: isSuper,
         pendentes_triagem: pendentesTriagem,
+        eh_aprovador_gestao: ehAprovadorGestao,
+        pendentes_gestao: pendentesGestao,
+        eh_aprovador_merito: ehAprovadorMerito,
+        pendentes_merito: pendentesMerito,
       });
     }
     const { data, error } = await supabase
@@ -495,6 +716,10 @@ router.get('/meu-papel', async (req, res) => {
       pendentes_origem: pendentesOrigem,
       eh_triagem_admin: isSuper,
       pendentes_triagem: pendentesTriagem,
+      eh_aprovador_gestao: ehAprovadorGestao,
+      pendentes_gestao: pendentesGestao,
+      eh_aprovador_merito: ehAprovadorMerito,
+      pendentes_merito: pendentesMerito,
     });
   } catch (e) {
     console.error('[SOLICITACOES] meu-papel error:', e.message);
@@ -522,7 +747,9 @@ router.post('/', async (req, res) => {
             itens_lista,
             // Marketing · Spec 010 (etiquetas) + intake por DOR (Redesenho 2026-05-30)
             marketing_tipo_id, marketing_destino_id,
-            mkt_publico_alvo, mkt_ideia_inicial } = req.body;
+            mkt_publico_alvo, mkt_ideia_inicial,
+            // Fluxo BPMN (2026-07-02) · checkbox "estava no planejamento"
+            eh_planejado } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
@@ -576,22 +803,51 @@ router.post('/', async (req, res) => {
       || (req.user.area ? _slugArea(req.user.area) : null)
       || null;
 
-    // Aprovação hierarquica de origem (Spec 001) · resolvida AQUI porque o insert
-    // roda via service_role (auth.uid()=NULL) e, nesse caso, o trigger so dispensa.
-    // Gravamos aprovacao_origem_* + status no insert · o trigger continua de rede
-    // de segurança (so age quando ninguém setou aprovacao_origem_status).
-    let rota = null;
-    try {
-      const setorHint = resolverSetorHint(req.user);
-      const { data: r, error: rErr } = await supabase
-        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
-      if (rErr) throw rErr;
-      rota = r;
-    } catch (rerr) {
-      console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
-    }
+    // ── Fluxo BPMN (2026-07-02) · planejado × não-planejado ──────────────────
+    // Planejado (checkbox do solicitante): o diretor já aprovou o mérito quando
+    // o pedido entrou no planejamento → PULA toda aprovação (nasce como uma
+    // "dispensada" · o trigger BEFORE INSERT refina o status: em_cotacao /
+    // aguardando_aprovacao_financeira / pendente conforme a categoria).
+    // Não-planejado: DUPLA aprovação — carimbo do diretor da ÁREA do demandante
+    // (mecanismo aprovacao_origem_* via RPC) E carimbo da diretoria de GESTÃO
+    // (aprovacao_gestao_*). Demandante do setor Gestão (ou ele próprio aprovador
+    // de Gestão) → os papéis colapsam: gestão nasce dispensada.
+    const planejado = eh_planejado === true || eh_planejado === 'true';
+    const setorHint = resolverSetorHint(req.user);
 
-    const { data, error } = await supabase
+    let rota = null;
+    let gestaoStatus = null;   // null = planejado (2º carimbo não se aplica)
+    let gestaoMotivo = null;
+    let gestaoIdsNotificar = [];
+    if (!planejado) {
+      // Aprovação hierarquica de origem (Spec 001) · resolvida AQUI porque o insert
+      // roda via service_role (auth.uid()=NULL) e, nesse caso, o trigger so dispensa.
+      // Gravamos aprovacao_origem_* + status no insert · o trigger continua de rede
+      // de segurança (so age quando ninguém setou aprovacao_origem_status).
+      try {
+        const { data: r, error: rErr } = await supabase
+          .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
+        if (rErr) throw rErr;
+        rota = r;
+      } catch (rerr) {
+        console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
+      }
+
+      // 2º carimbo · diretoria de Gestão (best-effort · lista vazia degrada).
+      const gestaoIds = await aprovadoresGestaoIds();
+      if (setorHint === SETOR_GESTAO || gestaoIds.includes(userId)) {
+        gestaoStatus = 'dispensada';
+        gestaoMotivo = gestaoIds.includes(userId)
+          ? 'Demandante é aprovador de Gestão · papéis colapsam no carimbo de origem'
+          : 'Demandante do setor Gestão · papéis colapsam no carimbo de origem';
+      } else {
+        gestaoStatus = 'pendente';
+        gestaoIdsNotificar = gestaoIds;
+      }
+    }
+    const agoraIso = new Date().toISOString();
+
+    let { data, error } = await supabase
       .from('solicitacoes')
       .insert({
         titulo,
@@ -607,14 +863,36 @@ router.post('/', async (req, res) => {
         // area_cliente vem da ÁREA do solicitante (KPIs), não mais de seletor.
         area_cliente: areaClienteResolvida,
         area_responsavel: finalAreaResp,
-        // Roteamento hierarquico resolvido acima · status='aguardando_aprovacao_origem'
-        // (vai pro diretor) ou 'pendente' (dispensada). SLA trigger refina compras/reembolso.
-        ...(rota && {
-          aprovacao_origem_diretor_id: rota.diretor_id || null,
-          aprovacao_origem_status: rota.aprovacao_status,
-          aprovacao_origem_motivo: rota.motivo || null,
-          aprovacao_origem_em: rota.aprovacao_status === 'dispensada' ? new Date().toISOString() : null,
-          status: rota.status,
+        // Fluxo BPMN · planejado pula tudo; não-planejado leva os 2 carimbos.
+        ...(planejado ? {
+          eh_planejado: true,
+          planejado_por: userId,
+          aprovacao_origem_status: 'dispensada',
+          aprovacao_origem_motivo: 'planejado',
+          aprovacao_origem_em: agoraIso,
+          status: 'pendente', // trigger SLA refina (em_cotacao / aguardando_aprovacao_financeira)
+        } : {
+          eh_planejado: false,
+          // Roteamento hierarquico resolvido acima · o trigger continua de rede
+          // de segurança quando a RPC falha (rota=null).
+          ...(rota && {
+            aprovacao_origem_diretor_id: rota.diretor_id || null,
+            aprovacao_origem_status: rota.aprovacao_status,
+            aprovacao_origem_motivo: rota.motivo || null,
+            aprovacao_origem_em: rota.aprovacao_status === 'dispensada' ? agoraIso : null,
+          }),
+          aprovacao_gestao_status: gestaoStatus,
+          ...(gestaoStatus === 'dispensada' && {
+            aprovacao_gestao_em: agoraIso,
+            aprovacao_gestao_motivo: gestaoMotivo,
+          }),
+          // Enquanto QUALQUER carimbo pende → aguardando_aprovacao_origem.
+          // Ambos dispensados → status da rota ('pendente' · trigger refina;
+          // o mérito é decidido logo após o insert, com o precisa_aprovacao_
+          // financeira que o trigger calculou).
+          ...(gestaoStatus === 'pendente'
+            ? { status: 'aguardando_aprovacao_origem' }
+            : (rota ? { status: rota.status } : {})),
         }),
         subcategoria: finalSub,
         eh_urgente: !!eh_urgente,
@@ -683,6 +961,35 @@ router.post('/', async (req, res) => {
       .single();
     if (error) throw error;
 
+    // ⚠️ Fluxo BPMN · se AMBOS os carimbos nasceram dispensados e o pedido TEM
+    // CUSTO (precisa_aprovacao_financeira calculado pelo trigger no insert),
+    // ele já nasce no julgamento de mérito (não-planejado com custo → Pastor
+    // Presidente). Planejado nunca passa por aqui.
+    if (!planejado
+        && data.aprovacao_origem_status === 'dispensada'
+        && data.aprovacao_gestao_status === 'dispensada'
+        && precisaMerito(data)) {
+      const statusAntes = data.status;
+      const { data: up, error: upErr } = await supabase
+        .from('solicitacoes')
+        .update({ status: 'aguardando_merito', merito_status: 'pendente' })
+        .eq('id', data.id)
+        .select('*')
+        .single();
+      if (!upErr && up) {
+        data = up;
+        registrarEvento(data.id, {
+          statusAnterior: statusAntes,
+          statusNovo: 'aguardando_merito',
+          atorId: userId,
+          observacao: 'Carimbos dispensados · pedido com custo enviado ao julgamento de mérito',
+        });
+        notificarMeritoPendente(data);
+      } else if (upErr) {
+        console.error('[SOLICITACOES] mover pra mérito no create:', upErr.message);
+      }
+    }
+
     // Pedido em massa · grava os itens estruturados (com foto) vinculados.
     // Best-effort: a solicitação + o resumo de texto já estão salvos; se a
     // gravação dos itens falhar, não derruba o pedido (loga só).
@@ -745,6 +1052,22 @@ router.post('/', async (req, res) => {
       }).catch(err => console.error('[SOLICITACOES] notify diretor:', err.message));
     }
 
+    // Fluxo BPMN · 2º carimbo pendente → notifica os aprovadores de Gestão
+    // (Eduardo + Juliana) com e-mail (mesmo padrão do alerta de origem).
+    if (data.aprovacao_gestao_status === 'pendente' && gestaoIdsNotificar.length) {
+      notificar({
+        modulo: 'administrativo',
+        tipo: 'solicitacao_aprovacao_gestao',
+        titulo: `Aprovar solicitação (Gestão): ${titulo}`,
+        mensagem: `${userName || 'Funcionário'} pediu uma solicitação não-planejada que precisa também do carimbo da diretoria de Gestão.`,
+        link: '/solicitacoes?aba=aprovar',
+        severidade: 'info',
+        chaveDedup: `solicitacao_aprovacao_gestao_${data.id}`,
+        targetIds: gestaoIdsNotificar,
+        email: true,
+      }).catch(err => console.error('[SOLICITACOES] notify gestao:', err.message));
+    }
+
     // Triagem · setor nao resolvido · alerta de governanca pros super-admins/diretoria.
     // O foco do alerta e' o CADASTRO sem area (corrigir o usuario), nao o pedido.
     if (data.status === 'aguardando_aprovacao_origem' && data.aprovacao_origem_status === 'triagem') {
@@ -788,6 +1111,13 @@ async function isAdminFallback(req) {
   return !!data;
 }
 
+// Fluxo BPMN (2026-07-02) · este endpoint virou "CARIMBAR": o ator dá o carimbo
+// do papel dele — diretor de ORIGEM (ou co-aprovador do setor) e/ou diretoria
+// de GESTÃO. Um request = UM carimbo (elegível pros dois? a UI chama de novo).
+// Só quando os DOIS estiverem aprovados/dispensados a solicitação transiciona:
+// com custo → julgamento de mérito; sem custo → fluxo normal (cotação/
+// financeiro/fila da área). Linha legada (aprovacao_gestao_status NULL) segue
+// o comportamento antigo (um carimbo só).
 router.patch('/:id/aprovar-origem', async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -803,45 +1133,75 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
     if (getErr) throw getErr;
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
 
-    if (!['pendente', 'triagem'].includes(atual.aprovacao_origem_status)) {
+    const origemPendente = ['pendente', 'triagem'].includes(atual.aprovacao_origem_status);
+    const gestaoPendente = atual.aprovacao_gestao_status === 'pendente';
+    if (!origemPendente && !gestaoPendente) {
       return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
     }
 
-    // Quem pode aprovar: o diretor de origem cadastrado, um CO-APROVADOR do
-    // setor (ex.: vice-diretora Juliana no setor Gestao), OU super-admin
-    // (fallback quando diretor_id não foi resolvido, OU intervencao manual).
-    const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
-    const isCoaprovador = !isDiretorAlvo && await podeAprovarOrigem(userId, atual);
-    if (!isDiretorAlvo && !isCoaprovador && !isSuperAdmin) {
-      return res.status(403).json({ error: 'Apenas o diretor de origem ou um co-aprovador do setor pode aprovar esta solicitação.' });
+    // Elegibilidade por papel:
+    // · ORIGEM: diretor cadastrado, co-aprovador do setor (ex.: Juliana em
+    //   Gestao) ou super-admin (fallback · inclusive triagem).
+    // · GESTÃO: diretor/co-aprovador do setor Gestao ou super-admin.
+    const isDiretorAlvo = origemPendente && atual.aprovacao_origem_diretor_id === userId;
+    const isCoaprovador = origemPendente && !isDiretorAlvo && await podeAprovarOrigem(userId, atual);
+    const podeOrigem = origemPendente && (isDiretorAlvo || isCoaprovador || isSuperAdmin);
+    let ehAprovadorGestao = false;
+    if (gestaoPendente) {
+      const gestaoIds = await aprovadoresGestaoIds();
+      ehAprovadorGestao = gestaoIds.includes(userId);
+    }
+    const podeGestao = gestaoPendente && (ehAprovadorGestao || isSuperAdmin);
+    if (!podeOrigem && !podeGestao) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem, um co-aprovador do setor ou a diretoria de Gestão pode aprovar esta solicitação.' });
     }
 
-    const novoResponsavelId = atual.responsavel_id;
-    // Próximo portao após o diretor de origem:
-    //   compras/servico  -> EM_COTACAO · a logistica levanta valor+fornecedor ANTES
-    //                       do financeiro (o Yago aprova sobre o valor real cotado).
-    //   reembolso/pagamento (e demais c/ alcada) -> aprovação financeira direta.
-    //   resto -> fila da área alvo (pendente).
-    const ehCotacao = ['compras', 'servico'].includes(atual.categoria);
-    let proximoStatus;
-    if (ehCotacao) {
-      proximoStatus = 'em_cotacao';
-    } else if (atual.precisa_aprovacao_financeira && !atual.aprovado_financeiro_em) {
-      proximoStatus = 'aguardando_aprovacao_financeira';
+    // Um request = um carimbo · origem primeiro quando elegível pros dois.
+    const carimbo = podeOrigem ? 'origem' : 'gestao';
+    const agoraIso = new Date().toISOString();
+
+    const update = {};
+    if (carimbo === 'origem') {
+      update.aprovacao_origem_status = 'aprovada';
+      update.aprovacao_origem_em = agoraIso;
+      // Registra quem aprovou quando NÃO foi o diretor principal (rastreio).
+      if (!isDiretorAlvo && isCoaprovador) {
+        update.aprovacao_origem_motivo = `Aprovada por ${userName || 'co-aprovador'} (co-aprovador do setor)`;
+      } else if (!isDiretorAlvo && isSuperAdmin) {
+        update.aprovacao_origem_diretor_id = userId;
+        update.aprovacao_origem_motivo = '[Fallback super-admin]';
+      }
     } else {
-      proximoStatus = 'pendente';
+      update.aprovacao_gestao_status = 'aprovada';
+      update.aprovacao_gestao_por = userId;
+      update.aprovacao_gestao_em = agoraIso;
+      if (!ehAprovadorGestao && isSuperAdmin) {
+        update.aprovacao_gestao_motivo = '[Fallback super-admin]';
+      }
     }
-    const update = {
-      aprovacao_origem_status: 'aprovada',
-      aprovacao_origem_em: new Date().toISOString(),
-      status: proximoStatus,
-    };
-    // Registra quem aprovou quando NÃO foi o diretor principal (rastreio).
-    if (!isDiretorAlvo && isCoaprovador) {
-      update.aprovacao_origem_motivo = `Aprovada por ${userName || 'co-aprovador'} (co-aprovador do setor)`;
-    } else if (!isDiretorAlvo && isSuperAdmin) {
-      update.aprovacao_origem_diretor_id = userId;
-      update.aprovacao_origem_motivo = '[Fallback super-admin]';
+
+    // Os dois carimbos completos? (gestão NULL = legado/planejado · não exige)
+    const origemOk = carimbo === 'origem'
+      || ['aprovada', 'dispensada'].includes(atual.aprovacao_origem_status);
+    const gestaoOk = carimbo === 'gestao'
+      || atual.aprovacao_gestao_status == null
+      || ['aprovada', 'dispensada'].includes(atual.aprovacao_gestao_status);
+    const completo = origemOk && gestaoOk;
+
+    // Próximo passo quando completo:
+    //   TEM CUSTO (não-planejado do fluxo novo) → julgamento de mérito.
+    //   Sem custo → fluxo normal: compras/servico → EM_COTACAO (a logística
+    //   levanta valor+fornecedor ANTES do Yago) · precisa financeira →
+    //   aguardando_aprovacao_financeira · resto → fila da área (pendente).
+    const vaiPraMerito = completo && precisaMerito(atual);
+    const ehCotacao = ['compras', 'servico'].includes(atual.categoria);
+    if (!completo) {
+      update.status = 'aguardando_aprovacao_origem';
+    } else if (vaiPraMerito) {
+      update.status = 'aguardando_merito';
+      update.merito_status = 'pendente';
+    } else {
+      update.status = proximoStatusPosAprovacao(atual);
     }
 
     const { data, error } = await supabase
@@ -852,11 +1212,56 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
       .single();
     if (error) throw error;
 
+    // Timeline com o ator correto (o trigger genérico erra o ator).
+    await registrarEvento(data.id, {
+      statusAnterior: atual.status,
+      statusNovo: data.status,
+      atorId: userId,
+      observacao: carimbo === 'gestao'
+        ? `Aprovação da diretoria de Gestão (${userName || 'aprovador'})`
+        : `Aprovação do diretor de origem (${userName || 'aprovador'})`,
+    });
+
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+
+    // Carimbo parcial · falta o outro papel: avisa o solicitante do progresso.
+    if (!completo) {
+      const faltaLabel = carimbo === 'origem' ? 'da diretoria de Gestão' : 'do diretor da sua área';
+      notificar({
+        modulo,
+        tipo: 'solicitacao_status',
+        titulo: `Aprovação parcial: ${data.titulo}`,
+        mensagem: `${userName || 'Aprovador'} deu o carimbo ${carimbo === 'origem' ? 'de origem' : 'de Gestão'} · falta a aprovação ${faltaLabel}.`,
+        link: '/solicitacoes',
+        severidade: 'info',
+        chaveDedup: `solicitacao_carimbo_${carimbo}_${data.id}`,
+        targetIds: [data.solicitante_id].filter(Boolean),
+      }).catch(err => console.error('[SOLICITACOES] notify carimbo parcial:', err.message));
+      return res.json(data);
+    }
+
+    // Completos + tem custo → julgamento de mérito (Pastor Presidente).
+    if (vaiPraMerito) {
+      notificar({
+        modulo,
+        tipo: 'solicitacao_status',
+        titulo: `Aprovada · em julgamento de mérito: ${data.titulo}`,
+        mensagem: `${userName || 'Aprovador'} concluiu as aprovações · como o pedido tem custo, segue para o julgamento de mérito.`,
+        link: '/solicitacoes',
+        severidade: 'info',
+        chaveDedup: `solicitacao_merito_solic_${data.id}`,
+        targetIds: [data.solicitante_id].filter(Boolean),
+      }).catch(err => console.error('[SOLICITACOES] notify merito solicitante:', err.message));
+      notificarMeritoPendente(data);
+      notificarPedidoWhatsapp(data.id, 'aguardando julgamento de mérito', null);
+      return res.json(data);
+    }
+
+    // Completos sem custo → fluxo normal (comportamento original).
     // WhatsApp pro solicitante: aprovação de origem concluída.
     notificarPedidoWhatsapp(data.id, 'aprovada na origem', null);
 
     // Notifica solicitante + responsável da área alvo
-    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
     notificar({
       modulo,
       tipo: 'solicitacao_status',
@@ -973,8 +1378,9 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
   }
 });
 
-// Diretor de origem rejeita · motivo obrigatório · status fica imutavel
-// (Marcos 2026-05-28 · "solicitação rejeitada não reabre · cria nova").
+// Rejeição por QUALQUER carimbo (origem OU Gestão) · motivo obrigatório ·
+// status fica imutavel (Marcos 2026-05-28 · "solicitação rejeitada não
+// reabre · cria nova").
 router.patch('/:id/rejeitar-origem', async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -992,23 +1398,41 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
       .is('deleted_at', null)
       .maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
-    if (!['pendente', 'triagem'].includes(atual.aprovacao_origem_status)) {
+
+    const origemPendente = ['pendente', 'triagem'].includes(atual.aprovacao_origem_status);
+    const gestaoPendente = atual.aprovacao_gestao_status === 'pendente';
+    if (!origemPendente && !gestaoPendente) {
       return res.status(400).json({ error: 'Solicitação não está pendente de aprovação.' });
     }
-    const isDiretorAlvo = atual.aprovacao_origem_diretor_id === userId;
-    const isCoaprovador = !isDiretorAlvo && await podeAprovarOrigem(userId, atual);
-    if (!isDiretorAlvo && !isCoaprovador && !isSuperAdmin) {
-      return res.status(403).json({ error: 'Apenas o diretor de origem ou um co-aprovador do setor pode rejeitar esta solicitação.' });
+
+    const isDiretorAlvo = origemPendente && atual.aprovacao_origem_diretor_id === userId;
+    const isCoaprovador = origemPendente && !isDiretorAlvo && await podeAprovarOrigem(userId, atual);
+    const podeOrigem = origemPendente && (isDiretorAlvo || isCoaprovador || isSuperAdmin);
+    let ehAprovadorGestao = false;
+    if (gestaoPendente) {
+      const gestaoIds = await aprovadoresGestaoIds();
+      ehAprovadorGestao = gestaoIds.includes(userId);
+    }
+    const podeGestao = gestaoPendente && (ehAprovadorGestao || isSuperAdmin);
+    if (!podeOrigem && !podeGestao) {
+      return res.status(403).json({ error: 'Apenas o diretor de origem, um co-aprovador do setor ou a diretoria de Gestão pode rejeitar esta solicitação.' });
     }
 
-    const update = {
-      aprovacao_origem_status: 'rejeitada',
-      aprovacao_origem_em: new Date().toISOString(),
-      aprovacao_origem_motivo: motivo.trim(),
-      status: 'rejeitado',
-    };
-    if (!isDiretorAlvo && isSuperAdmin && !isCoaprovador) {
-      update.aprovacao_origem_diretor_id = userId;
+    const carimbo = podeOrigem ? 'origem' : 'gestao';
+    const agoraIso = new Date().toISOString();
+    const update = { status: 'rejeitado' };
+    if (carimbo === 'origem') {
+      update.aprovacao_origem_status = 'rejeitada';
+      update.aprovacao_origem_em = agoraIso;
+      update.aprovacao_origem_motivo = motivo.trim();
+      if (!isDiretorAlvo && isSuperAdmin && !isCoaprovador) {
+        update.aprovacao_origem_diretor_id = userId;
+      }
+    } else {
+      update.aprovacao_gestao_status = 'rejeitada';
+      update.aprovacao_gestao_por = userId;
+      update.aprovacao_gestao_em = agoraIso;
+      update.aprovacao_gestao_motivo = motivo.trim();
     }
 
     const { data, error } = await supabase
@@ -1018,6 +1442,15 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
+
+    await registrarEvento(data.id, {
+      statusAnterior: atual.status,
+      statusNovo: 'rejeitado',
+      atorId: userId,
+      observacao: carimbo === 'gestao'
+        ? `Rejeitada pela diretoria de Gestão: ${motivo.trim()}`
+        : `Rejeitada na origem: ${motivo.trim()}`,
+    });
 
     const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
     notificar({
@@ -1038,6 +1471,342 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// JULGAMENTO DE MÉRITO (fluxo BPMN 2026-07-02) · Pastor Presidente decide os
+// pedidos não-planejados COM CUSTO depois dos 2 carimbos. Aprovadores vivem em
+// solicitacoes_merito_aprovadores (seed: Pr. Juninho) · super-admin é fallback.
+// ══════════════════════════════════════════════════════════════════════════
+
+async function podeJulgarMerito(req) {
+  const ids = await aprovadoresMeritoIds();
+  if (ids.includes(req.user.userId)) return true;
+  return isAdminFallback(req); // fallback super-admin/admin
+}
+
+router.post('/:id/aprovar-merito', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    if (!(await podeJulgarMerito(req))) {
+      return res.status(403).json({ error: 'Apenas o aprovador de mérito pode julgar esta solicitação.' });
+    }
+
+    const { data: atual } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.status !== 'aguardando_merito') {
+      return res.status(400).json({ error: 'Solicitação não está aguardando julgamento de mérito.' });
+    }
+
+    // Aprovou o mérito → segue o fluxo normal (mesma régua do aprovar-origem):
+    // compras/servico → em_cotacao · precisa financeira → aguardando_aprovacao_
+    // financeira · senão → pendente (fila da área).
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update({
+        merito_status: 'aprovado',
+        merito_por: userId,
+        merito_em: new Date().toISOString(),
+        status: proximoStatusPosAprovacao(atual),
+      })
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    await registrarEvento(data.id, {
+      statusAnterior: atual.status,
+      statusNovo: data.status,
+      atorId: userId,
+      observacao: `Mérito aprovado por ${userName || 'aprovador de mérito'}`,
+    });
+
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    const destinoLabel = {
+      em_cotacao: 'cotação na logística (valor e fornecedor) antes do financeiro',
+      aguardando_aprovacao_financeira: 'aprovação financeira',
+      pendente: `a fila ${data.area_responsavel || 'da área responsável'}`,
+    }[data.status] || 'a próxima etapa do fluxo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Mérito aprovado: ${data.titulo}`,
+      mensagem: `${userName || 'O aprovador de mérito'} aprovou o mérito · seu pedido seguiu para ${destinoLabel}.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solicitacao_merito_aprovado_${data.id}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify merito aprovado:', err.message));
+
+    // Fila da área alvo (mesmo padrão do pós-aprovação de origem).
+    if (data.area_responsavel) {
+      resolverDestinatarios(modulo).then(managers => {
+        const filtered = managers.filter(id => id !== data.solicitante_id);
+        if (filtered.length) {
+          notificar({
+            modulo,
+            tipo: 'solicitacao',
+            titulo: data.status === 'em_cotacao' ? `Cotar: ${data.titulo}` : `Nova na fila: ${data.titulo}`,
+            mensagem: data.status === 'em_cotacao'
+              ? 'Mérito aprovado · registre a cotação (valor + fornecedor) pra seguir pro financeiro.'
+              : 'Mérito aprovado · pronta para a próxima etapa.',
+            link: '/solicitacoes',
+            severidade: 'info',
+            chaveDedup: `solicitacao_pos_merito_${data.id}`,
+            targetIds: filtered,
+          }).catch(err => console.error('[SOLICITACOES] notify pos-merito:', err.message));
+        }
+      }).catch(err => console.error('[SOLICITACOES] resolve managers merito:', err.message));
+    }
+
+    notificarPedidoWhatsapp(data.id, 'mérito aprovado', null);
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] aprovar-merito:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao aprovar o mérito' });
+  }
+});
+
+// Reprovação de mérito é IMUTÁVEL (como a rejeição de origem · não reabre ·
+// cria-se nova solicitação). Motivo obrigatório (mínimo 5 caracteres).
+router.post('/:id/reprovar-merito', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    if (!(await podeJulgarMerito(req))) {
+      return res.status(403).json({ error: 'Apenas o aprovador de mérito pode julgar esta solicitação.' });
+    }
+    const { motivo } = req.body || {};
+    if (!motivo || motivo.trim().length < 5) {
+      return res.status(400).json({ error: 'Informe o motivo da reprovação (mínimo 5 caracteres).' });
+    }
+
+    const { data: atual } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.status !== 'aguardando_merito') {
+      return res.status(400).json({ error: 'Solicitação não está aguardando julgamento de mérito.' });
+    }
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update({
+        merito_status: 'rejeitado',
+        merito_por: userId,
+        merito_em: new Date().toISOString(),
+        merito_motivo: motivo.trim(),
+        status: 'rejeitado',
+      })
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    await registrarEvento(data.id, {
+      statusAnterior: atual.status,
+      statusNovo: 'rejeitado',
+      atorId: userId,
+      observacao: `Mérito reprovado: ${motivo.trim()}`,
+    });
+
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Mérito reprovado: ${data.titulo}`,
+      mensagem: `${userName || 'O aprovador de mérito'} reprovou o mérito: ${motivo.trim()}`,
+      link: '/solicitacoes',
+      severidade: 'alta',
+      chaveDedup: `solicitacao_merito_reprovado_${data.id}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify merito reprovado:', err.message));
+
+    notificarPedidoWhatsapp(data.id, 'mérito reprovado', motivo.trim());
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] reprovar-merito:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao reprovar o mérito' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// SOBRESTAR / RETOMAR (fluxo BPMN 2026-07-02) · "em espera" com motivo + data
+// de revisão opcional · SLA PAUSA no sobrestar e é empurrado na retomada
+// (mesma régua do relatar-problema/reenviar). NUNCA seta aprovado_financeiro_em.
+// Quem pode: financeiro (quando aguardando_aprovacao_financeira) · responsável
+// da área/admin (pendente/em_analise/em_atendimento).
+// ══════════════════════════════════════════════════════════════════════════
+
+const STATUS_SOBRESTAVEL_RESP = ['pendente', 'em_analise', 'em_atendimento'];
+
+router.post('/:id/sobrestar', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const { motivo, revisao } = req.body || {};
+    if (!motivo || motivo.trim().length < 3) {
+      return res.status(400).json({ error: 'Informe o motivo do sobrestamento (mínimo 3 caracteres).' });
+    }
+    if (revisao && !/^\d{4}-\d{2}-\d{2}$/.test(String(revisao))) {
+      return res.status(400).json({ error: 'Data de revisão inválida (use AAAA-MM-DD).' });
+    }
+
+    const { data: atual } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    if (atual.status === 'aguardando_aprovacao_financeira') {
+      if (!(await podeAprovarFinanceiro(req))) {
+        return res.status(403).json({ error: 'Apenas o financeiro pode sobrestar nesta etapa.' });
+      }
+    } else if (STATUS_SOBRESTAVEL_RESP.includes(atual.status)) {
+      if (!(await podeGerirSolicitacao(req, atual))) {
+        return res.status(403).json({ error: 'Apenas o responsável da área (ou admin) pode sobrestar esta solicitação.' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Esta solicitação não pode ser sobrestada neste status.' });
+    }
+
+    const agoraIso = new Date().toISOString();
+    const update = {
+      status: 'sobrestada',
+      sobrestada_em: agoraIso,
+      sobrestada_por: userId,
+      sobrestada_motivo: motivo.trim(),
+      sobrestada_revisao: revisao || null,
+      sobrestada_status_anterior: atual.status,
+    };
+    // Pausa o SLA (só se ainda não pausado) · NUNCA seta aprovado_financeiro_em.
+    if (!atual.sla_pausado_em) update.sla_pausado_em = agoraIso;
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    const revisaoBr = revisao ? String(revisao).split('-').reverse().join('/') : null;
+    await registrarEvento(data.id, {
+      statusAnterior: atual.status,
+      statusNovo: 'sobrestada',
+      atorId: userId,
+      observacao: `Sobrestada: ${motivo.trim()}${revisaoBr ? ` · revisão em ${revisaoBr}` : ''}`,
+    });
+
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Em espera (sobrestada): ${data.titulo}`,
+      mensagem: `${userName || 'A área'} colocou sua solicitação em espera: ${motivo.trim()}${revisaoBr ? ` · revisão prevista para ${revisaoBr}` : ''}. O SLA fica pausado até a retomada.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solicitacao_sobrestada_${data.id}_${Date.now()}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify sobrestar:', err.message));
+
+    notificarPedidoWhatsapp(data.id, 'em espera (sobrestada)', motivo.trim());
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] sobrestar:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao sobrestar a solicitação' });
+  }
+});
+
+router.post('/:id/retomar', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+
+    const { data: atual } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.status !== 'sobrestada') {
+      return res.status(400).json({ error: 'Solicitação não está sobrestada.' });
+    }
+
+    // Quem pode retomar = quem pode sobrestar naquele contexto.
+    if (atual.sobrestada_status_anterior === 'aguardando_aprovacao_financeira') {
+      if (!(await podeAprovarFinanceiro(req))) {
+        return res.status(403).json({ error: 'Apenas o financeiro pode retomar nesta etapa.' });
+      }
+    } else if (!(await podeGerirSolicitacao(req, atual))) {
+      return res.status(403).json({ error: 'Apenas o responsável da área (ou admin) pode retomar esta solicitação.' });
+    }
+
+    const statusRestaurado = atual.sobrestada_status_anterior || 'pendente';
+    const update = {
+      status: statusRestaurado,
+      // Zera o sobrestamento (o histórico fica na timeline/audit).
+      sobrestada_status_anterior: null,
+      sobrestada_em: null,
+      sobrestada_por: null,
+      sobrestada_motivo: null,
+      sobrestada_revisao: null,
+      sla_pausado_em: null,
+    };
+    // Retoma o SLA · empurra os prazos pelo tempo pausado (mesma régua do reenviar).
+    if (atual.sla_pausado_em) {
+      const pausaMs = Date.now() - new Date(atual.sla_pausado_em).getTime();
+      if (pausaMs > 0) {
+        if (atual.sla_resposta_deadline) update.sla_resposta_deadline = new Date(new Date(atual.sla_resposta_deadline).getTime() + pausaMs).toISOString();
+        if (atual.sla_resolucao_deadline) update.sla_resolucao_deadline = new Date(new Date(atual.sla_resolucao_deadline).getTime() + pausaMs).toISOString();
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update(update)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    await registrarEvento(data.id, {
+      statusAnterior: 'sobrestada',
+      statusNovo: data.status,
+      atorId: userId,
+      observacao: `Retomada do sobrestamento por ${userName || 'responsável'} · SLA retomado`,
+    });
+
+    const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
+    notificar({
+      modulo,
+      tipo: 'solicitacao_status',
+      titulo: `Retomada: ${data.titulo}`,
+      mensagem: `${userName || 'A área'} retomou sua solicitação (estava em espera) · voltou para "${String(data.status).replace(/_/g, ' ')}" e o SLA foi retomado.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solicitacao_retomada_${data.id}_${Date.now()}`,
+      targetIds: [data.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify retomar:', err.message));
+
+    notificarPedidoWhatsapp(data.id, 'retomada', null);
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] retomar:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao retomar a solicitação' });
+  }
+});
+
 // ── UPDATE (status, responsável, observações) ───────────────
 router.patch('/:id', async (req, res) => {
   try {
@@ -1054,13 +1823,26 @@ router.patch('/:id', async (req, res) => {
     // PATCH (sem authz) aceitava o campo do body → qualquer autenticado liberava
     // pagamento de qualquer solicitacao.
 
+    // Portões do fluxo BPMN · status fora da whitelist só muda pelo endpoint
+    // próprio (aprovar-origem/mérito/sobrestar/retomar/relatar-problema).
+    if (status && !STATUS_PATCH_PERMITIDOS.includes(status)) {
+      return res.status(400).json({ error: `Status "${status}" não pode ser definido por aqui · use o endpoint próprio do fluxo (aprovação, mérito ou sobrestamento).` });
+    }
+
     // ── Autorizacao · carrega a solicitacao e decide quem pode editar ──
     const { data: sol } = await supabase
       .from('solicitacoes')
-      .select('id, solicitante_id, responsavel_id, area_responsavel')
+      .select('id, solicitante_id, responsavel_id, area_responsavel, status')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    // Solicitação parada num portão (aprovação/mérito/sobrestada) não sai dele
+    // por PATCH · só pelo endpoint do portão.
+    if (status && status !== sol.status
+        && ['aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Esta solicitação está num portão do fluxo (aprovação, mérito ou sobrestada) · use o endpoint próprio para movê-la.' });
+    }
 
     const isAdmin = ['admin', 'diretor'].includes(req.user.role);
     const isResponsavel = sol.responsavel_id === userId;
@@ -1227,6 +2009,14 @@ router.post('/:id/relatar-problema', async (req, res) => {
     if (!isSolic && !podeGerir) return res.status(403).json({ error: 'Sem permissão.' });
     if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
       return res.status(400).json({ error: 'Solicitação já encerrada · não é possível relatar problema.' });
+    }
+    // Portões do fluxo BPMN · sobrestada precisa ser RETOMADA antes; mérito é
+    // decisão do Pastor Presidente (mesma lógica do bloqueio de origem abaixo).
+    if (sol.status === 'sobrestada') {
+      return res.status(400).json({ error: 'Esta solicitação está sobrestada (em espera) · retome-a antes de relatar problema.' });
+    }
+    if (sol.status === 'aguardando_merito') {
+      return res.status(400).json({ error: 'Esta solicitação aguarda o julgamento de mérito · o ajuste/devolução só vale depois da decisão.' });
     }
     // Ainda no portão de origem (o diretor não aprovou) · o ciclo de ajuste/devolução
     // só vale DEPOIS da aprovação de origem. Sem isso, devolver aqui geraria estado
@@ -1670,6 +2460,9 @@ router.get('/pendentes-financeiro', async (req, res) => {
       .neq('status', 'aguardando_aprovacao_origem')
       // Compras/servico em cotacao · o Yago so ve depois que a logistica cotar (valor real)
       .neq('status', 'em_cotacao')
+      // Fluxo BPMN · sobrestada (em espera) e mérito pendente ficam fora da fila
+      .neq('status', 'sobrestada')
+      .neq('status', 'aguardando_merito')
       .is('deleted_at', null)
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });

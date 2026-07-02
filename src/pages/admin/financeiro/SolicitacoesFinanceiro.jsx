@@ -192,7 +192,9 @@ function AbaPendentes() {
 function DetalheDialog({ solicitacao: s, onClose, onAction }) {
   const [loading, setLoading] = useState(false);
   const [reprovaModal, setReprovaModal] = useState(false);
+  const [sobrestaModal, setSobrestaModal] = useState(false);
   const [motivo, setMotivo] = useState('');
+  const [revisao, setRevisao] = useState('');
   const [obs, setObs] = useState('');
   const [erro, setErro] = useState(null);
 
@@ -209,6 +211,16 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
     setLoading(true); setErro(null);
     try {
       await financeiro.solicitacaoReprovarFinanceiro(s.id, motivo);
+      onAction();
+    } catch (e) { setErro(e.message); } finally { setLoading(false); }
+  };
+
+  // Sobrestar · põe a solicitação "em espera" (sai da fila até ser retomada)
+  const sobrestar = async () => {
+    if (motivo.trim().length < 5) { setErro('Informe o motivo (mínimo 5 caracteres)'); return; }
+    setLoading(true); setErro(null);
+    try {
+      await financeiro.solicitacaoSobrestarFinanceiro(s.id, motivo.trim(), revisao || undefined);
       onAction();
     } catch (e) { setErro(e.message); } finally { setLoading(false); }
   };
@@ -330,7 +342,7 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
           </div>
         )}
 
-        {!reprovaModal ? (
+        {!reprovaModal && !sobrestaModal ? (
           <>
             <div className="mb-3">
               <label className="text-xs font-medium text-muted-foreground block mb-1">Observação (opcional)</label>
@@ -346,12 +358,53 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
               </div>
             )}
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setReprovaModal(true)} disabled={loading} className="flex-1">
+              <Button variant="outline" onClick={() => { setReprovaModal(true); setErro(null); }} disabled={loading} className="flex-1">
                 <X className="h-4 w-4 mr-1.5" /> Reprovar
+              </Button>
+              <Button variant="outline" onClick={() => { setSobrestaModal(true); setErro(null); }} disabled={loading}
+                className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+                <Clock className="h-4 w-4 mr-1.5" /> Sobrestar
               </Button>
               <Button onClick={aprovar} disabled={loading} className="flex-1">
                 {loading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Check className="h-4 w-4 mr-1.5" />}
                 Aprovar
+              </Button>
+            </div>
+          </>
+        ) : sobrestaModal ? (
+          <>
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-3 mb-3">
+              <div className="text-xs font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5 mb-2">
+                <Clock className="h-4 w-4" /> Sobrestar (em espera)
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                A solicitação sai da fila até ser retomada. O motivo fica visível pro solicitante.
+              </p>
+              <label className="text-xs block mb-1">Motivo *</label>
+              <textarea
+                value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} autoFocus
+                className="w-full px-3 py-2 text-sm rounded-md border border-amber-500/30 bg-background"
+                placeholder="Por que este pedido vai esperar? Ex: aguardar caixa do próximo mês"
+              />
+              <label className="text-xs block mb-1 mt-2">Data de revisão (opcional)</label>
+              <input
+                type="date" value={revisao} onChange={e => setRevisao(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
+              />
+            </div>
+            {erro && (
+              <div className="text-xs text-rose-500 bg-rose-500/10 border border-rose-500/30 rounded px-3 py-2 mb-3">
+                {erro}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => { setSobrestaModal(false); setMotivo(''); setRevisao(''); setErro(null); }} disabled={loading} className="flex-1">
+                Voltar
+              </Button>
+              <Button onClick={sobrestar} disabled={loading || motivo.trim().length < 5}
+                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white">
+                {loading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : null}
+                Confirmar espera
               </Button>
             </div>
           </>

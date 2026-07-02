@@ -1093,6 +1093,79 @@ async function gerarNotificacoesSolicitacoes() {
     });
   }
 
+  // Fluxo BPMN (2026-07-02) · julgamento de mérito parado ≥48h → lembrete
+  // diário aos aprovadores de mérito (Pastor Presidente). Mesmo padrão do
+  // lembrete de origem (dedup por solicitação + dia). Best-effort: coluna/
+  // tabela ausente antes da migration → só pula este bloco.
+  try {
+    const ha48h = new Date(agora.getTime() - 48 * 3600 * 1000).toISOString();
+    const { data: aguardandoMerito, error: errMerito } = await supabase
+      .from('solicitacoes')
+      .select('id, titulo, updated_at')
+      .eq('status', 'aguardando_merito')
+      .lte('updated_at', ha48h)
+      .is('deleted_at', null);
+    if (!errMerito && (aguardandoMerito || []).length) {
+      let aprovadoresMerito = [];
+      const { data: aps, error: errAps } = await supabase
+        .from('solicitacoes_merito_aprovadores')
+        .select('profile_id');
+      if (!errAps) aprovadoresMerito = (aps || []).map(a => a.profile_id).filter(Boolean);
+      if (aprovadoresMerito.length) {
+        for (const s of aguardandoMerito) {
+          count += await notificar({
+            modulo: 'administrativo',
+            tipo: 'solicitacao_merito_lembrete',
+            titulo: `Aguardando seu julgamento de mérito: ${s.titulo}`,
+            mensagem: 'Solicitação parada há mais de 48h aguardando o julgamento de mérito.',
+            link: '/solicitacoes?aba=aprovar',
+            severidade: 'alta',
+            chaveDedup: `solic_merito_lembrete_${s.id}_${hojeKey}`,
+            targetIds: aprovadoresMerito,
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Solicitacoes notify] merito:', e.message);
+  }
+
+  // Fluxo BPMN (2026-07-02) · sobrestadas: data de revisão vencida OU 30+ dias
+  // sem revisão definida → alerta diário pro módulo dono do portão (financeiro
+  // quando estava na aprovação financeira · administrativo no resto).
+  try {
+    const { data: sobrestadas, error: errSob } = await supabase
+      .from('solicitacoes')
+      .select('id, titulo, sobrestada_em, sobrestada_revisao, sobrestada_status_anterior')
+      .eq('status', 'sobrestada')
+      .is('deleted_at', null);
+    if (!errSob) {
+      const hojeData = hojeKey;
+      const limite30d = agora.getTime() - 30 * 86400 * 1000;
+      for (const s of sobrestadas || []) {
+        const revisaoVencida = s.sobrestada_revisao && String(s.sobrestada_revisao) <= hojeData;
+        const semRevisao30d = !s.sobrestada_revisao && s.sobrestada_em
+          && new Date(s.sobrestada_em).getTime() <= limite30d;
+        if (!revisaoVencida && !semRevisao30d) continue;
+        const modulo = s.sobrestada_status_anterior === 'aguardando_aprovacao_financeira'
+          ? 'financeiro' : 'administrativo';
+        count += await notificar({
+          modulo,
+          tipo: 'solicitacao_sobrestada_revisao',
+          titulo: `Sobrestada aguardando revisão: ${s.titulo}`,
+          mensagem: revisaoVencida
+            ? `A data de revisão do sobrestamento chegou (${String(s.sobrestada_revisao).split('-').reverse().join('/')}) · decida: retomar ou manter em espera.`
+            : 'Solicitação sobrestada há mais de 30 dias sem data de revisão definida · decida: retomar ou definir um prazo.',
+          link: '/solicitacoes',
+          severidade: 'alta',
+          chaveDedup: `solic_sobrestada_revisao_${s.id}_${hojeKey}`,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[Solicitacoes notify] sobrestadas:', e.message);
+  }
+
   return count;
 }
 
