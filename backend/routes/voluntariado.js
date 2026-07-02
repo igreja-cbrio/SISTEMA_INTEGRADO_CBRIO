@@ -43,7 +43,25 @@ router.get('/cron/sync', requireCron, async (req, res) => {
   }
 });
 
+// Cron (sem login · CRON_SECRET) · drena os disparos de e-mail pros voluntários:
+// promove agendados vencidos e retoma campanhas 'enviando' com pendentes
+// (limite ~30 msgs/min do Exchange · blasts grandes atravessam várias execuções).
+router.get('/cron/emails', requireCron, async (req, res) => {
+  try {
+    const { drenarDisparos } = require('../services/volEmailSender');
+    const r = await drenarDisparos({ budgetMs: 270000 });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[vol/cron/emails]', e.message);
+    res.status(500).json({ error: 'Erro no cron de e-mails do voluntariado' });
+  }
+});
+
 router.use(authenticate, authorizeModule('membresia', 1));
+
+// Disparo de e-mails pros voluntários (composer + segmentos + histórico).
+// Sub-router exige voluntariado>=3 em todas as rotas.
+router.use('/emails', require('./volEmails'));
 
 // ══════════════════════════════════════════════════════════════
 // CONTROLE DE FREQUÊNCIA · histórico de serviços (planilha) + vínculo

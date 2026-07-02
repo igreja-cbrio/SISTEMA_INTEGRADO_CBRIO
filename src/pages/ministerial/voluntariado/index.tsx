@@ -24,6 +24,7 @@ import VolProfileComplete from './VolProfileComplete';
 import VolMinhaDisponibilidade from './VolMinhaDisponibilidade';
 import VolLista from './VolLista';
 import VolAcessos from './VolAcessos';
+import VolEmails from './VolEmails';
 import VolScanTotem from './VolScanTotem';
 import VolNavBar from './components/VolNavBar';
 
@@ -63,6 +64,7 @@ export default function Voluntariado() {
         <Route path="qrcodes" element={<VolQrCodes />} />
         <Route path="lista" element={<VolLista />} />
         <Route path="acessos" element={<VolAcessos />} />
+        <Route path="emails" element={<VolEmails />} />
         <Route path="admin" element={<VolAdmin />} />
         <Route path="*" element={<Navigate to="/ministerial/voluntariado" replace />} />
       </Routes>

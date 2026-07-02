@@ -1,0 +1,345 @@
+// Disparo de e-mails pros voluntários · sub-router montado em /api/voluntariado/emails
+// (backend/routes/voluntariado.js). O guard de arquivo do voluntariado é
+// membresia>=1 — aqui TODAS as rotas exigem voluntariado>=3 (compor/enviar é
+// ação de escrita da coordenação, não leitura geral).
+
+const router = require('express').Router();
+const multer = require('multer');
+const { authorizeModule } = require('../middleware/auth');
+const { supabase } = require('../utils/supabase');
+const { enviarEmail } = require('../services/email');
+const { gerarEmail } = require('../services/volEmailIa');
+const {
+  resolverSegmento,
+  montarHtmlEmail,
+  snapshotDestinatarios,
+  drenarDisparos,
+} = require('../services/volEmailSender');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+
+router.use(authorizeModule('voluntariado', 3));
+
+const EDITAVEIS = ['rascunho', 'agendado'];
+
+function validarSegmento(seg) {
+  if (!seg || typeof seg !== 'object') return { tipo: 'todos' };
+  const tipo = ['todos', 'equipe', 'escala'].includes(seg.tipo) ? seg.tipo : 'todos';
+  const limpo = { tipo };
+  if (tipo === 'equipe') limpo.team_id = seg.team_id || null;
+  if (tipo === 'escala') limpo.service_id = seg.service_id || null;
+  return limpo;
+}
+
+// GET / — histórico (últimos 100 ativos)
+router.get('/', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_email_disparos')
+      .select('*')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[volEmails] list:', e.message);
+    res.status(500).json({ error: 'Erro ao listar disparos' });
+  }
+});
+
+// GET /:id — detalhe + destinatários com erro (polling de progresso)
+router.get('/:id', async (req, res) => {
+  try {
+    const { data: disparo, error } = await supabase
+      .from('vol_email_disparos')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
+    const { data: erros } = await supabase
+      .from('vol_email_disparo_destinatarios')
+      .select('email, nome, erro_msg')
+      .eq('disparo_id', disparo.id)
+      .eq('status', 'erro')
+      .limit(50);
+    res.json({ ...disparo, destinatarios_erro: erros || [] });
+  } catch (e) {
+    console.error('[volEmails] get:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar disparo' });
+  }
+});
+
+// POST / — cria rascunho
+router.post('/', async (req, res) => {
+  try {
+    const { assunto, corpo_html, segmento } = req.body || {};
+    const { data, error } = await supabase
+      .from('vol_email_disparos')
+      .insert({
+        assunto: (assunto || '').trim(),
+        corpo_html: corpo_html || '',
+        segmento: validarSegmento(segmento),
+        criado_por: req.user.userId,
+        criado_por_nome: req.user.name || req.user.email,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[volEmails] create:', e.message);
+    res.status(500).json({ error: 'Erro ao criar rascunho' });
+  }
+});
+
+// PUT /:id — edita (só rascunho/agendado)
+router.put('/:id', async (req, res) => {
+  try {
+    const { assunto, corpo_html, segmento } = req.body || {};
+    const patch = {};
+    if (assunto !== undefined) patch.assunto = (assunto || '').trim();
+    if (corpo_html !== undefined) patch.corpo_html = corpo_html || '';
+    if (segmento !== undefined) patch.segmento = validarSegmento(segmento);
+    const { data, error } = await supabase
+      .from('vol_email_disparos')
+      .update(patch)
+      .eq('id', req.params.id)
+      .in('status', EDITAVEIS)
+      .is('deleted_at', null)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Disparo não é mais editável' });
+    res.json(data);
+  } catch (e) {
+    console.error('[volEmails] update:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar rascunho' });
+  }
+});
+
+// DELETE /:id — soft delete (lei do projeto)
+router.delete('/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'vol_email_disparos',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user.userId,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[volEmails] delete:', e.message);
+    res.status(500).json({ error: 'Erro ao excluir disparo' });
+  }
+});
+
+// POST /resolver-destinatarios — preview {total, sem_email, amostra}
+router.post('/resolver-destinatarios', async (req, res) => {
+  try {
+    const segmento = validarSegmento(req.body?.segmento);
+    const { destinatarios, sem_email } = await resolverSegmento(segmento);
+    res.json({
+      total: destinatarios.length,
+      sem_email,
+      amostra: destinatarios.slice(0, 10).map((d) => ({ nome: d.nome, email: d.email })),
+    });
+  } catch (e) {
+    console.error('[volEmails] resolver:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao resolver destinatários' });
+  }
+});
+
+// POST /upload-imagem — imagem do corpo (bucket público vol-emails)
+router.post('/upload-imagem', upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não enviado' });
+    if (!/^image\//.test(req.file.mimetype || '')) {
+      return res.status(400).json({ error: 'Envie apenas imagens' });
+    }
+    const ext = (req.file.originalname.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('vol-emails').upload(path, req.file.buffer, {
+      contentType: req.file.mimetype || 'image/jpeg',
+      upsert: false,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('vol-emails').getPublicUrl(path);
+    res.json({ url: data.publicUrl });
+  } catch (e) {
+    console.error('[volEmails] upload:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar imagem' });
+  }
+});
+
+// POST /gerar-ia — gera/melhora assunto + corpo com Claude
+router.post('/gerar-ia', async (req, res) => {
+  try {
+    const { objetivo, tom, corpo_atual } = req.body || {};
+    const r = await gerarEmail({ objetivo, tom, corpo_atual });
+    res.json(r);
+  } catch (e) {
+    console.error('[volEmails] gerar-ia:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao gerar com IA' });
+  }
+});
+
+// POST /preview — shell final pro iframe do composer
+router.post('/preview', async (req, res) => {
+  try {
+    const html = montarHtmlEmail(req.body?.corpo_html || '', { nome: req.user.name || 'Voluntário' });
+    res.json({ html });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao montar preview' });
+  }
+});
+
+// POST /:id/teste — envia pro e-mail do próprio usuário
+router.post('/:id/teste', async (req, res) => {
+  try {
+    const { data: disparo } = await supabase
+      .from('vol_email_disparos')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
+    if (!req.user.email) return res.status(400).json({ error: 'Seu usuário não tem e-mail cadastrado' });
+    const html = montarHtmlEmail(disparo.corpo_html, { nome: req.user.name });
+    const r = await enviarEmail({
+      to: req.user.email,
+      subject: `[TESTE] ${disparo.assunto || '(sem assunto)'}`,
+      html,
+    });
+    if (!r?.ok) return res.status(502).json({ error: r?.error || 'Falha no envio de teste' });
+    res.json({ ok: true, para: req.user.email });
+  } catch (e) {
+    console.error('[volEmails] teste:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar teste' });
+  }
+});
+
+// POST /:id/enviar — snapshot + drena inline (budget · cron retoma o resto)
+router.post('/:id/enviar', async (req, res) => {
+  try {
+    const { data: disparo } = await supabase
+      .from('vol_email_disparos')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
+    if (!EDITAVEIS.includes(disparo.status)) {
+      return res.status(409).json({ error: `Disparo já está "${disparo.status}"` });
+    }
+    if (!disparo.assunto?.trim() || !disparo.corpo_html?.trim()) {
+      return res.status(400).json({ error: 'Assunto e corpo são obrigatórios antes do envio' });
+    }
+
+    const total = await snapshotDestinatarios(disparo);
+    if (!total) return res.status(400).json({ error: 'Nenhum destinatário com e-mail no segmento escolhido' });
+
+    const { data: claimed } = await supabase
+      .from('vol_email_disparos')
+      .update({ status: 'enviando' })
+      .eq('id', disparo.id)
+      .in('status', EDITAVEIS)
+      .select('id');
+    if (!claimed?.length) return res.status(409).json({ error: 'Disparo já está em envio' });
+
+    // Drena inline com orçamento — blasts pequenos terminam aqui; grandes
+    // continuam pelo cron */5. A UI acompanha via polling do GET /:id.
+    const r = await drenarDisparos({ budgetMs: 240000, apenasDisparoId: disparo.id });
+    const { data: atual } = await supabase
+      .from('vol_email_disparos')
+      .select('*')
+      .eq('id', disparo.id)
+      .single();
+    res.json({ ...atual, drain: r });
+  } catch (e) {
+    console.error('[volEmails] enviar:', e.message);
+    res.status(500).json({ error: 'Erro ao iniciar envio' });
+  }
+});
+
+// POST /:id/agendar — {agendado_para} futuro
+router.post('/:id/agendar', async (req, res) => {
+  try {
+    const quando = new Date(req.body?.agendado_para || '');
+    if (Number.isNaN(quando.getTime()) || quando.getTime() <= Date.now()) {
+      return res.status(400).json({ error: 'Informe uma data/hora futura' });
+    }
+    const { data: disparo } = await supabase
+      .from('vol_email_disparos')
+      .select('id, status, assunto, corpo_html')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
+    if (!EDITAVEIS.includes(disparo.status)) {
+      return res.status(409).json({ error: `Disparo já está "${disparo.status}"` });
+    }
+    if (!disparo.assunto?.trim() || !disparo.corpo_html?.trim()) {
+      return res.status(400).json({ error: 'Assunto e corpo são obrigatórios antes de agendar' });
+    }
+    const { data, error } = await supabase
+      .from('vol_email_disparos')
+      .update({ status: 'agendado', agendado_para: quando.toISOString() })
+      .eq('id', disparo.id)
+      .in('status', EDITAVEIS)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[volEmails] agendar:', e.message);
+    res.status(500).json({ error: 'Erro ao agendar disparo' });
+  }
+});
+
+// POST /:id/cancelar — agendado→cancelado · enviando→fecha pendentes como erro
+router.post('/:id/cancelar', async (req, res) => {
+  try {
+    const { data: disparo } = await supabase
+      .from('vol_email_disparos')
+      .select('id, status')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
+
+    if (disparo.status === 'agendado') {
+      const { data } = await supabase
+        .from('vol_email_disparos')
+        .update({ status: 'cancelado' })
+        .eq('id', disparo.id)
+        .eq('status', 'agendado')
+        .select()
+        .single();
+      return res.json(data);
+    }
+    if (disparo.status === 'enviando') {
+      await supabase
+        .from('vol_email_disparo_destinatarios')
+        .update({ status: 'erro', erro_msg: 'cancelado' })
+        .eq('disparo_id', disparo.id)
+        .eq('status', 'pendente');
+      const { data } = await supabase
+        .from('vol_email_disparos')
+        .update({ status: 'cancelado' })
+        .eq('id', disparo.id)
+        .eq('status', 'enviando')
+        .select()
+        .single();
+      return res.json(data);
+    }
+    res.status(409).json({ error: `Disparo "${disparo.status}" não pode ser cancelado` });
+  } catch (e) {
+    console.error('[volEmails] cancelar:', e.message);
+    res.status(500).json({ error: 'Erro ao cancelar disparo' });
+  }
+});
+
+module.exports = router;
