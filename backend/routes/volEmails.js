@@ -104,6 +104,32 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /:id/destinatarios — log completo por destinatário (erro primeiro)
+router.get('/:id/destinatarios', async (req, res) => {
+  try {
+    const todos = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('vol_email_disparo_destinatarios')
+        .select('nome, email, status, erro_msg, enviado_em')
+        .eq('disparo_id', req.params.id)
+        .order('status', { ascending: false }) // pendente > erro > enviado (texto desc)
+        .order('nome', { ascending: true })
+        .range(from, from + 999);
+      if (error) throw error;
+      todos.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    // erro primeiro, depois pendente, depois enviado
+    const peso = { erro: 0, pendente: 1, enviado: 2 };
+    todos.sort((a, b) => (peso[a.status] ?? 3) - (peso[b.status] ?? 3) || String(a.nome || '').localeCompare(String(b.nome || '')));
+    res.json(todos);
+  } catch (e) {
+    console.error('[volEmails] destinatarios:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o log de destinatários' });
+  }
+});
+
 // POST / — cria rascunho
 router.post('/', async (req, res) => {
   try {
