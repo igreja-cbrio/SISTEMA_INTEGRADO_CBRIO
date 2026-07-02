@@ -2925,6 +2925,17 @@ export const nps = {
       }),
       { tentativas: 3, msg: 'Erro ao enviar resposta' },
     ),
+  // Envio "à prova de fechamento de aba" · dispara mesmo enquanto a página
+  // descarrega (pagehide/visibilitychange). Fire-and-forget (não lê resposta) ·
+  // usado como última tentativa da fila offline no NpsPublica.
+  publicResponderBeacon: (token, payload) => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
+      const url = `${API}/public/nps/${encodeURIComponent(token)}/responder`;
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      return navigator.sendBeacon(url, blob);
+    } catch { return false; }
+  },
 };
 
 // Retry com backoff pras chamadas públicas do NPS (evento com pico).
