@@ -903,6 +903,7 @@ function ProgressaoTab({ flash }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40">
                 <tr>
@@ -946,6 +947,7 @@ function ProgressaoTab({ flash }) {
                 {!historico.length && <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">Nenhuma progressão registrada ainda</td></tr>}
               </tbody>
             </table>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -958,6 +960,7 @@ function ProgressaoTab({ flash }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40">
                 <tr>
@@ -983,6 +986,7 @@ function ProgressaoTab({ flash }) {
                 {!reajustes.length && <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">Nenhum reajuste coletivo registrado</td></tr>}
               </tbody>
             </table>
+            </div>
           </CardContent>
         </Card>
       )}

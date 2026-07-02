@@ -711,6 +711,7 @@ export default function Grupos() {
           ) : membrosAtivos.length === 0 ? (
             <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum membro neste grupo</div>
           ) : (
+            <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--cbrio-table-header)' }}>
@@ -822,6 +823,7 @@ export default function Grupos() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
@@ -1832,11 +1834,11 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{data?.id ? 'Editar Grupo' : 'Novo Grupo'}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <Label>Nome do grupo *</Label>
             <Input value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Conexao Barra" />
@@ -2106,9 +2108,9 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-md max-h-[85vh] flex flex-col">
         <DialogHeader><DialogTitle>{editando ? 'Editar encontro' : 'Registrar encontro'}</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
             <div>
               <Label style={{ fontSize: 11 }}>Data *</Label>

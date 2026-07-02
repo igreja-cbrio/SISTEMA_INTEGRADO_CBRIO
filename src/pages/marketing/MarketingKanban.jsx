@@ -184,14 +184,16 @@ export default function MarketingKanban() {
                   <Plus className="h-4 w-4" /> Nova task interna
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-h-[90vh] overflow-y-auto">
+              <DialogContent className="max-h-[90vh] flex flex-col">
                 <DialogHeader><DialogTitle>Nova task interna</DialogTitle></DialogHeader>
-                <NovaTaskForm
-                  tipos={tipos}
-                  destinos={destinos}
-                  membros={membros}
-                  onSuccess={() => { setNovaOpen(false); carregar(); }}
-                />
+                <div className="flex-1 overflow-y-auto min-h-0">
+                  <NovaTaskForm
+                    tipos={tipos}
+                    destinos={destinos}
+                    membros={membros}
+                    onSuccess={() => { setNovaOpen(false); carregar(); }}
+                  />
+                </div>
               </DialogContent>
             </Dialog>
           )}

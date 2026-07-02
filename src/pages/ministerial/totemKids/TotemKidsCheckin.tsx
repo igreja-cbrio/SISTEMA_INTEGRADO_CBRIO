@@ -1029,12 +1029,13 @@ function ModalNovaCrianca(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Cadastrar criança · visitante</DialogTitle>
           <DialogDescription>Dados mínimos · LGPD com menores. Sem CPF da criança.</DialogDescription>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto min-h-0">
         {/* Modo */}
         <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 text-xs">
           <button type="button" onClick={() => setModo('novo')} className={`px-3 py-1.5 rounded-md ${modo === 'novo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Novo cadastro</button>
@@ -1133,6 +1134,7 @@ function ModalNovaCrianca(props: {
             </Button>
           </div>
         </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -1179,7 +1181,7 @@ function ModalCadastrarResponsavel(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
-      <DialogContent className="max-w-md max-h-[95vh] overflow-y-auto">
+      <DialogContent className="max-w-md max-h-[95vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="h-5 w-5 text-pink-500" /> Cadastrar responsável
@@ -1189,7 +1191,7 @@ function ModalCadastrarResponsavel(props: {
             Cadastre quem está trazendo agora pra deixar o histórico completo · pode fechar e seguir manual se preferir.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 flex-1 overflow-y-auto min-h-0">
           <Input placeholder="Nome do responsável *" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
           <div className="grid grid-cols-2 gap-2">
             <Input placeholder="Telefone *" value={telefone} onChange={e => setTelefone(e.target.value)} />

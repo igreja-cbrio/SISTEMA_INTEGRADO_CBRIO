@@ -259,7 +259,7 @@ function ValorDrillDown({ valorKey, membros, total, search, setSearch, page, set
       {/* Picker de KPIs disponíveis pra promover */}
       {pickerOpen && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--cbrio-overlay)' }} onClick={() => setPickerOpen(false)}>
-          <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow-hover), var(--hi)', borderRadius: 16, width: 600, maxHeight: '80vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow-hover), var(--hi)', borderRadius: 16, width: 'min(600px, calc(100vw - 24px))', maxHeight: '80vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>Promover KPI ao valor: {valor.nome}</h2>
               <button onClick={() => setPickerOpen(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3 }}>×</button>
@@ -358,7 +358,7 @@ function TabMembros({ membros, total, search, setSearch, filtro, setFiltro, page
       {loading ? <p style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Carregando...</p> : membros.length === 0 ? (
         <p style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Nenhum membro encontrado</p>
       ) : (
-        <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'hidden' }}>
+        <div style={{ background: 'var(--cbrio-card)', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', borderRadius: 16, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: C.tableHeader }}>

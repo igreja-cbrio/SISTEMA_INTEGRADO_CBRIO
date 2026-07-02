@@ -234,7 +234,7 @@ function Modal({ open, onClose, title, children, footer }) {
   return (
     <div className="fixed inset-0 z-[1000] flex">
       <div className="flex-1 bg-black/50" onClick={onClose} />
-      <div className="w-1/2 min-w-[440px] max-w-[600px] bg-popover overflow-y-auto flex flex-col shadow-2xl" style={{ animation: 'slideInRight 0.25s ease-out' }}>
+      <div className="w-full sm:w-1/2 sm:min-w-[440px] max-w-[600px] bg-popover overflow-y-auto flex flex-col shadow-2xl" style={{ animation: 'slideInRight 0.25s ease-out' }}>
         <div className="sticky top-0 z-10 bg-popover px-6 pt-5 pb-3 border-b border-border flex justify-between items-center">
           <div className="text-lg font-bold text-foreground">{title}</div>
           <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
@@ -548,7 +548,7 @@ export default function RH() {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab}>
         <ScrollArea className="w-full">
-          <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none">
+          <TabsList className="inline-flex flex-wrap h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none">
             {TABS.filter(t => podeRemun || !['folha', 'pcs'].includes(t.key)).map((t) => {
               const Icon = t.icon;
               return (

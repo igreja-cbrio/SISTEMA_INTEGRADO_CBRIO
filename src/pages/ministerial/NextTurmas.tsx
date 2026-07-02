@@ -236,7 +236,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col">
         {loading || !det ? (
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
         ) : (
@@ -247,6 +247,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                 {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
               </DialogTitle>
             </DialogHeader>
+            <div className="flex-1 overflow-y-auto min-h-0">
             <div className="flex flex-wrap gap-3">
               {det.encontros.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-2.5 flex items-center gap-2">
@@ -298,6 +299,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               <span className="flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" style={{ color: C.primary }} /> Formados: {det.matriculas.filter(m => presCount(m.id) >= totalEnc && totalEnc > 0).length}</span>
               <span className="flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" style={{ color: C.warn }} /> Faltou 1: {det.matriculas.filter(m => presCount(m.id) === totalEnc - 1 && totalEnc > 1).length}</span>
               <span className="flex items-center gap-1"><X className="h-3.5 w-3.5" style={{ color: C.danger }} /> Não foi: {det.matriculas.filter(m => presCount(m.id) === 0).length}</span>
+            </div>
             </div>
             <DialogFooter className="flex-wrap gap-2 sm:justify-between">
               <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>

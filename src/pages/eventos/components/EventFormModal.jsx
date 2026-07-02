@@ -101,7 +101,7 @@ export default function EventFormModal({ event, categories, onSave, onClose }) {
                 <SelectTrigger className="w-full h-8 text-xs">
                   <SelectValue placeholder="Sem categoria" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[1001]">
                   <SelectItem value="__none__">Sem categoria</SelectItem>
                   {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
                 </SelectContent>
@@ -115,7 +115,7 @@ export default function EventFormModal({ event, categories, onSave, onClose }) {
                 <SelectTrigger className="w-full h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[1001]">
                   {STATUS_OPTIONS.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -126,7 +126,7 @@ export default function EventFormModal({ event, categories, onSave, onClose }) {
                 <SelectTrigger className="w-full h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[1001]">
                   {RECURRENCES.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
                 </SelectContent>
               </Select>

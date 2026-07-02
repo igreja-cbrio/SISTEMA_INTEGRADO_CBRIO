@@ -227,7 +227,7 @@ export function GruposMapView({
       {/* Sidebar */}
       <aside
         className={cn(
-          "relative z-30 flex flex-col border-r transition-all duration-300 ease-out",
+          "relative z-30 flex flex-col min-h-0 border-r transition-all duration-300 ease-out",
           sidebarBg,
           sidebarOpen ? "w-[320px]" : "w-0",
         )}
@@ -330,7 +330,7 @@ export function GruposMapView({
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
               {filtered.length === 0 && (
                 <div className={cn("text-center text-sm py-12", mutedText)}>
                   Nenhum grupo encontrado.

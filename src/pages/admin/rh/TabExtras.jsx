@@ -216,7 +216,7 @@ export default function TabExtras({ funcionarios, onRefresh }) {
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
           <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={closeModal} />
-          <div style={{ width: '45%', minWidth: 400, maxWidth: 520, background: 'var(--cbrio-modal-bg)', overflowY: 'auto', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out' }}>
+          <div style={{ width: '45%', minWidth: 'min(400px, 100vw)', maxWidth: 520, background: 'var(--cbrio-modal-bg)', overflowY: 'auto', boxShadow: '-8px 0 30px rgba(0,0,0,0.3)', animation: 'slideInRight 0.25s ease-out' }}>
             <div style={{ padding: '20px 24px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>{editId ? 'Editar Escala de Extra' : 'Nova Escala de Extra'}</h3>
               <Button variant="ghost" size="icon-xs" onClick={closeModal}><X className="h-4 w-4" /></Button>

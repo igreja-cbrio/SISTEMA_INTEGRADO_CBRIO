@@ -430,11 +430,12 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto z-[1000]">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col z-[1000]">
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Editar Membro' : 'Novo Membro'}</DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto min-h-0">
         <MultistepFormShell
           steps={MODAL_STEPS}
           currentStep={currentStep}
@@ -612,6 +613,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
             </div>
           )}
         </MultistepFormShell>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -1376,7 +1378,7 @@ export default function Membresia() {
 
       {/* Page Tabs: Membros × Cadastros pendentes */}
       <Tabs value={pageTab} onValueChange={setPageTab}>
-        <TabsList className="inline-flex h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5" data-tour="membresia-tabs">
+        <TabsList className="inline-flex flex-wrap h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5" data-tour="membresia-tabs">
           {[
             { key: 'membros', label: 'Membros', icon: Users },
             { key: 'jornada', label: 'Jornada (5 valores)', icon: TrendingUp },
@@ -1493,7 +1495,7 @@ export default function Membresia() {
       </div>
 
       {/* Table */}
-      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
+      <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>

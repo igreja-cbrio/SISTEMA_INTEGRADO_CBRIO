@@ -189,7 +189,7 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
 
       {/* Modal de detalhe (sem contribuições) */}
       <Dialog open={!!sel || carregandoDet} onOpenChange={(o) => { if (!o) setSel(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Detalhes da pessoa</DialogTitle>
             <DialogDescription className="flex items-center gap-1 text-xs">
@@ -197,6 +197,7 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
             </DialogDescription>
           </DialogHeader>
 
+          <div className="flex-1 overflow-y-auto min-h-0">
           {carregandoDet || !sel ? (
             <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" style={{ color: accent }} /></div>
           ) : (
@@ -259,6 +260,7 @@ export default function PainelAreaPessoas({ area, accent = '#00B39D' }) {
               )}
             </div>
           )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

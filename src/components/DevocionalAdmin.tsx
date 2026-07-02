@@ -570,50 +570,52 @@ function ImportarDocxModal({ plano, createMode, onClose, onDone }: { plano?: Pla
 
   return (
     <Dialog open onOpenChange={(o) => !o && !publicando && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader><DialogTitle>{createMode ? 'Importar devocional (.docx)' : 'Importar .docx no plano'}</DialogTitle></DialogHeader>
 
-        {etapa === 'arquivo' ? (
-          <div className="space-y-3 py-2">
-            <p className="text-sm text-muted-foreground">
-              Suba o documento do pastor (semana toda, 1 devocional por dia). O sistema vai extrair e mostrar a <b>prévia</b> — nada vai pro app antes de você revisar e publicar.
-            </p>
-            <input ref={fileRef} type="file" accept=".docx" hidden onChange={escolher} />
-            <Button onClick={() => fileRef.current?.click()} disabled={lendo}>
-              {lendo ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Lendo o documento...</> : <><Upload className="h-4 w-4 mr-2" /> Escolher arquivo .docx</>}
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="rounded-md bg-primary/10 border border-primary/30 p-2 text-xs flex items-center gap-2">
-              <Sparkles className="h-3.5 w-3.5 text-primary" /> Prévia: {itens.length} dia(s). Revise/edite abaixo e clique em <b>Publicar</b>.
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {etapa === 'arquivo' ? (
+            <div className="space-y-3 py-2">
+              <p className="text-sm text-muted-foreground">
+                Suba o documento do pastor (semana toda, 1 devocional por dia). O sistema vai extrair e mostrar a <b>prévia</b> — nada vai pro app antes de você revisar e publicar.
+              </p>
+              <input ref={fileRef} type="file" accept=".docx" hidden onChange={escolher} />
+              <Button onClick={() => fileRef.current?.click()} disabled={lendo}>
+                {lendo ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Lendo o documento...</> : <><Upload className="h-4 w-4 mr-2" /> Escolher arquivo .docx</>}
+              </Button>
             </div>
-
-            {createMode && (
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label className="text-xs">Nome do devocional</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
-                <div><Label className="text-xs">1º dia (início)</Label><Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-md bg-primary/10 border border-primary/30 p-2 text-xs flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-primary" /> Prévia: {itens.length} dia(s). Revise/edite abaixo e clique em <b>Publicar</b>.
               </div>
-            )}
 
-            <div className="space-y-3">
-              {itens.map((it, i) => (
-                <Card key={i} className="p-3 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs">Dia {i + 1}</Badge>
-                    <Input className="h-8 text-sm font-medium" value={it.titulo} onChange={(e) => setCampo(i, 'titulo', e.target.value)} placeholder="Título" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input className="h-8 text-sm" value={it.passagem} onChange={(e) => setCampo(i, 'passagem', e.target.value)} placeholder="Passagem (ex.: Jó 1-6)" />
-                  </div>
-                  <Textarea rows={2} value={it.passagem_texto} onChange={(e) => setCampo(i, 'passagem_texto', e.target.value)} placeholder="Versículo em destaque" className="text-sm" />
-                  <Textarea rows={4} value={it.reflexao} onChange={(e) => setCampo(i, 'reflexao', e.target.value)} placeholder="Reflexão" className="text-sm" />
-                  <Textarea rows={2} value={it.aplicacao} onChange={(e) => setCampo(i, 'aplicacao', e.target.value)} placeholder="Aplicação (Viva esta mensagem...)" className="text-sm" />
-                </Card>
-              ))}
+              {createMode && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label className="text-xs">Nome do devocional</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+                  <div><Label className="text-xs">1º dia (início)</Label><Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {itens.map((it, i) => (
+                  <Card key={i} className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-xs">Dia {i + 1}</Badge>
+                      <Input className="h-8 text-sm font-medium" value={it.titulo} onChange={(e) => setCampo(i, 'titulo', e.target.value)} placeholder="Título" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input className="h-8 text-sm" value={it.passagem} onChange={(e) => setCampo(i, 'passagem', e.target.value)} placeholder="Passagem (ex.: Jó 1-6)" />
+                    </div>
+                    <Textarea rows={2} value={it.passagem_texto} onChange={(e) => setCampo(i, 'passagem_texto', e.target.value)} placeholder="Versículo em destaque" className="text-sm" />
+                    <Textarea rows={4} value={it.reflexao} onChange={(e) => setCampo(i, 'reflexao', e.target.value)} placeholder="Reflexão" className="text-sm" />
+                    <Textarea rows={2} value={it.aplicacao} onChange={(e) => setCampo(i, 'aplicacao', e.target.value)} placeholder="Aplicação (Viva esta mensagem...)" className="text-sm" />
+                  </Card>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" onClick={onClose} disabled={publicando}>Cancelar</Button>

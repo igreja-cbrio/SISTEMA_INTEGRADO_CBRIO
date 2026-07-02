@@ -308,7 +308,7 @@ export default function TotemKidsPainel() {
 
       {/* Modal de detalhe da sala · lista crianças + marca decisão Jesus */}
       <Dialog open={!!salaDetalhe} onOpenChange={(o) => !o && setSalaDetalhe(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <span className="h-3 w-3 rounded-full" style={{ background: salaDetalhe?.sala_cor || '#888' }} />
@@ -318,6 +318,7 @@ export default function TotemKidsPainel() {
               </Badge>
             </DialogTitle>
           </DialogHeader>
+          <div className="flex-1 overflow-y-auto min-h-0">
           {carregandoSala ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-pink-500" />
@@ -390,6 +391,7 @@ export default function TotemKidsPainel() {
               })}
             </div>
           )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

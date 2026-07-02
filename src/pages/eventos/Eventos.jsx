@@ -1749,7 +1749,7 @@ export default function Eventos() {
                         <SelectTrigger className="w-full h-8 text-xs">
                           <SelectValue placeholder="Selecione..." />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[1001]">
                           {eventOptions.map(ev => <SelectItem key={ev.id} value={String(ev.id)}>{ev.name}</SelectItem>)}
                         </SelectContent>
                       </ShadSelect>
@@ -1761,7 +1761,7 @@ export default function Eventos() {
                         <SelectTrigger className="w-full h-8 text-xs">
                           <SelectValue placeholder={eventPhases.length === 0 ? 'Selecione o evento primeiro' : 'Selecione...'} />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[1001]">
                           {eventPhases.map(p => <SelectItem key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</SelectItem>)}
                         </SelectContent>
                       </ShadSelect>
@@ -1777,7 +1777,7 @@ export default function Eventos() {
                       <SelectTrigger className="w-full h-8 text-xs">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[1001]">
                         <SelectItem value="compras">Compras</SelectItem>
                         <SelectItem value="financeiro">Financeiro</SelectItem>
                         <SelectItem value="manutencao">Manutenção</SelectItem>
@@ -2641,6 +2641,7 @@ export default function Eventos() {
 
         {/* Tabela */}
         <div style={styles.card}>
+          <div style={{ overflowX: 'auto' }}>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -2689,6 +2690,7 @@ export default function Eventos() {
               })()}
             </tbody>
           </table>
+          </div>
         </div>
       </>
     );

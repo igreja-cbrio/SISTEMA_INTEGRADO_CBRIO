@@ -192,12 +192,13 @@ export default function TotemKidsVinculos() {
 
       {/* Modal de detalhe */}
       <Dialog open={!!detalhe || carregandoDetalhe} onOpenChange={(o) => { if (!o) { setDetalhe(null); setModoRejeitar(false); } }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Conferir solicitação de vínculo</DialogTitle>
             <DialogDescription>Confira os dados antes de decidir. Informações confidenciais.</DialogDescription>
           </DialogHeader>
 
+          <div className="flex-1 overflow-y-auto min-h-0">
           {carregandoDetalhe || !detalhe ? (
             <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-pink-500" /></div>
           ) : (
@@ -364,6 +365,7 @@ export default function TotemKidsVinculos() {
               )}
             </div>
           )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

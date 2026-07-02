@@ -47,91 +47,93 @@ export default function VolunteerDetailDialog({ volunteerId, volunteerName, open
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{profile?.full_name || volunteerName}</DialogTitle>
         </DialogHeader>
 
-        {!volunteerId ? (
-          <p className="text-sm text-muted-foreground py-4">
-            Este voluntário ainda não tem um perfil vinculado no sistema (veio do Planning Center sem
-            cadastro). O histórico fica disponível assim que o perfil for criado/vinculado.
-          </p>
-        ) : (
-          <div className="space-y-4">
-            {/* Header com contato */}
-            <div className="flex items-center gap-3">
-              {profile?.avatar_url ? (
-                <img src={profile.avatar_url} alt={profile.full_name} className="h-14 w-14 rounded-full object-cover" />
-              ) : (
-                <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center text-lg font-semibold text-muted-foreground">
-                  {(profile?.full_name || volunteerName).trim().charAt(0).toUpperCase()}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {!volunteerId ? (
+            <p className="text-sm text-muted-foreground py-4">
+              Este voluntário ainda não tem um perfil vinculado no sistema (veio do Planning Center sem
+              cadastro). O histórico fica disponível assim que o perfil for criado/vinculado.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {/* Header com contato */}
+              <div className="flex items-center gap-3">
+                {profile?.avatar_url ? (
+                  <img src={profile.avatar_url} alt={profile.full_name} className="h-14 w-14 rounded-full object-cover" />
+                ) : (
+                  <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center text-lg font-semibold text-muted-foreground">
+                    {(profile?.full_name || volunteerName).trim().charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="space-y-0.5 text-sm">
+                  {profile?.email && (
+                    <p className="flex items-center gap-1.5 text-muted-foreground"><Mail className="h-3.5 w-3.5" /> {profile.email}</p>
+                  )}
+                  {(profile as any)?.phone && (
+                    <p className="flex items-center gap-1.5 text-muted-foreground"><Phone className="h-3.5 w-3.5" /> {(profile as any).phone}</p>
+                  )}
+                  {!profile?.email && !(profile as any)?.phone && (
+                    <p className="text-muted-foreground italic">Sem contato cadastrado</p>
+                  )}
                 </div>
-              )}
-              <div className="space-y-0.5 text-sm">
-                {profile?.email && (
-                  <p className="flex items-center gap-1.5 text-muted-foreground"><Mail className="h-3.5 w-3.5" /> {profile.email}</p>
-                )}
-                {(profile as any)?.phone && (
-                  <p className="flex items-center gap-1.5 text-muted-foreground"><Phone className="h-3.5 w-3.5" /> {(profile as any).phone}</p>
-                )}
-                {!profile?.email && !(profile as any)?.phone && (
-                  <p className="text-muted-foreground italic">Sem contato cadastrado</p>
-                )}
               </div>
-            </div>
 
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-lg border p-2"><p className="text-xl font-bold">{schedules.length}</p><p className="text-xs text-muted-foreground">Escalas</p></div>
-              <div className="rounded-lg border p-2"><p className="text-xl font-bold text-green-600">{presencas}</p><p className="text-xs text-muted-foreground">Presenças</p></div>
-              <div className="rounded-lg border p-2">
-                <p className="text-sm font-semibold flex items-center justify-center gap-1 h-7">
-                  <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
-                  {proxima?.service ? format(new Date(proxima.service.scheduled_at), 'dd/MM', { locale: ptBR }) : '—'}
-                </p>
-                <p className="text-xs text-muted-foreground">Próxima</p>
+              {/* Stats */}
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg border p-2"><p className="text-xl font-bold">{schedules.length}</p><p className="text-xs text-muted-foreground">Escalas</p></div>
+                <div className="rounded-lg border p-2"><p className="text-xl font-bold text-green-600">{presencas}</p><p className="text-xs text-muted-foreground">Presenças</p></div>
+                <div className="rounded-lg border p-2">
+                  <p className="text-sm font-semibold flex items-center justify-center gap-1 h-7">
+                    <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+                    {proxima?.service ? format(new Date(proxima.service.scheduled_at), 'dd/MM', { locale: ptBR }) : '—'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Próxima</p>
+                </div>
               </div>
-            </div>
 
-            {/* Histórico de escalas */}
-            <div>
-              <p className="text-sm font-medium mb-2">Histórico de escalas</p>
-              {loadingSchedules ? (
-                <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-              ) : sorted.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma escala registrada para este voluntário.</p>
-              ) : (
-                <div className="space-y-2">
-                  {sorted.map(s => {
-                    const st = statusLabel(s);
-                    return (
-                      <div key={s.id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg border bg-card">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          {s.check_in ? (
-                            <div className="h-7 w-7 shrink-0 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center"><Check className="h-3.5 w-3.5 text-green-600" /></div>
-                          ) : s.confirmation_status === 'declined' ? (
-                            <div className="h-7 w-7 shrink-0 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center"><X className="h-3.5 w-3.5 text-red-600" /></div>
-                          ) : (
-                            <div className="h-7 w-7 shrink-0 rounded-full bg-muted flex items-center justify-center"><Clock className="h-3.5 w-3.5 text-muted-foreground" /></div>
-                          )}
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium truncate">{s.service?.name || 'Culto'}</p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {s.service?.scheduled_at ? format(new Date(s.service.scheduled_at), "dd/MM/yyyy", { locale: ptBR }) : ''}
-                              {s.team_name ? ` · ${s.team_name}${s.position_name ? ` - ${s.position_name}` : ''}` : ''}
-                            </p>
+              {/* Histórico de escalas */}
+              <div>
+                <p className="text-sm font-medium mb-2">Histórico de escalas</p>
+                {loadingSchedules ? (
+                  <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+                ) : sorted.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma escala registrada para este voluntário.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {sorted.map(s => {
+                      const st = statusLabel(s);
+                      return (
+                        <div key={s.id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg border bg-card">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {s.check_in ? (
+                              <div className="h-7 w-7 shrink-0 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center"><Check className="h-3.5 w-3.5 text-green-600" /></div>
+                            ) : s.confirmation_status === 'declined' ? (
+                              <div className="h-7 w-7 shrink-0 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center"><X className="h-3.5 w-3.5 text-red-600" /></div>
+                            ) : (
+                              <div className="h-7 w-7 shrink-0 rounded-full bg-muted flex items-center justify-center"><Clock className="h-3.5 w-3.5 text-muted-foreground" /></div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{s.service?.name || 'Culto'}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {s.service?.scheduled_at ? format(new Date(s.service.scheduled_at), "dd/MM/yyyy", { locale: ptBR }) : ''}
+                                {s.team_name ? ` · ${s.team_name}${s.position_name ? ` - ${s.position_name}` : ''}` : ''}
+                              </p>
+                            </div>
                           </div>
+                          <Badge variant="outline" className={`shrink-0 ${st.cls}`}>{st.label}</Badge>
                         </div>
-                        <Badge variant="outline" className={`shrink-0 ${st.cls}`}>{st.label}</Badge>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

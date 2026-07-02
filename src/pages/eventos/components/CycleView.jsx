@@ -430,7 +430,7 @@ export default function CycleView({ eventId, eventName }) {
                     <SelectTrigger className="w-full h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="z-[1001]">
                       <SelectItem value="ambos">Ambos</SelectItem>
                       <SelectItem value="marketing">Marketing</SelectItem>
                     </SelectContent>
@@ -471,7 +471,7 @@ export default function CycleView({ eventId, eventName }) {
                   <SelectTrigger className="w-full h-8 text-xs">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[1001]">
                     {phases.map(p => <SelectItem key={p.id} value={p.id}>F{p.numero_fase} — {p.nome_fase}</SelectItem>)}
                   </SelectContent>
                 </ShadSelect>
@@ -487,7 +487,7 @@ export default function CycleView({ eventId, eventName }) {
                     <SelectTrigger className="w-full h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="z-[1001]">
                       <SelectItem value="adm">Administrativo</SelectItem>
                       <SelectItem value="marketing">Marketing</SelectItem>
                       <SelectItem value="compras">Compras</SelectItem>
@@ -604,7 +604,7 @@ export default function CycleView({ eventId, eventName }) {
                           <SelectTrigger className="w-full h-8 text-xs">
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="z-[1001]">
                             {phases.map(ph => <SelectItem key={ph.id} value={ph.id}>F{ph.numero_fase} — {ph.nome_fase}</SelectItem>)}
                           </SelectContent>
                         </ShadSelect>
@@ -615,7 +615,7 @@ export default function CycleView({ eventId, eventName }) {
                           <SelectTrigger className="w-full h-8 text-xs">
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="z-[1001]">
                             <SelectItem value="adm">Administrativo</SelectItem>
                             <SelectItem value="marketing">Marketing</SelectItem>
                             <SelectItem value="compras">Compras</SelectItem>

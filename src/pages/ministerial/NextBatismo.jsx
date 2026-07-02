@@ -588,7 +588,7 @@ function FichaEntrada({ id, onClose, onVerFicha }) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
         {(isLoading || !p) ? (
           <div className="py-12 flex items-center justify-center text-muted-foreground"><Loader2 className="size-5 animate-spin mr-2" /> Montando ficha...</div>
         ) : (
@@ -609,6 +609,7 @@ function FichaEntrada({ id, onClose, onVerFicha }) {
               </div>
             </DialogHeader>
 
+            <div className="flex-1 overflow-y-auto min-h-0">
             {pm && (
               <div className="rounded-lg border p-3 flex items-center gap-3" style={{ borderLeft: `3px solid ${pm.cor}` }}>
                 <div className="size-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: pm.cor + '1A' }}>
@@ -676,6 +677,7 @@ function FichaEntrada({ id, onClose, onVerFicha }) {
                 </div>
               )}
             </Secao>
+            </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={onClose}>Fechar</Button>

@@ -691,7 +691,7 @@ export default function VolInscricoes() {
 
       {/* Detalhe da inscrição · clique numa linha pra abrir */}
       <Dialog open={!!selected} onOpenChange={(o) => { if (!o) { setSelected(null); setEditando(false); } }}>
-        <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[88vh] flex flex-col">
           {selected && (
             <>
               <DialogHeader>
@@ -702,213 +702,215 @@ export default function VolInscricoes() {
                   </Badge>
                 </DialogTitle>
               </DialogHeader>
-              {!editando ? (
-                <>
-                  <div className="flex justify-end -mb-2 mt-1">
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={abrirEdicao}>
-                      <Pencil className="h-3.5 w-3.5" /> Editar dados
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                    <Info label="Area" value={<span className="capitalize">{selected.area}</span>} />
-                    <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
-                    <Info label="Telefone" value={fmtTel(selected.telefone)} />
-                    <Info label="E-mail" value={selected.email || '-'} />
-                    <Info label="CPF" value={fmtCpf(selected.cpf)} />
-                    <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
-                    <Info label="Nome da mae" value={selected.nome_mae || '-'} />
-                    <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
-                    <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
-                    <Info label="Origem" value={origemLabel(selected.origem)} />
-                    <div className="sm:col-span-2">
-                      <Info label="Áreas de interesse (o que pediu)" value={selected.ministerios_interesse || '-'} />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <Info
-                        label="Área direcionada (onde foi de fato)"
-                        value={selected.area_direcionada && selected.area_direcionada.length ? (
-                          <div className="flex flex-wrap gap-1 mt-0.5">
-                            {selected.area_direcionada.map((m) => (
-                              <Badge key={m} variant="outline" className="bg-[#00B39D]/10 text-[#00837a] border-[#00B39D]/20">{m}</Badge>
-                            ))}
-                          </div>
-                        ) : <span className="text-muted-foreground">— ainda não direcionada</span>}
-                      />
-                    </div>
-                    <Info
-                      label="Vinculo de membro"
-                      value={selected.membro_id
-                        ? <span className="text-green-600 font-medium">Vinculado</span>
-                        : 'Não vinculado'}
-                    />
-                    {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
-                    {selected.feedback && (
-                      <div className="sm:col-span-2">
-                        <Info label="Observacoes" value={selected.feedback} />
-                      </div>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div className="space-y-3 mt-1">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">CPF</label>
-                      <Input value={form.cpf} onChange={(e) => setForm((f) => ({ ...f, cpf: e.target.value }))} placeholder="Só números (11 dígitos)" />
-                    </div>
-                    <div>
-                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Data de nascimento</label>
-                      <Input type="date" value={form.data_nascimento} onChange={(e) => setForm((f) => ({ ...f, data_nascimento: e.target.value }))} />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Nome da mãe</label>
-                    <Input value={form.nome_mae} onChange={(e) => setForm((f) => ({ ...f, nome_mae: e.target.value }))} placeholder="Necessário pra antecedentes (Kids/Bridge)" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Áreas de interesse (o que pediu)</label>
-                    <Input value={form.ministerios_interesse} onChange={(e) => setForm((f) => ({ ...f, ministerios_interesse: e.target.value }))} placeholder="Ex.: Louvor, Kids, Recepção" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Área direcionada (onde foi de fato · pode marcar mais de uma)</label>
-                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                      {MINISTERIOS_DIRECIONAMENTO.map((m) => {
-                        const on = form.area_direcionada.includes(m);
-                        return (
-                          <button key={m} type="button" onClick={() => toggleMinisterio(m)}
-                            className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? 'bg-[#00B39D] text-white border-[#00B39D]' : 'bg-background text-muted-foreground border-border hover:border-[#00B39D]/50'}`}>
-                            {m}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <Button size="sm" disabled={salvarDados.isPending} onClick={() => salvarDados.mutate()}>
-                      <Save className="h-3.5 w-3.5 mr-1" /> {salvarDados.isPending ? 'Salvando...' : 'Salvar'}
-                    </Button>
-                    <Button size="sm" variant="outline" disabled={salvarDados.isPending} onClick={() => setEditando(false)}>
-                      Cancelar
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Triagem de antecedentes criminais · obrigatória pra Kids/Bridge */}
-              {selKidsBridge && (
-                <div className="pt-4 mt-2 border-t space-y-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold">Antecedentes criminais</span>
-                      <Badge variant="outline" className={check ? (BG_STATUS[check.status]?.cls || '') : 'bg-gray-500/10 text-gray-700'}>
-                        {check ? (BG_STATUS[check.status]?.label || check.status) : 'Sem triagem'}
-                      </Badge>
-                    </div>
-                    {bg?.autoConfigurado && (
-                      <Button size="sm" variant="outline" disabled={consultarBg.isPending}
-                        onClick={() => consultarBg.mutate()}>
-                        {consultarBg.isPending ? 'Consultando...' : (check && check.status !== 'pendente' ? 'Refazer consulta' : 'Consultar agora')}
+              <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+                {!editando ? (
+                  <>
+                    <div className="flex justify-end -mb-2 mt-1">
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={abrirEdicao}>
+                        <Pencil className="h-3.5 w-3.5" /> Editar dados
                       </Button>
-                    )}
-                  </div>
-
-                  {!bg?.autoConfigurado && (
-                    <p className="text-xs text-muted-foreground">
-                      Consulta automática não configurada — faça a triagem manual: confira a certidão e aprove.
-                    </p>
-                  )}
-                  {bg?.autoConfigurado && faltaDadosAntecedentes && !editando && (
-                    <p className="text-xs text-amber-600">
-                      Faltam dados pra consulta automática (CPF, data de nascimento e/ou nome da mãe).{' '}
-                      <button type="button" className="underline font-medium" onClick={abrirEdicao}>Completar agora</button>
-                    </p>
-                  )}
-                  {check?.status === 'erro' && check?.consulta_erro && (
-                    <p className="text-xs text-orange-600">Erro na consulta: {check.consulta_erro}</p>
-                  )}
-                  {check?.certidao_url && (
-                    <a href={check.certidao_url} target="_blank" rel="noopener noreferrer"
-                      className="text-xs text-[#00B39D] underline inline-block">
-                      Ver certidão emitida
-                    </a>
-                  )}
-                  {check?.revisado_por_nome && (
-                    <p className="text-xs text-muted-foreground">
-                      Revisado por {check.revisado_por_nome}
-                      {check.observacoes ? ` — ${check.observacoes}` : ''}
-                    </p>
-                  )}
-
-                  {check && (
-                    <div className="space-y-2 pt-1">
-                      <textarea
-                        value={obs}
-                        onChange={(e) => setObs(e.target.value)}
-                        placeholder="Observação da conferência (opcional)"
-                        className="w-full text-sm rounded-md border bg-background p-2 min-h-[52px]"
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                      <Info label="Area" value={<span className="capitalize">{selected.area}</span>} />
+                      <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
+                      <Info label="Telefone" value={fmtTel(selected.telefone)} />
+                      <Info label="E-mail" value={selected.email || '-'} />
+                      <Info label="CPF" value={fmtCpf(selected.cpf)} />
+                      <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
+                      <Info label="Nome da mae" value={selected.nome_mae || '-'} />
+                      <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
+                      <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
+                      <Info label="Origem" value={origemLabel(selected.origem)} />
+                      <div className="sm:col-span-2">
+                        <Info label="Áreas de interesse (o que pediu)" value={selected.ministerios_interesse || '-'} />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <Info
+                          label="Área direcionada (onde foi de fato)"
+                          value={selected.area_direcionada && selected.area_direcionada.length ? (
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {selected.area_direcionada.map((m) => (
+                                <Badge key={m} variant="outline" className="bg-[#00B39D]/10 text-[#00837a] border-[#00B39D]/20">{m}</Badge>
+                              ))}
+                            </div>
+                          ) : <span className="text-muted-foreground">— ainda não direcionada</span>}
+                        />
+                      </div>
+                      <Info
+                        label="Vinculo de membro"
+                        value={selected.membro_id
+                          ? <span className="text-green-600 font-medium">Vinculado</span>
+                          : 'Não vinculado'}
                       />
-                      <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" className="text-green-700 border-green-500/40 hover:bg-green-500/10"
-                          disabled={revisarBg.isPending}
-                          onClick={() => revisarBg.mutate({ acao: 'aprovar' })}>
-                          Aprovar manualmente
-                        </Button>
-                        <Button size="sm" variant="outline" className="text-purple-700 border-purple-500/40 hover:bg-purple-500/10"
-                          disabled={revisarBg.isPending}
-                          onClick={() => revisarBg.mutate({ acao: 'dispensar' })}>
-                          Dispensar triagem
-                        </Button>
-                        <Button size="sm" variant="outline" className="text-red-700 border-red-500/40 hover:bg-red-500/10"
-                          disabled={revisarBg.isPending}
-                          onClick={() => revisarBg.mutate({ acao: 'reprovar' })}>
-                          Reprovar
-                        </Button>
+                      {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
+                      {selected.feedback && (
+                        <div className="sm:col-span-2">
+                          <Info label="Observacoes" value={selected.feedback} />
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-3 mt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] uppercase tracking-wide text-muted-foreground">CPF</label>
+                        <Input value={form.cpf} onChange={(e) => setForm((f) => ({ ...f, cpf: e.target.value }))} placeholder="Só números (11 dígitos)" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Data de nascimento</label>
+                        <Input type="date" value={form.data_nascimento} onChange={(e) => setForm((f) => ({ ...f, data_nascimento: e.target.value }))} />
                       </div>
                     </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Nome da mãe</label>
+                      <Input value={form.nome_mae} onChange={(e) => setForm((f) => ({ ...f, nome_mae: e.target.value }))} placeholder="Necessário pra antecedentes (Kids/Bridge)" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Áreas de interesse (o que pediu)</label>
+                      <Input value={form.ministerios_interesse} onChange={(e) => setForm((f) => ({ ...f, ministerios_interesse: e.target.value }))} placeholder="Ex.: Louvor, Kids, Recepção" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Área direcionada (onde foi de fato · pode marcar mais de uma)</label>
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {MINISTERIOS_DIRECIONAMENTO.map((m) => {
+                          const on = form.area_direcionada.includes(m);
+                          return (
+                            <button key={m} type="button" onClick={() => toggleMinisterio(m)}
+                              className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? 'bg-[#00B39D] text-white border-[#00B39D]' : 'bg-background text-muted-foreground border-border hover:border-[#00B39D]/50'}`}>
+                              {m}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button size="sm" disabled={salvarDados.isPending} onClick={() => salvarDados.mutate()}>
+                        <Save className="h-3.5 w-3.5 mr-1" /> {salvarDados.isPending ? 'Salvando...' : 'Salvar'}
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={salvarDados.isPending} onClick={() => setEditando(false)}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Triagem de antecedentes criminais · obrigatória pra Kids/Bridge */}
+                {selKidsBridge && (
+                  <div className="pt-4 mt-2 border-t space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold">Antecedentes criminais</span>
+                        <Badge variant="outline" className={check ? (BG_STATUS[check.status]?.cls || '') : 'bg-gray-500/10 text-gray-700'}>
+                          {check ? (BG_STATUS[check.status]?.label || check.status) : 'Sem triagem'}
+                        </Badge>
+                      </div>
+                      {bg?.autoConfigurado && (
+                        <Button size="sm" variant="outline" disabled={consultarBg.isPending}
+                          onClick={() => consultarBg.mutate()}>
+                          {consultarBg.isPending ? 'Consultando...' : (check && check.status !== 'pendente' ? 'Refazer consulta' : 'Consultar agora')}
+                        </Button>
+                      )}
+                    </div>
+
+                    {!bg?.autoConfigurado && (
+                      <p className="text-xs text-muted-foreground">
+                        Consulta automática não configurada — faça a triagem manual: confira a certidão e aprove.
+                      </p>
+                    )}
+                    {bg?.autoConfigurado && faltaDadosAntecedentes && !editando && (
+                      <p className="text-xs text-amber-600">
+                        Faltam dados pra consulta automática (CPF, data de nascimento e/ou nome da mãe).{' '}
+                        <button type="button" className="underline font-medium" onClick={abrirEdicao}>Completar agora</button>
+                      </p>
+                    )}
+                    {check?.status === 'erro' && check?.consulta_erro && (
+                      <p className="text-xs text-orange-600">Erro na consulta: {check.consulta_erro}</p>
+                    )}
+                    {check?.certidao_url && (
+                      <a href={check.certidao_url} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-[#00B39D] underline inline-block">
+                        Ver certidão emitida
+                      </a>
+                    )}
+                    {check?.revisado_por_nome && (
+                      <p className="text-xs text-muted-foreground">
+                        Revisado por {check.revisado_por_nome}
+                        {check.observacoes ? ` — ${check.observacoes}` : ''}
+                      </p>
+                    )}
+
+                    {check && (
+                      <div className="space-y-2 pt-1">
+                        <textarea
+                          value={obs}
+                          onChange={(e) => setObs(e.target.value)}
+                          placeholder="Observação da conferência (opcional)"
+                          className="w-full text-sm rounded-md border bg-background p-2 min-h-[52px]"
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline" className="text-green-700 border-green-500/40 hover:bg-green-500/10"
+                            disabled={revisarBg.isPending}
+                            onClick={() => revisarBg.mutate({ acao: 'aprovar' })}>
+                            Aprovar manualmente
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-purple-700 border-purple-500/40 hover:bg-purple-500/10"
+                            disabled={revisarBg.isPending}
+                            onClick={() => revisarBg.mutate({ acao: 'dispensar' })}>
+                            Dispensar triagem
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-red-700 border-red-500/40 hover:bg-red-500/10"
+                            disabled={revisarBg.isPending}
+                            onClick={() => revisarBg.mutate({ acao: 'reprovar' })}>
+                            Reprovar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Aviso: integrar exige a área direcionada */}
+                {semDirecionada && (selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
+                  <p className="text-xs text-amber-600 pt-3">
+                    Para integrar, defina a <b>Área direcionada</b> (onde a pessoa vai servir) em{' '}
+                    <button type="button" className="underline font-medium" onClick={abrirEdicao}>Editar dados</button>.
+                  </p>
+                )}
+
+                {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
+                <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
+                  {selected.status === 'inscrito' && (
+                    <Button size="sm" disabled={mudarStatus.isPending}
+                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
+                      Enviar ao ministério
+                    </Button>
+                  )}
+                  {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
+                    <Button size="sm" variant="default"
+                      disabled={mudarStatus.isPending || integracaoBloqueada || semDirecionada}
+                      title={integracaoBloqueada
+                        ? 'Triagem de antecedentes pendente — libere a verificação antes de integrar'
+                        : semDirecionada
+                          ? 'Defina a Área direcionada (em "Editar dados") antes de integrar'
+                          : undefined}
+                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
+                      Integrar
+                    </Button>
+                  )}
+                  {selected.status === 'enviado_ministerio' && (
+                    <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'inscrito' })}>
+                      Voltar pra triagem
+                    </Button>
+                  )}
+                  {selected.status === 'integrado' && (
+                    <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
+                      Reverter integração
+                    </Button>
                   )}
                 </div>
-              )}
-
-              {/* Aviso: integrar exige a área direcionada */}
-              {semDirecionada && (selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
-                <p className="text-xs text-amber-600 pt-3">
-                  Para integrar, defina a <b>Área direcionada</b> (onde a pessoa vai servir) em{' '}
-                  <button type="button" className="underline font-medium" onClick={abrirEdicao}>Editar dados</button>.
-                </p>
-              )}
-
-              {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
-              <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
-                {selected.status === 'inscrito' && (
-                  <Button size="sm" disabled={mudarStatus.isPending}
-                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
-                    Enviar ao ministério
-                  </Button>
-                )}
-                {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
-                  <Button size="sm" variant="default"
-                    disabled={mudarStatus.isPending || integracaoBloqueada || semDirecionada}
-                    title={integracaoBloqueada
-                      ? 'Triagem de antecedentes pendente — libere a verificação antes de integrar'
-                      : semDirecionada
-                        ? 'Defina a Área direcionada (em "Editar dados") antes de integrar'
-                        : undefined}
-                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
-                    Integrar
-                  </Button>
-                )}
-                {selected.status === 'enviado_ministerio' && (
-                  <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
-                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'inscrito' })}>
-                    Voltar pra triagem
-                  </Button>
-                )}
-                {selected.status === 'integrado' && (
-                  <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
-                    onClick={() => mudarStatus.mutate({ id: selected.id, status: 'enviado_ministerio' })}>
-                    Reverter integração
-                  </Button>
-                )}
               </div>
             </>
           )}

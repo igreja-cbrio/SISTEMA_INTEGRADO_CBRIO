@@ -329,7 +329,7 @@ function ModalEventoDetalhe({ evento, onClose, onChanged }: { evento: Evento; on
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CalendarDays className="h-5 w-5" style={{ color: C.primary }} />
@@ -337,6 +337,7 @@ function ModalEventoDetalhe({ evento, onClose, onChanged }: { evento: Evento; on
           </DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto min-h-0">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 my-3">
           <div className="rounded-xl border border-border p-3">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Inscritos</p>
@@ -434,6 +435,7 @@ function ModalEventoDetalhe({ evento, onClose, onChanged }: { evento: Evento; on
             ))}
           </div>
         )}
+        </div>
 
         <DialogFooter className="pt-3">
           <Button variant="outline" onClick={onClose}>Fechar</Button>
@@ -772,7 +774,7 @@ function ModalNovaInscricao({
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) tentarFechar(); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Plus className="h-5 w-5" style={{ color: C.primary }} />
@@ -780,7 +782,7 @@ function ModalNovaInscricao({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 pt-2">
+        <div className="space-y-4 pt-2 flex-1 overflow-y-auto min-h-0">
           <div>
             <Label className="text-xs">Evento *</Label>
             <select

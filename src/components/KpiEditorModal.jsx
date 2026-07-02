@@ -282,7 +282,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay }} {...backdropProps}>
-      <div style={{ background: C.modalBg, borderRadius: 12, width: 720, maxHeight: '92vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: C.modalBg, borderRadius: 12, width: 'min(720px, calc(100vw - 24px))', maxHeight: '92vh', overflow: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: 18, color: C.text }}>{isEdit ? `Editar ${kpi.id}` : 'Novo KPI'}</h2>
           <button onClick={tentarFechar} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3 }}>×</button>
@@ -632,7 +632,7 @@ function KrEditorInline({ kr, onClose, onSaved }) {
     <div {...backdropProps}
       style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()}
-        style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: 520, maxHeight: '85vh', overflow: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
+        style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: 'min(520px, calc(100vw - 24px))', maxHeight: '85vh', overflow: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
         <header style={{ padding: 16, borderBottom: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
             {isNovo ? 'Novo KR especifico' : 'Editar KR'}
