@@ -42,3 +42,4 @@ guia-implementacao-cerebro-cbrio.md
 # Skills locais (npx skills add) — tooling, não versionar
 .agents/
 skills-lock.json
+.vercel
