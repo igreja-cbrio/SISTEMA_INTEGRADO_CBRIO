@@ -192,8 +192,10 @@ async function voluntariosPorAreaMes(range) {
 // Servir (decisão do Matheus · 2026-06-22): TODOS os voluntários que SERVIRAM
 // nos últimos 4 meses (não só os ligados a membro). Centro = distinto quem
 // serviu (vol_servicos_historico · planilha + PCO). Pétalas por área = via time
-// da escala do PCO (vol_schedules). Quem serviu sem time mapeável conta no
-// centro mas não nas pétalas (honesto · não chuta área).
+// da escala do PCO (vol_schedules), atribuindo cada pessoa ao CULTO PRINCIPAL
+// (onde ela mais serve · decisão Marcos 2026-07-02) pra a mandala REPARTIR as
+// pessoas (1 pessoa → 1 culto), não duplicar quem serve em vários. Quem serviu
+// sem time mapeável conta no centro mas não nas pétalas (honesto · não chuta área).
 function _normServir(s) { return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim(); }
 function _areaDoTeam(t) {
   const n = _normServir(t); if (!n) return null;
@@ -219,12 +221,29 @@ async function voluntariosAtivos4mPorArea(range) {
     .select('volunteer_name, team_name, confirmation_status, service:vol_services!inner(scheduled_at)')
     .neq('confirmation_status', 'declined')
     .gte('service.scheduled_at', iniISO).lte('service.scheduled_at', fimISO + 'T23:59:59'));
-  const setPorArea = { kids: new Set(), sede: new Set(), ami: new Set(), bridge: new Set(), online: new Set() };
-  const comArea = new Set();
+  // Conta os plantões por (voluntário × culto) e atribui cada pessoa ao culto
+  // onde MAIS serve (culto principal). Empate → AREA_ORDEM (determinístico) pra
+  // não oscilar entre coletas. Assim quem serve em 2 cultos conta 1× (no
+  // principal) e a mandala reparte as pessoas em vez de duplicar.
+  const AREA_ORDEM = ['sede', 'kids', 'ami', 'bridge', 'online'];
+  const porPessoa = new Map(); // nome_norm → { sede: n, kids: n, ... }
   (sch || []).forEach((s) => {
     const nn = _normServir(s.volunteer_name); if (!nn) return;
     const a = _areaDoTeam(s.team_name);
-    if (a && setPorArea[a]) { setPorArea[a].add(nn); comArea.add(nn); }
+    if (!a) return;
+    let c = porPessoa.get(nn);
+    if (!c) { c = {}; porPessoa.set(nn, c); }
+    c[a] = (c[a] || 0) + 1;
+  });
+  const setPorArea = { kids: new Set(), sede: new Set(), ami: new Set(), bridge: new Set(), online: new Set() };
+  const comArea = new Set();
+  porPessoa.forEach((c, nn) => {
+    let principal = null; let maisPlantoes = 0;
+    for (const a of AREA_ORDEM) {
+      const q = c[a] || 0;
+      if (q > maisPlantoes) { maisPlantoes = q; principal = a; }
+    }
+    if (principal) { setPorArea[principal].add(nn); comArea.add(nn); }
   });
   const porArea = {};
   Object.keys(setPorArea).forEach((a) => { porArea[a] = setPorArea[a].size; });
