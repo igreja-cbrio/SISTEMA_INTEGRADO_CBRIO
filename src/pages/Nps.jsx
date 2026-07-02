@@ -114,13 +114,15 @@ function Modal({ open, onClose, title, children, footer, width = 640 }) {
   if (!open) return null;
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.overlay, padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', padding: 24, boxShadow: 'var(--shadow-hover), var(--hi)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      {/* Cabeçalho e rodapé FIXOS · só o miolo rola (senão, em pesquisa longa, o
+          botão Salvar ficava fora da tela e o título sumia ao rolar · 2026-07-02). */}
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width, maxWidth: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '22px 24px 14px', flex: 'none' }}>
           <h2 style={{ margin: 0, fontSize: 18, color: C.text, fontWeight: 700 }}>{title}</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.t3, lineHeight: 1 }}>×</button>
         </div>
-        {children}
-        {footer && <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>{footer}</div>}
+        <div style={{ padding: '0 24px 20px', overflowY: 'auto', flex: 1 }}>{children}</div>
+        {footer && <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '14px 24px', borderTop: `1px solid ${C.border}`, flex: 'none' }}>{footer}</div>}
       </div>
     </div>
   );
