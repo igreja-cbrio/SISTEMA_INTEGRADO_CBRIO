@@ -625,6 +625,13 @@ const VISITA_TIPOS_UI: { v: string; l: string }[] = [
   { v: 'outro',             l: 'Outro' },
 ];
 const VISITA_TIPO_LABEL: Record<string, string> = Object.fromEntries(VISITA_TIPOS_UI.map(t => [t.v, t.l]));
+const VISITA_TIPO_COR: Record<string, string> = {
+  visita_domiciliar: '#00B39D', visita_hospitalar: '#3b82f6', funeral: '#6b7280',
+  casamento: '#ec4899', aconselhamento: '#f59e0b', outro: '#8b5cf6',
+};
+const VISITA_PERIODOS = [
+  { m: 3, l: '3 meses' }, { m: 6, l: '6 meses' }, { m: 12, l: '12 meses' }, { m: 24, l: '24 meses' }, { m: 0, l: 'Tudo' },
+];
 const VISITA_STATUS_UI: { v: string; l: string; color: string }[] = [
   { v: 'agendada',  l: 'Agendada',  color: '#3b82f6' },
   { v: 'realizada', l: 'Realizada', color: '#10b981' },
@@ -733,15 +740,59 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
 }) {
   const [busca, setBusca] = useState('');
   const [statusF, setStatusF] = useState('todos');
+  const [periodoM, setPeriodoM] = useState(12); // meses de corte · 0 = tudo
+  const [tipoF, setTipoF] = useState('todos');
   const fmtData = (d: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
+
+  // Corte por período (data_visita >= hoje - N meses · 0 = tudo)
+  const corteISO = useMemo(() => {
+    if (!periodoM) return null;
+    const d = new Date(); d.setMonth(d.getMonth() - periodoM);
+    return d.toISOString().slice(0, 10);
+  }, [periodoM]);
+  const noPeriodo = useMemo(
+    () => itens.filter((v: any) => !corteISO || (v.data_visita || '') >= corteISO),
+    [itens, corteISO],
+  );
+
+  // Contagem por tipo no período (chips de filtro)
+  const porTipo = useMemo(() => {
+    const m: Record<string, number> = {};
+    noPeriodo.forEach((v: any) => { m[v.tipo] = (m[v.tipo] || 0) + 1; });
+    return m;
+  }, [noPeriodo]);
+
+  // Série mensal empilhada por tipo (respeita o tipo filtrado)
+  const chartData = useMemo(() => {
+    const mesDe = (iso: string) => (iso || '').slice(0, 7);
+    const chaves = noPeriodo.map((v: any) => mesDe(v.data_visita)).filter(Boolean).sort();
+    if (!chaves.length) return [];
+    let [y, mo] = chaves[0].split('-').map(Number);
+    const hoje = new Date(); const fy = hoje.getFullYear(), fm = hoje.getMonth() + 1;
+    const meses: string[] = []; let guard = 0;
+    while ((y < fy || (y === fy && mo <= fm)) && guard++ < 400) {
+      meses.push(`${y}-${String(mo).padStart(2, '0')}`);
+      mo++; if (mo > 12) { mo = 1; y++; }
+    }
+    return meses.map(mes => {
+      const row: any = { periodo: mes };
+      VISITA_TIPOS_UI.forEach(t => {
+        if (tipoF !== 'todos' && t.v !== tipoF) return;
+        row[t.v] = noPeriodo.filter((v: any) => mesDe(v.data_visita) === mes && v.tipo === t.v).length;
+      });
+      return row;
+    });
+  }, [noPeriodo, tipoF]);
+
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return itens.filter((v: any) => {
+    return noPeriodo.filter((v: any) => {
+      if (tipoF !== 'todos' && v.tipo !== tipoF) return false;
       if (statusF !== 'todos' && v.status !== statusF) return false;
       if (q && !(`${v.nome || ''} ${v.responsavel || ''} ${v.observacao || ''}`.toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [itens, busca, statusF]);
+  }, [noPeriodo, busca, statusF, tipoF]);
 
   const { pageItems: filtradosPag, paginacaoProps: visitasPagProps } = usePaginacaoLocal(filtrados, 25);
 
@@ -754,6 +805,49 @@ function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
         </div>
         <p className="text-xs text-muted-foreground">Visitas pastorais e atendimentos avulsos — fora do funil de novos convertidos.</p>
       </div>
+
+      {/* Período + gráfico das visitas por mês (empilhado por tipo) + chips de filtro por tipo */}
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-muted-foreground">Período:</span>
+          {VISITA_PERIODOS.map(p => (
+            <Button key={p.m} size="sm" variant={periodoM === p.m ? 'default' : 'outline'} onClick={() => setPeriodoM(p.m)}>{p.l}</Button>
+          ))}
+          <span className="text-xs text-muted-foreground ml-auto"><strong className="text-foreground">{noPeriodo.length}</strong> visita(s) no período{tipoF !== 'todos' ? ` · ${porTipo[tipoF] || 0} de ${VISITA_TIPO_LABEL[tipoF] || tipoF}` : ''}</span>
+        </div>
+        {noPeriodo.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-10">Nenhuma visita no período.</p>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={chartData} margin={{ top: 8, right: 12, left: -14, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" />
+                <XAxis dataKey="periodo" tickFormatter={(v) => fmtPeriodo(v, 'mes')} fontSize={11} />
+                <YAxis allowDecimals={false} fontSize={11} />
+                <Tooltip labelFormatter={(v) => fmtPeriodo(v as string, 'mes')} />
+                {VISITA_TIPOS_UI.filter(t => tipoF === 'todos' || t.v === tipoF).map(t => (
+                  <Bar key={t.v} dataKey={t.v} name={t.l} stackId="v" fill={VISITA_TIPO_COR[t.v]} radius={[2, 2, 0, 0]} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button type="button" onClick={() => setTipoF('todos')}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${tipoF === 'todos' ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}>
+                Todos ({noPeriodo.length})
+              </button>
+              {VISITA_TIPOS_UI.map(t => (
+                <button key={t.v} type="button" onClick={() => setTipoF(tipoF === t.v ? 'todos' : t.v)}
+                  className={`text-xs px-2.5 py-1 rounded-full border inline-flex items-center gap-1.5 transition-colors ${tipoF === t.v ? 'text-white border-transparent' : 'border-border text-foreground hover:bg-muted/50'}`}
+                  style={tipoF === t.v ? { background: VISITA_TIPO_COR[t.v] } : undefined}>
+                  <span className="h-2 w-2 rounded-full" style={{ background: VISITA_TIPO_COR[t.v] }} />
+                  {t.l} ({porTipo[t.v] || 0})
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
