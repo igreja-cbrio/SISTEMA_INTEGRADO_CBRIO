@@ -75,11 +75,11 @@ function labelFonte(f: string): string {
   return FONTE_LABELS[f] || f;
 }
 
+// Número completo em pt-BR (1.317, não "1.3K") — pedido do gestor 2026-07-02:
+// nunca abreviar valores de views/pico/DS.
 function fmtNum(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-  return String(n);
+  return Number(n).toLocaleString('pt-BR');
 }
 
 function fmtData(d: string): string {
