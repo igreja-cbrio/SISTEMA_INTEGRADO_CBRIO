@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { solicitacoes as api, marketing as marketingApi } from '../api';
 import { playSuccessSound } from '../lib/sounds';
@@ -11,7 +11,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -64,6 +64,20 @@ const KANBAN_COLUMNS = [
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-t-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
   { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-t-emerald-600', match: ['concluido', 'avaliado'] },
   { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-t-red-500',     match: ['rejeitado', 'cancelado'] },
+];
+
+// Kanban do SOLICITANTE (aba Minhas · 2026-07-02) · colunas MACRO próprias, TODAS
+// read-only: o solicitante acompanha o pedido, não move (quem move é a área na aba
+// Atender). Não confundir com KANBAN_COLUMNS (board operacional da aba Atender).
+// ⚠️ color usa classes border-b-* LITERAIS (o header da coluna usa borda inferior);
+// montar a classe via .replace() quebraria o JIT do Tailwind (classe não gerada).
+const KANBAN_COLUNAS_SOLICITANTE = [
+  { key: 'em_aprovacao',       label: 'Em aprovação',         icon: Clock,         color: 'border-b-violet-500',  match: ['aguardando_aprovacao_origem'], readOnly: true },
+  { key: 'cotacao_financeiro', label: 'Cotação e financeiro', icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao', 'aguardando_aprovacao_financeira'], readOnly: true },
+  { key: 'na_fila',            label: 'Na fila',              icon: List,          color: 'border-b-amber-500',   match: ['pendente', 'em_analise', 'aguardando_ajuste'], readOnly: true },
+  { key: 'em_andamento',       label: 'Em andamento',         icon: ArrowRight,    color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'], readOnly: true },
+  { key: 'concluidas',         label: 'Concluídas',           icon: CheckCircle2,  color: 'border-b-emerald-600', match: ['concluido', 'avaliado'], readOnly: true },
+  { key: 'nao_aprovadas',      label: 'Não aprovadas',        icon: XCircle,       color: 'border-b-red-500',     match: ['rejeitado', 'cancelado'], readOnly: true },
 ];
 
 const STATUS_LABELS = {
@@ -210,6 +224,7 @@ export default function Solicitacoes() {
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
   const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'kanban' | 'lista'
+  const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
   // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
   // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
@@ -475,6 +490,14 @@ export default function Solicitacoes() {
     return KANBAN_COLUMNS.map(col => ({
       ...col,
       items: filtered.filter(i => (col.match || [col.key]).includes(i.status)),
+    }));
+  }, [filtered]);
+
+  // Kanban do solicitante (aba Minhas) · colunas macro read-only.
+  const colunasSolicitante = useMemo(() => {
+    return KANBAN_COLUNAS_SOLICITANTE.map(col => ({
+      ...col,
+      items: filtered.filter(i => col.match.includes(i.status)),
     }));
   }, [filtered]);
 
@@ -1151,6 +1174,14 @@ export default function Solicitacoes() {
                 className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
             </div>
           )}
+          {view === 'minhas' && (
+            <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
+              <button type="button" onClick={() => setMinhasLayout('lista')}
+                className={`px-3 h-9 text-sm ${minhasLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
+              <button type="button" onClick={() => setMinhasLayout('kanban')}
+                className={`px-3 h-9 text-sm border-l border-border ${minhasLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1236,10 +1267,39 @@ export default function Solicitacoes() {
         </div>
         )}
         </>
+      ) : minhasLayout === 'kanban' ? (
+        /* ── Kanban do solicitante (read-only) · colunas macro · sem drag ── */
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {colunasSolicitante.map(col => (
+            <div key={col.key} className="flex flex-col rounded-lg">
+              <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color}`}>
+                <col.icon className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold text-foreground">{col.label}</span>
+                <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
+              </div>
+              <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
+                <div className="space-y-3 pr-1 min-h-[60px]">
+                  {col.items.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-8">Nenhuma solicitação</p>
+                  )}
+                  {col.items.map(item => (
+                    <SolicitacaoCard
+                      key={item.id}
+                      item={item}
+                      isAdmin={false}
+                      onStatusChange={() => {}}
+                      onClick={() => setDetailItem(item)}
+                      draggable={false}
+                    />
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          ))}
+        </div>
       ) : (
-        /* ── Lista simples (minhas) · mesmo componente do modo Lista da fila ── */
-        <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
-          emptyMsg="Nenhuma solicitação para os filtros atuais." />
+        /* ── Aba Minhas · lista agrupada com rastreio (2026-07-02) ── */
+        <MinhasLista items={filtered} onOpen={setDetailItem} profileId={profile?.id} />
       )}
 
       {/* Detail dialog */}
@@ -1272,6 +1332,222 @@ const AREA_LABELS = {
   ti: 'TI', rh: 'RH', financeiro: 'Financeiro', marketing: 'Marketing', producao: 'Produção',
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+// Rastreio "tipo encomenda" (2026-07-02) · o solicitante vê em qual etapa o
+// pedido está, com quem está agora e há quanto tempo. Etapas macro derivadas
+// do fluxo real do backbone (portão de origem → cotação → financeiro →
+// atendimento → entrega → conclusão). Funções puras, só leitura: nenhum
+// status/endpoint de decisão é alterado por aqui.
+// ═══════════════════════════════════════════════════════════════════════
+const ETAPA_DO_STATUS = {
+  aguardando_aprovacao_origem: 'aprovacao',
+  em_cotacao: 'cotacao',
+  aguardando_aprovacao_financeira: 'financeiro',
+  pendente: 'atendimento',
+  em_analise: 'atendimento',
+  aprovado: 'atendimento',
+  em_atendimento: 'atendimento',
+  aguardando_entrega: 'entrega',
+  concluido: 'concluida',
+  avaliado: 'concluida',
+};
+
+function etapasDoItem(item) {
+  const encerradaOk = ['concluido', 'avaliado'].includes(item.status);
+  // Aprovação de origem só aparece se o pedido passou/passará por ela
+  // (dispensada ou nula = fluxo sem o portão · linhas antigas).
+  const passaAprovacao = !!item.aprovacao_origem_status && item.aprovacao_origem_status !== 'dispensada';
+  const temCotacao = ['compras', 'servico'].includes(item.categoria);
+  const temFinanceiro = !!item.precisa_aprovacao_financeira;
+  const temEntrega = item.categoria === 'compras';
+
+  const etapas = [{ key: 'enviada', label: 'Enviada', data: item.created_at }];
+  if (passaAprovacao) etapas.push({ key: 'aprovacao', label: 'Aprovação', data: item.aprovacao_origem_em });
+  if (temCotacao) etapas.push({ key: 'cotacao', label: 'Cotação', data: item.cotacao_em });
+  if (temFinanceiro) etapas.push({ key: 'financeiro', label: 'Financeiro', data: item.aprovado_financeiro_em });
+  etapas.push({ key: 'atendimento', label: 'Atendimento', data: item.respondido_em });
+  if (temEntrega) etapas.push({ key: 'entrega', label: 'Entrega', data: null });
+  etapas.push({ key: 'concluida', label: 'Concluída', data: item.concluido_em });
+
+  // Etapa ativa: mapeada do status atual. Terminais (aguardando_ajuste/rejeitado/
+  // cancelado) não têm etapa própria → fica na etapa em que estava (1º portão sem
+  // timestamp cumprido; se todos cumpridos, estava no atendimento). Etapa anterior
+  // à ativa conta como completa mesmo sem timestamp (ex.: compra urgente pula a
+  // cotação · o status já avançou).
+  let atualIdx = etapas.findIndex(e => e.key === ETAPA_DO_STATUS[item.status]);
+  if (atualIdx < 0) {
+    const gates = { aprovacao: item.aprovacao_origem_em, cotacao: item.cotacao_em, financeiro: item.aprovado_financeiro_em };
+    atualIdx = etapas.findIndex(e => e.key in gates && !gates[e.key]);
+    if (atualIdx < 0) atualIdx = etapas.findIndex(e => e.key === 'atendimento');
+  }
+
+  const terminal = item.status === 'rejeitado'
+    ? { tipo: 'rejeitada', motivo: item.aprovacao_origem_status === 'rejeitada' ? (item.aprovacao_origem_motivo || null) : null }
+    : item.status === 'cancelado'
+      ? { tipo: 'cancelada' }
+      : item.status === 'aguardando_ajuste'
+        ? { tipo: 'ajuste' }
+        : null;
+
+  return {
+    etapas: etapas.map((e, i) => ({
+      ...e,
+      done: encerradaOk || i < atualIdx,
+      atual: !encerradaOk && i === atualIdx,
+    })),
+    terminal,
+  };
+}
+
+// Há quanto tempo o pedido está parado na etapa atual · updated_at reflete o
+// último movimento (fallback created_at).
+function tempoNaEtapa(item) {
+  const ref = item.updated_at || item.created_at;
+  if (!ref) return '';
+  const dias = Math.max(0, Math.floor((Date.now() - new Date(ref).getTime()) / 86400000));
+  if (dias === 0) return 'hoje';
+  if (dias === 1) return 'há 1 dia';
+  return `há ${dias} dias`;
+}
+
+// "Está com quem" · papel + tempo. Não expõe nome além do que a UI atual já
+// expõe (aprovadores de origem, que a faixa violeta já mostra hoje).
+function comQuemEsta(item) {
+  const tempo = tempoNaEtapa(item);
+  const suf = tempo ? ` · ${tempo}` : '';
+  switch (item.status) {
+    case 'aguardando_aprovacao_origem': {
+      if (item.aprovacao_origem_status === 'triagem') return `Em triagem · definindo o aprovador${suf}`;
+      const aprovadores = Array.isArray(item.aprovacao_origem_aprovadores)
+        ? item.aprovacao_origem_aprovadores.filter(Boolean) : [];
+      const quem = aprovadores.length
+        ? aprovadores.join(' ou ')
+        : (item.aprovacao_origem_diretor?.name || 'diretor de origem');
+      return `Aguardando aprovação de ${quem}${suf}`;
+    }
+    case 'em_cotacao':
+      return `Com a equipe de compras (em cotação)${suf}`;
+    case 'aguardando_aprovacao_financeira':
+      return `Com o financeiro${suf}`;
+    case 'pendente':
+    case 'em_analise':
+    case 'aprovado':
+    case 'em_atendimento': {
+      const area = item.area_responsavel
+        ? (AREA_LABELS[item.area_responsavel] || item.area_responsavel)
+        : 'área responsável';
+      return `Com a equipe de ${area}${suf}`;
+    }
+    case 'aguardando_entrega':
+      return 'Compra a caminho';
+    case 'aguardando_ajuste':
+      return 'Com você · precisa de ajuste';
+    default:
+      return null;
+  }
+}
+
+// Stepper de rastreio da solicitação · compacto (card da aba Minhas) ou completo
+// (topo do DetailDialog · bolinhas maiores com rótulo e data nas concluídas).
+// Padrão visual inspirado na timeline do MLTrackingBlock.
+function TrackerSolicitacao({ item, compacto = false }) {
+  const { etapas, terminal } = etapasDoItem(item);
+  const substituiStepper = terminal && terminal.tipo !== 'ajuste';
+  // Em ajuste a faixa âmbar já diz "com você" · não repete na linha de quem.
+  const quem = terminal?.tipo === 'ajuste' ? null : comQuemEsta(item);
+  const etapaAtualLabel = etapas.find(e => e.atual)?.label || 'Concluída';
+  const fmtData = (iso) => iso
+    ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+    : null;
+
+  const faixaTerminal = substituiStepper && (
+    <div className={`rounded-md border px-3 ${compacto ? 'py-1.5 text-[11px]' : 'py-2 text-xs'} ${
+      terminal.tipo === 'rejeitada'
+        ? 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400'
+        : 'bg-muted border-border text-muted-foreground'
+    }`}>
+      {terminal.tipo === 'rejeitada'
+        ? <><span className="font-semibold">Não aprovada</span>{terminal.motivo ? ` · ${terminal.motivo}` : ''}</>
+        : <span className="font-semibold">Cancelada</span>}
+    </div>
+  );
+
+  const faixaAjuste = terminal?.tipo === 'ajuste' ? (
+    <div className={`rounded-md border border-amber-500/30 bg-amber-500/10 px-3 text-amber-700 dark:text-amber-400 ${compacto ? 'py-1.5 text-[11px]' : 'py-2 text-xs'}`}>
+      <span className="font-semibold">Devolvida pra você</span> · precisa de ajuste
+    </div>
+  ) : null;
+
+  if (compacto) {
+    if (substituiStepper) {
+      return <div className="mt-2 pt-2 border-t border-border">{faixaTerminal}</div>;
+    }
+    return (
+      <div className="mt-2 pt-2 border-t border-border space-y-1.5">
+        {faixaAjuste}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center flex-1 min-w-0">
+            {etapas.map((et, i) => (
+              <Fragment key={et.key}>
+                {i > 0 && (
+                  <div className={`h-px flex-1 min-w-[8px] ${etapas[i - 1].done ? 'bg-primary' : 'bg-border'}`} />
+                )}
+                <div
+                  title={et.label}
+                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                    et.done ? 'bg-primary'
+                      : et.atual ? 'bg-primary/25 ring-2 ring-primary animate-pulse motion-reduce:animate-none'
+                        : 'bg-muted border border-border'
+                  }`}
+                />
+              </Fragment>
+            ))}
+          </div>
+          <span className="text-[10px] font-medium text-foreground shrink-0">{etapaAtualLabel}</span>
+        </div>
+        {quem && <p className="text-xs text-muted-foreground">{quem}</p>}
+      </div>
+    );
+  }
+
+  // Versão completa (topo do DetailDialog)
+  return (
+    <div className="space-y-3 pb-3 border-b border-border">
+      {substituiStepper ? faixaTerminal : (
+        <>
+          {faixaAjuste}
+          <div className="flex items-start pt-1">
+            {etapas.map((et, i) => (
+              <div key={et.key} className="relative flex-1 flex flex-col items-center min-w-0">
+                {i > 0 && (
+                  <div
+                    className={`absolute top-[13px] h-0.5 w-full ${etapas[i - 1].done ? 'bg-primary' : 'bg-border'}`}
+                    style={{ left: '-50%' }}
+                  />
+                )}
+                <div className={`relative z-[1] h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-semibold ${
+                  et.done ? 'bg-primary text-primary-foreground'
+                    : et.atual ? 'bg-primary/15 text-primary ring-2 ring-primary animate-pulse motion-reduce:animate-none'
+                      : 'bg-muted text-muted-foreground'
+                }`}>
+                  {et.done ? <Check className="h-3.5 w-3.5" /> : i + 1}
+                </div>
+                <span className={`text-[10px] mt-1 text-center leading-tight ${et.done || et.atual ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                  {et.label}
+                </span>
+                {et.done && fmtData(et.data) && (
+                  <span className="text-[9px] text-muted-foreground">{fmtData(et.data)}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {!substituiStepper && quem && <p className="text-xs text-muted-foreground">{quem}</p>}
+    </div>
+  );
+}
+
 // "SLA estourando" = não pausado/encerrado E prazo ativo vencido ou < 24h pra
 // vencer (mesma régua do getSlaBadge, que mostra badge quando < 24h ou atrasado).
 function isSlaEstourando(item) {
@@ -1284,7 +1560,9 @@ function isSlaEstourando(item) {
 
 // Lista plana de solicitações · reusada na aba "Minhas" e no modo Lista da fila
 // "Para Atender" (a "Caixa da Área": filtre por área e veja a fila daquela área).
-function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg }) {
+// comTracker (aba Minhas): adiciona o stepper compacto + "está com quem" em cada
+// card — e o tracker passa a cobrir as linhas antigas de aprovação/rejeição.
+function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = false }) {
   if (!items || items.length === 0) {
     return (
       <Card className="p-8 text-center">
@@ -1342,24 +1620,91 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg }) {
                 <span className="text-xs text-muted-foreground">{date}</span>
               </div>
             </div>
-            {aguardandoOrigem && (
+            {!comTracker && aguardandoOrigem && (
               <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
                 {emTriagem
                   ? <>⏳ Em triagem · definindo o aprovador{item.eh_urgente ? ' · urgente' : ''}</>
                   : <>⏳ Aguardando aprovação de <span className="font-medium">{aprovadoresLabel}</span>{item.eh_urgente ? ' · urgente' : ''}</>}
               </p>
             )}
-            {foiRejeitada && item.aprovacao_origem_motivo && (
+            {!comTracker && foiRejeitada && item.aprovacao_origem_motivo && (
               <p className="text-xs text-red-700 dark:text-red-400 mt-2">
                 <span className="font-medium">Rejeitada:</span> {item.aprovacao_origem_motivo}
               </p>
             )}
-            {item.descricao && !aguardandoOrigem && !foiRejeitada && (
+            {item.descricao && (comTracker || (!aguardandoOrigem && !foiRejeitada)) && (
               <p className="text-xs text-muted-foreground mt-2 line-clamp-1">{item.descricao}</p>
             )}
+            {comTracker && <TrackerSolicitacao item={item} compacto />}
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+// Aba "Minhas Solicitações" · modo Lista agrupado em 3 blocos (2026-07-02):
+// "Precisa de você" (ajuste pendente + concluídas sem avaliação NPS · destaque no
+// topo) · "Em andamento" (resto não-terminal) · "Encerradas" (colapsável · começa
+// recolhida se houver mais de 5). Cada card ganha o rastreio compacto (comTracker).
+const STATUS_ENCERRADOS_MINHAS = ['concluido', 'avaliado', 'rejeitado', 'cancelado'];
+function MinhasLista({ items, onOpen, profileId }) {
+  // null = usuário ainda não mexeu · abre por padrão só quando são poucas (<= 5).
+  const [encerradasToggle, setEncerradasToggle] = useState(null);
+  const precisaDeVoce = (items || []).filter(i =>
+    i.status === 'aguardando_ajuste' ||
+    (i.status === 'concluido' && i.solicitante_id === profileId && i.nps_nota == null));
+  const idsPrecisa = new Set(precisaDeVoce.map(i => i.id));
+  const emAndamento = (items || []).filter(i => !idsPrecisa.has(i.id) && !STATUS_ENCERRADOS_MINHAS.includes(i.status));
+  const encerradas = (items || []).filter(i => !idsPrecisa.has(i.id) && STATUS_ENCERRADOS_MINHAS.includes(i.status));
+  const encerradasAbertas = encerradasToggle ?? encerradas.length <= 5;
+
+  if (!items || items.length === 0) {
+    return (
+      <Card className="p-8 text-center">
+        <List className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+        <p className="text-muted-foreground">Nenhuma solicitação para os filtros atuais.</p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {precisaDeVoce.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">Precisa de você</span>
+            <Badge className="text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-400 px-1.5">{precisaDeVoce.length}</Badge>
+          </div>
+          <ListaSolicitacoes items={precisaDeVoce} onOpen={onOpen} profileId={profileId} comTracker />
+        </section>
+      )}
+      {emAndamento.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Em andamento</span>
+            <Badge variant="secondary" className="text-[10px] px-1.5">{emAndamento.length}</Badge>
+          </div>
+          <ListaSolicitacoes items={emAndamento} onOpen={onOpen} profileId={profileId} comTracker />
+        </section>
+      )}
+      {encerradas.length > 0 && (
+        <section>
+          <button
+            type="button"
+            onClick={() => setEncerradasToggle(!encerradasAbertas)}
+            className="flex items-center gap-2 mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${encerradasAbertas ? '' : '-rotate-90'}`} />
+            Encerradas
+            <Badge variant="secondary" className="text-[10px] px-1.5">{encerradas.length}</Badge>
+            <span className="normal-case font-normal text-[11px]">{encerradasAbertas ? 'ocultar' : 'mostrar'}</span>
+          </button>
+          {encerradasAbertas && (
+            <ListaSolicitacoes items={encerradas} onOpen={onOpen} profileId={profileId} comTracker />
+          )}
+        </section>
+      )}
     </div>
   );
 }
@@ -1938,6 +2283,8 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
+          {/* Rastreio do pedido · etapas macro + com quem está (versão completa) */}
+          <TrackerSolicitacao item={item} />
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <span className="text-muted-foreground">Solicitante</span>
