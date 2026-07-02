@@ -2195,6 +2195,7 @@ export const voluntariado = {
     update: (id, data) => put(`/voluntariado/emails/${id}`, data),
     remove: (id) => del(`/voluntariado/emails/${id}`),
     resolverDestinatarios: (segmento) => post('/voluntariado/emails/resolver-destinatarios', { segmento }),
+    destinatarios: (id) => get(`/voluntariado/emails/${id}/destinatarios`),
     uploadImagem: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/emails/upload-imagem', fd); },
     gerarIa: (data) => post('/voluntariado/emails/gerar-ia', data, { timeout: 120_000 }),
     preview: (corpo_html, incluir_assinatura) => post('/voluntariado/emails/preview', { corpo_html, incluir_assinatura }),
