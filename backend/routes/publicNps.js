@@ -39,6 +39,11 @@ router.get('/:token', publicLimiter, async (req, res) => {
     if (data.data_fim && new Date(data.data_fim) < new Date()) {
       return res.status(400).json({ error: 'Pesquisa encerrada' });
     }
+    // A pesquisa é IGUAL pra todo mundo (varia só pelo token na URL) → cacheável
+    // na borda do Vercel. Num culto, dezenas abrindo ao mesmo tempo passam a ser
+    // servidas do CDN (rápido, sem bater no servidor, alivia o pico por IP).
+    // s-maxage curto: edição da pesquisa propaga em ~30s. Só o sucesso é cacheado.
+    res.set('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
     res.json(data);
   } catch (e) {
     console.error('[publicNps] get:', e.message);
