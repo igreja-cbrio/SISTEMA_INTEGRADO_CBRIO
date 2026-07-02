@@ -407,24 +407,55 @@ async function fetchVideoRetentionCurve(channelId, videoId, startDate, endDate) 
 // Retorna { peak, avg } · null se vídeo não foi live OU se Analytics não tem dado ainda.
 async function fetchLivePeakConcurrentViewers(channelId, videoId, startDate, endDate) {
   const { token, channel_id } = await getValidAccessToken(channelId);
-  const params = new URLSearchParams({
-    ids: `channel==${channel_id}`,
-    startDate,
-    endDate,
-    metrics: 'peakConcurrentViewers,averageConcurrentViewers',
-    filters: `video==${videoId}`,
-  });
-  const res = await fetch(`${ANALYTICS}/reports?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Analytics peakConcurrentViewers falhou: ${res.status} ${t.slice(0, 200)}`);
+
+  // ⚠️ O Google responde 500 genérico pra COMBINAÇÕES não suportadas dessa
+  // métrica (visto em prod 2026-07-01/02, mesmo com a live processada há dias).
+  // peakConcurrentViewers pertence aos relatórios de "playback detail" — a doc
+  // o lista junto da dimensão liveOrOnDemand. Tentamos formas em sequência:
+  //   1) forma antiga (sem dimensão · funcionou no passado)
+  //   2) dimensions=liveOrOnDemand + filtro liveOrOnDemand==LIVE
+  //   3) só peakConcurrentViewers com a dimensão (sem avg)
+  // endDate estendido +1d: live de 20h BRT cruza a meia-noite UTC e o dado pode
+  // cair no dia seguinte da agregação.
+  const endMais1 = (() => {
+    const d = new Date(`${endDate}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const shapes = [
+    { metrics: 'peakConcurrentViewers,averageConcurrentViewers', filters: `video==${videoId}` },
+    { metrics: 'peakConcurrentViewers,averageConcurrentViewers', dimensions: 'liveOrOnDemand', filters: `video==${videoId};liveOrOnDemand==LIVE` },
+    { metrics: 'peakConcurrentViewers', dimensions: 'liveOrOnDemand', filters: `video==${videoId};liveOrOnDemand==LIVE` },
+  ];
+
+  let lastErr = null;
+  for (const shape of shapes) {
+    const params = new URLSearchParams({
+      ids: `channel==${channel_id}`,
+      startDate,
+      endDate: endMais1,
+      ...shape,
+    });
+    const res = await fetch(`${ANALYTICS}/reports?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      lastErr = `Analytics peakConcurrentViewers falhou: ${res.status} ${t.slice(0, 200)}`;
+      continue; // tenta a próxima forma
+    }
+    const data = await res.json();
+    const temDim = !!shape.dimensions;
+    // Com dimensão a 1ª coluna é o valor da dimensão ('LIVE') · métricas depois.
+    const row = temDim
+      ? (data.rows || []).find(r => r[0] === 'LIVE') || (data.rows || [])[0]
+      : (data.rows || [])[0];
+    if (!row) return { peak: null, avg: null };
+    const base = temDim ? 1 : 0;
+    return { peak: row[base] || null, avg: row[base + 1] ?? null };
   }
-  const data = await res.json();
-  const row = (data.rows || [])[0];
-  if (!row) return { peak: null, avg: null };
-  return { peak: row[0] || null, avg: row[1] || null };
+  throw new Error(lastErr || 'Analytics peakConcurrentViewers falhou');
 }
 
 // Analytics: views separadas por inscrito vs nao-inscrito.
