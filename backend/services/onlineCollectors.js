@@ -42,6 +42,21 @@ function dataMaisDias(base, dias) {
   return d;
 }
 
+// Início REAL do culto em BRT (Brasil aboliu o horário de verão em 2019 ·
+// offset fixo -03:00, mesma convenção do pcDateToBRT no planningCenter).
+// ⚠️ O padrão antigo `new Date(data+'T00:00:00')` + setHours usa o fuso da
+// MÁQUINA — no Vercel (UTC) a âncora ficava 3h ADIANTADA: a janela [-30min,+4h]
+// do culto de quarta 20h BRT virava [19:30, 24:00] UTC em vez de [22:30, 03:00],
+// e o monitor DESCARTAVA amostras do fim do culto (bug pego em 2026-07-01:
+// amostra de 21:17 BRT caiu fora e o pico ficou na amostra do início, 99).
+function horarioCultoBRT(dataStr, recurrenceTime) {
+  const [h, m] = (recurrenceTime || '').split(':').map(Number);
+  if (isNaN(h)) return null;
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m || 0).padStart(2, '0');
+  return new Date(`${dataStr}T${hh}:${mm}:00-03:00`);
+}
+
 // ---------------------------------------------------------------------------
 // findCultoAtual · descobre qual slot de culto deveria estar ativo agora
 // ---------------------------------------------------------------------------
@@ -68,10 +83,8 @@ async function findCultoAtual({ fallbackUltimoDoDia = false } = {}) {
   for (const c of cultos) {
     const st = c.vol_service_types;
     if (!st?.has_online) continue;
-    const [h, m] = (st.recurrence_time || '').split(':').map(Number);
-    if (isNaN(h)) continue;
-    const horario = new Date(c.data + 'T00:00:00');
-    horario.setHours(h, m || 0, 0, 0);
+    const horario = horarioCultoBRT(c.data, st.recurrence_time);
+    if (!horario) continue;
     comHorario.push({ culto: c, horario, minutosDoInicio: (now - horario) / 60000 });
   }
   if (!comHorario.length) return null;
@@ -612,11 +625,8 @@ async function backfillCultoVideoIds() {
   for (const c of cultos) {
     const st = c.vol_service_types;
     if (!st?.has_online) continue;
-    const [h, m] = (st.recurrence_time || '').split(':').map(Number);
-    if (isNaN(h)) continue;
-
-    const horario = new Date(c.data + 'T00:00:00');
-    horario.setHours(h, m || 0, 0, 0);
+    const horario = horarioCultoBRT(c.data, st.recurrence_time);
+    if (!horario) continue;
     const inicio = new Date(horario.getTime() - JANELA_LIVE_MIN_ANTES * 60_000);
     const fim    = new Date(horario.getTime() + JANELA_LIVE_MIN_DEPOIS * 60_000);
 
@@ -660,7 +670,7 @@ async function catchUpMetricas({ limit = 5 } = {}) {
     .from('cultos')
     .select(`
       id, data, youtube_video_id,
-      online_pico,
+      online_pico, online_pico_verificado,
       online_ds, online_ddus,
       online_subs_ganhos, online_views_inscritos
     `)
@@ -670,12 +680,18 @@ async function catchUpMetricas({ limit = 5 } = {}) {
   if (error) throw error;
   if (!cultosCandidatos?.length) return { ok: true, processados: 0, remaining: 0, motivo: 'sem_cultos_com_video' };
 
+  // Pico ainda por conferir contra a Analytics (>= D+3 · self-heal de pico
+  // subamostrado pelo live-monitor). A flag evita reprocessar pra sempre.
+  const picoPorVerificar = (c) =>
+    c.online_pico_verificado === false && diasDesdeData(c.data) >= PICO_ANALYTICS_DELAY_DIAS;
+
   // Pre-filtra cultos que ainda precisam de pelo menos 1 metrica
   // (pico, DS, DDUS, subs ou sub_status faltando · trafico/retencao_curva não
   // são checados aqui pra simplicidade · o loop interno faz NULL-check
   // antes de chamar API).
   const pendentes = cultosCandidatos.filter(c =>
     !c.online_pico || c.online_pico === 0 ||
+    picoPorVerificar(c) ||
     !c.online_ds || c.online_ds === 0 ||
     !c.online_ddus || c.online_ddus === 0 ||
     c.online_subs_ganhos === null || c.online_subs_ganhos === undefined ||
@@ -697,16 +713,26 @@ async function catchUpMetricas({ limit = 5 } = {}) {
     const inicioDplus1 = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 1));
     const fimDplus7    = fmtData(dataMaisDias(new Date(c.data + 'T00:00:00'), 7));
 
-    // 2a-pico. Pico ao vivo · recovery post-live via peakConcurrentViewers.
+    // 2a-pico. Pico ao vivo · recovery/UPGRADE via peakConcurrentViewers.
     // So tenta depois que o Analytics processa (~3 dias · antes disso o Google
-    // 500a). Idempotente (so age se vazio) e a falha NÃO pinta o banner de
-    // vermelho · live-monitor e a fonte primaria do pico.
-    if ((!c.online_pico || c.online_pico === 0) && diasDesdeData(c.data) >= PICO_ANALYTICS_DELAY_DIAS) {
+    // 500a). O peak da Analytics e AUTORITATIVO: alem de preencher pico vazio,
+    // corrige PRA CIMA pico subamostrado pelo live-monitor (cron do GitHub
+    // atrasa e pode amostrar so o comeco da live · caso real 2026-07-01: pico
+    // gravado 99 na abertura). Nunca corrige pra baixo. `online_pico_verificado`
+    // marca o culto como conferido; erro da API (500) NÃO marca → retenta amanhã;
+    // peak ausente apos D+10 desiste (video não foi live / Analytics sem dado).
+    if ((!c.online_pico || c.online_pico === 0 || c.online_pico_verificado === false)
+        && diasDesdeData(c.data) >= PICO_ANALYTICS_DELAY_DIAS) {
       try {
         const live = await yt.fetchLivePeakConcurrentViewers(null, c.youtube_video_id, c.data, c.data);
-        if (live.peak) {
-          await supabase.from('cultos').update({ online_pico: live.peak }).eq('id', c.id);
+        const upd = {};
+        if (live.peak && live.peak > (c.online_pico || 0)) {
+          upd.online_pico = live.peak;
           out.pico++;
+        }
+        if (live.peak || diasDesdeData(c.data) >= 10) upd.online_pico_verificado = true;
+        if (Object.keys(upd).length) {
+          await supabase.from('cultos').update(upd).eq('id', c.id);
         }
       } catch (e) {
         out.erros.push({ culto: c.id, metrica: 'pico', msg: e.message });

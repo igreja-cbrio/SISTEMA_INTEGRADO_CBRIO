@@ -33,11 +33,11 @@ const STATUS_INFO: Record<string, { label: string; cor: string; corBg: string }>
   sem_dado: { label: 'Sem dado',  cor: 'text-muted-foreground',                   corBg: 'bg-gray-400'    },
 };
 
+// Número completo em pt-BR (1.317, não "1.3K") — pedido do gestor 2026-07-02:
+// nunca abreviar valores de views/pico/DS.
 function formatNumber(n: number | null | undefined) {
   if (n === null || n === undefined) return '—';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-  return String(n);
+  return Number(n).toLocaleString('pt-BR');
 }
 
 function formatDelta(n: number | null | undefined) {
