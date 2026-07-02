@@ -146,8 +146,10 @@ async function request(path, opts = {}) {
   return res.json();
 }
 
-const get = (path) => request(path);
-const post = (path, body) => request(path, { method: 'POST', body: JSON.stringify(body) });
+const get = (path, opts) => request(path, { ...opts });
+// opts opcional (ex.: { timeout }) pra operações longas — sync do Planning
+// Center, imports — que legitimamente passam do timeout padrão de 30s.
+const post = (path, body, opts) => request(path, { method: 'POST', body: JSON.stringify(body), ...opts });
 const put = (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) });
 const patch = (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) });
 const del = (path) => request(path, { method: 'DELETE' });
@@ -2317,10 +2319,13 @@ export const voluntariado = {
   },
   // Self check-in
   selfCheckin: (data) => post('/voluntariado/self-checkin', data),
-  // Sync
-  sync: () => post('/voluntariado/sync'),
-  syncHistorical: (startDate, endDate) => post('/voluntariado/sync-historical', { startDate, endDate }),
-  syncAuto: () => post('/voluntariado/sync-auto'),
+  // Sync · o sync do Planning Center é lento (todos os service types + planos +
+  // pessoas + QR + avatares). O backend roda com maxDuration 300s (vercel.json);
+  // por isso o cliente espera até ~300s em vez do padrão de 30s (que abortava e
+  // mostrava "tempo esgotado" mesmo com o sync completando no servidor).
+  sync: () => post('/voluntariado/sync', {}, { timeout: 300000 }),
+  syncHistorical: (startDate, endDate) => post('/voluntariado/sync-historical', { startDate, endDate }, { timeout: 300000 }),
+  syncAuto: () => post('/voluntariado/sync-auto', {}, { timeout: 300000 }),
   syncDiagnostics: () => get('/voluntariado/diagnostics'),
   pcoCpfCheck: () => get('/voluntariado/pco-cpf-check'),
   backfillCpf: () => post('/voluntariado/backfill-cpf'),

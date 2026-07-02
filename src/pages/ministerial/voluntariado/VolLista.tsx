@@ -111,6 +111,7 @@ function TodosList() {
   const { pageItems: filteredPag, paginacaoProps: volPagProps } = usePaginacaoLocal(filtered, 25);
 
   const handleSync = () => {
+    toast.info('Sincronizando com o Planning Center… pode levar até 1 minuto.');
     sync.mutate(undefined, {
       onSuccess: (data: any) => {
         queryClient.invalidateQueries({ queryKey: ['vol', 'volunteers-pool'] });
