@@ -15,6 +15,10 @@ const compression = require('compression');
 const path = require('path');
 
 const app = express();
+// Atrás do proxy do Vercel (1 hop) · faz req.ip = IP real do cliente (x-forwarded-for)
+// em vez do IP do proxy. Necessário pro rate-limit chavear por usuário e não tratar
+// todo mundo como o mesmo IP. ('1' e não 'true' · evita spoofing e o warning do express-rate-limit.)
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
 // Request handler do Sentry (precisa vir antes de qualquer middleware
@@ -59,7 +63,10 @@ app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 500 : 5000),
   message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
-  skip: () => process.env.NODE_ENV !== 'production',
+  // Isenta o NPS público do teto global · num culto, 100 pessoas no MESMO WiFi
+  // (1 IP público) estourariam o limite por-IP. O NPS público tem limiter próprio
+  // generoso (ver mount abaixo · routes/publicNps.js).
+  skip: (req) => process.env.NODE_ENV !== 'production' || req.path.startsWith('/api/public/nps'),
 }));
 app.use(hpp());
 app.use(compression());
@@ -110,6 +117,11 @@ const publicLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+// NPS público montado ANTES do publicLimiter estrito (30/15min) · num culto o link
+// é aberto por dezenas ao mesmo tempo. Como o Express casa a rota específica
+// primeiro, o NPS não passa pelo teto de 30 · usa o limiter próprio (generoso) do
+// routes/publicNps.js. Os demais forms públicos seguem no publicLimiter.
+app.use('/api/public/nps', require('./routes/publicNps'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
@@ -174,7 +186,7 @@ app.use('/api/gestao', require('./routes/gestao'));
 app.use('/api/dados-brutos', require('./routes/dadosBrutos'));
 app.use('/api/dashboard-semanal', require('./routes/dashboardSemanal'));
 app.use('/api/nps', require('./routes/nps'));
-app.use('/api/public/nps', require('./routes/publicNps'));
+// (/api/public/nps montado acima, antes do publicLimiter estrito)
 app.use('/api/planejamento', require('./routes/planejamento'));
 app.use('/api/apresentacoes', require('./routes/apresentacoes'));
 app.use('/api/lgpd', require('./routes/lgpd'));
