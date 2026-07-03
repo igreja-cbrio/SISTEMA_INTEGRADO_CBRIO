@@ -785,8 +785,9 @@ function ModalProducao({ culto, onClose, onSaved }) {
 // ── "Fazer solicitação" a partir de uma ocorrência ───────────────────────────
 // Reusa o form OFICIAL de Solicitações (NovaSolicitacaoForm) prefillado com o
 // contexto do culto — o pedido segue o fluxo normal (aprovação de origem, SLA,
-// fila da área). Categorias liberadas aqui: Serviços/manutenção (default), TI
-// (internet caiu) e Compras (equipamento quebrou e precisa repor).
+// fila da área). Categorias liberadas aqui: Serviços/manutenção, TI (internet
+// caiu) e Compras (equipamento quebrou e precisa repor) — SEM default: a pessoa
+// escolhe ativamente quem resolve (decisão do Marcos · 2026-07-03).
 function SolicitacaoOcorrenciaModal({ ocorrencia, culto, onClose, onVinculada }) {
   const [dirty, setDirty] = useState(false);
   const { tentarFechar, backdropProps } = useConfirmarSaida(dirty, onClose);
@@ -798,7 +799,6 @@ function SolicitacaoOcorrenciaModal({ ocorrencia, culto, onClose, onVinculada })
   // Urgente pré-marcado SÓ na severidade crítica (sempre desmarcável) · decisão
   // do Marcos 2026-07-03 · evita inflar o radar de urgência frequente.
   const prefill = {
-    categoria: 'infraestrutura',
     titulo: ocorrencia.descricao.length > 80 ? `${ocorrencia.descricao.slice(0, 77)}…` : ocorrencia.descricao,
     descricao: [
       `Ocorrência registrada pela Produção durante o culto ${cabecalho}.`,
