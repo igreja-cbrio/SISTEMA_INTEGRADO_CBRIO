@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
-const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -208,7 +208,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
 // Mesma lógica do qr-lookup, mas resolve direto pelo CPF (sem token).
 // Usado no totem como alternativa pra quem não tem a carteirinha digital.
 // CPF e' normalizado pra so digitos antes do match.
-router.get('/cpf-lookup/:cpf', async (req, res) => {
+router.get('/cpf-lookup/:cpf', authorizeModule('membros', 1), async (req, res) => {
   try {
     const cpf = String(req.params.cpf || '').replace(/\D/g, '');
     if (!cpf || cpf.length !== 11) {
@@ -327,7 +327,7 @@ router.get('/cpf-lookup/:cpf', async (req, res) => {
 //   ?busca=...         busca por nome
 //   ?papel=...         filtra por papel: voluntário|visitante|grupo_ativo|
 //                      contribuinte|inscrito_next|sem_papel
-router.get('/membros', async (req, res) => {
+router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
   try {
     const { status, busca, papel, faixa } = req.query;
     let query = supabase
@@ -403,7 +403,7 @@ router.get('/membros', async (req, res) => {
 });
 
 // GET /api/membresia/membros/:id (detalhe com trilha e histórico)
-router.get('/membros/:id', async (req, res) => {
+router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
   try {
     const id = req.params.id;
     const anoAtual = new Date().getFullYear();
@@ -608,7 +608,7 @@ router.get('/membros/:id', async (req, res) => {
 // GET /api/membresia/orfaos-stats · conta voluntários e batismos sem
 // link com mem_membros. Ideal = 0 após a migration 20260515500000.
 // ────────────────────────────────────────────────────────────────────────
-router.get('/orfaos-stats', async (_req, res) => {
+router.get('/orfaos-stats', authorizeModule('membros', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase
       .from('vw_membros_orfaos_stats')
@@ -788,7 +788,7 @@ router.patch('/trilha/:id', authorize('admin', 'diretor'), async (req, res) => {
 // ── Famílias ──
 
 // GET /api/membresia/familias
-router.get('/familias', async (req, res) => {
+router.get('/familias', authorizeModule('membros', 1), async (req, res) => {
   try {
     const { busca } = req.query;
     let query = supabase
@@ -924,7 +924,7 @@ router.post('/membros/:id/mesma-familia', authorize('admin', 'diretor'), async (
 
 // GET /api/membresia/membros/:id/wifi — histórico de conexões na rede wifi da
 // igreja deste membro (via wifi_visitantes.membro_id → wifi_conexoes).
-router.get('/membros/:id/wifi', async (req, res) => {
+router.get('/membros/:id/wifi', authorizeModule('membros', 1), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: vis } = await supabase.from('wifi_visitantes').select('id').eq('membro_id', id).is('deleted_at', null);
@@ -968,7 +968,7 @@ router.get('/membros/:id/wifi', async (req, res) => {
 
 // GET /membros/:id/reconhecimento-facial — cada vez que o membro foi reconhecido
 // pela câmera (data + hora), pra ver a frequência por reconhecimento facial.
-router.get('/membros/:id/reconhecimento-facial', async (req, res) => {
+router.get('/membros/:id/reconhecimento-facial', authorizeModule('membros', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('face_presencas')
       .select('reconhecido_em, entrada, confianca, culto_id')
@@ -1565,7 +1565,7 @@ router.patch('/grupo-membros/:id/sair', authorize('admin', 'diretor'), async (re
 // ── Contribuições (Generosidade) ──
 
 // GET /api/membresia/contribuicoes (lista com filtros)
-router.get('/contribuicoes', async (req, res) => {
+router.get('/contribuicoes', authorizeModule('membros-financeiro', 2), async (req, res) => {
   try {
     const { membro_id, tipo, data_inicio, data_fim, limit } = req.query;
     let query = supabase
@@ -2302,7 +2302,7 @@ router.get('/kpis', async (req, res) => {
 //          cadastro, mas detecta e oferece merge".
 // ============================================================================
 
-router.get('/duplicados', async (req, res) => {
+router.get('/duplicados', authorizeModule('membresia', 2), async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const { data, error } = await supabase
@@ -2374,7 +2374,7 @@ router.post('/duplicados/ignorar', authorize('admin', 'diretor'), async (req, re
 
 // GET /api/membresia/membros/:id/possiveis-duplicados — duplicados PROVÁVEIS da
 // pessoa aberta (mesmo nome/telefone/email/cpf), pra fundir direto no detalhe.
-router.get('/membros/:id/possiveis-duplicados', async (req, res) => {
+router.get('/membros/:id/possiveis-duplicados', authorizeModule('membresia', 2), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: m } = await supabase.from('mem_membros')

@@ -36,6 +36,14 @@ const ROUTE_MODULE_MAP = {
   'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
+  // Leitura de dados de PESSOA (nome/CPF/telefone) é legítima em vários módulos
+  // ministeriais que trabalham com gente. Quem tem QUALQUER um destes em leitura
+  // passa; quem não tem (ex.: conta só de logística/financeiro/produção/marketing,
+  // ou membro/voluntário sem módulo ministerial) é bloqueado. Fecha o vazamento de
+  // PII em rotas que antes eram só `authenticate`.
+  'membros':      ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face'],
+  // Dado financeiro do membro (contribuições) · membresia OU financeiro, nível 2.
+  'membros-financeiro': ['membresia','financeiro'],
   'face':         ['face'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],
