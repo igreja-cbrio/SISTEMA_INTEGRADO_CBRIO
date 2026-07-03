@@ -57,11 +57,12 @@ const URGENCIAS = [
 // pessoa da área vê que a solicitação está vindo, mas não pode movê-la (quem aprova é
 // o diretor de origem / co-aprovador na aba "Aprovar"). Antes sumia do quadro.
 const KANBAN_COLUMNS = [
-  { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-t-violet-500', match: ['aguardando_aprovacao_origem'], readOnly: true },
+  { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-t-violet-500', match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
   { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-t-cyan-500',    match: ['em_cotacao'] },
   { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-t-blue-500',    match: ['em_analise'] },
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-t-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
+  { key: 'sobrestada',     label: 'Em espera',    icon: Clock,        color: 'border-t-slate-400',   match: ['sobrestada'], readOnly: true },
   { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-t-emerald-600', match: ['concluido', 'avaliado'] },
   { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-t-red-500',     match: ['rejeitado', 'cancelado'] },
 ];
@@ -72,9 +73,10 @@ const KANBAN_COLUMNS = [
 // ⚠️ color usa classes border-b-* LITERAIS (o header da coluna usa borda inferior);
 // montar a classe via .replace() quebraria o JIT do Tailwind (classe não gerada).
 const KANBAN_COLUNAS_SOLICITANTE = [
-  { key: 'em_aprovacao',       label: 'Em aprovação',         icon: Clock,         color: 'border-b-violet-500',  match: ['aguardando_aprovacao_origem'], readOnly: true },
+  { key: 'em_aprovacao',       label: 'Em aprovação',         icon: Clock,         color: 'border-b-violet-500',  match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
   { key: 'cotacao_financeiro', label: 'Cotação e financeiro', icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao', 'aguardando_aprovacao_financeira'], readOnly: true },
   { key: 'na_fila',            label: 'Na fila',              icon: List,          color: 'border-b-amber-500',   match: ['pendente', 'em_analise', 'aguardando_ajuste'], readOnly: true },
+  { key: 'em_espera',          label: 'Em espera',            icon: Clock,         color: 'border-b-slate-400',   match: ['sobrestada'], readOnly: true },
   { key: 'em_andamento',       label: 'Em andamento',         icon: ArrowRight,    color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'], readOnly: true },
   { key: 'concluidas',         label: 'Concluídas',           icon: CheckCircle2,  color: 'border-b-emerald-600', match: ['concluido', 'avaliado'], readOnly: true },
   { key: 'nao_aprovadas',      label: 'Não aprovadas',        icon: XCircle,       color: 'border-b-red-500',     match: ['rejeitado', 'cancelado'], readOnly: true },
@@ -93,6 +95,8 @@ const STATUS_LABELS = {
   concluido: { label: 'Concluído', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
   avaliado: { label: 'Avaliado', color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
   aguardando_ajuste: { label: 'Aguardando ajuste', color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
+  aguardando_merito: { label: 'Julgamento de mérito', color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400' },
+  sobrestada: { label: 'Em espera (sobrestada)', color: 'bg-slate-500/15 text-slate-700 dark:text-slate-400' },
   cancelado: { label: 'Cancelado', color: 'bg-muted text-muted-foreground' },
 };
 
@@ -289,6 +293,8 @@ export default function Solicitacoes() {
     titulo: '', descricao: '', justificativa: '',
     categoria: '', urgencia: 'normal', valor_estimado: '',
     eh_urgente: false, justificativa_urgencia: '',
+    // Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação
+    eh_planejado: false,
     data_necessaria: '',
     espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
     motivo_reembolso: '', data_compra: '',
@@ -393,6 +399,33 @@ export default function Solicitacoes() {
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao rejeitar.');
+      load();
+    }
+  }
+
+  // Julgamento de mérito (Pastor Presidente) · mesma mecânica otimista do portão de origem.
+  async function handleAprovarMerito(id) {
+    dropItem(id);
+    try {
+      await api.aprovarMerito(id);
+      toast.success('Mérito aprovado.');
+      await refreshPapel();
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao aprovar o mérito.');
+      load();
+    }
+  }
+
+  async function handleReprovarMerito(id, motivo) {
+    dropItem(id);
+    try {
+      await api.reprovarMerito(id, motivo);
+      toast.success('Mérito reprovado.');
+      await refreshPapel();
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao reprovar o mérito.');
       load();
     }
   }
@@ -1057,6 +1090,23 @@ export default function Solicitacoes() {
                   </>
                 )}
 
+                {/* Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação */}
+                <div className="space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.eh_planejado}
+                      onChange={e => setForm(f => ({ ...f, eh_planejado: e.target.checked }))}
+                      className="h-4 w-4 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium">Este pedido estava no planejamento</span>
+                  </label>
+                  <p className="text-xs text-muted-foreground ml-6">
+                    Marque só se a demanda já foi aprovada no planejamento da sua área — pedidos planejados
+                    vão direto pro atendimento, sem nova aprovação. Fica registrado quem marcou.
+                  </p>
+                </div>
+
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
                   <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !reembolsoValid || !reservaEspacoValid || !comprasValid || !pagamentoValid || !urgenciaValid || submitting}>
@@ -1201,13 +1251,26 @@ export default function Solicitacoes() {
             </Card>
           ) : (
             filtered.map(item => (
-              <AprovacaoOrigemCard
-                key={item.id}
-                item={item}
-                onApprove={handleAprovarOrigem}
-                onReject={handleRejeitarOrigem}
-                onClick={() => setDetailItem(item)}
-              />
+              // O backend indica o que o ator atual decide neste item ('origem' | 'gestao'
+              // | 'merito'). Mérito ganha card próprio (é o que o Pastor Presidente vê);
+              // origem/gestão usam o mesmo card (o backend deduz o papel do ator).
+              item.aprovacao_papel_pendente === 'merito' ? (
+                <AprovacaoMeritoCard
+                  key={item.id}
+                  item={item}
+                  onApprove={handleAprovarMerito}
+                  onReject={handleReprovarMerito}
+                  onClick={() => setDetailItem(item)}
+                />
+              ) : (
+                <AprovacaoOrigemCard
+                  key={item.id}
+                  item={item}
+                  onApprove={handleAprovarOrigem}
+                  onReject={handleRejeitarOrigem}
+                  onClick={() => setDetailItem(item)}
+                />
+              )
             ))
           )}
         </div>
@@ -1219,7 +1282,7 @@ export default function Solicitacoes() {
           <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4">
           {columns.map(col => (
             <div
               key={col.key}
@@ -1269,7 +1332,7 @@ export default function Solicitacoes() {
         </>
       ) : minhasLayout === 'kanban' ? (
         /* ── Kanban do solicitante (read-only) · colunas macro · sem drag ── */
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
           {colunasSolicitante.map(col => (
             <div key={col.key} className="flex flex-col rounded-lg">
               <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color}`}>
@@ -1341,6 +1404,7 @@ const AREA_LABELS = {
 // ═══════════════════════════════════════════════════════════════════════
 const ETAPA_DO_STATUS = {
   aguardando_aprovacao_origem: 'aprovacao',
+  aguardando_merito: 'aprovacao',
   em_cotacao: 'cotacao',
   aguardando_aprovacao_financeira: 'financeiro',
   pendente: 'atendimento',
@@ -1387,7 +1451,11 @@ function etapasDoItem(item) {
       ? { tipo: 'cancelada' }
       : item.status === 'aguardando_ajuste'
         ? { tipo: 'ajuste' }
-        : null;
+        // Sobrestada não substitui o stepper: congela na etapa em que estava
+        // (igual ao ajuste) e a faixa "Em espera" explica o motivo/revisão.
+        : item.status === 'sobrestada'
+          ? { tipo: 'sobrestada', motivo: item.sobrestada_motivo || null, revisao: item.sobrestada_revisao || null }
+          : null;
 
   return {
     etapas: etapas.map((e, i) => ({
@@ -1397,6 +1465,13 @@ function etapasDoItem(item) {
     })),
     terminal,
   };
+}
+
+// Formata data (ISO ou date-only) como dd/mm · faixa da sobrestada (revisão).
+function fmtDiaMes(d) {
+  if (!d) return null;
+  const dt = new Date(String(d).length === 10 ? `${d}T00:00:00` : d);
+  return Number.isNaN(dt.getTime()) ? null : dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
 
 // Há quanto tempo o pedido está parado na etapa atual · updated_at reflete o
@@ -1425,6 +1500,8 @@ function comQuemEsta(item) {
         : (item.aprovacao_origem_diretor?.name || 'diretor de origem');
       return `Aguardando aprovação de ${quem}${suf}`;
     }
+    case 'aguardando_merito':
+      return `Com o Pastor Presidente (julgamento de mérito)${suf}`;
     case 'em_cotacao':
       return `Com a equipe de compras (em cotação)${suf}`;
     case 'aguardando_aprovacao_financeira':
@@ -1452,9 +1529,9 @@ function comQuemEsta(item) {
 // Padrão visual inspirado na timeline do MLTrackingBlock.
 function TrackerSolicitacao({ item, compacto = false }) {
   const { etapas, terminal } = etapasDoItem(item);
-  const substituiStepper = terminal && terminal.tipo !== 'ajuste';
-  // Em ajuste a faixa âmbar já diz "com você" · não repete na linha de quem.
-  const quem = terminal?.tipo === 'ajuste' ? null : comQuemEsta(item);
+  const substituiStepper = terminal && !['ajuste', 'sobrestada'].includes(terminal.tipo);
+  // Em ajuste/sobrestada a faixa já diz onde o pedido está · não repete na linha de quem.
+  const quem = ['ajuste', 'sobrestada'].includes(terminal?.tipo) ? null : comQuemEsta(item);
   const etapaAtualLabel = etapas.find(e => e.atual)?.label || 'Concluída';
   const fmtData = (iso) => iso
     ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
@@ -1478,6 +1555,15 @@ function TrackerSolicitacao({ item, compacto = false }) {
     </div>
   ) : null;
 
+  const revisaoFmt = terminal?.tipo === 'sobrestada' ? fmtDiaMes(terminal.revisao) : null;
+  const faixaSobrestada = terminal?.tipo === 'sobrestada' ? (
+    <div className={`rounded-md border border-amber-500/30 bg-amber-500/10 px-3 text-amber-700 dark:text-amber-400 ${compacto ? 'py-1.5 text-[11px]' : 'py-2 text-xs'}`}>
+      <span className="font-semibold">Em espera</span>
+      {terminal.motivo ? ` · ${terminal.motivo}` : ''}
+      {revisaoFmt ? ` · revisão em ${revisaoFmt}` : ''}
+    </div>
+  ) : null;
+
   if (compacto) {
     if (substituiStepper) {
       return <div className="mt-2 pt-2 border-t border-border">{faixaTerminal}</div>;
@@ -1485,6 +1571,7 @@ function TrackerSolicitacao({ item, compacto = false }) {
     return (
       <div className="mt-2 pt-2 border-t border-border space-y-1.5">
         {faixaAjuste}
+        {faixaSobrestada}
         <div className="flex items-center gap-2">
           <div className="flex items-center flex-1 min-w-0">
             {etapas.map((et, i) => (
@@ -1516,6 +1603,7 @@ function TrackerSolicitacao({ item, compacto = false }) {
       {substituiStepper ? faixaTerminal : (
         <>
           {faixaAjuste}
+          {faixaSobrestada}
           <div className="flex items-start pt-1">
             {etapas.map((et, i) => (
               <div key={et.key} className="relative flex-1 flex flex-col items-center min-w-0">
@@ -1551,7 +1639,7 @@ function TrackerSolicitacao({ item, compacto = false }) {
 // "SLA estourando" = não pausado/encerrado E prazo ativo vencido ou < 24h pra
 // vencer (mesma régua do getSlaBadge, que mostra badge quando < 24h ou atrasado).
 function isSlaEstourando(item) {
-  const fora = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado', 'aguardando_ajuste'].includes(item.status);
+  const fora = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado', 'aguardando_ajuste', 'sobrestada', 'aguardando_merito'].includes(item.status);
   if (fora) return false;
   const ativo = !item.respondido_em ? item.sla_resposta_deadline : item.sla_resolucao_deadline;
   if (!ativo) return false;
@@ -1598,6 +1686,9 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <Badge className={`text-xs shrink-0 ${cat.color}`}>{cat.label}</Badge>
+                {item.eh_planejado === true && (
+                  <Badge className="text-xs shrink-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">Planejado</Badge>
+                )}
                 <p className="text-sm font-medium text-foreground truncate">{item.titulo}</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -1711,7 +1802,8 @@ function MinhasLista({ items, onOpen, profileId }) {
 
 function getSlaBadge(item) {
   // aguardando_ajuste = SLA pausado (com o solicitante) · não mostra contagem.
-  const concluido = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado', 'aguardando_ajuste'].includes(item.status);
+  // sobrestada (em espera) e aguardando_merito (com o Pastor Presidente) idem.
+  const concluido = ['concluido', 'avaliado', 'rejeitado', 'cancelado', 'aprovado', 'aguardando_ajuste', 'sobrestada', 'aguardando_merito'].includes(item.status);
   if (concluido) return null;
   const ativo = !item.respondido_em ? item.sla_resposta_deadline : item.sla_resolucao_deadline;
   if (!ativo) return null;
@@ -1726,6 +1818,24 @@ function getSlaBadge(item) {
     return { label: `${Math.round(horas)}h`, color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' };
   }
   return null;
+}
+
+// Estado de um carimbo da dupla aprovação (diretoria da área / diretoria de Gestão).
+function CarimboLinha({ rotulo, status, nomes }) {
+  const lista = Array.isArray(nomes) ? nomes.filter(Boolean) : [];
+  const quem = lista.length ? ` (${lista.join(' ou ')})` : '';
+  const aprovada = status === 'aprovada';
+  return (
+    <div className="flex items-center gap-1.5 text-xs">
+      {aprovada
+        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+        : <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+      <span className="text-muted-foreground min-w-0 truncate">{rotulo}{quem}:</span>
+      <span className={`font-medium shrink-0 ${aprovada ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
+        {aprovada ? 'aprovada' : 'pendente'}
+      </span>
+    </div>
+  );
 }
 
 function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
@@ -1816,6 +1926,23 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
         </div>
       )}
 
+      {/* Dupla aprovação (pedido não-planejado) · estado dos dois carimbos.
+          Os botões seguem os mesmos · o backend deduz qual papel o ator carimba. */}
+      {item.aprovacao_gestao_status != null && (
+        <div className="space-y-1 rounded-md border border-border bg-muted/30 px-2.5 py-2 mb-2">
+          <CarimboLinha
+            rotulo="Diretoria da área"
+            status={item.aprovacao_origem_status}
+            nomes={item.aprovacao_origem_aprovadores}
+          />
+          <CarimboLinha
+            rotulo="Diretoria de Gestão"
+            status={item.aprovacao_gestao_status}
+            nomes={item.aprovacao_gestao_aprovadores}
+          />
+        </div>
+      )}
+
       {!confirmReject ? (
         <div className="flex gap-2 mt-3 pt-3 border-t border-border" onClick={e => e.stopPropagation()}>
           <Button
@@ -1854,6 +1981,114 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
               className="bg-red-600 hover:bg-red-700 text-white"
             >
               {submitting ? 'Rejeitando...' : 'Confirmar rejeição'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Card de JULGAMENTO DE MÉRITO · o que o Pastor Presidente vê na aba Aprovar:
+// pedido não-planejado com custo, já aprovado pelas duas diretorias, aguardando
+// o juízo de mérito (vale gastar?). Valor estimado em destaque + justificativa.
+function AprovacaoMeritoCard({ item, onApprove, onReject, onClick }) {
+  const [confirmReprova, setConfirmReprova] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const cat = getCatMeta(item.categoria);
+  const solicitanteNome = item.solicitante?.name || item.solicitante_nome || 'Solicitante';
+  const date = new Date(item.created_at).toLocaleDateString('pt-BR');
+
+  async function confirmarReprovacao() {
+    if (motivo.trim().length < 5) {
+      toast.error('Motivo precisa ter pelo menos 5 caracteres');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onReject(item.id, motivo.trim());
+      setConfirmReprova(false);
+      setMotivo('');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card
+      className="p-4 cursor-pointer hover:shadow-md transition-shadow border-l-4 border-l-violet-500"
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className="text-xs bg-violet-500/15 text-violet-700 dark:text-violet-400">Julgamento de mérito</Badge>
+          <Badge className={`text-xs ${cat.color}`}>{cat.label}</Badge>
+          {item.eh_urgente && (
+            <Badge className="text-xs bg-red-500/15 text-red-700 dark:text-red-400">Urgente</Badge>
+          )}
+        </div>
+        <span className="text-xs text-muted-foreground whitespace-nowrap">{date}</span>
+      </div>
+      <p className="text-sm font-semibold text-foreground mb-1">{item.titulo}</p>
+      <p className="text-xs text-muted-foreground mb-2">
+        por {solicitanteNome}
+        {item.area_responsavel && <> · vai pra <span className="font-medium">{item.area_responsavel}</span></>}
+        {item.data_necessaria && <> · precisa até {new Date(item.data_necessaria).toLocaleDateString('pt-BR')}</>}
+      </p>
+      {item.valor_estimado != null && (
+        <p className="mb-2">
+          <span className="text-lg font-bold text-foreground">
+            R$ {Number(item.valor_estimado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          </span>
+          <span className="text-xs text-muted-foreground ml-1.5">valor estimado</span>
+        </p>
+      )}
+      {item.descricao && (
+        <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.descricao}</p>
+      )}
+      {item.justificativa && (
+        <p className="text-xs text-muted-foreground mb-2"><span className="font-medium">Justificativa:</span> {item.justificativa}</p>
+      )}
+
+      {!confirmReprova ? (
+        <div className="flex gap-2 mt-3 pt-3 border-t border-border" onClick={e => e.stopPropagation()}>
+          <Button
+            size="sm"
+            onClick={() => onApprove(item.id)}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <CheckCircle2 className="h-4 w-4 mr-1" /> Aprovar mérito
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmReprova(true)}
+            className="flex-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+          >
+            <XCircle className="h-4 w-4 mr-1" /> Reprovar
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-3 pt-3 border-t border-border space-y-2" onClick={e => e.stopPropagation()}>
+          <Label className="text-xs">Motivo da reprovação *</Label>
+          <Textarea
+            value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+            rows={2}
+            placeholder="Solicitação reprovada não reabre · o solicitante terá que criar nova."
+          />
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setConfirmReprova(false); setMotivo(''); }}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={confirmarReprovacao}
+              disabled={motivo.trim().length < 5 || submitting}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {submitting ? 'Reprovando...' : 'Confirmar reprovação'}
             </Button>
           </div>
         </div>
@@ -2244,6 +2479,99 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
   );
 }
 
+// Sobrestar / Retomar (gestão) · põe o pedido "em espera" com motivo obrigatório
+// e data de revisão opcional; retomar devolve pro status em que estava (o backend
+// guarda sobrestada_status_anterior). Só pra admin/responsável no DetailDialog.
+function SobrestarBlock({ item, onChanged }) {
+  const [aberto, setAberto] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [revisao, setRevisao] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const sobrestada = item.status === 'sobrestada';
+  const podeSobrestar = ['pendente', 'em_analise', 'em_atendimento'].includes(item.status);
+
+  async function sobrestar() {
+    if (motivo.trim().length < 5) {
+      toast.error('Informe o motivo da espera (mínimo 5 caracteres).');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.sobrestar(item.id, { motivo: motivo.trim(), revisao: revisao || undefined });
+      toast.success('Solicitação sobrestada (em espera).');
+      setAberto(false); setMotivo(''); setRevisao('');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao sobrestar'); }
+    finally { setSubmitting(false); }
+  }
+
+  async function retomar() {
+    setSubmitting(true);
+    try {
+      await api.retomar(item.id);
+      toast.success('Solicitação retomada · voltou pra fila.');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao retomar'); }
+    finally { setSubmitting(false); }
+  }
+
+  if (sobrestada) {
+    const revisaoFmt = fmtDiaMes(item.sobrestada_revisao);
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        <div className="text-xs text-amber-700 dark:text-amber-400 min-w-0">
+          <span className="font-semibold">Em espera (sobrestada)</span>
+          {item.sobrestada_motivo && <> · {item.sobrestada_motivo}</>}
+          {revisaoFmt && <> · revisão em {revisaoFmt}</>}
+        </div>
+        <Button size="sm" variant="outline" onClick={retomar} disabled={submitting} className="shrink-0">
+          {submitting ? 'Retomando...' : 'Retomar'}
+        </Button>
+      </div>
+    );
+  }
+
+  if (!podeSobrestar) return null;
+
+  if (!aberto) {
+    return (
+      <div>
+        <Button size="sm" variant="outline" onClick={() => setAberto(true)}
+          className="text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+          <Clock className="h-4 w-4 mr-1" /> Sobrestar (em espera)
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+      <p className="text-sm font-medium text-foreground">Sobrestar (em espera)</p>
+      <p className="text-xs text-muted-foreground">
+        O pedido sai da fila até ser retomado. O motivo fica visível pro solicitante.
+      </p>
+      <div className="space-y-2">
+        <Label className="text-xs">Motivo *</Label>
+        <Textarea rows={2} value={motivo} onChange={e => setMotivo(e.target.value)}
+          placeholder="Por que este pedido vai esperar?" />
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs">Data de revisão (opcional)</Label>
+        <Input type="date" value={revisao} onChange={e => setRevisao(e.target.value)} />
+      </div>
+      <div className="flex gap-2 justify-end">
+        <Button size="sm" variant="outline" onClick={() => { setAberto(false); setMotivo(''); setRevisao(''); }}>
+          Cancelar
+        </Button>
+        <Button size="sm" onClick={sobrestar} disabled={motivo.trim().length < 5 || submitting}
+          className="bg-amber-600 hover:bg-amber-700 text-white">
+          {submitting ? 'Sobrestando...' : 'Confirmar espera'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
@@ -2312,6 +2640,12 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               <div>
                 <span className="text-muted-foreground">Responsável</span>
                 <p className="font-medium">{item.responsavel.name}</p>
+              </div>
+            )}
+            {item.eh_planejado === true && (
+              <div>
+                <span className="text-muted-foreground">Planejamento</span>
+                <p className="mt-0.5"><Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">Planejado</Badge></p>
               </div>
             )}
           </div>
@@ -2481,20 +2815,26 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               {item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
               {/* Aprovação/Rejeição definitiva da área · sempre disponível enquanto a
                   solicitação está com ela e ativa (não quando está com o solicitante em
-                  ajuste, nem antes do diretor de origem aprovar). Aprovar mantém o passo
-                  seguinte de Concluir; Rejeitar é terminal (sem Concluir). */}
-              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', 'aguardando_aprovacao_origem'].includes(item.status) && (
+                  ajuste, nem antes dos portões de aprovação/mérito, nem sobrestada —
+                  em espera precisa retomar antes). Aprovar mantém o passo seguinte de
+                  Concluir; Rejeitar é terminal (sem Concluir). */}
+              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status) && (
                 <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
               )}
               {item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
-              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', 'aguardando_aprovacao_origem'].includes(item.status) && (
+              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status) && (
                 <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
               )}
               {/* Ponte estoque · só faz sentido em pedidos de material (logística) ativos */}
               {['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
-                && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem'].includes(item.status)
+                && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status)
                 && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pela estoque</Button>}
             </div>
+          )}
+
+          {/* Sobrestar (em espera) / Retomar · ação de gestão (admin/responsável) */}
+          {isAdmin && !actionPending && (
+            <SobrestarBlock item={item} onChanged={() => onItemRefresh?.()} />
           )}
           {atenderEstoque && (
             <AtenderEstoqueModal
