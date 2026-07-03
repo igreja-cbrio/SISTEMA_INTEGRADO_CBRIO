@@ -98,7 +98,7 @@ function Input({ label, ...props }) { return (<div style={styles.formGroup}>{lab
 function Select({ label, children, ...props }) { return (<div style={styles.formGroup}>{label && <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">{label}</label>}<select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" {...props}>{children}</select></div>); }
 function Badge({ status, map }) { const s = map[status] || { c: C.text3, bg: '#73737318', label: status }; return <span style={styles.badge(s.c, s.bg)}>{s.label}</span>; }
 
-const TABS = ['Dashboard', 'Bens', 'Scanner', 'Categorias / Localizações', 'Inventários', 'Movimentações'];
+const TABS = ['Dashboard', 'Bens', 'Scanner', 'Categorias / Localizações', 'Inventários'];
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('pt-BR') : '—';
 
@@ -122,10 +122,6 @@ export default function Patrimonio() {
   const [newCat, setNewCat] = useState('');
   const [newLoc, setNewLoc] = useState('');
   const [error, setError] = useState('');
-  // Movimentações de Estoque (logística)
-  const [logMovimentacoes, setLogMovimentacoes] = useState([]);
-  const [filtroLogMovTipo, setFiltroLogMovTipo] = useState('');
-  const [modalLogMov, setModalLogMov] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const [dashError, setDashError] = useState(false);
@@ -137,18 +133,9 @@ export default function Patrimonio() {
   const loadCats = useCallback(async () => { try { setCategorias(await patrimonio.categorias.list()); } catch (e) { console.error(e); } }, []);
   const loadLocs = useCallback(async () => { try { setLocalizacoes(await patrimonio.localizacoes.list()); } catch (e) { console.error(e); } }, []);
   const loadInvs = useCallback(async () => { try { setInventarios(await patrimonio.inventarios.list()); } catch (e) { console.error(e); } }, []);
-  const loadLogMovs = useCallback(async () => {
-    try {
-      setLoading(true);
-      const params = filtroLogMovTipo ? { tipo: filtroLogMovTipo } : undefined;
-      setLogMovimentacoes(await logistica.movimentacoes.list(params) || []);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, [filtroLogMovTipo]);
 
   useEffect(() => { loadDash(); loadBens(); loadCats(); loadLocs(); loadInvs(); }, []);
   useEffect(() => { loadBens(); }, [filtroStatus, filtroCat, filtroLoc, busca]);
-  useEffect(() => { if (tab === 5) loadLogMovs(); }, [tab, loadLogMovs]);
 
   async function saveBem(data) {
     try { if (data.id) await patrimonio.bens.update(data.id, data); else await patrimonio.bens.create(data); setModalBem(null); loadBens(); loadDash(); } catch (e) { setError(e.message); }
@@ -165,17 +152,6 @@ export default function Patrimonio() {
   async function saveInv(data) { try { await patrimonio.inventarios.create(data); setModalInv(null); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
   async function updateInvStatus(id, status) { try { const upd = { status }; if (status === 'concluido') upd.data_fim = new Date().toISOString().slice(0, 10); await patrimonio.inventarios.atualizar(id, upd); loadInvs(); loadDash(); } catch (e) { setError(e.message); } }
 
-  async function saveLogMov() {
-    if (!modalLogMov?.codigo_barras?.trim()) { setError('Código de barras é obrigatório'); return; }
-    if (!modalLogMov?.tipo) { setError('Tipo é obrigatório'); return; }
-    setSaving(true);
-    try {
-      await logistica.movimentacoes.create(modalLogMov);
-      setModalLogMov(null); loadLogMovs();
-    } catch (e) { setError(e.message); }
-    setSaving(false);
-  }
-  const upLogMov = (k, v) => setModalLogMov(prev => ({ ...prev, [k]: v }));
 
   return (
     <div style={styles.page}>
@@ -202,20 +178,11 @@ export default function Patrimonio() {
       {tab === 2 && <ScannerTab localizacoes={localizacoes} onMov={saveMov} onDetail={openDetail} />}
       {tab === 3 && <CatLocTab categorias={categorias} localizacoes={localizacoes} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} newLoc={newLoc} setNewLoc={setNewLoc} addLoc={addLoc} removeLoc={removeLoc} isDiretor={isDiretor} />}
       {tab === 4 && <InventariosTab inventarios={inventarios} onNew={() => setModalInv({})} onUpdate={updateInvStatus} isDiretor={isDiretor} />}
-      {tab === 5 && (
-        <LogMovimentacoesTab data={logMovimentacoes} loading={loading}
-          filtroTipo={filtroLogMovTipo} setFiltroTipo={setFiltroLogMovTipo}
-          onNew={() => setModalLogMov({ tipo: 'entrada', codigo_barras: '', descricao: '', quantidade: 1, unidade: 'un', localizacao: '', observacoes: '' })}
-          onReload={loadLogMovs}
-        />
-      )}
 
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} localizacoes={localizacoes} onClose={() => setModalBem(null)} onSave={saveBem} />
       <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onDelete={deleteBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} isDiretor={isDiretor} />
       <MovFormModal open={!!modalMov} data={modalMov} localizacoes={localizacoes} onClose={() => setModalMov(null)} onSave={saveMov} />
       <InvFormModal open={!!modalInv} onClose={() => setModalInv(null)} onSave={saveInv} />
-      <LogMovimentacaoModal open={modalLogMov !== null} data={modalLogMov} onClose={() => setModalLogMov(null)}
-        onSave={saveLogMov} saving={saving} upLogMov={upLogMov} />
     </div>
   );
 }
@@ -849,159 +816,3 @@ function ScannerTab({ localizacoes, onMov, onDetail }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// Movimentações de Estoque (Logística)
-// ═══════════════════════════════════════════════════════════
-const LOG_MOV_TIPO = {
-  entrada: { c: C.green, bg: C.greenBg, label: 'Entrada', icon: '📥' },
-  saida: { c: C.red, bg: C.redBg, label: 'Saída', icon: '📤' },
-  transferencia: { c: C.blue, bg: C.blueBg, label: 'Transferência', icon: '🔄' },
-  devolucao: { c: C.amber, bg: C.amberBg, label: 'Devolução', icon: '↩️' },
-  inventario: { c: '#8b5cf6', bg: '#8b5cf618', label: 'Inventário', icon: '📋' },
-};
-
-function LogMovimentacoesTab({ data, loading, filtroTipo, setFiltroTipo, onNew, onReload }) {
-  const [scanning, setScanning] = useState(false);
-  const [scanResult, setScanResult] = useState(null);
-  const [historico, setHistorico] = useState([]);
-
-  function handleDetected(code) {
-    setScanResult(code);
-    setScanning(false);
-    loadHistorico(code);
-  }
-
-  async function loadHistorico(codigo) {
-    try { setHistorico(await logistica.movimentacoes.historico(codigo)); } catch (e) { console.error(e); }
-  }
-
-  function handleManualCode(e) {
-    if (e.key === 'Enter' && e.target.value) { setScanResult(e.target.value); loadHistorico(e.target.value); }
-  }
-
-  return (<>
-    <div style={styles.filterRow}>
-      <select className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}>
-        <option value="">Todos os tipos</option>
-        {Object.entries(LOG_MOV_TIPO).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
-      </select>
-      <Button onClick={onNew}>+ Nova Movimentação</Button>
-      <Button variant="outline" onClick={() => setScanning(s => !s)}>
-        {scanning ? '⏹ Parar Scanner' : '📷 Escanear Código'}
-      </Button>
-    </div>
-
-    {scanning && (
-      <div style={{ ...styles.card, marginBottom: 16, padding: 16 }}>
-        <div style={{ maxWidth: 400, margin: '0 auto' }}>
-          <BarcodeScanner active={scanning} onDetect={handleDetected} onError={() => setScanning(false)} />
-          <div style={{ fontSize: 13, color: C.text2, marginTop: 8, textAlign: 'center' }}>Aponte a câmera para o código de barras</div>
-        </div>
-      </div>
-    )}
-
-    {!scanning && (
-      <div style={{ ...styles.card, marginBottom: 16, padding: 16 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 20 }}>🔍</span>
-          <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: 1 }} placeholder="Digite ou escaneie o código de barras e pressione Enter"
-            onKeyDown={handleManualCode} defaultValue={scanResult || ''} />
-        </div>
-      </div>
-    )}
-
-    {scanResult && (
-      <div style={{ ...styles.card, marginBottom: 16 }}>
-        <div style={styles.cardHeader}>
-          <div>
-            <div style={styles.cardTitle}>Código: {scanResult}</div>
-            <div style={{ fontSize: 12, color: C.text2 }}>{historico.length} movimentação(ões)</div>
-          </div>
-          <Button variant="ghost" onClick={() => { setScanResult(null); setHistorico([]); }}>✕</Button>
-        </div>
-        {historico.length > 0 ? (
-          <table style={styles.table}><thead><tr>
-            <th style={styles.th}>Data</th><th style={styles.th}>Tipo</th><th style={styles.th}>Descrição</th><th style={styles.th}>Qtd</th><th style={styles.th}>Local</th><th style={styles.th}>Responsável</th>
-          </tr></thead><tbody>
-            {historico.map(m => (
-              <tr key={m.id}>
-                <td style={styles.td}>{fmtDateTime(m.created_at)}</td>
-                <td style={styles.td}><Badge status={m.tipo} map={LOG_MOV_TIPO} /></td>
-                <td style={styles.td}>{m.descricao || '—'}</td>
-                <td style={styles.td}>{m.quantidade} {m.unidade}</td>
-                <td style={styles.td}>{m.localizacao || '—'}</td>
-                <td style={styles.td}>{m.profiles?.name || '—'}</td>
-              </tr>
-            ))}
-          </tbody></table>
-        ) : <div style={{ padding: 20, textAlign: 'center', color: C.text3 }}>Nenhuma movimentação para este código</div>}
-      </div>
-    )}
-
-    <div style={styles.card}><div style={styles.cardHeader}><div style={styles.cardTitle}>Movimentações Recentes</div></div>
-    <table style={styles.table}><thead><tr>
-      <th style={styles.th}>Data</th><th style={styles.th}>Tipo</th><th style={styles.th}>Código</th><th style={styles.th}>Descrição</th><th style={styles.th}>Qtd</th><th style={styles.th}>Local</th><th style={styles.th}>Responsável</th>
-    </tr></thead><tbody>
-      {loading ? <tr><td style={styles.td} colSpan={7}>Carregando...</td></tr>
-      : data.length === 0 ? <tr><td style={styles.td} colSpan={7}><div style={styles.empty}>Nenhuma movimentação registrada</div></td></tr>
-      : data.map(m => (
-        <tr key={m.id}>
-          <td style={styles.td}>{fmtDateTime(m.created_at)}</td>
-          <td style={styles.td}><Badge status={m.tipo} map={LOG_MOV_TIPO} /></td>
-          <td style={{ ...styles.td, fontFamily: 'monospace', fontWeight: 600 }}>{fmtCodigo(m.codigo_barras)}</td>
-          <td style={styles.td}>{m.descricao || '—'}</td>
-          <td style={styles.td}>{m.quantidade} {m.unidade}</td>
-          <td style={styles.td}>{m.localizacao || '—'}</td>
-          <td style={styles.td}>{m.profiles?.name || '—'}</td>
-        </tr>
-      ))}
-    </tbody></table></div>
-  </>);
-}
-
-function LogMovimentacaoModal({ open, data, onClose, onSave, saving, upLogMov }) {
-  const [scanning, setScanning] = useState(false);
-
-  function handleDetected(code) {
-    upLogMov('codigo_barras', code);
-    setScanning(false);
-  }
-
-  useEffect(() => { if (!open) setScanning(false); }, [open]);
-
-  return (
-    <Modal open={open} onClose={() => { setScanning(false); onClose(); }} title="Nova Movimentação"
-      footer={<><Button variant="outline" onClick={() => { setScanning(false); onClose(); }}>Cancelar</Button><Button onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button></>}>
-      {data && (<>
-        <Select label="Tipo *" value={data.tipo || 'entrada'} onChange={e => upLogMov('tipo', e.target.value)}>
-          {Object.entries(LOG_MOV_TIPO).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
-        </Select>
-        <div style={styles.formGroup}>
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Código de Barras *</label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ flex: 1, fontFamily: 'monospace', fontSize: 16, fontWeight: 700 }}
-              value={data.codigo_barras || ''} onChange={e => upLogMov('codigo_barras', e.target.value)} placeholder="Digite ou escaneie" />
-            <Button variant={scanning ? 'destructive' : 'outline'} onClick={() => setScanning(s => !s)}>
-              {scanning ? '⏹' : '📷'}
-            </Button>
-          </div>
-        </div>
-        {scanning && (
-          <div style={{ marginBottom: 12, maxWidth: 300, marginLeft: 'auto', marginRight: 'auto' }}>
-            <BarcodeScanner active={scanning} onDetect={handleDetected} onError={() => setScanning(false)} />
-          </div>
-        )}
-        <Input label="Descrição" value={data.descricao || ''} onChange={e => upLogMov('descricao', e.target.value)} />
-        <div style={styles.formRow}>
-          <Input label="Quantidade" type="number" step="0.001" value={data.quantidade || ''} onChange={e => upLogMov('quantidade', e.target.value)} />
-          <Input label="Unidade" value={data.unidade || 'un'} onChange={e => upLogMov('unidade', e.target.value)} />
-        </div>
-        <Input label="Localização" value={data.localizacao || ''} onChange={e => upLogMov('localizacao', e.target.value)} placeholder="Ex: Depósito A, Sala 3" />
-        <div style={styles.formGroup}>
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Observações</label>
-          <textarea className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ minHeight: 70, resize: 'vertical' }} value={data.observacoes || ''} onChange={e => upLogMov('observacoes', e.target.value)} />
-        </div>
-      </>)}
-    </Modal>
-  );
-}

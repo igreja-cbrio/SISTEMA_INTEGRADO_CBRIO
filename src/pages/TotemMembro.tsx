@@ -26,10 +26,9 @@ const MENU_OPTIONS = [
   { id: 'batismo',      label: 'Batismo',              icon: Droplets,     color: '#6366F1', desc: 'Inscrição para batismo' },
   { id: 'next',         label: 'Next',                 icon: ArrowRight,   color: '#10B981', desc: 'Jornada de membros' },
   { id: 'apresentacao_bebe', label: 'Apresentar bebê', icon: Baby,         color: '#EC4899', desc: '2º domingo do mês' },
-  { id: 'retiro',       label: 'Retiro',               icon: Mountain,     color: '#F59E0B', desc: 'Próximos retiros' },
-  { id: 'contribuicao', label: 'Contribuição',         icon: Heart,        color: '#EF4444', desc: 'Dízimo ou oferta' },
-  { id: 'agendamento',  label: 'Ag. Pastoral',         icon: CalendarDays, color: '#8B5CF6', desc: 'Visita pastoral' },
-  { id: 'voluntariado', label: 'Voluntariado',         icon: HandHeart,    color: '#F97316', desc: 'Servir na CBRio' },
+  // Retiro / Contribuição / Ag. Pastoral / Voluntariado saíram do menu:
+  // eram placeholders sem implementação ("Em breve") — poda do atlas 2026-07.
+  // Voluntariado tem totem próprio em /voluntariado/totem.
 ] as const;
 
 type OptionId = (typeof MENU_OPTIONS)[number]['id'];
