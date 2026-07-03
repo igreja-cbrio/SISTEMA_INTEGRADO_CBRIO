@@ -6,6 +6,7 @@ const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storage
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -1195,34 +1196,45 @@ router.put('/totem/membros/:id', async (req, res) => {
 
 // ── Totem · NEXT (inscrição + status) ──
 //
-// Helper · acha o próximo evento NEXT agendado (data >= hoje).
-async function _proximoEventoNext() {
-  const hoje = new Date().toISOString().slice(0, 10);
-  const { data } = await supabase
-    .from('next_eventos')
-    .select('id, data, titulo')
-    .eq('status', 'agendado')
-    .gte('data', hoje)
-    .order('data')
+// Next é o modelo de TURMAS mensais (next_turmas/next_matriculas). O totem
+// grava direto na matrícula (fim da perda silenciosa do legado next_inscricoes).
+// Helper · a turma aberta do momento (mesma regra do formulário público: a mais
+// recente aberta). Devolve um objeto "evento-like" { id, data, titulo } pra UI do
+// totem seguir funcionando (data = 1º encontro da turma, se já marcado).
+async function _turmaAbertaTotem() {
+  const { data: turma } = await supabase
+    .from('next_turmas')
+    .select('id, nome')
+    .eq('status', 'aberta')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  return data || null;
+  if (!turma) return null;
+  const { data: enc } = await supabase
+    .from('next_encontros')
+    .select('data')
+    .eq('turma_id', turma.id)
+    .eq('numero', 1)
+    .maybeSingle();
+  return { id: turma.id, data: enc?.data || null, titulo: turma.nome };
 }
 
 // GET /api/membresia/totem/next/status?membro_id=X&email=Y&cpf=Z
-// Retorna { inscrito: bool, inscrição?, proximo_evento? }.
-// "inscrito = true" significa que o membro tem inscrição ativa pra um
-// evento futuro (status='agendado' do evento e check_in_at NULL).
+// Retorna { inscrito: bool, inscricao?, proximo_evento? } (proximo_evento e
+// inscricao.evento são "evento-like" a partir da turma · ver _turmaAbertaTotem).
+// "inscrito = true" = a pessoa tem matrícula viva numa turma aberta (ou espera)
+// e ainda não desistiu.
 router.get('/totem/next/status', async (req, res) => {
   try {
     const { membro_id, email, cpf } = req.query;
-    const hoje = new Date().toISOString().slice(0, 10);
-    const proximo = await _proximoEventoNext();
+    const proxima = await _turmaAbertaTotem();
 
-    // Procura inscrição mais recente do membro/email/cpf cujo evento e futuro
+    // Matrícula mais recente da pessoa (identidade membro_id/email/cpf)
     let q = supabase
-      .from('next_inscricoes')
-      .select('id, nome, sobrenome, email, cpf, check_in_at, evento:next_eventos(id, data, titulo, status)')
+      .from('next_matriculas')
+      .select('id, nome, sobrenome, email, cpf, status, turma_id, turma:next_turmas(id, nome, status)')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(1);
 
@@ -1231,24 +1243,29 @@ router.get('/totem/next/status', async (req, res) => {
     if (email) filtros.push(`email.eq.${escapePostgrestValue(String(email).toLowerCase().trim())}`);
     if (cpf) filtros.push(`cpf.eq.${String(cpf).replace(/\D/g, '')}`);
     if (filtros.length === 0) {
-      return res.json({ inscrito: false, proximo_evento: proximo });
+      return res.json({ inscrito: false, proximo_evento: proxima });
     }
     q = q.or(filtros.join(','));
 
-    const { data: inscricoes } = await q;
-    const insc = (inscricoes || [])[0] || null;
+    const { data: mats } = await q;
+    const mat = (mats || [])[0] || null;
 
-    // Inscrito ativo · evento futuro agendado e ainda sem check-in
-    const ativo = insc && insc.evento && insc.evento.data >= hoje
-      && insc.evento.status === 'agendado'
-      && !insc.check_in_at;
+    // Inscrito ativo · matrícula em turma aberta (ou fila de espera) e não desistiu
+    const emTurmaViva = mat && (mat.turma_id == null || (mat.turma && mat.turma.status === 'aberta'));
+    const ativo = !!(mat && emTurmaViva && mat.status !== 'desistiu');
 
-    return res.json({
-      inscrito: !!ativo,
-      inscricao: ativo ? insc : null,
-      ultima_inscricao: insc,
-      proximo_evento: proximo,
-    });
+    let inscricao = null;
+    if (ativo) {
+      let data = null;
+      if (mat.turma_id) {
+        const { data: enc } = await supabase.from('next_encontros')
+          .select('data').eq('turma_id', mat.turma_id).eq('numero', 1).maybeSingle();
+        data = enc?.data || null;
+      }
+      inscricao = { evento: { id: mat.turma_id, data, titulo: mat.turma?.nome || 'Lista de espera' } };
+    }
+
+    return res.json({ inscrito: ativo, inscricao, proximo_evento: proxima });
   } catch (e) {
     console.error('[TOTEM] next/status error:', e.message);
     res.status(500).json({ error: 'Erro ao consultar status do NEXT' });
@@ -1257,8 +1274,9 @@ router.get('/totem/next/status', async (req, res) => {
 
 // POST /api/membresia/totem/next/inscrever
 // Body: { membro_id?, nome, sobrenome?, cpf?, telefone, email, data_nascimento?, observações? }
-// Resolve evento automaticamente (próximo agendado). Idempotente por
-// CPF/email do evento (UNIQUE INDEX existente em next_inscricoes).
+// Matricula na turma aberta do momento (next_matriculas). Porta guardada: sem
+// membro_id, resolve/cria via matcher forte (não deixa órfão). Idempotente por
+// (turma, cpf/email) via UNIQUE INDEX de next_matriculas.
 router.post('/totem/next/inscrever', async (req, res) => {
   try {
     const {
@@ -1279,16 +1297,29 @@ router.post('/totem/next/inscrever', async (req, res) => {
     const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
     const cleanEmail = String(email).toLowerCase().trim();
 
-    const proximo = await _proximoEventoNext();
-    if (!proximo) {
-      return res.status(400).json({ error: 'Nenhum evento NEXT agendado no momento' });
+    const proxima = await _turmaAbertaTotem();
+    if (!proxima) {
+      return res.status(400).json({ error: 'Nenhuma turma do NEXT aberta no momento' });
+    }
+
+    // Porta guardada · garante membro_id (matcher forte) quando o totem não manda
+    let membroId = membro_id || null;
+    if (!membroId) {
+      try {
+        const r = await acharOuCriarGuardado({
+          cpf: cleanCpf, email: cleanEmail, telefone: cleanTel,
+          nome: [nome, sobrenome].filter(Boolean).join(' '),
+          dataNascimento: data_nascimento || null, status: 'visitante',
+        });
+        membroId = r.membro_id;
+      } catch (e) { console.error('[TOTEM] next matcher:', e.message); }
     }
 
     // Snapshot pre-NEXT
     let jaBatizado = false, jaVoluntario = false;
-    if (membro_id) {
+    if (membroId) {
       const { data: m } = await supabase
-        .from('mem_membros').select('batizado').eq('id', membro_id).maybeSingle();
+        .from('mem_membros').select('batizado').eq('id', membroId).maybeSingle();
       jaBatizado = !!m?.batizado;
     }
     if (cleanCpf) {
@@ -1300,10 +1331,10 @@ router.post('/totem/next/inscrever', async (req, res) => {
       if (count && count > 0) jaVoluntario = true;
     }
 
-    const { data: insc, error: insErr } = await supabase
-      .from('next_inscricoes')
+    const { error: insErr } = await supabase
+      .from('next_matriculas')
       .insert({
-        evento_id: proximo.id,
+        turma_id: proxima.id,
         nome: String(nome).trim(),
         sobrenome: sobrenome ? String(sobrenome).trim() : null,
         cpf: cleanCpf,
@@ -1311,19 +1342,19 @@ router.post('/totem/next/inscrever', async (req, res) => {
         email: cleanEmail,
         data_nascimento: data_nascimento || null,
         observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
-        membro_id: membro_id || null,
+        membro_id: membroId,
         ja_batizado: jaBatizado,
         ja_voluntario: jaVoluntario,
         origem: 'manual',
         registered_by: req.user?.id || null,
       })
-      .select('id, evento:next_eventos(id, data, titulo)')
+      .select('id')
       .single();
 
     if (insErr) {
       if (insErr.code === '23505') {
-        // Já inscrito · retorna evento
-        return res.json({ ok: true, ja_inscrito: true, evento: proximo });
+        // Já matriculado nesta turma · idempotente
+        return res.json({ ok: true, ja_inscrito: true, evento: proxima });
       }
       throw insErr;
     }
@@ -1333,13 +1364,13 @@ router.post('/totem/next/inscrever', async (req, res) => {
         modulo: 'next',
         titulo: 'Nova inscrição no NEXT (via totem)',
         mensagem: `${nome} ${sobrenome || ''} (${cleanEmail}) se inscreveu pelo totem.`,
-        link: '/ministerial/next?tab=inscritos',
+        link: '/ministerial/next',
       });
     } catch (e) {
       console.error('[TOTEM] next notificar error:', e.message);
     }
 
-    res.status(201).json({ ok: true, inscricao: insc, evento: insc?.evento || proximo });
+    res.status(201).json({ ok: true, evento: proxima });
   } catch (e) {
     console.error('[TOTEM] next/inscrever error:', e.message);
     res.status(500).json({ error: 'Erro ao inscrever no NEXT: ' + e.message });

@@ -2048,9 +2048,15 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
               </p>
             </div>
             <div className="rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-5">
-              <p className="text-3xl font-bold text-[#10B981]">{fmtDateBR(inscricao.evento.data)}</p>
-              {inscricao.evento.titulo && (
-                <p className="text-white/70 text-sm mt-1">{inscricao.evento.titulo}</p>
+              {inscricao.evento.data ? (
+                <>
+                  <p className="text-3xl font-bold text-[#10B981]">{fmtDateBR(inscricao.evento.data)}</p>
+                  {inscricao.evento.titulo && (
+                    <p className="text-white/70 text-sm mt-1">{inscricao.evento.titulo}</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-2xl font-bold text-[#10B981]">{inscricao.evento.titulo || 'Turma do NEXT'}</p>
               )}
             </div>
             <p className="text-white/40 text-xs">Te esperamos lá!</p>
