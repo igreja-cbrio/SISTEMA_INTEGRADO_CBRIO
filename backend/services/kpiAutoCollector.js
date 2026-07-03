@@ -662,14 +662,38 @@ const COLLECTORS = {
   },
 
   // VOLT-07: voluntários desaparecidos (sem check-in 90+ dias, até IS NULL)
+  // ⚠️ vol_check_ins.volunteer_id referencia vol_profiles.id, NÃO mem_membros —
+  // comparar direto com mem_voluntarios.membro_id fazia quase todo ativo contar
+  // como desaparecido. A ponte é vol_profiles.membresia_id. Check-ins são
+  // paginados (o cap de 1000 do PostgREST truncava 90 dias de check-ins).
   'voluntariado.desaparecidos': async () => {
     const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
     const { data: ativos } = await supabase.from('mem_voluntarios').select('membro_id').is('ate', null);
     if (!ativos || ativos.length === 0) return { valor: 0 };
-    const ids = ativos.map(a => a.membro_id).filter(Boolean);
-    const { data: recentes } = await supabase.from('vol_check_ins').select('volunteer_id').gte('checked_in_at', d90);
-    const recentSet = new Set((recentes || []).map(r => r.volunteer_id));
-    const desaparecidos = ids.filter(id => !recentSet.has(id)).length;
+    const ids = [...new Set(ativos.map(a => a.membro_id).filter(Boolean))];
+
+    // Ponte vol_profiles.id → membro (lotes pequenos: .in vai na URL do GET)
+    const membroPorPerfil = new Map();
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data: perfis } = await supabase.from('vol_profiles')
+        .select('id, membresia_id').in('membresia_id', ids.slice(i, i + 100));
+      for (const p of perfis || []) membroPorPerfil.set(p.id, p.membresia_id);
+    }
+
+    // Check-ins dos últimos 90 dias (paginado) → membros com presença
+    const comCheckin = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      const { data: page } = await supabase.from('vol_check_ins')
+        .select('volunteer_id').gte('checked_in_at', d90)
+        .order('checked_in_at').range(offset, offset + 999);
+      for (const r of page || []) {
+        const membro = membroPorPerfil.get(r.volunteer_id);
+        if (membro) comCheckin.add(membro);
+      }
+      if (!page || page.length < 1000) break;
+    }
+
+    const desaparecidos = ids.filter(id => !comCheckin.has(id)).length;
     return { valor: desaparecidos, observacao: `${desaparecidos} voluntários sem check-in 90+ dias` };
   },
 
