@@ -54,7 +54,7 @@ router.use((req, res, next) => {
   next();
 });
 
-const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'ferias', 'licenca', 'marketing', 'pagamento', 'servico', 'producao', 'outro'];
+const ALLOWED_CATEGORIES = ['ti', 'compras', 'reembolso', 'reserva_espaco', 'espaco', 'infraestrutura', 'hospitalidade', 'ferias', 'licenca', 'marketing', 'pagamento', 'servico', 'producao', 'outro'];
 
 // Status que o PATCH genérico (kanban/drag/edição) pode definir. Os portões do
 // fluxo BPMN (aguardando_aprovacao_origem, aguardando_merito, sobrestada,
@@ -72,6 +72,7 @@ const CATEGORIA_MODULO = {
   reserva_espaco: 'administrativo',
   espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
+  hospitalidade: 'administrativo', // recepção, café, hospedagem de convidados · Amaury
   ferias: 'rh',
   licenca: 'rh',
   marketing: 'marketing',
@@ -89,6 +90,7 @@ const CATEGORIA_TO_AREA_RESP = {
   reserva_espaco:  { area: 'reserva_espaco',    subcategoria: 'default' },
   espaco:          { area: 'reserva_espaco',    subcategoria: 'default' },
   infraestrutura:  { area: 'manutencao',        subcategoria: 'default' },
+  hospitalidade:   { area: 'hospitalidade',     subcategoria: 'default' },
   ferias:          { area: 'rh',                subcategoria: 'ferias' },
   licenca:         { area: 'rh',                subcategoria: 'licenca' },
   marketing:       { area: 'marketing',         subcategoria: 'default' },
@@ -101,7 +103,7 @@ const MODULO_CATEGORIAS = {
   ti: ['ti'],
   logistica: ['compras', 'servico'],
   financeiro: ['reembolso', 'pagamento'],
-  administrativo: ['espaco', 'reserva_espaco', 'infraestrutura', 'outro'],
+  administrativo: ['espaco', 'reserva_espaco', 'infraestrutura', 'hospitalidade', 'outro'],
   rh: ['ferias', 'licenca'],
   marketing: ['marketing'],
   producao: ['producao'],

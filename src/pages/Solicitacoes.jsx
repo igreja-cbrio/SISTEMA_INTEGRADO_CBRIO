@@ -18,9 +18,11 @@ import { toast } from 'sonner';
 const CATEGORIAS = [
   { value: 'compras',        label: 'Compras',             color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400', areaResp: 'logistica_compras' },
   { value: 'infraestrutura', label: 'Serviços',            color: 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-400', areaResp: 'manutencao' },
+  { value: 'servico',        label: 'Serviço externo (contratação)', color: 'bg-sky-500/15 text-sky-700 dark:text-sky-400', areaResp: 'logistica_compras', sub: 'servico' },
   { value: 'pagamento',      label: 'Pagamento',           color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', areaResp: 'financeiro', sub: 'pagamento' },
   { value: 'reembolso',      label: 'Reembolso',           color: 'bg-green-500/15 text-green-700 dark:text-green-400',    areaResp: 'financeiro', sub: 'reembolso' },
   { value: 'reserva_espaco', label: 'Reserva de Espaço',   color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400', areaResp: 'reserva_espaco' },
+  { value: 'hospitalidade',  label: 'Hospitalidade',       color: 'bg-rose-500/15 text-rose-700 dark:text-rose-400',       areaResp: 'hospitalidade' },
   { value: 'ti',             label: 'TI',                  color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',       areaResp: 'ti' },
   { value: 'marketing',      label: 'Marketing',           color: 'bg-pink-500/15 text-pink-700 dark:text-pink-400',       areaResp: 'marketing' },
   { value: 'producao',       label: 'Produção de Culto',   color: 'bg-violet-500/15 text-violet-700 dark:text-violet-400', areaResp: 'producao' },
@@ -32,10 +34,12 @@ const CATEGORIAS = [
 // (intencao em linguagem simples · evita confundir Compra/Serviço/Pagamento/Reembolso).
 const CATEGORIA_HINT = {
   compras:        'Comprar um produto/material. A logística cota e compra.',
-  infraestrutura: 'Pedir um reparo/serviço à manutenção da igreja (goteira, ar-condicionado, elétrica, marcenaria...). Precisa contratar e pagar alguém de fora? Use Pagamento.',
+  infraestrutura: 'Pedir um reparo/serviço à manutenção da igreja (goteira, ar-condicionado, elétrica, marcenaria...). Precisa contratar alguém de fora? Use Serviço externo.',
+  servico:        'Contratação de fornecedor ou prestador de fora — passa por cotação e aprovação financeira.',
   pagamento:      'Pagar um fornecedor externo (boleto, nota fiscal) ou contratar/pagar um serviço de fora (gráfica, buffet, transporte...). Já gastou do próprio bolso? Use Reembolso.',
   reembolso:      'Você já pagou do próprio bolso e quer o dinheiro de volta.',
   reserva_espaco: 'Reservar um espaço/sala na agenda da igreja.',
+  hospitalidade:  'Recepção, café, hospedagem de convidados e apoio a visitantes.',
   producao:       'Apoio da equipe de Produção: movimentação de material ou configuração de equipamentos (áudio, vídeo, palco, transmissão).',
 };
 
@@ -56,15 +60,18 @@ const URGENCIAS = [
 // `aguardando_aprovacao_origem` tem coluna PRÓPRIA (read-only · só visibilidade): a
 // pessoa da área vê que a solicitação está vindo, mas não pode movê-la (quem aprova é
 // o diretor de origem / co-aprovador na aba "Aprovar"). Antes sumia do quadro.
+// ⚠️ color usa classes border-b-* LITERAIS (o header da coluna usa borda inferior);
+// montar a classe via .replace() quebraria o JIT do Tailwind (classe não gerada).
+// `hint` (opcional) vira tooltip no header da coluna (explica jargão pro usuário).
 const KANBAN_COLUMNS = [
-  { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-t-violet-500', match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
-  { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-t-cyan-500',    match: ['em_cotacao'] },
-  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-t-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
-  { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-t-blue-500',    match: ['em_analise'] },
-  { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-t-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
-  { key: 'sobrestada',     label: 'Em espera',    icon: Clock,        color: 'border-t-slate-400',   match: ['sobrestada'], readOnly: true },
-  { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-t-emerald-600', match: ['concluido', 'avaliado'] },
-  { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-t-red-500',     match: ['rejeitado', 'cancelado'] },
+  { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-b-violet-500', match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
+  { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao'] },
+  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-b-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
+  { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-b-blue-500',    match: ['em_analise'] },
+  { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
+  { key: 'sobrestada',     label: 'Em espera',    icon: Clock,        color: 'border-b-slate-400',   match: ['sobrestada'], readOnly: true, hint: 'Aguardando verba ou equipe — volta a andar quando for retomada.' },
+  { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-b-emerald-600', match: ['concluido', 'avaliado'] },
+  { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-b-red-500',     match: ['rejeitado', 'cancelado'] },
 ];
 
 // Kanban do SOLICITANTE (aba Minhas · 2026-07-02) · colunas MACRO próprias, TODAS
@@ -76,7 +83,7 @@ const KANBAN_COLUNAS_SOLICITANTE = [
   { key: 'em_aprovacao',       label: 'Em aprovação',         icon: Clock,         color: 'border-b-violet-500',  match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
   { key: 'cotacao_financeiro', label: 'Cotação e financeiro', icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao', 'aguardando_aprovacao_financeira'], readOnly: true },
   { key: 'na_fila',            label: 'Na fila',              icon: List,          color: 'border-b-amber-500',   match: ['pendente', 'em_analise', 'aguardando_ajuste'], readOnly: true },
-  { key: 'em_espera',          label: 'Em espera',            icon: Clock,         color: 'border-b-slate-400',   match: ['sobrestada'], readOnly: true },
+  { key: 'em_espera',          label: 'Em espera',            icon: Clock,         color: 'border-b-slate-400',   match: ['sobrestada'], readOnly: true, hint: 'Aguardando verba ou equipe — você será avisado quando o pedido voltar a andar.' },
   { key: 'em_andamento',       label: 'Em andamento',         icon: ArrowRight,    color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'], readOnly: true },
   { key: 'concluidas',         label: 'Concluídas',           icon: CheckCircle2,  color: 'border-b-emerald-600', match: ['concluido', 'avaliado'], readOnly: true },
   { key: 'nao_aprovadas',      label: 'Não aprovadas',        icon: XCircle,       color: 'border-b-red-500',     match: ['rejeitado', 'cancelado'], readOnly: true },
@@ -605,7 +612,7 @@ export default function Solicitacoes() {
       }
 
       await api.create(payload);
-      toast.success('Solicitação criada com sucesso!');
+      toast.success('Solicitação enviada! Acompanhe o andamento em "Minhas Solicitações".');
       setDialogOpen(false);
       setForm(FORM_INITIAL);
       load();
@@ -694,7 +701,7 @@ export default function Solicitacoes() {
             <ClipboardList className="h-6 w-6 text-primary" />
             Solicitações
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Compras, serviços, pagamentos, reembolsos, reservas, TI, marketing, infraestrutura, férias e licenças</p>
+          <p className="text-sm text-muted-foreground mt-1">Peça compras, serviços, contratações, pagamentos, reembolsos, reservas, TI, marketing, hospitalidade, férias e licenças — e acompanhe tudo por aqui</p>
         </div>
         <div className="flex items-center gap-3">
           {/* Config de responsáveis · so admin/diretor */}
@@ -722,6 +729,8 @@ export default function Solicitacoes() {
                 <DialogTitle>Nova Solicitação</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
+                {/* ── Seção 1 · O que você precisa? ── */}
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">O que você precisa?</p>
                 <div className="space-y-2">
                   <Label>Qual tipo de solicitação? *</Label>
                   <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
@@ -731,7 +740,7 @@ export default function Solicitacoes() {
                     </SelectContent>
                   </Select>
                   {CATEGORIA_HINT[form.categoria] && (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-foreground/80">
                       {CATEGORIA_HINT[form.categoria]}
                     </p>
                   )}
@@ -740,47 +749,22 @@ export default function Solicitacoes() {
                   <Label>Título da solicitação *</Label>
                   <Input value={form.titulo} onChange={e => setForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Resuma em uma frase" />
                 </div>
+
+                {/* ── Seção 2 · Detalhes ── */}
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground pt-3 border-t border-border">Detalhes</p>
                 <div className="space-y-2">
                   <Label>{isReservaEspaco ? 'Descrição da necessidade (qual evento / finalidade)' : 'Descrição da necessidade'}</Label>
                   <Textarea
                     value={form.descricao}
                     onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))}
                     rows={3}
-                    placeholder={isReservaEspaco ? 'Qual evento/atividade vai acontecer e o que precisa no espaço' : undefined}
+                    placeholder={isReservaEspaco ? 'Qual evento/atividade vai acontecer e o que precisa no espaço' : 'Conte o que precisa, com detalhes que ajudem quem vai atender'}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Justificativa do pedido</Label>
-                  <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2} />
-                </div>
-
-                {/* Urgente checkbox · reduz SLA · pra compras significa "sai pra rua mesmo dia" */}
-                <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.eh_urgente}
-                      onChange={e => setForm(f => ({ ...f, eh_urgente: e.target.checked }))}
-                      className="h-4 w-4 cursor-pointer"
-                    />
-                    <span className="text-sm font-medium">Esta solicitação é urgente</span>
-                  </label>
-                  <p className="text-xs text-muted-foreground ml-6">
-                    Reduz o prazo. Compras urgentes não passam por cotação · alguém sai pra comprar no mesmo dia.
-                    Use só quando necessário · o sistema mapeia quem solicita urgência frequente.
-                  </p>
-                  {form.eh_urgente && (
-                    <div className="ml-6 mt-2">
-                      <Label className="text-xs">Justificativa da urgência *</Label>
-                      <Textarea
-                        value={form.justificativa_urgencia}
-                        onChange={e => setForm(f => ({ ...f, justificativa_urgencia: e.target.value }))}
-                        rows={2}
-                        placeholder="Por que precisa ser urgente?"
-                        className="mt-1"
-                      />
-                    </div>
-                  )}
+                  <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2}
+                    placeholder="Por que este pedido é importante agora?" />
                 </div>
 
                 {/* Reserva de Espaco · campos especificos */}
@@ -977,19 +961,6 @@ export default function Solicitacoes() {
                   </div>
                 )}
 
-                {/* Data necessária · vira "Vencimento" obrigatório pra pagamento */}
-                {form.categoria && form.categoria !== 'reserva_espaco' && (
-                  <div className="space-y-2">
-                    <Label>{isPagamento ? 'Vencimento *' : 'Data necessária (opcional)'}</Label>
-                    <Input type="date" value={form.data_necessaria} onChange={e => setForm(f => ({ ...f, data_necessaria: e.target.value }))} />
-                    <p className="text-xs text-muted-foreground">
-                      {isPagamento
-                        ? 'Quando o boleto/nota vence. Priorizamos pra não pagar com atraso.'
-                        : 'Se preencher, alertaremos caso o SLA padrão não bata.'}
-                    </p>
-                  </div>
-                )}
-
                 {/* Marketing · intake por DOR (Redesenho 2026-05-30 · só o aviso · Pedro tria) */}
                 {form.categoria === 'marketing' && (
                   <div className="rounded-lg border border-pink-500/30 bg-pink-500/5 p-3">
@@ -1003,25 +974,6 @@ export default function Solicitacoes() {
                     </p>
                   </div>
                 )}
-
-                {/* SLA esperado em tempo real (oculto p/ marketing · usa o aviso de 3-8 sem) */}
-                {(() => {
-                  const cat = CATEGORIAS.find(c => c.value === form.categoria);
-                  if (!cat?.areaResp || form.categoria === 'marketing') return null;
-                  const urg = !!form.eh_urgente;
-                  const sub = cat.sub || 'default';
-                  // Prefere a subcategoria exata · cai pra 'default' · cai pra área
-                  const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === urg)
-                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === 'default' && s.eh_urgente === urg)
-                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === urg);
-                  if (!sla) return null;
-                  return (
-                    <div className="rounded-md bg-blue-500/5 border border-blue-500/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
-                      <strong>Prazo esperado:</strong> resposta em ~{Math.round(sla.sla_resposta_horas/24*10)/10} dias · conclusão em ~{Math.round(sla.sla_resolucao_horas/24*10)/10} dias
-                      {form.eh_urgente && ' · modo urgente'}
-                    </div>
-                  );
-                })()}
 
                 <div className="grid grid-cols-2 gap-4">
                   {showValueField && (
@@ -1090,6 +1042,70 @@ export default function Solicitacoes() {
                   </>
                 )}
 
+                {/* ── Seção 3 · Prazo e urgência ── */}
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground pt-3 border-t border-border">Prazo e urgência</p>
+
+                {/* Data necessária · vira "Vencimento" obrigatório pra pagamento */}
+                {form.categoria && form.categoria !== 'reserva_espaco' && (
+                  <div className="space-y-2">
+                    <Label>{isPagamento ? 'Vencimento *' : 'Data necessária (opcional)'}</Label>
+                    <Input type="date" value={form.data_necessaria} onChange={e => setForm(f => ({ ...f, data_necessaria: e.target.value }))} />
+                    <p className="text-xs text-muted-foreground">
+                      {isPagamento
+                        ? 'Quando o boleto/nota vence. Priorizamos pra não pagar com atraso.'
+                        : 'Se preencher, avisaremos a equipe caso o prazo padrão não atenda.'}
+                    </p>
+                  </div>
+                )}
+
+                {/* Urgente checkbox · reduz SLA · pra compras significa "sai pra rua mesmo dia" */}
+                <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.eh_urgente}
+                      onChange={e => setForm(f => ({ ...f, eh_urgente: e.target.checked }))}
+                      className="h-4 w-4 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium">Esta solicitação é urgente</span>
+                  </label>
+                  <p className="text-xs text-muted-foreground ml-6">
+                    Reduz o prazo. Compras urgentes não passam por cotação · alguém sai pra comprar no mesmo dia.
+                    Use só quando necessário · o sistema mapeia quem solicita urgência frequente.
+                  </p>
+                  {form.eh_urgente && (
+                    <div className="ml-6 mt-2">
+                      <Label className="text-xs">Justificativa da urgência *</Label>
+                      <Textarea
+                        value={form.justificativa_urgencia}
+                        onChange={e => setForm(f => ({ ...f, justificativa_urgencia: e.target.value }))}
+                        rows={2}
+                        placeholder="Por que precisa ser urgente?"
+                        className="mt-1"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* SLA esperado em tempo real (oculto p/ marketing · usa o aviso de 3-8 sem) */}
+                {(() => {
+                  const cat = CATEGORIAS.find(c => c.value === form.categoria);
+                  if (!cat?.areaResp || form.categoria === 'marketing') return null;
+                  const urg = !!form.eh_urgente;
+                  const sub = cat.sub || 'default';
+                  // Prefere a subcategoria exata · cai pra 'default' · cai pra área
+                  const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === urg)
+                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === 'default' && s.eh_urgente === urg)
+                    || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === urg);
+                  if (!sla) return null;
+                  return (
+                    <div className="rounded-md bg-blue-500/5 border border-blue-500/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+                      <strong>Prazo esperado:</strong> resposta em ~{Math.round(sla.sla_resposta_horas/24*10)/10} dias · conclusão em ~{Math.round(sla.sla_resolucao_horas/24*10)/10} dias
+                      {form.eh_urgente && ' · modo urgente'}
+                    </div>
+                  );
+                })()}
+
                 {/* Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação */}
                 <div className="space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -1110,7 +1126,7 @@ export default function Solicitacoes() {
                 <div className="flex justify-end gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
                   <Button onClick={handleCreate} disabled={!form.titulo || !form.categoria || !reembolsoValid || !reservaEspacoValid || !comprasValid || !pagamentoValid || !urgenciaValid || submitting}>
-                    {submitting ? 'Criando...' : 'Criar Solicitação'}
+                    {submitting ? 'Enviando...' : 'Enviar solicitação'}
                   </Button>
                 </div>
               </div>
@@ -1303,7 +1319,7 @@ export default function Solicitacoes() {
                 handleStatusChange(itemId, col.key);
               }}
             >
-              <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color.replace('border-t-', 'border-b-')}`}>
+              <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color}`} title={col.hint}>
                 <col.icon className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold text-foreground">{col.label}</span>
                 <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
@@ -1311,7 +1327,7 @@ export default function Solicitacoes() {
               <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
                 <div className="space-y-3 pr-1 min-h-[60px]">
                   {col.items.length === 0 && (
-                    <p className="text-xs text-muted-foreground text-center py-8">Nenhuma solicitação</p>
+                    <p className="text-xs text-muted-foreground/60 italic text-center py-8">Nada por aqui</p>
                   )}
                   {col.items.map(item => (
                     <SolicitacaoCard
@@ -1335,7 +1351,7 @@ export default function Solicitacoes() {
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
           {colunasSolicitante.map(col => (
             <div key={col.key} className="flex flex-col rounded-lg">
-              <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color}`}>
+              <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color}`} title={col.hint}>
                 <col.icon className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold text-foreground">{col.label}</span>
                 <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
@@ -1343,7 +1359,7 @@ export default function Solicitacoes() {
               <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
                 <div className="space-y-3 pr-1 min-h-[60px]">
                   {col.items.length === 0 && (
-                    <p className="text-xs text-muted-foreground text-center py-8">Nenhuma solicitação</p>
+                    <p className="text-xs text-muted-foreground/60 italic text-center py-8">Nada por aqui</p>
                   )}
                   {col.items.map(item => (
                     <SolicitacaoCard
@@ -1362,7 +1378,12 @@ export default function Solicitacoes() {
         </div>
       ) : (
         /* ── Aba Minhas · lista agrupada com rastreio (2026-07-02) ── */
-        <MinhasLista items={filtered} onOpen={setDetailItem} profileId={profile?.id} />
+        <MinhasLista
+          items={filtered}
+          onOpen={setDetailItem}
+          profileId={profile?.id}
+          temFiltros={busca.trim() !== '' || filterCat !== 'todas' || filterStatus !== 'todos' || filterArea !== 'todas' || slaOnly}
+        />
       )}
 
       {/* Detail dialog */}
@@ -1393,6 +1414,7 @@ const AREA_LABELS = {
   reserva_espaco: 'Reserva de espaço', cozinha: 'Cozinha', limpeza: 'Limpeza',
   manutencao: 'Manutenção', logistica_estoque: 'Estoque', logistica_compras: 'Compras',
   ti: 'TI', rh: 'RH', financeiro: 'Financeiro', marketing: 'Marketing', producao: 'Produção',
+  hospitalidade: 'Hospitalidade',
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1556,20 +1578,24 @@ function TrackerSolicitacao({ item, compacto = false }) {
   ) : null;
 
   const revisaoFmt = terminal?.tipo === 'sobrestada' ? fmtDiaMes(terminal.revisao) : null;
+  const EXPLICA_ESPERA = 'Aguardando verba ou equipe — você será avisado quando o pedido voltar a andar.';
   const faixaSobrestada = terminal?.tipo === 'sobrestada' ? (
-    <div className={`rounded-md border border-amber-500/30 bg-amber-500/10 px-3 text-amber-700 dark:text-amber-400 ${compacto ? 'py-1.5 text-[11px]' : 'py-2 text-xs'}`}>
+    <div title={EXPLICA_ESPERA} className={`rounded-md border border-amber-500/30 bg-amber-500/10 px-3 text-amber-700 dark:text-amber-400 ${compacto ? 'py-1.5 text-[11px]' : 'py-2 text-xs'}`}>
       <span className="font-semibold">Em espera</span>
       {terminal.motivo ? ` · ${terminal.motivo}` : ''}
       {revisaoFmt ? ` · revisão em ${revisaoFmt}` : ''}
+      {!compacto && (
+        <span className="block mt-0.5 font-normal opacity-80">{EXPLICA_ESPERA}</span>
+      )}
     </div>
   ) : null;
 
   if (compacto) {
     if (substituiStepper) {
-      return <div className="mt-2 pt-2 border-t border-border">{faixaTerminal}</div>;
+      return <div className="mt-3 pt-3 border-t border-border">{faixaTerminal}</div>;
     }
     return (
-      <div className="mt-2 pt-2 border-t border-border space-y-1.5">
+      <div className="mt-3 pt-3 border-t border-border space-y-2">
         {faixaAjuste}
         {faixaSobrestada}
         <div className="flex items-center gap-2">
@@ -1592,7 +1618,8 @@ function TrackerSolicitacao({ item, compacto = false }) {
           </div>
           <span className="text-[10px] font-medium text-foreground shrink-0">{etapaAtualLabel}</span>
         </div>
-        {quem && <p className="text-xs text-muted-foreground">{quem}</p>}
+        {/* "Está com quem" · a informação nº 1 pro solicitante — destaque sutil */}
+        {quem && <p className="text-xs font-medium text-foreground/80">{quem}</p>}
       </div>
     );
   }
@@ -1631,7 +1658,7 @@ function TrackerSolicitacao({ item, compacto = false }) {
           </div>
         </>
       )}
-      {!substituiStepper && quem && <p className="text-xs text-muted-foreground">{quem}</p>}
+      {!substituiStepper && quem && <p className="text-xs font-medium text-foreground/80">{quem}</p>}
     </div>
   );
 }
@@ -1683,39 +1710,42 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
             }`}
             onClick={() => onOpen(item)}
           >
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <Badge className={`text-xs shrink-0 ${cat.color}`}>{cat.label}</Badge>
-                {item.eh_planejado === true && (
-                  <Badge className="text-xs shrink-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">Planejado</Badge>
-                )}
-                <p className="text-sm font-medium text-foreground truncate">{item.titulo}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {precisaAvaliar && (
-                  <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 gap-1">
-                    <Star className="h-3 w-3" /> Avalie
-                  </Badge>
-                )}
-                {item.ml_last_status && ML_STATUS_META[item.ml_last_status] && (
-                  <Badge className={`text-xs ${ML_STATUS_META[item.ml_last_status].color}`}>
-                    {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
-                  </Badge>
-                )}
-                {item.area_responsavel && (
-                  <Badge className="text-xs bg-muted text-muted-foreground hidden sm:inline-flex">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</Badge>
-                )}
-                {sla && <Badge className={`text-xs ${sla.color}`}>{sla.label}</Badge>}
-                <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
-                <Badge className={`text-xs ${st.color}`}>{st.label}</Badge>
-                <span className="text-xs text-muted-foreground">{date}</span>
-              </div>
+            {/* Hierarquia: título primeiro (maior) · badges agrupadas numa linha só,
+                com flex-wrap (não estoura no mobile). No modo com tracker o status
+                textual sai da linha de badges — o stepper + "está com quem" já contam
+                a história (menos ruído). Urgência "Normal" não vira badge (é o padrão). */}
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[15px] font-semibold leading-snug text-foreground min-w-0 flex-1 line-clamp-2">{item.titulo}</p>
+              <span className="text-xs text-muted-foreground shrink-0 mt-0.5">{date}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <Badge className={`text-xs ${cat.color}`}>{cat.label}</Badge>
+              {item.eh_planejado === true && (
+                <Badge className="text-xs bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">Planejado</Badge>
+              )}
+              {precisaAvaliar && (
+                <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 gap-1">
+                  <Star className="h-3 w-3" /> Avalie
+                </Badge>
+              )}
+              {item.ml_last_status && ML_STATUS_META[item.ml_last_status] && (
+                <Badge className={`text-xs ${ML_STATUS_META[item.ml_last_status].color}`}>
+                  {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
+                </Badge>
+              )}
+              {item.area_responsavel && (
+                <Badge className="text-xs bg-muted text-muted-foreground hidden sm:inline-flex">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</Badge>
+              )}
+              {sla && <Badge className={`text-xs ${sla.color}`}>{sla.label}</Badge>}
+              {item.urgencia && item.urgencia !== 'normal' && <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>}
+              {!comTracker && <Badge className={`text-xs ${st.color}`}>{st.label}</Badge>}
             </div>
             {!comTracker && aguardandoOrigem && (
-              <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
+              <p className="flex items-center gap-1.5 text-xs text-violet-700 dark:text-violet-400 mt-2">
+                <Clock className="h-3.5 w-3.5 shrink-0" />
                 {emTriagem
-                  ? <>⏳ Em triagem · definindo o aprovador{item.eh_urgente ? ' · urgente' : ''}</>
-                  : <>⏳ Aguardando aprovação de <span className="font-medium">{aprovadoresLabel}</span>{item.eh_urgente ? ' · urgente' : ''}</>}
+                  ? <span>Em triagem · definindo o aprovador{item.eh_urgente ? ' · urgente' : ''}</span>
+                  : <span>Aguardando aprovação de <span className="font-medium">{aprovadoresLabel}</span>{item.eh_urgente ? ' · urgente' : ''}</span>}
               </p>
             )}
             {!comTracker && foiRejeitada && item.aprovacao_origem_motivo && (
@@ -1739,7 +1769,7 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
 // topo) · "Em andamento" (resto não-terminal) · "Encerradas" (colapsável · começa
 // recolhida se houver mais de 5). Cada card ganha o rastreio compacto (comTracker).
 const STATUS_ENCERRADOS_MINHAS = ['concluido', 'avaliado', 'rejeitado', 'cancelado'];
-function MinhasLista({ items, onOpen, profileId }) {
+function MinhasLista({ items, onOpen, profileId, temFiltros = false }) {
   // null = usuário ainda não mexeu · abre por padrão só quando são poucas (<= 5).
   const [encerradasToggle, setEncerradasToggle] = useState(null);
   const precisaDeVoce = (items || []).filter(i =>
@@ -1752,9 +1782,19 @@ function MinhasLista({ items, onOpen, profileId }) {
 
   if (!items || items.length === 0) {
     return (
-      <Card className="p-8 text-center">
-        <List className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-        <p className="text-muted-foreground">Nenhuma solicitação para os filtros atuais.</p>
+      <Card className="p-10 text-center">
+        <ClipboardList className="h-10 w-10 text-muted-foreground/60 mx-auto mb-3" />
+        {temFiltros ? (
+          <>
+            <p className="text-sm font-medium text-foreground">Nenhuma solicitação encontrada</p>
+            <p className="text-sm text-muted-foreground mt-1">Tente ajustar a busca, os filtros ou o período acima.</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-medium text-foreground">Você ainda não fez nenhuma solicitação</p>
+            <p className="text-sm text-muted-foreground mt-1">Clique em Nova Solicitação, no topo da página, para começar.</p>
+          </>
+        )}
       </Card>
     );
   }
@@ -1870,25 +1910,35 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
       onClick={onClick}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Badge className={`text-xs ${cat.color}`}>{cat.label}</Badge>
-          <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
+          {item.urgencia && item.urgencia !== 'normal' && (
+            <Badge className={`text-xs ${urg.color}`}>{urg.label}</Badge>
+          )}
           {item.eh_urgente && (
             <Badge className="text-xs bg-red-500/15 text-red-700 dark:text-red-400">Urgente</Badge>
           )}
           {item.aprovacao_origem_status === 'triagem' && (
-            <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400">⚠ Triagem · sem setor</Badge>
+            <Badge className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400">Triagem · sem setor</Badge>
           )}
           <span className="text-xs text-muted-foreground">aguardando {aguardandoHa}</span>
         </div>
         <span className="text-xs text-muted-foreground whitespace-nowrap">{date}</span>
       </div>
-      <p className="text-sm font-semibold text-foreground mb-1">{item.titulo}</p>
+      <p className="text-[15px] font-semibold leading-snug text-foreground mb-1">{item.titulo}</p>
       <p className="text-xs text-muted-foreground mb-2">
         por {solicitanteNome}
-        {item.area_responsavel && <> · vai pra <span className="font-medium">{item.area_responsavel}</span></>}
+        {item.area_responsavel && <> · vai pra <span className="font-medium">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</span></>}
         {item.data_necessaria && <> · precisa até {new Date(item.data_necessaria).toLocaleDateString('pt-BR')}</>}
       </p>
+      {item.valor_estimado != null && (
+        <p className="mb-2">
+          <span className="text-base font-bold text-foreground">
+            R$ {Number(item.valor_estimado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          </span>
+          <span className="text-xs text-muted-foreground ml-1.5">valor estimado</span>
+        </p>
+      )}
       {item.descricao && (
         <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.descricao}</p>
       )}
@@ -1929,7 +1979,7 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
       {/* Dupla aprovação (pedido não-planejado) · estado dos dois carimbos.
           Os botões seguem os mesmos · o backend deduz qual papel o ator carimba. */}
       {item.aprovacao_gestao_status != null && (
-        <div className="space-y-1 rounded-md border border-border bg-muted/30 px-2.5 py-2 mb-2">
+        <div className="space-y-1.5 rounded-md border border-border bg-muted/30 px-3 py-2.5 mb-2">
           <CarimboLinha
             rotulo="Diretoria da área"
             status={item.aprovacao_origem_status}
@@ -2030,10 +2080,10 @@ function AprovacaoMeritoCard({ item, onApprove, onReject, onClick }) {
         </div>
         <span className="text-xs text-muted-foreground whitespace-nowrap">{date}</span>
       </div>
-      <p className="text-sm font-semibold text-foreground mb-1">{item.titulo}</p>
+      <p className="text-[15px] font-semibold leading-snug text-foreground mb-1">{item.titulo}</p>
       <p className="text-xs text-muted-foreground mb-2">
         por {solicitanteNome}
-        {item.area_responsavel && <> · vai pra <span className="font-medium">{item.area_responsavel}</span></>}
+        {item.area_responsavel && <> · vai pra <span className="font-medium">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</span></>}
         {item.data_necessaria && <> · precisa até {new Date(item.data_necessaria).toLocaleDateString('pt-BR')}</>}
       </p>
       {item.valor_estimado != null && (
@@ -2126,18 +2176,25 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
         <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solicitante}</span>
         <div className="flex items-center gap-1">
           {mostrarStatus && <Badge className={`text-[10px] px-1.5 py-0.5 ${st.color}`}>{st.label}</Badge>}
-          {sla && <Badge className={`text-[10px] px-1.5 py-0.5 ${sla.color}`}>⏱ {sla.label}</Badge>}
-          <Badge className={`text-[10px] px-1.5 py-0.5 ${urg.color}`}>{urg.label}</Badge>
+          {sla && (
+            <Badge className={`text-[10px] px-1.5 py-0.5 gap-0.5 ${sla.color}`}>
+              <Clock className="h-2.5 w-2.5" /> {sla.label}
+            </Badge>
+          )}
+          {item.urgencia && item.urgencia !== 'normal' && (
+            <Badge className={`text-[10px] px-1.5 py-0.5 ${urg.color}`}>{urg.label}</Badge>
+          )}
         </div>
       </div>
       {aguardandoFin && (
-        <div className="mt-2 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
-          ⏳ Aguardando aprovação do financeiro
+        <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+          <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
         </div>
       )}
       {item.status === 'aguardando_aprovacao_origem' && (
-        <div className="mt-2 text-[10px] text-violet-700 dark:text-violet-400 bg-violet-500/10 border border-violet-500/30 rounded px-2 py-1">
-          ⏳ Aguardando aprovação{Array.isArray(item.aprovacao_origem_aprovadores) && item.aprovacao_origem_aprovadores.length ? ` de ${item.aprovacao_origem_aprovadores.join(' ou ')}` : ' de origem'}
+        <div className="mt-2 flex items-center gap-1 text-[10px] text-violet-700 dark:text-violet-400 bg-violet-500/10 border border-violet-500/30 rounded px-2 py-1">
+          <Clock className="h-3 w-3 shrink-0" />
+          <span>Aguardando aprovação{Array.isArray(item.aprovacao_origem_aprovadores) && item.aprovacao_origem_aprovadores.length ? ` de ${item.aprovacao_origem_aprovadores.join(' ou ')}` : ' de origem'}</span>
         </div>
       )}
       {isAdmin && item.status === 'pendente' && (
@@ -2580,6 +2637,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
   if (!item) return null;
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
+  const st = getStatusMeta(item.status);
 
   const ACTION_LABELS = {
     em_analise: 'Analisar',
@@ -2613,38 +2671,41 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
           {/* Rastreio do pedido · etapas macro + com quem está (versão completa) */}
           <TrackerSolicitacao item={item} />
-          <div className="grid grid-cols-2 gap-4 text-sm">
+
+          {/* ── Detalhes ── */}
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Detalhes</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
             <div>
-              <span className="text-muted-foreground">Solicitante</span>
+              <span className="block text-xs text-muted-foreground mb-0.5">Solicitante</span>
               <p className="font-medium">{item.solicitante?.name || '—'}</p>
             </div>
             <div>
-              <span className="text-muted-foreground">Urgência</span>
+              <span className="block text-xs text-muted-foreground mb-0.5">Urgência</span>
               <p><Badge className={urg.color}>{urg.label}</Badge></p>
             </div>
             <div>
-              <span className="text-muted-foreground">Status</span>
-              <p className="font-medium capitalize">{item.status?.replace('_', ' ')}</p>
+              <span className="block text-xs text-muted-foreground mb-0.5">Situação</span>
+              <p><Badge className={st.color}>{st.label}</Badge></p>
             </div>
             <div>
-              <span className="text-muted-foreground">Data</span>
+              <span className="block text-xs text-muted-foreground mb-0.5">Criada em</span>
               <p className="font-medium">{new Date(item.created_at).toLocaleDateString('pt-BR')}</p>
             </div>
             {item.valor_estimado != null && (
               <div>
-                <span className="text-muted-foreground">Valor estimado</span>
+                <span className="block text-xs text-muted-foreground mb-0.5">Valor estimado</span>
                 <p className="font-medium">R$ {Number(item.valor_estimado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
               </div>
             )}
             {item.responsavel?.name && (
               <div>
-                <span className="text-muted-foreground">Responsável</span>
+                <span className="block text-xs text-muted-foreground mb-0.5">Responsável</span>
                 <p className="font-medium">{item.responsavel.name}</p>
               </div>
             )}
             {item.eh_planejado === true && (
               <div>
-                <span className="text-muted-foreground">Planejamento</span>
+                <span className="block text-xs text-muted-foreground mb-0.5">Planejamento</span>
                 <p className="mt-0.5"><Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">Planejado</Badge></p>
               </div>
             )}
@@ -2810,27 +2871,39 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             <CotacaoBlock item={item} canCotar={isAdmin} onChanged={() => onItemRefresh?.()} />
           )}
 
-          {isAdmin && !actionPending && (
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
-              {item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
-              {/* Aprovação/Rejeição definitiva da área · sempre disponível enquanto a
-                  solicitação está com ela e ativa (não quando está com o solicitante em
-                  ajuste, nem antes dos portões de aprovação/mérito, nem sobrestada —
-                  em espera precisa retomar antes). Aprovar mantém o passo seguinte de
-                  Concluir; Rejeitar é terminal (sem Concluir). */}
-              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status) && (
-                <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
-              )}
-              {item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
-              {!['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status) && (
-                <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
-              )}
-              {/* Ponte estoque · só faz sentido em pedidos de material (logística) ativos */}
-              {['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
-                && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status)
-                && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pela estoque</Button>}
-            </div>
-          )}
+          {/* ── Ações da área · header + primária (Aprovar/Concluir) antes das
+              secundárias e Rejeitar (destrutiva) por último. As CONDIÇÕES são
+              idênticas às de antes — só agrupamento/ordem visual mudou. ── */}
+          {isAdmin && !actionPending && (() => {
+            // Aprovação/Rejeição definitiva da área · sempre disponível enquanto a
+            // solicitação está com ela e ativa (não quando está com o solicitante em
+            // ajuste, nem antes dos portões de aprovação/mérito, nem sobrestada —
+            // em espera precisa retomar antes). Aprovar mantém o passo seguinte de
+            // Concluir; Rejeitar é terminal (sem Concluir).
+            const podeAprovar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
+            const podeRejeitar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
+            // Ponte estoque · só faz sentido em pedidos de material (logística) ativos
+            const podeEstoque = ['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
+              && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
+            const temAcoes = podeAprovar || podeRejeitar || item.status === 'pendente' || item.status === 'aprovado' || podeEstoque;
+            if (!temAcoes) return null;
+            return (
+              <div className="pt-3 border-t border-border space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Ações</p>
+                <div className="flex flex-wrap gap-2">
+                  {podeAprovar && (
+                    <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
+                  )}
+                  {item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
+                  {item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
+                  {podeEstoque && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pelo estoque</Button>}
+                  {podeRejeitar && (
+                    <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Sobrestar (em espera) / Retomar · ação de gestão (admin/responsável) */}
           {isAdmin && !actionPending && (
@@ -3332,14 +3405,14 @@ function AtenderEstoqueModal({ solicitacao, onClose, onDone }) {
       await api.atenderEstoque(solicitacao.id, fila.map(f => ({ produto_id: f.produto_id, quantidade: f.quantidade })), obs.trim() || null);
       toast.success('Baixa registrada · solicitação concluída.');
       onDone();
-    } catch (e) { toast.error(e.message || 'Erro ao atender pela estoque'); }
+    } catch (e) { toast.error(e.message || 'Erro ao atender pelo estoque'); }
     finally { setSaving(false); }
   }
 
   return (
     <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader><DialogTitle>Atender pela estoque</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Atender pelo estoque</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">Dá baixa no estoque dos itens que já temos e conclui <span className="font-medium">{solicitacao.titulo}</span>.</p>
           <Input placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} />
