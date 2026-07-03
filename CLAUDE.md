@@ -1725,6 +1725,16 @@ specs e fases no legado. Estado vigente:
 
 ## Solicitações · backbone administrativo (estado consolidado)
 
+### Form de criação reusável · NovaSolicitacaoForm (2026-07-03)
+O form oficial de "Nova Solicitação" vive em
+`src/components/solicitacoes/NovaSolicitacaoForm.jsx` (extraído da página).
+Props: `prefill`, `categoriasPermitidas`, `onCreated(criada)`, `onCancel`,
+`onDirtyChange` (o host liga o `useConfirmarSaida` · fechar com rascunho pede
+confirmação). `Solicitacoes.jsx` é o consumidor nº 1; a Produção abre o mesmo
+form a partir da ocorrência do culto. **Ponto de entrada novo = reusar esse
+componente** (não duplicar intake) — aprovação/SLA/roteamento/KPI ficam 100% no
+backend, iguais pra qualquer host.
+
 ### Co-aprovadores de origem + e-mail das aprovações (2026-06-22)
 Pedido (gestão): a vice-diretora **Juliana Leão** (`juliana.leao@cbrio.org` ·
 cargo `diretor-rh` · solicitações nível 2) aprova as solicitações de origem do
@@ -1827,6 +1837,19 @@ ver a fila de Produção lá, a área **Produção** foi adicionada ao `/admin/s
 (`AREAS` em `SolicitacoesResponsaveis.jsx`) e o Pedro Fernandes cadastrado em
 `area_solicitacoes_responsaveis` (`area='producao'`) — a fila "Atender" filtra POR ESSA
 tabela, não pelo cargo/boost; isso também faz a notificação de ocorrência crítica chegar nele.)
+
+**Ocorrência → "Fazer solicitação" (2026-07-03 · ideia do Pedro Fernandes):** na
+linha da ocorrência do `ModalProducao`, o link sublinhado **"Fazer solicitação"**
+abre um modal (z 1100 · convenção modal-sobre-modal) com o `NovaSolicitacaoForm`
+prefillado (contexto do culto + tipo/severidade/momento · categorias
+`infraestrutura` default / `ti` / `compras` · urgente pré-marcado SÓ na
+severidade crítica, sempre desmarcável). Ao criar, `PATCH
+/producao/ocorrencias/:id/solicitacao` grava
+`culto_producao_ocorrencias.solicitacao_id` (migration `20260703150000` ·
+**máx. 1 por ocorrência** · FK SET NULL · só vincula solicitação do próprio
+usuário) e o link vira **chip com o status vivo** da solicitação (o GET
+`/culto/:id` enriquece com `{status, titulo}`). O pedido segue o fluxo oficial
+inteiro (aprovação de origem → área) — nenhum bypass.
 
 **Cronograma por etapas (2026-06-16):** a equipe lança o tempo POR MOMENTO em
 mm:ss; a soma dos executados da seção 'culto' é a duração total

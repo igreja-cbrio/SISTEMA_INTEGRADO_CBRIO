@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { producao as prodApi } from '../../api';
 import { formatErro } from '../../lib/formatErro';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
+import NovaSolicitacaoForm from '../../components/solicitacoes/NovaSolicitacaoForm';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -564,6 +565,10 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const [form, setForm] = useState({ pontualidade_obs: '', observacoes: '' });
   const [marks, setMarks] = useState({}); // item_id -> {feito, observação}
   const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
+  // "Fazer solicitação" da ocorrência (ideia do Pedro Fernandes · 2026-07-03):
+  // quem acompanha o culto vê o problema e já abre o pedido no fluxo oficial de
+  // Solicitações, prefillado com o contexto · no máximo 1 solicitação por ocorrência.
+  const [solicitarDe, setSolicitarDe] = useState(null); // ocorrência alvo do modal
   const inicialRef = useRef(null); // snapshot do estado carregado · detecta alterações não salvas
 
   const carregar = useCallback(async () => {
@@ -683,6 +688,23 @@ function ModalProducao({ culto, onClose, onSaved }) {
                 <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.inputBg, color: C.t2, fontWeight: 700 }}>{o.tipo === 'tecnica' ? 'TÉCNICA' : 'ESTRUTURA'}</span>
                 <span style={{ fontSize: 9, color: sevCor(o.severidade), fontWeight: 700 }}>{o.severidade}</span>
                 <span style={{ flex: 1, color: C.text }}>{o.descricao}{o.momento ? ` · ${o.momento}` : ''}</span>
+                {o.solicitacao_id ? (
+                  <button
+                    onClick={() => { window.location.href = '/solicitacoes'; }}
+                    title={o.solicitacao?.titulo ? `${o.solicitacao.titulo} · acompanhe em Solicitações` : 'Acompanhe em Solicitações'}
+                    style={{ background: `${solStatusMeta(o.solicitacao?.status).cor}18`, border: 'none', cursor: 'pointer', fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 99, color: solStatusMeta(o.solicitacao?.status).cor, whiteSpace: 'nowrap' }}
+                  >
+                    Solicitação: {solStatusMeta(o.solicitacao?.status).label}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setSolicitarDe(o)}
+                    title="Abrir uma solicitação (manutenção, TI ou compra) já preenchida com esta ocorrência"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.primary, fontSize: 10, fontWeight: 600, textDecoration: 'underline', whiteSpace: 'nowrap', padding: 2 }}
+                  >
+                    Fazer solicitação
+                  </button>
+                )}
                 <button onClick={() => removerOcorrencia(o.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2 }}><Trash2 size={12} /></button>
               </div>
             ))}
@@ -738,8 +760,102 @@ function ModalProducao({ culto, onClose, onSaved }) {
           </button>
         </footer>
       </div>
+
+      {/* "Fazer solicitação" da ocorrência · modal-sobre-modal (z 1100) */}
+      {solicitarDe && (
+        <SolicitacaoOcorrenciaModal
+          ocorrencia={solicitarDe}
+          culto={culto}
+          onClose={() => setSolicitarDe(null)}
+          onVinculada={async (criada) => {
+            try {
+              await prodApi.vincularSolicitacao(solicitarDe.id, criada.id);
+            } catch (e) {
+              toast.error('Solicitação criada, mas não consegui vincular à ocorrência.');
+            }
+            setSolicitarDe(null);
+            try { const d = await prodApi.culto(culto.id); setDet(d); } catch (_) {}
+          }}
+        />
+      )}
     </div>
   );
+}
+
+// ── "Fazer solicitação" a partir de uma ocorrência ───────────────────────────
+// Reusa o form OFICIAL de Solicitações (NovaSolicitacaoForm) prefillado com o
+// contexto do culto — o pedido segue o fluxo normal (aprovação de origem, SLA,
+// fila da área). Categorias liberadas aqui: Serviços/manutenção (default), TI
+// (internet caiu) e Compras (equipamento quebrou e precisa repor).
+function SolicitacaoOcorrenciaModal({ ocorrencia, culto, onClose, onVinculada }) {
+  const [dirty, setDirty] = useState(false);
+  const { tentarFechar, backdropProps } = useConfirmarSaida(dirty, onClose);
+  const { dia, diaSemana } = formataDataCurta(culto.data);
+  const quando = `${diaSemana} ${dia} ${MESES[Number(culto.data.split('-')[1]) - 1]}${culto.hora ? ' · ' + culto.hora.slice(0, 5) : ''}`;
+  const cabecalho = `${culto.nome || culto.service_type_name} (${quando})`;
+  const tipoLabel = ocorrencia.tipo === 'tecnica' ? 'Falha técnica' : 'Instabilidade de estrutura';
+  const critica = ocorrencia.severidade === 'critica';
+  // Urgente pré-marcado SÓ na severidade crítica (sempre desmarcável) · decisão
+  // do Marcos 2026-07-03 · evita inflar o radar de urgência frequente.
+  const prefill = {
+    categoria: 'infraestrutura',
+    titulo: ocorrencia.descricao.length > 80 ? `${ocorrencia.descricao.slice(0, 77)}…` : ocorrencia.descricao,
+    descricao: [
+      `Ocorrência registrada pela Produção durante o culto ${cabecalho}.`,
+      `Tipo: ${tipoLabel} · Severidade: ${ocorrencia.severidade}${ocorrencia.momento ? ` · Momento: ${ocorrencia.momento}` : ''}`,
+      '',
+      ocorrencia.descricao,
+    ].join('\n'),
+    justificativa: 'Problema visto ao vivo durante o culto — solicitação aberta na hora pra não se perder.',
+    eh_urgente: critica,
+    justificativa_urgencia: critica ? `Ocorrência crítica durante o culto ${cabecalho}.` : '',
+  };
+  return (
+    <div {...backdropProps} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: C.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, maxWidth: 540, width: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column', padding: 16, boxShadow: 'var(--shadow-hover), var(--hi)' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>Fazer solicitação</h2>
+            <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0' }}>
+              A partir da ocorrência · entra no fluxo oficial de Solicitações (aprovação + prazo).
+              Depois, acompanhe em “Minhas Solicitações”.
+            </p>
+          </div>
+          <button onClick={tentarFechar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}><X size={18} /></button>
+        </header>
+        <NovaSolicitacaoForm
+          prefill={prefill}
+          categoriasPermitidas={['infraestrutura', 'ti', 'compras']}
+          onDirtyChange={setDirty}
+          onCancel={tentarFechar}
+          onCreated={onVinculada}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Status da solicitação vinculada · rótulos macro (espelho enxuto do módulo
+// Solicitações · só exibição no chip da ocorrência).
+const SOL_STATUS = {
+  aguardando_aprovacao_origem: { label: 'Aguardando aprovação', cor: '#8B5CF6' },
+  aguardando_merito: { label: 'Aguardando aprovação', cor: '#8B5CF6' },
+  em_cotacao: { label: 'Em cotação', cor: '#06B6D4' },
+  aguardando_aprovacao_financeira: { label: 'Aprovação financeira', cor: '#F97316' },
+  pendente: { label: 'Pendente', cor: '#F59E0B' },
+  aguardando_ajuste: { label: 'Aguardando ajuste', cor: '#F59E0B' },
+  em_analise: { label: 'Em análise', cor: '#3B82F6' },
+  aprovado: { label: 'Em andamento', cor: '#10B981' },
+  em_atendimento: { label: 'Em andamento', cor: '#10B981' },
+  aguardando_entrega: { label: 'Em andamento', cor: '#10B981' },
+  sobrestada: { label: 'Em espera', cor: '#94A3B8' },
+  concluido: { label: 'Concluída', cor: '#059669' },
+  avaliado: { label: 'Concluída', cor: '#059669' },
+  rejeitado: { label: 'Rejeitada', cor: '#EF4444' },
+  cancelado: { label: 'Cancelada', cor: '#94A3B8' },
+};
+function solStatusMeta(status) {
+  return SOL_STATUS[status] || { label: 'Criada', cor: '#64748B' };
 }
 
 // ── Aba Acumulado / Detalhado ─────────────────────────────────────────────────

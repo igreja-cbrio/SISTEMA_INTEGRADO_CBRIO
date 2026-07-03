@@ -282,10 +282,24 @@ router.get('/culto/:id', authorizeModule('producao', 1), async (req, res) => {
       titulo: r.titulo, previsto_seg: r.previsto_seg, secao: r.secao, ordem: r.ordem,
     }));
 
+    // Ocorrência com solicitação vinculada ("Fazer solicitação") → anexa o
+    // status vivo pro chip do modal (quem registrou acompanha sem sair da tela)
+    let ocorrenciasComSolicitacao = ocorr || [];
+    const solIds = ocorrenciasComSolicitacao.map(o => o.solicitacao_id).filter(Boolean);
+    if (solIds.length > 0) {
+      const { data: sols } = await supabase
+        .from('solicitacoes').select('id, status, titulo').in('id', solIds);
+      const solById = {};
+      (sols || []).forEach(s => { solById[s.id] = s; });
+      ocorrenciasComSolicitacao = ocorrenciasComSolicitacao.map(o => (
+        o.solicitacao_id ? { ...o, solicitacao: solById[o.solicitacao_id] || null } : o
+      ));
+    }
+
     res.json({
       culto,
       producao: prod || null,
-      ocorrencias: ocorr || [],
+      ocorrencias: ocorrenciasComSolicitacao,
       checklist: itens,
       etapas: (etapas || []).map(e => ({
         id: e.id, ordem: e.ordem, titulo: e.titulo,
@@ -449,6 +463,48 @@ router.delete('/ocorrencias/:id', authorizeModule('producao', 2), async (req, re
   if (error) return res.status(500).json({ error: error.message });
   painelCache.bust('');
   res.json({ ok: true });
+});
+
+// ── Vínculo ocorrência → solicitação ("Fazer solicitação" · 2026-07-03) ──────
+// O atalho no modal da Produção cria a solicitação pelo fluxo oficial e chama
+// este PATCH na sequência. No máximo 1 solicitação por ocorrência (decisão do
+// Marcos) e só é possível vincular solicitação criada pelo próprio usuário.
+router.patch('/ocorrencias/:id/solicitacao', authorizeModule('producao', 2), async (req, res) => {
+  try {
+    const { solicitacao_id } = req.body || {};
+    if (!solicitacao_id) return res.status(400).json({ error: 'solicitacao_id obrigatório' });
+
+    const { data: ocorr } = await supabase
+      .from('culto_producao_ocorrencias')
+      .select('id, solicitacao_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!ocorr) return res.status(404).json({ error: 'Ocorrência não encontrada' });
+    if (ocorr.solicitacao_id) {
+      return res.status(409).json({ error: 'Esta ocorrência já tem uma solicitação vinculada' });
+    }
+
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id')
+      .eq('id', solicitacao_id)
+      .maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (sol.solicitante_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Só é possível vincular uma solicitação criada por você' });
+    }
+
+    const { data, error } = await supabase
+      .from('culto_producao_ocorrencias')
+      .update({ solicitacao_id })
+      .eq('id', req.params.id)
+      .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('producao PATCH ocorrencia/solicitacao:', e.message);
+    res.status(500).json({ error: 'Erro ao vincular a solicitação' });
+  }
 });
 
 // ── Checklist por culto · bulk upsert das marcações ──────────────────────────
