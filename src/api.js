@@ -1672,6 +1672,7 @@ export const producao = {
   salvarEtapas: (cultoId, etapas) => put(`/producao/culto/${cultoId}/etapas`, { etapas }),
   addOcorrencia:(id, data) => post(`/producao/culto/${id}/ocorrencias`, data),
   removerOcorrencia: (id) => del(`/producao/ocorrencias/${id}`),
+  vincularSolicitacao: (ocorrenciaId, solicitacaoId) => patch(`/producao/ocorrencias/${ocorrenciaId}/solicitacao`, { solicitacao_id: solicitacaoId }),
   salvarChecklist: (cultoId, marks) => put(`/producao/culto/${cultoId}/checklist`, { marks }),
   acumulado:    (params = {}) => get('/producao/acumulado' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
   pendencias:   () => get('/producao/pendencias'),
