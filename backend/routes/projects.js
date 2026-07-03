@@ -88,16 +88,23 @@ router.get('/:id', async (req, res) => {
       supabase.from('project_budget_items').select('*').eq('project_id', req.params.id).order('created_at'),
     ]);
 
-    // Subtarefas
+    // Subtarefas + comentários (a UI lê t.comments — sem este fetch os
+    // comentários gravados nunca apareciam ao reabrir o projeto)
     const taskIds = (tasks.data || []).map(t => t.id);
     let subtasks = [];
+    let comments = [];
     if (taskIds.length > 0) {
-      const { data: subs } = await supabase.from('project_task_subtasks').select('*').in('task_id', taskIds).order('sort_order');
-      subtasks = subs || [];
+      const [subsRes, comsRes] = await Promise.all([
+        supabase.from('project_task_subtasks').select('*').in('task_id', taskIds).order('sort_order'),
+        supabase.from('project_task_comments').select('*').in('task_id', taskIds).order('created_at'),
+      ]);
+      subtasks = subsRes.data || [];
+      comments = comsRes.data || [];
     }
     const tasksWithSubs = (tasks.data || []).map(t => ({
       ...t,
       subtasks: subtasks.filter(s => s.task_id === t.id),
+      comments: comments.filter(c => c.task_id === t.id),
     }));
 
     res.json({

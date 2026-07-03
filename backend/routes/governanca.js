@@ -246,7 +246,7 @@ async function buildKPI(mes) {
     supabase.rpc('kpi_servir_comunidade', { _since: noventaDias.toISOString() }),
     supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
     supabase.from('kpi_metas').select('*').order('area'),
-    supabase.from('membros').select('id', { count: 'exact', head: true }).eq('status', 'ativo'),
+    supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').is('deleted_at', null),
   ]);
 
   const pick = (i) => settled[i].status === 'fulfilled' ? settled[i].value : { data: null, error: settled[i].reason, count: null };
@@ -355,7 +355,7 @@ async function buildAG() {
   const [projRes, transRes, membrosRes, cultosRes] = await Promise.all([
     supabase.from('projects').select('id, name, status'),
     supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado'),
-    supabase.from('membros').select('id', { count: 'exact', head: true }).eq('status', 'ativo'),
+    supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').is('deleted_at', null),
     supabase.from('cultos').select('id', { count: 'exact', head: true }).gte('data', `${ano}-01-01`),
   ]);
   const proj = projRes.data || [];

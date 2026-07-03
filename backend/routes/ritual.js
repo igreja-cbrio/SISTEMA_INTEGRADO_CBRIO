@@ -13,7 +13,7 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
@@ -168,7 +168,9 @@ router.get('/revisados', async (req, res) => {
 // ----------------------------------------------------------------------------
 // POST /:kpi_id/revisar - registrar revisão
 // ----------------------------------------------------------------------------
-router.post('/:kpi_id/revisar', async (req, res) => {
+// Escrita restrita: o ritual é operado pela diretoria (o botão no /painel já
+// era admin-only, mas a rota aceitava qualquer logado registrar revisão de OKR).
+router.post('/:kpi_id/revisar', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const b = req.body || {};
     const periodo = b.periodo_referencia || periodoMensalAtual();
@@ -222,7 +224,7 @@ router.post('/:kpi_id/revisar', async (req, res) => {
 // ----------------------------------------------------------------------------
 // PATCH /revisao/:id - atualizar revisão (executar / cancelar)
 // ----------------------------------------------------------------------------
-router.patch('/revisao/:id', async (req, res) => {
+router.patch('/revisao/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const allowed = [
       'status_revisao', 'observacao_execucao', 'data_execucao',

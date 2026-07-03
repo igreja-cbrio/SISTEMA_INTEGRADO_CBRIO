@@ -2083,13 +2083,13 @@ export default function Projetos() {
               <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Avaliação Geral</div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                 {[1, 2, 3, 4, 5].map(star => (
-                  <span key={star} onClick={() => setRetroForm(f => ({ ...f, rating: star }))}
-                    style={{ fontSize: 32, cursor: 'pointer', color: star <= (retroForm.rating || 0) ? C.amber : C.t3, transition: 'color .15s' }}>
+                  <span key={star} onClick={() => setRetroForm(f => ({ ...f, overall_rating: star }))}
+                    style={{ fontSize: 32, cursor: 'pointer', color: star <= (retroForm.overall_rating || 0) ? C.amber : C.t3, transition: 'color .15s' }}>
                     {'\u2605'}
                   </span>
                 ))}
               </div>
-              {retroForm.rating && <div style={{ fontSize: 13, color: C.t2, marginTop: 6 }}>{retroForm.rating}/5</div>}
+              {retroForm.overall_rating && <div style={{ fontSize: 13, color: C.t2, marginTop: 6 }}>{retroForm.overall_rating}/5</div>}
             </div>
 
             {/* Textareas */}
@@ -2107,7 +2107,7 @@ export default function Projetos() {
               <div style={{ ...styles.card, padding: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: C.blue, marginBottom: 8 }}>Ações</div>
                 <textarea style={{ ...styles.input, minHeight: 80, resize: 'vertical' }}
-                  value={retroForm.actions || ''} onChange={e => setRetroForm(f => ({ ...f, actions: e.target.value }))} />
+                  value={retroForm.action_items || ''} onChange={e => setRetroForm(f => ({ ...f, action_items: e.target.value }))} />
               </div>
             </div>
 

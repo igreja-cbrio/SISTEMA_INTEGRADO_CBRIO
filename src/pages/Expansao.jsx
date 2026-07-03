@@ -242,15 +242,14 @@ const TAB_LABELS = ['Visão Geral', 'Timeline', 'Marcos', 'Gantt', 'Acompanhamen
 // ═══════════════════════════════════════════════════════════
 export default function Expansao() {
   const { user, profile, getAccessLevel, userAreas, userSetores } = useAuth();
-  const accessLevel = getAccessLevel(['Projetos']);
+  const accessLevel = getAccessLevel(['expansao']); // era o slug legado 'Projetos' (não existe na matriz)
   const userId = user?.id;
-  const canEdit = accessLevel >= 3; // líder+ pode criar/editar
-  const canEditItem = (item) => {
-    if (accessLevel >= 4) return true; // diretor+: edita qualquer visível
-    if (accessLevel === 3) return !item.area || userAreas.includes(item.area); // líder: edita da sua área
-    if (accessLevel === 2) return item.responsible_id === userId; // assistente: só seus
-    return false;
-  };
+  // Escrita espelha o backend: /api/expansion/* exige role admin/diretor
+  // (authorize). Oferecer botão pra nível de matriz terminava em 403 surpresa.
+  // Ampliar pra líderes = mudar os DOIS lados juntos.
+  const isDiretorOuAdmin = ['admin', 'diretor'].includes(profile?.role);
+  const canEdit = isDiretorOuAdmin;
+  const canEditItem = () => isDiretorOuAdmin;
 
   const [milestones, setMilestones] = useState([]);
   const [dashboard, setDashboard] = useState(null);
