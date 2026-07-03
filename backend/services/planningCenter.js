@@ -441,7 +441,14 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
 
 // ── Batch upsert volunteer QR codes ─────────────────────────────────────────
 async function upsertVolunteerQrCodes(supabase, volunteersMap) {
-  const codes = Array.from(volunteersMap.values());
+  // Só as colunas que a tabela tem — o mapa carrega chaves extras (email) que
+  // faziam o PostgREST rejeitar o batch inteiro ("Could not find the 'email'
+  // column") e a tabela nunca era populada (bug silencioso · corrigido 2026-07-03).
+  const codes = Array.from(volunteersMap.values()).map(v => ({
+    planning_center_person_id: v.planning_center_person_id,
+    volunteer_name: v.volunteer_name,
+    avatar_url: v.avatar_url || null,
+  }));
   if (codes.length === 0) return 0;
   const batchSize = 100;
   for (let i = 0; i < codes.length; i += batchSize) {
@@ -676,7 +683,18 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
     }
   }
 
-  const withProfile = memberships.filter(m => m.volunteer_profile_id);
+  // Re-dedup pós-resolução: uma membership que era "pc-only" pode ter ganhado o
+  // MESMO volunteer_profile_id de outra já existente pra mesma equipe — duas
+  // linhas com o mesmo (team_id, volunteer_profile_id) num batch estouram
+  // "ON CONFLICT DO UPDATE command cannot affect row a second time".
+  const vistosProfile = new Map();
+  for (const m of memberships.filter(x => x.volunteer_profile_id)) {
+    const k = `${m.team_id}:${m.volunteer_profile_id}`;
+    const ja = vistosProfile.get(k);
+    if (!ja) vistosProfile.set(k, m);
+    else if (m.position_id && !ja.position_id) ja.position_id = m.position_id;
+  }
+  const withProfile = [...vistosProfile.values()];
   const pcOnly = memberships.filter(m => !m.volunteer_profile_id && m.planning_center_person_id);
 
   let assigned = 0;
