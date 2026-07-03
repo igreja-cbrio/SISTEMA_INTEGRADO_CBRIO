@@ -44,6 +44,11 @@ const ROUTE_MODULE_MAP = {
   'membros':      ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face'],
   // Dado financeiro do membro (contribuições) · membresia OU financeiro, nível 2.
   'membros-financeiro': ['membresia','financeiro'],
+  // Como 'membros', + a conta de quiosque do lounge (módulo totem-membro ·
+  // matriz zerada + override por conta · login trava em /totem). Usado só nos
+  // endpoints do fluxo do totem (ex.: cpf-lookup).
+  'membros-totem': ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face','totem-membro'],
+  'totem-membro': ['totem-membro'],
   'face':         ['face'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],

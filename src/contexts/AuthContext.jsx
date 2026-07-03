@@ -15,6 +15,8 @@ const MODULO_ROTA_TRAVA = {
   kids: '/ministerial/kids',
   marketing: '/marketing',
   online: '/online',
+  // Conta de quiosque dos computadores do lounge (autoatendimento do hall)
+  'totem-membro': '/totem',
 };
 
 // Set to true to bypass login and simulate an admin user
