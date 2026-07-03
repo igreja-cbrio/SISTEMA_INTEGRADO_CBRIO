@@ -74,6 +74,29 @@ app.use(compression());
 app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 
+// ── Telemetria de 500 (aba "Erros do servidor" do Feedback) ──
+// O error handler global só vê exceções NÃO tratadas; a maioria dos 500 reais
+// é respondida pela própria rota (res.status(500).json(...)) e ficava
+// invisível — "nenhum erro" na tela era falso. Este hook registra QUALQUER
+// resposta >= 500 no finish; o error handler marca res.locals pra não duplicar.
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    if (res.statusCode < 500 || res.locals._erro500Registrado) return;
+    try {
+      const { supabase } = require('./utils/supabase');
+      supabase.from('app_erros_servidor').insert({
+        user_id: req.user?.id || null,
+        user_email: req.user?.email || null,
+        metodo: req.method,
+        rota: String(req.path || req.originalUrl || '').slice(0, 300),
+        mensagem: `HTTP ${res.statusCode} respondido pela rota (sem exceção · ver logs da função)`,
+        status: res.statusCode,
+      }).then(() => {}, (e) => console.warn('[app_erros_servidor]', e.message));
+    } catch (_) { /* tabela ausente / supabase off · ignora */ }
+  });
+  next();
+});
+
 // ── Routes ──
 app.use('/api/app', require('./routes/app'));               // Mobile app (sem auth ERP)
 app.use('/api/auth/planning-center', require('./routes/authPlanningCenter'));
@@ -231,6 +254,7 @@ app.use(sentryErrorHandler());
 // ── Error handler ──
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err.message);
+  res.locals._erro500Registrado = true; // o hook de finish não duplica este registro
   // Sink de telemetria (Onda 0) · fire-and-forget · NUNCA quebra a resposta ·
   // sem query/body pra não vazar PII (só rota, método, mensagem e stack).
   try {

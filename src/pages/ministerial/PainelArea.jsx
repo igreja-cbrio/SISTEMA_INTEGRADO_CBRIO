@@ -338,9 +338,13 @@ export default function PainelArea({ area }) {
           <TabsTrigger value="indicadores">
             Indicadores {kpisRegulares.length > 0 && <span className="ml-1 opacity-60">({kpisRegulares.length})</span>}
           </TabsTrigger>
-          <TabsTrigger value="dados">
-            Dados {data.dados?.length > 0 && <span className="ml-1 opacity-60">({data.dados.length})</span>}
-          </TabsTrigger>
+          {/* Sem tipo de dado bruto esperado pra área (ex.: AMI/Bridge, cujos
+              KPIs vêm dos cultos) a aba ficaria vazia pra sempre → esconde. */}
+          {(data.dados?.length || 0) > 0 && (
+            <TabsTrigger value="dados">
+              Dados <span className="ml-1 opacity-60">({data.dados.length})</span>
+            </TabsTrigger>
+          )}
           <TabsTrigger value="saude">Saúde</TabsTrigger>
           <TabsTrigger value="novos-convertidos">Novos convertidos</TabsTrigger>
         </TabsList>

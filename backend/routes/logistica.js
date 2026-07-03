@@ -248,42 +248,9 @@ router.post('/fornecedores/:id/enriquecer', async (req, res) => {
   } catch (e) { console.error('[LOG] enriquecer fornecedor:', e); res.status(500).json({ error: 'Erro ao buscar dados do fornecedor' }); }
 });
 
-// ── SOLICITAÇÕES DE COMPRA ─────────────────────────────────
-router.get('/solicitacoes', async (req, res) => {
-  try {
-    const { status } = req.query;
-    let query = supabase.from('log_solicitacoes_compra').select('*, profiles!solicitante_id(name)').order('created_at', { ascending: false });
-    if (status) query = query.eq('status', status);
-    const { data, error } = await query;
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar solicitações' }); }
-});
-
-router.post('/solicitacoes', async (req, res) => {
-  try {
-    const { titulo, descricao, justificativa, valor_estimado, urgencia, area } = req.body;
-    if (!titulo) return res.status(400).json({ error: 'Título é obrigatório' });
-    const { data, error } = await supabase.from('log_solicitacoes_compra')
-      .insert({ titulo, descricao: descricao || null, justificativa: justificativa || null, valor_estimado: valor_estimado || null, urgencia: urgencia || 'normal', area: area || null, solicitante_id: req.user.userId })
-      .select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao criar solicitação' }); }
-});
-
-router.patch('/solicitacoes/:id', async (req, res) => {
-  try {
-    const { status, observacoes } = req.body;
-    const update = { status };
-    if (observacoes !== undefined) update.observacoes = observacoes;
-    if (['aprovado', 'rejeitado'].includes(status)) update.aprovado_por = req.user.userId;
-    const { data, error } = await supabase.from('log_solicitacoes_compra')
-      .update(update).eq('id', req.params.id).select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar solicitação' }); }
-});
+// (Endpoints legados de /solicitacoes [log_solicitacoes_compra] removidos na
+// poda do atlas 2026-07 — o fluxo vivo de compras é o módulo Solicitações
+// central; a tabela segue lida só pelo card de stats do dashboard.)
 
 // ── PEDIDOS ────────────────────────────────────────────────
 router.get('/pedidos', async (req, res) => {
@@ -887,42 +854,9 @@ router.delete('/itens/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao remover item' }); }
 });
 
-// ── MOVIMENTAÇÕES ─────────────────────────────────────────
-router.get('/movimentacoes', async (req, res) => {
-  try {
-    const { tipo } = req.query;
-    let query = supabase.from('log_movimentacoes')
-      .select('*, profiles!responsavel_id(name)')
-      .order('data_movimentacao', { ascending: false });
-    if (tipo) query = query.eq('tipo', tipo);
-    const { data, error } = await query;
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar movimentações' }); }
-});
-
-router.post('/movimentacoes', async (req, res) => {
-  try {
-    const { codigo_item, descricao, tipo, quantidade, origem, destino, observacoes } = req.body;
-    if (!descricao || !tipo || !quantidade) return res.status(400).json({ error: 'Descrição, tipo e quantidade são obrigatórios' });
-    const { data, error } = await supabase.from('log_movimentacoes')
-      .insert({ codigo_item: codigo_item || null, descricao, tipo, quantidade, origem: origem || null, destino: destino || null, observacoes: observacoes || null, responsavel_id: req.user.userId, data_movimentacao: new Date().toISOString() })
-      .select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao registrar movimentação' }); }
-});
-
-router.get('/movimentacoes/historico/:codigo', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('log_movimentacoes')
-      .select('*')
-      .eq('codigo_item', req.params.codigo)
-      .order('data_movimentacao', { ascending: false });
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar histórico' }); }
-});
+// (Endpoints legados de /movimentacoes removidos na poda do atlas 2026-07 —
+// a tabela log_movimentacoes era o estoque ANTIGO do Power App; o estoque
+// vivo é o razão log_estoque_movimentacoes, nos endpoints /estoque/*.)
 
 // ══════════════════════════════════════════════════════════════════════════
 // ESTOQUE (Fase 3a) · catálogo + razão (saldo DERIVADO) + validade/FEFO + consumo

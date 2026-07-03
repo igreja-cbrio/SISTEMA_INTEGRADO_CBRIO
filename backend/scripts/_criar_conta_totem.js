@@ -96,7 +96,7 @@ async function main() {
     nivel_leitura: 3, nivel_escrita: 3,
     pode_exportar: false, pode_aprovar: false, escopo_proprio: false,
     motivo: 'Conta de quiosque do Totem Membro (computador do lounge)',
-    criado_por: 'script _criar_conta_totem',
+    // criado_por é INTEGER (FK) — não aceita texto; fica null no script.
   };
   if (ovExist) {
     const { error } = await supabase.from('permissoes_modulo').update(ovPayload).eq('id', ovExist.id);

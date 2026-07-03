@@ -191,7 +191,10 @@ export default function DadosBrutos({ embedded = false }) {
     } else {
       ids = QUICK_LOG_DEFAULT;
     }
-    return ids.map(id => tipoById[id]).filter(Boolean);
+    // Tipos AUTOMÁTICOS (entrada_manual=false · alimentados por coletor/módulo)
+    // ficam FORA do lançamento rápido: lançar à mão neles concorre com o
+    // coletor e contamina o KPI (mesmo filtro do formulário completo).
+    return ids.map(id => tipoById[id]).filter(t => t && t.entrada_manual !== false);
   }, [tipos, isAdmin, ministerioId, kpiAreas, areasEditaveis]);
 
   // Abre modal com tipo (e área se única) pre-preenchidos

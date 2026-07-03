@@ -169,7 +169,7 @@ const TABS = [
 ];
 const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Calendário', 'Notas de compras'];
 const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
-const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal', 'DRE (legacy)'];
+const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal'];
 const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
@@ -261,7 +261,6 @@ export default function Financeiro() {
       case 'dre_auto':         setTab(5); setSubDre(0); break;
       case 'dre_centro':       setTab(5); setSubDre(1); break;
       case 'dre_comparativo':  setTab(5); setSubDre(2); break;
-      case 'dre_legacy':       setTab(5); setSubDre(3); break;
       case 'generosidade':     setTab(6); break;
       case 'banco':            setTab(7); setSubBanco(0); break;
       case 'culto_vivo':       setTab(7); setSubBanco(1); break;
@@ -1194,197 +1193,6 @@ export default function Financeiro() {
     return v < 0 ? `(${abs})` : abs;
   };
 
-  const renderDRE = () => {
-    if (!dreData) {
-      return (
-        <div style={styles.card}>
-          <div style={{ padding: 40, textAlign: 'center' }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 }}>
-              Demonstrativo de Resultados (DRE)
-            </div>
-            <div style={{ fontSize: 13, color: C.text2, marginBottom: 20, maxWidth: 540, margin: '0 auto 20px' }}>
-              Envie um ou mais arquivos <strong>Balanço Ano YYYY.xlsx</strong> da CBRio.
-              O sistema vai consolidar, filtrar receitas/despesas e gerar a DRE hierarquica.
-            </div>
-            <label
-              style={{
-                display: 'inline-block', padding: '12px 24px', borderRadius: 8,
-                background: C.primary, color: '#fff', fontWeight: 600, cursor: 'pointer',
-                fontSize: 14,
-              }}
-            >
-              {dreLoading ? 'Processando...' : 'Selecionar arquivos .xlsx'}
-              <input
-                type="file"
-                accept=".xlsx"
-                multiple
-                disabled={dreLoading}
-                style={{ display: 'none' }}
-                onChange={e => handleDreUpload(e.target.files)}
-              />
-            </label>
-          </div>
-        </div>
-      );
-    }
-
-    const totalRec = dreSomar('TOTAL_REC');
-    const totalDesp = dreSomar('TOTAL_DESP');
-    const resultado = totalRec + totalDesp;
-    const margem = totalRec ? (resultado / totalRec) * 100 : 0;
-
-    const KPIS = [
-      { label: 'Receitas', value: dreMoneyFmt(totalRec), bg: '#10b981' },
-      { label: 'Despesas', value: dreMoneyFmt(totalDesp), bg: '#ef4444' },
-      { label: 'Resultado', value: dreMoneyFmt(resultado), bg: resultado >= 0 ? '#10b981' : '#ef4444' },
-      { label: 'Margem', value: `${margem.toFixed(1)}%`, bg: '#3b82f6' },
-    ];
-
-    const MESES = [
-      { v: '1', n: 'Janeiro' }, { v: '2', n: 'Fevereiro' }, { v: '3', n: 'Marco' },
-      { v: '4', n: 'Abril' }, { v: '5', n: 'Maio' }, { v: '6', n: 'Junho' },
-      { v: '7', n: 'Julho' }, { v: '8', n: 'Agosto' }, { v: '9', n: 'Setembro' },
-      { v: '10', n: 'Outubro' }, { v: '11', n: 'Novembro' }, { v: '12', n: 'Dezembro' },
-    ];
-
-    // Filtra estrutura: oculta linha com valor 0 (deixa só os totais)
-    // mas mantém pais cujos filhos têm valor.
-    const linhasVisiveis = [];
-    for (const item of dreData.estrutura) {
-      const total = dreSomar(item.cod);
-      // Sempre mostrar nível 1 (3, 4), 2, 3. Para 4+ só mostrar se tem valor.
-      if (item.tipo === 'total') {
-        linhasVisiveis.push({ ...item, total });
-        continue;
-      }
-      if (item.level <= 3) {
-        linhasVisiveis.push({ ...item, total });
-      } else if (total !== 0) {
-        linhasVisiveis.push({ ...item, total });
-      }
-    }
-
-    // Esconde linhas cujo pai está colapsado
-    const renderLinhas = linhasVisiveis.filter(item => {
-      if (item.tipo === 'total') return true;
-      if (item.level <= 1) return true;
-      const partes = item.cod.split('.');
-      for (let i = 1; i < partes.length; i++) {
-        const pai = partes.slice(0, i).join('.');
-        if (!dreExpanded.has(pai)) return false;
-      }
-      return true;
-    });
-
-    const temFilho = (cod) => linhasVisiveis.some(it => it.tipo !== 'total' && it.cod !== cod && it.cod.startsWith(cod + '.'));
-
-    return (
-      <>
-        <div style={styles.kpiGrid}>
-          {KPIS.map((k, i) => (
-            <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={FIN_STAT_SVGS[i % FIN_STAT_SVGS.length]} />
-          ))}
-        </div>
-
-        <div style={styles.filterRow}>
-          <select
-            className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            value={dreAno}
-            onChange={e => setDreAno(e.target.value)}
-          >
-            <option value="todos">Todos os anos</option>
-            {dreAnosDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
-          <select
-            className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            value={dreMes}
-            onChange={e => setDreMes(e.target.value)}
-          >
-            <option value="todos">Todos os meses</option>
-            {MESES.map(m => <option key={m.v} value={m.v}>{m.n}</option>)}
-          </select>
-          <Button variant="outline" onClick={() => window.print()}>Imprimir / PDF</Button>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.primary}`, color: C.primary, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-            {dreLoading ? 'Processando...' : 'Recarregar .xlsx'}
-            <input
-              type="file"
-              accept=".xlsx"
-              multiple
-              disabled={dreLoading}
-              style={{ display: 'none' }}
-              onChange={e => handleDreUpload(e.target.files)}
-            />
-          </label>
-          <Button variant="ghost" onClick={() => setDreData(null)}>Limpar</Button>
-          <div style={{ marginLeft: 'auto', fontSize: 12, color: C.text3 }}>
-            {dreData.stats.arquivos} arquivo(s) · {dreData.stats.validas.toLocaleString('pt-BR')} lancamentos validos · {dreData.stats.excluidas.toLocaleString('pt-BR')} excluidos
-          </div>
-        </div>
-
-        <div style={styles.card}>
-          <div style={{ overflowX: 'auto' }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ ...styles.th, width: '60%' }}>Conta</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Código</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Valor (R$)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {renderLinhas.map(item => {
-                const isTotal = item.tipo === 'total';
-                const isResultado = item.cod === 'RESULTADO';
-                const expandable = !isTotal && temFilho(item.cod);
-                const expanded = dreExpanded.has(item.cod);
-                const corValor = item.total < 0 ? C.red : (item.total > 0 ? C.green : C.text3);
-                let bgRow = 'transparent';
-                let fontWeight = 400;
-                let corLabel = C.text;
-                if (isTotal) {
-                  bgRow = isResultado ? (item.total >= 0 ? C.greenBg : C.redBg) : '#1e3a5f12';
-                  fontWeight = 800;
-                  corLabel = isResultado ? (item.total >= 0 ? C.green : C.red) : '#1e3a5f';
-                } else if (item.level === 1) {
-                  bgRow = '#1e3a5f10';
-                  fontWeight = 800;
-                  corLabel = '#1e3a5f';
-                } else if (item.level === 2) {
-                  fontWeight = 700;
-                } else if (item.level === 3) {
-                  fontWeight = 600;
-                }
-                return (
-                  <tr key={item.cod} style={{ background: bgRow }}>
-                    <td style={{ ...styles.td, paddingLeft: 16 + (isTotal ? 0 : (item.level - 1) * 20), fontWeight, color: corLabel }}>
-                      {expandable && (
-                        <button
-                          onClick={() => dreToggle(item.cod)}
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', marginRight: 6, color: C.text2, fontSize: 12, padding: 0 }}
-                        >
-                          {expanded ? '▼' : '▶'}
-                        </button>
-                      )}
-                      {!expandable && !isTotal && <span style={{ display: 'inline-block', width: 18 }} />}
-                      {item.desc}
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 12, color: C.text3 }}>
-                      {isTotal ? '' : item.cod}
-                    </td>
-                    <td style={{ ...styles.td, textAlign: 'right', fontWeight: isTotal || item.level <= 2 ? 700 : fontWeight, color: corValor, fontFamily: 'monospace' }}>
-                      {dreMoneyFmt(item.total)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </>
-    );
-  };
-
   // ═══════════════════════════════════════════════════════════
   // RENDER PRINCIPAL
   // ═══════════════════════════════════════════════════════════
@@ -1431,7 +1239,6 @@ export default function Financeiro() {
           {subDre === 0 && <DreAuto />}
           {subDre === 1 && <DreCentroCusto />}
           {subDre === 2 && <DreComparativo />}
-          {subDre === 3 && renderDRE()}
         </div>
       )}
 

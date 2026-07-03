@@ -570,8 +570,6 @@ export const meetings = {
 export const dashboard = {
   pmo: () => get('/dashboard/pmo'),
   workload: () => get('/dashboard/workload'),
-  projectsKanban: () => get('/dashboard/projects-kanban'),
-  strategicKanban: () => get('/dashboard/strategic-kanban'),
 };
 
 export const risks = {
@@ -1075,11 +1073,6 @@ export const logistica = {
     enriquecer: (id) => post(`/logistica/fornecedores/${id}/enriquecer`, {}),
     enriquecerIncompletos: () => post('/logistica/fornecedores/enriquecer-incompletos', {}),
   },
-  solicitacoes: {
-    list: (params) => get('/logistica/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
-    create: (data) => post('/logistica/solicitacoes', data),
-    atualizar: (id, data) => patch(`/logistica/solicitacoes/${id}`, data),
-  },
   pedidos: {
     list: (params) => get('/logistica/pedidos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/logistica/pedidos', data),
@@ -1128,11 +1121,6 @@ export const logistica = {
     sugestoesVinculo: (id) => get(`/logistica/compras/${id}/sugestoes-vinculo`),
     vincular: (id, fin_transacao_id, score) => post(`/logistica/compras/${id}/vincular`, { fin_transacao_id, score }),
     desvincular: (id) => post(`/logistica/compras/${id}/desvincular`, {}),
-  },
-  movimentacoes: {
-    list: (params) => get('/logistica/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
-    create: (data) => post('/logistica/movimentacoes', data),
-    historico: (codigo) => get(`/logistica/movimentacoes/historico/${encodeURIComponent(codigo)}`),
   },
   // Estoque (Fase 3a) · catálogo + razão (saldo derivado) + validade/FEFO + consumo
   estoque: {
