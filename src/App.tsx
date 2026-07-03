@@ -526,7 +526,7 @@ function AppRoutes() {
 
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
-      <Route path="/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><TotemMembro /></Suspense></ProtectedRoute>} />
+      <Route path="/totem" element={<ProtectedRoute><ModuleGuard moduleSlug="totem-membro"><Suspense fallback={<Loading />}><TotemMembro /></Suspense></ModuleGuard></ProtectedRoute>} />
 
       {/* Display Totem Kids · TV/Fire TV · publica (autentica via token de estação) */}
       <Route path="/ministerial/totem-kids/display-sala" element={<Suspense fallback={<Loading />}><TotemKidsDisplaySala /></Suspense>} />

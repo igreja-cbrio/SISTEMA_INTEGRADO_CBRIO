@@ -27,6 +27,9 @@ router.use(authenticate);
 function podeEditarMembroTotem(req, membroId) {
   if (['admin', 'diretor'].includes(req.user.role)) return true;
   if (getEffectiveLevel(req, 'membresia') >= 3) return true;
+  // Conta de quiosque do lounge (módulo totem-membro · override por conta):
+  // edita os campos seguros de qualquer membro identificado no totem.
+  if (getEffectiveLevel(req, 'totem-membro') >= 3) return true;
   if (req.user.membro_id && String(req.user.membro_id) === String(membroId)) return true;
   return false;
 }
@@ -208,7 +211,7 @@ router.get('/qr-lookup/:token', async (req, res) => {
 // Mesma lógica do qr-lookup, mas resolve direto pelo CPF (sem token).
 // Usado no totem como alternativa pra quem não tem a carteirinha digital.
 // CPF e' normalizado pra so digitos antes do match.
-router.get('/cpf-lookup/:cpf', authorizeModule('membros', 1), async (req, res) => {
+router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, res) => {
   try {
     const cpf = String(req.params.cpf || '').replace(/\D/g, '');
     if (!cpf || cpf.length !== 11) {

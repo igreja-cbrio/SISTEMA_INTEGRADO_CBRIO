@@ -51,6 +51,9 @@ function authorizeBatismo(req, res, next) {
   if (areas.includes('integracao')) return next();
   if ((getEffectiveLevel(req, 'integracao') || 0) >= 2) return next();
   if ((getEffectiveLevel(req, 'batismo') || 0) >= 2) return next();
+  // Conta de quiosque do lounge: o check-in de batismo (etiqueta QR + selfie)
+  // é operado no próprio Totem Membro.
+  if ((getEffectiveLevel(req, 'totem-membro') || 0) >= 2) return next();
   return res.status(403).json({
     error: 'Sem permissão · necessário acesso a Batismo ou Integração',
   });
