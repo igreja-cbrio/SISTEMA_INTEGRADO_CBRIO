@@ -17,10 +17,13 @@ WHERE NOT EXISTS (SELECT 1 FROM public.modulos WHERE slug = 'totem-membro');
 
 -- 2) Cargo das contas de quiosque · matriz TODA zerada (nenhuma linha na
 --    cargo_modulo_permissao) — o único acesso vem do override por conta.
+--    nivel_padrao_* = 1 porque o CHECK da tabela exige >= 1; é inócuo: o
+--    middleware já usa 1 como piso universal (`|| 1`) e nenhum guard real
+--    aceita nível 1 pra escrita — quem manda é a matriz vazia + o override.
 INSERT INTO public.cargos (slug, nome, nome_completo, descricao, nivel_padrao_leitura, nivel_padrao_escrita, ativo)
 SELECT 'totem-kiosk', 'Totem (quiosque)', 'Conta de quiosque · Totem Membro',
        'Conta dedicada dos computadores do lounge. Sem matriz: acesso só por override no módulo totem-membro.',
-       0, 0, true
+       1, 1, true
 WHERE NOT EXISTS (SELECT 1 FROM public.cargos WHERE slug = 'totem-kiosk');
 
 -- 3) dev = nível 5 no módulo novo (a matriz do cargo dev foi seedada antes
