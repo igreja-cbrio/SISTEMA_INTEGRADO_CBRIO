@@ -1076,7 +1076,7 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
 function ItensPedidoModal({ open, pedidoId, onClose }) {
   const [itens, setItens] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({ descricao: '', quantidade: '', unidade: 'un', valor_unit: '' });
+  const [form, setForm] = useState({ descricao: '', quantidade: '', unidade: 'un', valor_unitario: '' });
   const [adding, setAdding] = useState(false);
   const [localError, setLocalError] = useState('');
 
@@ -1095,7 +1095,7 @@ function ItensPedidoModal({ open, pedidoId, onClose }) {
     setAdding(true); setLocalError('');
     try {
       await logistica.pedidos.addItem(pedidoId, form);
-      setForm({ descricao: '', quantidade: '', unidade: 'un', valor_unit: '' });
+      setForm({ descricao: '', quantidade: '', unidade: 'un', valor_unitario: '' });
       loadItens();
     } catch (e) { setLocalError(e.message); }
     setAdding(false);
@@ -1125,7 +1125,7 @@ function ItensPedidoModal({ open, pedidoId, onClose }) {
               <td style={styles.td}>{i.descricao}</td>
               <td style={styles.td}>{i.quantidade}</td>
               <td style={styles.td}>{i.unidade}</td>
-              <td style={styles.td}>{fmtMoney(i.valor_unit)}</td>
+              <td style={styles.td}>{fmtMoney(i.valor_unitario)}</td>
               <td style={styles.td}>{fmtMoney(i.valor_total)}</td>
               <td style={styles.td}><Button variant="ghost" size="sm" onClick={() => removeItem(i.id)}>🗑</Button></td>
             </tr>
@@ -1141,7 +1141,7 @@ function ItensPedidoModal({ open, pedidoId, onClose }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <Input label="Quantidade *" type="number" step="0.001" value={form.quantidade} onChange={e => setForm(f => ({ ...f, quantidade: e.target.value }))} />
             <Input label="Unidade" value={form.unidade} onChange={e => setForm(f => ({ ...f, unidade: e.target.value }))} />
-            <Input label="Valor Unitário" type="number" step="0.01" value={form.valor_unit} onChange={e => setForm(f => ({ ...f, valor_unit: e.target.value }))} />
+            <Input label="Valor Unitário" type="number" step="0.01" value={form.valor_unitario} onChange={e => setForm(f => ({ ...f, valor_unitario: e.target.value }))} />
           </div>
           <Button onClick={addItem} disabled={adding}>{adding ? 'Adicionando...' : 'Adicionar Item'}</Button>
         </div>

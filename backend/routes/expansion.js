@@ -42,13 +42,33 @@ router.get('/milestones', async (req, res) => {
   } catch (e) { console.error('[Expansion milestones]', e.message); res.status(500).json({ error: 'Erro ao buscar marcos' }); }
 });
 
+// Campos do marco que o formulário edita — todas as colunas existem na tabela.
+// Antes o insert/update persistia SÓ 6 campos e descartava o resto em silêncio
+// (year/área/responsável/date_start/status/SWOT sumiam ao salvar).
+const MILESTONE_FIELDS = [
+  'name', 'description', 'year', 'strategic_axis', 'strategic_objective',
+  'area', 'responsible', 'responsible_id', 'responsavel_secundario',
+  'date_start', 'date_end', 'expected_delivery', 'status', 'phase',
+  'budget_planned', 'budget_spent', 'sort_order',
+  'swot_strengths', 'swot_weaknesses', 'swot_opportunities', 'swot_threats',
+];
+// Monta o payload só com o que veio no body (update parcial não apaga campo).
+function milestonePayload(d) {
+  const out = {};
+  for (const f of MILESTONE_FIELDS) if (d[f] !== undefined) out[f] = d[f];
+  if (d.deadline !== undefined && out.date_end === undefined) out.date_end = d.deadline;
+  return out;
+}
+
 // POST /api/expansion/milestones
 router.post('/milestones', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const d = req.body;
+    const d = req.body || {};
+    if (!d.name || !String(d.name).trim()) {
+      return res.status(400).json({ error: 'Nome do marco é obrigatório' });
+    }
     const { data, error } = await supabase.from('expansion_milestones').insert({
-      name: d.name, description: d.description || '', date_end: d.deadline || d.date_end || null,
-      phase: d.phase || '', budget_planned: d.budget_planned || 0, created_by: req.user.userId,
+      ...milestonePayload(d), created_by: req.user.userId,
     }).select().single();
     if (error) throw error;
     res.json(data);
@@ -58,11 +78,13 @@ router.post('/milestones', authorize('admin', 'diretor'), async (req, res) => {
 // PUT /api/expansion/milestones/:id
 router.put('/milestones/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const d = req.body;
-    const { data, error } = await supabase.from('expansion_milestones').update({
-      name: d.name, description: d.description || '', date_end: d.deadline || d.date_end || null,
-      phase: d.phase || '', budget_planned: d.budget_planned || 0, budget_spent: d.budget_spent || 0,
-    }).eq('id', req.params.id).select().single();
+    const payload = milestonePayload(req.body || {});
+    if (Object.keys(payload).length === 0) {
+      return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+    }
+    const { data, error } = await supabase.from('expansion_milestones')
+      .update(payload)
+      .eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
