@@ -1842,8 +1842,8 @@ tabela, não pelo cargo/boost; isso também faz a notificação de ocorrência c
 linha da ocorrência do `ModalProducao`, o link sublinhado **"Fazer solicitação"**
 abre um modal (z 1100 · convenção modal-sobre-modal) com o `NovaSolicitacaoForm`
 prefillado (contexto do culto + tipo/severidade/momento · categorias
-`infraestrutura` default / `ti` / `compras` · urgente pré-marcado SÓ na
-severidade crítica, sempre desmarcável). Ao criar, `PATCH
+`infraestrutura`/`ti`/`compras` **sem default — a pessoa escolhe ativamente**
+quem resolve · urgente pré-marcado SÓ na severidade crítica, sempre desmarcável). Ao criar, `PATCH
 /producao/ocorrencias/:id/solicitacao` grava
 `culto_producao_ocorrencias.solicitacao_id` (migration `20260703150000` ·
 **máx. 1 por ocorrência** · FK SET NULL · só vincula solicitação do próprio
