@@ -2,6 +2,10 @@ const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
+// Leva o agregado da pesquisa pra dados_brutos → KPIs de satisfação. Com
+// colapso por pesquisa (janela de 15s) pra não multiplicar queries no pico
+// do culto; a rede de segurança é o re-sync do cron diário de KPIs.
+const { agendarSync } = require('../services/npsKpiSync');
 
 // Rate limit do link público de NPS · teto ALTO de propósito: no culto o link é
 // aberto por centenas de pessoas AO MESMO TEMPO e, no WiFi da igreja, todas saem
@@ -101,6 +105,10 @@ router.post('/:token/responder', publicLimiter, async (req, res) => {
         user_agent: (req.headers['user-agent'] || '').slice(0, 200),
       });
     if (error) throw error;
+
+    // O canal público é onde chega o grosso das respostas (culto) — sem isso
+    // o KPI só atualizava com resposta de usuário logado.
+    agendarSync(pesquisa.id);
 
     res.status(201).json({ ok: true });
   } catch (e) {

@@ -5,6 +5,9 @@ const { authenticate, authorize, authorizeModule, getUserAreas } = require('../m
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const npsService = require('../services/npsService');
+// Sync do agregado da pesquisa → dados_brutos → KPIs (compartilhado com o
+// canal público em publicNps.js).
+const { sincronizarKpi, removerDadosBrutos } = require('../services/npsKpiSync');
 
 const TIPOS_KPI_VALIDOS = ['nps_geral', 'nps_next', 'nps_lideres', 'nps_voluntarios', 'nps_culto'];
 
@@ -250,6 +253,12 @@ router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    // Edição pode mudar área/data/status (encerrar, reativar) → re-sincroniza
+    // o agregado no dados_brutos (também garante o valor FINAL da pesquisa
+    // encerrada, cobrindo o rabo do throttle do canal público).
+    sincronizarKpi(req.params.id).catch(err =>
+      console.warn('[nps] sincronizarKpi (update) falhou:', err.message)
+    );
     res.json(data);
   } catch (e) {
     console.error('[nps] update:', e.message);
@@ -268,6 +277,11 @@ router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
       .update({ status: 'arquivada' })
       .eq('id', req.params.id);
     if (error) throw error;
+    // Pesquisa arquivada sai do KPI (a linha agregada dela em dados_brutos é
+    // removida; reativar pela edição re-sincroniza e ela volta).
+    removerDadosBrutos(req.params.id).catch(err =>
+      console.warn('[nps] removerDadosBrutos falhou:', err.message)
+    );
     res.json({ success: true });
   } catch (e) {
     console.error('[nps] delete:', e.message);
@@ -415,51 +429,5 @@ router.post('/:id/notificar', authorizeModule('nps', 3), async (req, res) => {
     res.status(500).json({ error: 'Erro ao enviar lembretes' });
   }
 });
-
-// ────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────
-async function sincronizarKpi(pesquisaId) {
-  const { data: pesquisa } = await supabase
-    .from('nps_pesquisas')
-    .select('id, contexto_kpi, area, data_inicio')
-    .eq('id', pesquisaId)
-    .single();
-  if (!pesquisa) return;
-
-  const { data: stats } = await supabase
-    .from('vw_nps_pesquisa_stats')
-    .select('total_respostas, score_medio, nps_score')
-    .eq('pesquisa_id', pesquisa.id)
-    .single();
-  if (!stats || !stats.total_respostas) return;
-
-  // Garante que o tipo existe (no-op se já cadastrado).
-  const { data: tipo } = await supabase
-    .from('tipos_dado_bruto')
-    .select('id')
-    .eq('id', pesquisa.contexto_kpi)
-    .maybeSingle();
-  if (!tipo) return; // tipo NPS ainda não seedado — ignora silenciosamente
-
-  await supabase
-    .from('dados_brutos')
-    .upsert(
-      {
-        tipo_id: pesquisa.contexto_kpi,
-        area: pesquisa.area || 'geral',
-        data: pesquisa.data_inicio,
-        valor: Number(stats.score_medio) || 0,
-        contexto: {
-          pesquisa_id: pesquisa.id,
-          total_respostas: stats.total_respostas,
-          nps_score: Number(stats.nps_score) || 0,
-        },
-        origem: 'auto',
-        observacao: `NPS automático: pesquisa ${pesquisa.id}`,
-      },
-      { onConflict: 'tipo_id,area,data,contexto' }
-    );
-}
 
 module.exports = router;

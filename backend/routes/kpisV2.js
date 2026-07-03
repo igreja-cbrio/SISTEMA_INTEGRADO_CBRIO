@@ -20,6 +20,7 @@ const { authenticate, authorize, authorizeKpiArea } = require('../middleware/aut
 const { supabase } = require('../utils/supabase');
 const painelCache = require('../services/painelCache');
 const { coletarTodos } = require('../services/kpiAutoCollector');
+const { sincronizarPesquisasRecentes } = require('../services/npsKpiSync');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -41,6 +42,15 @@ async function autorizaCron(req, res, next) {
 async function coletarERecalcular() {
   const resultados = await coletarTodos();
   const ok = resultados.filter(r => r.status === 'ok').length;
+  // NPS → dados_brutos: re-sincroniza o agregado das pesquisas recentes ANTES
+  // do recálculo geral (rede de segurança pro colapso do canal público — o
+  // rabo do pico do culto entra aqui, no máximo D+1).
+  let nps = null;
+  try {
+    nps = await sincronizarPesquisasRecentes();
+  } catch (e) {
+    nps = { error: e.message };
+  }
   let recalculo = null;
   try {
     const { data, error } = await supabase.rpc('kpi_recalcular_todos');
@@ -58,7 +68,7 @@ async function coletarERecalcular() {
   } catch (e) {
     nsm = { error: e.message };
   }
-  return { ok, total: resultados.length, recalculo, nsm, resultados };
+  return { ok, total: resultados.length, nps, recalculo, nsm, resultados };
 }
 
 router.get('/cron/coletar', autorizaCron, async (_req, res) => {
