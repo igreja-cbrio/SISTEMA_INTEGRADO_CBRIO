@@ -810,7 +810,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [pesquisa, setPesquisa] = useState(null);
   const [respostas, setRespostas] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('respostas');
+  const [tab, setTab] = useState('resumo');
   const [analisando, setAnalisando] = useState(false);
   const [notificando, setNotificando] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -970,13 +970,15 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: `1px solid ${C.border}` }}>
-        {['respostas', 'perguntas', 'analise'].map(t => (
+        {['resumo', 'respostas', 'perguntas', 'analise'].map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{ padding: '8px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer', background: 'transparent', border: 'none', borderBottom: `2px solid ${tab === t ? C.cyan : 'transparent'}`, color: tab === t ? C.cyan : C.t2, textTransform: 'capitalize' }}>
             {t === 'analise' ? 'Análise IA' : t}
           </button>
         ))}
       </div>
+
+      {tab === 'resumo' && <ResumoTab pesquisa={pesquisa} respostas={respostas} />}
 
       {tab === 'respostas' && (
         respostas.length === 0 ? (
@@ -1094,6 +1096,288 @@ function AnaliseView({ analise }) {
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Resumo estatístico da pesquisa (determinístico · estilo Google Forms)
+// ════════════════════════════════════════════════════════════════════
+const RESUMO_TIPO_LABEL = {
+  escala_5: 'escala 1-5',
+  sim_nao: 'sim/não',
+  opcao_unica: 'escolha única',
+  multipla: 'múltipla escolha',
+  texto_curto: 'texto',
+  texto_longo: 'texto',
+};
+
+function diaLocal(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function computarResumo(pesquisa, respostas) {
+  const total = respostas.length;
+
+  const histograma = Array.from({ length: 11 }, (_, nota) => ({
+    nota,
+    count: respostas.filter(r => Number(r.score) === nota).length,
+  }));
+  const promoters = respostas.filter(r => r.score >= 9).length;
+  const passives = respostas.filter(r => r.score >= 7 && r.score <= 8).length;
+  const detractors = respostas.filter(r => r.score <= 6).length;
+
+  const origem = {
+    logado: respostas.filter(r => r.origem !== 'publico').length,
+    publico: respostas.filter(r => r.origem === 'publico').length,
+  };
+
+  const porDiaMap = new Map();
+  respostas.forEach(r => {
+    const dia = diaLocal(r.created_at);
+    if (dia) porDiaMap.set(dia, (porDiaMap.get(dia) || 0) + 1);
+  });
+  const porDia = [...porDiaMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([dia, count]) => ({ dia, count }));
+
+  const vazio = v => v == null || v === '' || (Array.isArray(v) && v.length === 0);
+
+  const blocos = (pesquisa.perguntas?.perguntas_extras || []).map(p => {
+    if (p.tipo === 'secao') return { ...p, bloco: 'secao' };
+    const valores = respostas.map(r => r.respostas?.[p.id]).filter(v => !vazio(v));
+
+    if (p.tipo === 'escala_5') {
+      const nums = valores.map(Number).filter(x => Number.isFinite(x) && x >= 1 && x <= 5);
+      const dist = [1, 2, 3, 4, 5].map(nota => ({
+        label: String(nota),
+        count: nums.filter(x => Math.round(x) === nota).length,
+      }));
+      const media = nums.length ? nums.reduce((s, x) => s + x, 0) / nums.length : null;
+      return { ...p, bloco: 'barras', n: nums.length, dist, media };
+    }
+
+    if (p.tipo === 'sim_nao') {
+      const counts = new Map([['Sim', 0], ['Não', 0]]);
+      valores.forEach(v => {
+        const s = String(v).trim();
+        const low = s.toLowerCase();
+        const k = low === 'sim' || low === 's' ? 'Sim' : (low === 'não' || low === 'nao' || low === 'n' ? 'Não' : s);
+        counts.set(k, (counts.get(k) || 0) + 1);
+      });
+      const dist = [...counts.entries()].map(([label, count]) => ({ label, count }));
+      return { ...p, bloco: 'barras', n: valores.length, dist, media: null };
+    }
+
+    if (p.tipo === 'opcao_unica' || p.tipo === 'multipla') {
+      const listas = p.tipo === 'multipla'
+        ? valores.map(v => (Array.isArray(v) ? v : [v]))
+        : valores.map(v => [v]);
+      // Semeia com opcoes[] (na ordem do form) e agrega também valores fora do
+      // catálogo — resiliência a opções editadas depois de respostas coletadas.
+      const counts = new Map();
+      (p.opcoes || []).forEach(op => counts.set(String(op), 0));
+      listas.forEach(arr => arr.forEach(v => {
+        const k = String(v).trim();
+        if (!k) return;
+        counts.set(k, (counts.get(k) || 0) + 1);
+      }));
+      const dist = [...counts.entries()].map(([label, count]) => ({ label, count }));
+      return { ...p, bloco: 'barras', n: listas.length, dist, media: null };
+    }
+
+    // texto_curto / texto_longo (e qualquer tipo desconhecido)
+    return {
+      ...p,
+      bloco: 'texto',
+      n: valores.length,
+      valores: valores.map(v => (Array.isArray(v) ? v.join(', ') : String(v))),
+    };
+  });
+
+  const comentarios = respostas
+    .map(r => (r.comentario ? String(r.comentario).trim() : ''))
+    .filter(Boolean);
+
+  return { total, histograma, promoters, passives, detractors, origem, porDia, blocos, comentarios };
+}
+
+function BlocoPergunta({ titulo, tipoLabel, n, children }) {
+  return (
+    <div style={{ padding: 14, background: C.inputBg, borderRadius: 10, border: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.4 }}>{titulo}</div>
+        <span style={{ fontSize: 10.5, color: C.t3, whiteSpace: 'nowrap' }}>
+          {n} resposta{n === 1 ? '' : 's'}{tipoLabel ? ` · ${tipoLabel}` : ''}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SemRespostas() {
+  return <div style={{ fontSize: 12, color: C.t3 }}>Nenhuma resposta para esta pergunta.</div>;
+}
+
+function BarraLinha({ label, count, total }) {
+  const pct = total > 0 ? (count / total) * 100 : 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span title={label} style={{ flex: '0 0 34%', fontSize: 12, color: C.t2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <div style={{ flex: 1, height: 14, background: C.border, borderRadius: 7, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, minWidth: count > 0 ? 4 : 0, height: '100%', background: C.cyan, borderRadius: 7 }} />
+      </div>
+      <span style={{ flex: '0 0 74px', fontSize: 12, color: C.text, fontWeight: 600, textAlign: 'right' }}>{count} ({pct.toFixed(0)}%)</span>
+    </div>
+  );
+}
+
+function HistogramaScore({ histograma }) {
+  const max = Math.max(1, ...histograma.map(h => h.count));
+  const corDe = nota => (nota >= 9 ? C.green : nota >= 7 ? C.amber : C.red);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4 }}>
+      {histograma.map(h => (
+        <div key={h.nota} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: 10, color: C.t3, fontWeight: 600, minHeight: 13 }}>{h.count > 0 ? h.count : ''}</span>
+          <div style={{
+            width: '100%', maxWidth: 34,
+            height: h.count > 0 ? Math.max(4, Math.round((h.count / max) * 70)) : 2,
+            background: h.count > 0 ? corDe(h.nota) : C.border,
+            borderRadius: '4px 4px 0 0',
+            opacity: h.count > 0 ? 1 : 0.6,
+          }} />
+          <span style={{ fontSize: 10, color: C.t2, fontWeight: 600 }}>{h.nota}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FaixaNps({ promoters, passives, detractors, total }) {
+  if (!total) return null;
+  const seg = [
+    { label: 'Detratores (0-6)', count: detractors, cor: C.red },
+    { label: 'Neutros (7-8)', count: passives, cor: C.amber },
+    { label: 'Promotores (9-10)', count: promoters, cor: C.green },
+  ];
+  return (
+    <div>
+      <div style={{ display: 'flex', height: 12, borderRadius: 6, overflow: 'hidden', background: C.border }}>
+        {seg.map(s => s.count > 0 && (
+          <div key={s.label} style={{ width: `${(s.count / total) * 100}%`, background: s.cor }} />
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
+        {seg.map(s => (
+          <span key={s.label} style={{ fontSize: 11, color: C.t2, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: s.cor, display: 'inline-block' }} />
+            {s.label}: <strong style={{ color: C.text }}>{s.count}</strong> ({((s.count / total) * 100).toFixed(0)}%)
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RespostasPorDia({ porDia }) {
+  const ultimos = porDia.slice(-30);
+  const max = Math.max(1, ...ultimos.map(d => d.count));
+  const fmt = dia => `${dia.slice(8, 10)}/${dia.slice(5, 7)}`;
+  return (
+    <div style={{ padding: '10px 14px', background: C.inputBg, borderRadius: 10, border: `1px solid ${C.border}` }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: C.t3, textTransform: 'uppercase', marginBottom: 8 }}>
+        Respostas por dia{porDia.length > 30 ? ' (últimos 30 dias com resposta)' : ''}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3 }}>
+        {ultimos.map(d => (
+          <div key={d.dia} title={`${fmt(d.dia)}: ${d.count}`} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            <div style={{ width: '100%', maxWidth: 26, height: Math.max(3, Math.round((d.count / max) * 42)), background: C.cyan, borderRadius: '3px 3px 0 0' }} />
+            <span style={{ fontSize: 8.5, color: C.t3, whiteSpace: 'nowrap' }}>{fmt(d.dia)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ListaTextos({ itens }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 190, overflowY: 'auto' }}>
+      {itens.map((t, i) => (
+        <div key={i} style={{ fontSize: 12, color: C.t2, lineHeight: 1.45, padding: '5px 8px', background: C.card, borderRadius: 6, border: `1px solid ${C.border}` }}>{t}</div>
+      ))}
+    </div>
+  );
+}
+
+function ResumoTab({ pesquisa, respostas }) {
+  const resumo = useMemo(() => computarResumo(pesquisa, respostas), [pesquisa, respostas]);
+
+  if (!respostas.length) {
+    return <div style={{ textAlign: 'center', padding: 30, color: C.t3, fontSize: 13 }}>Nenhuma resposta ainda</div>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 11.5, color: C.t3 }}>
+        {resumo.total} resposta{resumo.total === 1 ? '' : 's'} · {resumo.origem.logado} de colaboradores · {resumo.origem.publico} pelo link público
+      </div>
+
+      {resumo.porDia.length > 1 && <RespostasPorDia porDia={resumo.porDia} />}
+
+      <BlocoPergunta
+        titulo={pesquisa.perguntas?.pergunta_nps?.texto || 'Nota NPS'}
+        tipoLabel="nota 0-10"
+        n={resumo.total}
+      >
+        <HistogramaScore histograma={resumo.histograma} />
+        <div style={{ marginTop: 10 }}>
+          <FaixaNps promoters={resumo.promoters} passives={resumo.passives} detractors={resumo.detractors} total={resumo.total} />
+        </div>
+      </BlocoPergunta>
+
+      {resumo.blocos.map((b, i) => {
+        if (b.bloco === 'secao') {
+          return (
+            <div key={b.id || i} style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.cyan, textTransform: 'uppercase', letterSpacing: 0.4 }}>{b.texto}</div>
+              {b.descricao && <div style={{ fontSize: 11.5, color: C.t3, marginTop: 2 }}>{b.descricao}</div>}
+            </div>
+          );
+        }
+        if (b.bloco === 'barras') {
+          return (
+            <BlocoPergunta key={b.id || i} titulo={b.texto} tipoLabel={RESUMO_TIPO_LABEL[b.tipo]} n={b.n}>
+              {b.media != null && (
+                <div style={{ fontSize: 12, color: C.t2, marginBottom: 8 }}>
+                  Média: <strong style={{ color: C.text, fontSize: 14 }}>{b.media.toFixed(1)}</strong>
+                </div>
+              )}
+              {b.n === 0 ? <SemRespostas /> : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {b.dist.map(d => <BarraLinha key={d.label} label={d.label} count={d.count} total={b.n} />)}
+                </div>
+              )}
+              {b.tipo === 'multipla' && b.n > 0 && (
+                <div style={{ fontSize: 10.5, color: C.t3, marginTop: 6 }}>Múltipla escolha — a soma pode passar de 100%.</div>
+              )}
+            </BlocoPergunta>
+          );
+        }
+        return (
+          <BlocoPergunta key={b.id || i} titulo={b.texto} tipoLabel={RESUMO_TIPO_LABEL[b.tipo]} n={b.n}>
+            {b.n === 0 ? <SemRespostas /> : <ListaTextos itens={b.valores} />}
+          </BlocoPergunta>
+        );
+      })}
+
+      <BlocoPergunta titulo="Comentários" tipoLabel="campo aberto" n={resumo.comentarios.length}>
+        {resumo.comentarios.length === 0 ? <SemRespostas /> : <ListaTextos itens={resumo.comentarios} />}
+      </BlocoPergunta>
     </div>
   );
 }
