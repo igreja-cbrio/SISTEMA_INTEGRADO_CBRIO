@@ -293,6 +293,27 @@ router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
 // Respostas
 // ────────────────────────────────────────────────────────────────────
 
+// O PostgREST capa cada select em 1000 linhas server-side — um culto de
+// domingo já rende ~700 respostas, então uma pesquisa maior truncaria a
+// lista (e as estatísticas) em silêncio. Pagina até esgotar.
+async function listarRespostasCompletas(pesquisaId, select) {
+  const pageSize = 1000;
+  let todas = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from('nps_respostas')
+      .select(select)
+      .eq('pesquisa_id', pesquisaId)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    todas = todas.concat(data || []);
+    if (!data || data.length < pageSize) break;
+  }
+  return todas;
+}
+
 // GET /api/nps/:id/respostas  → admin/diretor ou criador
 router.get('/:id/respostas', async (req, res) => {
   try {
@@ -305,12 +326,10 @@ router.get('/:id/respostas', async (req, res) => {
       return res.status(403).json({ error: 'Sem permissão' });
     }
 
-    const { data, error } = await supabase
-      .from('nps_respostas')
-      .select('id, score, respostas, comentario, origem, nome_publico, email_publico, profile_id, created_at')
-      .eq('pesquisa_id', req.params.id)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
+    const data = await listarRespostasCompletas(
+      req.params.id,
+      'id, score, respostas, comentario, origem, nome_publico, email_publico, profile_id, created_at'
+    );
     res.json(data);
   } catch (e) {
     console.error('[nps] respostas:', e.message);
@@ -375,15 +394,12 @@ router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, r
 
     const { data: stats } = await supabase
       .from('vw_nps_pesquisa_stats').select('*').eq('pesquisa_id', pesquisa.id).single();
-    const { data: respostas } = await supabase
-      .from('nps_respostas')
-      .select('score, comentario, respostas')
-      .eq('pesquisa_id', pesquisa.id);
+    const respostas = await listarRespostasCompletas(pesquisa.id, 'score, comentario, respostas');
 
     const analise = await npsService.analisarRespostas({
       pesquisa,
       stats: stats || { total_respostas: 0, score_medio: 0, nps_score: 0, promoters: 0, passives: 0, detractors: 0 },
-      respostas: respostas || [],
+      respostas,
     });
 
     await supabase
