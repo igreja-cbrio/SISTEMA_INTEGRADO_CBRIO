@@ -1884,7 +1884,7 @@ tabela, não pelo cargo/boost; isso também faz a notificação de ocorrência c
 
 **Ocorrência → "Fazer solicitação" (2026-07-03 · ideia do Pedro Fernandes):** na
 linha da ocorrência do `ModalProducao`, o link sublinhado **"Fazer solicitação"**
-abre um modal (z 1100 · convenção modal-sobre-modal) com o `NovaSolicitacaoForm`
+abre um modal (z 1100 · convenção modal-sobre-modal · ⚠️ os SelectContent do form usam z-[1200], senão o portal Radix z-50 abre ATRÁS do overlay e o dropdown "trava") com o `NovaSolicitacaoForm`
 prefillado (contexto do culto + tipo/severidade/momento · categorias
 `infraestrutura`/`ti`/`compras` **sem default — a pessoa escolhe ativamente**
 quem resolve · urgente pré-marcado SÓ na severidade crítica, sempre desmarcável). Ao criar, `PATCH

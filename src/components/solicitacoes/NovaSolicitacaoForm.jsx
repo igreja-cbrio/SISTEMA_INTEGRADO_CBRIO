@@ -7,6 +7,10 @@
 // categoria, SLA em tempo real, upload de comprovante/fotos e o fluxo de
 // aprovação (origem/BPMN) intactos no backend, qualquer que seja o host.
 //
+// ⚠️ Os <SelectContent> usam z-[1200]: o host da Produção é um modal custom em
+// z-1100 e o portal do Radix (z-50 padrão) abriria ATRÁS do overlay — dropdown
+// parecia "travado". Se um host novo passar de z-1200, subir os selects junto.
+//
 // Props:
 //   prefill              · objeto mesclado sobre o FORM_INITIAL no mount
 //                          (ex.: { categoria, titulo, descricao, eh_urgente })
@@ -336,7 +340,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         <Label>Qual tipo de solicitação? *</Label>
         <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
           <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-          <SelectContent>
+          <SelectContent className="z-[1200]">
             {cats.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
           </SelectContent>
         </Select>
@@ -527,7 +531,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
             <Label className="text-xs">Forma de pagamento *</Label>
             <Select value={form.forma_pagamento} onValueChange={v => setForm(f => ({ ...f, forma_pagamento: v, chave_pix: '', banco: '', agencia: '', conta: '' }))}>
               <SelectTrigger><SelectValue placeholder="Como pagar?" /></SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1200]">
                 <SelectItem value="boleto">Boleto</SelectItem>
                 <SelectItem value="pix">PIX</SelectItem>
                 <SelectItem value="transferencia_bancaria">Transferência Bancária</SelectItem>
@@ -608,7 +612,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
             <Label>Forma de pagamento *</Label>
             <Select value={form.forma_pagamento} onValueChange={v => setForm(f => ({ ...f, forma_pagamento: v, chave_pix: '', banco: '', agencia: '', conta: '' }))}>
               <SelectTrigger><SelectValue placeholder="Como quer receber?" /></SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1200]">
                 <SelectItem value="pix">PIX</SelectItem>
                 <SelectItem value="transferencia_bancaria">Transferência Bancária</SelectItem>
               </SelectContent>
