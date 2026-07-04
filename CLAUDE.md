@@ -1806,6 +1806,50 @@ aprovação financeira por alçada.
   dashboard de urgência frequente, painel solicitante × responsável separados.
   Detalhes/pendências originais no legado.
 
+## NPS · pesquisas de satisfação (estado consolidado · 2026-07-04)
+
+Módulo `/nps` (`src/pages/Nps.jsx` + `src/components/nps/NpsForm.jsx` +
+`backend/routes/nps.js` · resposta pública em `publicNps.js` ·
+`/nps/publica/:token`). Pesquisa = `nps_pesquisas` (coluna `perguntas` jsonb:
+`{descricao_curta, pergunta_nps, perguntas_extras[]}` · tipos que o NpsForm
+renderiza: `secao` (cabeçalho, sem resposta), `texto_curto`, `texto_longo`,
+`escala_5` (number 1-5), `sim_nao` ('Sim'/'Não'), `opcao_unica` e `multipla`
+(usam `opcoes: string[]` · múltipla responde array). Resposta = `nps_respostas`:
+`score` 0-10 (a métrica, sempre existe) + `respostas` jsonb keyed pelo id da
+pergunta + `comentario`. Stats de score na view `vw_nps_pesquisa_stats`.
+
+- **Detalhe da pesquisa · 4 abas**: **Resumo** (default · PR #1530 · relatório
+  estatístico determinístico estilo Google Forms — histograma 0-10 com faixa
+  detratores/neutros/promotores, média + distribuição por pergunta, barras por
+  opção **semeadas com `opcoes[]` ∪ valores observados** fora do catálogo,
+  textos/comentários em lista rolável, respostas por dia · agregação
+  client-side em `computarResumo` sobre as respostas que o modal já carrega) ·
+  Respostas (individuais) · Perguntas · **Análise IA** (qualitativo sob
+  demanda: temas/sentimento/ações · rate limit 30/h). Divisão de trabalho
+  (decisão do Marcos): **números por aritmética, IA só pro texto livre**.
+- ⚠️ **Editor de pergunta preserva o objeto INTEIRO** (lição do bug
+  #1488→#1495: um editor que reduzia cada pergunta a `{id,tipo,texto}` apagou
+  `opcoes[]` de perguntas já respondidas — irrecuperável). Nunca reduzir a
+  subset de campos; manter o id (respostas ligam por id); só descartar linha
+  realmente vazia.
+- **Leitura de respostas é PAGINADA** (`listarRespostasCompletas` em `nps.js` ·
+  PR #1530): o PostgREST capa em 1000 linhas e um culto de domingo já rende
+  ~700 respostas — sem o loop, a lista, o Resumo e a análise IA truncavam em
+  silêncio. Não regredir pra select único.
+- **Permissão** (#1483): cargos `coordenador-ami/kids/bridge/online` têm nps=3
+  → list/create/edit/analisar/respostas escopados pela área (`podeNaArea`);
+  admin/diretor veem tudo. `GET /:id` fica **aberto de propósito** (fluxo de
+  responder de qualquer colaborador); o dado sensível vive em `/:id/respostas`.
+- **Pico/público**: o caminho público aguenta multidão no WiFi da igreja
+  (1 IP só · subsolo sem 4G): `trust proxy` + limiter dedicado 10000/15min +
+  bypass no Vercel Firewall (rule "NPS público") + retry com backoff no api.js
+  + fila offline em localStorage com sendBeacon (PRs #1503/#1506/#1509/#1510).
+  ⚠️ Testar com curl em rajada re-flaga o IP no challenge do Vercel — validação
+  fiel só com celulares reais.
+- **KPI**: resposta sincroniza `dados_brutos` via `services/npsKpiSync.js`
+  (#1522 · upsert com contexto estável `{pesquisa_id}` · pesquisa arquivada
+  remove a linha) → alimenta os tipos `nps_*` e os KPIs ligados.
+
 ## Monitoramento OKR · aba /monitoramento-okr (2026-06-02/03)
 
 Reproduz a planilha "CBRio_cabeca_Juninho" (1 NSM → 9 OKRs em 3 blocos:
