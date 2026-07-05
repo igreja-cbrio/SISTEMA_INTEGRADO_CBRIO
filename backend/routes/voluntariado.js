@@ -1522,8 +1522,9 @@ router.get('/check-ins', async (req, res) => {
 
 router.post('/check-ins', async (req, res) => {
   try {
-    const { schedule_id, volunteer_id, service_id, method, is_unscheduled, checked_in_at, novo_cadastro } = req.body;
+    const { schedule_id, volunteer_id, service_id, method, is_unscheduled, checked_in_at, novo_cadastro, volunteer_name } = req.body;
     if (!method) return res.status(400).json({ error: 'method obrigatorio' });
+    const nomeDigitado = (volunteer_name || '').trim().slice(0, 120) || null;
 
     // Hora real do check-in (preserva o horário de check-ins feitos OFFLINE no
     // totem, que só chegam aqui na sincronização posterior). Aceita só uma data
@@ -1601,7 +1602,9 @@ router.post('/check-ins', async (req, res) => {
           const casa = (s) => (
             (volunteer_id && s.volunteer_id && s.volunteer_id === volunteer_id) ||
             (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
-            (vpName && norm(s.volunteer_name) === vpName)
+            (vpName && norm(s.volunteer_name) === vpName) ||
+            // fluxo "sem escala" com nome digitado: tenta casar a escala pelo nome
+            (nomeDigitado && norm(s.volunteer_name) === norm(nomeDigitado))
           );
           const match = (scheds || []).filter(s => idsBloco.includes(s.service_id)).find(casa) || (scheds || []).find(casa);
           if (match) {
@@ -1615,6 +1618,17 @@ router.post('/check-ins', async (req, res) => {
       }
     }
 
+    // Nome digitado sem vínculo resolvido: tenta casar com um perfil ÚNICO pelo
+    // nome (não-arquivado) pra não perder a identidade do check-in sem escala.
+    if (!resolvedVolunteerId && nomeDigitado) {
+      const { data: cands } = await supabase.from('vol_profiles')
+        .select('id, full_name')
+        .eq('arquivado', false)
+        .ilike('full_name', nomeDigitado);
+      const exatos = (cands || []).filter(p => norm(p.full_name) === norm(nomeDigitado));
+      if (exatos.length === 1) resolvedVolunteerId = exatos[0].id;
+    }
+
     const { data, error } = await supabase.from('vol_check_ins')
       .insert({
         schedule_id: resolvedScheduleId,
@@ -1623,6 +1637,8 @@ router.post('/check-ins', async (req, res) => {
         checked_in_by: req.user.userId,
         method,
         is_unscheduled: resolvedUnscheduled || false,
+        // snapshot do nome (fluxo sem escala) — mesmo com vínculo, não faz mal guardar
+        ...(nomeDigitado ? { volunteer_name: nomeDigitado } : {}),
         ...(checkedInAt ? { checked_in_at: checkedInAt } : {}),
       }).select().single();
 

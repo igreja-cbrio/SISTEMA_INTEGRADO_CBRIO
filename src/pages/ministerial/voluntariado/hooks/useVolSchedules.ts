@@ -60,6 +60,8 @@ interface CheckInParams {
   service_id?: string;
   method: 'qr_code' | 'manual' | 'facial' | 'self_service';
   is_unscheduled?: boolean;
+  // Nome digitado no fluxo "check-in sem escala" — vira snapshot no banco
+  volunteer_name?: string;
 }
 
 export function useCheckIn() {

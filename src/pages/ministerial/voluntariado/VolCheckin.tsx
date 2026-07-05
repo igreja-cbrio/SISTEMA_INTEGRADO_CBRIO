@@ -96,7 +96,7 @@ export default function VolCheckin() {
 
   const handleUnscheduledCheckIn = useCallback(async (name: string) => {
     try {
-      await checkIn.mutateAsync({ service_id: selectedServiceId, method: 'manual', is_unscheduled: true });
+      await checkIn.mutateAsync({ service_id: selectedServiceId, method: 'manual', is_unscheduled: true, volunteer_name: name });
       setSuccess({ name, unscheduled: true });
       toast.success('Check-in sem escala realizado!');
     } catch (err: any) {
