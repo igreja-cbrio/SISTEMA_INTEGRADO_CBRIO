@@ -141,7 +141,7 @@ export default function VolRelatorios() {
     const extras = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
     const esc = (t: string) => (t || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m] as string));
     const nomeSched = (s: any) => esc(s.volunteer_name || s.volunteer?.full_name || 'Voluntário');
-    const nomeCi = (c: any) => esc(c.volunteer?.full_name || c.schedule?.volunteer_name || 'Voluntário');
+    const nomeCi = (c: any) => esc(c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || 'Voluntário');
     const equipe = (s: any) => s.team_name ? ` <span style="color:#888">· ${esc(s.team_name)}${s.position_name ? ' / ' + esc(s.position_name) : ''}</span>` : '';
     const dt = (() => { try { return new Date(svc.scheduled_at).toLocaleString('pt-BR', { dateStyle: 'full', timeStyle: 'short' }); } catch { return ''; } })();
     const liS = (arr: any[]) => arr.length ? arr.map(s => `<li>${nomeSched(s)}${equipe(s)}</li>`).join('') : '<li style="color:#999">—</li>';
@@ -346,7 +346,7 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                   {unscheduledCheckIns.map(ci => (
                     <div key={ci.id} className="flex items-center justify-between p-3 rounded-lg border bg-card">
                       <div className="min-w-0">
-                        <p className="font-medium text-sm">{ci.volunteer?.full_name || ci.schedule?.volunteer_name || 'Voluntário não identificado'}</p>
+                        <p className="font-medium text-sm">{ci.volunteer?.full_name || ci.schedule?.volunteer_name || ci.volunteer_name || 'Voluntário não identificado'}</p>
                         <p className="text-xs text-muted-foreground">{ci.serviceName}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -525,7 +525,7 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                   <div className="space-y-1.5">
                     {serviceDetail.extras.map(c => (
                       <div key={c.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
-                        <p className="text-sm font-medium truncate">{c.volunteer?.full_name || c.schedule?.volunteer_name || 'Voluntário'}</p>
+                        <p className="text-sm font-medium truncate">{c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || 'Voluntário'}</p>
                         <Badge variant="outline" className="border-yellow-300 text-yellow-700 text-xs shrink-0">sem escala</Badge>
                       </div>
                     ))}
