@@ -828,12 +828,15 @@ function formatBr(iso) {
 // ── Dialog · quem foram as pessoas únicas do Voluntariado na semana ──────────
 function VolPessoasDialog({ ano, semana, onClose }) {
   const [busca, setBusca] = useState('');
+  const [soSemEscala, setSoSemEscala] = useState(false);
   const { data: pessoas = [], isLoading } = useQuery({
     queryKey: ['dash-sem', 'vol-pessoas', ano, semana],
     queryFn: () => api.voluntariadoPessoas(ano, semana),
   });
 
+  const totalSemEscala = pessoas.filter(p => p.sem_escala).length;
   const filtradas = pessoas.filter(p => {
+    if (soSemEscala && !p.sem_escala) return false;
     const q = busca.trim().toLowerCase();
     return !q || (p.nome || '').toLowerCase().includes(q) || (p.blocos || '').toLowerCase().includes(q);
   });
@@ -850,9 +853,23 @@ function VolPessoasDialog({ ano, semana, onClose }) {
         <p className="text-xs text-muted-foreground -mt-1">
           Voluntários que fizeram check-in na semana, sem repetir quem serviu em mais de um culto.
         </p>
-        <div className="relative">
-          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome ou culto…" className="pl-9" />
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome ou culto…" className="pl-9" />
+          </div>
+          <button
+            type="button"
+            onClick={() => setSoSemEscala(v => !v)}
+            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold border transition-colors ${
+              soSemEscala
+                ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40'
+                : 'text-muted-foreground border-border hover:bg-accent'
+            }`}
+            title="Mostrar só quem veio sem escala"
+          >
+            Sem escala ({totalSemEscala})
+          </button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border">
           {isLoading ? (
@@ -871,7 +888,14 @@ function VolPessoasDialog({ ano, semana, onClose }) {
               <tbody>
                 {filtradas.map((p, i) => (
                   <tr key={`${p.nome}-${i}`} className="border-b border-border/60 last:border-0">
-                    <td className="py-2 px-3 font-medium">{p.nome}</td>
+                    <td className="py-2 px-3 font-medium">
+                      {p.nome}
+                      {p.sem_escala && (
+                        <span className="ml-2 inline-block rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-semibold px-2 py-0.5 align-middle">
+                          sem escala
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2 px-3 text-muted-foreground">{p.blocos || '—'}</td>
                     <td className="py-2 px-3 text-right">{p.checkins}</td>
                   </tr>
