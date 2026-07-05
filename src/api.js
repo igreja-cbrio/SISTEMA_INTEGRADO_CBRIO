@@ -429,6 +429,7 @@ export const dashboardSemanal = {
   semanasDisponiveis: (ano) => get(`/dashboard-semanal/semanas-disponiveis?ano=${ano}`),
   semanal: (params) => get('/dashboard-semanal/semanal?' + new URLSearchParams(params)),
   resumoSemana: (ano, semana) => get(`/dashboard-semanal/resumo-semana?ano=${ano}&semana=${semana}`),
+  voluntariadoPessoas: (ano, semana) => get(`/dashboard-semanal/voluntariado-pessoas?ano=${ano}&semana=${semana}`),
   resumoMes: (ano, mes) => get(`/dashboard-semanal/resumo-mes?ano=${ano}&mes=${mes}`),
   ranking: (params) => get('/dashboard-semanal/ranking?' + new URLSearchParams(params)),
   yoy: (params) => get('/dashboard-semanal/yoy?' + new URLSearchParams(params)),

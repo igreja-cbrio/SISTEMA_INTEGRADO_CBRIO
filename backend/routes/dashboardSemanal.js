@@ -291,6 +291,27 @@ router.get('/semanal', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /ranking · melhor e pior semana de um ano (top/bottom 1)
 //   query: ano, indicador (default frequência), culto (uuid opcional)
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /voluntariado-pessoas · quem são as "pessoas únicas" do card do
+// Voluntariado (mesma régua da fn_dashboard_voluntariado_resumo).
+//   query: ano, semana (ISO) → [{ nome, checkins, blocos }]
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/voluntariado-pessoas', async (req, res) => {
+  try {
+    const ano = parseInt(req.query.ano, 10);
+    const semana = parseInt(req.query.semana, 10);
+    if (!ano || !semana) return res.status(400).json({ error: 'ano e semana são obrigatórios' });
+    const { data, error } = await supabase.rpc('fn_dashboard_voluntariado_pessoas', {
+      p_ano_iso: ano, p_semana_iso: semana,
+    });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[DASH-SEM] vol pessoas', e.message);
+    res.status(500).json({ error: 'Erro ao listar as pessoas da semana' });
+  }
+});
+
 //
 // Soma o indicador por semana ISO (mesma regra do /semanal · exclui cultos
 // sem kids quando o indicador é de kids, respeita filtro de culto). Considera

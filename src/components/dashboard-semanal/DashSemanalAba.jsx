@@ -4,7 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { dashboardSemanal as api } from '../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Input } from '../ui/input';
+import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv, Search } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
   ComposedChart,
@@ -43,6 +45,7 @@ export default function DashSemanalAba() {
   // Multi-select: array de slugs dos indicadores selecionados
   const [indicadoresSel, setIndicadoresSel] = useState(['frequencia']);
   const [culto, setCulto] = useState('todos');
+  const [volPessoasOpen, setVolPessoasOpen] = useState(false);
 
   const { data: cultos } = useQuery({
     queryKey: ['dash-sem', 'cultos'],
@@ -326,15 +329,20 @@ export default function DashSemanalAba() {
 
         {isSingle && primario?.indicador === 'voluntariado' && primario.data && (
           <div className="pt-4 grid grid-cols-2 gap-2">
-            <div className="rounded-xl border bg-card p-4 text-center">
+            <button
+              type="button"
+              onClick={() => setVolPessoasOpen(true)}
+              className="rounded-xl border bg-card p-4 text-center cursor-pointer transition-colors hover:border-primary/60 hover:bg-accent/40"
+              title="Ver quem foram as pessoas da semana"
+            >
               <p className="text-2xl font-bold" style={{ color: C.primary }}>
                 {primario.data.resumo.pessoas_unicas ?? '—'}
               </p>
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">
                 Pessoas únicas
               </p>
-              <p className="text-[10px] text-muted-foreground">na semana (sem repetir)</p>
-            </div>
+              <p className="text-[10px] text-muted-foreground">na semana (sem repetir) · clique pra ver</p>
+            </button>
             <div className="rounded-xl border bg-card p-4 text-center">
               <p className="text-2xl font-bold" style={{ color: C.media }}>
                 {primario.data.resumo.checkins_total ?? '—'}
@@ -345,6 +353,10 @@ export default function DashSemanalAba() {
               <p className="text-[10px] text-muted-foreground">eventos na semana</p>
             </div>
           </div>
+        )}
+
+        {volPessoasOpen && (
+          <VolPessoasDialog ano={ano} semana={semana} onClose={() => setVolPessoasOpen(false)} />
         )}
       </div>
 
@@ -811,4 +823,64 @@ function formatBr(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
+}
+
+// ── Dialog · quem foram as pessoas únicas do Voluntariado na semana ──────────
+function VolPessoasDialog({ ano, semana, onClose }) {
+  const [busca, setBusca] = useState('');
+  const { data: pessoas = [], isLoading } = useQuery({
+    queryKey: ['dash-sem', 'vol-pessoas', ano, semana],
+    queryFn: () => api.voluntariadoPessoas(ano, semana),
+  });
+
+  const filtradas = pessoas.filter(p => {
+    const q = busca.trim().toLowerCase();
+    return !q || (p.nome || '').toLowerCase().includes(q) || (p.blocos || '').toLowerCase().includes(q);
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" style={{ color: C.primary }} />
+            Pessoas únicas · Semana {semana}/{ano} ({pessoas.length})
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground -mt-1">
+          Voluntários que fizeram check-in na semana, sem repetir quem serviu em mais de um culto.
+        </p>
+        <div className="relative">
+          <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome ou culto…" className="pl-9" />
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border">
+          {isLoading ? (
+            <div className="py-10 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : filtradas.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma pessoa nesse filtro.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-card">
+                <tr className="text-left text-muted-foreground border-b border-border">
+                  <th className="py-2 px-3 font-medium">Nome</th>
+                  <th className="py-2 px-3 font-medium">Cultos em que serviu</th>
+                  <th className="py-2 px-3 font-medium text-right">Check-ins</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtradas.map((p, i) => (
+                  <tr key={`${p.nome}-${i}`} className="border-b border-border/60 last:border-0">
+                    <td className="py-2 px-3 font-medium">{p.nome}</td>
+                    <td className="py-2 px-3 text-muted-foreground">{p.blocos || '—'}</td>
+                    <td className="py-2 px-3 text-right">{p.checkins}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
