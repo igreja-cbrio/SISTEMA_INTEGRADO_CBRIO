@@ -2472,8 +2472,33 @@ router.post('/service-types/:id/generate', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 router.post('/services', async (req, res) => {
   try {
-    const { name, service_type_name, service_type_id, scheduled_at } = req.body;
+    const { name, service_type_name, service_type_id, scheduled_at, forcar } = req.body;
     if (!name || !scheduled_at) return res.status(400).json({ error: 'name e scheduled_at obrigatórios' });
+
+    // Guard anti-duplicação (incidente 05/07): criar culto manual num dia que JÁ
+    // tem culto do Planning Center gera duplicado SEM ESCALA — a equipe faz
+    // check-in nele e as presenças se separam da escala real. Bloqueia com
+    // explicação; quem souber o que está fazendo passa forcar=true.
+    if (!forcar) {
+      const d = new Date(scheduled_at);
+      if (!Number.isNaN(d.getTime())) {
+        const dia = d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+        const { data: doDia } = await supabase.from('vol_services')
+          .select('name')
+          .not('planning_center_id', 'is', null)
+          .gte('scheduled_at', `${dia}T00:00:00-03:00`)
+          .lt('scheduled_at', `${dia}T23:59:59-03:00`)
+          .limit(5);
+        if (doDia?.length) {
+          return res.status(409).json({
+            error: `Este dia já tem culto(s) do Planning Center com a escala: ${doDia.map(s => s.name).join(', ')}. ` +
+              'Use esse culto pro check-in — criar outro separa as presenças da escala. ' +
+              'Se realmente precisar de um culto extra neste dia, envie forcar=true.',
+          });
+        }
+      }
+    }
+
     const { data, error } = await supabase.from('vol_services')
       .insert({ name, service_type_name, service_type_id, scheduled_at }).select().single();
     if (error) return res.status(400).json({ error: error.message });
