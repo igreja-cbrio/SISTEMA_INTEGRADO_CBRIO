@@ -1,12 +1,13 @@
 import { useState, useMemo, useRef } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { dashboardSemanal as api } from '../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
-import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv, Search } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv, Search, StickyNote, Plus, Trash2 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
   ComposedChart,
@@ -739,6 +740,9 @@ export default function DashSemanalAba() {
         </Card>
         )}
 
+        {/* Observações da semana · explicam blocos zerados/atípicos */}
+        <ObservacoesSemana ano={ano} semana={semana} blocos={primario?.data?.items || []} />
+
         {/* Comparativo entre anos · mesma semana ISO em anos anteriores */}
         {!isEmpty && yoy?.resultados?.length > 0 && (
           <Card>
@@ -906,5 +910,149 @@ function VolPessoasDialog({ ano, semana, onClose }) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Observações da semana · explicam blocos zerados/atípicos ────────────────
+// Ex.: "Domingo Noite · Não houve culto (jogo do Brasil)". Nota geral ou por
+// bloco de culto; qualquer autenticado vê, quem edita o dashboard registra.
+function ObservacoesSemana({ ano, semana, blocos }) {
+  const qc = useQueryClient();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [bloco, setBloco] = useState('semana');
+  const [texto, setTexto] = useState('');
+
+  const { data: notas = [] } = useQuery({
+    queryKey: ['dash-sem', 'notas', ano, semana],
+    queryFn: () => api.notasList(ano, semana),
+  });
+
+  const criarMut = useMutation({
+    mutationFn: () => {
+      const b = bloco !== 'semana' ? blocos.find(x => x.service_type_id === bloco) : null;
+      return api.notaCreate({
+        ano, semana,
+        service_type_id: b?.service_type_id || null,
+        service_type_name: b?.service_type_name || null,
+        nota: texto,
+      });
+    },
+    onSuccess: () => {
+      toast.success('Observação registrada');
+      setDialogOpen(false); setTexto(''); setBloco('semana');
+      qc.invalidateQueries({ queryKey: ['dash-sem', 'notas', ano, semana] });
+    },
+    onError: (e) => toast.error(e.message || 'Erro ao salvar a observação'),
+  });
+
+  const excluirMut = useMutation({
+    mutationFn: (id) => api.notaDelete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dash-sem', 'notas', ano, semana] }),
+    onError: (e) => toast.error(e.message || 'Erro ao excluir'),
+  });
+
+  if (!notas.length && !blocos.length) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <StickyNote className="h-4 w-4 text-amber-500" />
+            Observações da semana {semana}
+          </span>
+          <button
+            type="button"
+            onClick={() => setDialogOpen(true)}
+            className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" /> Observação
+          </button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {notas.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Nenhuma observação nesta semana. Registre aqui quando um culto não acontecer (feriado, evento, jogo…) pra explicar números zerados.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {notas.map(n => (
+              <li key={n.id} className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
+                <StickyNote className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="font-medium">{n.service_type_name || 'Semana toda'}:</span>{' '}
+                  <span>{n.nota}</span>
+                  <span className="block text-[11px] text-muted-foreground mt-0.5">
+                    {n.criado_por_nome || '—'} · {new Date(n.created_at).toLocaleDateString('pt-BR')}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => excluirMut.mutate(n.id)}
+                  className="text-muted-foreground hover:text-red-500 transition-colors"
+                  title="Excluir observação"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <StickyNote className="h-5 w-5 text-amber-500" /> Nova observação · Semana {semana}/{ano}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Aplicar a</label>
+              <Select value={bloco} onValueChange={setBloco}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semana">Semana toda</SelectItem>
+                  {blocos.map(b => (
+                    <SelectItem key={b.service_type_id} value={b.service_type_id}>{b.service_type_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Observação</label>
+              <Input
+                value={texto}
+                onChange={e => setTexto(e.target.value)}
+                placeholder="Ex.: Não houve culto — jogo do Brasil"
+                maxLength={500}
+                onKeyDown={e => { if (e.key === 'Enter' && texto.trim()) criarMut.mutate(); }}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDialogOpen(false)}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!texto.trim() || criarMut.isPending}
+                onClick={() => criarMut.mutate()}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                style={{ background: C.primary }}
+              >
+                {criarMut.isPending ? 'Salvando…' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </Card>
   );
 }

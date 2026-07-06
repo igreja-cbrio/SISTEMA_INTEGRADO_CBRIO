@@ -430,6 +430,10 @@ export const dashboardSemanal = {
   semanal: (params) => get('/dashboard-semanal/semanal?' + new URLSearchParams(params)),
   resumoSemana: (ano, semana) => get(`/dashboard-semanal/resumo-semana?ano=${ano}&semana=${semana}`),
   voluntariadoPessoas: (ano, semana) => get(`/dashboard-semanal/voluntariado-pessoas?ano=${ano}&semana=${semana}`),
+  // Observações da semana (ex.: "Não houve culto · jogo do Brasil")
+  notasList: (ano, semana) => get(`/dashboard-semanal/notas?ano=${ano}&semana=${semana}`),
+  notaCreate: (data) => post('/dashboard-semanal/notas', data),
+  notaDelete: (id) => del(`/dashboard-semanal/notas/${id}`),
   resumoMes: (ano, mes) => get(`/dashboard-semanal/resumo-mes?ano=${ano}&mes=${mes}`),
   ranking: (params) => get('/dashboard-semanal/ranking?' + new URLSearchParams(params)),
   yoy: (params) => get('/dashboard-semanal/yoy?' + new URLSearchParams(params)),
