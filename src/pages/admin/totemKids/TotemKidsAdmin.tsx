@@ -265,7 +265,7 @@ function AbaSalas() {
     <Card>
       <CardContent className="p-4 space-y-3">
         <div className="flex justify-between items-center">
-          <div className="text-sm text-muted-foreground">Salas físicas do Kids</div>
+          <div className="text-sm text-muted-foreground">Salas do Kids · nome, <b>faixa de idade</b> e capacidade</div>
           <Button onClick={() => abrir()} size="sm" className="bg-pink-600 hover:bg-pink-700">
             <Plus className="h-4 w-4 mr-1" /> Nova sala
           </Button>
@@ -296,16 +296,41 @@ function AbaSalas() {
             {editando && (
               <div className="space-y-2">
                 <Input placeholder="Nome (ex: Berçário)" value={editando.nome} onChange={e => setEditando({ ...editando, nome: e.target.value })} />
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs">Idade mínima (meses)</label>
-                    <Input type="number" value={editando.faixa_etaria_min_meses} onChange={e => setEditando({ ...editando, faixa_etaria_min_meses: Number(e.target.value) })} />
+                    <label className="text-xs font-medium">Idade mínima</label>
+                    <div className="flex items-end gap-1.5 mt-0.5">
+                      <div className="flex-1">
+                        <Input type="number" min={0} value={Math.floor((editando.faixa_etaria_min_meses || 0) / 12)}
+                          onChange={e => setEditando({ ...editando, faixa_etaria_min_meses: (Number(e.target.value) || 0) * 12 + ((editando.faixa_etaria_min_meses || 0) % 12) })} />
+                        <span className="text-[10px] text-muted-foreground">anos</span>
+                      </div>
+                      <div className="flex-1">
+                        <Input type="number" min={0} max={11} value={(editando.faixa_etaria_min_meses || 0) % 12}
+                          onChange={e => setEditando({ ...editando, faixa_etaria_min_meses: Math.floor((editando.faixa_etaria_min_meses || 0) / 12) * 12 + Math.min(11, Math.max(0, Number(e.target.value) || 0)) })} />
+                        <span className="text-[10px] text-muted-foreground">meses</span>
+                      </div>
+                    </div>
                   </div>
                   <div>
-                    <label className="text-xs">Idade máxima (meses)</label>
-                    <Input type="number" value={editando.faixa_etaria_max_meses} onChange={e => setEditando({ ...editando, faixa_etaria_max_meses: Number(e.target.value) })} />
+                    <label className="text-xs font-medium">Idade máxima</label>
+                    <div className="flex items-end gap-1.5 mt-0.5">
+                      <div className="flex-1">
+                        <Input type="number" min={0} value={Math.floor((editando.faixa_etaria_max_meses || 0) / 12)}
+                          onChange={e => setEditando({ ...editando, faixa_etaria_max_meses: (Number(e.target.value) || 0) * 12 + ((editando.faixa_etaria_max_meses || 0) % 12) })} />
+                        <span className="text-[10px] text-muted-foreground">anos</span>
+                      </div>
+                      <div className="flex-1">
+                        <Input type="number" min={0} max={11} value={(editando.faixa_etaria_max_meses || 0) % 12}
+                          onChange={e => setEditando({ ...editando, faixa_etaria_max_meses: Math.floor((editando.faixa_etaria_max_meses || 0) / 12) * 12 + Math.min(11, Math.max(0, Number(e.target.value) || 0)) })} />
+                        <span className="text-[10px] text-muted-foreground">meses</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  Ex.: Berçário 0 anos 6 meses a 1 ano 11 meses · Maternal 2 a 3 anos. A criança é sugerida pra sala pela idade no check-in.
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs">Capacidade</label>
