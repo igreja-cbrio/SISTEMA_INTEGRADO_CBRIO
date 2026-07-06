@@ -131,10 +131,20 @@ export default function VolRelatorios() {
         const total = svcSchedules.length;
         const present = svcSchedules.filter(sch => svcCheckIns.some(c => ciMatchesSched(c, sch))).length;
         const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-        return { ...svc, total, present, rate };
+        // "Quantas pessoas serviram" = escalados presentes + sem-escala identificados
+        // (anônimos ficam numa contagem à parte · não dá pra saber quem foram)
+        const extrasTodos = svcCheckIns.filter(c => !svcSchedules.some(sch => ciMatchesSched(c, sch)) && isRealmenteSemEscala(c));
+        const serviram = present + new Set(
+          extrasTodos.filter(ciTemIdentidade).map(c =>
+            c.volunteer?.planning_center_id || c.volunteer_id ||
+            normName(c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name)
+          )
+        ).size;
+        const anonimos = extrasTodos.filter(c => !ciTemIdentidade(c)).length;
+        return { ...svc, total, present, rate, serviram, anonimos };
       })
-      .filter(s => s.total > 0 || s.present > 0);
-  }, [reportData]);
+      .filter(s => s.total > 0 || s.present > 0 || s.serviram > 0);
+  }, [reportData, isRealmenteSemEscala]);
 
   // Detalhe de UM culto: quem dos escalados fez check-in (presente), quem não
   // fez (faltou) e quem fez check-in sem estar escalado (sem escala). Tudo
@@ -323,13 +333,19 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                         </p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <p className="text-sm font-semibold">
+                            {svc.serviram} serviram
+                            {svc.anonimos > 0 && <span className="text-amber-600 dark:text-amber-400 font-normal"> +{svc.anonimos}?</span>}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">escala {svc.present}/{svc.total}</p>
+                        </div>
                         <div className="w-32 h-2 bg-muted rounded-full overflow-hidden hidden sm:block">
                           <div
                             className={`h-full rounded-full cbrio-bar ${svc.rate >= 80 ? 'bg-green-500' : svc.rate >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
                             style={{ width: `${Math.min(svc.rate, 100)}%` }}
                           />
                         </div>
-                        <span className="text-sm text-muted-foreground w-16 text-right">{svc.present}/{svc.total}</span>
                         <Badge variant={svc.rate >= 80 ? 'default' : 'outline'} className={svc.rate >= 80 ? 'bg-green-600 text-white' : ''}>
                           {svc.rate}%
                         </Badge>

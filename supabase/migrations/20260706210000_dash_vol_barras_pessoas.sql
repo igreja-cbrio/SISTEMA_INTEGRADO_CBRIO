@@ -1,0 +1,8 @@
+-- Dashboard Voluntariado · barras passam a contar PESSOAS DISTINTAS por bloco
+-- (pedido do Matheus 06/07: "quero saber quantas pessoas serviram"). Antes
+-- contavam eventos de check-in (302 na manhã de 05/07 · inflado por anônimos
+-- e retro-lançamentos). Identidade = mesma régua das RPCs; anônimos ficam
+-- FORA das barras (aparecem como "+N sem identificação" no card).
+-- JÁ APLICADA em prod via MCP · definição completa da view na migration
+-- aplicada (vw_dashboard_voluntariado · count(DISTINCT pessoa) + joins de
+-- identidade em vol_schedules/vol_profiles · WHERE pessoa IS NOT NULL).
