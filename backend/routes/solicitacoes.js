@@ -401,7 +401,10 @@ router.get('/', async (req, res) => {
       } else if (aprovarIds.length) {
         queries.push(mkBase().in('aprovacao_origem_diretor_id', aprovarIds).eq('aprovacao_origem_status', 'pendente'));
       }
-      if (isSuper || ehGestao) queries.push(mkBase().eq('aprovacao_gestao_status', 'pendente'));
+      // 2º carimbo (Gestão) só entra na fila DEPOIS que o diretor do demandante
+      // aprovou a origem (regra sequencial · 2026-07-06). Aprovar antes disso
+      // invertia a decisão (ops decidindo antes da área dona da demanda).
+      if (isSuper || ehGestao) queries.push(mkBase().eq('aprovacao_gestao_status', 'pendente').in('aprovacao_origem_status', ['aprovada', 'dispensada']));
       if (isSuper || ehMerito) queries.push(mkBase().eq('status', 'aguardando_merito'));
 
       const results = await Promise.all(queries);
@@ -428,7 +431,7 @@ router.get('/', async (req, res) => {
         if (origemPend && (isSuper || (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)))) {
           papeis.push('origem');
         }
-        if (d.aprovacao_gestao_status === 'pendente' && (isSuper || ehGestao)) papeis.push('gestao');
+        if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && (isSuper || ehGestao)) papeis.push('gestao');
         if (d.status === 'aguardando_merito' && (isSuper || ehMerito)) papeis.push('merito');
         papeisPorId[d.id] = papeis;
       }
@@ -674,6 +677,7 @@ router.get('/meu-papel', async (req, res) => {
         .from('solicitacoes')
         .select('id', { count: 'exact', head: true })
         .eq('aprovacao_gestao_status', 'pendente')
+        .in('aprovacao_origem_status', ['aprovada', 'dispensada'])
         .is('deleted_at', null);
       pendentesGestao = count || 0;
     }
@@ -1056,7 +1060,13 @@ router.post('/', async (req, res) => {
 
     // Fluxo BPMN · 2º carimbo pendente → notifica os aprovadores de Gestão
     // (Eduardo + Juliana) com e-mail (mesmo padrão do alerta de origem).
-    if (data.aprovacao_gestao_status === 'pendente' && gestaoIdsNotificar.length) {
+    // SÓ quando a origem já está resolvida (ex.: demandante é o próprio diretor
+    // da área → origem dispensada). Se a origem ainda pende, o aviso de Gestão
+    // é adiado pro momento em que o diretor do demandante aprovar (regra
+    // sequencial · 2026-07-06) — evita a Gestão decidir antes da área dona.
+    if (data.aprovacao_gestao_status === 'pendente'
+        && ['aprovada', 'dispensada'].includes(data.aprovacao_origem_status)
+        && gestaoIdsNotificar.length) {
       notificar({
         modulo: 'administrativo',
         tipo: 'solicitacao_aprovacao_gestao',
@@ -1153,8 +1163,15 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
       const gestaoIds = await aprovadoresGestaoIds();
       ehAprovadorGestao = gestaoIds.includes(userId);
     }
-    const podeGestao = gestaoPendente && (ehAprovadorGestao || isSuperAdmin);
+    // Regra sequencial (2026-07-06): o carimbo de Gestão só libera DEPOIS que a
+    // origem foi aprovada/dispensada (diretor do demandante decide primeiro).
+    const origemResolvida = ['aprovada', 'dispensada'].includes(atual.aprovacao_origem_status);
+    const podeGestao = gestaoPendente && origemResolvida && (ehAprovadorGestao || isSuperAdmin);
     if (!podeOrigem && !podeGestao) {
+      // Aprovador de Gestão tentando carimbar antes do diretor do demandante.
+      if (gestaoPendente && !origemResolvida && (ehAprovadorGestao || isSuperAdmin)) {
+        return res.status(409).json({ error: 'Esta solicitação ainda aguarda a aprovação do diretor da área do demandante. O carimbo de Gestão fica disponível depois disso.' });
+      }
       return res.status(403).json({ error: 'Apenas o diretor de origem, um co-aprovador do setor ou a diretoria de Gestão pode aprovar esta solicitação.' });
     }
 
@@ -1239,6 +1256,25 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
         chaveDedup: `solicitacao_carimbo_${carimbo}_${data.id}`,
         targetIds: [data.solicitante_id].filter(Boolean),
       }).catch(err => console.error('[SOLICITACOES] notify carimbo parcial:', err.message));
+
+      // Origem acabou de sair e ainda falta a Gestão → AGORA é a vez dos
+      // aprovadores de Gestão (aviso adiado da criação · regra sequencial).
+      if (carimbo === 'origem' && data.aprovacao_gestao_status === 'pendente') {
+        const gestaoIds = await aprovadoresGestaoIds();
+        if (gestaoIds.length) {
+          notificar({
+            modulo,
+            tipo: 'solicitacao_aprovacao_gestao',
+            titulo: `Aprovar solicitação (Gestão): ${data.titulo}`,
+            mensagem: `O diretor da área do demandante aprovou · agora precisa do carimbo da diretoria de Gestão.`,
+            link: '/solicitacoes?aba=aprovar',
+            severidade: 'info',
+            chaveDedup: `solicitacao_aprovacao_gestao_${data.id}`,
+            targetIds: gestaoIds,
+            email: true,
+          }).catch(err => console.error('[SOLICITACOES] notify gestao (pos-origem):', err.message));
+        }
+      }
       return res.json(data);
     }
 
