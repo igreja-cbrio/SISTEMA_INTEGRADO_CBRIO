@@ -1,79 +1,48 @@
 // ============================================================================
-// Governança — ciclo de reuniões de diretoria
+// Governança — Rituais Mensais de Gestão Estratégica
 // ============================================================================
-// Módulo operacional do Marcos (como o Eventos): agenda das reuniões da
-// diretoria, documentos de entrada (pré-reunião), atas/deliberações e
-// pendências por reunião. A diretoria acessa em modo leitura (nível 1);
-// quem opera (super-admin / override nível 3) cria e edita.
-//
-// - Agenda do mês: as reuniões do ciclo (criadas a partir dos tipos) + avulsas.
-// - "Criar ciclo do mês" materializa as reuniões mensais (N-ésima quarta) +
-//   as tarefas dos templates de cada tipo.
-// - "Preparar reunião" reusa os relatórios automáticos (OKR/DRE/KPI/...).
-// - Documentos vão pro SharePoint (biblioteca Gestão).
+// Home do módulo: os 4 rituais do ciclo executivo do mês (OKR → DRE → KPI →
+// Conselho) como quadrados clicáveis (reproduzindo o material institucional),
+// cada um levando à página do ritual (/governanca/:sigla) com instruções,
+// próxima reunião, atas anteriores, deliberações e relatório do período.
+// A aba Agenda gerencia as datas/prazos (ciclo do mês · gerar ano · avulsas);
+// a aba Tipos edita o catálogo de reuniões.
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ChevronLeft, ChevronRight, X, Plus, Trash2, FileText, Upload, Download,
-  CheckCircle2, Circle, ClipboardList, Sparkles, Loader2, CalendarDays, Settings2,
-  Brain, Layers, Pencil,
+  ChevronLeft, ChevronRight, Plus, Loader2, CalendarDays, Settings2, Landmark,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
 import { governanca as gov } from '../../api';
 import { formatErro } from '../../lib/formatErro';
 import { useAuth } from '../../contexts/AuthContext';
-import useConfirmarSaida from '../../hooks/useConfirmarSaida';
+import {
+  C, MESES, STATUS_MEETING, pad, ymd, fmtData, diaSemana, inputStyle,
+  DetalheReuniao, NovaReuniaoModal,
+} from './compartilhado';
+import { RITUAIS, ORDEM_RITUAIS, SEQUENCIA_LOGICA, REGRA_DE_OURO, COMO_CONDUZIMOS } from './rituais';
 
-const C = {
-  bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
-  t2: 'var(--cbrio-text2)', t3: 'var(--cbrio-text3)', border: 'var(--cbrio-border)',
-  inputBg: 'var(--cbrio-input-bg)', modalBg: 'var(--cbrio-modal-bg)', overlay: 'var(--cbrio-overlay)',
-  primary: '#00B39D', primaryBg: '#00B39D18',
-};
-
-const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-
-const STATUS_MEETING = {
-  agendada: { label: 'Agendada', cor: '#3B82F6' },
-  em_preparo: { label: 'Em preparo', cor: '#F59E0B' },
-  realizada: { label: 'Realizada', cor: '#10B981' },
-  cancelada: { label: 'Cancelada', cor: '#9CA3AF' },
-  adiada: { label: 'Adiada', cor: '#EF4444' },
-};
-const STATUS_TASK = { pendente: 'Pendente', em_andamento: 'Em andamento', concluida: 'Concluída', cancelada: 'Cancelada' };
-const TIPO_DOC = {
-  entrada: { label: 'Documento (pré-reunião)', cor: '#3B82F6' },
-  transcricao: { label: 'Transcrição (Plaud)', cor: '#0EA5E9' },
-  ata: { label: 'Ata', cor: '#10B981' },
-  apoio: { label: 'Apoio', cor: '#8B5CF6' },
-  pauta_ia: { label: 'Pauta (IA)', cor: '#00B39D' },
-};
-// Tipos que o usuário pode SUBIR (pauta_ia é gerada pela IA, não enviada).
-const UPLOAD_TIPOS = ['transcricao', 'entrada', 'apoio', 'ata'];
-const SIGLAS_RELATORIO = new Set(['OKR', 'DRE', 'KPI', 'CC', 'DE', 'AG']);
-
-function pad(n) { return String(n).padStart(2, '0'); }
-function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
-function fmtData(s) { if (!s) return 'Sem data'; const [y, m, dd] = s.split('-').map(Number); return `${pad(dd)}/${pad(m)}/${y}`; }
-function diaSemana(s) { if (!s) return ''; const d = new Date(`${s}T00:00:00`); return DIAS_SEMANA[d.getDay()]; }
-
-const inputStyle = { background: C.inputBg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 8, padding: '8px 10px', width: '100%', fontSize: 14 };
+// Cores institucionais dos rituais (mesmas dos tipos seedados no banco).
+const COR_RITUAL = { OKR: '#3b82f6', DRE: '#10b981', KPI: '#f59e0b', CC: '#8b5cf6', DE: '#ef4444', AG: '#06b6d4' };
 
 // ────────────────────────────────────────────────────────────────────────
 export default function Governanca() {
   const { getAccessLevel } = useAuth();
   const canEdit = getAccessLevel(['governanca']) >= 3;
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [ref, setRef] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
   const [meetings, setMeetings] = useState([]);
+  const [proximas, setProximas] = useState([]); // próximas reuniões (todas as siglas · pros quadrados)
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [criando, setCriando] = useState(false);
   const [gerandoAno, setGerandoAno] = useState(false);
-  const [view, setView] = useState('agenda'); // 'agenda' | 'tipos'
+  const view = searchParams.get('view') || 'rituais'; // 'rituais' | 'agenda' | 'tipos'
+  const setView = (v) => setSearchParams(v === 'rituais' ? {} : { view: v }, { replace: true });
   const [openId, setOpenId] = useState(null);
   const [novaOpen, setNovaOpen] = useState(false);
 
@@ -84,9 +53,15 @@ export default function Governanca() {
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const [mtgs, tps] = await Promise.all([gov.meetings.list({ from, to }), gov.types.list()]);
+      const hoje = ymd(new Date());
+      const [mtgs, tps, prox] = await Promise.all([
+        gov.meetings.list({ from, to }),
+        gov.types.list(),
+        gov.meetings.list({ from: hoje }),
+      ]);
       setMeetings(Array.isArray(mtgs) ? mtgs : []);
       setTypes(Array.isArray(tps) ? tps : []);
+      setProximas(Array.isArray(prox) ? prox : []);
     } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
   }, [from, to]);
@@ -123,19 +98,36 @@ export default function Governanca() {
   const irMes = (delta) => setRef(new Date(ano, mes - 1 + delta, 1));
   const irHoje = () => { const n = new Date(); setRef(new Date(n.getFullYear(), n.getMonth(), 1)); };
 
+  // Próxima reunião (não cancelada) por sigla · alimenta os quadrados.
+  const proximaPorSigla = useMemo(() => {
+    const map = {};
+    for (const m of proximas) {
+      const s = m.governance_meeting_types?.sigla;
+      if (!s || m.status === 'cancelada') continue;
+      if (!map[s]) map[s] = m;
+    }
+    return map;
+  }, [proximas]);
+
+  const tipoPorSigla = useMemo(() => {
+    const map = {};
+    for (const t of types) map[t.sigla] = t;
+    return map;
+  }, [types]);
+
   return (
     <div style={{ background: C.bg, minHeight: '100%', color: C.text }} className="p-4 md:p-6">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <span style={{ color: C.primary }}><CalendarDays size={24} /></span>
+            <span style={{ color: C.primary }}><Landmark size={24} /></span>
             Governança
           </h1>
-          <p style={{ color: C.t2 }} className="text-sm">Ciclo de reuniões da diretoria · pauta, documentos, atas e pendências</p>
+          <p style={{ color: C.t2 }} className="text-sm">Rituais mensais de gestão estratégica · reuniões, atas e deliberações</p>
         </div>
         <div className="flex items-center gap-2">
-          {[['agenda', 'Agenda', CalendarDays], ['analise', 'Análise', Layers], ['tipos', 'Tipos', Settings2]].map(([v, label, Icon]) => (
+          {[['rituais', 'Rituais', Landmark], ['agenda', 'Agenda', CalendarDays], ['tipos', 'Tipos', Settings2]].map(([v, label, Icon]) => (
             <button key={v} onClick={() => setView(v)}
               className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg"
               style={{ border: `1px solid ${C.border}`, color: view === v ? C.primary : C.t2, background: view === v ? C.primaryBg : 'transparent' }}>
@@ -151,9 +143,7 @@ export default function Governanca() {
 
       {view === 'tipos' ? (
         <TiposPanel types={types} canEdit={canEdit} onChange={carregar} />
-      ) : view === 'analise' ? (
-        <AnalisePanel types={types} canEdit={canEdit} />
-      ) : (
+      ) : view === 'agenda' ? (
         <>
           {/* Navegação de mês */}
           <div className="flex items-center justify-between gap-2 mb-4">
@@ -193,10 +183,94 @@ export default function Governanca() {
             </div>
           )}
         </>
+      ) : (
+        <RituaisHome
+          loading={loading}
+          tipoPorSigla={tipoPorSigla}
+          proximaPorSigla={proximaPorSigla}
+          onAbrir={(sigla) => navigate(`/governanca/${sigla.toLowerCase()}`)}
+        />
       )}
 
-      {openId && <DetalheReuniao id={openId} canEdit={canEdit} types={types} onClose={() => setOpenId(null)} onChange={carregar} />}
+      {openId && <DetalheReuniao id={openId} canEdit={canEdit} onClose={() => setOpenId(null)} onChange={carregar} />}
       {novaOpen && <NovaReuniaoModal types={types} dataPadrao={`${ano}-${pad(mes)}-01`} onClose={() => setNovaOpen(false)} onSaved={() => { setNovaOpen(false); carregar(); }} />}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Home dos rituais: o ciclo executivo do mês em 4 quadrados + as reuniões
+// não-mensais (Diretoria Estatutária · Assembleia) como cards menores.
+function RituaisHome({ loading, tipoPorSigla, proximaPorSigla, onAbrir }) {
+  const extras = ['DE', 'AG'].filter(s => tipoPorSigla[s] && tipoPorSigla[s].ativo !== false);
+  return (
+    <div className="max-w-5xl">
+      {/* Faixa do ciclo */}
+      <div className="rounded-xl p-4 mb-4" style={{ background: `linear-gradient(135deg, ${C.primary}14, ${C.card})`, border: `1px solid ${C.border}` }}>
+        <div className="text-xs font-bold uppercase tracking-wide" style={{ color: C.primary }}>Ciclo executivo do mês</div>
+        <div className="text-sm font-medium mt-1" style={{ color: C.text }}>{SEQUENCIA_LOGICA}</div>
+        <div className="text-sm mt-2" style={{ color: C.t2 }}>
+          <b style={{ color: C.text }}>Regra de ouro:</b> {REGRA_DE_OURO}
+        </div>
+      </div>
+
+      {/* 4 quadrados */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {ORDEM_RITUAIS.map((sigla, i) => {
+          const r = RITUAIS[sigla];
+          const cor = tipoPorSigla[sigla]?.cor || COR_RITUAL[sigla];
+          const prox = proximaPorSigla[sigla];
+          return (
+            <button key={sigla} onClick={() => onAbrir(sigla)}
+              className="text-left rounded-2xl p-4 transition hover:opacity-95"
+              style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `4px solid ${cor}`, boxShadow: 'var(--shadow, 0 1px 3px rgba(0,0,0,0.06))' }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-1 rounded-full" style={{ background: `${cor}1c`, color: cor }}>
+                  {r.semanaLabel} · quarta
+                </span>
+                <span className="text-xs font-bold" style={{ color: C.t3 }}>{i + 1}/4</span>
+              </div>
+              <div className="text-lg font-bold mt-2" style={{ color: C.text }}>{r.titulo}</div>
+              <p className="text-sm mt-1 leading-relaxed" style={{ color: C.t2 }}>{r.objetivo}</p>
+              <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
+                <span className="text-xs" style={{ color: C.t3 }}>
+                  {loading ? '…' : prox ? <>Próxima: <b style={{ color: C.t2 }}>{diaSemana(prox.date)} {fmtData(prox.date)}</b></> : 'Sem reunião agendada'}
+                </span>
+                <span className="text-xs font-semibold inline-flex items-center gap-1" style={{ color: cor }}>Abrir <ChevronRight size={13} /></span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Reuniões não-mensais */}
+      {extras.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+          {extras.map(sigla => {
+            const t = tipoPorSigla[sigla];
+            const cor = t?.cor || COR_RITUAL[sigla];
+            const prox = proximaPorSigla[sigla];
+            return (
+              <button key={sigla} onClick={() => onAbrir(sigla)}
+                className="text-left rounded-xl p-3 flex items-center gap-3 transition hover:opacity-95"
+                style={{ background: C.card, border: `1px solid ${C.border}` }}>
+                <span style={{ width: 10, height: 10, borderRadius: 99, background: cor, flexShrink: 0 }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate" style={{ color: C.text }}>{t.nome}</div>
+                  <div className="text-xs" style={{ color: C.t3 }}>
+                    {t.recorrencia}{prox ? ` · próxima ${fmtData(prox.date)}` : ' · sem reunião agendada'}
+                  </div>
+                </div>
+                <ChevronRight size={15} style={{ color: C.t3, flexShrink: 0 }} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="text-xs mt-4 leading-relaxed" style={{ color: C.t3 }}>
+        <b style={{ color: C.t2 }}>Como conduzimos estas reuniões:</b> {COMO_CONDUZIMOS}
+      </p>
     </div>
   );
 }
@@ -218,488 +292,6 @@ function CardReuniao({ m, onClick }) {
         <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: `${st.cor}22`, color: st.cor }}>{st.label}</span>
       </div>
     </button>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────
-function DetalheReuniao({ id, canEdit, types, onClose, onChange }) {
-  const [m, setM] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState(null);
-  const [snap, setSnap] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [prep, setPrep] = useState(null);
-  const [prepLoading, setPrepLoading] = useState(false);
-  const [novaTarefa, setNovaTarefa] = useState({ titulo: '', responsavel: '', prazo: '' });
-  const [uploadTipo, setUploadTipo] = useState('transcricao');
-  const [uploading, setUploading] = useState(false);
-  const [gerandoPauta, setGerandoPauta] = useState(false);
-
-  async function gerarPautaIA() {
-    if (gerandoPauta) return;
-    if (!window.confirm('Gerar a pauta desta reunião com IA (resumo + pendências + indicadores)? Pode levar até 1 minuto.')) return;
-    setGerandoPauta(true);
-    try { await gov.meetings.gerarPauta(id); toast.success('Pauta gerada pela IA'); await carregar(); }
-    catch (e) { toast.error(formatErro(e)); }
-    finally { setGerandoPauta(false); }
-  }
-  async function salvarDocMd(docId, md) {
-    const r = await gov.docs.update(docId, md);
-    await carregar();
-    return r;
-  }
-
-  const carregar = useCallback(async () => {
-    try {
-      const data = await gov.meetings.get(id);
-      setM(data);
-      const f = {
-        date: data.date || '', status: data.status || 'agendada',
-        pauta: data.pauta || '', ata: data.ata || '', deliberacoes: data.deliberacoes || '',
-        participantes: (data.participantes || []).join(', '),
-        quorum_presente: data.quorum_presente ?? '', local: data.local || '',
-      };
-      setForm(f); setSnap(JSON.stringify(f));
-    } catch (e) { toast.error(formatErro(e)); onClose(); }
-    finally { setLoading(false); }
-  }, [id, onClose]);
-
-  useEffect(() => { carregar(); }, [carregar]);
-
-  const dirty = !!form && JSON.stringify(form) !== snap;
-  const { tentarFechar, backdropProps } = useConfirmarSaida(dirty, onClose);
-
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  async function salvar() {
-    if (!form || saving) return;
-    setSaving(true);
-    try {
-      const payload = {
-        date: form.date || null, status: form.status,
-        pauta: form.pauta || null, ata: form.ata || null, deliberacoes: form.deliberacoes || null,
-        participantes: form.participantes ? form.participantes.split(',').map(s => s.trim()).filter(Boolean) : null,
-        quorum_presente: form.quorum_presente === '' ? null : Number(form.quorum_presente),
-        local: form.local || null,
-      };
-      await gov.meetings.update(id, payload);
-      const novoSnap = JSON.stringify(form); setSnap(novoSnap);
-      toast.success('Reunião salva');
-      onChange?.();
-    } catch (e) { toast.error(formatErro(e)); }
-    finally { setSaving(false); }
-  }
-
-  async function excluir() {
-    if (!window.confirm('Excluir esta reunião? (pode ser restaurada por um super-admin)')) return;
-    try { await gov.meetings.remove(id); toast.success('Reunião excluída'); onChange?.(); onClose(); }
-    catch (e) { toast.error(formatErro(e)); }
-  }
-
-  async function preparar(sigla) {
-    setPrepLoading(true);
-    try { setPrep(await gov.relatorio(sigla)); }
-    catch (e) { toast.error(formatErro(e)); }
-    finally { setPrepLoading(false); }
-  }
-
-  async function addTarefa() {
-    if (!novaTarefa.titulo.trim()) return;
-    try {
-      await gov.tasks.create(id, { titulo: novaTarefa.titulo.trim(), responsavel: novaTarefa.responsavel || null, prazo: novaTarefa.prazo || null });
-      setNovaTarefa({ titulo: '', responsavel: '', prazo: '' });
-      await carregar();
-    } catch (e) { toast.error(formatErro(e)); }
-  }
-  async function toggleTarefa(t) {
-    const novo = t.status === 'concluida' ? 'pendente' : 'concluida';
-    try { await gov.tasks.update(t.id, { status: novo }); await carregar(); }
-    catch (e) { toast.error(formatErro(e)); }
-  }
-  async function removerTarefa(t) {
-    try { await gov.tasks.remove(t.id); await carregar(); } catch (e) { toast.error(formatErro(e)); }
-  }
-  async function aplicarTemplates() {
-    try { const r = await gov.meetings.aplicarTemplates(id); toast.success(`${r?.criadas || 0} tarefa(s) adicionada(s)`); await carregar(); }
-    catch (e) { toast.error(formatErro(e)); }
-  }
-
-  async function enviarDoc(e) {
-    const file = e.target.files?.[0]; e.target.value = '';
-    if (!file) return;
-    setUploading(true);
-    try { await gov.docs.upload(id, file, uploadTipo); toast.success('Documento enviado'); await carregar(); }
-    catch (err) { toast.error(formatErro(err)); }
-    finally { setUploading(false); }
-  }
-  async function baixarDoc(d) {
-    try { const { url } = await gov.docs.download(d.id); if (url) window.open(url, '_blank', 'noopener'); }
-    catch (e) { toast.error(formatErro(e)); }
-  }
-  async function removerDoc(d) {
-    if (!window.confirm(`Remover "${d.nome_arquivo}"?`)) return;
-    try { await gov.docs.remove(d.id); await carregar(); } catch (e) { toast.error(formatErro(e)); }
-  }
-
-  const tipo = m?.governance_meeting_types || {};
-  const sigla = tipo.sigla;
-  const ro = !canEdit;
-
-  return (
-    <div {...backdropProps} style={{ position: 'fixed', inset: 0, background: C.overlay, zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: 16 }}>
-      <div style={{ background: C.modalBg, border: `1px solid ${C.border}`, borderRadius: 14, width: '100%', maxWidth: 720, margin: '24px 0' }}>
-        {/* topo */}
-        <div className="flex items-start justify-between gap-3 p-4" style={{ borderBottom: `1px solid ${C.border}` }}>
-          <div className="flex items-center gap-2">
-            <span style={{ width: 10, height: 10, borderRadius: 99, background: tipo.cor || C.primary, display: 'inline-block' }} />
-            <div>
-              <div className="font-semibold text-lg" style={{ color: C.text }}>{tipo.nome || 'Reunião'}{sigla ? <span style={{ color: C.t3 }}> · {sigla}</span> : null}</div>
-              {m?.governance_cycles && <div className="text-xs" style={{ color: C.t3 }}>Ciclo {MESES[(m.governance_cycles.month || 1) - 1]} {m.governance_cycles.year}</div>}
-            </div>
-          </div>
-          <button onClick={tentarFechar} style={{ color: C.t2 }}><X size={20} /></button>
-        </div>
-
-        {loading || !form ? (
-          <div className="flex items-center gap-2 p-8 justify-center" style={{ color: C.t3 }}><Loader2 className="animate-spin" size={18} /> Carregando…</div>
-        ) : (
-          <div className="p-4 space-y-5">
-            {/* data + status */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium" style={{ color: C.t2 }}>Data</label>
-                <input type="date" disabled={ro} value={form.date} onChange={e => set('date', e.target.value)} style={inputStyle} />
-              </div>
-              <div>
-                <label className="text-xs font-medium" style={{ color: C.t2 }}>Status</label>
-                <select disabled={ro} value={form.status} onChange={e => set('status', e.target.value)} style={inputStyle}>
-                  {Object.entries(STATUS_MEETING).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* preparar reunião */}
-            {SIGLAS_RELATORIO.has(sigla) && (
-              <div className="rounded-lg p-3" style={{ background: C.primaryBg, border: `1px solid ${C.border}` }}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: C.text }}><Sparkles size={15} style={{ color: C.primary }} /> Preparo automático</div>
-                  <button onClick={() => preparar(sigla)} disabled={prepLoading} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>
-                    {prepLoading ? 'Gerando…' : 'Gerar checklist'}
-                  </button>
-                </div>
-                {prep?.checklist && (
-                  <ul className="mt-2 space-y-1">
-                    {prep.checklist.map((c, i) => (
-                      <li key={i} className="text-sm flex items-start gap-2" style={{ color: C.t2 }}>
-                        {c.ok ? <CheckCircle2 size={15} style={{ color: '#10B981', flexShrink: 0, marginTop: 2 }} /> : <Circle size={15} style={{ color: '#EF4444', flexShrink: 0, marginTop: 2 }} />}
-                        <span><b style={{ color: C.text }}>{c.item}:</b> {c.valor}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            <Campo label="Pauta" hint="O que será tratado · enviada à diretoria antes da reunião">
-              <textarea disabled={ro} rows={3} value={form.pauta} onChange={e => set('pauta', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Tópicos da pauta…" />
-            </Campo>
-
-            {/* documentos */}
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: C.text }}><FileText size={15} /> Documentos</div>
-                {canEdit && (
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={gerarPautaIA} disabled={gerandoPauta} title="Gera a pauta desta reunião com IA"
-                      className="text-xs px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1.5 text-white" style={{ background: C.primary, opacity: gerandoPauta ? 0.6 : 1 }}>
-                      {gerandoPauta ? <Loader2 className="animate-spin" size={14} /> : <Brain size={14} />} {gerandoPauta ? 'Gerando…' : 'Gerar pauta (IA)'}
-                    </button>
-                    <select value={uploadTipo} onChange={e => setUploadTipo(e.target.value)} style={{ ...inputStyle, width: 'auto', padding: '6px 8px', fontSize: 12 }}>
-                      {UPLOAD_TIPOS.map(k => <option key={k} value={k}>{TIPO_DOC[k].label}</option>)}
-                    </select>
-                    <label className="text-xs px-2.5 py-1.5 rounded-lg cursor-pointer inline-flex items-center gap-1.5" style={{ border: `1px solid ${C.border}`, color: C.t2, opacity: uploading ? 0.6 : 1 }}>
-                      {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />} Enviar
-                      <input type="file" hidden disabled={uploading} onChange={enviarDoc} />
-                    </label>
-                  </div>
-                )}
-              </div>
-              {(m?.docs || []).length === 0 ? (
-                <p className="text-sm" style={{ color: C.t3 }}>Nenhum documento anexado.</p>
-              ) : (
-                <div className="space-y-2">
-                  {m.docs.filter(d => d.tipo !== 'pauta_ia').map(d => {
-                    const td = TIPO_DOC[d.tipo] || TIPO_DOC.entrada;
-                    return (
-                      <div key={d.id} className="flex items-center gap-2 p-2 rounded-lg" style={{ border: `1px solid ${C.border}` }}>
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: `${td.cor}22`, color: td.cor }}>{td.label}</span>
-                        <span className="flex-1 text-sm truncate" style={{ color: C.text }}>{d.nome_arquivo}</span>
-                        <button onClick={() => baixarDoc(d)} title="Baixar" style={{ color: C.t2 }}><Download size={16} /></button>
-                        {canEdit && <button onClick={() => removerDoc(d)} title="Remover" style={{ color: '#EF4444' }}><Trash2 size={15} /></button>}
-                      </div>
-                    );
-                  })}
-                  {m.docs.filter(d => d.tipo === 'pauta_ia').map(d => (
-                    <BlocoMarkdownEditavel key={d.id} titulo="Pauta gerada pela IA" conteudo={d.conteudo_md ?? ''} canEdit={canEdit}
-                      onSalvar={(md) => salvarDocMd(d.id, md)} onRemover={canEdit ? () => removerDoc(d) : null} />
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <Campo label="Ata" hint="Registro do que foi decidido na reunião">
-              <textarea disabled={ro} rows={4} value={form.ata} onChange={e => set('ata', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Ata da reunião…" />
-            </Campo>
-            <Campo label="Deliberações">
-              <textarea disabled={ro} rows={2} value={form.deliberacoes} onChange={e => set('deliberacoes', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Decisões formais…" />
-            </Campo>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <label className="text-xs font-medium" style={{ color: C.t2 }}>Participantes <span style={{ color: C.t3 }}>(separados por vírgula)</span></label>
-                <input disabled={ro} value={form.participantes} onChange={e => set('participantes', e.target.value)} style={inputStyle} placeholder="Eduardo, Arthur, …" />
-              </div>
-              <div>
-                <label className="text-xs font-medium" style={{ color: C.t2 }}>Quórum</label>
-                <input type="number" disabled={ro} value={form.quorum_presente} onChange={e => set('quorum_presente', e.target.value)} style={inputStyle} />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium" style={{ color: C.t2 }}>Local</label>
-              <input disabled={ro} value={form.local} onChange={e => set('local', e.target.value)} style={inputStyle} placeholder="Sala / link…" />
-            </div>
-
-            {/* tarefas */}
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: C.text }}><ClipboardList size={15} /> Pendências</div>
-                {canEdit && <button onClick={aplicarTemplates} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Aplicar templates</button>}
-              </div>
-              <div className="space-y-1.5">
-                {(m?.tasks || []).map(t => (
-                  <div key={t.id} className="flex items-center gap-2 p-2 rounded-lg" style={{ border: `1px solid ${C.border}` }}>
-                    <button disabled={ro} onClick={() => toggleTarefa(t)} style={{ color: t.status === 'concluida' ? '#10B981' : C.t3 }}>
-                      {t.status === 'concluida' ? <CheckCircle2 size={17} /> : <Circle size={17} />}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm truncate" style={{ color: C.text, textDecoration: t.status === 'concluida' ? 'line-through' : 'none' }}>{t.titulo}</div>
-                      <div className="text-xs" style={{ color: C.t3 }}>{[t.responsavel, t.prazo ? `prazo ${fmtData(t.prazo)}` : '', STATUS_TASK[t.status]].filter(Boolean).join(' · ')}</div>
-                    </div>
-                    {canEdit && <button onClick={() => removerTarefa(t)} style={{ color: '#EF4444' }}><Trash2 size={14} /></button>}
-                  </div>
-                ))}
-                {(m?.tasks || []).length === 0 && <p className="text-sm" style={{ color: C.t3 }}>Sem pendências.</p>}
-              </div>
-              {canEdit && (
-                <div className="flex flex-wrap items-end gap-2 mt-2">
-                  <input value={novaTarefa.titulo} onChange={e => setNovaTarefa(t => ({ ...t, titulo: e.target.value }))} placeholder="Nova pendência…" style={{ ...inputStyle, flex: '2 1 180px', width: 'auto' }} onKeyDown={e => { if (e.key === 'Enter') addTarefa(); }} />
-                  <input value={novaTarefa.responsavel} onChange={e => setNovaTarefa(t => ({ ...t, responsavel: e.target.value }))} placeholder="Responsável" style={{ ...inputStyle, flex: '1 1 120px', width: 'auto' }} />
-                  <input type="date" value={novaTarefa.prazo} onChange={e => setNovaTarefa(t => ({ ...t, prazo: e.target.value }))} style={{ ...inputStyle, width: 'auto' }} />
-                  <button onClick={addTarefa} className="text-sm px-3 py-2 rounded-lg text-white" style={{ background: C.primary }}><Plus size={15} /></button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* rodapé */}
-        {!loading && form && (
-          <div className="flex items-center justify-between gap-2 p-4" style={{ borderTop: `1px solid ${C.border}` }}>
-            {canEdit ? <button onClick={excluir} className="text-sm px-3 py-2 rounded-lg" style={{ color: '#EF4444', border: `1px solid ${C.border}` }}><Trash2 size={14} className="inline mr-1" /> Excluir</button> : <span />}
-            <div className="flex items-center gap-2">
-              <button onClick={tentarFechar} className="text-sm px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Fechar</button>
-              {canEdit && <button onClick={salvar} disabled={saving || !dirty} className="text-sm px-4 py-2 rounded-lg text-white" style={{ background: C.primary, opacity: (saving || !dirty) ? 0.5 : 1 }}>{saving ? 'Salvando…' : 'Salvar'}</button>}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Campo({ label, hint, children }) {
-  return (
-    <div>
-      <label className="text-xs font-medium" style={{ color: C.t2 }}>{label}{hint ? <span style={{ color: C.t3 }}> · {hint}</span> : null}</label>
-      {children}
-    </div>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────
-function NovaReuniaoModal({ types, dataPadrao, onClose, onSaved }) {
-  const [typeId, setTypeId] = useState(types?.[0]?.id || '');
-  const [date, setDate] = useState(dataPadrao || '');
-  const [saving, setSaving] = useState(false);
-  const dirty = !!typeId;
-  const { tentarFechar, backdropProps } = useConfirmarSaida(dirty, onClose);
-
-  async function salvar() {
-    if (!typeId) { toast.error('Escolha o tipo de reunião'); return; }
-    setSaving(true);
-    try { await gov.meetings.create({ type_id: typeId, date: date || null }); toast.success('Reunião criada'); onSaved(); }
-    catch (e) { toast.error(formatErro(e)); }
-    finally { setSaving(false); }
-  }
-
-  return (
-    <div {...backdropProps} style={{ position: 'fixed', inset: 0, background: C.overlay, zIndex: 1010, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: 16 }}>
-      <div style={{ background: C.modalBg, border: `1px solid ${C.border}`, borderRadius: 14, width: '100%', maxWidth: 440, margin: '60px 0' }}>
-        <div className="flex items-center justify-between p-4" style={{ borderBottom: `1px solid ${C.border}` }}>
-          <div className="font-semibold" style={{ color: C.text }}>Nova reunião</div>
-          <button onClick={tentarFechar} style={{ color: C.t2 }}><X size={20} /></button>
-        </div>
-        <div className="p-4 space-y-3">
-          <div>
-            <label className="text-xs font-medium" style={{ color: C.t2 }}>Tipo</label>
-            <select value={typeId} onChange={e => setTypeId(e.target.value)} style={inputStyle}>
-              <option value="">Selecione…</option>
-              {(types || []).filter(t => t.ativo !== false).map(t => <option key={t.id} value={t.id}>{t.nome} ({t.sigla})</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium" style={{ color: C.t2 }}>Data</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} />
-          </div>
-          <p className="text-xs" style={{ color: C.t3 }}>A reunião entra no ciclo do mês da data escolhida.</p>
-        </div>
-        <div className="flex items-center justify-end gap-2 p-4" style={{ borderTop: `1px solid ${C.border}` }}>
-          <button onClick={tentarFechar} className="text-sm px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Cancelar</button>
-          <button onClick={salvar} disabled={saving} className="text-sm px-4 py-2 rounded-lg text-white" style={{ background: C.primary, opacity: saving ? 0.6 : 1 }}>{saving ? 'Criando…' : 'Criar'}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────
-function BlocoMarkdownEditavel({ titulo, conteudo, canEdit, onSalvar, onRemover, vazioMsg }) {
-  const [editando, setEditando] = useState(false);
-  const [txt, setTxt] = useState(conteudo || '');
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { setTxt(conteudo || ''); }, [conteudo]);
-  const temConteudo = conteudo != null && conteudo !== '';
-  async function salvar() {
-    setSaving(true);
-    try { await onSalvar(txt); setEditando(false); toast.success('Salvo'); }
-    catch (e) { toast.error(formatErro(e)); }
-    finally { setSaving(false); }
-  }
-  return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-      <div className="flex items-center justify-between gap-2 p-2" style={{ background: C.primaryBg }}>
-        <span className="text-sm font-medium flex items-center gap-1.5" style={{ color: C.text }}><Brain size={14} style={{ color: C.primary }} /> {titulo}</span>
-        <div className="flex items-center gap-1.5">
-          {canEdit && temConteudo && !editando && <button onClick={() => setEditando(true)} className="text-xs px-2 py-1 rounded" style={{ border: `1px solid ${C.border}`, color: C.t2 }}><Pencil size={12} className="inline mr-1" />Editar</button>}
-          {canEdit && editando && <button onClick={salvar} disabled={saving} className="text-xs px-2 py-1 rounded text-white" style={{ background: C.primary }}>{saving ? 'Salvando…' : 'Salvar'}</button>}
-          {canEdit && editando && <button onClick={() => { setEditando(false); setTxt(conteudo || ''); }} className="text-xs px-2 py-1 rounded" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Cancelar</button>}
-          {onRemover && !editando && <button onClick={onRemover} title="Remover" style={{ color: '#EF4444' }}><Trash2 size={14} /></button>}
-        </div>
-      </div>
-      <div className="p-3">
-        {!temConteudo ? <p className="text-sm" style={{ color: C.t3 }}>{vazioMsg || 'Sem conteúdo.'}</p>
-          : editando ? <textarea value={txt} onChange={e => setTxt(e.target.value)} rows={16} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: 13 }} />
-            : <div className="text-sm leading-relaxed governanca-md" style={{ color: C.text }}><ReactMarkdown>{conteudo}</ReactMarkdown></div>}
-      </div>
-    </div>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────
-function AnalisePanel({ types, canEdit }) {
-  const anoAtual = new Date().getFullYear();
-  const [sigla, setSigla] = useState(types?.[0]?.sigla || 'OKR');
-  const [ano, setAno] = useState(anoAtual);
-  const [data, setData] = useState(null);
-  const [memoria, setMemoria] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [gerando, setGerando] = useState(false);
-
-  const carregar = useCallback(async () => {
-    if (!sigla) return;
-    setLoading(true);
-    try {
-      const [a, m] = await Promise.all([gov.analise(sigla, ano), gov.memoria.get(sigla, ano)]);
-      setData(a); setMemoria(m);
-    } catch (e) { toast.error(formatErro(e)); }
-    finally { setLoading(false); }
-  }, [sigla, ano]);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  async function gerarMemoria() {
-    if (gerando) return;
-    if (!window.confirm('Gerar/atualizar a memória do tema com IA (consolida transcrições, atas e dados do sistema)? Pode levar até 1 minuto.')) return;
-    setGerando(true);
-    try { const m = await gov.memoria.gerar(sigla, ano); setMemoria(m); toast.success('Memória atualizada'); }
-    catch (e) { toast.error(formatErro(e)); }
-    finally { setGerando(false); }
-  }
-
-  const pend = data?.pendencias_abertas || [];
-  return (
-    <div className="max-w-4xl">
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <select value={sigla} onChange={e => setSigla(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
-          {(types || []).map(t => <option key={t.id} value={t.sigla}>{t.nome} ({t.sigla})</option>)}
-        </select>
-        <select value={ano} onChange={e => setAno(Number(e.target.value))} style={{ ...inputStyle, width: 'auto' }}>
-          {[anoAtual, anoAtual - 1, anoAtual - 2].map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        {canEdit && (
-          <button onClick={gerarMemoria} disabled={gerando} className="text-sm px-3 py-2 rounded-lg text-white inline-flex items-center gap-1.5" style={{ background: C.primary, opacity: gerando ? 0.6 : 1 }}>
-            {gerando ? <Loader2 className="animate-spin" size={15} /> : <Brain size={15} />} {gerando ? 'Gerando…' : 'Gerar/atualizar memória'}
-          </button>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="flex items-center gap-2 py-10 justify-center" style={{ color: C.t3 }}><Loader2 className="animate-spin" size={18} /> Carregando…</div>
-      ) : (
-        <div className="space-y-5">
-          <BlocoMarkdownEditavel
-            titulo={`Memória — ${sigla} ${ano}`}
-            conteudo={memoria?.conteudo_md ?? ''}
-            canEdit={canEdit}
-            vazioMsg='Sem memória ainda. Clique em "Gerar/atualizar memória" para a IA consolidar o histórico do tema.'
-            onSalvar={async (md) => { const r = await gov.memoria.update(memoria.id, md); setMemoria(r); }}
-          />
-
-          {pend.length > 0 && (
-            <div>
-              <div className="text-sm font-semibold mb-2" style={{ color: C.text }}>Pendências em aberto ({pend.length})</div>
-              <div className="space-y-1">
-                {pend.map(t => (
-                  <div key={t.id} className="text-sm p-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>
-                    {t.titulo}{t.responsavel ? ` · ${t.responsavel}` : ''}{t.prazo ? ` · prazo ${fmtData(t.prazo)}` : ''}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <div className="text-sm font-semibold mb-2" style={{ color: C.text }}>Reuniões de {ano} ({data?.meetings?.length || 0})</div>
-            {(data?.meetings || []).length === 0 ? (
-              <p className="text-sm" style={{ color: C.t3 }}>Nenhuma reunião deste tema em {ano}.</p>
-            ) : (
-              <div className="space-y-2">
-                {data.meetings.map(m => {
-                  const abertas = (m.tasks || []).filter(t => t.status !== 'concluida' && t.status !== 'cancelada');
-                  return (
-                    <div key={m.id} className="p-3 rounded-xl" style={{ background: C.card, border: `1px solid ${C.border}` }}>
-                      <div className="text-sm font-medium" style={{ color: C.text }}>{fmtData(m.date)} · {(STATUS_MEETING[m.status] || {}).label || m.status}</div>
-                      {m.ata && <div className="text-sm mt-1" style={{ color: C.t2 }}><b>Ata:</b> {m.ata}</div>}
-                      {m.deliberacoes && <div className="text-sm mt-1" style={{ color: C.t2 }}><b>Deliberações:</b> {m.deliberacoes}</div>}
-                      {abertas.length > 0 && <div className="text-xs mt-1" style={{ color: C.t3 }}>Pendências: {abertas.map(t => t.titulo).join(', ')}</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
