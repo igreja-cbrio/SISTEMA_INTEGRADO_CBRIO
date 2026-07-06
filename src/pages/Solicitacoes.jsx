@@ -110,6 +110,7 @@ export default function Solicitacoes() {
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
   const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'kanban' | 'lista'
+  const [aprovarLayout, setAprovarLayout] = useState('lista'); // aba Aprovar · 'lista' | 'kanban' (por categoria)
   const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
   // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
@@ -565,6 +566,14 @@ export default function Solicitacoes() {
                 className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
             </div>
           )}
+          {view === 'aprovar' && (
+            <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
+              <button type="button" onClick={() => setAprovarLayout('lista')}
+                className={`px-3 h-9 text-sm ${aprovarLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
+              <button type="button" onClick={() => setAprovarLayout('kanban')}
+                className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+            </div>
+          )}
           {view === 'minhas' && (
             <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
               <button type="button" onClick={() => setMinhasLayout('lista')}
@@ -582,39 +591,51 @@ export default function Solicitacoes() {
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
         </div>
       ) : view === 'aprovar' ? (
-        /* ── Aba Aprovar · diretor de origem ── */
-        <div className="space-y-3">
-          {filtered.length === 0 ? (
-            <Card className="p-8 text-center">
-              <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-3" />
-              <p className="text-muted-foreground">Sem solicitações aguardando aprovação.</p>
-              <p className="text-sm text-muted-foreground mt-1">Quando houver uma solicitação pendente de aprovação, aparecerá aqui.</p>
-            </Card>
-          ) : (
-            filtered.map(item => (
-              // O backend indica o que o ator atual decide neste item ('origem' | 'gestao'
-              // | 'merito'). Mérito ganha card próprio (é o que o Pastor Presidente vê);
-              // origem/gestão usam o mesmo card (o backend deduz o papel do ator).
-              item.aprovacao_papel_pendente === 'merito' ? (
-                <AprovacaoMeritoCard
-                  key={item.id}
-                  item={item}
-                  onApprove={handleAprovarMerito}
-                  onReject={handleReprovarMerito}
-                  onClick={() => setDetailItem(item)}
-                />
-              ) : (
-                <AprovacaoOrigemCard
-                  key={item.id}
-                  item={item}
-                  onApprove={handleAprovarOrigem}
-                  onReject={handleRejeitarOrigem}
-                  onClick={() => setDetailItem(item)}
-                />
-              )
-            ))
-          )}
-        </div>
+        /* ── Aba Aprovar · diretor de origem/Gestão/mérito ── */
+        (() => {
+          // O backend indica o papel pendente do ator ('origem'|'gestao'|'merito').
+          // Mérito ganha card próprio; origem/gestão usam o mesmo card.
+          const renderCard = (item) => (
+            item.aprovacao_papel_pendente === 'merito' ? (
+              <AprovacaoMeritoCard key={item.id} item={item} onApprove={handleAprovarMerito} onReject={handleReprovarMerito} onClick={() => setDetailItem(item)} />
+            ) : (
+              <AprovacaoOrigemCard key={item.id} item={item} onApprove={handleAprovarOrigem} onReject={handleRejeitarOrigem} onClick={() => setDetailItem(item)} />
+            )
+          );
+          if (filtered.length === 0) {
+            return (
+              <Card className="p-8 text-center">
+                <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-3" />
+                <p className="text-muted-foreground">Sem solicitações aguardando aprovação.</p>
+                <p className="text-sm text-muted-foreground mt-1">Quando houver uma solicitação pendente de aprovação, aparecerá aqui.</p>
+              </Card>
+            );
+          }
+          if (aprovarLayout !== 'kanban') return <div className="space-y-3">{filtered.map(renderCard)}</div>;
+          // Kanban por categoria · só colunas com itens, na ordem de CATEGORIAS.
+          const porCat = new Map();
+          for (const it of filtered) {
+            const k = it.categoria || 'outro';
+            if (!porCat.has(k)) porCat.set(k, []);
+            porCat.get(k).push(it);
+          }
+          const colunas = CATEGORIAS.filter(c => porCat.has(c.value));
+          const extras = [...porCat.keys()].filter(k => !CATEGORIAS.some(c => c.value === k)).map(k => ({ value: k, label: k }));
+          const todas = [...colunas, ...extras];
+          return (
+            <div className="flex gap-4 overflow-x-auto pb-2">
+              {todas.map(col => (
+                <div key={col.value} className="shrink-0 w-[340px] flex flex-col">
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <span className="font-semibold text-sm">{col.label}</span>
+                    <span className="text-xs text-muted-foreground rounded-full bg-muted px-2 py-0.5">{porCat.get(col.value).length}</span>
+                  </div>
+                  <div className="space-y-3">{porCat.get(col.value).map(renderCard)}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })()
       ) : view === 'atender' ? (
         /* ── Kanban Board (managers/admins) ── */
         <>
