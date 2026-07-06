@@ -259,4 +259,45 @@ async function idsComCheckinDesde(dataISO) {
   return ids;
 }
 
-module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO, ehEventoKids, idsComCheckinDesde };
+// Persiste a PRESENÇA por criança (do PCO) em kids_pco_presencas — fonte da
+// frequência do Kids e do alerta "faltando 3+ cultos", sem depender do totem.
+// dias: janela pra trás (usa as datas de culto COM kids). datas: lista explícita.
+async function sincronizarPresencasKidsPCO({ dias = 90, datas = null } = {}) {
+  let alvo = datas;
+  if (!alvo) {
+    const hoje = new Date();
+    const iniStr = new Date(hoje.getTime() - dias * 86400000).toISOString().slice(0, 10);
+    const hojeStr = hoje.toISOString().slice(0, 10);
+    const { data: cultos } = await supabase.from('cultos')
+      .select('data, vol_service_types(has_kids)')
+      .gte('data', iniStr).lte('data', hojeStr);
+    alvo = [...new Set((cultos || []).filter(c => c.vol_service_types?.has_kids).map(c => c.data))].sort();
+  }
+  const { data: cris } = await supabase.from('kids_criancas')
+    .select('id, planning_center_id').not('planning_center_id', 'is', null).is('deleted_at', null);
+  const porPco = new Map((cris || []).map(c => [String(c.planning_center_id), c.id]));
+  let inseridas = 0, semVinculo = 0, diasProcessados = 0;
+  for (const data of alvo) {
+    let freq;
+    try { freq = await coletarFrequenciaKidsPCO(data); }
+    catch (e) { console.error('[kids presencas] dia', data, e.message); continue; }
+    diasProcessados++;
+    const uniq = new Map(); // 1 presença por criança/dia
+    for (const culto of freq.por_culto || []) {
+      for (const cr of culto.criancas || []) {
+        const cid = cr.pco_id ? porPco.get(String(cr.pco_id)) : null;
+        if (!cid) { semVinculo++; continue; }
+        uniq.set(cid, { crianca_id: cid, data, culto_id: culto.culto_id || null });
+      }
+    }
+    if (uniq.size) {
+      const { error } = await supabase.from('kids_pco_presencas')
+        .upsert([...uniq.values()], { onConflict: 'crianca_id,data', ignoreDuplicates: true });
+      if (error) console.error('[kids presencas] upsert', data, error.message);
+      else inseridas += uniq.size;
+    }
+  }
+  return { dias_processados: diasProcessados, presencas_upsert: inseridas, sem_vinculo: semVinculo, datas: alvo.length };
+}
+
+module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO, ehEventoKids, idsComCheckinDesde, sincronizarPresencasKidsPCO };

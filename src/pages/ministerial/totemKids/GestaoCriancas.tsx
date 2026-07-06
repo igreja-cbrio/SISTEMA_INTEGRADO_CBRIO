@@ -66,6 +66,18 @@ export default function GestaoCriancas() {
   }, []);
   useEffect(() => { if (modo === 'faltantes') carregarAusentes(); }, [modo, carregarAusentes]);
 
+  const [syncPres, setSyncPres] = useState(false);
+  async function sincronizarPresencas() {
+    setSyncPres(true);
+    try {
+      const r: any = await api.syncPresencasPco(90);
+      toast.success(`Presenças do PCO sincronizadas · ${r?.presencas_upsert ?? 0} registros em ${r?.dias_processados ?? 0} cultos.`);
+      carregarAusentes();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao sincronizar presenças do PCO');
+    } finally { setSyncPres(false); }
+  }
+
   async function sincronizarPco() {
     setSincronizando(true);
     try {
@@ -141,9 +153,14 @@ export default function GestaoCriancas() {
       {modo === 'faltantes' ? (
         <Card>
           <CardContent className="p-3">
-            <p className="text-xs text-muted-foreground mb-2">
-              Crianças ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família.
-            </p>
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <p className="text-xs text-muted-foreground">
+                Crianças ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família. A frequência vem dos check-ins do Planning Center.
+              </p>
+              <Button variant="outline" size="sm" className="shrink-0" onClick={sincronizarPresencas} disabled={syncPres}>
+                {syncPres ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sincronizar presenças (PCO)
+              </Button>
+            </div>
             {loadingAus ? (
               <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
             ) : ausentes.length === 0 ? (
