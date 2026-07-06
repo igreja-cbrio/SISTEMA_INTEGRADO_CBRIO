@@ -542,7 +542,7 @@ function LinhaDoTempo({ passadas, periodo, cor, onAbrir }) {
   return (
     <section className="mb-5">
       <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: C.text }}>
-        <Gavel size={15} style={{ color: cor }} /> Atas e deliberações anteriores <span style={{ color: C.t3 }}>· últimos {label}</span>
+        <Gavel size={15} style={{ color: cor }} /> Atas e deliberações anteriores <span style={{ color: C.t3 }}>· período: {label}</span>
       </div>
       {passadas.length === 0 ? (
         <p className="text-sm rounded-xl p-3" style={{ border: `1px dashed ${C.border}`, color: C.t3 }}>
