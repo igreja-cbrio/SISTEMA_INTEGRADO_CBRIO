@@ -1599,6 +1599,40 @@ router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) 
 // CHECK-IN / CHECK-OUT
 // ═══════════════════════════════════════════════════════════════════════════
 
+// GET /api/totem-kids/ausentes?min=3 · crianças ativas faltando N cultos seguidos
+// (aba dedicada · mesma régua do alerta) + contato dos responsáveis pra ação.
+router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const min = Math.max(1, Number(req.query.min) || 3);
+    const { data: ausentes, error } = await supabase
+      .rpc('fn_kids_ausentes_consecutivos', { p_min: min });
+    if (error) throw error;
+    const ids = (ausentes || []).map(a => a.crianca_id);
+    let respPorCrianca = {};
+    if (ids.length) {
+      const { data: resps } = await supabase
+        .from('kids_responsaveis')
+        .select('crianca_id, parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
+        .in('crianca_id', ids);
+      for (const r of resps || []) {
+        (respPorCrianca[r.crianca_id] = respPorCrianca[r.crianca_id] || []).push({
+          nome: r.membro?.nome || null,
+          telefone: r.membro?.telefone || null,
+          parentesco: r.parentesco || null,
+          autorizado_buscar: r.autorizado_buscar || false,
+        });
+      }
+    }
+    res.json((ausentes || []).map(a => ({
+      ...a,
+      responsaveis: respPorCrianca[a.crianca_id] || [],
+    })));
+  } catch (e) {
+    console.error('[totemKids/ausentes]', e.message);
+    res.status(500).json({ error: 'Erro ao listar crianças faltantes' });
+  }
+});
+
 // GET /api/totem-kids/cultos-do-dia?data=YYYY-MM-DD · cultos COM Kids do dia
 // (pro check-in multi-culto: marcar em quais a criança vai ficar).
 router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {

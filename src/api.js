@@ -1417,6 +1417,7 @@ export const totemKids = {
     atualizar: (id, data) => patch(`/totem-kids/checkin/${id}`, data),
   },
   cultosDoDia: (data) => get(`/totem-kids/cultos-do-dia?data=${encodeURIComponent(data)}`),
+  ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
   // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
   preCheckin: {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),

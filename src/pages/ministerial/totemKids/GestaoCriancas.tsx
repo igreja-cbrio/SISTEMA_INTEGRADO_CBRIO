@@ -34,6 +34,9 @@ export default function GestaoCriancas() {
   const [faixa, setFaixa] = useState('todas');
   const [status, setStatus] = useState('ativos'); // ativos | inativos
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
+  const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
+  const [ausentes, setAusentes] = useState<any[]>([]);
+  const [loadingAus, setLoadingAus] = useState(false);
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
@@ -53,6 +56,15 @@ export default function GestaoCriancas() {
       .finally(() => setLoading(false));
   }, [status]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  const carregarAusentes = useCallback(() => {
+    setLoadingAus(true);
+    api.ausentes(3)
+      .then((d: any) => setAusentes(Array.isArray(d) ? d : []))
+      .catch(() => toast.error('Erro ao carregar crianças faltantes'))
+      .finally(() => setLoadingAus(false));
+  }, []);
+  useEffect(() => { if (modo === 'faltantes') carregarAusentes(); }, [modo, carregarAusentes]);
 
   async function sincronizarPco() {
     setSincronizando(true);
@@ -114,6 +126,59 @@ export default function GestaoCriancas() {
         </div>
       </div>
 
+      {/* Alternância · lista completa × crianças faltando */}
+      <div className="flex rounded-lg border bg-muted/40 p-0.5 w-fit">
+        <button type="button" onClick={() => setModo('lista')}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${modo === 'lista' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+          <Baby className="h-4 w-4" /> Todas as crianças
+        </button>
+        <button type="button" onClick={() => setModo('faltantes')}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${modo === 'faltantes' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+          <AlertCircle className="h-4 w-4" /> Faltando 3+ cultos{ausentes.length > 0 && modo !== 'faltantes' ? ` (${ausentes.length})` : ''}
+        </button>
+      </div>
+
+      {modo === 'faltantes' ? (
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground mb-2">
+              Crianças ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família.
+            </p>
+            {loadingAus ? (
+              <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+            ) : ausentes.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma criança faltando 3+ cultos. 🎉</p>
+            ) : (
+              <div className="space-y-2">
+                {ausentes.map(a => {
+                  const resp = (a.responsaveis || []).find((r: any) => r.telefone) || (a.responsaveis || [])[0];
+                  const tel = resp?.telefone ? String(resp.telefone).replace(/\D/g, '') : null;
+                  const telFull = tel ? (tel.length <= 11 && !tel.startsWith('55') ? '55' + tel : tel) : null;
+                  return (
+                    <div key={a.crianca_id} className="flex items-center gap-3 rounded-lg border border-border p-2.5">
+                      <button onClick={() => setSel({ id: a.crianca_id })} className="flex-1 min-w-0 text-left">
+                        <div className="font-medium text-sm truncate">{a.nome}</div>
+                        <div className="text-xs text-muted-foreground">
+                          <span className="text-amber-600 font-medium">{a.cultos_perdidos} cultos sem vir</span>
+                          {a.ultima_presenca ? ` · última presença ${new Date(a.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}
+                          {resp?.nome ? ` · ${resp.nome}` : ''}
+                        </div>
+                      </button>
+                      {telFull && (
+                        <a href={`https://wa.me/${telFull}`} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`WhatsApp de ${resp?.nome || 'responsável'}`}>
+                          <Phone className="h-4 w-4" />
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+      <>
       {/* Filtros */}
       <div className="flex flex-wrap gap-2">
         <div className="relative flex-1 min-w-[200px]">
@@ -173,6 +238,8 @@ export default function GestaoCriancas() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
 
       {sel && <FichaCrianca criancaId={sel.id} onClose={() => { setSel(null); if (searchParams.get('crianca')) setSearchParams({}, { replace: true }); }} onChanged={carregar} />}
       {novoOpen && <NovaCrianca onClose={() => setNovoOpen(false)} onCreated={() => { setNovoOpen(false); carregar(); }} />}
