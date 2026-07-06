@@ -2200,6 +2200,13 @@ export const voluntariado = {
     // Assinatura global do módulo (texto + logo)
     config: () => get('/voluntariado/emails/config'),
     saveConfig: (assinatura_html) => put('/voluntariado/emails/config', { assinatura_html }),
+    // Templates de e-mail (modelos reutilizáveis · fábrica + custom)
+    templates: {
+      list: () => get('/voluntariado/emails/templates'),
+      create: (data) => post('/voluntariado/emails/templates', data),
+      update: (id, data) => put(`/voluntariado/emails/templates/${id}`, data),
+      remove: (id) => del(`/voluntariado/emails/templates/${id}`),
+    },
   },
   // Backfill de e-mails: Planning Center (People API) + complemento membresia
   backfillEmails: () => post('/voluntariado/backfill-emails', {}, { timeout: 300_000 }),
