@@ -2376,6 +2376,37 @@ mexer no React.
   com `cultos.data` sem ambiguidade — `(service_type_id, data)` é
   chave estável.
 
+### Cancelamento / remarcação de culto (2026-07-06)
+
+Marcos: "ontem não houve culto de domingo à noite pelo jogo Brasil x
+Noruega" — cultos raramente são cancelados/remarcados e o sistema não
+tinha esse conceito. Migration `20260706130000_cultos_cancelamento.sql`
+(`cancelado` + `cancelado_motivo/em/por` em `cultos`).
+
+- **NUNCA deletar a linha pra cancelar**: `gerar_cultos_recorrentes()` e
+  o `/kpis/cultos/auto-create` recriam o slot por `(service_type_id, data)`
+  na execução seguinte. Cancelar = `cancelado=true` + motivo — a linha
+  fica e o EXISTS do gerador continua encontrando (não recria).
+- **Remarcar** = cancela o original + cria culto avulso na nova data
+  (`POST /kpis/cultos/:id/remarcar` · a UNIQUE devolve 409 se já houver
+  culto do tipo na data destino). Endpoints: `/cancelar` (motivo
+  obrigatório), `/reativar`, `/remarcar` · todos `authorizeIntegracao`.
+- **`vw_culto_stats` CONTINUA mostrando cancelados** (decisão deliberada):
+  calendário da Integração e semana da Produção mostram o culto riscado
+  com badge "Cancelado" (motivo no tooltip/modal) em vez de sumir com ele.
+  UI: `CalendarioCultos.jsx` (ZonaCancelamento no ModalCulto + card
+  cinza) e `Producao.jsx` (card não-clicável).
+- **Quem FILTRA cancelados** (`.eq('cancelado', false)` / `WHERE NOT
+  cancelado`): `vw_culto_historico_anual` (contagem anual), pendências da
+  Integração (`integracao.js`) e da Produção (`producao.js`), seletor de
+  culto do WhatsApp Flow (`whatsappFlowColeta.js`), live-monitor +
+  backfill de vídeo + verificação de saúde (`onlineCollectors.js`),
+  notificações de culto sem vídeo (`notificacaoGenerator.js`, `kpis.js`),
+  count de cultos do ano (`governanca.js`).
+- **Somas de KPI não filtram de propósito**: culto cancelado tem zeros e
+  já contribuía com 0 — filtrar não muda nada e mexeria em dezenas de
+  read-sites. Médias existentes se protegem com `> 0` (ocupação, pico).
+
 ### Regras e decisões vigentes (condensado · detalhes no legado)
 
 - **Contagem de visitantes descontinuada** (2026-05-14 · decisão do Marcos):

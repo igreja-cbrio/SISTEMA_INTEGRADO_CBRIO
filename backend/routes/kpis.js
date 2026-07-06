@@ -172,10 +172,116 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   res.json(data);
 });
 
+// ⚠️ DELETE físico é inútil pra "cancelar culto": gerar_cultos_recorrentes()
+// e o /cultos/auto-create recriam a linha por (service_type_id, data) na
+// próxima execução. Pra cancelar de verdade, usar POST /cultos/:id/cancelar.
 router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => {
   const { error } = await supabase.from('cultos').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
+});
+
+// ── Cancelamento / remarcação de culto ────────────────────────────────────────
+// A linha do culto permanece (o gerador recorrente não recria slots existentes) ·
+// só ganha cancelado=true + motivo. Integração e Produção veem o culto marcado.
+
+router.post('/cultos/:id/cancelar', authorizeIntegracao, async (req, res) => {
+  const motivo = String(req.body?.motivo || '').trim();
+  if (!motivo) return res.status(400).json({ error: 'Informe o motivo do cancelamento' });
+
+  const { data, error } = await supabase
+    .from('cultos')
+    .update({
+      cancelado: true,
+      cancelado_motivo: motivo,
+      cancelado_em: new Date().toISOString(),
+      cancelado_por: req.user.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  painelCache.bust('');
+  res.json(data);
+});
+
+router.post('/cultos/:id/reativar', authorizeIntegracao, async (req, res) => {
+  const { data, error } = await supabase
+    .from('cultos')
+    .update({
+      cancelado: false,
+      cancelado_motivo: null,
+      cancelado_em: null,
+      cancelado_por: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  painelCache.bust('');
+  res.json(data);
+});
+
+// Remarcar = cancela o original + cria culto avulso na nova data/hora.
+// Mantém a UNIQUE (service_type_id, data): se já existir culto do mesmo tipo
+// na data destino, devolve 409 com mensagem clara.
+router.post('/cultos/:id/remarcar', authorizeIntegracao, async (req, res) => {
+  const { data: novaData, hora: novaHora, motivo } = req.body || {};
+  if (!novaData) return res.status(400).json({ error: 'Informe a nova data' });
+
+  const { data: original, error: errGet } = await supabase
+    .from('cultos').select('*').eq('id', req.params.id).single();
+  if (errGet)   return res.status(500).json({ error: errGet.message });
+  if (!original) return res.status(404).json({ error: 'Culto não encontrado' });
+  if (original.cancelado) {
+    return res.status(400).json({ error: 'Culto já está cancelado · reative antes de remarcar' });
+  }
+
+  const hora = novaHora || original.hora;
+  const dataLabel = String(novaData).split('-').reverse().join('/');
+
+  // Cria o culto na nova data ANTES de cancelar o original · se a UNIQUE
+  // estourar (já existe culto do tipo na data), nada muda.
+  const { data: novo, error: errNovo } = await supabase
+    .from('cultos')
+    .insert({
+      service_type_id: original.service_type_id,
+      nome: `${original.nome.split(' — ')[0]} — ${dataLabel}`,
+      data: novaData,
+      hora,
+      inserido_por: req.user.id,
+      observacoes: `Remarcado de ${String(original.data).split('-').reverse().join('/')}${motivo ? ` · ${motivo}` : ''}`,
+    })
+    .select()
+    .single();
+  if (errNovo) {
+    if (errNovo.code === '23505') {
+      return res.status(409).json({ error: 'Já existe um culto deste tipo na data escolhida' });
+    }
+    return res.status(500).json({ error: errNovo.message });
+  }
+
+  const motivoCancel = `Remarcado para ${dataLabel}${motivo ? ` · ${motivo}` : ''}`;
+  const { data: cancelado, error: errCancel } = await supabase
+    .from('cultos')
+    .update({
+      cancelado: true,
+      cancelado_motivo: motivoCancel,
+      cancelado_em: new Date().toISOString(),
+      cancelado_por: req.user.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.params.id)
+    .select()
+    .single();
+  if (errCancel) return res.status(500).json({ error: errCancel.message });
+
+  painelCache.bust('');
+  res.json({ original: cancelado, novo });
 });
 
 // Conta automática de voluntários escalados/checkin · usada no modal pra
@@ -1162,6 +1268,7 @@ router.post('/youtube/sync', async (req, res) => {
   const { data: cultosSemVideoRaw } = await supabase
     .from('cultos')
     .select('id, nome, data, service_type_id')
+    .eq('cancelado', false)
     .eq('data', ontemStr)
     .is('youtube_video_id', null);
   const cultosSemVideo = (cultosSemVideoRaw || []).filter(isOnline);

@@ -73,6 +73,7 @@ async function findCultoAtual({ fallbackUltimoDoDia = false } = {}) {
   const { data: cultos } = await supabase
     .from('cultos')
     .select('id, data, service_type_id, vol_service_types(name, recurrence_time, has_online), online_pico, youtube_video_id')
+    .eq('cancelado', false)
     .in('data', [hojeStr, ontemStr])
     .order('data', { ascending: false });
 
@@ -602,6 +603,7 @@ async function backfillCultoVideoIds() {
   const { data: cultos, error: cErr } = await supabase
     .from('cultos')
     .select('id, data, vol_service_types(recurrence_time, has_online)')
+    .eq('cancelado', false)
     .is('youtube_video_id', null)
     .gte('data', horizonte)
     .order('data', { ascending: false });
@@ -958,6 +960,7 @@ async function verificarColetaOnline() {
   const { data: cultos } = await supabase
     .from('cultos')
     .select('id, data, youtube_video_id, online_pico, online_ds, decisoes_online, online_decisoes_chat, vol_service_types(name, has_online)')
+    .eq('cancelado', false)
     .in('data', [anteontemStr, ontemStr])
     .lt('data', hojeStr)
     .order('data', { ascending: false });

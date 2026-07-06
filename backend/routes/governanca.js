@@ -356,7 +356,7 @@ async function buildAG() {
     supabase.from('projects').select('id, name, status'),
     supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado'),
     supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').is('deleted_at', null),
-    supabase.from('cultos').select('id', { count: 'exact', head: true }).gte('data', `${ano}-01-01`),
+    supabase.from('cultos').select('id', { count: 'exact', head: true }).eq('cancelado', false).gte('data', `${ano}-01-01`),
   ]);
   const proj = projRes.data || [];
   const trans = transRes.data || [];
