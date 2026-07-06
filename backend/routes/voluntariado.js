@@ -1175,6 +1175,54 @@ router.delete('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req
 });
 
 // ══════════════════════════════════════════════════════════════
+// SUPERVISORES DE ÁREA (concedido no sistema · usado pelo app pra montar escala)
+// ══════════════════════════════════════════════════════════════
+router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_area_supervisores')
+      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      .order('area', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[voluntariado] supervisores get:', e.message);
+    res.status(500).json({ error: 'Erro ao listar supervisores' });
+  }
+});
+
+router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { membro_id, area } = req.body || {};
+    if (!membro_id || !area) return res.status(400).json({ error: 'membro_id e area obrigatórios' });
+    const { data, error } = await supabase
+      .from('vol_area_supervisores')
+      .insert({ membro_id, area: String(area).trim().toLowerCase(), concedido_por: req.user?.userId || null })
+      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      .single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já é supervisora dessa área' });
+      throw error;
+    }
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[voluntariado] supervisores post:', e.message);
+    res.status(500).json({ error: 'Erro ao conceder supervisão' });
+  }
+});
+
+router.delete('/supervisores/:id', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_area_supervisores').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[voluntariado] supervisores delete:', e.message);
+    res.status(500).json({ error: 'Erro ao remover supervisão' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // USER ROLES
 // ══════════════════════════════════════════════════════════════
 router.get('/roles', async (req, res) => {
@@ -1387,7 +1435,7 @@ router.get('/volunteers-pool', async (req, res) => {
       let q = supabase
         .from('vol_profiles')
         .select(`
-          id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado,
+          id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
           team_members:vol_team_members(
             id, team_id, position_id,
             team:vol_teams(id, name, color),
