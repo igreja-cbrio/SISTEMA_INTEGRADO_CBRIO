@@ -656,13 +656,19 @@ router.post('/cycles/generate-year', wr, async (req, res) => {
 });
 
 // ── Reuniões ───────────────────────────────────────────────────────────
-// Lista por período (calendário) e/ou por ciclo.
+// Lista por período (calendário), por ciclo e/ou por tipo (sigla · página do ritual).
 router.get('/meetings', rd, async (req, res) => {
   try {
     let q = supabase.from('governance_meetings')
       .select('*, governance_meeting_types(sigla, nome, cor, recorrencia)')
       .is('deleted_at', null);
     if (req.query.cycle_id) q = q.eq('cycle_id', req.query.cycle_id);
+    if (req.query.sigla) {
+      const { data: t } = await supabase.from('governance_meeting_types')
+        .select('id').eq('sigla', String(req.query.sigla).toUpperCase()).maybeSingle();
+      if (!t) return res.json([]);
+      q = q.eq('type_id', t.id);
+    }
     if (req.query.from) q = q.gte('date', req.query.from);
     if (req.query.to) q = q.lte('date', req.query.to);
     const { data, error } = await q.order('date', { ascending: true });
@@ -726,16 +732,25 @@ router.post('/meetings', wr, async (req, res) => {
 
 router.patch('/meetings/:id', wr, async (req, res) => {
   try {
+    // `snapshot` = retrato dos indicadores do ritual na data da reunião (jsonb ·
+    // congela o que a diretoria viu; alimenta o gráfico de evolução da página
+    // do ritual). Exige a migration 20260706120000 (colunas snapshot/snapshot_em).
     const allow = ['date', 'status', 'pauta', 'ata', 'deliberacoes', 'participantes',
-      'quorum_presente', 'local', 'observacoes', 'type_id'];
+      'quorum_presente', 'local', 'observacoes', 'type_id', 'snapshot'];
     const patch = {};
     for (const k of allow) if (k in (req.body || {})) patch[k] = req.body[k];
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    if ('snapshot' in patch) patch.snapshot_em = patch.snapshot == null ? null : new Date().toISOString();
     patch.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('governance_meetings')
       .update(patch).eq('id', req.params.id).is('deleted_at', null)
       .select('*, governance_meeting_types(sigla, nome, cor)').maybeSingle();
-    if (error) throw error;
+    if (error) {
+      if ('snapshot' in patch && /snapshot/i.test(error.message || '')) {
+        return res.status(400).json({ error: 'Retrato indisponível: aplique a migration 20260706120000_governanca_meeting_snapshot no Supabase.' });
+      }
+      throw error;
+    }
     if (!data) return res.status(404).json({ error: 'Reunião não encontrada' });
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
