@@ -711,7 +711,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         );
       })()}
 
-      {/* Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação */}
+      {/* Planejado · dispensa Gestão + mérito, mas mantém a aprovação do diretor da área */}
       <div className="space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
         <label className="flex items-center gap-2 cursor-pointer">
           <input
@@ -724,7 +724,8 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         </label>
         <p className="text-xs text-muted-foreground ml-6">
           Marque só se a demanda já foi aprovada no planejamento da sua área — pedidos planejados
-          vão direto pro atendimento, sem nova aprovação. Fica registrado quem marcou.
+          dispensam o carimbo da diretoria de Gestão e o mérito, mas <b>ainda passam pela aprovação
+          do diretor da sua área</b> antes de ir pro atendimento. Fica registrado quem marcou.
         </p>
       </div>
 
