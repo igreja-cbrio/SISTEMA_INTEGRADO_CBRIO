@@ -809,15 +809,13 @@ router.post('/', async (req, res) => {
       || (req.user.area ? _slugArea(req.user.area) : null)
       || null;
 
-    // ── Fluxo BPMN (2026-07-02) · planejado × não-planejado ──────────────────
-    // Planejado (checkbox do solicitante): o diretor já aprovou o mérito quando
-    // o pedido entrou no planejamento → PULA toda aprovação (nasce como uma
-    // "dispensada" · o trigger BEFORE INSERT refina o status: em_cotacao /
-    // aguardando_aprovacao_financeira / pendente conforme a categoria).
-    // Não-planejado: DUPLA aprovação — carimbo do diretor da ÁREA do demandante
-    // (mecanismo aprovacao_origem_* via RPC) E carimbo da diretoria de GESTÃO
-    // (aprovacao_gestao_*). Demandante do setor Gestão (ou ele próprio aprovador
-    // de Gestão) → os papéis colapsam: gestão nasce dispensada.
+    // ── Fluxo BPMN · planejado × não-planejado (atualizado 2026-07-06) ────────
+    // A aprovação do diretor da ÁREA do demandante (aprovacao_origem_*) é
+    // REQUISITO pra demanda chegar em operações — INCLUSIVE quando planejada.
+    // "Planejado" (checkbox do solicitante) alivia só o 2º carimbo (diretoria de
+    // GESTÃO) e o julgamento de MÉRITO; a origem continua obrigatória.
+    // Não-planejado: origem + carimbo de Gestão (aprovacao_gestao_*). Demandante
+    // do setor Gestão (ou ele próprio aprovador) → o carimbo de Gestão colapsa.
     const planejado = eh_planejado === true || eh_planejado === 'true';
     const setorHint = resolverSetorHint(req.user);
 
@@ -825,20 +823,21 @@ router.post('/', async (req, res) => {
     let gestaoStatus = null;   // null = planejado (2º carimbo não se aplica)
     let gestaoMotivo = null;
     let gestaoIdsNotificar = [];
-    if (!planejado) {
-      // Aprovação hierarquica de origem (Spec 001) · resolvida AQUI porque o insert
-      // roda via service_role (auth.uid()=NULL) e, nesse caso, o trigger so dispensa.
-      // Gravamos aprovacao_origem_* + status no insert · o trigger continua de rede
-      // de segurança (so age quando ninguém setou aprovacao_origem_status).
-      try {
-        const { data: r, error: rErr } = await supabase
-          .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
-        if (rErr) throw rErr;
-        rota = r;
-      } catch (rerr) {
-        console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
-      }
 
+    // Aprovação hierárquica de origem (Spec 001) · SEMPRE resolvida AQUI (planejado
+    // ou não) porque o insert roda via service_role (auth.uid()=NULL) e, nesse
+    // caso, o trigger só dispensa. O trigger continua de rede de segurança (só
+    // age quando ninguém setou aprovacao_origem_status · ex.: RPC falhou).
+    try {
+      const { data: r, error: rErr } = await supabase
+        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
+      if (rErr) throw rErr;
+      rota = r;
+    } catch (rerr) {
+      console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
+    }
+
+    if (!planejado) {
       // 2º carimbo · diretoria de Gestão (best-effort · lista vazia degrada).
       const gestaoIds = await aprovadoresGestaoIds();
       if (setorHint === SETOR_GESTAO || gestaoIds.includes(userId)) {
@@ -869,37 +868,29 @@ router.post('/', async (req, res) => {
         // area_cliente vem da ÁREA do solicitante (KPIs), não mais de seletor.
         area_cliente: areaClienteResolvida,
         area_responsavel: finalAreaResp,
-        // Fluxo BPMN · planejado pula tudo; não-planejado leva os 2 carimbos.
-        ...(planejado ? {
-          eh_planejado: true,
-          planejado_por: userId,
-          aprovacao_origem_status: 'dispensada',
-          aprovacao_origem_motivo: 'planejado',
-          aprovacao_origem_em: agoraIso,
-          status: 'pendente', // trigger SLA refina (em_cotacao / aguardando_aprovacao_financeira)
-        } : {
-          eh_planejado: false,
-          // Roteamento hierarquico resolvido acima · o trigger continua de rede
-          // de segurança quando a RPC falha (rota=null).
-          ...(rota && {
-            aprovacao_origem_diretor_id: rota.diretor_id || null,
-            aprovacao_origem_status: rota.aprovacao_status,
-            aprovacao_origem_motivo: rota.motivo || null,
-            aprovacao_origem_em: rota.aprovacao_status === 'dispensada' ? agoraIso : null,
-          }),
-          aprovacao_gestao_status: gestaoStatus,
-          ...(gestaoStatus === 'dispensada' && {
-            aprovacao_gestao_em: agoraIso,
-            aprovacao_gestao_motivo: gestaoMotivo,
-          }),
-          // Enquanto QUALQUER carimbo pende → aguardando_aprovacao_origem.
-          // Ambos dispensados → status da rota ('pendente' · trigger refina;
-          // o mérito é decidido logo após o insert, com o precisa_aprovacao_
-          // financeira que o trigger calculou).
-          ...(gestaoStatus === 'pendente'
-            ? { status: 'aguardando_aprovacao_origem' }
-            : (rota ? { status: rota.status } : {})),
+        // Fluxo BPMN · origem SEMPRE (inclusive planejado); Gestão só no não-planejado.
+        eh_planejado: planejado,
+        ...(planejado && { planejado_por: userId }),
+        // Roteamento hierárquico de origem resolvido acima (planejado ou não).
+        // O trigger continua de rede de segurança quando a RPC falha (rota=null).
+        ...(rota && {
+          aprovacao_origem_diretor_id: rota.diretor_id || null,
+          aprovacao_origem_status: rota.aprovacao_status,
+          aprovacao_origem_motivo: rota.motivo || null,
+          aprovacao_origem_em: rota.aprovacao_status === 'dispensada' ? agoraIso : null,
         }),
+        // Gestão: pendente/dispensada no não-planejado · null no planejado.
+        aprovacao_gestao_status: gestaoStatus,
+        ...(gestaoStatus === 'dispensada' && {
+          aprovacao_gestao_em: agoraIso,
+          aprovacao_gestao_motivo: gestaoMotivo,
+        }),
+        // Enquanto origem OU Gestão pende → aguardando_aprovacao_origem.
+        // Tudo resolvido → status da rota ('pendente' · trigger refina SLA/
+        // financeiro; o mérito é decidido logo após o insert quando aplicável).
+        ...(((rota && ['pendente', 'triagem'].includes(rota.aprovacao_status)) || gestaoStatus === 'pendente')
+          ? { status: 'aguardando_aprovacao_origem' }
+          : (rota ? { status: rota.status } : {})),
         subcategoria: finalSub,
         eh_urgente: !!eh_urgente,
         justificativa_urgencia: justificativa_urgencia || null,
