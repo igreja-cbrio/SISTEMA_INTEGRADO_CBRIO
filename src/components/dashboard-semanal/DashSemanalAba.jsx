@@ -160,6 +160,7 @@ export default function DashSemanalAba() {
           // nível semana · não mudam com o filtro de culto).
           pessoas_unicas: r.data.resumo?.pessoas_unicas,
           checkins_total: r.data.resumo?.checkins_total,
+          sem_identificacao: r.data.resumo?.sem_identificacao,
         },
       },
       cor: PALETA_MULTI[i % PALETA_MULTI.length],
@@ -342,7 +343,12 @@ export default function DashSemanalAba() {
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">
                 Pessoas únicas
               </p>
-              <p className="text-[10px] text-muted-foreground">na semana (sem repetir) · clique pra ver</p>
+              <p className="text-[10px] text-muted-foreground">
+                na semana (sem repetir) · clique pra ver
+                {primario.data.resumo.sem_identificacao > 0 && (
+                  <span className="block text-amber-600 dark:text-amber-400">+{primario.data.resumo.sem_identificacao} check-ins sem identificação</span>
+                )}
+              </p>
             </button>
             <div className="rounded-xl border bg-card p-4 text-center">
               <p className="text-2xl font-bold" style={{ color: C.media }}>
@@ -357,7 +363,12 @@ export default function DashSemanalAba() {
         )}
 
         {volPessoasOpen && (
-          <VolPessoasDialog ano={ano} semana={semana} onClose={() => setVolPessoasOpen(false)} />
+          <VolPessoasDialog
+            ano={ano}
+            semana={semana}
+            semIdentificacao={primario?.data?.resumo?.sem_identificacao || 0}
+            onClose={() => setVolPessoasOpen(false)}
+          />
         )}
       </div>
 
@@ -830,7 +841,7 @@ function formatBr(iso) {
 }
 
 // ── Dialog · quem foram as pessoas únicas do Voluntariado na semana ──────────
-function VolPessoasDialog({ ano, semana, onClose }) {
+function VolPessoasDialog({ ano, semana, semIdentificacao = 0, onClose }) {
   const [busca, setBusca] = useState('');
   const [soSemEscala, setSoSemEscala] = useState(false);
   const { data: pessoas = [], isLoading } = useQuery({
@@ -890,6 +901,15 @@ function VolPessoasDialog({ ano, semana, onClose }) {
                 </tr>
               </thead>
               <tbody>
+                {semIdentificacao > 0 && !soSemEscala && !busca.trim() && (
+                  <tr className="border-b border-dashed border-amber-400/40 bg-amber-500/5">
+                    <td className="py-2 px-3 text-sm text-muted-foreground" colSpan={2}>
+                      {semIdentificacao} check-in{semIdentificacao === 1 ? '' : 's'} sem identificação
+                      <span className="block text-xs">registrados antes do sistema guardar o nome — sem como saber quem foram</span>
+                    </td>
+                    <td className="py-2 px-3 text-right text-muted-foreground">{semIdentificacao}</td>
+                  </tr>
+                )}
                 {filtradas.map((p, i) => (
                   <tr key={`${p.nome}-${i}`} className="border-b border-border/60 last:border-0">
                     <td className="py-2 px-3 font-medium">
