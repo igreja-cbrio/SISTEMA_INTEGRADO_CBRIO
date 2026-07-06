@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
-import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv, Search, StickyNote, Plus, Trash2 } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Users, GitCompare, Check, Calendar as CalIcon, Tv, Search, StickyNote, Plus, Trash2, X, LayoutGrid } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList, Cell,
   ComposedChart,
@@ -177,6 +177,16 @@ export default function DashSemanalAba() {
     if (culto === 'todos') return null;
     return (cultos || []).find(c => c.id === culto) || null;
   }, [culto, cultos]);
+
+  // Voluntariado: ao clicar numa barra (bloco = turno consolidado), mostramos a
+  // composição por culto real ao lado. O `culto` selecionado é o service_type_id
+  // sintético do bloco; o nome vem dos items da semana.
+  const blocoSelNome = useMemo(() => {
+    if (culto === 'todos') return null;
+    const it = (primario?.data?.items || []).find(i => i.service_type_id === culto);
+    return it?.nome || null;
+  }, [culto, primario]);
+  const mostrarComposicao = isSingle && primario?.indicador === 'voluntariado' && !!blocoSelNome;
 
   // Quando 1 indicador: estrutura atual (valor_absoluto + media + taxa)
   // Quando 2+ indicadores: combina por culto · uma chave por indicador
@@ -591,7 +601,8 @@ export default function DashSemanalAba() {
 
         {/* Bar chart principal · só renderiza com indicador selecionado */}
         {!isEmpty && (
-        <Card>
+        <div className="flex flex-col lg:flex-row gap-4 items-stretch">
+        <Card className="flex-1 min-w-0">
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle className="text-sm font-medium">
               {isSingle
@@ -749,6 +760,23 @@ export default function DashSemanalAba() {
             )}
           </CardContent>
         </Card>
+        {mostrarComposicao && (
+          <VolComposicaoCards
+            ano={ano}
+            semana={semana}
+            bloco={blocoSelNome}
+            cor={primario?.cor}
+            onClose={() => setCulto('todos')}
+          />
+        )}
+        </div>
+        )}
+
+        {/* Dica: como abrir a composição do bloco (voluntariado) */}
+        {isSingle && primario?.indicador === 'voluntariado' && !mostrarComposicao && chartData.length > 0 && (
+          <p className="text-[11px] text-muted-foreground -mt-1">
+            Dica: clique numa barra (ex.: Domingo Manhã) pra ver quantas pessoas serviram em cada culto daquele turno.
+          </p>
         )}
 
         {/* Observações da semana · explicam blocos zerados/atípicos */}
@@ -840,6 +868,79 @@ function formatBr(iso) {
   return `${d}/${m}/${y}`;
 }
 
+// ── Composição do bloco · quantas pessoas serviram em cada culto do turno ────
+// (as barras consolidam por turno · ex.: "Domingo Manhã" junta 08:30/10:00/
+// 11:30 + CBKIDS da manhã). Aparece ao lado do gráfico ao clicar numa barra.
+function VolComposicaoCards({ ano, semana, bloco, cor = C.primary, onClose }) {
+  const { data: linhas = [], isLoading } = useQuery({
+    queryKey: ['dash-sem', 'vol-composicao', ano, semana],
+    queryFn: () => api.voluntariadoComposicao(ano, semana),
+  });
+
+  const doBloco = (linhas || [])
+    .filter(l => l.bloco === bloco)
+    .sort((a, b) => (b.pessoas || 0) - (a.pessoas || 0));
+  const totalPessoas = doBloco.reduce((s, l) => s + (l.pessoas || 0), 0);
+  const totalSemId = doBloco.reduce((s, l) => s + (l.sem_identificacao || 0), 0);
+
+  return (
+    <Card className="lg:w-72 shrink-0">
+      <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
+        <CardTitle className="text-sm font-medium inline-flex items-center gap-1.5">
+          <LayoutGrid className="h-4 w-4" style={{ color: cor }} />
+          {bloco}
+        </CardTitle>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground"
+          title="Fechar composição"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <p className="text-[11px] text-muted-foreground -mt-1">
+          Pessoas que serviram em cada culto deste turno.
+        </p>
+        {isLoading ? (
+          <div className="py-8 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : doBloco.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Sem check-ins neste turno.</p>
+        ) : (
+          <>
+            {doBloco.map((l) => (
+              <div
+                key={l.culto}
+                className="rounded-lg border bg-card px-3 py-2 flex items-center justify-between gap-2"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate" title={l.culto}>{l.culto}</p>
+                  {l.sem_identificacao > 0 && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                      +{l.sem_identificacao} sem identificação
+                    </p>
+                  )}
+                </div>
+                <span className="text-lg font-bold shrink-0" style={{ color: cor }}>{l.pessoas}</span>
+              </div>
+            ))}
+            <div className="rounded-lg px-3 py-2 flex items-center justify-between gap-2 bg-accent/40 border border-dashed">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total do turno</span>
+              <span className="text-lg font-bold" style={{ color: cor }}>{totalPessoas}</span>
+            </div>
+            {totalSemId > 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                {totalSemId} check-in{totalSemId === 1 ? '' : 's'} sem identificação neste turno (fora da contagem de pessoas).
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Dialog · quem foram as pessoas únicas do Voluntariado na semana ──────────
 function VolPessoasDialog({ ano, semana, semIdentificacao = 0, onClose }) {
   const [busca, setBusca] = useState('');
@@ -853,7 +954,7 @@ function VolPessoasDialog({ ano, semana, semIdentificacao = 0, onClose }) {
   const filtradas = pessoas.filter(p => {
     if (soSemEscala && !p.sem_escala) return false;
     const q = busca.trim().toLowerCase();
-    return !q || (p.nome || '').toLowerCase().includes(q) || (p.blocos || '').toLowerCase().includes(q);
+    return !q || (p.nome || '').toLowerCase().includes(q) || (p.blocos || '').toLowerCase().includes(q) || (p.equipes || '').toLowerCase().includes(q);
   });
 
   return (
@@ -920,7 +1021,12 @@ function VolPessoasDialog({ ano, semana, semIdentificacao = 0, onClose }) {
                         </span>
                       )}
                     </td>
-                    <td className="py-2 px-3 text-muted-foreground">{p.blocos || '—'}</td>
+                    <td className="py-2 px-3 text-muted-foreground">
+                      {p.blocos || '—'}
+                      {p.equipes && (
+                        <span className="block text-[11px] text-muted-foreground/70">{p.equipes}</span>
+                      )}
+                    </td>
                     <td className="py-2 px-3 text-right">{p.checkins}</td>
                   </tr>
                 ))}

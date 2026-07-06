@@ -108,7 +108,7 @@ export default function ApresentacaoCriancas() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-      <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao hub do Kids</button>
+      <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao Kids</button>
       <div>
         <h1 className="text-xl font-bold flex items-center gap-2"><Baby className="h-5 w-5 text-fuchsia-500" /> Apresentação de Crianças</h1>
         <p className="text-sm text-muted-foreground">Respostas do formulário público (sempre no 2º domingo do mês), separadas por turma. Entre em contato com a família para agendar o horário.</p>

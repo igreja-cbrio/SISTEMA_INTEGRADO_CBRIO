@@ -711,7 +711,6 @@ export default function VolInscricoes() {
                       </Button>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                      <Info label="Area" value={<span className="capitalize">{selected.area}</span>} />
                       <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
                       <Info label="Telefone" value={fmtTel(selected.telefone)} />
                       <Info label="E-mail" value={selected.email || '-'} />

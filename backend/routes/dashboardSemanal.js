@@ -374,6 +374,28 @@ router.get('/voluntariado-pessoas', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /voluntariado-composicao · o que compõe cada BLOCO do gráfico (as barras
+// consolidam por turno · ex.: "Domingo Manhã" junta os cultos das 08:30/10:00/
+// 11:30 + o CBKIDS da manhã). Clicar na barra abre a quantidade de pessoas por
+// culto real.  query: ano, semana → [{ bloco, culto, pessoas, sem_identificacao }]
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/voluntariado-composicao', async (req, res) => {
+  try {
+    const ano = parseInt(req.query.ano, 10);
+    const semana = parseInt(req.query.semana, 10);
+    if (!ano || !semana) return res.status(400).json({ error: 'ano e semana são obrigatórios' });
+    const { data, error } = await supabase.rpc('fn_dashboard_voluntariado_composicao', {
+      p_ano_iso: ano, p_semana_iso: semana,
+    });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[DASH-SEM] vol composicao', e.message);
+    res.status(500).json({ error: 'Erro ao detalhar a composição do bloco' });
+  }
+});
+
 //
 // Soma o indicador por semana ISO (mesma regra do /semanal · exclui cultos
 // sem kids quando o indicador é de kids, respeita filtro de culto). Considera

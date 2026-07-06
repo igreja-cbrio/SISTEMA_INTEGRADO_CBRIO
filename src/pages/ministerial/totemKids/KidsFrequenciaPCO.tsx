@@ -71,8 +71,8 @@ export default function KidsFrequenciaPCO() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-5">
-      <button onClick={() => navigate('/ministerial/kids')} className="text-sm text-muted-foreground inline-flex items-center gap-1 hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> Voltar pro Kids
+      <button onClick={() => navigate('/kids')} className="text-sm text-muted-foreground inline-flex items-center gap-1 hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> Voltar ao Kids
       </button>
 
       <div>
