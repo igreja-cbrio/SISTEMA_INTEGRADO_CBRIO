@@ -260,7 +260,7 @@ router.get('/semanal', async (req, res) => {
       try {
         const { data: vr } = await supabase.rpc('fn_dashboard_voluntariado_resumo', { p_ano_iso: ano, p_semana_iso: semana });
         const row = Array.isArray(vr) ? vr[0] : vr;
-        if (row) volResumo = { pessoas_unicas: Number(row.pessoas_unicas) || 0, checkins_total: Number(row.checkins_total) || 0 };
+        if (row) volResumo = { pessoas_unicas: Number(row.pessoas_unicas) || 0, checkins_total: Number(row.checkins_total) || 0, sem_identificacao: Number(row.sem_identificacao) || 0 };
       } catch (e) { console.error('[DASH-SEM] vol resumo', e.message); }
     }
 

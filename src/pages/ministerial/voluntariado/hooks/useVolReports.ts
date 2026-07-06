@@ -19,26 +19,16 @@ export function useVolReportData(period: Period = 'month', customRange?: { start
   return useQuery({
     queryKey: ['vol', 'report-data', period, customRange],
     queryFn: async () => {
-      const [services, allSchedules, allCheckIns] = await Promise.all([
-        voluntariado.services.list() as Promise<VolService[]>,
-        voluntariado.schedules.list({}) as Promise<VolSchedule[]>,
-        voluntariado.checkIns.list({}) as Promise<VolCheckIn[]>,
-      ]);
-
+      // Busca por PERÍODO no servidor (paginação interna) — buscar tudo e
+      // filtrar no cliente esbarrava no cap de 1000 do PostgREST e escalas
+      // de cultos recentes sumiam do relatório (bug 06/07).
       const range = getPeriodRange(period, customRange);
-      const startDate = new Date(range.start);
-      const endDate = new Date(range.end);
-
-      const filteredServices = services.filter(s => {
-        const d = new Date(s.scheduled_at);
-        return d >= startDate && d <= endDate;
-      });
-
-      const serviceIds = new Set(filteredServices.map(s => s.id));
-      const filteredSchedules = allSchedules.filter(s => serviceIds.has(s.service_id));
-      const filteredCheckIns = allCheckIns.filter(c => c.service_id && serviceIds.has(c.service_id));
-
-      return { services: filteredServices, schedules: filteredSchedules, checkIns: filteredCheckIns };
+      const desde = range.start.slice(0, 10);
+      const ate = range.end.slice(0, 10);
+      const dados = await voluntariado.relatorioDados(desde, ate) as {
+        services: VolService[]; schedules: VolSchedule[]; checkIns: VolCheckIn[];
+      };
+      return { services: dados.services, schedules: dados.schedules, checkIns: dados.checkIns };
     },
   });
 }

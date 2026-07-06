@@ -1482,6 +1482,51 @@ router.get('/services/checkin-window', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // SCHEDULES
 // ══════════════════════════════════════════════════════════════
+// Dados do relatório de presença por PERÍODO — busca no servidor com paginação
+// interna (o front buscava TUDO e o PostgREST capa em 1000 · vol_schedules tem
+// 3k+ linhas → escalas de cultos recentes sumiam do relatório · bug 06/07).
+router.get('/relatorio-dados', async (req, res) => {
+  try {
+    const { desde, ate } = req.query;
+    if (!desde || !ate) return res.status(400).json({ error: 'desde e ate são obrigatórios (YYYY-MM-DD)' });
+
+    const { data: services, error: eSvc } = await supabase
+      .from('vol_services').select('*')
+      .gte('scheduled_at', `${desde}T00:00:00-03:00`)
+      .lte('scheduled_at', `${ate}T23:59:59-03:00`)
+      .order('scheduled_at', { ascending: false })
+      .limit(500);
+    if (eSvc) throw eSvc;
+
+    const ids = (services || []).map(s => s.id);
+    const schedules = [];
+    const checkIns = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const lote = ids.slice(i, i + 50);
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('vol_schedules')
+          .select('*').in('service_id', lote).order('id').range(from, from + 999);
+        if (error) throw error;
+        schedules.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('vol_check_ins')
+          .select('*, volunteer:vol_profiles(id, full_name, planning_center_id), schedule:vol_schedules(id, volunteer_name, volunteer_id, team_name, position_name), service:vol_services(id, name, scheduled_at)')
+          .in('service_id', lote).order('id').range(from, from + 999);
+        if (error) throw error;
+        checkIns.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+    }
+
+    res.json({ services: services || [], schedules, checkIns });
+  } catch (e) {
+    console.error('[vol/relatorio-dados]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os dados do relatório' });
+  }
+});
+
 router.get('/schedules', async (req, res) => {
   try {
     const { service_id, volunteer_id } = req.query;
@@ -1629,6 +1674,17 @@ router.post('/check-ins', async (req, res) => {
       if (exatos.length === 1) resolvedVolunteerId = exatos[0].id;
     }
 
+    // Guard anti-cliente desatualizado (06/07): frontends com o chunk ANTIGO
+    // mandavam check-in "sem escala" sem NENHUMA identidade (nem volunteer_id,
+    // nem escala, nem nome) e o registro nascia anônimo pra sempre (171 no
+    // domingo 05/07 + 60 retroativos na segunda). Check-in anônimo não serve
+    // pra análise nenhuma — recusa com instrução de recarregar a página.
+    if (!resolvedVolunteerId && !resolvedScheduleId && !nomeDigitado) {
+      return res.status(400).json({
+        error: 'O sistema foi atualizado: recarregue a página (F5 ou Ctrl+R) e refaça o check-in — agora o nome do voluntário fica registrado.',
+      });
+    }
+
     const { data, error } = await supabase.from('vol_check_ins')
       .insert({
         schedule_id: resolvedScheduleId,
@@ -1641,6 +1697,7 @@ router.post('/check-ins', async (req, res) => {
         ...(nomeDigitado ? { volunteer_name: nomeDigitado } : {}),
         ...(checkedInAt ? { checked_in_at: checkedInAt } : {}),
       }).select().single();
+
 
     if (error) {
       if (error.code === '23505') {

@@ -2296,6 +2296,8 @@ export const voluntariado = {
     generate: (id, weeks, year) => post(`/voluntariado/service-types/${id}/generate`, { weeks, year }),
   },
   // Services
+  // Dados do relatório de presença por período (server-side · cap-proof)
+  relatorioDados: (desde, ate) => get(`/voluntariado/relatorio-dados?desde=${desde}&ate=${ate}`),
   services: {
     list: () => get('/voluntariado/services'),
     upcoming: () => get('/voluntariado/services/upcoming'),
