@@ -60,6 +60,50 @@ function dispararConfete() {
   } catch { /* sem-op se WebGL/canvas indisponível */ }
 }
 
+// ── Visual "Kids Zone" (2026-07-06 · referência aprovada pelo Matheus) ──────
+// Moldura do totem: gradiente índigo/roxo/fúcsia com blobs animados + cartão
+// branco arredondado. Telas de totem são intencionalmente sólidas/brand
+// (CLAUDE.md · não aplicar vidro). Toda a LÓGICA de check-in permanece igual.
+const KIDS_ZONE_CSS = `
+@keyframes kz-blob { 0%,100%{ transform: translate(0,0) scale(1);} 33%{ transform: translate(30px,-40px) scale(1.1);} 66%{ transform: translate(-20px,20px) scale(.95);} }
+.kz-blob{ animation: kz-blob 16s infinite ease-in-out; }
+.kz-blob-d1{ animation-delay: -6s; } .kz-blob-d2{ animation-delay: -11s; }
+`;
+
+function KidsZoneRelogio() {
+  const [agora, setAgora] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setAgora(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="text-right hidden sm:block">
+      <p className="text-lg font-bold text-slate-700 leading-none">
+        {agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+      </p>
+      <p className="text-xs text-slate-400 capitalize">
+        {agora.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}
+      </p>
+    </div>
+  );
+}
+
+function KidsZoneShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-[calc(100vh-4rem)] relative overflow-x-hidden bg-gradient-to-br from-indigo-950 via-purple-900 to-fuchsia-900 flex items-start justify-center p-3 sm:p-6">
+      <style>{KIDS_ZONE_CSS}</style>
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="kz-blob absolute -top-24 -left-16 w-96 h-96 bg-fuchsia-500/30 rounded-full blur-3xl" />
+        <div className="kz-blob kz-blob-d1 absolute top-1/3 -right-24 w-[28rem] h-[28rem] bg-cyan-400/20 rounded-full blur-3xl" />
+        <div className="kz-blob kz-blob-d2 absolute bottom-0 left-1/4 w-80 h-80 bg-amber-400/20 rounded-full blur-3xl" />
+      </div>
+      <div className="relative z-10 w-full max-w-6xl bg-white/95 backdrop-blur rounded-[2rem] shadow-2xl ring-1 ring-black/5 p-4 sm:p-8 text-slate-800">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -393,63 +437,63 @@ export default function TotemKidsCheckin() {
 
   if (!sessao) {
     return (
-      <div className="max-w-2xl mx-auto p-6 space-y-4">
-        <h1 className="text-2xl font-bold">Totem Kids · Check-in</h1>
-        <Card>
-          <CardContent className="p-6 text-center space-y-4">
-            <Baby className="h-12 w-12 text-pink-500 mx-auto" />
-            <p className="text-lg">Nenhuma sessão aberta no momento</p>
-            <p className="text-sm text-muted-foreground">
-              Crie uma sessão na administração antes de iniciar o check-in.
-            </p>
-            <Button onClick={() => navigate('/ministerial/totem-kids/configuracoes?aba=sessoes')}>
-              Gerenciar sessões
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <KidsZoneShell>
+        <div className="text-center py-14 space-y-4">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-3xl shadow-lg shadow-pink-500/30">🧸</div>
+          <h1 className="text-2xl font-black tracking-tight">Kids Zone</h1>
+          <p className="text-lg text-slate-600">Nenhuma sessão aberta no momento</p>
+          <p className="text-sm text-slate-400">Crie uma sessão na administração antes de iniciar o check-in.</p>
+          <Button onClick={() => navigate('/ministerial/totem-kids/configuracoes?aba=sessoes')} className="bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold">
+            Gerenciar sessões
+          </Button>
+        </div>
+      </KidsZoneShell>
     );
   }
 
   const estacaoPareada = getEstacaoPareada();
 
   return (
-    <div className={totemMode ? 'fixed inset-0 z-[60] bg-background overflow-y-auto' : ''}>
-    <div className="max-w-4xl mx-auto p-3 md:p-4 space-y-3 md:space-y-4">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div>
-          <h1 className="text-xl md:text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Check-in</h1>
-          <p className="text-xs md:text-sm text-muted-foreground">
-            {sessao.culto?.nome}
-            {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), "EEE, dd/MM", { locale: ptBR })}`}
-          </p>
-          {estacaoPareada ? (
-            <Badge variant="secondary" className="mt-1 text-xs">
-              <Tablet className="h-3 w-3 mr-1" /> {estacaoPareada.nome}
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="mt-1 text-xs text-amber-600 border-amber-400">
-              <Tablet className="h-3 w-3 mr-1" /> Dispositivo não pareado · etiquetas saem sem estação
-            </Badge>
-          )}
+    <div className={totemMode ? 'fixed inset-0 z-[60] overflow-y-auto' : ''}>
+    <KidsZoneShell>
+      {/* Barra do topo · logo, sessão, relógio e alternância check-in/check-out */}
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-dashed border-slate-200">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-2xl shadow-lg shadow-pink-500/30">🧸</div>
+          <div>
+            <p className="text-lg font-black leading-none">Kids Zone</p>
+            <p className="text-xs font-medium text-slate-400 tracking-wide">
+              {sessao.culto?.nome}
+              {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), "EEE, dd/MM", { locale: ptBR })}`}
+            </p>
+            {estacaoPareada ? (
+              <Badge variant="secondary" className="mt-1 text-[10px]">
+                <Tablet className="h-3 w-3 mr-1" /> {estacaoPareada.nome}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="mt-1 text-[10px] text-amber-600 border-amber-400">
+                <Tablet className="h-3 w-3 mr-1" /> Sem estação pareada
+              </Badge>
+            )}
+          </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
+
+        <div className="flex items-center gap-4 flex-wrap">
+          <KidsZoneRelogio />
+          {/* Alternância segmentada check-in / check-out */}
+          <div className="relative flex bg-slate-100 rounded-full p-1 w-56">
+            <div className="absolute top-1 left-1 h-[calc(100%-8px)] w-[calc(50%-4px)] rounded-full bg-gradient-to-r from-orange-400 to-pink-500 shadow-md" />
+            <button type="button" className="relative z-10 flex-1 py-2 text-sm font-bold rounded-full text-white">Check-in</button>
+            <button type="button" onClick={() => navigate('/ministerial/totem-kids/checkout')} className="relative z-10 flex-1 py-2 text-sm font-bold rounded-full text-slate-500 hover:text-slate-700">Check-out</button>
+          </div>
           {totemMode ? (
-            <>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
-                <LogOut className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Checkout</span>
-              </Button>
-              <Button variant="destructive" size="sm" onClick={pedirSairTotem}>
-                <Lock className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Sair do modo totem</span>
-              </Button>
-            </>
+            <Button variant="destructive" size="sm" onClick={pedirSairTotem}>
+              <Lock className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Sair do modo totem</span>
+            </Button>
           ) : (
             <>
               <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/kids')}>
                 <ArrowLeft className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Kids</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/checkout')}>
-                <LogOut className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Checkout</span>
               </Button>
               <Button variant="default" size="sm" className="bg-pink-600 hover:bg-pink-700" onClick={iniciarModoTotem}>
                 <Maximize className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Modo totem</span>
@@ -460,47 +504,71 @@ export default function TotemKidsCheckin() {
       </div>
 
       {!crianca ? (
-        <Card>
-          <CardContent className="p-4 space-y-4">
-            {/* Pré-check-in pelo app · responsável já preparou no celular */}
-            <div className="rounded-lg border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 p-3 space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium text-violet-800 dark:text-violet-200">
-                <Sparkles className="h-4 w-4" /> Chegou pelo app? Digite ou escaneie o código
+        <div className="space-y-6">
+          {/* Título central */}
+          <div className="text-center">
+            <h1 className="text-3xl sm:text-4xl font-black tracking-tight">Vamos fazer o check-in! 🎈</h1>
+            <p className="text-slate-500 mt-2 text-sm sm:text-base">
+              Digite o código do app do responsável ou busque a criança pelo nome.
+            </p>
+          </div>
+
+          {/* Duas colunas: código do app | ou | busca por nome */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1.4fr] gap-6 items-start">
+            {/* ESQUERDA · código do app (pré-check-in) */}
+            <div className="rounded-2xl border-2 border-slate-100 bg-slate-50/70 p-5 sm:p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center text-base">🔑</span>
+                <h2 className="font-bold text-slate-700 text-sm sm:text-base">Código do app do responsável</h2>
               </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Código do app (ex.: 6UCHWQ)"
-                  value={preCodigo}
-                  onChange={e => setPreCodigo(e.target.value.toUpperCase())}
-                  onKeyDown={e => { if (e.key === 'Enter') buscarPreCheckin(); }}
-                  className="h-12 text-lg tracking-widest uppercase font-mono flex-1"
-                  maxLength={8}
-                  autoCapitalize="characters"
-                />
-                <Button
-                  onClick={buscarPreCheckin}
-                  disabled={preBuscando}
-                  variant="default"
-                  size="lg"
-                  className="h-12 bg-violet-600 hover:bg-violet-700 whitespace-nowrap"
-                >
-                  {preBuscando ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Aplicar'}
-                </Button>
-              </div>
-              <p className="text-xs text-violet-700/80 dark:text-violet-300/70">
+              <Input
+                placeholder="EX.: 6UCHWQ"
+                value={preCodigo}
+                onChange={e => setPreCodigo(e.target.value.toUpperCase())}
+                onKeyDown={e => { if (e.key === 'Enter') buscarPreCheckin(); }}
+                className="h-16 text-center text-3xl tracking-[0.4em] uppercase font-black text-slate-700 rounded-xl border-2 border-slate-200 bg-white"
+                maxLength={8}
+                autoCapitalize="characters"
+              />
+              <Button
+                onClick={buscarPreCheckin}
+                disabled={preBuscando || !preCodigo.trim()}
+                className="w-full h-12 bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold text-base rounded-xl"
+              >
+                {preBuscando ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Aplicar código'}
+              </Button>
+              <p className="text-xs text-slate-400 text-center">
                 Confira a criança com o responsável antes de imprimir — a entrada continua presencial.
               </p>
             </div>
 
+            {/* divisor */}
+            <div className="hidden lg:flex flex-col items-center self-stretch pt-4">
+              <div className="w-px flex-1 bg-slate-200" />
+              <span className="my-2 w-10 h-10 rounded-full bg-slate-100 text-slate-400 text-xs font-bold flex items-center justify-center border border-slate-200">ou</span>
+              <div className="w-px flex-1 bg-slate-200" />
+            </div>
+            <div className="flex lg:hidden items-center gap-3">
+              <div className="h-px flex-1 bg-slate-200" />
+              <span className="text-xs font-bold text-slate-400">ou busque pelo nome</span>
+              <div className="h-px flex-1 bg-slate-200" />
+            </div>
+
+            {/* DIREITA · busca por nome */}
+            <div className="rounded-2xl border-2 border-slate-100 p-5 sm:p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-lg bg-fuchsia-100 text-fuchsia-500 flex items-center justify-center text-base">🔍</span>
+                <h2 className="font-bold text-slate-700 text-sm sm:text-base">Buscar pelo nome da criança</h2>
+              </div>
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
                 <Input
                   ref={buscaRef}
-                  placeholder="Buscar criança por nome ou telefone do responsável..."
+                  placeholder="Ex.: Sofia, Lucas, Helena... ou telefone"
                   value={busca}
                   onChange={e => setBusca(e.target.value)}
-                  className="pl-10 h-14 text-lg"
+                  className="pl-10 h-14 text-lg rounded-xl border-2 border-slate-200 bg-slate-50 focus:bg-white text-slate-700"
                   autoFocus
                 />
               </div>
@@ -508,7 +576,7 @@ export default function TotemKidsCheckin() {
                 onClick={() => setModalNovo(true)}
                 variant="default"
                 size="lg"
-                className="h-14 bg-pink-600 hover:bg-pink-700 whitespace-nowrap"
+                className="h-14 bg-pink-600 hover:bg-pink-700 whitespace-nowrap rounded-xl"
               >
                 <Plus className="h-5 w-5 mr-1" /> Nova criança
               </Button>
@@ -566,8 +634,14 @@ export default function TotemKidsCheckin() {
                 </p>
               )}
             </div>
-          </CardContent>
-        </Card>
+            </div>
+          </div>
+
+          {/* rodapé de ajuda */}
+          <p className="text-center text-xs text-slate-400">
+            Precisa de ajuda pra localizar a criança? Chame um voluntário da recepção do Kids. 💛
+          </p>
+        </div>
       ) : (
         <>
         {preCheckin && (
@@ -658,7 +732,7 @@ export default function TotemKidsCheckin() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </KidsZoneShell>
     </div>
   );
 }
