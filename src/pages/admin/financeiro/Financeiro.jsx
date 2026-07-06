@@ -322,14 +322,6 @@ export default function Financeiro() {
   const [modalConta, setModalConta] = useState(null);
   const [modalTransacao, setModalTransacao] = useState(null);
   const [modalPagar, setModalPagar] = useState(null);
-  const [modalReembolso, setModalReembolso] = useState(null);
-
-  // DRE
-  const [dreLoading, setDreLoading] = useState(false);
-  const [dreData, setDreData] = useState(null); // { estrutura, valores, stats }
-  const [dreAno, setDreAno] = useState('todos');
-  const [dreMes, setDreMes] = useState('todos');
-  const [dreExpanded, setDreExpanded] = useState(() => new Set(['3', '4', '3.01', '3.02', '4.01']));
 
   // ── Loaders ──
   const loadDash = useCallback(async () => {
@@ -484,15 +476,6 @@ export default function Financeiro() {
       loadDash();
     } catch (e) { handleError(e); }
     finally { setImportingCp(false); }
-  };
-
-  const saveReembolso = async (form) => {
-    try {
-      await financeiro.reembolsos.create(form);
-      setModalReembolso(null);
-      loadReembolsos();
-      loadDash();
-    } catch (e) { handleError(e); }
   };
 
   const aprovarReembolso = async (id, status) => {
@@ -923,11 +906,9 @@ export default function Financeiro() {
           <option value="rejeitado">Rejeitado</option>
           <option value="pago">Pago</option>
         </select>
-        <Button onClick={() => setModalReembolso({
-          descricao: '', valor: '', data_despesa: '', categoria_id: '', observacoes: '',
-        })}>
-          + Novo Reembolso
-        </Button>
+        <span className="text-sm text-muted-foreground self-center">
+          Novos reembolsos entram pelo módulo Solicitações (categoria Reembolso).
+        </span>
       </div>
       <div style={styles.card}>
         {loading ? (
@@ -1107,92 +1088,6 @@ export default function Financeiro() {
     );
   };
 
-  const renderModalReembolso = () => {
-    const [form, setForm] = useState(modalReembolso || {});
-    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
-    return (
-      <Modal
-        open={!!modalReembolso}
-        onClose={() => setModalReembolso(null)}
-        title="Novo Reembolso"
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setModalReembolso(null)}>Cancelar</Button>
-            <Button onClick={() => saveReembolso(form)}>Solicitar</Button>
-          </>
-        }
-      >
-        <Input label="Descricao" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
-        <div style={styles.formRow}>
-          <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} onChange={e => upd('valor', e.target.value)} />
-          <Input label="Data da Despesa" type="date" value={form.data_despesa || ''} onChange={e => upd('data_despesa', e.target.value)} />
-        </div>
-        <Select label="Categoria" value={form.categoria_id || ''} onChange={e => upd('categoria_id', e.target.value)}>
-          <option value="">Selecione...</option>
-          {categorias.filter(c => c.tipo === 'despesa').map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-        </Select>
-        <Input label="Observacoes" value={form.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
-      </Modal>
-    );
-  };
-
-  // ═══════════════════════════════════════════════════════════
-  // TAB: DRE
-  // ═══════════════════════════════════════════════════════════
-  const handleDreUpload = async (fileList) => {
-    const files = Array.from(fileList || []).filter(f => /\.xlsx?$/i.test(f.name));
-    if (!files.length) { handleError({ message: 'Selecione arquivos .xlsx' }); return; }
-    try {
-      setDreLoading(true);
-      const res = await financeiro.dre.processar(files);
-      setDreData(res);
-      setDreAno('todos');
-      setDreMes('todos');
-    } catch (e) {
-      handleError(e);
-    } finally {
-      setDreLoading(false);
-    }
-  };
-
-  // Soma valores de um cod aplicando filtros ano/mes. Pega tanto folha
-  // exata quanto descendentes (rollup).
-  const dreSomar = (cod) => {
-    if (!dreData) return 0;
-    const isTotalRec = cod === 'TOTAL_REC';
-    const isTotalDesp = cod === 'TOTAL_DESP';
-    const isResultado = cod === 'RESULTADO';
-    let total = 0;
-    for (const [c, ano, mes, v] of dreData.valores) {
-      if (dreAno !== 'todos' && ano !== Number(dreAno)) continue;
-      if (dreMes !== 'todos' && mes !== Number(dreMes)) continue;
-      if (isResultado) total += v;
-      else if (isTotalRec) { if (c.startsWith('3')) total += v; }
-      else if (isTotalDesp) { if (c.startsWith('4')) total += v; }
-      else if (c === cod || c.startsWith(cod + '.')) total += v;
-    }
-    return total;
-  };
-
-  const dreToggle = (cod) => {
-    setDreExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(cod)) next.delete(cod); else next.add(cod);
-      return next;
-    });
-  };
-
-  const dreAnosDisponiveis = (() => {
-    if (!dreData) return [];
-    const anos = new Set(dreData.valores.map(v => v[1]));
-    return [...anos].sort((a, b) => b - a);
-  })();
-
-  const dreMoneyFmt = (v) => {
-    const abs = Math.abs(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return v < 0 ? `(${abs})` : abs;
-  };
-
   // ═══════════════════════════════════════════════════════════
   // RENDER PRINCIPAL
   // ═══════════════════════════════════════════════════════════
@@ -1288,7 +1183,6 @@ export default function Financeiro() {
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
       {modalPagar && renderModalPagar()}
-      {modalReembolso && renderModalReembolso()}
     </div>
   );
 }

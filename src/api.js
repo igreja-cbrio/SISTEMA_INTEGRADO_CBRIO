@@ -833,15 +833,7 @@ export const financeiro = {
   dreCentroHistorico: (id) => get(`/financeiro/dre-centro-custo/${id}/historico`),
   reembolsos: {
     list: (params) => get('/financeiro/reembolsos' + (params ? '?' + new URLSearchParams(params) : '')),
-    create: (data) => post('/financeiro/reembolsos', data),
     aprovar: (id, status) => patch(`/financeiro/reembolsos/${id}`, { status }),
-  },
-  dre: {
-    processar: (files) => {
-      const fd = new FormData();
-      for (const f of files) fd.append('arquivos', f);
-      return requestFile('/financeiro/dre/processar', fd);
-    },
   },
 };
 
