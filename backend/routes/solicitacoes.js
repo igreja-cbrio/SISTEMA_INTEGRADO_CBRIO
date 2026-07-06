@@ -1047,6 +1047,9 @@ router.post('/', async (req, res) => {
         targetIds: alvosAprovacao,
         email: true,
       }).catch(err => console.error('[SOLICITACOES] notify diretor:', err.message));
+      // WhatsApp · manda a solicitação pro diretor aprovar por lá (1/2). No-op
+      // se não houver template/telefone. Não bloqueia a criação.
+      require('../services/solicitacaoWpp').enviarAprovacaoWpp(data).catch(() => {});
     }
 
     // Fluxo BPMN · 2º carimbo pendente → notifica os aprovadores de Gestão
@@ -1121,7 +1124,7 @@ async function isAdminFallback(req) {
 // com custo → julgamento de mérito; sem custo → fluxo normal (cotação/
 // financeiro/fila da área). Linha legada (aprovacao_gestao_status NULL) segue
 // o comportamento antigo (um carimbo só).
-router.patch('/:id/aprovar-origem', async (req, res) => {
+async function aprovarOrigemHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -1329,7 +1332,8 @@ router.patch('/:id/aprovar-origem', async (req, res) => {
     console.error('[SOLICITACOES] aprovar-origem:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao aprovar solicitação' });
   }
-});
+}
+router.patch('/:id/aprovar-origem', aprovarOrigemHandler);
 
 // ── COTACAO (compras/servico) · a logistica levanta valor+fornecedor ANTES do ──
 // financeiro. Marcos (2026-06-16): "primeiro vem a cotacao, depois a aprovacao do
@@ -1410,7 +1414,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
 // Rejeição por QUALQUER carimbo (origem OU Gestão) · motivo obrigatório ·
 // status fica imutavel (Marcos 2026-05-28 · "solicitação rejeitada não
 // reabre · cria nova").
-router.patch('/:id/rejeitar-origem', async (req, res) => {
+async function rejeitarOrigemHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -1498,7 +1502,29 @@ router.patch('/:id/rejeitar-origem', async (req, res) => {
     console.error('[SOLICITACOES] rejeitar-origem:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao rejeitar solicitação' });
   }
-});
+}
+router.patch('/:id/rejeitar-origem', rejeitarOrigemHandler);
+
+// ── Chamada interna (fake req/res) · reusa 100% da lógica dos handlers acima
+// pra o webhook do WhatsApp aplicar a decisão do Arthur (1=aprovar, 2=rejeitar).
+function _fakeRes() {
+  const r = { statusCode: 200, body: null };
+  r.status = (c) => { r.statusCode = c; return r; };
+  r.json = (b) => { r.body = b; return r; };
+  return r;
+}
+async function aprovarOrigemInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail }) {
+  const req = { params: { id: solicitacaoId }, body: {}, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await aprovarOrigemHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
+async function rejeitarOrigemInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail, motivo }) {
+  const req = { params: { id: solicitacaoId }, body: { motivo: motivo || 'Rejeitada pelo WhatsApp' }, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await rejeitarOrigemHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // JULGAMENTO DE MÉRITO (fluxo BPMN 2026-07-02) · Pastor Presidente decide os
@@ -2811,3 +2837,5 @@ router.post('/:id/atender-estoque', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.aprovarOrigemInterno = aprovarOrigemInterno;
+module.exports.rejeitarOrigemInterno = rejeitarOrigemInterno;

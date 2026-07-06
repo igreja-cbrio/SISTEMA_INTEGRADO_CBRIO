@@ -88,6 +88,28 @@ async function sendTemplate(toRaw, templateName, language, parameters) {
   }
 }
 
+// Envia texto livre (só funciona dentro da janela de 24h · ex.: resposta a quem
+// acabou de mandar mensagem). Fora da janela, a Meta exige template.
+async function sendText(toRaw, texto) {
+  const to = normalizarTelefone(toRaw);
+  if (!to) return { sent: false, reason: 'invalid_phone' };
+  if (!configurado()) {
+    console.log('[WPP][DRY-RUN] text to=%s: %s', to, texto);
+    return { sent: false, reason: 'disabled', to };
+  }
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: String(texto).slice(0, 4096) } }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error('[WPP] text erro %d: %s', res.status, JSON.stringify(json)); return { sent: false, status: res.status }; }
+    return { sent: true, to, messageId: json.messages?.[0]?.id };
+  } catch (err) { console.error('[WPP] text exception:', err.message); return { sent: false, reason: 'exception' }; }
+}
+
 // Envia notificação de atualização de pedido (template `pedido_atualizado`).
 // vars: { primeiroNome, tituloSolicitacao, statusLabel, detalhe, link }
 async function sendPedidoAtualizado(telefone, vars) {
@@ -197,6 +219,7 @@ module.exports = {
   configurado,
   normalizarTelefone,
   sendTemplate,
+  sendText,
   sendPedidoAtualizado,
   sendDevocionalDiario,
   notificarMembro,

@@ -112,6 +112,19 @@ async function processarMensagem(m, cfg) {
     .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
   if (jaVisto) return;
 
+  // ── APROVAÇÃO DE SOLICITAÇÃO · se o número tem solicitação aguardando (ex.:
+  // Arthur), interpreta 1=aprovar / 2=rejeitar e aplica. Intercepta cedo (só
+  // assume se houver pendência pra este número); senão segue o fluxo normal.
+  const tratadoAprov = await require('../services/solicitacaoWpp')
+    .tratarRespostaAprovacao({ telefone, texto })
+    .catch(err => { console.error('[whatsapp webhook] aprovacao:', err.message); return false; });
+  if (tratadoAprov) {
+    await supabase.from('whatsapp_coletas').insert({
+      whatsapp_message_id: messageId, telefone, raw_text: texto, status: 'ignorado',
+    }).catch(() => {});
+    return;
+  }
+
   // ── NOTA FISCAL · qualquer número envia foto(s) → fila de aprovação da aba
   // Compras. Intercepta ANTES da checagem de líder (não restringe remetente) e
   // só assume quando há sessão de nota aberta ou gatilho explícito ("nota
