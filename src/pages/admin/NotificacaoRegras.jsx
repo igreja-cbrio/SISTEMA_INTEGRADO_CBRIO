@@ -21,6 +21,7 @@ const MODULOS = [
   { id: 'voluntariado', label: 'Voluntariado', desc: 'Novos voluntários, indicações para servir', color: '#14b8a6' },
   { id: 'grupos', label: 'Grupos', desc: 'Novos membros, grupos sem encontro recente, membros sem grupo, indicações via NEXT', color: '#a855f7' },
   { id: 'integracao', label: 'Integração', desc: 'Dados de culto aguardando aprovação, visitantes novos, indicações de batismo via NEXT', color: '#0ea5e9' },
+  { id: 'kids', label: 'Kids', desc: 'Criança ativa faltando 3 cultos seguidos (para contato com a família)', color: '#ec4899' },
   { id: 'batismos', label: 'Batismos', desc: 'Novas inscrições para batismo via formulário público', color: '#06b6d4' },
   { id: 'nps', label: 'NPS', desc: 'Novas pesquisas de satisfação, lembretes e análises', color: '#06b6d4' },
   { id: 'marketing', label: 'Marketing', desc: 'Cards atribuídos, prazo confirmado, preview pronto, entrega aprovada, revisão sugerida, gargalo de aprovação', color: '#ec4899' },

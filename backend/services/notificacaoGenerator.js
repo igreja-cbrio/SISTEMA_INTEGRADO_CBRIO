@@ -60,6 +60,7 @@ async function gerarTodasNotificacoes() {
   });
   total += await safe('Governanca', gerarNotificacoesGovernanca);
   total += await safe('TarefasPessoais', gerarNotificacoesTarefasPessoais);
+  total += await safe('Kids', gerarNotificacoesKids);
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
@@ -1347,6 +1348,34 @@ async function rodarAnaliseFinanceiraDiaria() {
     }
     return 0;
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+// KIDS — criança ativa faltando N cultos seguidos (Mari/Milena)
+// ═══════════════════════════════════════════════════════════
+async function gerarNotificacoesKids() {
+  let count = 0;
+  const { data: ausentes, error } = await supabase
+    .rpc('fn_kids_ausentes_consecutivos', { p_min: 3 });
+  if (error) { console.error('[Notificações] Kids rpc:', error.message); return 0; }
+
+  for (const c of ausentes || []) {
+    const ult = c.ultima_presenca
+      ? new Date(c.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')
+      : '—';
+    count += await notificar({
+      modulo: 'kids',
+      tipo: 'kids_crianca_ausente',
+      titulo: `Criança faltando: ${c.nome}`,
+      mensagem: `${c.nome} está há ${c.cultos_perdidos} cultos seguidos sem check-in no Kids (última presença em ${ult}). Vale um contato com a família.`,
+      link: '/ministerial/totem-kids/criancas',
+      severidade: 'aviso',
+      // 1 alerta por streak (ancorado na última presença); se voltar e sumir de
+      // novo, a última presença muda → novo alerta.
+      chaveDedup: `kids_ausente_${c.crianca_id}_${c.ultima_presenca}`,
+    });
+  }
+  return count;
 }
 
 module.exports = { gerarTodasNotificacoes };
