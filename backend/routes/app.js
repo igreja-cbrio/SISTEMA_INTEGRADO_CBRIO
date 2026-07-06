@@ -266,6 +266,26 @@ router.get('/voluntariado/status/:userId', authApp, async (req, res) => {
   }
 });
 
+// ── Supervisor de área (app monta escala) ──────────────────────────────────
+// Retorna as áreas onde o membro logado é supervisor de escala. O app usa pra
+// liberar as telas de montar/ver escala da área. A concessão é feita no sistema
+// (aba Voluntariado → Supervisores).
+router.get('/voluntariado/supervisor', authApp, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    if (!membro) return res.json({ supervisor: false, areas: [] });
+    const { data } = await supabase
+      .from('vol_area_supervisores')
+      .select('area')
+      .eq('membro_id', membro.id);
+    const areas = [...new Set((data || []).map(r => r.area).filter(Boolean))];
+    res.json({ supervisor: areas.length > 0, areas });
+  } catch (e) {
+    console.error('[app] voluntariado/supervisor:', e.message);
+    res.status(500).json({ error: 'Erro ao verificar supervisão' });
+  }
+});
+
 // ── Inscrições ────────────────────────────────────────────────────────────
 // Tipos aceitos pelo app. Os pastorais (Cuidados) notificam a equipe e
 // entram na fila da aba "Acompanhamentos" do módulo Cuidados.

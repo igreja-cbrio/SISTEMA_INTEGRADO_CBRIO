@@ -2369,6 +2369,12 @@ export const voluntariado = {
   // incluirArquivados=true traz também os arquivados (saíram do PCO na reconciliação).
   volunteersPool: (incluirArquivados = false) =>
     get(`/voluntariado/volunteers-pool${incluirArquivados ? '?incluir_arquivados=1' : ''}`),
+  // Supervisores de área (concedido no sistema · usado pelo app pra montar escala)
+  supervisores: {
+    list: () => get('/voluntariado/supervisores'),
+    grant: (membro_id, area) => post('/voluntariado/supervisores', { membro_id, area }),
+    revoke: (id) => del(`/voluntariado/supervisores/${id}`),
+  },
   // CPF / Membresia unification
   volByMembro: (membroId) => get(`/voluntariado/vol-by-membro/${membroId}`),
   queroServir: (membroId) => post('/voluntariado/quero-servir', { membro_id: membroId }),
