@@ -754,6 +754,118 @@ router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, asy
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// SUPERVISOR DE ÁREA · monta escala pelo app (concessão feita no sistema)
+// ══════════════════════════════════════════════════════════════════════════
+// Retorna as áreas onde o membro logado é supervisor (ou [] se não for).
+async function supervisorAreasApp(req) {
+  const membro = await resolveMembroApp(req).catch(() => null);
+  if (!membro) return { membro: null, areas: [] };
+  const { data } = await supabase
+    .from('vol_area_supervisores').select('area').eq('membro_id', membro.id);
+  return { membro, areas: [...new Set((data || []).map(r => r.area).filter(Boolean))] };
+}
+
+// GET /app/voluntariado/escala/servicos — próximos cultos (para montar escala)
+router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const hoje = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('vol_services')
+      .select('id, service_type_name, scheduled_at')
+      .gte('scheduled_at', hoje)
+      .order('scheduled_at', { ascending: true })
+      .limit(60);
+    if (error) throw error;
+    res.json({ areas, servicos: data || [] });
+  } catch (e) {
+    console.error('[APP vol/escala servicos]', e.message);
+    res.status(500).json({ error: 'Erro ao listar cultos' });
+  }
+});
+
+// GET /app/voluntariado/escala/:serviceId — escalados do culto (agrupa no app)
+router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { data, error } = await supabase
+      .from('vol_schedules')
+      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status')
+      .eq('service_id', req.params.serviceId)
+      .order('team_name', { ascending: true })
+      .order('volunteer_name', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[APP vol/escala get]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a escala' });
+  }
+});
+
+// GET /app/voluntariado/escala-pool — voluntários pra adicionar (busca ?q=)
+router.get('/voluntariado/escala-pool', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const q = String(req.query.q || '').trim();
+    let query = supabase.from('vol_profiles')
+      .select('id, full_name, planning_center_id').eq('arquivado', false)
+      .order('full_name').limit(30);
+    if (q) query = query.ilike('full_name', `%${q}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[APP vol/escala pool]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar voluntários' });
+  }
+});
+
+// POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
+router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { service_id, volunteer_id, team_name, position_name } = req.body || {};
+    if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, planning_center_id').eq('id', volunteer_id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+    const { data, error } = await supabase.from('vol_schedules').insert({
+      service_id,
+      volunteer_id: vp.id,
+      volunteer_name: vp.full_name,
+      planning_center_person_id: vp.planning_center_id || null,
+      team_name: team_name || null,
+      position_name: position_name || null,
+      confirmation_status: 'pending',
+      source: 'manual',
+    }).select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[APP vol/escala post]', e.message);
+    res.status(500).json({ error: 'Erro ao escalar' });
+  }
+});
+
+// DELETE /app/voluntariado/escala/:id — remove da escala
+router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { error } = await supabase.from('vol_schedules').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP vol/escala delete]', e.message);
+    res.status(500).json({ error: 'Erro ao remover da escala' });
+  }
+});
+
 // ── NEXT · inscrição + próximos encontros + check-in geolocalizado ────────
 // Tudo vinculado ao mem_membros (resolveMembroApp) → alimenta a jornada.
 // Geofence configurável por env (defina as coordenadas EXATAS no Vercel):
