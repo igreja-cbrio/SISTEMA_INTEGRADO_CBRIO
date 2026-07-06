@@ -12,7 +12,31 @@ import { useVolTeams } from './hooks';
 import { UserX, Flame, BarChart3, Calendar, CheckCircle2, TrendingUp, Users, Printer, AlertTriangle, Filter, Clock, ChevronRight, XCircle, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ciMatchesSched, dateOfSP } from './volMatch';
+import { ciMatchesSched, dateOfSP, normName } from './volMatch';
+
+// Escala do PCO tem 1 linha por horário/função (ex.: Bazar 8:30/10:00/11:30) —
+// a MESMA pessoa aparece várias vezes. Presença é por PESSOA: dedup das linhas
+// de escala pela identidade (PCID > volunteer_id > nome), juntando as equipes.
+const schedPersonKey = (s: any) =>
+  s.planning_center_person_id || s.volunteer_id || normName(s.volunteer_name) || s.id;
+
+function dedupePorPessoa(scheds: any[]): any[] {
+  const map = new Map<string, any>();
+  for (const s of scheds) {
+    const k = schedPersonKey(s);
+    const ex = map.get(k);
+    if (!ex) {
+      map.set(k, { ...s, _equipes: [s.team_name].filter(Boolean) });
+    } else if (s.team_name && !ex._equipes.includes(s.team_name)) {
+      ex._equipes.push(s.team_name);
+    }
+  }
+  return [...map.values()];
+}
+
+// Check-in tem identidade? (check-ins anônimos do fluxo antigo não têm)
+const ciTemIdentidade = (c: any) =>
+  !!(c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name);
 
 const METHOD_LABELS: Record<string, string> = {
   qr_code: 'QR',
@@ -69,11 +93,17 @@ export default function VolRelatorios() {
     if (!reportData) return [];
     return reportData.checkIns
       .filter(isRealmenteSemEscala)
+      .filter(ciTemIdentidade) // anônimos ficam na contagem agregada (unscheduledAnonimos)
       .sort((a, b) => new Date(b.checked_in_at).getTime() - new Date(a.checked_in_at).getTime())
       .map(ci => {
         const svc = reportData.services.find(s => s.id === ci.service_id);
         return { ...ci, serviceName: svc?.name || 'Desconhecido' };
       });
+  }, [reportData, isRealmenteSemEscala]);
+
+  const unscheduledAnonimos = useMemo(() => {
+    if (!reportData) return 0;
+    return reportData.checkIns.filter(isRealmenteSemEscala).filter(c => !ciTemIdentidade(c)).length;
   }, [reportData, isRealmenteSemEscala]);
 
   // ── Weekly/Report stats (Relatório Semanal + Por Culto) ──
@@ -95,10 +125,11 @@ export default function VolRelatorios() {
     return reportData.services
       .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime())
       .map(svc => {
-        const svcSchedules = reportData.schedules.filter(s => s.service_id === svc.id);
+        const svcSchedules = dedupePorPessoa(reportData.schedules.filter(s => s.service_id === svc.id));
         const svcCheckIns = reportData.checkIns.filter(c => c.service_id === svc.id);
+        // Por PESSOA: total = escalados distintos; present = escalados com check-in
         const total = svcSchedules.length;
-        const present = svcCheckIns.length;
+        const present = svcSchedules.filter(sch => svcCheckIns.some(c => ciMatchesSched(c, sch))).length;
         const rate = total > 0 ? Math.round((present / total) * 100) : 0;
         return { ...svc, total, present, rate };
       })
@@ -111,7 +142,9 @@ export default function VolRelatorios() {
   const serviceDetail = useMemo(() => {
     if (!openServiceId || !reportData) return null;
     const svc = reportData.services.find(s => s.id === openServiceId) || null;
-    const scheds = reportData.schedules.filter(s => s.service_id === openServiceId);
+    // Dedup por PESSOA: a escala do PCO tem 1 linha por horário/função e a
+    // mesma pessoa aparecia 3x como "presente" (1 check-in × 3 linhas).
+    const scheds = dedupePorPessoa(reportData.schedules.filter(s => s.service_id === openServiceId));
     const checks = reportData.checkIns.filter(c => c.service_id === openServiceId);
 
     // Presente = escalado que tem check-in casado (por id/volunteer_id/PCID/nome);
@@ -125,20 +158,25 @@ export default function VolRelatorios() {
 
     // "Sem escala" = check-in que não casa com nenhuma escala DESTE culto E que
     // também não tem escala da mesma pessoa na mesma data (evita falso positivo
-    // quando o serviço duplicou no sync).
-    const extras = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
+    // quando o serviço duplicou no sync). Anônimos (check-in antigo sem nome)
+    // são agrupados numa contagem só — não dá pra saber quem foram.
+    const extrasTodos = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
+    const extras = extrasTodos.filter(ciTemIdentidade);
+    const extrasAnonimos = extrasTodos.length - extras.length;
 
-    return { svc, present, absent, extras };
+    return { svc, present, absent, extras, extrasAnonimos };
   }, [openServiceId, reportData, isRealmenteSemEscala]);
 
   // Imprime a chamada (presença) de UM culto numa janela própria.
   const imprimirCulto = (svc: any) => {
     if (!reportData) return;
-    const scheds = reportData.schedules.filter(s => s.service_id === svc.id);
+    const scheds = dedupePorPessoa(reportData.schedules.filter(s => s.service_id === svc.id));
     const checks = reportData.checkIns.filter(c => c.service_id === svc.id);
     const present = scheds.filter(s => checks.some(c => ciMatchesSched(c, s)));
     const absent = scheds.filter(s => !checks.some(c => ciMatchesSched(c, s)));
-    const extras = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
+    const extrasTodos = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
+    const extras = extrasTodos.filter(ciTemIdentidade);
+    const extrasAnon = extrasTodos.length - extras.length;
     const esc = (t: string) => (t || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m] as string));
     const nomeSched = (s: any) => esc(s.volunteer_name || s.volunteer?.full_name || 'Voluntário');
     const nomeCi = (c: any) => esc(c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || 'Voluntário');
@@ -158,7 +196,7 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
 <div class="stats">Escalados: <b>${scheds.length}</b> · Presentes: <b>${present.length}</b> · Faltaram: <b>${absent.length}</b> · Sem escala: <b>${extras.length}</b></div>
 <h2>✓ Presentes (${present.length})</h2><ul>${liS(present)}</ul>
 <h2>✗ Faltaram (${absent.length})</h2><ul>${liS(absent)}</ul>
-<h2>Check-in sem escala (${extras.length})</h2><ul>${liC(extras)}</ul>
+<h2>Check-in sem escala (${extras.length}${extrasAnon ? ` + ${extrasAnon} sem identificação` : ''})</h2><ul>${liC(extras)}${extrasAnon ? `<li style="color:#999">${extrasAnon} check-in(s) sem identificação</li>` : ''}</ul>
 <script>window.onload=function(){setTimeout(function(){window.print();},150);}</script>
 </body></html>`;
     const w = window.open('', '_blank', 'width=820,height=920');
@@ -339,8 +377,13 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                 <AlertTriangle className="h-5 w-5 text-yellow-500" />
                 <h3 className="font-semibold">Check-ins sem Escala</h3>
               </div>
+              {unscheduledAnonimos > 0 && (
+                <p className="text-xs text-muted-foreground mb-3 rounded-lg border border-dashed px-3 py-2 bg-muted/40">
+                  {unscheduledAnonimos} check-in{unscheduledAnonimos === 1 ? '' : 's'} sem identificação no período (registrados antes do sistema guardar o nome).
+                </p>
+              )}
               {unscheduledCheckIns.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">Nenhum check-in sem escala no período</p>
+                <p className="text-center text-muted-foreground py-8">Nenhum check-in identificado sem escala no período</p>
               ) : (
                 <div className="space-y-2">
                   {unscheduledCheckIns.map(ci => (
@@ -456,8 +499,10 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
               <div className="flex gap-2 text-xs">
                 <Badge className="bg-green-600 text-white hover:bg-green-600">{serviceDetail.present.length} presente(s)</Badge>
                 <Badge variant="outline" className="border-red-300 text-red-600">{serviceDetail.absent.length} faltou(aram)</Badge>
-                {serviceDetail.extras.length > 0 && (
-                  <Badge variant="outline" className="border-yellow-300 text-yellow-700">{serviceDetail.extras.length} sem escala</Badge>
+                {(serviceDetail.extras.length > 0 || serviceDetail.extrasAnonimos > 0) && (
+                  <Badge variant="outline" className="border-yellow-300 text-yellow-700">
+                    {serviceDetail.extras.length + serviceDetail.extrasAnonimos} sem escala
+                  </Badge>
                 )}
               </div>
 
@@ -475,9 +520,9 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                       <div key={s.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{s.volunteer_name}</p>
-                          {(s.team_name || s.position_name) && (
+                          {(s._equipes?.length || s.position_name) && (
                             <p className="text-xs text-muted-foreground truncate">
-                              {s.team_name}{s.team_name && s.position_name ? ' — ' : ''}{s.position_name}
+                              {s._equipes?.join(' · ') || s.team_name}{(s._equipes?.length || s.team_name) && s.position_name ? ' — ' : ''}{s.position_name}
                             </p>
                           )}
                         </div>
@@ -502,9 +547,9 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                       <div key={s.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{s.volunteer_name}</p>
-                          {(s.team_name || s.position_name) && (
+                          {(s._equipes?.length || s.position_name) && (
                             <p className="text-xs text-muted-foreground truncate">
-                              {s.team_name}{s.team_name && s.position_name ? ' — ' : ''}{s.position_name}
+                              {s._equipes?.join(' · ') || s.team_name}{(s._equipes?.length || s.team_name) && s.position_name ? ' — ' : ''}{s.position_name}
                             </p>
                           )}
                         </div>
@@ -516,7 +561,7 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
               </div>
 
               {/* Sem escala */}
-              {serviceDetail.extras.length > 0 && (
+              {(serviceDetail.extras.length > 0 || serviceDetail.extrasAnonimos > 0) && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <UserPlus className="h-4 w-4 text-yellow-600" />
@@ -529,6 +574,15 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                         <Badge variant="outline" className="border-yellow-300 text-yellow-700 text-xs shrink-0">sem escala</Badge>
                       </div>
                     ))}
+                    {serviceDetail.extrasAnonimos > 0 && (
+                      <div className="flex items-center justify-between gap-3 p-2 rounded-lg border border-dashed bg-muted/40">
+                        <p className="text-sm text-muted-foreground">
+                          {serviceDetail.extrasAnonimos} check-in{serviceDetail.extrasAnonimos === 1 ? '' : 's'} sem identificação
+                          <span className="block text-xs">registrados antes do sistema guardar o nome (05/07) — sem como saber quem foram</span>
+                        </p>
+                        <Badge variant="outline" className="text-xs shrink-0">anônimos</Badge>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
