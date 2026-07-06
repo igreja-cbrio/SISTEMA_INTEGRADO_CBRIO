@@ -1128,25 +1128,30 @@ router.get('/cron/resumo-pco', async (req, res) => {
     const hoje = agoraBRT.toISOString().slice(0, 10);
     const ontem = new Date(agoraBRT.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
 
-    // Cultos com Kids dos últimos 2 dias, ainda sem resumo enviado.
+    // Cultos com Kids dos últimos 2 dias (pendentes de resumo + já resumidos,
+    // estes pra RECONCILIAR o número · check-ins corrigidos no PCO depois da
+    // foto deixavam o dashboard ±1 diferente do módulo · 06/07).
     const { data: cultos } = await supabase
       .from('cultos')
-      .select('id, nome, data, kids_resumo_enviado_at, vol_service_types(recurrence_time, has_kids)')
-      .in('data', [ontem, hoje])
-      .is('kids_resumo_enviado_at', null);
+      .select('id, nome, data, presencial_kids, kids_resumo_enviado_at, vol_service_types(recurrence_time, has_kids)')
+      .in('data', [ontem, hoje]);
 
     // Só os que têm Kids e JÁ terminaram (início + 90 min de folga).
-    const pendentes = (cultos || []).filter((c) => {
+    const terminados = (cultos || []).filter((c) => {
       if (!c.vol_service_types?.has_kids) return false;
       const hhmm = (c.vol_service_types.recurrence_time || '').slice(0, 5);
       if (!hhmm) return false;
       const inicio = new Date(`${c.data}T${hhmm}:00-03:00`).getTime();
       return agora >= inicio + 90 * 60 * 1000;
     });
-    if (!pendentes.length) return res.json({ ok: true, enviados: 0, motivo: 'nenhum culto pendente' });
+    const pendentes = terminados.filter((c) => !c.kids_resumo_enviado_at);
+    const reconciliar = terminados.filter((c) => c.kids_resumo_enviado_at);
+    if (!pendentes.length && !reconciliar.length) {
+      return res.json({ ok: true, enviados: 0, motivo: 'nenhum culto pendente' });
+    }
 
     // Coleta 1x por data (a coleta já devolve o total por culto do dia).
-    const datas = [...new Set(pendentes.map((c) => c.data))];
+    const datas = [...new Set([...pendentes, ...reconciliar].map((c) => c.data))];
     const porData = {};
     for (const d of datas) {
       try { porData[d] = await coletarFrequenciaKidsPCO(d); } catch (e) { console.error(`[resumo-pco] coleta ${d}:`, e.message); porData[d] = null; }
@@ -1167,7 +1172,22 @@ router.get('/cron/resumo-pco', async (req, res) => {
       enviados += 1;
       detalhe.push({ culto: c.nome, total });
     }
-    res.json({ ok: true, enviados, detalhe });
+
+    // Reconciliação: check-ins corrigidos no PCO depois da foto → atualiza o
+    // número SEM reenviar o resumo (kids_resumo_enviado_at fica como está).
+    let reconciliados = 0;
+    for (const c of reconciliar) {
+      const col = porData[c.data];
+      if (!col) continue;
+      const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
+      const total = entry?.total || 0;
+      if (total > 0 && total !== c.presencial_kids) {
+        await supabase.from('cultos').update({ presencial_kids: total }).eq('id', c.id);
+        reconciliados += 1;
+        detalhe.push({ culto: c.nome, total, reconciliado: true, antes: c.presencial_kids });
+      }
+    }
+    res.json({ ok: true, enviados, reconciliados, detalhe });
   } catch (e) {
     console.error('[totemKids] cron resumo-pco:', e.message);
     res.status(500).json({ error: e.message || 'Erro no resumo do Kids' });
