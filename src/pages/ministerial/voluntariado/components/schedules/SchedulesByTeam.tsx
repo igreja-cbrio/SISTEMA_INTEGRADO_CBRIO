@@ -67,9 +67,9 @@ export default function SchedulesByTeam({ schedules }: Props) {
 
   return (
     <>
-      <div className="flex gap-4 overflow-x-auto pb-2 -mx-1 px-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {equipes.map(eq => (
-          <div key={eq.nome} className="shrink-0 w-72 rounded-xl border bg-card flex flex-col">
+          <div key={eq.nome} className="rounded-xl border bg-card flex flex-col self-start">
             {/* Cabeçalho da equipe + contadores */}
             <div className="p-3 border-b">
               <p className="font-semibold truncate" title={eq.nome}>{eq.nome}</p>
