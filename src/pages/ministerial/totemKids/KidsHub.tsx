@@ -9,24 +9,20 @@ import { Card } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
 import { toast } from 'sonner';
 import {
-  Baby, ScanLine, Users, ShieldCheck, Sparkles, Settings, Monitor, BarChart3, Printer,
-  Cake, DoorOpen, Loader2, ArrowRight, UserCheck, Boxes, Droplets, MessageCircle,
+  Baby, ScanLine, Users, Settings, Monitor, Printer,
+  Cake, DoorOpen, Loader2, MessageCircle,
 } from 'lucide-react';
 
+// Reorganização 2026-07-06 (pedido do Matheus): o hub fica só com a OPERAÇÃO
+// de culto (o que os voluntários usam); o gerencial (frequência, vínculos,
+// equipe, estoque, batismos, apresentação, decisões) mudou pro módulo Kids
+// da aba Cultos (/kids · PainelKids).
 const ACESSOS = [
   { titulo: 'Check-in (Totem)', desc: 'Entrada e saída das crianças no culto', icon: ScanLine, path: '/ministerial/totem-kids', cor: '#ec4899' },
   { titulo: 'Crianças', desc: 'Gestão, ficha, atendimentos e frequência', icon: Users, path: '/ministerial/totem-kids/criancas', cor: '#00B39D' },
-  { titulo: 'Frequência (PCO)', desc: 'Validar check-ins das crianças por culto', icon: BarChart3, path: '/ministerial/totem-kids/frequencia', cor: '#0ea5e9' },
-  { titulo: 'Vínculos', desc: 'Pedidos de vínculo criança ↔ responsável', icon: ShieldCheck, path: '/ministerial/totem-kids/vinculos', cor: '#3b82f6' },
-  { titulo: 'Equipe do Kids', desc: 'Voluntários por posição (salas, recepção...) + ficha', icon: UserCheck, path: '/ministerial/totem-kids/voluntarios', cor: '#14b8a6' },
-  { titulo: 'Estoque por sala', desc: 'O que tem e o que deve ter em cada sala (Patrimônio)', icon: Boxes, path: '/ministerial/totem-kids/estoque', cor: '#f97316' },
-  { titulo: 'Batismos (crianças)', desc: 'Crianças pra batizar · contatar a família', icon: Droplets, path: '/ministerial/totem-kids/batismos', cor: '#0ea5e9' },
-  { titulo: 'Apresentação de crianças', desc: 'Inscrições do formulário · por turma (2º domingo)', icon: Baby, path: '/ministerial/totem-kids/apresentacao', cor: '#d946ef' },
-  { titulo: 'Decisões', desc: 'Decisões de fé registradas no Kids', icon: Sparkles, path: '/ministerial/totem-kids/decisoes', cor: '#8b5cf6' },
   { titulo: 'Painel ao vivo', desc: 'Quem está em cada sala agora', icon: Monitor, path: '/ministerial/totem-kids/painel', cor: '#f59e0b' },
-  { titulo: 'Etiqueta (teste)', desc: 'Testar impressão da etiqueta', icon: Printer, path: '/ministerial/totem-kids/teste-etiqueta', cor: '#64748b' },
+  { titulo: 'Etiqueta', desc: 'Testar impressão da etiqueta', icon: Printer, path: '/ministerial/totem-kids/teste-etiqueta', cor: '#64748b' },
   { titulo: 'Configurações', desc: 'Sessões, salas, estações, pagers, auditoria', icon: Settings, path: '/ministerial/totem-kids/configuracoes', cor: '#64748b' },
-  { titulo: 'Indicadores (KPIs)', desc: 'Saúde e metas do ministério infantil', icon: BarChart3, path: '/kids', cor: '#ef4444' },
 ];
 
 const fmtDiaMes = (d?: string | null) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : '');
@@ -62,11 +58,9 @@ export default function KidsHub() {
   const r = d?.resumo || {};
   const STATS = [
     { label: 'Crianças ativas', valor: r.criancas_ativas, icon: Baby, cor: '#00B39D', path: '/ministerial/totem-kids/criancas' },
-    { label: 'Solicitações de vínculo', valor: r.vinculos_pendentes, icon: ShieldCheck, cor: '#3b82f6', path: '/ministerial/totem-kids/vinculos', destaque: r.vinculos_pendentes > 0 },
     { label: 'Aniversariantes (semana)', valor: r.aniversariantes_semana, icon: Cake, cor: '#ec4899' },
     { label: 'Salas', valor: r.salas, icon: DoorOpen, cor: '#f59e0b', path: '/ministerial/totem-kids/configuracoes?aba=salas' },
     { label: 'Sessões abertas', valor: r.sessoes_abertas, icon: ScanLine, cor: '#8b5cf6', path: '/ministerial/totem-kids' },
-    { label: 'Crianças pra batizar', valor: r.batismos_criancas, icon: Droplets, cor: '#0ea5e9', path: '/ministerial/totem-kids/batismos', destaque: r.batismos_criancas > 0 },
   ];
 
   return (
@@ -84,7 +78,7 @@ export default function KidsHub() {
       </div>
 
       {/* Cards de resumo */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {STATS.map((s) => (
           <Card
             key={s.label}
@@ -102,33 +96,7 @@ export default function KidsHub() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Novas solicitações de vínculo */}
-        <Card className="glass-solid p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-semibold text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-blue-500" /> Novas solicitações de vínculo</div>
-            <button onClick={() => navigate('/ministerial/totem-kids/vinculos')} className="text-xs text-primary inline-flex items-center gap-1">ver todas <ArrowRight className="h-3 w-3" /></button>
-          </div>
-          {loading ? (
-            <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
-          ) : (d?.vinculos || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma solicitação pendente.</p>
-          ) : (
-            <div className="space-y-2">
-              {d.vinculos.map((v: any) => (
-                <button key={v.id} onClick={() => navigate('/ministerial/totem-kids/vinculos')} className="w-full flex items-center gap-3 rounded-lg border border-border p-2 text-left hover:border-primary/40 transition-colors">
-                  <div className="h-8 w-8 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0"><Baby className="h-4 w-4 text-blue-500" /></div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{v.crianca_nome}</div>
-                    <div className="text-xs text-muted-foreground truncate">{v.solicitante_nome}{v.solicitante_parentesco ? ` · ${v.solicitante_parentesco}` : ''}</div>
-                  </div>
-                  <Badge variant="secondary" className="text-[10px]">pendente</Badge>
-                </button>
-              ))}
-            </div>
-          )}
-        </Card>
-
+      <div className="grid grid-cols-1 gap-4">
         {/* Aniversariantes da semana */}
         <Card className="glass-solid p-4">
           <div className="font-semibold text-sm flex items-center gap-2 mb-3"><Cake className="h-4 w-4 text-pink-500" /> Aniversariantes da semana</div>
