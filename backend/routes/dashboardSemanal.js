@@ -289,6 +289,68 @@ router.get('/semanal', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Observações da semana · explicam blocos zerados/atípicos
+// (ex.: "Não houve culto · jogo do Brasil"). Nota geral (service_type_id null)
+// ou presa a um bloco/culto.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/notas', async (req, res) => {
+  try {
+    const ano = parseInt(req.query.ano, 10);
+    const semana = parseInt(req.query.semana, 10);
+    if (!ano || !semana) return res.status(400).json({ error: 'ano e semana são obrigatórios' });
+    const { data, error } = await supabase
+      .from('dash_semana_notas')
+      .select('*')
+      .eq('ano_iso', ano)
+      .eq('semana_iso', semana)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[DASH-SEM] notas list', e.message);
+    res.status(500).json({ error: 'Erro ao listar as observações' });
+  }
+});
+
+router.post('/notas', async (req, res) => {
+  try {
+    const { ano, semana, service_type_id, service_type_name, nota } = req.body || {};
+    if (!ano || !semana || !nota?.trim()) {
+      return res.status(400).json({ error: 'ano, semana e nota são obrigatórios' });
+    }
+    const { data, error } = await supabase
+      .from('dash_semana_notas')
+      .insert({
+        ano_iso: parseInt(ano, 10),
+        semana_iso: parseInt(semana, 10),
+        service_type_id: service_type_id || null,
+        service_type_name: service_type_name || null,
+        nota: String(nota).trim().slice(0, 500),
+        criado_por: req.user.userId,
+        criado_por_nome: req.user.name || req.user.email,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[DASH-SEM] notas create', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a observação' });
+  }
+});
+
+router.delete('/notas/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('dash_semana_notas').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[DASH-SEM] notas delete', e.message);
+    res.status(500).json({ error: 'Erro ao excluir a observação' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /ranking · melhor e pior semana de um ano (top/bottom 1)
 //   query: ano, indicador (default frequência), culto (uuid opcional)
 // ─────────────────────────────────────────────────────────────────────────────
