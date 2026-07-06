@@ -2670,6 +2670,14 @@ export const encaminhamentos = {
   auxGrupos: () => get('/encaminhamentos/aux/grupos'),
 };
 
+// Minhas Tarefas · pessoais (página /tarefas)
+export const tarefas = {
+  list: () => get('/tarefas'),
+  create: (data) => post('/tarefas', data),
+  update: (id, data) => put(`/tarefas/${id}`, data),
+  remove: (id, serie = false) => del(`/tarefas/${id}${serie ? '?serie=1' : ''}`),
+};
+
 export const processos = {
   list:   (p) => get('/processos' + (p ? '?' + new URLSearchParams(p) : '')),
   get:    (id) => get(`/processos/${id}`),
