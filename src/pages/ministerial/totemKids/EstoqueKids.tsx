@@ -58,7 +58,7 @@ export default function EstoqueKids() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-4">
-      <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao hub do Kids</button>
+      <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao Kids</button>
       <div className="flex items-start justify-between gap-2">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2"><Boxes className="h-5 w-5 text-primary" /> Kids por sala</h1>

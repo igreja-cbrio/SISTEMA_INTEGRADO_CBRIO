@@ -229,7 +229,7 @@ export default function TotemKidsDecisoes() {
             {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}`}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/kids')}>
+        <Button variant="outline" size="sm" onClick={() => navigate('/kids')}>
           <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Kids
         </Button>
       </div>

@@ -42,7 +42,7 @@ export default function BatismosKids() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-      <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao hub do Kids</button>
+      <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao Kids</button>
       <div>
         <h1 className="text-xl font-bold flex items-center gap-2"><Droplets className="h-5 w-5 text-blue-500" /> Crianças para batizar</h1>
         <p className="text-sm text-muted-foreground">Inscrições de batismo de crianças — entre em contato com a família. (Também aparecem na Integração.)</p>
