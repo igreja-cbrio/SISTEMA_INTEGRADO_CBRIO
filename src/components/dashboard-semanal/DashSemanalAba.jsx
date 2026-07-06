@@ -933,7 +933,8 @@ function ObservacoesSemana({ ano, semana, blocos }) {
       return api.notaCreate({
         ano, semana,
         service_type_id: b?.service_type_id || null,
-        service_type_name: b?.service_type_name || null,
+        // items do /semanal usam `nome` (não service_type_name)
+        service_type_name: b?.nome || null,
         nota: texto,
       });
     },
@@ -1016,7 +1017,7 @@ function ObservacoesSemana({ ano, semana, blocos }) {
                 <SelectContent>
                   <SelectItem value="semana">Semana toda</SelectItem>
                   {blocos.map(b => (
-                    <SelectItem key={b.service_type_id} value={b.service_type_id}>{b.service_type_name}</SelectItem>
+                    <SelectItem key={b.service_type_id} value={b.service_type_id}>{b.nome}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
