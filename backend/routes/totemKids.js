@@ -1921,6 +1921,50 @@ router.patch('/checkin/:id', authorizeModule('kids', 2), async (req, res) => {
 // PAINEL AO VIVO
 // ═══════════════════════════════════════════════════════════════════════════
 
+// GET /api/totem-kids/painel/dia?data=YYYY-MM-DD · resumo dos cultos do dia com
+// a contagem de crianças por culto (pra Milena abrir no celular e ver rápido
+// quantas crianças em cada culto do dia + drilldown por sala/criança). Sem
+// `data`, usa hoje (America/Sao_Paulo).
+router.get('/painel/dia', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const data = req.query.data
+      || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const { data: linhas, error } = await supabase
+      .from('vw_kids_sessao_ao_vivo')
+      .select('sessao_id, culto_id, data_culto, culto_nome, service_type_name, status, abrir_em, criancas_presentes, criancas_saidas, decisoes_jesus, total_checkins')
+      .eq('data_culto', data);
+    if (error) throw error;
+
+    // Agrega por culto (a view vem 1 linha por sala)
+    const porCulto = new Map();
+    for (const r of (linhas || [])) {
+      const k = r.culto_id;
+      const cur = porCulto.get(k) || {
+        culto_id: r.culto_id,
+        sessao_id: r.sessao_id,
+        culto_nome: r.culto_nome,
+        service_type_name: r.service_type_name,
+        abrir_em: r.abrir_em,
+        status: r.status,
+        presentes: 0, sairam: 0, decisoes: 0, total: 0,
+      };
+      cur.presentes += Number(r.criancas_presentes) || 0;
+      cur.sairam    += Number(r.criancas_saidas) || 0;
+      cur.decisoes  += Number(r.decisoes_jesus) || 0;
+      cur.total     += Number(r.total_checkins) || 0;
+      // aberta vence encerrada pra sinalizar culto em andamento
+      if (r.status === 'aberta') cur.status = 'aberta';
+      porCulto.set(k, cur);
+    }
+    const lista = Array.from(porCulto.values())
+      .sort((a, b) => String(a.abrir_em || '').localeCompare(String(b.abrir_em || '')));
+    res.json({ data, cultos: lista });
+  } catch (e) {
+    console.error('[totemKids/painel/dia]', e.message);
+    res.status(500).json({ error: 'Erro ao resumir os cultos do dia' });
+  }
+});
+
 // GET /api/totem-kids/painel/ao-vivo?sessao_id=... · agregado por sala
 router.get('/painel/ao-vivo', authorizeModule('kids', 1), async (req, res) => {
   try {
