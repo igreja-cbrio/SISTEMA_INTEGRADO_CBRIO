@@ -12,7 +12,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw, Sparkles } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw, Sparkles, Pencil } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 
 const FAIXAS = [
@@ -191,6 +191,59 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
   const [novoDesc, setNovoDesc] = useState('');
   const [novoData, setNovoData] = useState(new Date().toISOString().slice(0, 10));
   const [salvando, setSalvando] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState<any>({});
+
+  function iniciarEdicao() {
+    setForm({
+      nome: c.nome || '',
+      data_nascimento: c.data_nascimento || '',
+      sexo: c.sexo || '',
+      serie: c.serie || '',
+      data_conversao: c.data_conversao || '',
+      data_batismo: c.data_batismo || '',
+      visitante: !!c.visitante,
+      tem_alergia: !!c.tem_alergia,
+      alergia_qual: c.alergia_qual || '',
+      tem_espectro: !!c.tem_espectro,
+      espectro_qual: c.espectro_qual || '',
+      tem_limitacao_fisica: !!c.tem_limitacao_fisica,
+      limitacao_fisica_qual: c.limitacao_fisica_qual || '',
+      necessidades_especiais: c.necessidades_especiais || '',
+      observacoes_medicas: c.observacoes_medicas || '',
+    });
+    setEditando(true);
+  }
+
+  async function salvarEdicao() {
+    if (!form.nome?.trim()) { toast.error('O nome é obrigatório'); return; }
+    setSalvando(true);
+    try {
+      const payload = {
+        ...form,
+        nome: form.nome.trim(),
+        data_nascimento: form.data_nascimento || null,
+        sexo: form.sexo || null,
+        serie: form.serie?.trim() || null,
+        data_conversao: form.data_conversao || null,
+        data_batismo: form.data_batismo || null,
+        alergia_qual: form.tem_alergia ? (form.alergia_qual?.trim() || null) : null,
+        espectro_qual: form.tem_espectro ? (form.espectro_qual?.trim() || null) : null,
+        limitacao_fisica_qual: form.tem_limitacao_fisica ? (form.limitacao_fisica_qual?.trim() || null) : null,
+        necessidades_especiais: form.necessidades_especiais?.trim() || null,
+        observacoes_medicas: form.observacoes_medicas?.trim() || null,
+      };
+      await api.criancas.update(criancaId, payload);
+      toast.success('Ficha atualizada');
+      setEditando(false);
+      load();
+      onChanged();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao salvar');
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   const load = useCallback(() => {
     api.criancas.get(criancaId).then(setC).catch(() => toast.error('Erro ao abrir ficha'));
@@ -241,7 +294,71 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
         </div>
 
         {!c ? <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div> : aba === 'dados' ? (
+          editando ? (
           <div className="space-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              <label className="col-span-2 text-xs">Nome
+                <Input className="mt-0.5 h-9" value={form.nome} onChange={e => setForm((f: any) => ({ ...f, nome: e.target.value }))} />
+              </label>
+              <label className="text-xs">Nascimento
+                <Input type="date" className="mt-0.5 h-9" value={form.data_nascimento || ''} onChange={e => setForm((f: any) => ({ ...f, data_nascimento: e.target.value }))} />
+              </label>
+              <label className="text-xs">Sexo
+                <Select value={form.sexo || ''} onValueChange={v => setForm((f: any) => ({ ...f, sexo: v }))}>
+                  <SelectTrigger className="mt-0.5 h-9"><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent><SelectItem value="M">Menino</SelectItem><SelectItem value="F">Menina</SelectItem></SelectContent>
+                </Select>
+              </label>
+              <label className="text-xs">Série
+                <Input className="mt-0.5 h-9" value={form.serie || ''} onChange={e => setForm((f: any) => ({ ...f, serie: e.target.value }))} />
+              </label>
+              <label className="text-xs">Tipo
+                <Select value={form.visitante ? 'visitante' : 'membro'} onValueChange={v => setForm((f: any) => ({ ...f, visitante: v === 'visitante' }))}>
+                  <SelectTrigger className="mt-0.5 h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="visitante">Visitante</SelectItem><SelectItem value="membro">Membro</SelectItem></SelectContent>
+                </Select>
+              </label>
+              <label className="text-xs">Conversão
+                <Input type="date" className="mt-0.5 h-9" value={form.data_conversao || ''} onChange={e => setForm((f: any) => ({ ...f, data_conversao: e.target.value }))} />
+              </label>
+              <label className="text-xs">Batismo
+                <Input type="date" className="mt-0.5 h-9" value={form.data_batismo || ''} onChange={e => setForm((f: any) => ({ ...f, data_batismo: e.target.value }))} />
+              </label>
+            </div>
+            <div className="rounded-md border border-border p-2 space-y-2">
+              <div className="text-xs font-semibold text-muted-foreground">Saúde</div>
+              {([
+                ['tem_alergia', 'alergia_qual', 'Alergia'],
+                ['tem_espectro', 'espectro_qual', 'Espectro autista'],
+                ['tem_limitacao_fisica', 'limitacao_fisica_qual', 'Limitação física / deficiência'],
+              ] as const).map(([bk, qk, label]) => (
+                <div key={bk} className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-xs w-52 shrink-0">
+                    <input type="checkbox" checked={!!form[bk]} onChange={e => setForm((f: any) => ({ ...f, [bk]: e.target.checked }))} />
+                    {label}
+                  </label>
+                  <Input className="h-8 flex-1" placeholder="Qual? (opcional)" disabled={!form[bk]} value={form[qk] || ''} onChange={e => setForm((f: any) => ({ ...f, [qk]: e.target.value }))} />
+                </div>
+              ))}
+              <label className="block text-xs">Necessidades específicas
+                <Input className="mt-0.5 h-9" value={form.necessidades_especiais || ''} onChange={e => setForm((f: any) => ({ ...f, necessidades_especiais: e.target.value }))} />
+              </label>
+              <label className="block text-xs">Mais informações
+                <Textarea rows={2} className="mt-0.5" value={form.observacoes_medicas || ''} onChange={e => setForm((f: any) => ({ ...f, observacoes_medicas: e.target.value }))} />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => setEditando(false)} disabled={salvando}>Cancelar</Button>
+              <Button size="sm" onClick={salvarEdicao} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}</Button>
+            </div>
+          </div>
+          ) : (
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-end -mb-1">
+              <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={iniciarEdicao}>
+                <Pencil className="h-3.5 w-3.5" /> Editar informações
+              </Button>
+            </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
               <CampoSempre label="Nascimento" v={c.data_nascimento ? fmt(c.data_nascimento) : ''} />
               <CampoSempre label="Idade" v={c.idade_label} />
@@ -282,6 +399,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               {!c.ativo && c.motivo_inativacao && <p className="text-xs text-muted-foreground mt-1">Motivo: {c.motivo_inativacao}</p>}
             </div>
           </div>
+          )
         ) : aba === 'frequencia' ? (
           <JornadaTab criancaId={criancaId} c={c} onChanged={() => { load(); onChanged(); }} />
         ) : (
