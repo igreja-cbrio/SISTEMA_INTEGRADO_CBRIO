@@ -92,7 +92,6 @@ const NAV_ITEMS = [
           { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
           { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
           { label: 'Reconhecimento Facial', description: 'Presença na entrada · membros identificados + rostos anônimos a resolver', icon: Camera, path: '/ministerial/reconhecimento-facial', module: 'face' },
-          { label: 'Apresentações', description: 'Gera slides HTML premium via Claude Opus · upload opcional', icon: Sparkles, path: '/admin/apresentacoes', module: 'apresentacoes' },
         ],
       },
     ],
@@ -138,7 +137,7 @@ const NAV_ITEMS = [
         title: 'Ferramentas',
         items: [
           { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', module: 'totem-membro' },
-          { label: 'Kids', description: 'Hub do ministério infantil · check-in, crianças, vínculos, config', icon: Baby, path: '/ministerial/kids', module: 'kids' },
+          { label: 'Kids', description: 'Operação de culto · check-in, crianças, painel ao vivo, etiqueta, config', icon: Baby, path: '/ministerial/kids', module: 'kids' },
         ],
       },
     ],
@@ -151,7 +150,7 @@ const NAV_ITEMS = [
         title: 'Visualização por culto',
         items: [
           { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/online', perm: 'canMembresia' },
-          { label: 'Kids · Indicadores', description: 'KPIs e saúde do ministério infantil', icon: Baby, path: '/kids', module: 'kids' },
+          { label: 'Kids · Indicadores', description: 'Gestão do ministério (vínculos, equipe, estoque...) + KPIs e saúde', icon: Baby, path: '/kids', module: 'kids' },
           { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ami', module: 'ami' },
           { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/bridge', module: 'bridge' },
         ],

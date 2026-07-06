@@ -52,6 +52,19 @@ serverless functions via `api/index.js`).
 > da tabela `processos` permanece no banco mas o modulo nao aparece mais no
 > menu nem no sistema de permissoes (linha marcada como obsoleta na matriz).
 
+> **Apresentações**: desativado a pedido do Matheus (2026-07-06). Rotas
+> `/admin/apresentacoes*` redirecionam pro `/dashboard`, item removido do menu
+> Inteligência, mount `/api/apresentacoes` comentado no server.js e
+> `modulos.ativo=false`. Schema (`apresentacoes*`) e código das páginas/rota
+> permanecem pra eventual reativação.
+
+> **Kids · hub × módulo (2026-07-06)**: o hub `/ministerial/kids` (KidsHub)
+> ficou só com a OPERAÇÃO de culto (Check-in Totem, Crianças, Painel ao vivo,
+> Etiqueta, Configurações + aniversariantes). O GERENCIAL (Frequência PCO,
+> Vínculos + solicitações, Equipe, Estoque, Batismos, Apresentação de crianças,
+> Decisões) mudou pro módulo `/kids` da aba Cultos (PainelKids = seção Gestão
+> [kids nível >=2] + PainelArea de indicadores).
+
 ## Mapa do sistema · o que cada módulo faz, quem usa e o que alimenta
 
 Visão de helicóptero (formato: o que faz · quem usa · **impacto** = o que

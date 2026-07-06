@@ -218,8 +218,6 @@ const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const WhatsappAdmin = lazyWithRetry(() => import('./pages/admin/Whatsapp'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
-const Apresentacoes = lazyWithRetry(() => import('./pages/apresentacoes/Apresentacoes'));
-const ApresentacaoDetalhe = lazyWithRetry(() => import('./pages/apresentacoes/ApresentacaoDetalhe'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
@@ -658,8 +656,9 @@ function AppRoutes() {
         <Route path="/admin/feedback" element={<Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense>} />
         <Route path="/admin/app-analytics" element={<ModuleGuard moduleSlug="dashboard" nivelMinimo={1}><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></ModuleGuard>} />
         <Route path="/admin/whatsapp" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={3}><Suspense fallback={<Loading />}><WhatsappAdmin /></Suspense></ModuleGuard>} />
-        <Route path="/admin/apresentacoes" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><Apresentacoes /></Suspense></ModuleGuard>} />
-        <Route path="/admin/apresentacoes/:id" element={<ModuleGuard moduleSlug="apresentacoes"><Suspense fallback={<Loading />}><ApresentacaoDetalhe /></Suspense></ModuleGuard>} />
+        {/* Apresentações: módulo desativado (2026-07-06 · pedido do Matheus) — rota redireciona */}
+        <Route path="/admin/apresentacoes" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/admin/apresentacoes/*" element={<Navigate to="/dashboard" replace />} />
         <Route path="/admin/usuarios" element={<Navigate to="/admin/permissoes?aba=usuarios" replace />} />
         <Route path="/admin/kpi-areas" element={<Navigate to="/admin/permissoes" replace />} />
         <Route path="/permissoes" element={<Navigate to="/admin/permissoes" replace />} />
