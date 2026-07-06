@@ -33,7 +33,17 @@ import {
   ArrowLeft, Bold, Italic, Heading2, Heading3, List, ListOrdered, Link2, Unlink,
   ImagePlus, AlignLeft, AlignCenter, AlignRight, AtSign, Sparkles, Loader2,
   Send, Clock, Eye, Save, FlaskConical, Users, Search, RefreshCw, PenLine, UserPlus,
+  FileText, Trash2,
 } from 'lucide-react';
+
+export type VolEmailTemplate = {
+  id: string;
+  nome: string;
+  assunto: string;
+  corpo_html: string;
+  is_padrao: boolean;
+  updated_at?: string;
+};
 
 export type VolEmailDisparo = {
   id: string;
@@ -103,6 +113,8 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
   const [confirmEnvio, setConfirmEnvio] = useState(false);
   const [agendarDialog, setAgendarDialog] = useState(false);
   const [agendadoPara, setAgendadoPara] = useState('');
+  const [salvarTemplateOpen, setSalvarTemplateOpen] = useState(false);
+  const [templateNome, setTemplateNome] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
@@ -179,6 +191,39 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
     mutationFn: salvar,
     onSuccess: () => toast.success('Rascunho salvo'),
     onError: (e: Error) => toast.error(e.message || 'Erro ao salvar'),
+  });
+
+  // ── Templates de e-mail (modelos prontos + custom) ────────────────────────
+  const { data: templates = [], refetch: refetchTemplates } = useQuery<VolEmailTemplate[]>({
+    queryKey: ['vol', 'email-templates'],
+    queryFn: () => voluntariado.emails.templates.list(),
+  });
+
+  function aplicarTemplate(t: VolEmailTemplate) {
+    if (t.assunto) setAssunto(t.assunto);
+    editor?.commands.setContent(t.corpo_html || '<p>Olá, {{nome}}!</p>');
+    toast.success(`Modelo "${t.nome}" aplicado`);
+  }
+
+  const salvarTemplateMut = useMutation({
+    mutationFn: () => voluntariado.emails.templates.create({
+      nome: templateNome.trim(),
+      assunto,
+      corpo_html: editor?.getHTML() || '',
+    }),
+    onSuccess: () => {
+      toast.success('Modelo salvo');
+      setSalvarTemplateOpen(false);
+      setTemplateNome('');
+      refetchTemplates();
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao salvar o modelo'),
+  });
+
+  const removerTemplateMut = useMutation({
+    mutationFn: (id: string) => voluntariado.emails.templates.remove(id),
+    onSuccess: () => { toast.success('Modelo removido'); refetchTemplates(); },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao remover'),
   });
 
   const iaMut = useMutation({
@@ -294,6 +339,33 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
         <div className="lg:col-span-2 space-y-4">
           <Card>
             <CardContent className="pt-4 space-y-3">
+              {/* Modelos prontos · aplica assunto + corpo · pode salvar o atual */}
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[200px]">
+                  <Label className="flex items-center gap-1.5"><FileText className="h-3.5 w-3.5" /> Modelo de e-mail</Label>
+                  <Select
+                    value=""
+                    onValueChange={(id) => {
+                      const t = templates.find(x => x.id === id);
+                      if (t) aplicarTemplate(t);
+                    }}
+                  >
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="Começar de um modelo…" /></SelectTrigger>
+                    <SelectContent>
+                      {templates.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">Nenhum modelo ainda</div>}
+                      {templates.map(t => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.nome}{t.is_padrao ? ' · pronto' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => { setTemplateNome(assunto || ''); setSalvarTemplateOpen(true); }}>
+                  <Save className="h-4 w-4 mr-1.5" /> Salvar como modelo
+                </Button>
+              </div>
+
               <div>
                 <Label htmlFor="assunto">Assunto</Label>
                 <Input
@@ -595,6 +667,54 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setLinkDialog(false)}>Cancelar</Button>
             <Button onClick={aplicarLink}>Aplicar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog · salvar/gerenciar modelos ── */}
+      <Dialog open={salvarTemplateOpen} onOpenChange={setSalvarTemplateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Salvar como modelo</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="tpl-nome">Nome do modelo</Label>
+            <Input
+              id="tpl-nome"
+              value={templateNome}
+              onChange={(e) => setTemplateNome(e.target.value)}
+              placeholder="Ex.: Convocação do Kids"
+              onKeyDown={(e) => { if (e.key === 'Enter' && templateNome.trim()) salvarTemplateMut.mutate(); }}
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">Salva o assunto e o corpo atuais como um modelo reutilizável.</p>
+          </div>
+
+          {templates.some(t => !t.is_padrao) && (
+            <div className="mt-2 border-t pt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-1.5">Seus modelos</p>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {templates.filter(t => !t.is_padrao).map(t => (
+                  <div key={t.id} className="flex items-center justify-between gap-2 text-sm rounded-md border px-2 py-1.5">
+                    <span className="truncate">{t.nome}</span>
+                    <button
+                      type="button"
+                      onClick={() => removerTemplateMut.mutate(t.id)}
+                      className="text-muted-foreground hover:text-red-600 shrink-0"
+                      title="Remover modelo"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSalvarTemplateOpen(false)}>Fechar</Button>
+            <Button onClick={() => salvarTemplateMut.mutate()} disabled={!templateNome.trim() || salvarTemplateMut.isPending}>
+              {salvarTemplateMut.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
+              Salvar modelo
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

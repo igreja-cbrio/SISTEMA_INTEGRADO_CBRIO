@@ -80,6 +80,83 @@ router.put('/config', async (req, res) => {
   }
 });
 
+// ── Templates de e-mail (modelos reutilizáveis · fábrica + custom) ───────────
+// GET /templates — lista (fábrica primeiro)
+router.get('/templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vol_email_templates')
+      .select('id, nome, assunto, corpo_html, is_padrao, updated_at')
+      .order('is_padrao', { ascending: false })
+      .order('nome', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[volEmails] templates get:', e.message);
+    res.status(500).json({ error: 'Erro ao listar os templates' });
+  }
+});
+
+// POST /templates — cria template custom
+router.post('/templates', async (req, res) => {
+  try {
+    const nome = (req.body?.nome || '').trim();
+    if (!nome) return res.status(400).json({ error: 'Dê um nome ao template' });
+    const { data, error } = await supabase
+      .from('vol_email_templates')
+      .insert({
+        nome: nome.slice(0, 120),
+        assunto: (req.body?.assunto || '').slice(0, 300),
+        corpo_html: sanitizarHtml(req.body?.corpo_html || ''),
+        is_padrao: false,
+        created_by: req.user?.userId || null,
+      })
+      .select('id, nome, assunto, corpo_html, is_padrao, updated_at')
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[volEmails] templates post:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar o template' });
+  }
+});
+
+// PUT /templates/:id — edita template
+router.put('/templates/:id', async (req, res) => {
+  try {
+    const patch = { updated_at: new Date().toISOString() };
+    if (req.body?.nome != null) patch.nome = String(req.body.nome).trim().slice(0, 120);
+    if (req.body?.assunto != null) patch.assunto = String(req.body.assunto).slice(0, 300);
+    if (req.body?.corpo_html != null) patch.corpo_html = sanitizarHtml(req.body.corpo_html);
+    const { data, error } = await supabase
+      .from('vol_email_templates')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select('id, nome, assunto, corpo_html, is_padrao, updated_at')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[volEmails] templates put:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o template' });
+  }
+});
+
+// DELETE /templates/:id — só custom (fábrica não apaga)
+router.delete('/templates/:id', async (req, res) => {
+  try {
+    const { data: t } = await supabase
+      .from('vol_email_templates').select('is_padrao').eq('id', req.params.id).maybeSingle();
+    if (t?.is_padrao) return res.status(400).json({ error: 'Templates de fábrica não podem ser apagados' });
+    const { error } = await supabase.from('vol_email_templates').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[volEmails] templates delete:', e.message);
+    res.status(500).json({ error: 'Erro ao apagar o template' });
+  }
+});
+
 // GET /:id — detalhe + destinatários com erro (polling de progresso)
 router.get('/:id', async (req, res) => {
   try {
