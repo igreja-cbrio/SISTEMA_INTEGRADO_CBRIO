@@ -1187,10 +1187,41 @@ router.get('/cron/resumo-pco', async (req, res) => {
         detalhe.push({ culto: c.nome, total, reconciliado: true, antes: c.presencial_kids });
       }
     }
+    // Persiste a presença por criança (frequência do Kids · alimenta a aba/alerta
+    // "faltando 3+ cultos") a partir do que já foi coletado do PCO.
+    try {
+      const { data: cris } = await supabase.from('kids_criancas')
+        .select('id, planning_center_id').not('planning_center_id', 'is', null).is('deleted_at', null);
+      const porPco = new Map((cris || []).map((c) => [String(c.planning_center_id), c.id]));
+      for (const d of datas) {
+        const col = porData[d]; if (!col) continue;
+        const uniq = new Map();
+        for (const culto of col.por_culto || []) for (const cr of culto.criancas || []) {
+          const cid = cr.pco_id ? porPco.get(String(cr.pco_id)) : null;
+          if (cid) uniq.set(cid, { crianca_id: cid, data: d, culto_id: culto.culto_id || null });
+        }
+        if (uniq.size) await supabase.from('kids_pco_presencas').upsert([...uniq.values()], { onConflict: 'crianca_id,data', ignoreDuplicates: true });
+      }
+    } catch (e) { console.error('[resumo-pco] presencas:', e.message); }
+
     res.json({ ok: true, enviados, reconciliados, detalhe });
   } catch (e) {
     console.error('[totemKids] cron resumo-pco:', e.message);
     res.status(500).json({ error: e.message || 'Erro no resumo do Kids' });
+  }
+});
+
+// POST /sync-presencas-pco?dias=90 · backfill das presenças por criança (do PCO)
+// pras datas de culto com Kids no período. Alimenta a aba/alerta de faltantes.
+router.post('/sync-presencas-pco', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const dias = Math.min(400, Math.max(1, Number(req.query.dias || req.body?.dias) || 90));
+    const { sincronizarPresencasKidsPCO } = require('../services/planningCenterKidsCheckins');
+    const r = await sincronizarPresencasKidsPCO({ dias });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[totemKids] sync-presencas-pco:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao sincronizar presenças do PCO' });
   }
 });
 
