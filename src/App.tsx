@@ -206,6 +206,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'));
 const DesignPreview = lazyWithRetry(() => import('./pages/DesignPreview'));
 const Perfil = lazyWithRetry(() => import('./pages/Perfil'));
+const MinhasTarefas = lazyWithRetry(() => import('./pages/MinhasTarefas'));
 const NotFound = lazyWithRetry(() => import('./pages/NotFound'));
 const Solicitacoes = lazyWithRetry(() => import('./pages/Solicitacoes'));
 const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoRegras'));
@@ -557,6 +558,8 @@ function AppRoutes() {
       >
         <Route path="/dashboard" element={<Suspense fallback={<Loading />}><Dashboard /></Suspense>} />
         <Route path="/perfil" element={<Suspense fallback={<Loading />}><Perfil /></Suspense>} />
+        {/* Página pessoal · sem ModuleGuard (login basta · cada um vê só as suas) */}
+        <Route path="/tarefas" element={<Suspense fallback={<Loading />}><MinhasTarefas /></Suspense>} />
         <Route path="/planejamento" element={<Suspense fallback={<Loading />}><GestaoAnual /></Suspense>} />
         <Route path="/eventos" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><Eventos /></Suspense></ModuleGuard>} />
         <Route path="/eventos/:id" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><EventDetail /></Suspense></ModuleGuard>} />

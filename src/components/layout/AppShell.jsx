@@ -55,6 +55,8 @@ const NAV_ITEMS = [
         title: 'Serviços',
         items: [
           { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes', perm: 'isColaborador' },
+          // Sem perm/module: página pessoal · visível pra qualquer autenticado
+          { label: 'Minhas Tarefas', description: 'Suas tarefas pessoais — lista, kanban e calendário', icon: ListChecks, path: '/tarefas' },
         ],
       },
       {

@@ -59,8 +59,43 @@ async function gerarTodasNotificacoes() {
     return enfileirar();
   });
   total += await safe('Governanca', gerarNotificacoesGovernanca);
+  total += await safe('TarefasPessoais', gerarNotificacoesTarefasPessoais);
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
+}
+
+// ── Tarefas pessoais · prazo (vence hoje / atrasou) ─────────────────────────
+// Sempre direto pro DONO (targetIds) — não passa pelas regras de módulo.
+// Dedup: "vence hoje" 1x por tarefa/data; "atrasada" 1x por tarefa.
+async function gerarNotificacoesTarefasPessoais() {
+  const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  let count = 0;
+
+  const { data: pendentes } = await supabase
+    .from('tarefas_pessoais')
+    .select('id, titulo, data, created_by')
+    .eq('done', false)
+    .not('data', 'is', null)
+    .not('created_by', 'is', null)
+    .lte('data', hoje)
+    .limit(2000);
+
+  for (const t of pendentes || []) {
+    const venceHoje = t.data === hoje;
+    count += await notificar({
+      modulo: 'tarefas',
+      tipo: venceHoje ? 'tarefa_vence_hoje' : 'tarefa_atrasada',
+      titulo: venceHoje ? 'Tarefa vence hoje' : 'Tarefa atrasada',
+      mensagem: venceHoje
+        ? `"${t.titulo}" vence hoje.`
+        : `"${t.titulo}" venceu em ${new Date(`${t.data}T12:00:00`).toLocaleDateString('pt-BR')}.`,
+      link: '/tarefas',
+      severidade: venceHoje ? 'aviso' : 'urgente',
+      chaveDedup: venceHoje ? `tarefa_hoje_${t.id}_${t.data}` : `tarefa_atrasada_${t.id}`,
+      targetIds: [t.created_by],
+    });
+  }
+  return count;
 }
 
 // Governança · reunião da diretoria que já passou e está sem ata registrada

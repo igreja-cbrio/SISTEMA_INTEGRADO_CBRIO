@@ -189,6 +189,7 @@ app.use('/api/next', require('./routes/next'));
 app.use('/api/next-batismo', require('./routes/nextBatismo'));
 app.use('/api/governanca', require('./routes/governanca'));
 app.use('/api/processos', require('./routes/processos'));
+app.use('/api/tarefas', require('./routes/tarefas'));
 app.use('/api/jornada', require('./routes/jornada'));
 app.use('/api/encaminhamentos', require('./routes/encaminhamentos'));
 app.use('/api/devocionais', require('./routes/devocionais'));
