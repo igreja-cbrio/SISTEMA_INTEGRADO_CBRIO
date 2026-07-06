@@ -5,15 +5,17 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useUpcomingServices, useServiceSchedules } from './hooks';
 import ScheduleList from './components/schedules/ScheduleList';
+import SchedulesByTeam from './components/schedules/SchedulesByTeam';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { CalendarPlus } from 'lucide-react';
+import { CalendarPlus, LayoutGrid, List } from 'lucide-react';
 
 export default function VolEscalas() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { data: services = [], isLoading } = useUpcomingServices();
   const [selectedServiceId, setSelectedServiceId] = useState(searchParams.get('serviceId') || '');
+  const [vista, setVista] = useState<'equipes' | 'lista'>('equipes');
   const { data: schedules = [] } = useServiceSchedules(selectedServiceId || undefined);
 
   const selectedService = services.find(s => s.id === selectedServiceId);
@@ -58,8 +60,30 @@ export default function VolEscalas() {
           </div>
 
           <Card>
-            <CardHeader><CardTitle>{selectedService.name}</CardTitle></CardHeader>
-            <CardContent><ScheduleList schedules={schedules} /></CardContent>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+              <CardTitle>{selectedService.name}</CardTitle>
+              <div className="flex rounded-lg border bg-muted/40 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setVista('equipes')}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${vista === 'equipes' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" /> Equipes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVista('lista')}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${vista === 'lista' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <List className="h-3.5 w-3.5" /> Lista
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {vista === 'equipes'
+                ? <SchedulesByTeam schedules={schedules} />
+                : <ScheduleList schedules={schedules} />}
+            </CardContent>
           </Card>
         </>
       )}
