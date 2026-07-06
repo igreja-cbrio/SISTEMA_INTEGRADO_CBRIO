@@ -186,6 +186,13 @@ export default function DashSemanalAba() {
     const it = (primario?.data?.items || []).find(i => i.service_type_id === culto);
     return it?.nome || null;
   }, [culto, primario]);
+  // Total do turno = pessoas DISTINTAS no turno (o valor da barra). A soma dos
+  // cultos pode ser maior porque quem serve em 2 cultos do turno entra nos dois.
+  const blocoSelTotal = useMemo(() => {
+    if (culto === 'todos') return null;
+    const it = (primario?.data?.items || []).find(i => i.service_type_id === culto);
+    return it ? (it.valor_absoluto ?? null) : null;
+  }, [culto, primario]);
   const mostrarComposicao = isSingle && primario?.indicador === 'voluntariado' && !!blocoSelNome;
 
   // Quando 1 indicador: estrutura atual (valor_absoluto + media + taxa)
@@ -765,6 +772,7 @@ export default function DashSemanalAba() {
             ano={ano}
             semana={semana}
             bloco={blocoSelNome}
+            totalBloco={blocoSelTotal}
             cor={primario?.cor}
             onClose={() => setCulto('todos')}
           />
@@ -871,7 +879,7 @@ function formatBr(iso) {
 // ── Composição do bloco · quantas pessoas serviram em cada culto do turno ────
 // (as barras consolidam por turno · ex.: "Domingo Manhã" junta 08:30/10:00/
 // 11:30 + CBKIDS da manhã). Aparece ao lado do gráfico ao clicar numa barra.
-function VolComposicaoCards({ ano, semana, bloco, cor = C.primary, onClose }) {
+function VolComposicaoCards({ ano, semana, bloco, totalBloco = null, cor = C.primary, onClose }) {
   const { data: linhas = [], isLoading } = useQuery({
     queryKey: ['dash-sem', 'vol-composicao', ano, semana],
     queryFn: () => api.voluntariadoComposicao(ano, semana),
@@ -880,8 +888,13 @@ function VolComposicaoCards({ ano, semana, bloco, cor = C.primary, onClose }) {
   const doBloco = (linhas || [])
     .filter(l => l.bloco === bloco)
     .sort((a, b) => (b.pessoas || 0) - (a.pessoas || 0));
-  const totalPessoas = doBloco.reduce((s, l) => s + (l.pessoas || 0), 0);
+  const somaCultos = doBloco.reduce((s, l) => s + (l.pessoas || 0), 0);
   const totalSemId = doBloco.reduce((s, l) => s + (l.sem_identificacao || 0), 0);
+  // Total do turno = pessoas DISTINTAS (mesmo número da barra). Se não veio,
+  // cai na soma. A soma por culto pode ser maior (quem serve em 2 cultos conta
+  // nos dois) — por isso mostramos o distinto como total e explicamos.
+  const totalPessoas = totalBloco != null ? totalBloco : somaCultos;
+  const temOverlap = totalBloco != null && somaCultos > totalBloco;
 
   return (
     <Card className="lg:w-72 shrink-0">
@@ -926,9 +939,14 @@ function VolComposicaoCards({ ano, semana, bloco, cor = C.primary, onClose }) {
               </div>
             ))}
             <div className="rounded-lg px-3 py-2 flex items-center justify-between gap-2 bg-accent/40 border border-dashed">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total do turno</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pessoas no turno</span>
               <span className="text-lg font-bold" style={{ color: cor }}>{totalPessoas}</span>
             </div>
+            {temOverlap && (
+              <p className="text-[10px] text-muted-foreground">
+                A soma dos cultos ({somaCultos}) passa do total porque {somaCultos - totalPessoas} pessoa{somaCultos - totalPessoas === 1 ? '' : 's'} serviu em mais de um culto do turno (conta em cada um). O total mostra pessoas distintas — igual à barra.
+              </p>
+            )}
             {totalSemId > 0 && (
               <p className="text-[10px] text-muted-foreground">
                 {totalSemId} check-in{totalSemId === 1 ? '' : 's'} sem identificação neste turno (fora da contagem de pessoas).
@@ -1022,12 +1040,18 @@ function VolPessoasDialog({ ano, semana, semIdentificacao = 0, onClose }) {
                       )}
                     </td>
                     <td className="py-2 px-3 text-muted-foreground">
-                      {p.blocos || '—'}
-                      {p.equipes && (
-                        <span className="block text-[11px] text-muted-foreground/70">{p.equipes}</span>
-                      )}
+                      {Array.isArray(p.cultos) && p.cultos.length ? (
+                        <div className="flex flex-col gap-0.5">
+                          {p.cultos.map((c, ci) => (
+                            <div key={ci} className="leading-tight">
+                              <span className="text-foreground">{c.culto}</span>
+                              {c.equipe && <span className="text-[11px] text-muted-foreground/70"> · {c.equipe}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (p.blocos || '—')}
                     </td>
-                    <td className="py-2 px-3 text-right">{p.checkins}</td>
+                    <td className="py-2 px-3 text-right align-top">{p.checkins}</td>
                   </tr>
                 ))}
               </tbody>
