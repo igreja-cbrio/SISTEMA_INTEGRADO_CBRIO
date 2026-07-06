@@ -300,15 +300,18 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
     const dados = { ...extras };
     let membroId = null;
 
-    // Pedidos pastorais: resolve o membro logado pra vincular a ficha +
-    // guarda um snapshot de nome/telefone pra exibir mesmo se o cadastro mudar.
-    if (ehCuidados) {
+    // Pedidos pastorais + batismo/next: resolve o membro logado pra vincular a
+    // ficha + snapshot de nome/telefone. Pro batismo/next isso melhora a taxa
+    // de vínculo do fan-out (trigger fn_app_inscricoes_fanout) — o JWT já
+    // identifica a pessoa, não dá pra depender só do que o form mandou.
+    if (ehCuidados || tipo === 'batismo' || tipo === 'next') {
       const membro = await resolveMembroApp(req).catch(() => null);
       if (membro) {
         membroId = membro.id;
         dados.membro_id = membro.id;
         if (!dados.nome && membro.nome) dados.nome = membro.nome;
         if (!dados.telefone && membro.telefone) dados.telefone = membro.telefone;
+        if (!dados.cpf && membro.cpf) dados.cpf = membro.cpf;
       }
       // Fallback: o app também envia membro_id no corpo (já autenticado por JWT).
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -376,6 +379,21 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
         severidade: 'info',
         chaveDedup: `app_contato_${inserted.id}`,
       }).catch(e => console.warn('[APP] inscricoes · notificar contato:', e.message));
+    }
+
+    // Batismo: o fan-out (trigger) cria a inscrição em batismo_inscricoes —
+    // aqui só avisa a equipe do módulo (espelho do publicBatismo).
+    if (tipo === 'batismo') {
+      const nome = [dados.nome, dados.sobrenome].filter(Boolean).join(' ') || req.user?.email || 'Alguém';
+      notificar({
+        modulo: 'batismos',
+        tipo: 'nova_inscricao_batismo',
+        titulo: 'Nova inscrição de batismo (app) 💧',
+        mensagem: `${nome} se inscreveu pro batismo pelo app.`,
+        link: '/batismo',
+        severidade: 'info',
+        chaveDedup: `batismo_app_${inserted.id}`,
+      }).catch(e => console.warn('[APP] inscricoes · notificar batismo:', e.message));
     }
 
     // Mensagem automática de WhatsApp pro membro que pediu aconselhamento pastoral.
