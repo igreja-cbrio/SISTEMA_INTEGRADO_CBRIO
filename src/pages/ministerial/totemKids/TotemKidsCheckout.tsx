@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, ShieldAlert, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, Bell, Tablet } from 'lucide-react';
+import { Search, Baby, ShieldAlert, ArrowLeft, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,7 +19,6 @@ import { totemKids } from '@/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
-import { getEstacaoPareada } from './lib/estacaoPareada';
 import { KidsZoneShell, KidsZoneRelogio, KidsZoneToggle } from './KidsZoneShell';
 
 type CheckinData = {
@@ -51,27 +50,11 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
   const [confirmandoCheckout, setConfirmandoCheckout] = useState(false);
   const [modalOverride, setModalOverride] = useState(false);
   const [overrideMotivo, setOverrideMotivo] = useState('');
-  const [chamouTV, setChamouTV] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const estacao = getEstacaoPareada();
-  const modoSelf = estacao?.tipo === 'self';
 
   useEffect(() => {
     inputRef.current?.focus();
   }, [checkin]);
-
-  async function dispararChamadaTV(codigo: string) {
-    try {
-      await totemKids.chamadas.chamar({ codigo });
-      setChamouTV(true);
-      toast.success('Professora avisada · aguarde a criança', { duration: 4000 });
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      console.warn('[checkout] chamar TV falhou:', err?.message);
-      // Não bloqueia o fluxo · checkout segue normal
-    }
-  }
 
   async function buscarCodigo() {
     const c = codigoInput.toUpperCase().trim();
@@ -80,12 +63,9 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
       return;
     }
     setCarregando(true);
-    setChamouTV(false);
     try {
       const data = await totemKids.checkin.porCodigo(c);
       setCheckin(data);
-      // Dispara chamada na TV automaticamente (Marcos: "assim que digita")
-      dispararChamadaTV(c);
     } catch (e: unknown) {
       const err = e as { status?: number; message?: string };
       if (err?.status === 404) {
@@ -173,11 +153,6 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
           <div>
             <p className="text-lg font-black leading-none">Totem Kids</p>
             <p className="text-xs font-medium text-slate-400 tracking-wide">Check-out · entrega das crianças</p>
-            {estacao && (
-              <Badge variant={modoSelf ? 'default' : 'secondary'} className="mt-1 text-[10px]">
-                <Tablet className="h-3 w-3 mr-1" /> {estacao.nome}{modoSelf && ' · self-service'}
-              </Badge>
-            )}
           </div>
         </div>
         <div className="flex items-center gap-4 flex-wrap">
@@ -249,27 +224,6 @@ export default function TotemKidsCheckout({ embutido = false }: { embutido?: boo
               <div className="bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 rounded-lg p-3 flex gap-2">
                 <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0" />
                 <div className="text-sm">{checkin.crianca.observacoes_medicas}</div>
-              </div>
-            )}
-
-            {/* Status da chamada na TV */}
-            {chamouTV && (
-              <div className="bg-emerald-100 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 rounded-lg p-3 flex items-center justify-between gap-2">
-                <div className="flex gap-2 items-center">
-                  <Bell className="h-5 w-5 text-emerald-700 dark:text-emerald-300" />
-                  <div>
-                    <div className="font-semibold text-emerald-900 dark:text-emerald-100">Professora avisada</div>
-                    <div className="text-sm text-emerald-700 dark:text-emerald-300">Apareceu na TV da sala. Aguarde.</div>
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => dispararChamadaTV(checkin.codigo_seguranca)}
-                  title="Demorando? Chamar de novo · toca sino + TTS na TV"
-                >
-                  <Bell className="h-4 w-4 mr-1" /> Chamar de novo
-                </Button>
               </div>
             )}
 

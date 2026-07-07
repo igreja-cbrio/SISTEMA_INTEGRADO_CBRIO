@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ColorPicker } from '@/components/ui/ColorPicker';
-import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, Vibrate, Trash2, Send, RefreshCw } from 'lucide-react';
+import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
 import { EtiquetaTesteForm } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
@@ -27,7 +27,7 @@ import { ptBR } from 'date-fns/locale';
 export default function TotemKidsAdmin() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const ABAS = ['sessoes', 'salas', 'estacoes', 'pagers', 'auditoria', 'etiqueta'];
+  const ABAS = ['sessoes', 'salas', 'auditoria', 'etiqueta'];
   const abaParam = searchParams.get('aba') || '';
   const aba = ABAS.includes(abaParam) ? abaParam : 'sessoes';
   return (
@@ -35,7 +35,7 @@ export default function TotemKidsAdmin() {
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Totem Kids · Configurações</h1>
-          <p className="text-sm text-muted-foreground">Sessões, salas, estações, crianças e auditoria de overrides.</p>
+          <p className="text-sm text-muted-foreground">Sessões, salas e auditoria (overrides + portão de saída).</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Button variant="default" size="sm" onClick={() => navigate('/ministerial/kids')} className="bg-pink-600 hover:bg-pink-700">
@@ -66,7 +66,7 @@ export default function TotemKidsAdmin() {
 // senão gerencia o próprio estado. Inclui a aba "Etiqueta" (teste de impressão).
 export function TotemKidsConfigTabs({ aba: abaProp, onAba, abas }: { aba?: string; onAba?: (v: string) => void; abas?: string[] }) {
   // `abas` restringe quais abas aparecem (ex.: a engrenagem do totem mostra só
-  // sessoes/estacoes/etiqueta). Sem `abas`, mostra todas (página de config).
+  // sessoes/etiqueta). Sem `abas`, mostra todas (página de config).
   const mostra = (k: string) => !abas || abas.includes(k);
   const primeira = abas && abas.length ? abas[0] : 'sessoes';
   const [abaLocal, setAbaLocal] = useState(primeira);
@@ -77,15 +77,11 @@ export function TotemKidsConfigTabs({ aba: abaProp, onAba, abas }: { aba?: strin
       <TabsList className="flex-wrap">
         {mostra('sessoes') && <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>}
         {mostra('salas') && <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>}
-        {mostra('estacoes') && <TabsTrigger value="estacoes"><Printer className="h-4 w-4 mr-1" /> Estações</TabsTrigger>}
-        {mostra('pagers') && <TabsTrigger value="pagers"><Vibrate className="h-4 w-4 mr-1" /> Pagers</TabsTrigger>}
         {mostra('auditoria') && <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>}
         {mostra('etiqueta') && <TabsTrigger value="etiqueta"><Printer className="h-4 w-4 mr-1" /> Etiqueta</TabsTrigger>}
       </TabsList>
       {mostra('sessoes') && <TabsContent value="sessoes"><AbaSessoes /></TabsContent>}
       {mostra('salas') && <TabsContent value="salas"><AbaSalas /></TabsContent>}
-      {mostra('estacoes') && <TabsContent value="estacoes"><AbaEstacoes /></TabsContent>}
-      {mostra('pagers') && <TabsContent value="pagers"><AbaPagers /></TabsContent>}
       {mostra('auditoria') && <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>}
       {mostra('etiqueta') && <TabsContent value="etiqueta"><EtiquetaTesteForm /></TabsContent>}
     </Tabs>
@@ -377,392 +373,6 @@ function AbaSalas() {
         </Dialog>
       </CardContent>
     </Card>
-  );
-}
-
-// ─── Aba Pagers ──────────────────────────────────────────────────────────────
-// Catalogo dos pagers fisicos (pulseira/coaster) entregues a família no check-in.
-// Integra com o transmissor LRS Freedom via agente local da recepcao.
-const CORES_LRS: { v: string; nome: string; hex: string }[] = [
-  { v: 'R', nome: 'Vermelho', hex: '#EF4444' },
-  { v: 'B', nome: 'Azul', hex: '#3B82F6' },
-  { v: 'G', nome: 'Verde', hex: '#22C55E' },
-  { v: 'Y', nome: 'Amarelo', hex: '#EAB308' },
-  { v: 'O', nome: 'Laranja', hex: '#F97316' },
-  { v: 'P', nome: 'Roxo', hex: '#A855F7' },
-  { v: 'W', nome: 'Branco', hex: '#E5E7EB' },
-];
-function corHex(c?: string) { return CORES_LRS.find(x => x.v === (c || 'R'))?.hex || '#EF4444'; }
-
-function AbaPagers() {
-  const [pagers, setPagers] = useState<any[]>([]);
-  const [emUso, setEmUso] = useState<Record<string, any>>({});
-  const [carregando, setCarregando] = useState(true);
-  const [modalAberto, setModalAberto] = useState(false);
-  const [editando, setEditando] = useState<any>(null);
-  const [testando, setTestando] = useState<string | null>(null);
-
-  async function carregar() {
-    setCarregando(true);
-    try {
-      const [lista, uso] = await Promise.all([
-        totemKids.pagers.list(),
-        totemKids.pagers.emUso().catch(() => ({})),
-      ]);
-      setPagers(lista || []);
-      setEmUso(uso || {});
-    } finally { setCarregando(false); }
-  }
-  useEffect(() => { carregar(); }, []);
-
-  function abrir(p?: any) {
-    setEditando(p || { numero: '', rotulo: '', cor: 'R', tipo_lrs: 2, observacao: '', ativo: true });
-    setModalAberto(true);
-  }
-
-  async function salvar() {
-    if (editando.numero === '' || editando.numero == null) return toast.error('Número do pager obrigatório');
-    try {
-      if (editando.id) await totemKids.pagers.update(editando.id, editando);
-      else await totemKids.pagers.create(editando);
-      toast.success('Pager salvo');
-      setModalAberto(false);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao salvar');
-    }
-  }
-
-  async function remover(p: any) {
-    if (!confirm(`Remover o pager ${p.numero}? (fica no histórico, some da operação)`)) return;
-    try { await totemKids.pagers.remove(p.id); toast.success('Pager removido'); carregar(); }
-    catch (e: any) { toast.error(e?.message || 'Erro'); }
-  }
-
-  async function testar(p: any) {
-    setTestando(p.id);
-    try {
-      await totemKids.pagers.testar(p.id);
-      toast.success(`Toque de teste enfileirado · o pager ${p.numero} deve vibrar em instantes`);
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao testar');
-    } finally { setTestando(null); }
-  }
-
-  return (
-    <Card>
-      <CardContent className="p-4 space-y-3">
-        <div className="flex justify-between items-center gap-2 flex-wrap">
-          <div className="text-sm text-muted-foreground">
-            Pagers físicos entregues à família no check-in. O número é o ID no transmissor LRS.
-          </div>
-          <Button onClick={() => abrir()} size="sm" className="bg-pink-600 hover:bg-pink-700">
-            <Plus className="h-4 w-4 mr-1" /> Novo pager
-          </Button>
-        </div>
-
-        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-2 text-xs text-amber-800 dark:text-amber-200">
-          O toque real depende do <b>agente local</b> (pager-bridge) estar rodando no PC da recepção,
-          na mesma rede do transmissor LRS Freedom. Sem ele, os toques ficam enfileirados.
-        </div>
-
-        {carregando ? <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" /> : (
-          <div className="space-y-2">
-            {pagers.length === 0 && (
-              <div className="text-sm text-muted-foreground text-center py-6">Nenhum pager cadastrado ainda.</div>
-            )}
-            {pagers.map(p => {
-              const uso = emUso[p.id];
-              return (
-                <div key={p.id} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <span className="h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shadow" style={{ background: corHex(p.cor) }}>
-                      {p.numero}
-                    </span>
-                    <div>
-                      <div className="font-medium flex items-center gap-2">
-                        {p.rotulo || `Pager ${p.numero}`}
-                        {!p.ativo && <Badge variant="outline">inativo</Badge>}
-                        {uso && <Badge className="bg-emerald-600">em uso · {uso.crianca?.nome || uso.responsavel_checkin_nome}</Badge>}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        nº {p.numero} · cor {CORES_LRS.find(c => c.v === p.cor)?.nome || p.cor}
-                        {p.responsavel?.nome ? ` · padrão: ${p.responsavel.nome}` : ''}
-                        {p.observacao ? ` · ${p.observacao}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button size="sm" variant="outline" disabled={testando === p.id} onClick={() => testar(p)} title="Toque de teste">
-                      {testando === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => abrir(p)}><Pencil className="h-4 w-4" /></Button>
-                    <Button size="sm" variant="ghost" onClick={() => remover(p)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
-          <DialogContent className="z-[1100]">
-            <DialogHeader>
-              <DialogTitle>{editando?.id ? 'Editar pager' : 'Novo pager'}</DialogTitle>
-              <DialogDescription>O número precisa bater com o ID programado no pager físico.</DialogDescription>
-            </DialogHeader>
-            {editando && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs">Número (ID LRS) *</label>
-                    <Input type="number" value={editando.numero} onChange={e => setEditando({ ...editando, numero: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="text-xs">Cor</label>
-                    <Select value={editando.cor} onValueChange={(v) => setEditando({ ...editando, cor: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent className="z-[1200]">
-                        {CORES_LRS.map(c => (
-                          <SelectItem key={c.v} value={c.v}>
-                            <span className="inline-flex items-center gap-2">
-                              <span className="h-3 w-3 rounded-full" style={{ background: c.hex }} /> {c.nome}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs">Rótulo (opcional)</label>
-                  <Input placeholder="ex: Pulseira 21" value={editando.rotulo || ''} onChange={e => setEditando({ ...editando, rotulo: e.target.value })} />
-                </div>
-                <div>
-                  <label className="text-xs">Observação (opcional)</label>
-                  <Textarea value={editando.observacao || ''} onChange={e => setEditando({ ...editando, observacao: e.target.value })} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-xs flex items-center gap-2">
-                    <input type="checkbox" checked={editando.ativo} onChange={e => setEditando({ ...editando, ativo: e.target.checked })} />
-                    Ativo
-                  </label>
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
-                    <Button onClick={salvar} className="bg-pink-600 hover:bg-pink-700">Salvar</Button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Aba Estações ────────────────────────────────────────────────────────────
-function AbaEstacoes() {
-  const [estacoes, setEstacoes] = useState<any[]>([]);
-  const [carregando, setCarregando] = useState(true);
-  const [modalAberto, setModalAberto] = useState(false);
-  const [editando, setEditando] = useState<any>(null);
-  const [modalQr, setModalQr] = useState<any>(null);
-
-  async function carregar() {
-    setCarregando(true);
-    try { setEstacoes(await totemKids.estacoes.list()); }
-    finally { setCarregando(false); }
-  }
-  useEffect(() => { carregar(); }, []);
-
-  function abrir(e?: any) {
-    setEditando(e || { nome: '', tipo: 'manned', printer_modelo: 'QL-820NWB', printer_target: '', ativo: true });
-    setModalAberto(true);
-  }
-
-  async function salvar() {
-    if (!editando.nome?.trim()) return toast.error('Nome obrigatório');
-    try {
-      if (editando.id) await totemKids.estacoes.update(editando.id, editando);
-      else await totemKids.estacoes.create(editando);
-      toast.success('Estação salva');
-      setModalAberto(false);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro');
-    }
-  }
-
-  async function abrirQr(e: any) {
-    try {
-      const info = await totemKids.estacoes.infoPareamento(e.id);
-      setModalQr(info);
-    } catch (err: any) {
-      toast.error(err?.message || 'Erro ao gerar QR');
-    }
-  }
-
-  async function regenerarToken(estacaoId: string) {
-    if (!confirm('Regenerar o token vai REVOGAR tablets já pareados. Eles vão precisar escanear o QR novo. Continuar?')) return;
-    try {
-      const info = await totemKids.estacoes.regenerarToken(estacaoId);
-      setModalQr(info);
-      toast.success('Token regenerado · QR novo gerado');
-      carregar();
-    } catch (err: any) {
-      toast.error(err?.message || 'Erro');
-    }
-  }
-
-  return (
-    <Card>
-      <CardContent className="p-4 space-y-3">
-        <div className="flex justify-between items-center">
-          <div className="text-sm text-muted-foreground">
-            Totems físicos · cada tablet pareia com 1 estação via QR
-          </div>
-          <Button onClick={() => abrir()} size="sm" className="bg-pink-600 hover:bg-pink-700">
-            <Plus className="h-4 w-4 mr-1" /> Nova estação
-          </Button>
-        </div>
-        {carregando ? <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" /> : (
-          <div className="space-y-2">
-            {estacoes.map(e => (
-              <div key={e.id} className="flex items-center justify-between p-3 border rounded-lg gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium truncate">{e.nome} <Badge variant="outline" className="ml-1">{e.tipo}</Badge> {!e.ativo && <Badge variant="outline">inativa</Badge>}</div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {e.printer_modelo} {e.printer_target && `· ${e.printer_target}`}
-                    {e.pareada_em && <span className="text-emerald-600"> · pareada {format(new Date(e.pareada_em), 'dd/MM HH:mm', { locale: ptBR })}</span>}
-                  </div>
-                </div>
-                <div className="flex gap-1 flex-shrink-0">
-                  <Button size="sm" variant="outline" onClick={() => abrirQr(e)} title="QR de pareamento">
-                    <Sparkles className="h-4 w-4" />
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => abrir(e)} title="Editar">
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Modal: QR de pareamento */}
-        <Dialog open={!!modalQr} onOpenChange={(o) => !o && setModalQr(null)}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>QR de pareamento · {modalQr?.nome}</DialogTitle>
-              <DialogDescription>
-                Escaneie no tablet/celular pra vincular esse dispositivo à estação.
-                O pareamento dura até regenerar o token.
-              </DialogDescription>
-            </DialogHeader>
-            {modalQr && (
-              <div className="space-y-3">
-                <div className="bg-white p-4 rounded-lg flex justify-center">
-                  <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(modalQr.url)}`}
-                    alt="QR de pareamento"
-                    className="rounded"
-                  />
-                </div>
-                <div className="text-xs bg-muted/50 p-2 rounded font-mono break-all">
-                  {modalQr.url}
-                </div>
-                <div className="flex justify-between items-center">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => { navigator.clipboard.writeText(modalQr.url); toast.success('URL copiada'); }}
-                  >
-                    Copiar URL
-                  </Button>
-                  <Button variant="destructive" size="sm" onClick={() => regenerarToken(modalQr.id)}>
-                    Regenerar token
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  <b>Como usar</b>: abre essa URL no tablet (escaneando o QR), aceita o pareamento, pronto. Daí pra frente os check-ins desse tablet vinculam à estação <b>{modalQr.nome}</b>.
-                </p>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
-          <DialogContent className="z-[1100]">
-            <DialogHeader><DialogTitle>{editando?.id ? 'Editar estação' : 'Nova estação'}</DialogTitle></DialogHeader>
-            {editando && (
-              <div className="space-y-2">
-                <Input placeholder="Nome (ex: Totem Recepção 1)" value={editando.nome} onChange={ev => setEditando({ ...editando, nome: ev.target.value })} />
-                <Select value={editando.tipo} onValueChange={(v: any) => setEditando({ ...editando, tipo: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent className="z-[1200]">
-                    <SelectItem value="manned">Manned · voluntário opera o totem</SelectItem>
-                    <SelectItem value="self">Self · PC touch (pai opera sem login)</SelectItem>
-                    <SelectItem value="display">Display · TV de uma sala específica</SelectItem>
-                    <SelectItem value="display_foyer">Display foyer · TV agregado de todas as salas</SelectItem>
-                    <SelectItem value="roster">Roster · dentro da sala (futuro)</SelectItem>
-                  </SelectContent>
-                </Select>
-                {/* Sala vinculada · só pra display/roster */}
-                {(editando.tipo === 'display' || editando.tipo === 'roster') && (
-                  <SeletorSala
-                    salaId={editando.sala_id}
-                    onChange={(id) => setEditando({ ...editando, sala_id: id })}
-                  />
-                )}
-                {/* Impressora · só pra manned/self */}
-                {(editando.tipo === 'manned' || editando.tipo === 'self') && (
-                  <>
-                    <Input placeholder="Modelo da impressora (ex: QL-820NWB)" value={editando.printer_modelo || ''} onChange={ev => setEditando({ ...editando, printer_modelo: ev.target.value })} />
-                    <Input placeholder="IP da Brother na rede (informativo · ex: 192.168.10.50)" value={editando.printer_target || ''} onChange={ev => setEditando({ ...editando, printer_target: ev.target.value })} />
-                    <p className="text-xs text-muted-foreground">
-                      A impressão usa o browser. Configure a Brother como impressora padrão do Windows do totem.
-                    </p>
-                  </>
-                )}
-                <div className="flex items-center justify-between">
-                  <label className="text-xs flex items-center gap-2">
-                    <input type="checkbox" checked={editando.ativo} onChange={ev => setEditando({ ...editando, ativo: ev.target.checked })} />
-                    Ativa
-                  </label>
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
-                    <Button onClick={salvar} className="bg-pink-600 hover:bg-pink-700">Salvar</Button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── Seletor de sala (usado no modal de estação tipo display/roster) ─────────
-function SeletorSala({ salaId, onChange }: { salaId: string | null; onChange: (id: string | null) => void }) {
-  const [salas, setSalas] = useState<any[]>([]);
-  useEffect(() => { totemKids.salas.list().then(setSalas); }, []);
-  return (
-    <div>
-      <label className="text-xs text-muted-foreground block mb-1">Sala vinculada *</label>
-      <Select value={salaId || ''} onValueChange={(v) => onChange(v || null)}>
-        <SelectTrigger><SelectValue placeholder="Selecione a sala" /></SelectTrigger>
-        <SelectContent className="z-[1200]">
-          {salas.filter((s: any) => s.ativo).map((s: any) => (
-            <SelectItem key={s.id} value={s.id}>
-              <span className="inline-block h-2 w-2 rounded-full mr-2" style={{ background: s.cor }} />
-              {s.nome}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
   );
 }
 
@@ -1139,18 +749,72 @@ function ImportarCriancasModal({ open, onClose, onImportado }: { open: boolean; 
 }
 
 // ─── Aba Auditoria ───────────────────────────────────────────────────────────
+// Rótulo + cor de cada resultado do portão (só os anômalos precisam de atenção)
+const PORTAO_RESULTADO: Record<string, { label: string; cls: string }> = {
+  ok: { label: 'Saída autorizada', cls: 'text-emerald-600' },
+  ja_retirada: { label: 'Código já usado', cls: 'text-red-600' },
+  fora_de_sessao: { label: 'Etiqueta de culto antigo', cls: 'text-amber-600' },
+  nao_reconhecido: { label: 'Código não reconhecido', cls: 'text-amber-600' },
+};
+
 function AbaAuditoria() {
   const [overrides, setOverrides] = useState<any[]>([]);
+  const [scans, setScans] = useState<any[]>([]);
+  const [soAnomalias, setSoAnomalias] = useState(true);
   const [carregando, setCarregando] = useState(true);
 
   async function carregar() {
     setCarregando(true);
-    try { setOverrides(await totemKids.auditoria.overrides()); }
-    finally { setCarregando(false); }
+    try {
+      const [ov, sc] = await Promise.all([
+        totemKids.auditoria.overrides(),
+        totemKids.portao.scans({ limit: 200 }).catch(() => []),
+      ]);
+      setOverrides(ov);
+      setScans(sc || []);
+    } finally { setCarregando(false); }
   }
   useEffect(() => { carregar(); }, []);
 
+  const scansVisiveis = soAnomalias ? scans.filter((s) => s.resultado !== 'ok') : scans;
+
   return (
+    <div className="space-y-4">
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-sm text-muted-foreground">Portão de saída · bips (últimos 200)</div>
+          <label className="text-xs flex items-center gap-1.5 cursor-pointer select-none">
+            <input type="checkbox" checked={soAnomalias} onChange={(e) => setSoAnomalias(e.target.checked)} />
+            Só anomalias (código reusado / culto antigo / desconhecido)
+          </label>
+        </div>
+        {carregando ? <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" /> : scansVisiveis.length === 0 ? (
+          <p className="text-muted-foreground text-center py-6">
+            {soAnomalias ? 'Nenhuma anomalia no portão · 👍' : 'Nenhum bip registrado ainda.'}
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {scansVisiveis.map((s) => {
+              const meta = PORTAO_RESULTADO[s.resultado] || { label: s.resultado, cls: 'text-muted-foreground' };
+              return (
+                <div key={s.id} className="border rounded-lg px-3 py-2 flex items-center justify-between gap-2 text-sm">
+                  <div className="min-w-0">
+                    <span className={`font-medium ${meta.cls}`}>{meta.label}</span>
+                    <span className="text-muted-foreground"> · código <b className="font-mono">{s.codigo}</b></span>
+                    {s.crianca_nome && <span className="text-muted-foreground"> · {s.crianca_nome}</span>}
+                    {s.detalhe && <div className="text-xs text-muted-foreground truncate">{s.detalhe}</div>}
+                  </div>
+                  <div className="text-xs text-muted-foreground whitespace-nowrap">
+                    {s.created_at && format(new Date(s.created_at), 'dd/MM HH:mm')}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
     <Card>
       <CardContent className="p-4 space-y-3">
         <div className="text-sm text-muted-foreground">Overrides realizados (últimos 100)</div>
@@ -1188,5 +852,6 @@ function AbaAuditoria() {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }

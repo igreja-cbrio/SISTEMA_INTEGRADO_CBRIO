@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
+import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,7 +22,6 @@ import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrSca
 import { formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas, reimprimirEtiqueta } from './lib/imprimir';
 import confetti from 'canvas-confetti';
-import { getEstacaoPareada } from './lib/estacaoPareada';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -85,10 +84,6 @@ export default function TotemKidsCheckin() {
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
 
-  // Pagers (pulseira/coaster entregue a família · opcional)
-  const [pagers, setPagers] = useState<any[]>([]);
-  const [pagerSelecionado, setPagerSelecionado] = useState<string>('');
-
   // Multi-culto: outros cultos do dia (com Kids) em que a criança também fica
   const [cultosDia, setCultosDia] = useState<any[]>([]);
   const [cultosExtras, setCultosExtras] = useState<string[]>([]);
@@ -137,7 +132,6 @@ export default function TotemKidsCheckin() {
     checkinId: string; salaNome: string; salaCor?: string | null; respNome: string;
     codigo: string; codigoBarras?: string | null; cultoNome?: string | null; cultoData?: string | null;
   }): Parameters<typeof imprimirEtiquetas>[0] {
-    const estacao = getEstacaoPareada();
     const alergiaLabel = c.tem_alergia ? (c.alergia_qual || 'sim') : null;
     const necessidadeLabel = [
       c.tem_espectro ? `Espectro${c.espectro_qual ? `: ${c.espectro_qual}` : ''}` : '',
@@ -157,7 +151,7 @@ export default function TotemKidsCheckin() {
       : undefined;
     return {
       checkinId: args.checkinId,
-      estacaoId: estacao?.id || null,
+      estacaoId: null,
       crianca: {
         nome: c.nome,
         idadeLabel: formatIdade(c.idade_meses),
@@ -305,20 +299,7 @@ export default function TotemKidsCheckin() {
         }
       })
       .finally(() => setCarregando(false));
-    carregarPagers();
   }, []);
-
-  // Pagers disponíveis = ativos e não em uso por outra criança agora
-  async function carregarPagers() {
-    try {
-      const [lista, uso] = await Promise.all([
-        totemKids.pagers.list({ ativo: 'true' }),
-        totemKids.pagers.emUso().catch(() => ({})),
-      ]);
-      const disponiveis = (lista || []).filter((p: any) => !uso?.[p.id]);
-      setPagers(disponiveis);
-    } catch { setPagers([]); }
-  }
 
   // Foco no input após limpar seleção
   useEffect(() => {
@@ -443,13 +424,10 @@ export default function TotemKidsCheckin() {
 
     setImprimindo(true);
     try {
-      const estacao = getEstacaoPareada();
       const payload: Record<string, unknown> = {
         sessao_id: sessao.id,
         crianca_id: crianca.id,
         sala_id: salaSelecionada,
-        estacao_id: estacao?.id || null,
-        pager_id: pagerSelecionado || null,
         cultos_extras: cultosExtras,
       };
       if (usarRespManual) {
@@ -490,10 +468,8 @@ export default function TotemKidsCheckin() {
       setUsarRespManual(false);
       setRespManualNome('');
       setRespManualTel('');
-      setPagerSelecionado('');
       setCultosExtras([]);
       setResultados([]);
-      carregarPagers();          // o pager usado some da lista de disponíveis
 
       // Em modo pré-check-in: avança a fila de filhos; ao acabar, marca usado.
       if (preCheckin && crianca) {
@@ -541,12 +517,10 @@ export default function TotemKidsCheckin() {
           <DialogTitle>Ajustes do totem</DialogTitle>
           <DialogDescription>Sessões, estações e teste de etiqueta — sem sair do totem.</DialogDescription>
         </DialogHeader>
-        <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} abas={['sessoes', 'estacoes', 'etiqueta']} />
+        <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} abas={['sessoes', 'etiqueta']} />
       </DialogContent>
     </Dialog>
   );
-
-  const estacaoPareada = getEstacaoPareada();
 
   return (
     <div className={totemMode ? 'fixed inset-0 z-[60] overflow-y-auto' : ''}>
@@ -568,15 +542,6 @@ export default function TotemKidsCheckin() {
               ) : 'Sem sessão aberta'}
               <Settings className="h-3 w-3 opacity-60" />
             </button>
-            {estacaoPareada ? (
-              <Badge variant="secondary" className="mt-1 text-[10px]">
-                <Tablet className="h-3 w-3 mr-1" /> {estacaoPareada.nome}
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="mt-1 text-[10px] text-amber-600 border-amber-400">
-                <Tablet className="h-3 w-3 mr-1" /> Sem estação pareada
-              </Badge>
-            )}
           </div>
         </div>
 
@@ -831,9 +796,6 @@ export default function TotemKidsCheckin() {
           setSalaSelecionada={setSalaSelecionada}
           responsavelSelecionado={responsavelSelecionado}
           setResponsavelSelecionado={setResponsavelSelecionado}
-          pagers={pagers}
-          pagerSelecionado={pagerSelecionado}
-          setPagerSelecionado={setPagerSelecionado}
           cultosDia={cultosDia}
           cultosExtras={cultosExtras}
           setCultosExtras={setCultosExtras}
@@ -1210,9 +1172,6 @@ function CheckinSelecao(props: {
   setSalaSelecionada: (s: string) => void;
   responsavelSelecionado: string;
   setResponsavelSelecionado: (s: string) => void;
-  pagers: any[];
-  pagerSelecionado: string;
-  setPagerSelecionado: (s: string) => void;
   cultosDia: any[];
   cultosExtras: string[];
   setCultosExtras: (v: string[]) => void;
@@ -1236,7 +1195,6 @@ function CheckinSelecao(props: {
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
-    pagers, pagerSelecionado, setPagerSelecionado,
     cultosDia, cultosExtras, setCultosExtras,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
@@ -1364,27 +1322,6 @@ function CheckinSelecao(props: {
             </SelectContent>
           </Select>
         </div>
-
-        {pagers.length > 0 && (
-          <div>
-            <label className="text-sm font-medium block mb-2">
-              Pager da família <span className="text-muted-foreground font-normal">(opcional · vibra no pickup)</span>
-            </label>
-            <Select value={pagerSelecionado || 'nenhum'} onValueChange={(v) => setPagerSelecionado(v === 'nenhum' ? '' : v)}>
-              <SelectTrigger className="h-12">
-                <SelectValue placeholder="Sem pager" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="nenhum">Sem pager</SelectItem>
-                {pagers.map(p => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.rotulo || `Pager ${p.numero}`} <span className="text-muted-foreground text-xs ml-1">(nº {p.numero})</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
 
         {cultosDia.length > 0 && (
           <div>
