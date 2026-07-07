@@ -570,6 +570,40 @@ router.patch('/membro/:id', authorizeModule('kids', 3), async (req, res) => {
   }
 });
 
+// ── Senha de edição da ficha da criança (totem) ──────────────────────────────
+// Criada por líder do Kids (Mari/Milena · kids>=4). Editar a ficha no totem exige
+// verificar essa senha (qualquer operador kids>=1).
+router.get('/edit-senha/status', authorizeModule('kids', 1), async (_req, res) => {
+  try {
+    const { data } = await supabase.from('kids_totem_config').select('edit_senha_hash').eq('id', true).maybeSingle();
+    res.json({ definida: !!data?.edit_senha_hash });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.post('/edit-senha', authorizeModule('kids', 4), async (req, res) => {
+  try {
+    const bcrypt = require('bcryptjs');
+    const senha = String(req.body?.senha || '');
+    if (senha.length < 4) return res.status(400).json({ error: 'A senha precisa ter ao menos 4 caracteres' });
+    const hash = bcrypt.hashSync(senha, 10);
+    const { error } = await supabase.from('kids_totem_config')
+      .update({ edit_senha_hash: hash, edit_senha_por: req.user?.userId || null, edit_senha_em: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', true);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao salvar a senha' }); }
+});
+
+router.post('/edit-senha/verificar', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const bcrypt = require('bcryptjs');
+    const senha = String(req.body?.senha || '');
+    const { data } = await supabase.from('kids_totem_config').select('edit_senha_hash').eq('id', true).maybeSingle();
+    if (!data?.edit_senha_hash) return res.json({ ok: false, naoDefinida: true });
+    res.json({ ok: bcrypt.compareSync(senha, data.edit_senha_hash) });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
 // GET /api/totem-kids/criancas · listagem completa (admin)
 router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   try {
