@@ -238,6 +238,17 @@ function ChipToggle({ checked, onChange, label }: {
   );
 }
 
+// Nome completo sem abreviação: rejeita partes com ponto ("J.") ou de 1 letra
+// (conectivos "de/da/do/das/dos/e" são permitidos).
+const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+function temAbreviacaoNome(s: string) {
+  return String(s || '').trim().split(/\s+/).some(p => {
+    const limpo = p.replace(/\./g, '');
+    if (CONECTIVOS_NOME.has(limpo.toLowerCase())) return false;
+    return p.includes('.') || limpo.length === 1;
+  });
+}
+
 export default function InscricaoVoluntariado() {
   const [form, setForm] = useState({
     nome: '', sobrenome: '', email: '', telefone: '',
@@ -309,13 +320,17 @@ export default function InscricaoVoluntariado() {
     e.preventDefault();
     setError('');
     if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome');
-    if (!form.sobrenome || form.sobrenome.trim().length < 1) return setError('Informe seu sobrenome');
+    if (!form.sobrenome || form.sobrenome.trim().length < 2) return setError('Informe seu sobrenome completo');
+    if (temAbreviacaoNome(form.nome) || temAbreviacaoNome(form.sobrenome)) {
+      return setError('Escreva seu nome completo, sem abreviações (ex.: "Maria da Silva Santos", não "Maria S.")');
+    }
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido');
     if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido');
     if (precisaDadosMenor && !form.cpf) return setError('Informe seu CPF');
     if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido');
     if (!form.data_nascimento) return setError('Informe sua data de nascimento');
     if (ministerios.length === 0) return setError('Escolha ao menos uma área pra servir');
+    if (!form.participou_next) return setError('Conta pra gente se você já participou do NEXT');
     if (precisaDadosMenor && (!form.nome_mae || form.nome_mae.trim().length < 2)) return setError('Nome da mãe obrigatório para Kids/Bridge');
     if (precisaDadosMenor && !consentAntecedentes) return setError('Autorize a consulta de antecedentes criminais para servir no Kids/Bridge');
 
@@ -437,8 +452,8 @@ export default function InscricaoVoluntariado() {
             <form onSubmit={handleSubmit}>
               <SectionTitle>Dados pessoais</SectionTitle>
               <Row>
-                <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
-                <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
+                <Field id="nome" label="Nome (sem abreviar)" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
+                <Field id="sobrenome" label="Sobrenome completo (sem abreviar)" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
               </Row>
               <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
@@ -523,6 +538,7 @@ export default function InscricaoVoluntariado() {
                 label="Você já participou do NEXT?"
                 value={form.participou_next}
                 onChange={set('participou_next') as any}
+                required
                 options={[
                   { value: 'Sim', label: 'Sim, já participei' },
                   { value: 'Nao', label: 'Ainda não' },
