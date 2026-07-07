@@ -674,16 +674,18 @@ router.get('/voluntariado/escalas', authApp, limiterNormal, async (req, res) => 
 // POST /api/app/voluntariado/escalas/:id/responder — { status: 'confirmed'|'declined' }
 router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async (req, res) => {
   try {
-    const { status } = req.body || {};
+    const { status, motivo } = req.body || {};
     if (!['confirmed', 'declined'].includes(status)) {
       return res.status(400).json({ error: "status deve ser 'confirmed' ou 'declined'" });
     }
     const membro = await resolveMembroApp(req);
     const vp = await resolverVolProfile(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    // motivo opcional só na recusa; confirmar limpa o motivo anterior.
+    const recusa_motivo = status === 'declined' ? (String(motivo || '').trim().slice(0, 200) || null) : null;
     // só responde escala própria
     const { data, error } = await supabase.from('vol_schedules')
-      .update({ confirmation_status: status })
+      .update({ confirmation_status: status, recusa_motivo })
       .eq('id', req.params.id).eq('volunteer_id', vp.id).select().maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Escala não encontrada' });
@@ -800,7 +802,7 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { data, error } = await supabase
       .from('vol_schedules')
-      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status')
+      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
       .order('volunteer_name', { ascending: true });
