@@ -250,9 +250,7 @@ const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKid
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
 const TotemKidsDecisoes = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDecisoes'));
 const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsVinculos'));
-const TotemKidsParear = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsParear'));
-const TotemKidsDisplaySala = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplaySala'));
-const TotemKidsDisplayFoyer = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplayFoyer'));
+const TotemKidsPortao = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPortao'));
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
@@ -543,12 +541,6 @@ function AppRoutes() {
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
       <Route path="/totem" element={<ProtectedRoute><ModuleGuard moduleSlug="totem-membro"><Suspense fallback={<Loading />}><TotemMembro /></Suspense></ModuleGuard></ProtectedRoute>} />
 
-      {/* Display Totem Kids · TV/Fire TV · publica (autentica via token de estação) */}
-      <Route path="/ministerial/totem-kids/display-sala" element={<Suspense fallback={<Loading />}><TotemKidsDisplaySala /></Suspense>} />
-      <Route path="/ministerial/totem-kids/display-foyer" element={<Suspense fallback={<Loading />}><TotemKidsDisplayFoyer /></Suspense>} />
-      {/* Pareamento público · token na URL já autoriza */}
-      <Route path="/ministerial/totem-kids/parear" element={<Suspense fallback={<Loading />}><TotemKidsParear /></Suspense>} />
-
       {/* Self check-in — voluntário escaneia QR do totem com celular.
           Rota PUBLICA: se não estiver autenticado, a própria página oferece
           cadastro via CPF (fluxo de registration / magic link). */}
@@ -604,6 +596,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/batismos" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><BatismosKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/apresentacao" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><ApresentacaoCriancasKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/checkout" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckout /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/portao" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPortao /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/decisoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsDecisoes /></Suspense></ModuleGuard>} />

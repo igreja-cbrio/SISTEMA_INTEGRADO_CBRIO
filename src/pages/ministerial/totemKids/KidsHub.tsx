@@ -19,10 +19,11 @@ import {
 // da aba Cultos (/kids · PainelKids).
 const ACESSOS = [
   { titulo: 'Check-in (Totem)', desc: 'Entrada e saída das crianças no culto', icon: ScanLine, path: '/ministerial/totem-kids', cor: '#ec4899' },
+  { titulo: 'Portão de saída', desc: 'Leitor valida a etiqueta na entrada do corredor', icon: DoorOpen, path: '/ministerial/totem-kids/portao', cor: '#10b981' },
   { titulo: 'Crianças', desc: 'Gestão, ficha, atendimentos e frequência', icon: Users, path: '/ministerial/totem-kids/criancas', cor: '#00B39D' },
   { titulo: 'Painel ao vivo', desc: 'Quem está em cada sala agora', icon: Monitor, path: '/ministerial/totem-kids/painel', cor: '#f59e0b' },
   { titulo: 'Etiqueta', desc: 'Testar impressão da etiqueta', icon: Printer, path: '/ministerial/totem-kids/teste-etiqueta', cor: '#64748b' },
-  { titulo: 'Configurações', desc: 'Sessões, salas, estações, pagers, auditoria', icon: Settings, path: '/ministerial/totem-kids/configuracoes', cor: '#64748b' },
+  { titulo: 'Configurações', desc: 'Sessões, salas e auditoria (overrides + portão)', icon: Settings, path: '/ministerial/totem-kids/configuracoes', cor: '#64748b' },
 ];
 
 const fmtDiaMes = (d?: string | null) => (d ? `${String(d).slice(8, 10)}/${String(d).slice(5, 7)}` : '');

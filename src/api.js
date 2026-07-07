@@ -1519,45 +1519,20 @@ export const totemKids = {
     update: (id, data) => patch(`/totem-kids/salas/${id}`, data),
     remove: (id) => del(`/totem-kids/salas/${id}`),
   },
-  estacoes: {
-    list: () => get('/totem-kids/estacoes'),
-    create: (data) => post('/totem-kids/estacoes', data),
-    update: (id, data) => patch(`/totem-kids/estacoes/${id}`, data),
-    // Pareamento de tablet · admin gera QR a partir disso
-    infoPareamento: (id) => get(`/totem-kids/estacoes/${id}/info-pareamento`),
-    regenerarToken: (id) => post(`/totem-kids/estacoes/${id}/regenerar-token`, {}),
-    // Tablet confirma pareamento · body: {estacao_id, token}
-    parear: (data) => post('/totem-kids/estacoes/parear', data),
-  },
-  // Chamadas (TV das salas) · pai digita código na recepcao
-  chamadas: {
-    // Body: { código, estacao_token? } · token presente = modo self-service (sem login)
-    chamar: (data) => post('/totem-kids/chamadas', data),
-  },
-  // Display da TV consome via polling 2s
-  display: {
-    info: (token) => get(`/totem-kids/display/info?token=${encodeURIComponent(token)}`),
-    chamadasAtivas: (token) => get(`/totem-kids/display/chamadas-ativas?token=${encodeURIComponent(token)}`),
-    foyerResumo: (token) => get(`/totem-kids/display/foyer-resumo?token=${encodeURIComponent(token)}`),
-  },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),
   },
   auditoria: {
     overrides: () => get('/totem-kids/auditoria/overrides'),
   },
-  // Pagers fisicos (pulseira/coaster da família) · integração com transmissor LRS
-  pagers: {
-    list: (params = {}) => {
+  // Portão de saída · leitor de código de barras na entrada do corredor.
+  // scan registra a saída (verde) ou loga anomalia sem bloquear (âmbar).
+  portao: {
+    scan: (codigo) => post('/totem-kids/portao/scan', { codigo }),
+    scans: (params = {}) => {
       const q = new URLSearchParams(params).toString();
-      return get(`/totem-kids/pager/pagers${q ? `?${q}` : ''}`);
+      return get(`/totem-kids/portao/scans${q ? `?${q}` : ''}`);
     },
-    create: (data) => post('/totem-kids/pager/pagers', data),
-    update: (id, data) => patch(`/totem-kids/pager/pagers/${id}`, data),
-    remove: (id) => del(`/totem-kids/pager/pagers/${id}`),
-    testar: (id) => post(`/totem-kids/pager/pagers/${id}/testar`, {}),
-    emUso: () => get('/totem-kids/pager/em-uso'),
-    envios: (limit = 50) => get(`/totem-kids/pager/envios?limit=${limit}`),
   },
 };
 
