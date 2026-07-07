@@ -546,6 +546,30 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
   }
 });
 
+// PATCH /api/totem-kids/membro/:id · corrige nome/telefone do responsável
+// (mem_membros) direto do totem Kids — pra consertar nome errado no check-in.
+router.patch('/membro/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const allowed = ['nome', 'telefone'];
+    const update = {};
+    for (const k of allowed) {
+      if (k in req.body && String(req.body[k] ?? '').trim()) update[k] = String(req.body[k]).trim();
+    }
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: 'Nada pra atualizar' });
+    const { data, error } = await supabase
+      .from('mem_membros')
+      .update(update)
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .select('id, nome, telefone')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao editar responsável' });
+  }
+});
+
 // GET /api/totem-kids/criancas · listagem completa (admin)
 router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   try {

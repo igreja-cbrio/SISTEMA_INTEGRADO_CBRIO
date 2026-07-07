@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet, ShieldCheck, Maximize, Lock, Check } from 'lucide-react';
+import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, Tablet, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -725,6 +725,7 @@ export default function TotemKidsCheckin() {
           onCancelar={() => { setCrianca(null); if (preCheckin) encerrarPreCheckin(); }}
           onConfirmar={confirmarCheckin}
           imprimindo={imprimindo}
+          atualizarCrianca={(patch: Partial<Crianca>) => setCrianca(c => (c ? { ...c, ...patch } : c))}
           onResponsavelCadastrado={async () => {
             // Recarrega dados da criança (com os responsáveis novos)
             try {
@@ -783,6 +784,66 @@ export default function TotemKidsCheckin() {
   );
 }
 
+// ── Captura de foto pela webcam (getUserMedia) · usada no check-in ──
+function WebcamCaptura({ titulo, salvando, onCapturar, onFechar }: {
+  titulo: string; salvando: boolean; onCapturar: (dataUrl: string) => void; onFechar: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [erro, setErro] = useState('');
+  const [preview, setPreview] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancel = false;
+    navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 }, audio: false })
+      .then(stream => {
+        if (cancel) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
+      })
+      .catch(() => setErro('Não consegui acessar a câmera. Confira a permissão e se a webcam está conectada.'));
+    return () => { cancel = true; streamRef.current?.getTracks().forEach(t => t.stop()); };
+  }, []);
+
+  function capturar() {
+    const v = videoRef.current; if (!v) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = v.videoWidth || 640; canvas.height = v.videoHeight || 480;
+    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    setPreview(canvas.toDataURL('image/jpeg', 0.85));
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }}>
+      <DialogContent className="max-w-md z-[80]">
+        <DialogHeader>
+          <DialogTitle>{titulo}</DialogTitle>
+          <DialogDescription>Enquadre a criança e toque em Capturar.</DialogDescription>
+        </DialogHeader>
+        {erro ? (
+          <p className="text-sm text-destructive text-center py-6">{erro}</p>
+        ) : preview ? (
+          <div className="space-y-3">
+            <img src={preview} alt="" className="w-full rounded-xl object-cover" />
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setPreview(null)} disabled={salvando}>Refazer</Button>
+              <Button className="flex-1 bg-pink-600 hover:bg-pink-700" onClick={() => onCapturar(preview)} disabled={salvando}>
+                {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Check className="h-4 w-4 mr-1" />} Usar foto
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <video ref={videoRef} playsInline muted className="w-full rounded-xl bg-black aspect-[4/3] object-cover" />
+            <Button className="w-full bg-pink-600 hover:bg-pink-700" onClick={capturar}><Camera className="h-4 w-4 mr-1" /> Capturar</Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Subcomponente: tela de confirmação após selecionar criança ──
 function CheckinSelecao(props: {
   crianca: Crianca;
@@ -806,6 +867,7 @@ function CheckinSelecao(props: {
   onCancelar: () => void;
   onConfirmar: () => void;
   imprimindo: boolean;
+  atualizarCrianca: (patch: Partial<Crianca>) => void;
   onResponsavelCadastrado: () => void;
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
@@ -814,6 +876,7 @@ function CheckinSelecao(props: {
     cultosDia, cultosExtras, setCultosExtras,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
+    atualizarCrianca,
     onCancelar, onConfirmar, imprimindo, onResponsavelCadastrado } = props;
 
   // Auto-abre modal de cadastro se criança chegar sem responsável
@@ -824,19 +887,90 @@ function CheckinSelecao(props: {
     }
   }, [crianca.id, crianca.responsaveis]);
 
+  // Foto por webcam + correção de dados (nome da criança / do responsável) na hora.
+  const [camAberta, setCamAberta] = useState(false);
+  const [salvandoFoto, setSalvandoFoto] = useState(false);
+  const [editandoNome, setEditandoNome] = useState(false);
+  const [nomeEdit, setNomeEdit] = useState(crianca.nome);
+  const [salvandoNome, setSalvandoNome] = useState(false);
+  const [editRespId, setEditRespId] = useState<string | null>(null);
+  const [respNomeEdit, setRespNomeEdit] = useState('');
+  const [salvandoResp, setSalvandoResp] = useState(false);
+
+  async function salvarFoto(dataUrl: string) {
+    setSalvandoFoto(true);
+    try {
+      const r: any = await totemKids.criancas.uploadFoto(crianca.id, dataUrl);
+      atualizarCrianca({ foto_url: r?.foto_url || r?.url || r?.signedUrl || dataUrl });
+      setCamAberta(false);
+      toast.success('Foto da criança atualizada');
+    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar foto'); }
+    finally { setSalvandoFoto(false); }
+  }
+  async function salvarNomeCrianca() {
+    const nome = nomeEdit.trim();
+    if (nome.length < 2) { toast.error('Nome muito curto'); return; }
+    setSalvandoNome(true);
+    try {
+      await totemKids.criancas.update(crianca.id, { nome });
+      atualizarCrianca({ nome });
+      setEditandoNome(false);
+      toast.success('Nome da criança corrigido');
+    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar'); }
+    finally { setSalvandoNome(false); }
+  }
+  async function salvarNomeResp(membroId: string) {
+    const nome = respNomeEdit.trim();
+    if (nome.length < 2) { toast.error('Nome muito curto'); return; }
+    setSalvandoResp(true);
+    try {
+      await totemKids.criancas.updateResponsavelMembro(membroId, { nome });
+      atualizarCrianca({
+        responsaveis: crianca.responsaveis.map(r =>
+          r.membro_id === membroId ? { ...r, membro: { ...(r.membro || {}), id: r.membro?.id || membroId, nome } } : r),
+      });
+      setEditRespId(null);
+      toast.success('Nome do responsável corrigido');
+    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar'); }
+    finally { setSalvandoResp(false); }
+  }
+
   return (
     <Card>
       <CardContent className="p-6 space-y-5">
         <div className="flex items-start gap-4">
-          {crianca.foto_url ? (
-            <img src={crianca.foto_url} alt="" className="h-20 w-20 rounded-full object-cover" />
-          ) : (
-            <div className="h-20 w-20 rounded-full bg-pink-100 dark:bg-pink-900/40 flex items-center justify-center">
-              <Baby className="h-10 w-10 text-pink-500" />
-            </div>
-          )}
-          <div className="flex-1">
-            <h2 className="text-2xl font-bold">{crianca.nome}</h2>
+          {/* Avatar + botão de foto (webcam) */}
+          <button type="button" onClick={() => setCamAberta(true)} title="Tirar/atualizar foto da criança"
+            className="relative h-20 w-20 rounded-full shrink-0 group">
+            {crianca.foto_url ? (
+              <img src={crianca.foto_url} alt="" className="h-20 w-20 rounded-full object-cover" />
+            ) : (
+              <div className="h-20 w-20 rounded-full bg-pink-100 dark:bg-pink-900/40 flex items-center justify-center">
+                <Baby className="h-10 w-10 text-pink-500" />
+              </div>
+            )}
+            <span className="absolute -bottom-0.5 -right-0.5 h-7 w-7 rounded-full bg-pink-600 text-white flex items-center justify-center shadow ring-2 ring-background">
+              <Camera className="h-3.5 w-3.5" />
+            </span>
+          </button>
+          <div className="flex-1 min-w-0">
+            {editandoNome ? (
+              <div className="flex items-center gap-2">
+                <Input value={nomeEdit} onChange={e => setNomeEdit(e.target.value)} autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') salvarNomeCrianca(); if (e.key === 'Escape') setEditandoNome(false); }}
+                  className="h-10 text-lg font-bold" />
+                <Button size="sm" onClick={salvarNomeCrianca} disabled={salvandoNome} className="bg-pink-600 hover:bg-pink-700">
+                  {salvandoNome ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                </Button>
+                <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => { setEditandoNome(false); setNomeEdit(crianca.nome); }}><X className="h-4 w-4" /></Button>
+              </div>
+            ) : (
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <span className="truncate">{crianca.nome}</span>
+                <button type="button" onClick={() => { setNomeEdit(crianca.nome); setEditandoNome(true); }} title="Corrigir nome da criança"
+                  className="text-muted-foreground hover:text-pink-600 shrink-0"><Pencil className="h-4 w-4" /></button>
+              </h2>
+            )}
             <p className="text-muted-foreground">
               {formatIdade(crianca.idade_meses) || 'idade não informada'}
               {crianca.familia?.nome && <> · {crianca.familia.nome}</>}
@@ -847,6 +981,15 @@ function CheckinSelecao(props: {
             <ArrowLeft className="h-4 w-4 mr-1" /> Outra criança
           </Button>
         </div>
+
+        {camAberta && (
+          <WebcamCaptura
+            titulo={`Foto de ${crianca.nome.split(' ')[0]}`}
+            salvando={salvandoFoto}
+            onCapturar={salvarFoto}
+            onFechar={() => setCamAberta(false)}
+          />
+        )}
 
         {(crianca.tem_alergia || crianca.tem_espectro || crianca.tem_limitacao_fisica) && (
           <div className="bg-red-100 dark:bg-red-900/40 border border-red-300 dark:border-red-700 rounded-lg p-3 flex gap-2">
@@ -944,35 +1087,51 @@ function CheckinSelecao(props: {
             <>
               <div className="space-y-2">
                 {crianca.responsaveis.filter(r => r.autorizado_buscar).map(r => (
-                  <button
-                    key={r.membro_id}
-                    onClick={() => setResponsavelSelecionado(r.membro_id)}
-                    className={`w-full text-left flex items-center gap-3 p-3 rounded-lg border transition ${
-                      responsavelSelecionado === r.membro_id
-                        ? 'bg-pink-50 dark:bg-pink-950/30 border-pink-500'
-                        : 'bg-card hover:bg-muted'
-                    }`}
-                  >
-                    {r.membro?.foto_url ? (
-                      <img src={r.membro.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
-                    ) : (
-                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
-                        {(r.membro?.nome || '?').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{r.membro?.nome}</div>
-                      <div className="text-xs text-muted-foreground flex items-center gap-2">
-                        {r.parentesco && <span>{r.parentesco}</span>}
-                        {r.membro?.telefone && (
-                          <span className="flex items-center gap-1">
-                            <Phone className="h-3 w-3" />
-                            {r.membro.telefone}
-                          </span>
-                        )}
-                      </div>
+                  editRespId === r.membro_id ? (
+                    <div key={r.membro_id} className="flex items-center gap-2 p-2 rounded-lg border border-pink-500 bg-pink-50 dark:bg-pink-950/30">
+                      <Input value={respNomeEdit} onChange={e => setRespNomeEdit(e.target.value)} autoFocus
+                        onKeyDown={e => { if (e.key === 'Enter') salvarNomeResp(r.membro_id); if (e.key === 'Escape') setEditRespId(null); }}
+                        placeholder="Nome do responsável" className="h-10" />
+                      <Button size="sm" onClick={() => salvarNomeResp(r.membro_id)} disabled={salvandoResp} className="bg-pink-600 hover:bg-pink-700">
+                        {salvandoResp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                      </Button>
+                      <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setEditRespId(null)}><X className="h-4 w-4" /></Button>
                     </div>
-                  </button>
+                  ) : (
+                  <div key={r.membro_id} className="flex items-center gap-1">
+                    <button
+                      onClick={() => setResponsavelSelecionado(r.membro_id)}
+                      className={`flex-1 min-w-0 text-left flex items-center gap-3 p-3 rounded-lg border transition ${
+                        responsavelSelecionado === r.membro_id
+                          ? 'bg-pink-50 dark:bg-pink-950/30 border-pink-500'
+                          : 'bg-card hover:bg-muted'
+                      }`}
+                    >
+                      {r.membro?.foto_url ? (
+                        <img src={r.membro.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
+                      ) : (
+                        <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
+                          {(r.membro?.nome || '?').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{r.membro?.nome}</div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-2">
+                          {r.parentesco && <span>{r.parentesco}</span>}
+                          {r.membro?.telefone && (
+                            <span className="flex items-center gap-1">
+                              <Phone className="h-3 w-3" />
+                              {r.membro.telefone}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                    <button type="button" title="Corrigir nome do responsável"
+                      onClick={() => { setRespNomeEdit(r.membro?.nome || ''); setEditRespId(r.membro_id); }}
+                      className="p-2 text-muted-foreground hover:text-pink-600 shrink-0"><Pencil className="h-4 w-4" /></button>
+                  </div>
+                  )
                 ))}
                 {crianca.responsaveis.length === 0 && (
                   <div className="text-sm bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg p-3">
