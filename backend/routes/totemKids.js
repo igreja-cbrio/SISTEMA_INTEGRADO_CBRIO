@@ -564,6 +564,30 @@ router.patch('/membro/:id', authorizeModule('kids', 3), async (req, res) => {
       .select('id, nome, telefone')
       .single();
     if (error) throw error;
+
+    // mem_membros é o cadastro CANÔNICO da pessoa — propaga a mudança pros
+    // espelhos (best-effort · não falha a resposta): conta de usuário
+    // (profiles) e perfil de voluntariado (vol_profiles). O telefone do bot
+    // WhatsApp (whatsapp_lideres) re-sincroniza no cron diário de líderes.
+    (async () => {
+      try {
+        const patchProfile = {};
+        if (update.telefone) patchProfile.telefone = update.telefone;
+        if (update.nome) patchProfile.name = update.nome;
+        if (Object.keys(patchProfile).length) {
+          await supabase.from('profiles').update(patchProfile).eq('membro_id', req.params.id);
+        }
+      } catch (err) { console.error('[totemKids/membro] sync profiles:', err.message); }
+      try {
+        const patchVol = {};
+        if (update.telefone) patchVol.phone = update.telefone;
+        if (update.nome) patchVol.full_name = update.nome;
+        if (Object.keys(patchVol).length) {
+          await supabase.from('vol_profiles').update(patchVol).eq('membresia_id', req.params.id);
+        }
+      } catch (err) { console.error('[totemKids/membro] sync vol_profiles:', err.message); }
+    })();
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao editar responsável' });
@@ -1756,7 +1780,17 @@ router.get('/checkin/aberto', authorizeModule('kids', 1), async (req, res) => {
       .eq('crianca_id', crianca_id)
       .is('checkout_at', null)
       .maybeSingle();
-    res.json({ checkin: data || null });
+    // Check-ins ABERTOS em OUTRAS sessões (culto anterior sem check-out) —
+    // não impedem o novo check-in, mas o totem avisa e oferece regularizar.
+    const { data: anteriores } = await supabase
+      .from('kids_checkins')
+      .select('id, codigo_seguranca, created_at, sessao:kids_sessoes(id, status, culto:cultos(id, nome, data))')
+      .eq('crianca_id', crianca_id)
+      .neq('sessao_id', sessao_id)
+      .is('checkout_at', null)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    res.json({ checkin: data || null, abertos_anteriores: anteriores || [] });
   } catch (e) {
     console.error('[totemKids] checkin aberto:', e.message);
     res.status(500).json({ error: 'Erro ao consultar o check-in' });
@@ -1990,7 +2024,9 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     if (!checkin_id) return res.status(400).json({ error: 'checkin_id obrigatorio' });
     if (!metodo) return res.status(400).json({ error: 'metodo obrigatorio' });
 
-    const validMetodos = ['codigo_digitado', 'barcode_escaneado', 'responsavel_autorizado', 'override_supervisor'];
+    // 'painel' = check-out simples pela equipe (painel ao vivo / regularização
+    // de culto anterior no totem) — sem escolher qual responsável retirou.
+    const validMetodos = ['codigo_digitado', 'barcode_escaneado', 'responsavel_autorizado', 'override_supervisor', 'painel'];
     if (!validMetodos.includes(metodo)) return res.status(400).json({ error: 'metodo invalido', validos: validMetodos });
 
     // Override exige motivo + permissão
@@ -2009,13 +2045,13 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
       }
     }
 
-    // Buscar nome do responsável (snapshot)
+    // Buscar nome do responsável (snapshot) · dispensado no método 'painel'
     let respNome = responsavel_nome;
     if (responsavel_id && !respNome) {
       const { data: m } = await supabase.from('mem_membros').select('nome').eq('id', responsavel_id).maybeSingle();
       respNome = m?.nome;
     }
-    if (!respNome) return res.status(400).json({ error: 'responsavel_nome obrigatorio (snapshot)' });
+    if (!respNome && metodo !== 'painel') return res.status(400).json({ error: 'responsavel_nome obrigatorio (snapshot)' });
 
     // Multi-culto: se o check-in faz parte de um grupo (criança ficou em mais de
     // um culto), a retirada fecha TODAS as linhas ativas do grupo de uma vez.
@@ -2027,7 +2063,7 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     const patch = {
       checkout_at: new Date().toISOString(),
       responsavel_checkout_id: responsavel_id || null,
-      responsavel_checkout_nome: respNome,
+      responsavel_checkout_nome: respNome || null,
       checkout_metodo: metodo,
       checkout_por: req.user.userId,
       override_motivo: metodo === 'override_supervisor' ? override_motivo : null,
