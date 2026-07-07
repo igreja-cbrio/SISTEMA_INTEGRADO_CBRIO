@@ -11,6 +11,16 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { verifyDirecionarToken, direcionarMatricula } = require('../services/nextDirecionar');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
+
+// Janela do dia de HOJE em BRT (UTC-3, sem horário de verão) → intervalo em UTC.
+// 00:00 BRT = 03:00 UTC do mesmo dia. Usado pra "quem fez check-in hoje".
+function brtHojeRangeUtc() {
+  const brt = new Date(Date.now() - 3 * 3600 * 1000);
+  const start = new Date(Date.UTC(brt.getUTCFullYear(), brt.getUTCMonth(), brt.getUTCDate(), 3, 0, 0));
+  const end = new Date(start.getTime() + 24 * 3600 * 1000);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
 
 // Rate limit dedicado para inscrições (anti-spam)
 const limiter = rateLimit({
@@ -199,9 +209,14 @@ router.get('/direcionar/:token', async (req, res) => {
     if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
     const turma = await turmaAbertaAtual();
     if (!turma) return res.json({ turma: null, pessoas: [] }); // nenhuma turma aberta agora
+    // Só mostra quem fez check-in HOJE (decisão Matheus 2026-07-07): o self-service
+    // no fim do NEXT lista os presentes do dia, não a turma inteira.
+    const { start, end } = brtHojeRangeUtc();
     const { data: pessoas } = await supabase.from('next_matriculas')
       .select('id, nome, sobrenome, indicou_grupo, indicou_servir, indicou_batismo')
-      .eq('turma_id', turma.id).is('deleted_at', null).order('nome');
+      .eq('turma_id', turma.id).is('deleted_at', null)
+      .gte('check_in_at', start).lt('check_in_at', end)
+      .order('nome');
     res.json({
       turma: { nome: turma.nome },
       pessoas: (pessoas || []).map(p => ({
@@ -217,7 +232,7 @@ router.get('/direcionar/:token', async (req, res) => {
 router.post('/direcionar/:token', async (req, res) => {
   try {
     if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
-    const { matricula_id, destinos } = req.body || {};
+    const { matricula_id, destinos, areas } = req.body || {};
     if (!matricula_id) return res.status(400).json({ error: 'Selecione a pessoa' });
     const turma = await turmaAbertaAtual();
     if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
@@ -226,11 +241,110 @@ router.post('/direcionar/:token', async (req, res) => {
       .select('id, turma_id').eq('id', matricula_id).is('deleted_at', null).maybeSingle();
     if (!m || m.turma_id !== turma.id) return res.status(403).json({ error: 'Pessoa não pertence à turma aberta' });
     const r = await direcionarMatricula({
-      matriculaId: matricula_id, destinos, userId: null,
+      matriculaId: matricula_id, destinos, areas, userId: null,
       permitir: ['grupos', 'voluntarios', 'batismo'], // Devocional = Fase 2b (com o app do Matheus)
     });
     res.json(r);
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// ── Check-in / lista de presença do NEXT (totem · token assinado) ────────────
+// Mesma turma aberta do direcionamento. O totem marca quem chegou (presença) e
+// cadastra quem veio sem inscrição (walk-in), sempre cruzando com a base pra não
+// duplicar. O self-service (direcionar) só mostra quem tem check-in de hoje.
+
+// GET /checkin/:token — turma aberta + pessoas com status de presença (hoje)
+router.get('/checkin/:token', async (req, res) => {
+  try {
+    if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
+    const turma = await turmaAbertaAtual();
+    if (!turma) return res.json({ turma: null, pessoas: [] });
+    const { start, end } = brtHojeRangeUtc();
+    const { data: pessoas } = await supabase.from('next_matriculas')
+      .select('id, nome, sobrenome, check_in_at, origem')
+      .eq('turma_id', turma.id).is('deleted_at', null).order('nome');
+    res.json({
+      turma: { nome: turma.nome },
+      pessoas: (pessoas || []).map(p => ({
+        id: p.id,
+        nome: `${p.nome || ''}${p.sobrenome ? ' ' + p.sobrenome : ''}`.trim(),
+        presente: !!(p.check_in_at && p.check_in_at >= start && p.check_in_at < end),
+        walk_in: p.origem === 'totem',
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /checkin/:token — { matricula_id, presente } marca/desmarca presença
+router.post('/checkin/:token', async (req, res) => {
+  try {
+    if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
+    const { matricula_id, presente = true } = req.body || {};
+    if (!matricula_id) return res.status(400).json({ error: 'Selecione a pessoa' });
+    const turma = await turmaAbertaAtual();
+    if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
+    const { data: m } = await supabase.from('next_matriculas')
+      .select('id, turma_id').eq('id', matricula_id).is('deleted_at', null).maybeSingle();
+    if (!m || m.turma_id !== turma.id) return res.status(403).json({ error: 'Pessoa não pertence à turma aberta' });
+    await supabase.from('next_matriculas')
+      .update({ check_in_at: presente ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+      .eq('id', matricula_id);
+    res.json({ ok: true, presente: !!presente });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /checkin/:token/walkin — cadastra quem chegou sem inscrição (dedup) + check-in
+router.post('/checkin/:token/walkin', async (req, res) => {
+  try {
+    if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
+    const { nome, sobrenome, cpf, telefone, email, data_nascimento } = req.body || {};
+    if (!nome || String(nome).trim().length < 2) return res.status(400).json({ error: 'Informe o nome' });
+    if (cpf && !ehCpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido' });
+    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido' });
+    const turma = await turmaAbertaAtual();
+    if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
+
+    const cleanCpf = cpf ? soDigitos(cpf) : null;
+    const cleanTel = telefone ? soDigitos(telefone) : null;
+    const cleanEmail = email ? String(email).toLowerCase().trim() : null;
+    const nomeCompleto = [nome, sobrenome].filter(Boolean).join(' ').trim();
+
+    // Cruza com a base (CPF/telefone+nome/nome+nascimento) pra não duplicar cadastro.
+    let membroId = null;
+    try {
+      const r = await acharOuCriarGuardado({
+        cpf: cleanCpf, email: cleanEmail, telefone: cleanTel,
+        nome: nomeCompleto, dataNascimento: data_nascimento || null, status: 'visitante',
+      });
+      membroId = r?.membro_id || null;
+    } catch (e) { console.error('[next walkin] acharOuCriarGuardado:', e.message); }
+
+    // Se a pessoa já tem matrícula na turma aberta, só marca presença (não duplica).
+    if (membroId) {
+      const { data: ja } = await supabase.from('next_matriculas').select('id')
+        .eq('turma_id', turma.id).eq('membro_id', membroId).is('deleted_at', null)
+        .limit(1).maybeSingle();
+      if (ja) {
+        await supabase.from('next_matriculas')
+          .update({ check_in_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('id', ja.id);
+        return res.json({ ok: true, id: ja.id, ja_inscrito: true });
+      }
+    }
+
+    const { data: mat, error: matErr } = await supabase.from('next_matriculas').insert({
+      turma_id: turma.id,
+      nome: String(nome).trim(), sobrenome: sobrenome ? String(sobrenome).trim() : null,
+      cpf: cleanCpf, telefone: cleanTel, email: cleanEmail,
+      data_nascimento: data_nascimento || null, membro_id: membroId,
+      origem: 'totem', check_in_at: new Date().toISOString(),
+    }).select('id').single();
+    if (matErr) {
+      if (matErr.code === '23505') return res.json({ ok: true, ja_inscrito: true });
+      return res.status(500).json({ error: matErr.message });
+    }
+    res.json({ ok: true, id: mat.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;
