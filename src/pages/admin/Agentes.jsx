@@ -157,7 +157,7 @@ export default function Agentes() {
                         <span className="ag-chip" style={{ ['--c']: m.cor }}><Loader2 className="h-3 w-3 animate-spin" /> ativo</span>
                       </div>
                       <p className="text-xs text-muted-foreground truncate">{r.summary || m.desc}</p>
-                      <div className="flex items-center gap-4 mt-2 text-xs">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs">
                         <span className="flex items-center gap-1"><Timer className="h-3.5 w-3.5" style={{ color: m.cor }} /> {fmtDur(r.dur_s)}</span>
                         <span className="flex items-center gap-1 ag-num"><Coins className="h-3.5 w-3.5" style={{ color: m.cor }} /> {fmtTokens(r.tokens)}</span>
                         <span className="flex items-center gap-1 ag-num">{fmtCost(r.custo)}</span>
@@ -244,8 +244,8 @@ function Kpi({ Icon, label, value, sub, cor, pulse }) {
           <Icon className="h-4 w-4 relative" style={{ color: cor }} />
         </span>
       </div>
-      <div className="text-3xl font-extrabold mt-1 ag-num" style={{ color: cor }}>{value}</div>
-      {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
+      <div className="text-2xl md:text-3xl font-extrabold mt-1 ag-num leading-tight break-words" style={{ color: cor }}>{value}</div>
+      {sub && <div className="text-[11px] md:text-xs text-muted-foreground mt-0.5 break-words">{sub}</div>}
     </div>
   );
 }
