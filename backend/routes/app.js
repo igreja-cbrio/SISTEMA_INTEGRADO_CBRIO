@@ -839,7 +839,7 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
     const { service_id, volunteer_id, team_name, position_name } = req.body || {};
     if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
     const { data: vp } = await supabase.from('vol_profiles')
-      .select('id, full_name, planning_center_id').eq('id', volunteer_id).maybeSingle();
+      .select('id, full_name, planning_center_id, auth_user_id, membresia_id').eq('id', volunteer_id).maybeSingle();
     if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
     // Dedup: mesma pessoa já nesta equipe deste culto? (NULLs no unique não
     // deduplicam, então checamos aqui). Permite a mesma pessoa em OUTRA equipe.
@@ -860,6 +860,30 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
     }).select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status').single();
     if (error) throw error;
     res.status(201).json(data);
+
+    // Push pro voluntário escalado (na hora). Fire-and-forget · não bloqueia.
+    (async () => {
+      try {
+        const { notificarApp, membrosParaUsuarios } = require('../services/appPush');
+        let userIds = vp.auth_user_id ? [vp.auth_user_id] : [];
+        if (!userIds.length && vp.membresia_id) userIds = await membrosParaUsuarios([vp.membresia_id]);
+        if (!userIds.length) return;
+        const { data: svc } = await supabase.from('vol_services')
+          .select('service_type_name, scheduled_at').eq('id', service_id).maybeSingle();
+        const quando = svc?.scheduled_at
+          ? new Date(new Date(svc.scheduled_at).getTime() - 3 * 3600 * 1000)
+              .toISOString().replace('T', ' ').slice(0, 16).replace(/-/g, '/')
+          : '';
+        const culto = svc?.service_type_name || 'um culto';
+        const teamTxt = team_name ? ` · ${team_name}` : '';
+        await notificarApp(userIds, {
+          tipo: 'escala',
+          titulo: 'Você foi escalado(a) 🙌',
+          body: `${culto}${quando ? ` · ${quando}` : ''}${teamTxt}. Confirme sua presença no app.`,
+          data: { service_id },
+        });
+      } catch (e) { console.error('[APP vol/escala push]', e.message); }
+    })();
   } catch (e) {
     console.error('[APP vol/escala post]', e.message);
     res.status(500).json({ error: 'Erro ao escalar' });
