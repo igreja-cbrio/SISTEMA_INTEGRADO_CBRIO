@@ -729,6 +729,10 @@ export const governanca = {
     gerar:  (sigla, ano) => post('/governanca/memoria/gerar', { sigla, ano }),
     update: (id, conteudo_md) => patch(`/governanca/memoria/${id}`, { conteudo_md }),
   },
+  // Reunião de KPI (objetivos gerais × áreas) · deliberações estruturadas (Plaud)
+  kpiObjetivos: (meses) => get('/governanca/kpi-objetivos' + (meses ? `?meses=${meses}` : '')),
+  deliberacoes: (params = {}) => get('/governanca/deliberacoes' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
+  extrairDeliberacoes: (meetingId) => post(`/governanca/meetings/${meetingId}/extrair-deliberacoes`, {}),
 };
 
 export const agents = {

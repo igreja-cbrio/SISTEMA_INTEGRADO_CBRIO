@@ -735,8 +735,10 @@ router.patch('/meetings/:id', wr, async (req, res) => {
     // `snapshot` = retrato dos indicadores do ritual na data da reunião (jsonb ·
     // congela o que a diretoria viu; alimenta o gráfico de evolução da página
     // do ritual). Exige a migration 20260706120000 (colunas snapshot/snapshot_em).
+    // `temas` = curadoria do Conselho Consultivo ({selecionados:[siglas], extra:texto} ·
+    // quais relatórios das outras reuniões vão ao conselho). Migration 20260707120000.
     const allow = ['date', 'status', 'pauta', 'ata', 'deliberacoes', 'participantes',
-      'quorum_presente', 'local', 'observacoes', 'type_id', 'snapshot'];
+      'quorum_presente', 'local', 'observacoes', 'type_id', 'snapshot', 'temas'];
     const patch = {};
     for (const k of allow) if (k in (req.body || {})) patch[k] = req.body[k];
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
@@ -748,6 +750,9 @@ router.patch('/meetings/:id', wr, async (req, res) => {
     if (error) {
       if ('snapshot' in patch && /snapshot/i.test(error.message || '')) {
         return res.status(400).json({ error: 'Retrato indisponível: aplique a migration 20260706120000_governanca_meeting_snapshot no Supabase.' });
+      }
+      if ('temas' in patch && /temas/i.test(error.message || '')) {
+        return res.status(400).json({ error: 'Curadoria indisponível: aplique a migration 20260707120000_governanca_temas_deliberacoes no Supabase.' });
       }
       throw error;
     }
@@ -817,7 +822,13 @@ router.patch('/tasks/:id', wr, async (req, res) => {
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
     const { data, error } = await supabase.from('governance_tasks')
       .update(patch).eq('id', req.params.id).select('*').maybeSingle();
-    if (error) throw error;
+    if (error) {
+      // status='nao_executada' (deliberações) exige o CHECK ampliado pela migration.
+      if (patch.status === 'nao_executada' && /status_check/i.test(error.message || '')) {
+        return res.status(400).json({ error: 'Status indisponível: aplique a migration 20260707120000_governanca_temas_deliberacoes no Supabase.' });
+      }
+      throw error;
+    }
     if (!data) return res.status(404).json({ error: 'Tarefa não encontrada' });
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -862,6 +873,198 @@ router.delete('/docs/:id', wr, async (req, res) => {
   try {
     await govDocs.removerDoc(req.params.id, req.user.userId);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Reunião de KPI — os objetivos gerais como indicadores de processo
+// ════════════════════════════════════════════════════════════════════
+// Desenho do Marcos (2026-07-06): a 3ª reunião do mês avalia os ~30 objetivos
+// gerais do sistema OKR real, tratados como indicadores de processo POR VALOR
+// da Jornada que desaguam nas áreas (~171 KPIs táticos). A régua é
+// `objetivo_geral_id IS NOT NULL` (táticos operacionais fora da cascata não
+// entram). Estado atual vem da vw_kpi_trajetoria_atual (meta normalizada por
+// periodicidade — NÃO reimplementar essa conta); a série mensal usa o
+// histórico real (kpi_valores_calculados + kpi_registros) contra a meta
+// normalizada ATUAL (aproximação honesta · anotada na resposta).
+
+async function fetchPaged(table, cols, applyFilter) {
+  const out = []; let from = 0; const page = 1000;
+  while (true) {
+    let q = supabase.from(table).select(cols).range(from, from + page - 1);
+    if (applyFilter) q = applyFilter(q);
+    const { data, error } = await q;
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
+// 'YYYY-MM' | 'YYYY-Wnn' | 'YYYY-Qn' | 'YYYY-Sn' | 'YYYY' → 'YYYY-MM' (bucket mensal).
+function periodoParaMes(p) {
+  const s = String(p || '');
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{2})$/))) return `${m[1]}-${m[2]}`;
+  if ((m = s.match(/^(\d{4})-W(\d{2})$/))) {
+    // Quinta-feira da semana ISO define o mês (regra ISO-8601).
+    const ano = Number(m[1]), sem = Number(m[2]);
+    const jan4 = new Date(Date.UTC(ano, 0, 4));
+    const seg1 = new Date(jan4); seg1.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7));
+    const qui = new Date(seg1); qui.setUTCDate(seg1.getUTCDate() + (sem - 1) * 7 + 3);
+    return qui.toISOString().slice(0, 7);
+  }
+  if ((m = s.match(/^(\d{4})-Q([1-4])$/))) return `${m[1]}-${String(Number(m[2]) * 3).padStart(2, '0')}`;
+  if ((m = s.match(/^(\d{4})-S([12])$/))) return `${m[1]}-${m[2] === '1' ? '06' : '12'}`;
+  if ((m = s.match(/^(\d{4})$/))) return `${m[1]}-12`;
+  return null;
+}
+
+router.get('/kpi-objetivos', rd, async (req, res) => {
+  try {
+    const meses = Math.max(3, Math.min(24, Number(req.query.meses) || 12));
+
+    const [objRes, taticos] = await Promise.all([
+      supabase.from('kpi_objetivos_gerais')
+        .select('id, nome, descricao, indicador_geral, valores, ordem')
+        .eq('ativo', true).order('ordem'),
+      fetchPaged('vw_kpi_trajetoria_atual',
+        'kpi_id, indicador, area, periodicidade, valores, objetivo_geral_id, meta_periodo, ultimo_periodo, ultimo_valor, status_trajetoria, percentual_meta',
+        (q) => q.not('objetivo_geral_id', 'is', null)),
+    ]);
+    if (objRes.error) throw objRes.error;
+    const objetivos = objRes.data || [];
+
+    const porObjetivo = {};
+    for (const t of taticos) (porObjetivo[t.objetivo_geral_id] ||= []).push(t);
+
+    const avg = (arr) => arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null;
+
+    // ── Série mensal (histórico real · % vs meta normalizada atual) ──
+    const metaPorKpi = {}, objPorKpi = {};
+    for (const t of taticos) {
+      objPorKpi[t.kpi_id] = t.objetivo_geral_id;
+      if (t.meta_periodo != null && Number(t.meta_periodo) > 0) metaPorKpi[t.kpi_id] = Number(t.meta_periodo);
+    }
+    const idsComMeta = Object.keys(metaPorKpi);
+    const mesInicio = new Date(); mesInicio.setUTCMonth(mesInicio.getUTCMonth() - (meses - 1));
+    const mesInicioStr = mesInicio.toISOString().slice(0, 7);
+
+    // valores por kpi × mês (média quando há várias semanas no mês)
+    const buckets = {}; // `${kpi}|${mes}` -> number[]
+    const addBucket = (kpi, periodo, valor) => {
+      if (valor == null || metaPorKpi[kpi] == null) return;
+      const mes = periodoParaMes(periodo);
+      if (!mes || mes < mesInicioStr) return;
+      (buckets[`${kpi}|${mes}`] ||= []).push(Number(valor));
+    };
+    if (idsComMeta.length) {
+      // Corte por ano é seguro pra todos os formatos de período ('YYYY-MM',
+      // 'YYYY-Wnn', 'YYYY-Qn'…): comparação lexicográfica com o prefixo do ano.
+      const anoCorte = mesInicioStr.slice(0, 4);
+      const [calc, regs] = await Promise.all([
+        fetchPaged('kpi_valores_calculados', 'kpi_id, periodo_referencia, valor_calculado',
+          (q) => q.in('kpi_id', idsComMeta).gt('valor_calculado', 0).gte('periodo_referencia', anoCorte)),
+        fetchPaged('kpi_registros', 'indicador_id, periodo_referencia, valor_realizado',
+          (q) => q.in('indicador_id', idsComMeta).gt('valor_realizado', 0).gte('periodo_referencia', anoCorte)),
+      ]);
+      // Calculados têm precedência (mesma regra da view) · registros cobrem os manuais.
+      const temCalc = new Set(calc.map(c => c.kpi_id));
+      for (const c of calc) addBucket(c.kpi_id, c.periodo_referencia, c.valor_calculado);
+      for (const r of regs) if (!temCalc.has(r.indicador_id)) addBucket(r.indicador_id, r.periodo_referencia, r.valor_realizado);
+    }
+    // % do kpi no mês → média por objetivo no mês
+    const serieObj = {}; // objetivoId -> { mes -> number[] }
+    for (const [chave, vals] of Object.entries(buckets)) {
+      const [kpi, mes] = chave.split('|');
+      const media = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const pct = Math.round((media / metaPorKpi[kpi]) * 1000) / 10;
+      const obj = objPorKpi[kpi];
+      ((serieObj[obj] ||= {})[mes] ||= []).push(pct);
+    }
+
+    const resposta = objetivos.map(o => {
+      const ts = porObjetivo[o.id] || [];
+      const medidos = ts.filter(t => t.ultimo_valor != null);
+      const pcts = ts.map(t => t.percentual_meta).filter(v => v != null).map(Number);
+      const porArea = {};
+      for (const t of ts) {
+        const a = t.area || 'sem_area';
+        (porArea[a] ||= { pcts: [], medidos: 0, total: 0 });
+        porArea[a].total++;
+        if (t.ultimo_valor != null) porArea[a].medidos++;
+        if (t.percentual_meta != null) porArea[a].pcts.push(Number(t.percentual_meta));
+      }
+      const areas = {};
+      for (const [a, v] of Object.entries(porArea)) areas[a] = { pct: avg(v.pcts), medidos: v.medidos, total: v.total };
+      const serie = Object.entries(serieObj[o.id] || {})
+        .map(([mes, pcts2]) => ({ mes, pct: avg(pcts2) }))
+        .sort((x, y) => (x.mes < y.mes ? -1 : 1));
+      return {
+        id: o.id, nome: o.nome, descricao: o.descricao, indicador_geral: o.indicador_geral,
+        valores: o.valores || [], ordem: o.ordem,
+        total_taticos: ts.length, medidos: medidos.length,
+        pct_medio: avg(pcts),
+        areas, serie,
+        taticos: ts.map(t => ({
+          kpi_id: t.kpi_id, indicador: t.indicador, area: t.area, periodicidade: t.periodicidade,
+          ultimo_periodo: t.ultimo_periodo, ultimo_valor: t.ultimo_valor,
+          meta_periodo: t.meta_periodo, percentual_meta: t.percentual_meta,
+          status: t.status_trajetoria,
+        })),
+      };
+    });
+
+    res.json({
+      geradoEm: new Date().toISOString(),
+      meses,
+      nota_serie: 'Série mensal calculada do histórico real contra a meta normalizada ATUAL de cada KPI (aproximação: metas passadas podem ter sido diferentes).',
+      objetivos: resposta,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Deliberações estruturadas (extração do Plaud · review-before-apply)
+// ════════════════════════════════════════════════════════════════════
+
+// Deliberações (governance_tasks · origem='deliberacao') das reuniões de um
+// tipo no período — alimenta a página do ritual e a checagem do conselho.
+router.get('/deliberacoes', rd, async (req, res) => {
+  try {
+    let typeId = req.query.type_id;
+    if (req.query.sigla) {
+      const { data: t } = await supabase.from('governance_meeting_types')
+        .select('id').eq('sigla', String(req.query.sigla).toUpperCase()).maybeSingle();
+      if (!t) return res.json([]);
+      typeId = t.id;
+    }
+    let q = supabase.from('governance_meetings')
+      .select('id, date').is('deleted_at', null).order('date', { ascending: false });
+    if (typeId) q = q.eq('type_id', typeId);
+    if (req.query.from) q = q.gte('date', req.query.from);
+    if (req.query.to) q = q.lte('date', req.query.to);
+    const { data: meetings, error } = await q;
+    if (error) throw error;
+    const ids = (meetings || []).map(m => m.id);
+    if (!ids.length) return res.json([]);
+    const dataPorMtg = Object.fromEntries((meetings || []).map(m => [m.id, m.date]));
+    const { data: tasks, error: e2 } = await supabase.from('governance_tasks')
+      .select('id, meeting_id, titulo, responsavel, prazo, status, created_at')
+      .in('meeting_id', ids).eq('origem', 'deliberacao').order('created_at');
+    if (e2) throw e2;
+    res.json((tasks || []).map(t => ({ ...t, meeting_date: dataPorMtg[t.meeting_id] || null })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Extrai deliberações da transcrição (Plaud) com IA · NÃO grava nada — devolve
+// propostas pra revisão humana (quem confirma cria via POST /meetings/:id/tasks
+// com origem='deliberacao').
+router.post('/meetings/:id/extrair-deliberacoes', wr, async (req, res) => {
+  try {
+    const r = await govIA.extrairDeliberacoes({ meetingId: req.params.id });
+    res.json(r);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

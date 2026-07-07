@@ -33,7 +33,7 @@ export const STATUS_MEETING = {
   cancelada: { label: 'Cancelada', cor: '#9CA3AF' },
   adiada: { label: 'Adiada', cor: '#EF4444' },
 };
-export const STATUS_TASK = { pendente: 'Pendente', em_andamento: 'Em andamento', concluida: 'Concluída', cancelada: 'Cancelada' };
+export const STATUS_TASK = { pendente: 'Pendente', em_andamento: 'Em andamento', concluida: 'Concluída', cancelada: 'Cancelada', nao_executada: 'Não executada' };
 export const TIPO_DOC = {
   entrada: { label: 'Documento (pré-reunião)', cor: '#3B82F6' },
   transcricao: { label: 'Transcrição (Plaud)', cor: '#0EA5E9' },
@@ -74,6 +74,41 @@ export function DetalheReuniao({ id, canEdit, onClose, onChange }) {
   const [uploadTipo, setUploadTipo] = useState('transcricao');
   const [uploading, setUploading] = useState(false);
   const [gerandoPauta, setGerandoPauta] = useState(false);
+  // Extração de deliberações via IA (review-before-apply: nada é gravado até confirmar)
+  const [propostas, setPropostas] = useState(null); // [{decisao, responsavel, prazo, incluir}]
+  const [extraindo, setExtraindo] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
+
+  async function extrairDeliberacoes() {
+    if (extraindo) return;
+    if (!window.confirm('Extrair as deliberações da transcrição (Plaud) com IA? Nada é gravado — você revisa e confirma item a item. Pode levar até 1 minuto.')) return;
+    setExtraindo(true);
+    try {
+      const r = await gov.extrairDeliberacoes(id);
+      const lista = (r?.propostas || []).map(p => ({ ...p, incluir: true }));
+      setPropostas(lista);
+      if (!lista.length) toast.info('A IA não encontrou decisões claras na transcrição/ata.');
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setExtraindo(false); }
+  }
+
+  async function confirmarDeliberacoes() {
+    const marcadas = (propostas || []).filter(p => p.incluir && p.decisao.trim());
+    if (!marcadas.length) { toast.error('Nenhuma deliberação marcada'); return; }
+    setConfirmando(true);
+    try {
+      for (const p of marcadas) {
+        await gov.tasks.create(id, {
+          titulo: p.decisao.trim(), responsavel: p.responsavel || null,
+          prazo: p.prazo || null, origem: 'deliberacao',
+        });
+      }
+      toast.success(`${marcadas.length} deliberação(ões) registrada(s)`);
+      setPropostas(null);
+      await carregar();
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setConfirmando(false); }
+  }
 
   async function gerarPautaIA() {
     if (gerandoPauta) return;
@@ -290,9 +325,55 @@ export function DetalheReuniao({ id, canEdit, onClose, onChange }) {
             <Campo label="Ata" hint="Registro do que foi decidido na reunião">
               <textarea disabled={ro} rows={4} value={form.ata} onChange={e => set('ata', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Ata da reunião…" />
             </Campo>
-            <Campo label="Deliberações">
+            <Campo label="Deliberações" hint="texto corrido da ata · as decisões rastreáveis ficam no bloco abaixo">
               <textarea disabled={ro} rows={2} value={form.deliberacoes} onChange={e => set('deliberacoes', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} placeholder="Decisões formais…" />
             </Campo>
+
+            {/* Deliberações estruturadas · extração da transcrição (Plaud) com revisão humana */}
+            {canEdit && (
+              <div className="rounded-lg p-3" style={{ border: `1px solid ${C.border}` }}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: C.text }}>
+                    <Brain size={15} style={{ color: C.primary }} /> Deliberações rastreáveis
+                  </div>
+                  <button onClick={extrairDeliberacoes} disabled={extraindo}
+                    className="text-xs px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+                    style={{ border: `1px solid ${C.border}`, color: C.t2, opacity: extraindo ? 0.6 : 1 }}>
+                    {extraindo ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                    {extraindo ? 'Extraindo…' : 'Extrair da transcrição (IA)'}
+                  </button>
+                </div>
+                <p className="text-xs mt-1" style={{ color: C.t3 }}>
+                  A IA lê o Plaud/ata e propõe as decisões com responsável e prazo. Você revisa, edita e confirma — cada uma vira um item com status pra checar a execução na reunião seguinte.
+                </p>
+                {propostas && propostas.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {propostas.map((p, i) => (
+                      <div key={i} className="flex flex-wrap items-start gap-2 p-2 rounded-lg" style={{ border: `1px solid ${C.border}`, opacity: p.incluir ? 1 : 0.5 }}>
+                        <input type="checkbox" checked={p.incluir} className="mt-2"
+                          onChange={e => setPropostas(ps => ps.map((x, j) => j === i ? { ...x, incluir: e.target.checked } : x))} />
+                        <input value={p.decisao} placeholder="Decisão"
+                          onChange={e => setPropostas(ps => ps.map((x, j) => j === i ? { ...x, decisao: e.target.value } : x))}
+                          style={{ ...inputStyle, flex: '2 1 220px', width: 'auto', fontSize: 13 }} />
+                        <input value={p.responsavel || ''} placeholder="Responsável"
+                          onChange={e => setPropostas(ps => ps.map((x, j) => j === i ? { ...x, responsavel: e.target.value } : x))}
+                          style={{ ...inputStyle, flex: '1 1 110px', width: 'auto', fontSize: 13 }} />
+                        <input type="date" value={p.prazo || ''}
+                          onChange={e => setPropostas(ps => ps.map((x, j) => j === i ? { ...x, prazo: e.target.value } : x))}
+                          style={{ ...inputStyle, width: 'auto', fontSize: 13 }} />
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => setPropostas(null)} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Descartar</button>
+                      <button onClick={confirmarDeliberacoes} disabled={confirmando}
+                        className="text-xs px-3 py-1.5 rounded-lg text-white" style={{ background: C.primary, opacity: confirmando ? 0.6 : 1 }}>
+                        {confirmando ? 'Registrando…' : `Confirmar ${propostas.filter(p => p.incluir).length} deliberação(ões)`}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="sm:col-span-2">
@@ -322,7 +403,10 @@ export function DetalheReuniao({ id, canEdit, onClose, onChange }) {
                       {t.status === 'concluida' ? <CheckCircle2 size={17} /> : <Circle size={17} />}
                     </button>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm truncate" style={{ color: C.text, textDecoration: t.status === 'concluida' ? 'line-through' : 'none' }}>{t.titulo}</div>
+                      <div className="text-sm truncate" style={{ color: C.text, textDecoration: t.status === 'concluida' ? 'line-through' : 'none' }}>
+                        {t.origem === 'deliberacao' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full mr-1.5 align-middle" style={{ background: C.primaryBg, color: C.primary }}>deliberação</span>}
+                        {t.titulo}
+                      </div>
                       <div className="text-xs" style={{ color: C.t3 }}>{[t.responsavel, t.prazo ? `prazo ${fmtData(t.prazo)}` : '', STATUS_TASK[t.status]].filter(Boolean).join(' · ')}</div>
                     </div>
                     {canEdit && <button onClick={() => removerTarefa(t)} style={{ color: '#EF4444' }}><Trash2 size={14} /></button>}
