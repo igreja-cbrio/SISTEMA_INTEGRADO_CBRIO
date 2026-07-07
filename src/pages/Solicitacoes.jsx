@@ -109,7 +109,7 @@ export default function Solicitacoes() {
   const [busca, setBusca] = useState('');
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
-  const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'kanban' | 'lista'
+  const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'kanban' | 'lista' | 'solicitante'
   const [aprovarLayout, setAprovarLayout] = useState('lista'); // aba Aprovar · 'lista' | 'kanban' (por categoria)
   const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
@@ -564,6 +564,8 @@ export default function Solicitacoes() {
                 className={`px-3 h-9 text-sm ${atenderLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
               <button type="button" onClick={() => setAtenderLayout('lista')}
                 className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
+              <button type="button" onClick={() => setAtenderLayout('solicitante')}
+                className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'solicitante' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Por solicitante</button>
             </div>
           )}
           {view === 'aprovar' && (
@@ -643,6 +645,8 @@ export default function Solicitacoes() {
         {atenderLayout === 'lista' ? (
           <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
+        ) : atenderLayout === 'solicitante' ? (
+          <PainelPorSolicitante items={filtered} onOpen={setDetailItem} />
         ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4">
           {columns.map(col => (
@@ -1490,6 +1494,182 @@ function AprovacaoMeritoCard({ item, onApprove, onReject, onClick }) {
         </div>
       )}
     </Card>
+  );
+}
+
+// ── Painel "Por solicitante" (aba Atender · 2026-07-07) ──────────────────────
+// Agrupa as demandas por SOLICITANTE (uma pessoa pode pedir várias vezes) num
+// card por pessoa, mantendo o destaque dos urgentes. Toggle Kanban/Lista/Por
+// solicitante no cabeçalho. Estilo do sistema (glass, primária #00B39D) —
+// inspirado no rascunho "Painel por Responsável".
+
+function tempoAtras(iso) {
+  if (!iso) return '';
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 60) return `${min}m`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+function ehUrgente(item) {
+  return item.eh_urgente === true || item.urgencia === 'critica' || item.urgencia === 'alta';
+}
+function dotUrg(item) {
+  if (item.urgencia === 'critica' || item.eh_urgente) return 'bg-rose-500';
+  if (item.urgencia === 'alta') return 'bg-amber-500';
+  if (item.urgencia === 'baixa') return 'bg-slate-400';
+  return 'bg-blue-500';
+}
+function iniciais(nome) {
+  const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  return (((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase()) || '?';
+}
+
+function StatMini({ label, valor, tom }) {
+  const cor = tom === 'rose' ? 'text-rose-600 dark:text-rose-400'
+    : tom === 'amber' ? 'text-amber-600 dark:text-amber-400' : 'text-foreground';
+  return (
+    <Card className="p-4">
+      <p className="text-xs text-muted-foreground font-medium mb-1">{label}</p>
+      <p className={`text-2xl font-extrabold ${cor}`}>{valor}</p>
+    </Card>
+  );
+}
+
+function SolicitanteCard({ grupo, maxCarga, onOpen }) {
+  const [aberto, setAberto] = useState(false);
+  const carga = Math.round((grupo.demandas.length / maxCarga) * 100);
+  const barCor = carga >= 85 ? 'bg-rose-500' : carga >= 60 ? 'bg-amber-500' : 'bg-primary';
+  const mostra = aberto ? grupo.demandas : grupo.demandas.slice(0, 3);
+  return (
+    <Card className="p-5">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="h-11 w-11 rounded-full bg-primary/15 text-primary flex items-center justify-center text-sm font-bold shrink-0">
+          {iniciais(grupo.nome)}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-bold truncate">{grupo.nome}</p>
+          {grupo.email && <p className="text-[12px] text-muted-foreground truncate">{grupo.email}</p>}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between text-[12px] text-muted-foreground mb-1.5">
+        <span>Solicitações</span>
+        <span className="font-semibold text-foreground">{grupo.demandas.length}</span>
+      </div>
+      <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mb-4">
+        <div className={`h-full rounded-full transition-all ${barCor}`} style={{ width: `${carga}%` }} />
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        {grupo.urgentes > 0 && (
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />{grupo.urgentes} urgente{grupo.urgentes !== 1 ? 's' : ''}
+          </span>
+        )}
+        {grupo.normais > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">{grupo.normais} normal{grupo.normais !== 1 ? 'is' : ''}</span>}
+        {grupo.baixas > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{grupo.baixas} baixa{grupo.baixas !== 1 ? 's' : ''}</span>}
+      </div>
+
+      <div className="space-y-1">
+        {mostra.map(it => {
+          const st = getStatusMeta(it.status);
+          return (
+            <button key={it.id} onClick={() => onOpen(it)}
+              className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-muted/60 transition-colors">
+              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dotUrg(it)}`} />
+              <p className="text-[13px] truncate flex-1">{it.titulo}</p>
+              <Badge className={`text-[9px] px-1.5 py-0 ${st.color}`}>{st.label}</Badge>
+              <span className="text-[11px] text-muted-foreground shrink-0 w-8 text-right">{tempoAtras(it.created_at)}</span>
+            </button>
+          );
+        })}
+      </div>
+      {grupo.demandas.length > 3 && (
+        <button onClick={() => setAberto(a => !a)} className="w-full mt-2 text-[12px] font-semibold text-primary hover:opacity-80 py-1.5">
+          {aberto ? 'Ver menos' : `Ver todas (${grupo.demandas.length}) →`}
+        </button>
+      )}
+    </Card>
+  );
+}
+
+function PainelPorSolicitante({ items, onOpen }) {
+  const grupos = useMemo(() => {
+    const map = new Map();
+    for (const it of items) {
+      const key = it.solicitante_id || it.solicitante?.id || `nome:${(it.solicitante_nome || it.solicitante?.name || 'desconhecido').toLowerCase()}`;
+      if (!map.has(key)) {
+        map.set(key, { key, nome: it.solicitante?.name || it.solicitante_nome || 'Desconhecido', email: it.solicitante?.email || '', demandas: [] });
+      }
+      map.get(key).demandas.push(it);
+    }
+    const arr = [...map.values()];
+    arr.forEach(g => {
+      g.urgentes = g.demandas.filter(ehUrgente).length;
+      g.normais = g.demandas.filter(d => !ehUrgente(d) && d.urgencia !== 'baixa').length;
+      g.baixas = g.demandas.filter(d => d.urgencia === 'baixa').length;
+      g.demandas.sort((a, b) => (Number(ehUrgente(b)) - Number(ehUrgente(a))) || (new Date(b.created_at) - new Date(a.created_at)));
+    });
+    arr.sort((a, b) => (b.urgentes - a.urgentes) || (b.demandas.length - a.demandas.length) || a.nome.localeCompare(b.nome));
+    return arr;
+  }, [items]);
+
+  const maxCarga = Math.max(1, ...grupos.map(g => g.demandas.length));
+  const urgentesGlobais = useMemo(
+    () => items.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+    [items]
+  );
+  const totalSla = items.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
+
+  if (items.length === 0) {
+    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação na fila para os filtros atuais.</Card>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatMini label="Solicitações ativas" valor={items.length} />
+        <StatMini label="Solicitantes" valor={grupos.length} />
+        <StatMini label="Urgentes" valor={urgentesGlobais.length} tom="rose" />
+        <StatMini label="SLA atrasado" valor={totalSla} tom="amber" />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {grupos.map(g => <SolicitanteCard key={g.key} grupo={g} maxCarga={maxCarga} onOpen={onOpen} />)}
+        </div>
+
+        <div>
+          <Card className="p-5 xl:sticky xl:top-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> Urgentes agora
+              </h3>
+              <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-400">{urgentesGlobais.length}</Badge>
+            </div>
+            {urgentesGlobais.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma urgente. 🎉</p>
+            ) : (
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                {urgentesGlobais.map(it => (
+                  <button key={it.id} onClick={() => onOpen(it)}
+                    className="w-full text-left flex items-start gap-2.5 p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 transition-colors">
+                    <span className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${dotUrg(it)}`} />
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-snug line-clamp-2">{it.titulo}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                        {it.solicitante?.name || it.solicitante_nome || 'Desconhecido'} · há {tempoAtras(it.created_at)}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
   );
 }
 
