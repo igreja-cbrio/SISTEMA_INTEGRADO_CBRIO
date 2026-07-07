@@ -17,6 +17,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { toast } from 'sonner';
 import { totemKids } from '@/api';
 import { TotemKidsConfigTabs } from '@/pages/admin/totemKids/TotemKidsAdmin';
+import TotemKidsCheckout from './TotemKidsCheckout';
 import { formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas } from './lib/imprimir';
 import confetti from 'canvas-confetti';
@@ -114,6 +115,8 @@ export default function TotemKidsCheckin() {
   // Ajustes do totem (engrenagem): Sessões / Config / Testar etiqueta — sem sair do totem.
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [ajustesAba, setAjustesAba] = useState('sessoes');
+  // Check-in ↔ Check-out sem recarregar: alterna só o corpo (mantém o totem).
+  const [tela, setTela] = useState<'checkin' | 'checkout'>('checkin');
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
@@ -446,32 +449,6 @@ export default function TotemKidsCheckin() {
     </Dialog>
   );
 
-  if (!sessao) {
-    return (
-      <div className={totemMode ? 'fixed inset-0 z-[60] overflow-y-auto' : ''}>
-      <KidsZoneShell fullscreen={totemMode}>
-        <div className="text-center py-14 space-y-4">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-3xl shadow-lg shadow-pink-500/30">🧸</div>
-          <h1 className="text-2xl font-black tracking-tight">Totem Kids</h1>
-          <p className="text-lg text-slate-600">Nenhuma sessão aberta no momento</p>
-          <p className="text-sm text-slate-400">Abra uma sessão aqui mesmo pra iniciar o check-in.</p>
-          <div className="flex items-center justify-center gap-2 flex-wrap">
-            <Button onClick={() => abrirAjustes('sessoes')} className="bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold">
-              <Settings className="h-4 w-4 mr-1" /> Gerenciar sessões
-            </Button>
-            {totemMode ? (
-              <Button variant="destructive" onClick={pedirSairTotem}><Lock className="h-4 w-4 mr-1" /> Sair do modo totem</Button>
-            ) : (
-              <Button variant="outline" onClick={() => navigate('/ministerial/kids')}><ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Kids</Button>
-            )}
-          </div>
-        </div>
-        {ajustesDialog}
-      </KidsZoneShell>
-      </div>
-    );
-  }
-
   const estacaoPareada = getEstacaoPareada();
 
   return (
@@ -486,8 +463,12 @@ export default function TotemKidsCheckin() {
             {/* Sessão atual · clicável pra abrir/fechar/trocar sem sair do totem */}
             <button onClick={() => abrirAjustes('sessoes')} title="Gerenciar sessão (abrir/fechar/trocar)"
               className="text-xs font-medium text-slate-400 tracking-wide inline-flex items-center gap-1 hover:text-pink-600 transition-colors">
-              {sessao.culto?.nome}
-              {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), 'dd/MM', { locale: ptBR })}`}
+              {sessao ? (
+                <>
+                  {sessao.culto?.nome}
+                  {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), 'dd/MM', { locale: ptBR })}`}
+                </>
+              ) : 'Sem sessão aberta'}
               <Settings className="h-3 w-3 opacity-60" />
             </button>
             {estacaoPareada ? (
@@ -504,7 +485,7 @@ export default function TotemKidsCheckin() {
 
         <div className="flex items-center gap-4 flex-wrap">
           <KidsZoneRelogio />
-          <KidsZoneToggle ativo="checkin" onCheckout={() => navigate('/ministerial/totem-kids/checkout')} />
+          <KidsZoneToggle ativo={tela} onCheckin={() => setTela('checkin')} onCheckout={() => setTela('checkout')} />
           {/* Engrenagem discreta · ajustes (sessões, config, etiqueta) sem sair do totem */}
           <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-pink-600" onClick={() => abrirAjustes('sessoes')} title="Ajustes · sessões, configurações e testar etiqueta">
             <Settings className="h-5 w-5" />
@@ -528,7 +509,18 @@ export default function TotemKidsCheckin() {
 
       {ajustesDialog}
 
-      {!crianca ? (
+      {tela === 'checkout' ? (
+        <TotemKidsCheckout embutido />
+      ) : !sessao ? (
+        <div className="text-center py-14 space-y-4">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-3xl shadow-lg shadow-pink-500/30">🧸</div>
+          <p className="text-lg text-slate-600">Nenhuma sessão aberta no momento</p>
+          <p className="text-sm text-slate-400">Abra uma sessão aqui mesmo pra iniciar o check-in.</p>
+          <Button onClick={() => abrirAjustes('sessoes')} className="bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold">
+            <Settings className="h-4 w-4 mr-1" /> Gerenciar sessões
+          </Button>
+        </div>
+      ) : !crianca ? (
         <div className="space-y-6">
           {/* Último check-in · reimprimir etiqueta (se borrou/falhou) sem novo check-in */}
           {ultimaEtiqueta && (
