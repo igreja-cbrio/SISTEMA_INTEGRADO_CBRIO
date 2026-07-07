@@ -370,6 +370,15 @@ async function authenticate(req, res, next) {
         .map(o => modulosById.get(o.modulo_id)?.slug)
         .filter(Boolean);
 
+      // Slugs dos módulos DISTINTOS com leitura >= 1, deduplicados no catálogo.
+      // O front NÃO consegue deduzir isso de modulePerms: o mapa indexa por
+      // nome E por slug apontando pro MESMO objeto, mas o JSON da resposta
+      // duplica os objetos — contagem por referência (new Set) vê 2 pra um
+      // módulo só, e a trava-quiosque/landing de módulo único nunca disparava.
+      const slugsComAcesso = modulos
+        .filter(m => m.slug && (modulePerms[m.slug]?.leitura || 0) >= 1)
+        .map(m => m.slug);
+
       granular = {
         usuarioId: permUser.id,
         cargoId: permUser.cargo_id,
@@ -379,6 +388,7 @@ async function authenticate(req, res, next) {
         cargoNivelEscrita: permUser.cargos?.nivel_padrao_escrita ?? 1,
         modulePerms,
         modulosBloqueados, // ['rh', ...] · deny explícito (vence admin)
+        slugsComAcesso,    // ['kids', ...] · módulos distintos com leitura>=1
         areas,    // ['Marketing', 'Louvor', ...]
         setores,  // ['Criativo', 'Administrativo', ...]
       };
@@ -618,6 +628,7 @@ async function getMyPermissions(req, res) {
       cargoNivelEscrita: req.user.granular.cargoNivelEscrita,
       modulePerms: req.user.granular.modulePerms,
       modulosBloqueados: req.user.granular.modulosBloqueados || [],
+      slugsComAcesso: req.user.granular.slugsComAcesso || [],
       areas: req.user.granular.areas || [],
       setores: req.user.granular.setores || [],
     } : null,

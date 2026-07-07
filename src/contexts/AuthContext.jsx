@@ -396,14 +396,25 @@ export function AuthProvider({ children }) {
   // EXATAMENTE 1 módulo — ex.: voluntário responsável só pelo Batismo — abre
   // direto naquele módulo, sem menu e sem poder navegar pra mais nada. Não afeta
   // staff (is_membro_only=false), admin, diretor nem voluntário (kiosk próprio).
-  // ⚠️ modulePerms é indexado por NOME *e* por SLUG (2 chaves apontando pro MESMO
-  // objeto), então conta módulos DISTINTOS por referência — não por nº de chaves.
-  const entriesComAcesso = modulePerms
-    ? [...new Set(Object.values(modulePerms).filter((p) => p && (p.leitura || 0) >= 1))]
-    : [];
-  const slugTravavel = entriesComAcesso.length === 1
-    ? Object.keys(MODULO_ROTA_TRAVA).find((s) => modulePerms?.[s] === entriesComAcesso[0])
-    : null;
+  // A contagem de módulos DISTINTOS vem do backend (granular.slugsComAcesso ·
+  // slugs deduplicados no catálogo). ⚠️ NÃO dá pra contar por referência em
+  // modulePerms: o backend indexa nome e slug no MESMO objeto, mas o JSON da
+  // resposta duplica os objetos — o new Set vê 2 pra um módulo só e a trava
+  // nunca dispara. Fallback por referência só pra resposta de backend antigo.
+  const slugsComAcesso = Array.isArray(permData?.slugsComAcesso) ? permData.slugsComAcesso : null;
+  let slugTravavel = null;
+  if (slugsComAcesso) {
+    slugTravavel = (slugsComAcesso.length === 1 && MODULO_ROTA_TRAVA[slugsComAcesso[0]])
+      ? slugsComAcesso[0]
+      : null;
+  } else if (modulePerms) {
+    const entriesComAcesso = [...new Set(Object.values(modulePerms).filter((p) => p && (p.leitura || 0) >= 1))];
+    slugTravavel = entriesComAcesso.length === 1
+      ? (Object.keys(MODULO_ROTA_TRAVA).find((s) => modulePerms?.[s] === entriesComAcesso[0]) || null)
+      : null;
+  }
+  // Módulo único da conta (slug) — usado também pelo landing pós-login (homeRoute).
+  const moduloUnico = slugsComAcesso && slugsComAcesso.length === 1 ? slugsComAcesso[0] : null;
   const moduloTravado = (
     !!profile?.is_membro_only && !isAdmin && profile?.role !== 'diretor' && !isVoluntario && slugTravavel
   ) ? slugTravavel : null;
@@ -427,6 +438,7 @@ export function AuthProvider({ children }) {
     moduloTravado,
     rotaTravada,
     travaPrefixos,
+    moduloUnico,
     isColaborador,
     modulePerms,
     modulosBloqueados,
@@ -459,7 +471,7 @@ export function useAuth() {
     // During HMR, context can temporarily be null — return a safe fallback
     return {
       user: null, profile: null, loading: true, role: null,
-      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, moduloTravado: null, rotaTravada: null, travaPrefixos: null, isColaborador: false, modulePerms: null,
+      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, moduloTravado: null, rotaTravada: null, travaPrefixos: null, moduloUnico: null, isColaborador: false, modulePerms: null,
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,
