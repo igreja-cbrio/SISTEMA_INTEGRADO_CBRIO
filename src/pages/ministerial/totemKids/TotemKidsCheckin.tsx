@@ -611,12 +611,25 @@ export default function TotemKidsCheckin() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
                 <Input
                   ref={buscaRef}
+                  type="search"
+                  name="busca-crianca"
                   placeholder="Ex.: Sofia, Lucas, Helena... ou telefone"
                   value={busca}
                   onChange={e => setBusca(e.target.value)}
                   className="pl-10 h-14 text-lg rounded-xl border-2 border-slate-200 bg-slate-50 focus:bg-white text-slate-700"
                   autoFocus
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
                 />
+                {/* Campo isca oculto: o Chrome joga o autofill de e-mail aqui em vez
+                    do campo de busca (heurística de "primeiro input"). */}
+                <input type="text" name="fake-email" autoComplete="off" tabIndex={-1} aria-hidden="true"
+                  style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }} />
               </div>
               <Button
                 onClick={() => setModalNovo(true)}
