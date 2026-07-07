@@ -866,6 +866,37 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
   }
 });
 
+// PATCH /app/voluntariado/escala/:id — move de equipe (drag & drop) / muda função
+router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { team_name, position_name } = req.body || {};
+    const { data: atual } = await supabase.from('vol_schedules')
+      .select('id, service_id, volunteer_id, team_name').eq('id', req.params.id).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Escala não encontrada' });
+    const novoTeam = team_name === undefined ? atual.team_name : (team_name || null);
+    // Dedup: a pessoa já está na equipe destino deste culto?
+    if (atual.volunteer_id && novoTeam !== atual.team_name) {
+      let dupQ = supabase.from('vol_schedules').select('id')
+        .eq('service_id', atual.service_id).eq('volunteer_id', atual.volunteer_id).neq('id', atual.id);
+      dupQ = (novoTeam ? dupQ.eq('team_name', novoTeam) : dupQ.is('team_name', null));
+      const { data: dup } = await dupQ.maybeSingle();
+      if (dup) return res.status(409).json({ error: 'Essa pessoa já está nessa equipe' });
+    }
+    const patch = { team_name: novoTeam };
+    if (position_name !== undefined) patch.position_name = position_name || null;
+    const { data, error } = await supabase.from('vol_schedules').update(patch)
+      .eq('id', req.params.id)
+      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[APP vol/escala patch]', e.message);
+    res.status(500).json({ error: 'Erro ao mover' });
+  }
+});
+
 // DELETE /app/voluntariado/escala/:id — remove da escala
 router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
   try {
