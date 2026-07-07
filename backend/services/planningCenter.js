@@ -855,6 +855,26 @@ async function fetchPcoEmailMap(credentials) {
   return map;
 }
 
+// Telefone de UMA pessoa no PCO (People API) · usado no detalhe do voluntário
+// enquanto os números não vêm do app. Retorna o primário (ou o 1º) em dígitos.
+async function fetchPcoPhone(pcoId) {
+  if (!pcoId) return null;
+  try {
+    const { basic } = getPCCredentials();
+    const url = `${PC_PEOPLE_BASE}/people/${encodeURIComponent(pcoId)}/phone_numbers`;
+    const r = await fetchWithRetry(url, { Authorization: `Basic ${basic}` });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const arr = j.data || [];
+    if (!arr.length) return null;
+    const primary = arr.find((p) => p.attributes?.primary) || arr[0];
+    return primary?.attributes?.number || null;
+  } catch (e) {
+    console.error('[PCO phone]', e.message);
+    return null;
+  }
+}
+
 // Preenche vol_profiles.email onde estiver vazio, casando por planning_center_id.
 // NUNCA sobrescreve um e-mail já existente (mesma regra do backfill de CPF).
 async function backfillVolProfilesEmail(supabase, credentials) {
@@ -911,4 +931,5 @@ module.exports = {
   backfillVolProfilesCpf,
   fetchPcoEmailMap,
   backfillVolProfilesEmail,
+  fetchPcoPhone,
 };
