@@ -343,6 +343,16 @@ export const next = {
   publicDirecionar: (token, data) => fetch(`${API}/public/next/direcionar/${token}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Check-in / lista de presença do totem do NEXT (mesmo token assinado da turma)
+  publicCheckinInfo: (token) => fetch(`${API}/public/next/checkin/${token}`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
+  publicCheckin: (token, data) => fetch(`${API}/public/next/checkin/${token}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  publicCheckinWalkin: (token, data) => fetch(`${API}/public/next/checkin/${token}/walkin`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
   direcionarQr: () => get('/next/direcionar-qr'),
   // Admin
