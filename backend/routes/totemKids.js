@@ -1742,6 +1742,27 @@ router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {
   }
 });
 
+// GET /api/totem-kids/checkin/aberto?sessao_id=&crianca_id= · check-in ABERTO da
+// criança na sessão, com sala/culto/responsável — pra REIMPRIMIR a etiqueta
+// perdida (mesmo código) sem criar outro check-in.
+router.get('/checkin/aberto', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { sessao_id, crianca_id } = req.query;
+    if (!sessao_id || !crianca_id) return res.status(400).json({ error: 'sessao_id e crianca_id obrigatórios' });
+    const { data } = await supabase
+      .from('kids_checkins')
+      .select('id, codigo_seguranca, codigo_barras, checkin_grupo_id, responsavel_checkin_nome, created_at, sala:kids_salas(id, nome, cor), sessao:kids_sessoes(id, culto:cultos(id, nome, data))')
+      .eq('sessao_id', sessao_id)
+      .eq('crianca_id', crianca_id)
+      .is('checkout_at', null)
+      .maybeSingle();
+    res.json({ checkin: data || null });
+  } catch (e) {
+    console.error('[totemKids] checkin aberto:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar o check-in' });
+  }
+});
+
 // POST /api/totem-kids/checkin · cria check-in + gera código + retorna pra impressão
 router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   try {
@@ -1767,17 +1788,19 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       return res.status(400).json({ error: 'Sessão não esta aberta', status: sessao.status });
     }
 
-    // Anti-duplicidade: não deixa 2 checkins na mesma sessão pra mesma criança
-    const { data: existing } = await supabase
+    // Anti-duplicidade: bloqueia só quando há check-in ABERTO (sem check-out) na
+    // sessão. Depois do check-out a criança PODE fazer novo check-in (saiu e
+    // voltou pra outra celebração) — gera código e etiqueta novos.
+    const { data: existentes } = await supabase
       .from('kids_checkins')
       .select('id, codigo_seguranca, sala_id, checkout_at')
       .eq('sessao_id', sessao_id)
-      .eq('crianca_id', crianca_id)
-      .maybeSingle();
-    if (existing) {
+      .eq('crianca_id', crianca_id);
+    const checkinAberto = (existentes || []).find(c => !c.checkout_at);
+    if (checkinAberto) {
       return res.status(409).json({
-        error: 'Criança já com check-in nessa sessão',
-        checkin_existente: existing,
+        error: 'Criança já está com check-in aberto nessa sessão. Perdeu a etiqueta? Use "Imprimir etiqueta de novo".',
+        checkin_existente: checkinAberto,
       });
     }
 
@@ -1859,6 +1882,11 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       })
       .select('*')
       .single();
+    // 23505 = índice único (check-in aberto) — corrida entre 2 totens ou
+    // migration 20260707220000 ainda não aplicada (UNIQUE antiga no lugar).
+    if (errIns && errIns.code === '23505') {
+      return res.status(409).json({ error: 'Criança já está com check-in nessa sessão. Perdeu a etiqueta? Use "Imprimir etiqueta de novo".' });
+    }
     if (errIns) throw errIns;
 
     // Cultos do grupo (pro recibo): começa com o atual.
