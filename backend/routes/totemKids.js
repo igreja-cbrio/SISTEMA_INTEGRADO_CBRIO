@@ -2052,11 +2052,23 @@ router.get('/painel/dia', authorizeModule('kids', 1), async (req, res) => {
   try {
     const data = req.query.data
       || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-    const { data: linhas, error } = await supabase
-      .from('vw_kids_sessao_ao_vivo')
-      .select('sessao_id, culto_id, data_culto, culto_nome, service_type_name, status, abrir_em, criancas_presentes, criancas_saidas, decisoes_jesus, total_checkins')
-      .eq('data_culto', data);
-    if (error) throw error;
+    const COLS = 'sessao_id, sala_id, culto_id, data_culto, culto_nome, service_type_name, status, abrir_em, criancas_presentes, criancas_saidas, decisoes_jesus, total_checkins';
+    // Cultos do dia + QUALQUER sessão ABERTA (independe de ser dia de culto —
+    // testes/cultos atípicos com sessão aberta e check-ins reais devem aparecer).
+    const [rHoje, rAbertas] = await Promise.all([
+      supabase.from('vw_kids_sessao_ao_vivo').select(COLS).eq('data_culto', data),
+      supabase.from('vw_kids_sessao_ao_vivo').select(COLS).eq('status', 'aberta'),
+    ]);
+    if (rHoje.error) throw rHoje.error;
+    if (rAbertas.error) throw rAbertas.error;
+    const vistos = new Set();
+    const linhas = [];
+    for (const r of [...(rHoje.data || []), ...(rAbertas.data || [])]) {
+      const k = `${r.sessao_id}|${r.sala_id ?? ''}`;
+      if (vistos.has(k)) continue;
+      vistos.add(k);
+      linhas.push(r);
+    }
 
     // Agrega por culto (a view vem 1 linha por sala)
     const porCulto = new Map();
