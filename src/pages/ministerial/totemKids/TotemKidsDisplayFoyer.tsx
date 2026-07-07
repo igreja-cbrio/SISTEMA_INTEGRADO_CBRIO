@@ -7,9 +7,10 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { resolveApiBaseUrl } from '../../../lib/api-base';
 
 const POLL_INTERVAL_MS = 3000;
-const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || '/api';
+const API_BASE = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 
 type Sala = {
   id: string;
