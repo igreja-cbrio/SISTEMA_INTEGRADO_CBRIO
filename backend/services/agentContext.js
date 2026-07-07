@@ -1,6 +1,7 @@
 const { supabase } = require('../utils/supabase');
 const { getEffectiveLevel } = require('../middleware/auth');
 const { searchVault } = require('./cerebroSearch');
+const { searchConhecimento } = require('./conhecimentoBase');
 
 /**
  * Mapeia cada módulo de agente para a routeKey usada no sistema de permissões
@@ -76,6 +77,10 @@ async function buildContext(targetModules = ['all'], req = null, options = {}) {
 
   const ctx = {
     sistema: getSystemDoc(),
+    // Posicionado no topo de propósito: numa pergunta de conhecimento é a fonte
+    // mais confiável e precisa sobreviver ao corte de tamanho do serializeContext
+    // (que trunca por ordem de inserção). Preenchido abaixo; removido se vazio.
+    conhecimento_sistema: null,
     usuario: req?.user ? {
       nome: req.user.name,
       email: req.user.email,
@@ -94,7 +99,8 @@ async function buildContext(targetModules = ['all'], req = null, options = {}) {
     }
   }));
 
-  // Busca no Cérebro em paralelo com as consultas de módulos.
+  // Busca no Cérebro (vault SharePoint) + na base de conhecimento do sistema,
+  // ambas em paralelo com as consultas de módulos. As duas filtram por permissão.
   const vaultPromise = options.query
     ? searchVault(options.query, req, options.vaultLimit || 5).catch((e) => {
         console.warn('[AGENT CONTEXT] vault search failed:', e.message);
@@ -102,10 +108,32 @@ async function buildContext(targetModules = ['all'], req = null, options = {}) {
       })
     : Promise.resolve([]);
 
-  const [moduleResults, vaultResults] = await Promise.all([modulesPromise, vaultPromise]);
+  const conhecimentoPromise = options.query
+    ? searchConhecimento(options.query, req, options.conhecimentoLimit || 6).catch((e) => {
+        console.warn('[AGENT CONTEXT] conhecimento search failed:', e.message);
+        return [];
+      })
+    : Promise.resolve([]);
+
+  const [moduleResults, vaultResults, conhecimentoResults] = await Promise.all([
+    modulesPromise, vaultPromise, conhecimentoPromise,
+  ]);
 
   for (const [mod, data] of moduleResults) {
     ctx.modulos[mod] = data;
+  }
+
+  // Base de conhecimento primeiro: é a fonte curada de "como o sistema funciona
+  // / o que significa esse indicador". O agente deve preferir isto para
+  // perguntas conceituais/operacionais. Se vazia, remove a chave (não polui).
+  if (conhecimentoResults.length) {
+    ctx.conhecimento_sistema = {
+      descricao: 'Base de conhecimento curada do sistema CBRio (como funciona, o que cada módulo faz, glossário de indicadores). Use como fonte principal para perguntas sobre o sistema; é conteúdo confiável e verificado.',
+      total: conhecimentoResults.length,
+      itens: conhecimentoResults,
+    };
+  } else {
+    delete ctx.conhecimento_sistema;
   }
 
   if (vaultResults.length) {
