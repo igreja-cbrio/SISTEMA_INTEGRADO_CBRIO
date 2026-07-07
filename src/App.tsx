@@ -218,6 +218,7 @@ const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const WhatsappAdmin = lazyWithRetry(() => import('./pages/admin/Whatsapp'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
+const Agentes = lazyWithRetry(() => import('./pages/admin/Agentes'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
@@ -638,6 +639,7 @@ function AppRoutes() {
         <Route path="/ministerial/next" element={<Navigate to="/ministerial/integracao?tab=next" replace />} />
         <Route path="/ministerial/batismos" element={<Navigate to="/ministerial/integracao?tab=batismos" replace />} />
         <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
+        <Route path="/admin/agentes" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><Agentes /></Suspense></ModuleGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         {/* Telas substituidas pelo /painel (Sistema OKR/NSM 2026 — Fase 2) */}
         <Route path="/kpis" element={<Navigate to="/painel" replace />} />

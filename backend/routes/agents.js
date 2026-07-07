@@ -758,6 +758,123 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// GET /api/agents/overview — bundle único pro painel de atividade dos agentes.
+// runs/tokens/custo (agent_runs) ficam abertos a qualquer autenticado (como /runs
+// e /stats); a fila financeira (reasoning) e o log de chamadas só vão pra
+// admin/diretor — mesma régua de /queue e /log.
+router.get('/overview', async (req, res) => {
+  try {
+    const agora = Date.now();
+    const iso = (ms) => new Date(ms).toISOString();
+    const desde30 = iso(agora - 30 * 86400000);
+    const podeSensivel = ['admin', 'diretor'].includes(req.user.role);
+
+    // 1) Execuções dos últimos 30 dias (cap 1000 do PostgREST · folgado aqui)
+    const { data: runs30, error: errRuns } = await supabase
+      .from('agent_runs')
+      .select('id, agent_type, status, summary, tokens_input, tokens_output, cost_usd, created_at, completed_at')
+      .gte('created_at', desde30)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (errRuns) throw errRuns;
+    const runs = runs30 || [];
+
+    // 2) Rodando AGORA (independente da janela de 30d)
+    const { data: rodando } = await supabase
+      .from('agent_runs')
+      .select('id, agent_type, status, summary, tokens_input, tokens_output, cost_usd, created_at')
+      .eq('status', 'running')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    const durS = (ini, fim) => Math.max(0, Math.round((new Date(fim).getTime() - new Date(ini).getTime()) / 1000));
+    const inWindow = (r, dias) => new Date(r.created_at).getTime() >= agora - dias * 86400000;
+    const tk = (r) => (r.tokens_input || 0) + (r.tokens_output || 0);
+
+    // 3) KPIs
+    const kpis = {
+      rodandoAgora: (rodando || []).length,
+      runs24h: runs.filter((r) => inWindow(r, 1)).length,
+      runs7d: runs.filter((r) => inWindow(r, 7)).length,
+      runs30d: runs.length,
+      tokens7d: runs.filter((r) => inWindow(r, 7)).reduce((s, r) => s + tk(r), 0),
+      tokens30d: runs.reduce((s, r) => s + tk(r), 0),
+      custo7d: runs.filter((r) => inWindow(r, 7)).reduce((s, r) => s + Number(r.cost_usd || 0), 0),
+      custo30d: runs.reduce((s, r) => s + Number(r.cost_usd || 0), 0),
+      completed7d: runs.filter((r) => inWindow(r, 7) && r.status === 'completed').length,
+      failed7d: runs.filter((r) => inWindow(r, 7) && r.status === 'failed').length,
+    };
+
+    // 4) Agregação por agente (30d)
+    const mapa = {};
+    for (const r of runs) {
+      const k = r.agent_type || 'desconhecido';
+      if (!mapa[k]) mapa[k] = { agent_type: k, runs: 0, tokensInput: 0, tokensOutput: 0, tokens: 0, custo: 0, completed: 0, failed: 0, running: 0, lastAt: null, _durSum: 0, _durN: 0 };
+      const a = mapa[k];
+      a.runs += 1;
+      a.tokensInput += r.tokens_input || 0;
+      a.tokensOutput += r.tokens_output || 0;
+      a.tokens += tk(r);
+      a.custo += Number(r.cost_usd || 0);
+      if (r.status === 'completed') a.completed += 1;
+      if (r.status === 'failed') a.failed += 1;
+      if (r.status === 'running') a.running += 1;
+      if (!a.lastAt || new Date(r.created_at) > new Date(a.lastAt)) a.lastAt = r.created_at;
+      if (r.completed_at) { a._durSum += durS(r.created_at, r.completed_at); a._durN += 1; }
+    }
+    const perAgent = Object.values(mapa)
+      .map((a) => ({ ...a, avgDurS: a._durN ? Math.round(a._durSum / a._durN) : null, _durSum: undefined, _durN: undefined }))
+      .sort((x, y) => y.tokens - x.tokens);
+
+    // 5) Série 14d (tokens + runs + custo por dia)
+    const dias = [];
+    for (let i = 13; i >= 0; i--) dias.push(new Date(agora - i * 86400000).toISOString().slice(0, 10));
+    const balde = Object.fromEntries(dias.map((d) => [d, { dia: d, tokens: 0, runs: 0, custo: 0 }]));
+    for (const r of runs) {
+      const d = (r.created_at || '').slice(0, 10);
+      if (balde[d]) { balde[d].tokens += tk(r); balde[d].runs += 1; balde[d].custo += Number(r.cost_usd || 0); }
+    }
+    const serie = dias.map((d) => balde[d]);
+
+    // 6) Running detalhado + últimas execuções
+    const running = (rodando || []).map((r) => ({
+      id: r.id, agent_type: r.agent_type, summary: r.summary,
+      tokens: tk(r), custo: Number(r.cost_usd || 0), created_at: r.created_at, dur_s: durS(r.created_at, iso(agora)),
+    }));
+    const recent = runs.slice(0, 18).map((r) => ({
+      id: r.id, agent_type: r.agent_type, status: r.status, summary: r.summary,
+      tokens: tk(r), custo: Number(r.cost_usd || 0), created_at: r.created_at, completed_at: r.completed_at,
+      dur_s: r.completed_at ? durS(r.created_at, r.completed_at) : null,
+    }));
+
+    // 7) Fila financeira + log (só admin/diretor)
+    let fila = [];
+    let filaPendente = null;
+    let log = [];
+    if (podeSensivel) {
+      const { data: q } = await supabase
+        .from('agent_queue')
+        .select('id, agent_type, action_type, action_label, description, reasoning, status, created_at, applied_at')
+        .in('status', ['pending', 'approved', 'applied', 'failed'])
+        .order('created_at', { ascending: false })
+        .limit(40);
+      fila = q || [];
+      filaPendente = fila.filter((x) => x.status === 'pending').length;
+      const { data: l } = await supabase
+        .from('agent_log')
+        .select('agent, action, created_at')
+        .order('created_at', { ascending: false })
+        .limit(25);
+      log = l || [];
+    }
+
+    res.json({ geracao: iso(agora), restrito: !podeSensivel, kpis, running, recent, perAgent, serie, fila, filaPendente, log });
+  } catch (e) {
+    console.error('[AGENTS] /overview error:', e.message);
+    res.status(500).json({ error: 'Erro ao montar visão geral dos agentes' });
+  }
+});
+
 // GET /api/agents/scores — histórico de score por agent_type
 router.get('/scores', async (req, res) => {
   try {
