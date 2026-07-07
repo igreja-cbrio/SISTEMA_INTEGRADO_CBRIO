@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { totemKids } from '@/api';
 import { TotemKidsConfigTabs } from '@/pages/admin/totemKids/TotemKidsAdmin';
 import TotemKidsCheckout from './TotemKidsCheckout';
+import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
 import { formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas } from './lib/imprimir';
 import confetti from 'canvas-confetti';
@@ -98,6 +99,7 @@ export default function TotemKidsCheckin() {
   // Pré-check-in pelo app · o responsável preparou no celular e gerou um código
   const [preCodigo, setPreCodigo] = useState('');
   const [preBuscando, setPreBuscando] = useState(false);
+  const [scanAberto, setScanAberto] = useState(false);
   const [preCheckin, setPreCheckin] = useState<{
     pre_checkin_id: string;
     responsavel: { membro_id: string; nome: string; telefone: string | null };
@@ -257,8 +259,8 @@ export default function TotemKidsCheckin() {
 
   // Voluntário digita/escaneia o código do app → carrega responsável + filhos
   // e enfileira pra confirmar um a um (o check-in real continua manual).
-  async function buscarPreCheckin() {
-    const cod = preCodigo.trim().toUpperCase();
+  async function buscarPreCheckin(codigoArg?: string) {
+    const cod = (codigoArg ?? preCodigo).trim().toUpperCase();
     if (cod.length < 4) {
       toast.error('Digite o código do app');
       return;
@@ -282,6 +284,18 @@ export default function TotemKidsCheckin() {
     } finally {
       setPreBuscando(false);
     }
+  }
+
+  // QR do pré-check-in (app) → extrai o código e aplica. O QR do app contém o
+  // código; se vier como URL, pega o último segmento.
+  function onScanQR(text: string) {
+    setScanAberto(false);
+    let limpo = String(text || '').trim();
+    if (limpo.includes('/')) limpo = limpo.split('/').filter(Boolean).pop() || limpo;
+    const m = limpo.match(/[A-Za-z0-9]{4,8}/);
+    const cod = (m ? m[0] : limpo).toUpperCase();
+    setPreCodigo(cod);
+    buscarPreCheckin(cod);
   }
 
   async function carregarCriancaDaFila(criancaId: string) {
@@ -509,6 +523,18 @@ export default function TotemKidsCheckin() {
 
       {ajustesDialog}
 
+      {scanAberto && (
+        <Dialog open onOpenChange={(o) => { if (!o) setScanAberto(false); }}>
+          <DialogContent className="max-w-sm z-[80]">
+            <DialogHeader>
+              <DialogTitle>Escanear QR do app</DialogTitle>
+              <DialogDescription>Aponte a câmera pro QR do pré-check-in do responsável.</DialogDescription>
+            </DialogHeader>
+            <QrScanner onScan={onScanQR} onError={(e) => toast.error(e || 'Erro ao abrir a câmera')} />
+          </DialogContent>
+        </Dialog>
+      )}
+
       {tela === 'checkout' ? (
         <TotemKidsCheckout embutido />
       ) : !sessao ? (
@@ -569,11 +595,18 @@ export default function TotemKidsCheckin() {
                 autoCapitalize="characters"
               />
               <Button
-                onClick={buscarPreCheckin}
+                onClick={() => buscarPreCheckin()}
                 disabled={preBuscando || !preCodigo.trim()}
                 className="w-full h-12 bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold text-base rounded-xl"
               >
                 {preBuscando ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Aplicar código'}
+              </Button>
+              <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                <span className="flex-1 h-px bg-slate-200" /> ou <span className="flex-1 h-px bg-slate-200" />
+              </div>
+              <Button variant="outline" onClick={() => setScanAberto(true)}
+                className="w-full h-12 rounded-xl border-2 font-semibold gap-2">
+                <Camera className="h-5 w-5" /> Escanear QR do app
               </Button>
               <p className="text-xs text-slate-400 text-center">
                 Confira a criança com o responsável antes de imprimir — a entrada continua presencial.
