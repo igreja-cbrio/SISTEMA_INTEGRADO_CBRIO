@@ -122,6 +122,94 @@ export default function TotemKidsCheckin() {
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
+
+  // Check-in ABERTO da criança selecionada nessa sessão: etiqueta perdida →
+  // reimprimir (mesmo código); novo check-in só depois do check-out.
+  const [checkinAberto, setCheckinAberto] = useState<any>(null);
+  const [reimprimindoAberto, setReimprimindoAberto] = useState(false);
+
+  // Monta o payload da etiqueta (usado no check-in novo E na reimpressão).
+  function montarDadosEtiqueta(c: Crianca, args: {
+    checkinId: string; salaNome: string; salaCor?: string | null; respNome: string;
+    codigo: string; codigoBarras?: string | null; cultoNome?: string | null; cultoData?: string | null;
+  }): Parameters<typeof imprimirEtiquetas>[0] {
+    const estacao = getEstacaoPareada();
+    const alergiaLabel = c.tem_alergia ? (c.alergia_qual || 'sim') : null;
+    const necessidadeLabel = [
+      c.tem_espectro ? `Espectro${c.espectro_qual ? `: ${c.espectro_qual}` : ''}` : '',
+      c.tem_limitacao_fisica ? `Limitação${c.limitacao_fisica_qual ? `: ${c.limitacao_fisica_qual}` : ''}` : '',
+    ].filter(Boolean).join(' · ') || null;
+    // Aniversário na semana (próximos 7 dias) → etiqueta personalizada
+    const aniversarioSemana = (() => {
+      if (!c.data_nascimento) return false;
+      const mmdd = (dt: Date) => `${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      const hoje = new Date();
+      const dias: string[] = [];
+      for (let i = 0; i < 7; i++) { const dt = new Date(hoje); dt.setDate(hoje.getDate() + i); dias.push(mmdd(dt)); }
+      return dias.includes(String(c.data_nascimento).slice(5, 10));
+    })();
+    const cultoDiaHora = args.cultoNome
+      ? `${args.cultoNome}${args.cultoData ? ` · ${format(new Date(args.cultoData + 'T00:00:00'), 'dd/MM', { locale: ptBR })}` : ''}`
+      : undefined;
+    return {
+      checkinId: args.checkinId,
+      estacaoId: estacao?.id || null,
+      crianca: {
+        nome: c.nome,
+        idadeLabel: formatIdade(c.idade_meses),
+        salaNome: args.salaNome,
+        salaCor: args.salaCor,
+        observacoesMedicas: c.observacoes_medicas,
+        alergia: alergiaLabel,
+        necessidade: necessidadeLabel,
+        fotoAutorizada: !!c.foto_url,
+        aniversarioSemana,
+      },
+      responsavel: { nome: args.respNome },
+      codigoSeguranca: args.codigo,
+      codigoBarras: args.codigoBarras || args.codigo,
+      dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
+      cultoNome: args.cultoNome || undefined,
+      cultoDiaHora,
+    };
+  }
+
+  async function consultarCheckinAberto(sessaoId: string, criancaId: string) {
+    try {
+      const r: any = await totemKids.checkin.aberto(sessaoId, criancaId);
+      setCheckinAberto(r?.checkin || null);
+    } catch { setCheckinAberto(null); }
+  }
+
+  useEffect(() => {
+    setCheckinAberto(null);
+    if (!crianca?.id || !sessao?.id) return;
+    consultarCheckinAberto(sessao.id, crianca.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crianca?.id, sessao?.id]);
+
+  // Reimprime a etiqueta do check-in ABERTO (perdeu/borrou) · mesmo código.
+  async function reimprimirCheckinAberto() {
+    if (!crianca || !checkinAberto) return;
+    setReimprimindoAberto(true);
+    try {
+      const dados = montarDadosEtiqueta(crianca, {
+        checkinId: checkinAberto.id,
+        salaNome: checkinAberto.sala?.nome || '',
+        salaCor: checkinAberto.sala?.cor || null,
+        respNome: checkinAberto.responsavel_checkin_nome || '',
+        codigo: checkinAberto.codigo_seguranca,
+        codigoBarras: checkinAberto.codigo_barras,
+        cultoNome: checkinAberto.sessao?.culto?.nome || null,
+        cultoData: checkinAberto.sessao?.culto?.data || null,
+      });
+      await imprimirEtiquetas(dados);
+      setUltimaEtiqueta(dados);
+      toast.success(`Etiqueta reimpressa · mesmo código ${checkinAberto.codigo_seguranca}`);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao reimprimir a etiqueta');
+    } finally { setReimprimindoAberto(false); }
+  }
   const [reimprimindo, setReimprimindo] = useState(false);
   async function reimprimir() {
     if (!ultimaEtiqueta) return;
@@ -356,48 +444,18 @@ export default function TotemKidsCheckin() {
 
       const r = await totemKids.checkin.criar(payload);
 
-      // Saúde em destaque na etiqueta
-      const alergiaLabel = crianca.tem_alergia ? (crianca.alergia_qual || 'sim') : null;
-      const necessidadeLabel = [
-        crianca.tem_espectro ? `Espectro${crianca.espectro_qual ? `: ${crianca.espectro_qual}` : ''}` : '',
-        crianca.tem_limitacao_fisica ? `Limitação${crianca.limitacao_fisica_qual ? `: ${crianca.limitacao_fisica_qual}` : ''}` : '',
-      ].filter(Boolean).join(' · ') || null;
-      // Aniversário na semana (próximos 7 dias) → etiqueta personalizada
-      const aniversarioSemana = (() => {
-        if (!crianca.data_nascimento) return false;
-        const mmdd = (dt: Date) => `${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-        const hoje = new Date();
-        const dias: string[] = [];
-        for (let i = 0; i < 7; i++) { const dt = new Date(hoje); dt.setDate(hoje.getDate() + i); dias.push(mmdd(dt)); }
-        return dias.includes(String(crianca.data_nascimento).slice(5, 10));
-      })();
-      const cultoDiaHora = r.sessao.culto?.nome
-        ? `${r.sessao.culto.nome}${r.sessao.culto.data ? ` · ${format(new Date(r.sessao.culto.data + 'T00:00:00'), 'dd/MM', { locale: ptBR })}` : ''}`
-        : undefined;
-
       // Monta os dados da etiqueta e imprime. Guarda pra permitir REIMPRIMIR
       // (se a impressão falhar/borrar) sem criar outro check-in.
-      const dadosEtiqueta = {
+      const dadosEtiqueta = montarDadosEtiqueta(crianca, {
         checkinId: r.checkin.id,
-        estacaoId: estacao?.id || null,
-        crianca: {
-          nome: r.crianca.nome,
-          idadeLabel: formatIdade(crianca.idade_meses),
-          salaNome: r.sala.nome,
-          salaCor: r.sala.cor,
-          observacoesMedicas: r.crianca.observacoes_medicas,
-          alergia: alergiaLabel,
-          necessidade: necessidadeLabel,
-          fotoAutorizada: !!crianca.foto_url,
-          aniversarioSemana,
-        },
-        responsavel: { nome: r.responsavel.nome },
-        codigoSeguranca: r.codigo_seguranca,
+        salaNome: r.sala.nome,
+        salaCor: r.sala.cor,
+        respNome: r.responsavel.nome,
+        codigo: r.codigo_seguranca,
         codigoBarras: r.codigo_barras,
-        dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
-        cultoNome: r.sessao.culto?.nome,
-        cultoDiaHora,
-      };
+        cultoNome: r.sessao.culto?.nome || null,
+        cultoData: r.sessao.culto?.data || null,
+      });
       await imprimirEtiquetas(dadosEtiqueta);
       setUltimaEtiqueta(dadosEtiqueta);
 
@@ -435,7 +493,12 @@ export default function TotemKidsCheckin() {
         }
       }
     } catch (e: unknown) {
-      toast.error((e as { message?: string })?.message || 'Erro no check-in');
+      const err = e as { status?: number; message?: string; checkin_existente?: unknown };
+      // Já existe check-in ABERTO: carrega o banner de reimpressão da etiqueta.
+      if (err?.status === 409 && crianca && sessao?.id) {
+        consultarCheckinAberto(sessao.id, crianca.id);
+      }
+      toast.error(err?.message || 'Erro no check-in');
     } finally {
       setImprimindo(false);
     }
@@ -763,6 +826,9 @@ export default function TotemKidsCheckin() {
           onCancelar={() => { setCrianca(null); if (preCheckin) encerrarPreCheckin(); }}
           onConfirmar={confirmarCheckin}
           imprimindo={imprimindo}
+          checkinAberto={checkinAberto}
+          onReimprimirEtiqueta={reimprimirCheckinAberto}
+          reimprimindoEtiqueta={reimprimindoAberto}
           atualizarCrianca={(patch: Partial<Crianca>) => setCrianca(c => (c ? { ...c, ...patch } : c))}
           onResponsavelCadastrado={async () => {
             // Recarrega dados da criança (com os responsáveis novos)
@@ -868,7 +934,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
       setSenhaDefinida(true); setCriandoSenha(false); setNovaSenha('');
     } catch (e: unknown) {
       const err = e as { status?: number; message?: string };
-      setErro(err?.status === 403 ? 'Só um líder do Kids (Mari ou Milena) pode criar a senha.' : (err?.message || 'Erro ao criar a senha.'));
+      setErro(err?.status === 403 ? 'Só líderes do Kids (Mari/Milena) ou administradores (Matheus/Marcos Paulo) podem criar a senha.' : (err?.message || 'Erro ao criar a senha.'));
     } finally { setSalvandoSenha(false); }
   }
 
@@ -936,11 +1002,12 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
             {senhaDefinida === false ? (
               <div className="space-y-3">
                 <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 text-sm">
-                  Ainda não há senha de edição. A <b>Mari Gaia</b> ou a <b>Milena Rochet</b> (líderes do Kids) precisam criá-la.
+                  Ainda não há senha de edição. Ela pode ser criada por um <b>líder do Kids</b> (Mari Gaia / Milena Rochet)
+                  ou por um <b>administrador do sistema</b> (Matheus / Marcos Paulo).
                 </div>
                 {!criandoSenha ? (
                   <Button variant="outline" className="w-full" onClick={() => { setCriandoSenha(true); setErro(''); }}>
-                    Sou líder do Kids · criar senha
+                    Sou líder ou administrador · criar senha
                   </Button>
                 ) : (
                   <div className="space-y-2">
@@ -1114,6 +1181,9 @@ function CheckinSelecao(props: {
   onCancelar: () => void;
   onConfirmar: () => void;
   imprimindo: boolean;
+  checkinAberto: any;
+  onReimprimirEtiqueta: () => void;
+  reimprimindoEtiqueta: boolean;
   atualizarCrianca: (patch: Partial<Crianca>) => void;
   onResponsavelCadastrado: () => void;
 }) {
@@ -1124,7 +1194,9 @@ function CheckinSelecao(props: {
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     atualizarCrianca,
-    onCancelar, onConfirmar, imprimindo, onResponsavelCadastrado } = props;
+    onCancelar, onConfirmar, imprimindo,
+    checkinAberto, onReimprimirEtiqueta, reimprimindoEtiqueta,
+    onResponsavelCadastrado } = props;
 
   // Auto-abre modal de cadastro se criança chegar sem responsável
   const [modalCadResp, setModalCadResp] = useState(false);
@@ -1378,11 +1450,33 @@ function CheckinSelecao(props: {
           )}
         </div>
 
+        {/* Criança já com check-in ABERTO: reimprimir a etiqueta (perdida/borrada)
+            sem criar outro check-in. Novo check-in só depois do check-out. */}
+        {checkinAberto && (
+          <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 space-y-2">
+            <p className="text-sm">
+              <b>{crianca.nome.split(' ')[0]}</b> já está com check-in nessa sessão · código{' '}
+              <b className="font-mono tracking-widest">{checkinAberto.codigo_seguranca}</b>
+              {checkinAberto.sala?.nome ? <> · sala <b>{checkinAberto.sala.nome}</b></> : null}.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Perdeu a etiqueta? Imprima de novo — sai com o mesmo código. Um novo check-in só é
+              possível depois do check-out (quando a criança sai e volta).
+            </p>
+            <Button onClick={onReimprimirEtiqueta} disabled={reimprimindoEtiqueta} variant="outline"
+              className="w-full border-amber-400 text-amber-700 dark:text-amber-300">
+              {reimprimindoEtiqueta ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Printer className="h-4 w-4 mr-1" />}
+              Imprimir etiqueta de novo
+            </Button>
+          </div>
+        )}
+
         <div className="flex justify-end pt-2">
           <Button
             size="lg"
             onClick={onConfirmar}
-            disabled={imprimindo}
+            disabled={imprimindo || !!checkinAberto}
+            title={checkinAberto ? 'Já existe check-in aberto — reimprima a etiqueta ou faça o check-out antes.' : undefined}
             className="bg-pink-600 hover:bg-pink-700 text-white"
           >
             {imprimindo ? (
