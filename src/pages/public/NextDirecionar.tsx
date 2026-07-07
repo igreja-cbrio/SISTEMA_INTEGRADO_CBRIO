@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { Users, HandHeart, Droplets } from 'lucide-react';
 import { next as nextApi, publicVoluntariado } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
@@ -19,9 +20,9 @@ type PresencaPessoa = { id: string; nome: string; presente: boolean; walk_in: bo
 type Opcao = { id?: string; label: string; area_canonica?: string };
 
 const DESTINOS = [
-  { v: 'grupos',      l: 'Grupos',      emoji: '👥', desc: 'Fazer parte de um grupo' },
-  { v: 'voluntarios', l: 'Quero servir', emoji: '🙌', desc: 'Servir num ministério' },
-  { v: 'batismo',     l: 'Quero me batizar', emoji: '💧', desc: 'Dar esse passo' },
+  { v: 'grupos',      l: 'Grupos',           Icon: Users,     tint: 'bg-sky-500/12 text-sky-600 dark:text-sky-400',       desc: 'Fazer parte de um grupo' },
+  { v: 'voluntarios', l: 'Quero servir',     Icon: HandHeart, tint: 'bg-amber-500/12 text-amber-600 dark:text-amber-400', desc: 'Servir num ministério' },
+  { v: 'batismo',     l: 'Quero me batizar', Icon: Droplets,  tint: 'bg-blue-500/12 text-blue-600 dark:text-blue-400',     desc: 'Dar esse passo' },
 ] as const;
 
 const MAX_AREAS = 3;
@@ -196,12 +197,15 @@ export default function NextDirecionar() {
                   {DESTINOS.map(d => {
                     const feito = sel.ja[d.v];
                     const on = feito || !!destinos[d.v];
+                    const Icon = d.Icon;
                     return (
                       <div key={d.v}>
                         <button disabled={feito}
                           onClick={() => setDestinos(s => ({ ...s, [d.v]: !s[d.v] }))}
                           className={`w-full flex items-center gap-3 rounded-2xl border-2 px-4 py-3.5 text-left transition-colors ${on ? 'border-primary bg-primary/10' : 'border-border bg-background'} ${feito ? 'opacity-60' : ''}`}>
-                          <span className="text-2xl">{d.emoji}</span>
+                          <span className={`h-11 w-11 rounded-2xl flex items-center justify-center shrink-0 ${d.tint}`}>
+                            <Icon className="h-5 w-5" strokeWidth={2} />
+                          </span>
                           <span className="flex-1">
                             <span className="block font-semibold">{d.l}</span>
                             <span className="block text-xs text-muted-foreground">{feito ? 'já escolhido' : d.desc}</span>
