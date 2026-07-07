@@ -500,7 +500,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Adicione tudo que precisa num só pedido — uma linha por item. Anexe uma foto pra facilitar a identificação.
+            Adicione tudo que precisa num só pedido — uma linha por item. Anexe uma foto pra facilitar a identificação. No valor, informe o <strong>total da linha</strong> (todas as unidades juntas), não o preço de 1 unidade.
           </p>
 
           {form.itens_lista.length === 0 && (
@@ -548,7 +548,8 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
                     <Input
                       className="w-28 shrink-0"
                       type="number" min="0" step="0.01"
-                      placeholder="R$ estim."
+                      placeholder="R$ total"
+                      title="Valor estimado TOTAL desta linha (todas as unidades juntas), não o preço de 1 unidade"
                       value={it.valor_estimado}
                       onChange={e => updateItem(idx, { valor_estimado: e.target.value })}
                     />

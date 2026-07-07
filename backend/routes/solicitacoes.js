@@ -787,8 +787,11 @@ router.post('/', async (req, res) => {
       itensTexto = itensListaNorm
         .map(it => `${it.quantidade}x ${it.descricao}`)
         .join('\n');
+      // ⚠️ Semântica (2026-07-07 · caso aventais/coletes): o valor do item é o
+      // TOTAL DA LINHA (todas as unidades), NÃO o preço unitário — não
+      // multiplicar por quantidade (30 coletes · R$ 1.000 = R$ 1.000, não 30k).
       const soma = itensListaNorm.reduce(
-        (acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado * it.quantidade : 0), 0);
+        (acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
       const semTotal = valorEstimadoFinal == null || valorEstimadoFinal === '' || Number(valorEstimadoFinal) === 0;
       if (semTotal && soma > 0) valorEstimadoFinal = soma;
     }
