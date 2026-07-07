@@ -79,8 +79,13 @@ export const FORM_INITIAL = {
   // Pedido em massa (compras) · lista de itens · cada um: descrição + qtd +
   // link + valor estimado + foto (imagem_file no client → imagem_url no envio)
   itens_lista: [],
+  // Fotos gerais da solicitação (Serviços/Serviço externo) · Files locais →
+  // sobem pro bucket 'solicitacoes' no envio e viram imagens_url (jsonb)
+  imagens: [],
   // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
 };
+
+const MAX_FOTOS = 3;
 
 // Dropzone reutilizavel · comprovante de reembolso, boleto/NF de pagamento,
 // proposta de serviço. Estado de drag interno (self-contained).
@@ -156,6 +161,42 @@ function ItemFotoMini({ file, url, onFile, onClear }) {
   );
 }
 
+// Fotos gerais da solicitação · até MAX_FOTOS thumbnails + botão adicionar.
+// Usado em Serviços (manutenção) e Serviço externo — quem atende/cota avalia
+// pela imagem (goteira, equipamento, referência do serviço).
+function FotosAnexos({ fotos, onAdd, onRemove }) {
+  const inputRef = useRef(null);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {fotos.map((file, idx) => (
+        <div key={idx} className="relative h-16 w-16">
+          <img src={URL.createObjectURL(file)} alt="" className="h-16 w-16 rounded-md object-cover border border-border" />
+          <button type="button"
+            className="absolute -right-1.5 -top-1.5 rounded-full bg-background border border-border p-0.5 text-muted-foreground hover:text-red-500"
+            onClick={() => onRemove(idx)}
+            title="Remover foto">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
+      {fotos.length < MAX_FOTOS && (
+        <button type="button" onClick={() => inputRef.current?.click()}
+          className="h-16 w-16 rounded-md border-2 border-dashed border-border hover:border-primary/40 flex flex-col items-center justify-center text-muted-foreground"
+          title="Adicionar foto">
+          <ImageIcon className="h-5 w-5" />
+          <span className="text-[9px] leading-none mt-1">foto</span>
+        </button>
+      )}
+      <input ref={inputRef} type="file" className="hidden" accept=".jpg,.jpeg,.png,.webp"
+        onChange={e => {
+          const f = e.target.files[0];
+          if (f) onAdd(f);
+          e.target.value = '';
+        }} />
+    </div>
+  );
+}
+
 // Toggle "é recorrente" + frequência · pagamento e serviço (aluguel, mensalidade)
 function RecorrenteToggle({ form, setForm }) {
   return (
@@ -222,6 +263,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
       setSubmitting(true);
       const payload = { ...form };
       delete payload.documento_file;
+      delete payload.imagens;
 
       if (payload.valor_estimado) payload.valor_estimado = parseFloat(payload.valor_estimado);
       else delete payload.valor_estimado;
@@ -254,6 +296,22 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         if (uploadError) throw new Error('Erro ao enviar comprovante: ' + uploadError.message);
         const { data: { publicUrl } } = supabase.storage.from('solicitacoes').getPublicUrl(path);
         payload.documento_url = publicUrl;
+      }
+
+      // Fotos gerais (Serviços/Serviço externo) · sobe cada uma pro bucket e
+      // manda só as URLs públicas (backend grava em solicitacoes.imagens_url)
+      if (Array.isArray(form.imagens) && form.imagens.length && supabase) {
+        const urls = [];
+        for (const file of form.imagens) {
+          const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+          const path = `fotos/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from('solicitacoes')
+            .upload(path, file, { upsert: false });
+          if (upErr) throw new Error('Erro ao enviar foto: ' + upErr.message);
+          urls.push(supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl);
+        }
+        payload.imagens_url = urls;
       }
 
       // Pedido em massa (compras) · sobe as fotos de cada item e monta a lista
@@ -371,6 +429,23 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2}
           placeholder="Por que este pedido é importante agora?" />
       </div>
+
+      {/* Serviços (manutenção) / Serviço externo · fotos pra quem atende/cota
+          avaliar (goteira, equipamento, referência do serviço) */}
+      {['infraestrutura', 'servico'].includes(form.categoria) && (
+        <div className="space-y-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
+          <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">Fotos (opcional)</p>
+          <p className="text-xs text-muted-foreground">
+            Anexe até {MAX_FOTOS} fotos do problema ou do que precisa ser feito — ajuda quem vai
+            {form.categoria === 'servico' ? ' cotar o serviço' : ' atender'} a avaliar sem precisar ir até o local.
+          </p>
+          <FotosAnexos
+            fotos={form.imagens}
+            onAdd={f => setForm(prev => ({ ...prev, imagens: [...prev.imagens, f].slice(0, MAX_FOTOS) }))}
+            onRemove={idx => setForm(prev => ({ ...prev, imagens: prev.imagens.filter((_, i) => i !== idx) }))}
+          />
+        </div>
+      )}
 
       {/* Reserva de Espaco · campos especificos */}
       {form.categoria === 'reserva_espaco' && (

@@ -1753,6 +1753,25 @@ form a partir da ocorrência do culto. **Ponto de entrada novo = reusar esse
 componente** (não duplicar intake) — aprovação/SLA/roteamento/KPI ficam 100% no
 backend, iguais pra qualquer host.
 
+### Fotos anexadas no intake · Serviços/Serviço externo (2026-07-07)
+Pedido do Marcos: quem pede **Serviços (manutenção)** ou **Serviço externo
+(cotação)** pode anexar até 3 fotos no form pra quem atende/cota avaliar pela
+imagem (goteira, equipamento, referência). Compras NÃO ganhou o campo — já tem
+foto POR ITEM (`solicitacao_itens.imagem_url`).
+- **Coluna `solicitacoes.imagens_url` (jsonb · array de URLs)** · migration
+  `20260707120000` (aditiva/idempotente). Upload client-side pro bucket
+  `solicitacoes` (path `fotos/` · bucket+policies já existiam da 20260623200000),
+  mesmo padrão do comprovante/foto-de-item.
+- `NovaSolicitacaoForm.jsx`: campo `imagens` (Files) + componente `FotosAnexos`
+  (thumbnails + adicionar/remover · cap `MAX_FOTOS=3`) exibido só pra
+  `infraestrutura`/`servico`; no submit sobe as fotos e manda `imagens_url`.
+- Backend POST: sanitiza (strings · cap 5 · 2000 chars) e **só inclui a coluna
+  no insert quando há foto** — flows antigos não tocam a coluna (tolera a
+  migration ainda não aplicada; só o caminho novo exige ela).
+- Detalhe (`Solicitacoes.jsx` DetailDialog): bloco genérico "Fotos anexadas"
+  (thumbnails clicáveis · abre em tamanho real) pra qualquer categoria com
+  `imagens_url` — o GET usa `select('*')`, a coluna flui sozinha.
+
 ### Co-aprovadores de origem + e-mail das aprovações (2026-06-22)
 Pedido (gestão): a vice-diretora **Juliana Leão** (`juliana.leao@cbrio.org` ·
 cargo `diretor-rh` · solicitações nível 2) aprova as solicitações de origem do

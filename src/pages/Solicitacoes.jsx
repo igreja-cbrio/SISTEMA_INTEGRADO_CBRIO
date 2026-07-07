@@ -2300,6 +2300,21 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
+          {/* Fotos anexadas no intake (Serviços/Serviço externo) · quem
+              atende/cota avalia pela imagem · clicar abre em tamanho real */}
+          {Array.isArray(item.imagens_url) && item.imagens_url.length > 0 && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Fotos anexadas</p>
+              <div className="flex flex-wrap gap-2">
+                {item.imagens_url.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" title="Abrir foto em tamanho real">
+                    <img src={url} alt={`Foto ${i + 1}`} className="h-24 w-24 rounded-md object-cover border border-border hover:opacity-80 transition-opacity" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Detalhes da compra · itens estruturados (com foto) ou texto legado */}
           {item.categoria === 'compras' && ((item.solicitacao_itens?.length) || item.itens || item.link_referencia || item.favorecido_nome) && (
             <div className="space-y-2 pt-3 border-t border-border">
