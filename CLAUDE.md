@@ -111,7 +111,12 @@ sistema inteiro: **a operação dos módulos ministeriais alimenta a NSM e os
   Arthur Cecconi / Lillian · leitura; preenchimento via /integracao.
 - **Totem Kids** (`/ministerial/totem-kids`) · check-in/out infantil com
   etiqueta e pager · voluntários do Kids · **consolida presencial_kids e
-  decisões kids nos cultos** (aguardando hardware pro go-live).
+  decisões kids nos cultos** (totems montados, em teste pro go-live).
+  Displays de TV (`display-sala`/`display-foyer`, públicos via token de
+  estação): usar `resolveApiBaseUrl` de `src/lib/api-base.js` pra montar a
+  base da API — o padrão inline `VITE_API_URL || '/api'` não acrescenta
+  `/api` quando a env não termina nele, o fetch cai no fallback do SPA e
+  quebra com "Unexpected token '<'" (corrigido 2026-07-07).
 
 **Operação administrativa:**
 - `/solicitacoes` · backbone único adm↔ministérios (TI, compras, reembolso,

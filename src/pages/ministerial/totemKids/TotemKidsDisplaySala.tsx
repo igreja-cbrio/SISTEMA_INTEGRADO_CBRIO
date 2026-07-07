@@ -13,9 +13,10 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { resolveApiBaseUrl } from '../../../lib/api-base';
 
 const POLL_INTERVAL_MS = 2000;
-const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || '/api';
+const API_BASE = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 
 type Chamada = {
   chamada_id: string;
