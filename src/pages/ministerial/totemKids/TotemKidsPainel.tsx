@@ -582,7 +582,7 @@ export default function TotemKidsPainel() {
                             ehDecisaoMarcada ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800' : 'bg-card'
                           } ${c.checkout_at ? 'opacity-60' : ''}`}
                         >
-                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => { setCriancaSelCheckin(c); setOverridePainel(false); setOverrideMotivoPainel(''); abrirCrianca(c.crianca_id); }}>
+                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => { setCriancaSelCheckin(c); abrirCrianca(c.crianca_id); }}>
                             {c.crianca.foto_url ? (
                               <img src={c.crianca.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
                             ) : (
