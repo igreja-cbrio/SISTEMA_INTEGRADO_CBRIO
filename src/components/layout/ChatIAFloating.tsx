@@ -256,14 +256,6 @@ export default function ChatIAFloating() {
               {m.role === 'assistant' ? (
                 <div className="pedrinho-md">
                   {m.text ? <ReactMarkdown>{m.text}</ReactMarkdown> : (streaming && i === messages.length - 1 ? <TypingDots /> : null)}
-                  {!!m.text && !streaming && (
-                    <button onClick={() => (speaking ? pararVoz() : falar(m.text))}
-                      className="mt-1.5 flex items-center gap-1 text-[11px] opacity-60 hover:opacity-100"
-                      style={{ color: PRIMARY }} title={speaking ? 'Parar' : 'Ouvir'}>
-                      {speaking ? <Square className="h-3 w-3" fill="currentColor" /> : <Volume2 className="h-3 w-3" />}
-                      {speaking ? 'parar' : 'ouvir'}
-                    </button>
-                  )}
                 </div>
               ) : (
                 <span style={{ whiteSpace: 'pre-wrap' }}>{m.text}</span>
