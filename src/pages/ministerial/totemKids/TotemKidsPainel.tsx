@@ -121,6 +121,11 @@ export default function TotemKidsPainel() {
   const [criancaSelId, setCriancaSelId] = useState<string | null>(null);
   const [criancaDet, setCriancaDet] = useState<CriancaDetalhe | null>(null);
   const [carregandoCrianca, setCarregandoCrianca] = useState(false);
+  // Check-out direto do painel
+  const [criancaSelCheckin, setCriancaSelCheckin] = useState<CriancaNaSala | null>(null);
+  const [fazendoCheckout, setFazendoCheckout] = useState(false);
+  const [overridePainel, setOverridePainel] = useState(false);
+  const [overrideMotivoPainel, setOverrideMotivoPainel] = useState('');
 
   const podeEncerrar = isAdmin || (modulePerms?.kids?.escrita ?? 0) >= 3;
   const podeMarcarDecisao = isAdmin || (modulePerms?.kids?.escrita ?? 0) >= 2;
@@ -223,6 +228,35 @@ export default function TotemKidsPainel() {
       toast.error((e as { message?: string })?.message || 'Erro');
     } finally {
       setSalvandoDecisao(null);
+    }
+  }
+
+  // Check-out da criança direto do painel ao vivo (entrega pra responsável
+  // autorizado ou override do supervisor com motivo). Fecha o grupo multi-culto.
+  async function fazerCheckoutPainel(metodo: 'responsavel_autorizado' | 'override_supervisor', resp?: Responsavel) {
+    if (!criancaSelCheckin || fazendoCheckout) return;
+    const payload: Record<string, unknown> = { checkin_id: criancaSelCheckin.id, metodo };
+    if (metodo === 'responsavel_autorizado') {
+      if (!resp?.membro?.nome) { toast.error('Responsável sem nome'); return; }
+      payload.responsavel_id = resp.membro.id;
+      payload.responsavel_nome = resp.membro.nome;
+    } else {
+      if (overrideMotivoPainel.trim().length < 10) { toast.error('Descreva o motivo (mín. 10 caracteres)'); return; }
+      payload.override_motivo = overrideMotivoPainel.trim();
+      payload.responsavel_nome = 'Retirada autorizada pelo supervisor';
+    }
+    setFazendoCheckout(true);
+    try {
+      await totemKids.checkout.realizar(payload);
+      toast.success(`Check-out de ${criancaSelCheckin.crianca.nome} registrado`);
+      setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null);
+      setOverridePainel(false); setOverrideMotivoPainel('');
+      if (salaDetalhe) await abrirDetalheSala(salaDetalhe);
+      carregar(true);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao fazer check-out');
+    } finally {
+      setFazendoCheckout(false);
     }
   }
 
@@ -403,14 +437,14 @@ export default function TotemKidsPainel() {
       </div>
 
       {/* Modal · sala → lista de crianças ↔ ficha da criança (drilldown mobile) */}
-      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); } }}>
+      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0 gap-0">
           {/* ── Ficha da criança ── */}
           {criancaSelId ? (
             <>
               <DialogHeader className="p-4 pb-2 border-b">
                 <DialogTitle className="flex items-center gap-2">
-                  <button onClick={() => { setCriancaSelId(null); setCriancaDet(null); }} className="text-muted-foreground hover:text-foreground">
+                  <button onClick={() => { setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); }} className="text-muted-foreground hover:text-foreground">
                     <ChevronLeft className="h-5 w-5" />
                   </button>
                   Ficha da criança
@@ -486,6 +520,51 @@ export default function TotemKidsPainel() {
                         </div>
                       )}
                     </div>
+
+                    {/* Fazer check-out direto do painel */}
+                    {criancaSelCheckin && (
+                      criancaSelCheckin.checkout_at ? (
+                        <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground text-center">
+                          Esta criança já saiu (check-out feito).
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Fazer check-out</div>
+                          <p className="text-xs text-muted-foreground mb-2">Entregue para um responsável autorizado:</p>
+                          <div className="space-y-2">
+                            {(criancaDet.responsaveis || []).filter(r => r.autorizado_buscar && r.membro).map(r => (
+                              <Button key={r.id} variant="outline" className="w-full justify-start h-auto py-3"
+                                disabled={fazendoCheckout} onClick={() => fazerCheckoutPainel('responsavel_autorizado', r)}>
+                                <CheckCircle2 className="h-5 w-5 mr-2 text-green-600 shrink-0" />
+                                <span className="text-left">Entregar para {r.membro?.nome}{r.parentesco ? ` · ${r.parentesco}` : ''}</span>
+                              </Button>
+                            ))}
+                            {!(criancaDet.responsaveis || []).some(r => r.autorizado_buscar && r.membro) && (
+                              <p className="text-sm text-muted-foreground">Nenhum responsável autorizado cadastrado — use o override abaixo.</p>
+                            )}
+                          </div>
+                          {!overridePainel ? (
+                            <button className="mt-3 text-xs text-amber-700 dark:text-amber-400 inline-flex items-center gap-1 hover:underline"
+                              onClick={() => setOverridePainel(true)}>
+                              <ShieldAlert className="h-4 w-4" /> Outra pessoa (registrar motivo)
+                            </button>
+                          ) : (
+                            <div className="mt-3 space-y-2 rounded-lg border border-amber-300 dark:border-amber-800 p-3">
+                              <textarea value={overrideMotivoPainel} onChange={e => setOverrideMotivoPainel(e.target.value)}
+                                placeholder="Motivo (mín. 10 caracteres). Ex.: 'Mãe autorizou pelo WhatsApp que a tia Cláudia busca; conferi a identidade.'"
+                                className="w-full rounded-md border border-border bg-background p-2 text-sm min-h-[70px]" />
+                              <div className="flex gap-2">
+                                <Button variant="ghost" className="flex-1" onClick={() => { setOverridePainel(false); setOverrideMotivoPainel(''); }}>Cancelar</Button>
+                                <Button className="flex-1 bg-amber-600 hover:bg-amber-700" disabled={fazendoCheckout || overrideMotivoPainel.trim().length < 10}
+                                  onClick={() => fazerCheckoutPainel('override_supervisor')}>
+                                  {fazendoCheckout ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Check-out com override'}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    )}
                   </div>
                 )}
               </div>
@@ -519,7 +598,7 @@ export default function TotemKidsPainel() {
                             ehDecisaoMarcada ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800' : 'bg-card'
                           } ${c.checkout_at ? 'opacity-60' : ''}`}
                         >
-                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => abrirCrianca(c.crianca_id)}>
+                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => { setCriancaSelCheckin(c); setOverridePainel(false); setOverrideMotivoPainel(''); abrirCrianca(c.crianca_id); }}>
                             {c.crianca.foto_url ? (
                               <img src={c.crianca.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
                             ) : (
