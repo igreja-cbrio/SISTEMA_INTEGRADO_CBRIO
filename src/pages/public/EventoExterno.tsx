@@ -241,19 +241,24 @@ export default function EventoExterno() {
           resultado ? (
             <div style={{ padding: '32px 20px', textAlign: 'center', background: '#00B39D18', border: '1px solid #00B39D40', borderRadius: 14 }}>
               <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#00B39D', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, marginBottom: 14 }}>&#10003;</div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>Presença confirmada!</h2>
-              {resultado.temSorteio ? (
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>{evento.msg_sucesso_titulo || 'Presença confirmada!'}</h2>
+              {/* Texto de agradecimento: custom do evento (se houver) ou o padrão */}
+              {evento.msg_sucesso_texto ? (
+                <p style={{ fontSize: 13, color: C.text3, marginTop: 8, whiteSpace: 'pre-wrap' }}>{evento.msg_sucesso_texto}</p>
+              ) : (
+                <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>
+                  {resultado.jaInscrito ? 'Você já estava confirmado(a).' : resultado.temSorteio ? 'Anota aí o seu número da sorte:' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}
+                </p>
+              )}
+              {resultado.temSorteio && (
                 <>
-                  <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{resultado.jaInscrito ? 'Você já estava confirmado(a).' : 'Anota aí o seu número da sorte:'}</p>
                   <div style={{ marginTop: 12, fontSize: 13, color: '#00B39D', fontWeight: 600 }}>Seu número da sorte</div>
                   <div style={{ fontSize: 64, fontWeight: 800, color: '#00B39D', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{resultado.numero}</div>
                   <p style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>Guarde este número — vale pro sorteio!</p>
                 </>
-              ) : (
-                <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{resultado.jaInscrito ? 'Você já estava confirmado(a).' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}</p>
               )}
             </div>
-          ) : !evento.form_ativo ? (
+          ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>As inscrições deste evento estão encerradas.</p>
           ) : (
             <form onSubmit={enviar}>

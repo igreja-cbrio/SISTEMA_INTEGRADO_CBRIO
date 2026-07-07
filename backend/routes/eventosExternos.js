@@ -55,7 +55,7 @@ router.get('/', authorizeModule('eventos-externos', 1), async (req, res) => {
 // POST / — cria evento
 router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const { nome, data, hora, local, descricao, form_ativo, tem_sorteio, campos, capa_url, premios } = req.body || {};
+    const { nome, data, hora, local, descricao, form_ativo, tem_sorteio, campos, capa_url, premios, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, msg_whatsapp } = req.body || {};
     if (!nome || nome.trim().length < 2) return res.status(400).json({ error: 'Nome obrigatório' });
     // slug único
     let base = slugify(nome), slug = base, n = 1;
@@ -70,6 +70,10 @@ router.post('/', authorizeModule('eventos-externos', 3), async (req, res) => {
       form_ativo: form_ativo !== false, tem_sorteio: tem_sorteio !== false,
       campos: Array.isArray(campos) ? campos : [], capa_url: capa_url || null,
       premios: Array.isArray(premios) ? premios : [],
+      inscricoes_encerram_em: inscricoes_encerram_em || null,
+      msg_sucesso_titulo: msg_sucesso_titulo || null,
+      msg_sucesso_texto: msg_sucesso_texto || null,
+      msg_whatsapp: msg_whatsapp || null,
       created_by: req.user?.userId || null,
     }).select('*').single();
     if (error) throw error;
@@ -95,7 +99,7 @@ router.get('/:id', authorizeModule('eventos-externos', 1), async (req, res) => {
 // PUT /:id — atualizar
 router.put('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
-    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo', 'tem_sorteio', 'campos', 'capa_url', 'premios'];
+    const allowed = ['nome', 'data', 'hora', 'local', 'descricao', 'form_ativo', 'tem_sorteio', 'campos', 'capa_url', 'premios', 'inscricoes_encerram_em', 'msg_sucesso_titulo', 'msg_sucesso_texto', 'msg_whatsapp'];
     const patch = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
     const { data, error } = await supabase.from('ext_eventos')

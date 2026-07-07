@@ -161,12 +161,23 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
   );
 }
 
+// ISO (UTC) → valor do input datetime-local (horário local), e vazio se nulo.
+function isoParaInputLocal(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
 function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: () => void; onSaved: (id: string) => void }) {
   const ed = !!evento;
   const [f, setF] = useState({
     nome: evento?.nome || '', data: evento?.data || '', hora: evento?.hora || '', local: evento?.local || '',
     descricao: evento?.descricao || '', tem_sorteio: evento?.tem_sorteio !== false, form_ativo: evento?.form_ativo !== false,
     capa_url: evento?.capa_url || '',
+    inscricoes_encerram_em: isoParaInputLocal(evento?.inscricoes_encerram_em),
+    msg_sucesso_titulo: evento?.msg_sucesso_titulo || '', msg_sucesso_texto: evento?.msg_sucesso_texto || '',
+    msg_whatsapp: evento?.msg_whatsapp || '',
   });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
   const [premios, setPremios] = useState<string[]>(evento?.premios || []);
@@ -183,7 +194,11 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
     for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo precisa de uma pergunta'); return; } if (['select', 'escolha', 'multi'].includes(c.tipo) && !(c.opcoes || []).length) { toast.error(`Adicione opções em "${c.label}"`); return; } }
     setSalvando(true);
     try {
-      const payload = { ...f, campos, premios: premios.map(p => p.trim()).filter(Boolean) };
+      const payload = {
+        ...f, campos, premios: premios.map(p => p.trim()).filter(Boolean),
+        // datetime-local (horário local) → ISO; vazio → null (sem prazo)
+        inscricoes_encerram_em: f.inscricoes_encerram_em ? new Date(f.inscricoes_encerram_em).toISOString() : null,
+      };
       const ev: any = ed ? await api.atualizar(evento.id, payload) : await api.criar(payload);
       toast.success(ed ? 'Evento atualizado' : 'Evento criado');
       onSaved(ed ? evento.id : ev.id);
@@ -215,6 +230,11 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
             <Input type="date" value={f.data || ''} onChange={e => setF({ ...f, data: e.target.value })} />
             <Input placeholder="Horário (ex.: 8h30)" value={f.hora} onChange={e => setF({ ...f, hora: e.target.value })} />
           </div>
+          <div>
+            <div className="text-xs font-medium text-muted-foreground mb-1">Encerrar inscrições em (opcional)</div>
+            <Input type="datetime-local" value={f.inscricoes_encerram_em} onChange={e => setF({ ...f, inscricoes_encerram_em: e.target.value })} />
+            <p className="text-[11px] text-muted-foreground mt-1">Depois desse horário o formulário bloqueia novas inscrições automaticamente.</p>
+          </div>
           <Input placeholder="Local" value={f.local} onChange={e => setF({ ...f, local: e.target.value })} />
           <textarea placeholder="Descrição (opcional)" value={f.descricao} onChange={e => setF({ ...f, descricao: e.target.value })}
             className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-3 py-2 text-sm min-h-[90px]" />
@@ -238,6 +258,25 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
             <input type="checkbox" checked={f.form_ativo} onChange={e => setF({ ...f, form_ativo: e.target.checked })} />
             Inscrições abertas
           </label>
+
+          {/* Mensagem de agradecimento (tela pós-inscrição) */}
+          <div className="space-y-2 rounded-lg border border-border p-2">
+            <div className="text-xs font-medium text-muted-foreground">Mensagem de agradecimento (após confirmar) <span className="font-normal">— opcional</span></div>
+            <Input placeholder='Título (padrão: "Presença confirmada!")' value={f.msg_sucesso_titulo} onChange={e => setF({ ...f, msg_sucesso_titulo: e.target.value })} />
+            <textarea placeholder="Texto abaixo do título (padrão: mensagem de agradecimento)" value={f.msg_sucesso_texto}
+              onChange={e => setF({ ...f, msg_sucesso_texto: e.target.value })}
+              className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-3 py-2 text-sm min-h-[70px]" />
+          </div>
+
+          {/* Mensagem pré-definida do compartilhar no WhatsApp */}
+          <div className="space-y-1 rounded-lg border border-border p-2">
+            <div className="text-xs font-medium text-muted-foreground">Mensagem do botão "Compartilhar no WhatsApp" <span className="font-normal">— opcional</span></div>
+            <textarea placeholder="Ex.: Vem pro Celebra! Confirme sua presença: {link}" value={f.msg_whatsapp}
+              onChange={e => setF({ ...f, msg_whatsapp: e.target.value })}
+              className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-3 py-2 text-sm min-h-[60px]" />
+            <p className="text-[11px] text-muted-foreground">Use <code>{'{link}'}</code> onde o link do formulário deve aparecer.</p>
+          </div>
+
           <CamposEditor campos={campos} setCampos={setCampos} />
         </div>
         <Button onClick={salvar} disabled={salvando} className="w-full mt-2">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : (ed ? 'Salvar' : 'Criar evento')}</Button>
@@ -260,7 +299,11 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
 
   const link = ev ? `${window.location.origin}/evento/${ev.slug}` : '';
   function copiar() { navigator.clipboard.writeText(link); toast.success('Link copiado'); }
-  const wa = `https://wa.me/?text=${encodeURIComponent(`Confirme sua presença no ${ev?.nome || 'evento'}: ${link}`)}`;
+  // Mensagem do WhatsApp: usa a custom do evento ({link} vira a URL) ou o padrão.
+  const waTexto = ev?.msg_whatsapp
+    ? String(ev.msg_whatsapp).replaceAll('{link}', link)
+    : `Confirme sua presença no ${ev?.nome || 'evento'}: ${link}`;
+  const wa = `https://wa.me/?text=${encodeURIComponent(waTexto)}`;
 
   function confeteBig() {
     const cores = ['#00B39D', '#00d9bd', '#ffd166', '#ef476f', '#118ab2', '#ffffff'];
@@ -338,7 +381,7 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
       </div>
     )}
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl flex flex-col max-h-[88vh]">
+      <DialogContent className="max-w-5xl w-[96vw] flex flex-col max-h-[88vh]">
         {loading || !ev ? (
           <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         ) : (
@@ -424,17 +467,17 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
                 {(ev.inscritos || []).length === 0 ? (
                   <p className="text-xs text-muted-foreground py-2">Ninguém confirmou ainda.</p>
                 ) : (
-                  <div className="max-h-[220px] overflow-y-auto rounded-lg border border-border">
-                    <table className="w-full text-xs">
-                      <thead className="bg-foreground/5 text-muted-foreground"><tr>
-                        <th className="text-left p-1.5">Nº</th><th className="text-left p-1.5">Nome</th><th className="text-left p-1.5">Telefone</th>
-                        {(ev.campos || []).map((c: any) => <th key={c.key} className="text-left p-1.5">{c.label}</th>)}
+                  <div className="max-h-[340px] overflow-auto rounded-lg border border-border">
+                    <table className="min-w-max text-xs">
+                      <thead className="bg-foreground/5 text-muted-foreground sticky top-0"><tr>
+                        <th className="text-left px-2.5 py-2 whitespace-nowrap">Nº</th><th className="text-left px-2.5 py-2 whitespace-nowrap">Nome</th><th className="text-left px-2.5 py-2 whitespace-nowrap">Telefone</th>
+                        {(ev.campos || []).map((c: any) => <th key={c.key} className="text-left px-2.5 py-2 whitespace-nowrap min-w-[140px] max-w-[240px]">{c.label}</th>)}
                       </tr></thead>
                       <tbody>
                         {ev.inscritos.map((i: any) => (
                           <tr key={i.id} className="border-t border-border/40">
-                            <td className="p-1.5 font-semibold tabular-nums">{i.numero_sorte}</td>
-                            <td className="p-1.5">
+                            <td className="px-2.5 py-2 font-semibold tabular-nums align-top">{i.numero_sorte}</td>
+                            <td className="px-2.5 py-2 align-top whitespace-nowrap">
                               <span className="inline-flex items-center gap-1.5">
                                 {i.nome}
                                 {i.telefone && (
@@ -445,9 +488,9 @@ function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => 
                                 )}
                               </span>
                             </td>
-                            <td className="p-1.5 text-muted-foreground">{i.telefone || ''}</td>
+                            <td className="px-2.5 py-2 text-muted-foreground align-top whitespace-nowrap">{i.telefone || ''}</td>
                             {(ev.campos || []).map((c: any) => (
-                              <td key={c.key} className="p-1.5 text-muted-foreground">
+                              <td key={c.key} className="px-2.5 py-2 text-muted-foreground align-top min-w-[140px] max-w-[240px] whitespace-pre-wrap break-words">
                                 {c.tipo === 'imagem' ? (
                                   i.dados?.[c.key] ? (
                                     <a href={i.dados[c.key]} target="_blank" rel="noreferrer" title="Abrir imagem">
