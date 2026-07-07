@@ -89,7 +89,7 @@ const NAV_ITEMS = [
         items: [
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', perm: 'isAdmin' },
-          { label: 'Assistente IA', description: 'Agentes de auditoria e análise', icon: BrainCircuit, path: '/assistente-ia', perm: 'canIA' },
+          { label: 'Agentes & Auditoria', description: 'Fila de aprovação e agentes de auditoria · acesso restrito (devs)', icon: BrainCircuit, path: '/assistente-ia', perm: 'isDev' },
           { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
           { label: 'Reconhecimento Facial', description: 'Presença na entrada · membros identificados + rostos anônimos a resolver', icon: Camera, path: '/ministerial/reconhecimento-facial', module: 'face' },
         ],
