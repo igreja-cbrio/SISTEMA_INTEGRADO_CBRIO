@@ -111,7 +111,7 @@ router.post('/:slug/inscrever', async (req, res) => {
       modulo: 'eventos-externos', tipo: 'nova_inscricao',
       titulo: `Nova inscrição · ${ev.nome}`,
       mensagem: `${nome.trim()} confirmou presença em "${ev.nome}".`,
-      link: `/eventos-externos?evento=${ev.id}`,
+      link: `/eventos-externos/${ev.id}`,
     }).catch((err) => console.error('[publicEventoExterno] notificar:', err.message));
 
     res.status(201).json({ ok: true, numero_sorte: ins.numero_sorte, tem_sorteio: ev.tem_sorteio });

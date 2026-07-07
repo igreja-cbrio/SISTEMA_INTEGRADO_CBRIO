@@ -1,7 +1,7 @@
 // Eventos Externos · calendário + eventos com formulário público de confirmação
 // de presença e sorteio (número da sorte aleatório por inscrito).
 import { useEffect, useMemo, useState } from 'react';
-import confetti from 'canvas-confetti';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { eventosExternos as api } from '../api';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -9,21 +9,27 @@ import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import {
-  CalendarDays, Plus, Loader2, ChevronLeft, ChevronRight, Users, Gift, Link2, MessageCircle,
-  Trash2, MapPin, Clock, PartyPopper, Pencil, Image as ImageIcon, QrCode,
+  CalendarDays, Plus, Loader2, ChevronLeft, ChevronRight, Users,
+  Trash2, Image as ImageIcon,
 } from 'lucide-react';
-import QrLinkDialog from '../components/QrLinkDialog';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const DIAS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 export default function EventosExternos() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [eventos, setEventos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mesRef, setMesRef] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [novoOpen, setNovoOpen] = useState(false);
-  const [detId, setDetId] = useState<string | null>(null);
+
+  // Link legado de notificação (?evento=id) → tela dedicada do evento.
+  useEffect(() => {
+    const evId = searchParams.get('evento');
+    if (evId) navigate(`/eventos-externos/${evId}`, { replace: true });
+  }, [searchParams, navigate]);
 
   function carregar() {
     setLoading(true);
@@ -79,7 +85,7 @@ export default function EventosExternos() {
                   {d && <div className="text-xs text-muted-foreground">{d.getDate()}</div>}
                   <div className="space-y-0.5 mt-0.5">
                     {evs.map(e => (
-                      <button key={e.id} onClick={() => setDetId(e.id)} title={e.nome}
+                      <button key={e.id} onClick={() => navigate(`/eventos-externos/${e.id}`)} title={e.nome}
                         className="w-full truncate rounded bg-primary/15 text-primary text-[11px] px-1 py-0.5 text-left hover:bg-primary/25">
                         {e.nome}
                       </button>
@@ -101,7 +107,7 @@ export default function EventosExternos() {
           ) : (
             <div className="space-y-2 max-h-[440px] overflow-y-auto">
               {eventos.map(e => (
-                <button key={e.id} onClick={() => setDetId(e.id)} className="w-full text-left rounded-lg border border-border p-2.5 hover:border-primary/40 transition-colors">
+                <button key={e.id} onClick={() => navigate(`/eventos-externos/${e.id}`)} className="w-full text-left rounded-lg border border-border p-2.5 hover:border-primary/40 transition-colors">
                   <div className="font-medium text-sm">{e.nome}</div>
                   <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
                     {e.data && <span>{new Date(e.data + 'T00:00:00').toLocaleDateString('pt-BR')}</span>}
@@ -115,8 +121,7 @@ export default function EventosExternos() {
         </Card>
       </div>
 
-      {novoOpen && <EventoFormModal onClose={() => setNovoOpen(false)} onSaved={(id) => { setNovoOpen(false); carregar(); setDetId(id); }} />}
-      {detId && <EventoDetalhe id={detId} onClose={() => setDetId(null)} onChanged={carregar} />}
+      {novoOpen && <EventoFormModal onClose={() => setNovoOpen(false)} onSaved={(id) => { setNovoOpen(false); navigate(`/eventos-externos/${id}`); }} />}
     </div>
   );
 }
@@ -169,7 +174,8 @@ function isoParaInputLocal(iso?: string | null): string {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: () => void; onSaved: (id: string) => void }) {
+// Exportado: a tela dedicada do evento (EventoExternoDetalhe) reusa o mesmo form de edição.
+export function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: () => void; onSaved: (id: string) => void }) {
   const ed = !!evento;
   const [f, setF] = useState({
     nome: evento?.nome || '', data: evento?.data || '', hora: evento?.hora || '', local: evento?.local || '',
@@ -282,240 +288,5 @@ function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; onClose: 
         <Button onClick={salvar} disabled={salvando} className="w-full mt-2">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : (ed ? 'Salvar' : 'Criar evento')}</Button>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function EventoDetalhe({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
-  const [ev, setEv] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [sorteando, setSorteando] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
-  const [rolNum, setRolNum] = useState(0);
-  const [qrOpen, setQrOpen] = useState(false);
-
-  function carregar() { setLoading(true); api.get(id).then(setEv).catch(() => toast.error('Erro')).finally(() => setLoading(false)); }
-  useEffect(() => { carregar(); }, [id]);
-
-  const link = ev ? `${window.location.origin}/evento/${ev.slug}` : '';
-  function copiar() { navigator.clipboard.writeText(link); toast.success('Link copiado'); }
-  // Mensagem do WhatsApp: usa a custom do evento ({link} vira a URL) ou o padrão.
-  const waTexto = ev?.msg_whatsapp
-    ? String(ev.msg_whatsapp).replaceAll('{link}', link)
-    : `Confirme sua presença no ${ev?.nome || 'evento'}: ${link}`;
-  const wa = `https://wa.me/?text=${encodeURIComponent(waTexto)}`;
-
-  function confeteBig() {
-    const cores = ['#00B39D', '#00d9bd', '#ffd166', '#ef476f', '#118ab2', '#ffffff'];
-    const raja = (x: number) => confetti({ particleCount: 80, spread: 80, startVelocity: 55, origin: { x, y: 0.55 }, colors: cores });
-    raja(0.5); setTimeout(() => raja(0.2), 200); setTimeout(() => raja(0.8), 400);
-    setTimeout(() => confetti({ particleCount: 140, spread: 120, startVelocity: 45, origin: { y: 0.5 }, colors: cores }), 250);
-  }
-
-  const sorteioDoPremio = (nome: string) => (ev?.sorteios || []).find((s: any) => (s.premio || '') === nome);
-
-  // Sorteio com animação cinematográfica: números "rolando" + revelação do ganhador.
-  async function sortearPremio(nome: string) {
-    if (anim) return;
-    setSorteando(true);
-    setAnim({ fase: 'rolando', premio: nome });
-    const iv = setInterval(() => setRolNum(1000 + Math.floor(Math.random() * 9000)), 65);
-    try {
-      const s: any = await api.sortear(id, nome);
-      await new Promise(r => setTimeout(r, 2400)); // suspense
-      clearInterval(iv);
-      setRolNum(s.numero_sorteado);
-      setAnim({ fase: 'fim', premio: nome, ganhador: { numero: s.numero_sorteado, nome: s.ganhador_nome } });
-      confeteBig();
-      carregar();
-    } catch (e: any) {
-      clearInterval(iv); setAnim(null);
-      toast.error(e?.message || 'Erro ao sortear');
-    } finally { setSorteando(false); }
-  }
-  async function sortearTodos() {
-    setSorteando(true);
-    try {
-      const pendentes = (ev?.premios || []).filter((p: string) => !sorteioDoPremio(p));
-      for (const p of pendentes) { await api.sortear(id, p); }
-      carregar();
-      toast.success(`${pendentes.length} prêmio(s) sorteado(s)`);
-    } catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
-  }
-  async function excluir() {
-    if (!window.confirm('Excluir este evento? (some da lista · reversível por super-admin)')) return;
-    try { await api.remover(id); toast.success('Evento excluído'); onChanged(); onClose(); }
-    catch (e: any) { toast.error(e?.message || 'Erro ao excluir'); }
-  }
-
-  return (
-    <>
-    {anim && (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-hidden"
-        style={{ background: 'radial-gradient(circle at 50% 40%, rgba(0,60,55,0.92), rgba(4,10,12,0.97))', backdropFilter: 'blur(6px)' }}>
-        <div className="absolute inset-0 opacity-30" style={{ background: 'conic-gradient(from 0deg at 50% 45%, transparent, rgba(0,179,157,0.25), transparent 60%)', animation: anim.fase === 'rolando' ? 'spin 8s linear infinite' : undefined }} />
-        <div className="relative text-center px-6">
-          <div className="uppercase tracking-[0.35em] text-white/60 text-sm mb-4">{anim.premio || 'Sorteio'}</div>
-          <div className="font-black tabular-nums leading-none"
-            style={{
-              fontSize: 'clamp(72px, 18vw, 180px)',
-              background: 'linear-gradient(90deg,#00d9bd,#00B39D,#7CF5E4)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
-              filter: anim.fase === 'fim' ? 'drop-shadow(0 0 30px rgba(0,217,189,0.6))' : 'none',
-              transform: anim.fase === 'fim' ? 'scale(1)' : 'scale(0.96)', transition: 'transform .3s ease',
-            }}>
-            {String(rolNum).padStart(4, '0')}
-          </div>
-          {anim.fase === 'rolando' ? (
-            <div className="mt-6 text-white/80 text-lg tracking-wide animate-pulse">Sorteando…</div>
-          ) : (
-            <div className="mt-4">
-              <div className="text-white text-3xl sm:text-4xl font-bold">{anim.ganhador?.nome}</div>
-              <div className="text-teal-300 mt-1">🎉 Ganhador(a) do sorteio</div>
-              <button onClick={() => setAnim(null)}
-                className="mt-8 rounded-full bg-white/10 hover:bg-white/20 text-white px-8 py-2.5 text-sm font-semibold border border-white/20">
-                Fechar
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    )}
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-5xl w-[96vw] flex flex-col max-h-[88vh]">
-        {loading || !ev ? (
-          <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
-        ) : (
-          <>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                {ev.nome}
-                <Button size="sm" variant="outline" className="ml-auto mr-6" onClick={() => setEditOpen(true)}><Pencil className="h-3.5 w-3.5 mr-1" /> Editar</Button>
-              </DialogTitle>
-            </DialogHeader>
-            {editOpen && <EventoFormModal evento={ev} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); carregar(); onChanged(); }} />}
-            {qrOpen && (
-              <QrLinkDialog
-                link={link}
-                titulo={ev.nome}
-                nomeArquivo={`qr-${ev.slug}`}
-                descricao="Imprima ou projete no telão — quem escanear cai direto no formulário de confirmação."
-                onClose={() => setQrOpen(false)}
-              />
-            )}
-            <div className="flex-1 overflow-y-auto min-h-0 space-y-4 text-sm">
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
-                {ev.data && <span className="inline-flex items-center gap-1"><CalendarDays className="h-4 w-4" />{new Date(ev.data + 'T00:00:00').toLocaleDateString('pt-BR')}</span>}
-                {ev.hora && <span className="inline-flex items-center gap-1"><Clock className="h-4 w-4" />{ev.hora}</span>}
-                {ev.local && <span className="inline-flex items-center gap-1"><MapPin className="h-4 w-4" />{ev.local}</span>}
-                <span className="inline-flex items-center gap-1"><Users className="h-4 w-4" />{ev.inscritos?.length || 0} confirmados</span>
-              </div>
-
-              {/* Link do formulário */}
-              <div className="rounded-lg border border-border p-3">
-                <div className="text-xs font-medium mb-2">Formulário de confirmação {ev.form_ativo ? '' : '(inscrições fechadas)'}</div>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={copiar}><Link2 className="h-3.5 w-3.5 mr-1" /> Copiar link</Button>
-                  <a href={wa} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><MessageCircle className="h-3.5 w-3.5 mr-1 text-emerald-500" /> WhatsApp</Button></a>
-                  <Button size="sm" variant="outline" onClick={() => setQrOpen(true)}><QrCode className="h-3.5 w-3.5 mr-1" /> QR Code</Button>
-                  <a href={link} target="_blank" rel="noreferrer" className="text-xs text-primary self-center truncate max-w-[220px]">{link}</a>
-                </div>
-              </div>
-
-              {/* Sorteio */}
-              <div className="rounded-lg border border-border p-3">
-                <div className="text-xs font-medium mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5"><Gift className="h-4 w-4 text-primary" /> Sorteio</span>
-                  {(ev.premios || []).length > 0 && (ev.premios || []).some((p: string) => !sorteioDoPremio(p)) && (
-                    <Button size="sm" variant="outline" onClick={sortearTodos} disabled={sorteando || !(ev.inscritos?.length)}>
-                      {sorteando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Sortear todos'}
-                    </Button>
-                  )}
-                </div>
-
-                {(ev.premios || []).length > 0 ? (
-                  <div className="space-y-1.5">
-                    {(ev.premios || []).map((p: string, i: number) => {
-                      const s = sorteioDoPremio(p);
-                      return (
-                        <div key={i} className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-1.5">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{p || `${i + 1}º prêmio`}</div>
-                            {s && <div className="text-xs text-primary">🎉 Nº {s.numero_sorteado} · {s.ganhador_nome}</div>}
-                          </div>
-                          {s ? (
-                            <Button size="sm" variant="ghost" onClick={() => sortearPremio(p)} disabled={sorteando} className="text-xs">Re-sortear</Button>
-                          ) : (
-                            <Button size="sm" onClick={() => sortearPremio(p)} disabled={sorteando || !(ev.inscritos?.length)}>
-                              {sorteando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Sortear'}
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <p className="text-[11px] text-muted-foreground">Defina/edite os prêmios em "Editar".</p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground py-1">
-                    Nenhum prêmio definido. Clique em <b>"Editar"</b> e adicione os prêmios do sorteio pra sortear um ganhador por prêmio.
-                  </p>
-                )}
-              </div>
-
-              {/* Inscritos */}
-              <div>
-                <div className="text-xs font-medium mb-1">Inscritos ({ev.inscritos?.length || 0})</div>
-                {(ev.inscritos || []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-2">Ninguém confirmou ainda.</p>
-                ) : (
-                  <div className="max-h-[340px] overflow-auto rounded-lg border border-border">
-                    <table className="min-w-max text-xs">
-                      <thead className="bg-foreground/5 text-muted-foreground sticky top-0"><tr>
-                        <th className="text-left px-2.5 py-2 whitespace-nowrap">Nº</th><th className="text-left px-2.5 py-2 whitespace-nowrap">Nome</th><th className="text-left px-2.5 py-2 whitespace-nowrap">Telefone</th>
-                        {(ev.campos || []).map((c: any) => <th key={c.key} className="text-left px-2.5 py-2 whitespace-nowrap min-w-[140px] max-w-[240px]">{c.label}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {ev.inscritos.map((i: any) => (
-                          <tr key={i.id} className="border-t border-border/40">
-                            <td className="px-2.5 py-2 font-semibold tabular-nums align-top">{i.numero_sorte}</td>
-                            <td className="px-2.5 py-2 align-top whitespace-nowrap">
-                              <span className="inline-flex items-center gap-1.5">
-                                {i.nome}
-                                {i.telefone && (
-                                  <a href={`https://wa.me/55${String(i.telefone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
-                                    title="Enviar WhatsApp" className="text-emerald-500 hover:text-emerald-600">
-                                    <MessageCircle className="h-3.5 w-3.5" />
-                                  </a>
-                                )}
-                              </span>
-                            </td>
-                            <td className="px-2.5 py-2 text-muted-foreground align-top whitespace-nowrap">{i.telefone || ''}</td>
-                            {(ev.campos || []).map((c: any) => (
-                              <td key={c.key} className="px-2.5 py-2 text-muted-foreground align-top min-w-[140px] max-w-[240px] whitespace-pre-wrap break-words">
-                                {c.tipo === 'imagem' ? (
-                                  i.dados?.[c.key] ? (
-                                    <a href={i.dados[c.key]} target="_blank" rel="noreferrer" title="Abrir imagem">
-                                      <img src={i.dados[c.key]} alt={c.label} className="h-8 w-auto max-w-[80px] object-contain rounded border border-border" />
-                                    </a>
-                                  ) : ''
-                                ) : (i.dados?.[c.key] || '')}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-1">
-                <Button size="sm" variant="ghost" onClick={excluir} className="text-red-600 hover:text-red-700"><Trash2 className="h-3.5 w-3.5 mr-1" /> Excluir evento</Button>
-              </div>
-            </div>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-    </>
   );
 }
