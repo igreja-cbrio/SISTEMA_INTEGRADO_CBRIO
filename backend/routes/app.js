@@ -833,6 +833,56 @@ router.get('/voluntariado/escala-pool', authApp, limiterNormal, async (req, res)
   }
 });
 
+// GET /app/voluntariado/voluntario/:id/detalhe — ficha do voluntário pro supervisor:
+// nome, telefone (membro→vol_profiles→PCO), equipes que serve, histórico de
+// check-ins e de escalas.
+router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, planning_center_id, membresia_id, phone, avatar_url').eq('id', req.params.id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+
+    // Telefone: cadastro de membro (app) → vol_profiles.phone → PCO ao vivo.
+    let telefone = null;
+    if (vp.membresia_id) {
+      const { data: m } = await supabase.from('mem_membros').select('telefone').eq('id', vp.membresia_id).maybeSingle();
+      telefone = m?.telefone || null;
+    }
+    if (!telefone) telefone = vp.phone || null;
+    if (!telefone && vp.planning_center_id) {
+      try { const { fetchPcoPhone } = require('../services/planningCenter'); telefone = await fetchPcoPhone(vp.planning_center_id); } catch { /* best-effort */ }
+    }
+
+    const { data: schedsRaw } = await supabase.from('vol_schedules')
+      .select('id, team_name, position_name, confirmation_status, service:vol_services(service_type_name, scheduled_at)')
+      .eq('volunteer_id', vp.id).limit(100);
+    const escalas = (schedsRaw || [])
+      .map((s) => ({ culto: s.service?.service_type_name || null, data: s.service?.scheduled_at || null, equipe: s.team_name, posicao: s.position_name, status: s.confirmation_status }))
+      .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+      .slice(0, 40);
+
+    const { data: cisRaw } = await supabase.from('vol_check_ins')
+      .select('id, created_at, service:vol_services(service_type_name, scheduled_at)')
+      .eq('volunteer_id', vp.id).limit(100);
+    const checkins = (cisRaw || [])
+      .map((c) => ({ culto: c.service?.service_type_name || null, data: c.service?.scheduled_at || c.created_at || null }))
+      .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+      .slice(0, 40);
+
+    const equipes = [...new Set((schedsRaw || []).map((s) => s.team_name).filter(Boolean))];
+
+    res.json({
+      id: vp.id, full_name: vp.full_name, avatar_url: vp.avatar_url || null,
+      telefone, equipes, total_checkins: checkins.length, total_escalas: escalas.length, checkins, escalas,
+    });
+  } catch (e) {
+    console.error('[APP vol/voluntario detalhe]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o voluntário' });
+  }
+});
+
 // POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
 router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
   try {
