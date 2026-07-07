@@ -681,6 +681,15 @@ router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async
     const membro = await resolveMembroApp(req);
     const vp = await resolverVolProfile(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    // Não dá pra RECUSAR culto que já passou (aceitar/registrar segue liberado).
+    if (status === 'declined') {
+      const { data: sched } = await supabase.from('vol_schedules')
+        .select('service:vol_services(scheduled_at)').eq('id', req.params.id).maybeSingle();
+      const quando = sched?.service?.scheduled_at ? new Date(sched.service.scheduled_at) : null;
+      if (quando && quando.getTime() < Date.now()) {
+        return res.status(400).json({ error: 'Esse culto já passou — não dá mais pra recusar.' });
+      }
+    }
     // motivo opcional só na recusa; confirmar limpa o motivo anterior.
     const recusa_motivo = status === 'declined' ? (String(motivo || '').trim().slice(0, 200) || null) : null;
     // só responde escala própria
