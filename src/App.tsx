@@ -453,17 +453,21 @@ function VolunteerShell() {
 
 // Home pós-login. Quem tem acesso a um ÚNICO módulo abre direto nele
 // (ex.: colaborador só de Produção → /producao) em vez do dashboard.
+// `moduloUnico` vem do AuthContext (canônico do backend · slugs deduplicados);
+// contar por referência em modulePerms quebrava: o JSON da resposta duplica o
+// objeto das chaves nome+slug e o Set vê 2 módulos pra quem tem só 1.
+const HOME_MODULO_UNICO: Record<string, string> = {
+  producao: '/producao',
+  batismo: '/batismo',
+  kids: '/ministerial/kids',
+};
 function homeRoute(auth: Record<string, unknown>): string {
   if (auth.rotaTravada) return auth.rotaTravada as string; // login travado num módulo (quiosque)
   if (auth.isMembroOnly) return '/devocional';
   if (auth.isVoluntario) return '/voluntariado/checkin';
-  const modulePerms = auth.modulePerms as Record<string, { leitura?: number }> | null | undefined;
-  if (!auth.isAdmin && modulePerms) {
-    const distintos = new Set<object>();
-    for (const v of Object.values(modulePerms)) if (v && (v.leitura || 0) > 0) distintos.add(v);
-    if (distintos.size === 1 && (modulePerms.producao?.leitura || 0) > 0) return '/producao';
-    if (distintos.size === 1 && (modulePerms.batismo?.leitura || 0) > 0) return '/batismo';
-    if (distintos.size === 1 && (modulePerms.kids?.leitura || 0) > 0) return '/ministerial/kids';
+  const moduloUnico = auth.moduloUnico as string | null | undefined;
+  if (!auth.isAdmin && moduloUnico && HOME_MODULO_UNICO[moduloUnico]) {
+    return HOME_MODULO_UNICO[moduloUnico];
   }
   return '/dashboard';
 }
