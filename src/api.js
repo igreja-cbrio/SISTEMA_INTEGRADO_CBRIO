@@ -1495,6 +1495,8 @@ export const totemKids = {
   },
   checkout: {
     realizar: (data) => post('/totem-kids/checkout', data),
+    // Desfaz um check-out feito sem querer (criança volta a constar presente)
+    desfazer: (checkinId) => post(`/totem-kids/checkin/${checkinId}/reabrir`, {}),
   },
   painel: {
     aoVivo: (sessaoId) => get(`/totem-kids/painel/ao-vivo${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
