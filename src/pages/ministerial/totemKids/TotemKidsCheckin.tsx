@@ -439,9 +439,9 @@ export default function TotemKidsCheckin() {
       <DialogContent className="max-w-4xl w-[95vw] max-h-[92vh] overflow-y-auto z-[80]">
         <DialogHeader>
           <DialogTitle>Ajustes do totem</DialogTitle>
-          <DialogDescription>Sessões, salas, estações, pagers e teste de etiqueta — sem sair do totem.</DialogDescription>
+          <DialogDescription>Sessões, estações e teste de etiqueta — sem sair do totem.</DialogDescription>
         </DialogHeader>
-        <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} />
+        <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} abas={['sessoes', 'estacoes', 'etiqueta']} />
       </DialogContent>
     </Dialog>
   );
@@ -487,7 +487,7 @@ export default function TotemKidsCheckin() {
             <button onClick={() => abrirAjustes('sessoes')} title="Gerenciar sessão (abrir/fechar/trocar)"
               className="text-xs font-medium text-slate-400 tracking-wide inline-flex items-center gap-1 hover:text-pink-600 transition-colors">
               {sessao.culto?.nome}
-              {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), "EEE, dd/MM", { locale: ptBR })}`}
+              {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), 'dd/MM', { locale: ptBR })}`}
               <Settings className="h-3 w-3 opacity-60" />
             </button>
             {estacaoPareada ? (
@@ -782,6 +782,14 @@ export default function TotemKidsCheckin() {
             onKeyDown={(e) => { if (e.key === 'Enter') confirmarPin(); }}
             className="text-center text-2xl tracking-widest font-mono h-14"
             maxLength={8}
+            name="totem-pin"
+            autoComplete="new-password"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-lpignore="true"
+            data-1p-ignore="true"
+            data-form-type="other"
           />
           {pinErro && <p className="text-sm text-red-500 text-center">{pinErro}</p>}
           <div className="flex gap-2">

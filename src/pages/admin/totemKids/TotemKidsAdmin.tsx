@@ -64,26 +64,30 @@ export default function TotemKidsAdmin() {
 // Abas de configuração reutilizáveis (usadas na página /configuracoes E dentro do
 // modo totem do check-in, via engrenagem). Controlado se receber aba/onAba,
 // senão gerencia o próprio estado. Inclui a aba "Etiqueta" (teste de impressão).
-export function TotemKidsConfigTabs({ aba: abaProp, onAba }: { aba?: string; onAba?: (v: string) => void }) {
-  const [abaLocal, setAbaLocal] = useState('sessoes');
+export function TotemKidsConfigTabs({ aba: abaProp, onAba, abas }: { aba?: string; onAba?: (v: string) => void; abas?: string[] }) {
+  // `abas` restringe quais abas aparecem (ex.: a engrenagem do totem mostra só
+  // sessoes/estacoes/etiqueta). Sem `abas`, mostra todas (página de config).
+  const mostra = (k: string) => !abas || abas.includes(k);
+  const primeira = abas && abas.length ? abas[0] : 'sessoes';
+  const [abaLocal, setAbaLocal] = useState(primeira);
   const aba = abaProp ?? abaLocal;
   const setAba = onAba ?? setAbaLocal;
   return (
     <Tabs value={aba} onValueChange={setAba}>
       <TabsList className="flex-wrap">
-        <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>
-        <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>
-        <TabsTrigger value="estacoes"><Printer className="h-4 w-4 mr-1" /> Estações</TabsTrigger>
-        <TabsTrigger value="pagers"><Vibrate className="h-4 w-4 mr-1" /> Pagers</TabsTrigger>
-        <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>
-        <TabsTrigger value="etiqueta"><Printer className="h-4 w-4 mr-1" /> Etiqueta</TabsTrigger>
+        {mostra('sessoes') && <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>}
+        {mostra('salas') && <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>}
+        {mostra('estacoes') && <TabsTrigger value="estacoes"><Printer className="h-4 w-4 mr-1" /> Estações</TabsTrigger>}
+        {mostra('pagers') && <TabsTrigger value="pagers"><Vibrate className="h-4 w-4 mr-1" /> Pagers</TabsTrigger>}
+        {mostra('auditoria') && <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>}
+        {mostra('etiqueta') && <TabsTrigger value="etiqueta"><Printer className="h-4 w-4 mr-1" /> Etiqueta</TabsTrigger>}
       </TabsList>
-      <TabsContent value="sessoes"><AbaSessoes /></TabsContent>
-      <TabsContent value="salas"><AbaSalas /></TabsContent>
-      <TabsContent value="estacoes"><AbaEstacoes /></TabsContent>
-      <TabsContent value="pagers"><AbaPagers /></TabsContent>
-      <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>
-      <TabsContent value="etiqueta"><EtiquetaTesteForm /></TabsContent>
+      {mostra('sessoes') && <TabsContent value="sessoes"><AbaSessoes /></TabsContent>}
+      {mostra('salas') && <TabsContent value="salas"><AbaSalas /></TabsContent>}
+      {mostra('estacoes') && <TabsContent value="estacoes"><AbaEstacoes /></TabsContent>}
+      {mostra('pagers') && <TabsContent value="pagers"><AbaPagers /></TabsContent>}
+      {mostra('auditoria') && <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>}
+      {mostra('etiqueta') && <TabsContent value="etiqueta"><EtiquetaTesteForm /></TabsContent>}
     </Tabs>
   );
 }
@@ -198,7 +202,7 @@ function AbaSessoes() {
         )}
 
         <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
-          <DialogContent>
+          <DialogContent className="z-[1100]">
             <DialogHeader>
               <DialogTitle>Nova sessão Kids</DialogTitle>
               <DialogDescription>
@@ -307,7 +311,7 @@ function AbaSalas() {
           </div>
         )}
         <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
-          <DialogContent>
+          <DialogContent className="z-[1100]">
             <DialogHeader><DialogTitle>{editando?.id ? 'Editar sala' : 'Nova sala'}</DialogTitle></DialogHeader>
             {editando && (
               <div className="space-y-2">
@@ -502,7 +506,7 @@ function AbaPagers() {
         )}
 
         <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
-          <DialogContent>
+          <DialogContent className="z-[1100]">
             <DialogHeader>
               <DialogTitle>{editando?.id ? 'Editar pager' : 'Novo pager'}</DialogTitle>
               <DialogDescription>O número precisa bater com o ID programado no pager físico.</DialogDescription>
@@ -689,7 +693,7 @@ function AbaEstacoes() {
         </Dialog>
 
         <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
-          <DialogContent>
+          <DialogContent className="z-[1100]">
             <DialogHeader><DialogTitle>{editando?.id ? 'Editar estação' : 'Nova estação'}</DialogTitle></DialogHeader>
             {editando && (
               <div className="space-y-2">
