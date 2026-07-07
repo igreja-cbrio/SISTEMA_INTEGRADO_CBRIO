@@ -779,7 +779,14 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
       .order('scheduled_at', { ascending: true })
       .limit(60);
     if (error) throw error;
-    res.json({ areas, servicos: data || [] });
+    // Contagem de escalados por culto (pro chip mostrar "N escalados").
+    const ids = (data || []).map(s => s.id);
+    const cnt = {};
+    if (ids.length) {
+      const { data: scs } = await supabase.from('vol_schedules').select('service_id').in('service_id', ids);
+      for (const r of scs || []) cnt[r.service_id] = (cnt[r.service_id] || 0) + 1;
+    }
+    res.json({ areas, servicos: (data || []).map(s => ({ ...s, escalados: cnt[s.id] || 0 })) });
   } catch (e) {
     console.error('[APP vol/escala servicos]', e.message);
     res.status(500).json({ error: 'Erro ao listar cultos' });
@@ -834,6 +841,13 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
     const { data: vp } = await supabase.from('vol_profiles')
       .select('id, full_name, planning_center_id').eq('id', volunteer_id).maybeSingle();
     if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+    // Dedup: mesma pessoa já nesta equipe deste culto? (NULLs no unique não
+    // deduplicam, então checamos aqui). Permite a mesma pessoa em OUTRA equipe.
+    let dupQ = supabase.from('vol_schedules').select('id')
+      .eq('service_id', service_id).eq('volunteer_id', vp.id);
+    dupQ = (team_name ? dupQ.eq('team_name', team_name) : dupQ.is('team_name', null));
+    const { data: dup } = await dupQ.maybeSingle();
+    if (dup) return res.status(409).json({ error: 'Essa pessoa já está nesta equipe do culto' });
     const { data, error } = await supabase.from('vol_schedules').insert({
       service_id,
       volunteer_id: vp.id,
@@ -857,6 +871,12 @@ router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, re
   try {
     const { areas } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    // Só remove quem foi escalado pelo app (source='manual'). Escala do Planning
+    // Center é gerida lá — se apagar aqui, o próximo sync recria (remoção fantasma).
+    const { data: sc } = await supabase.from('vol_schedules').select('source').eq('id', req.params.id).maybeSingle();
+    if (sc && sc.source && sc.source !== 'manual') {
+      return res.status(400).json({ error: 'Essa pessoa veio do Planning Center — remova por lá. Pelo app só dá pra tirar quem foi escalado aqui.' });
+    }
     const { error } = await supabase.from('vol_schedules').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
