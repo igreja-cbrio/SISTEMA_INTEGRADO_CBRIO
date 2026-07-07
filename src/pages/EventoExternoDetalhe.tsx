@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket,
+  ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown,
 } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoFormModal } from './EventosExternos';
@@ -26,6 +27,14 @@ export default function EventoExternoDetalhe() {
   const [qrOpen, setQrOpen] = useState(false);
   const [busca, setBusca] = useState('');
   const [inscSel, setInscSel] = useState<any>(null);
+  // Cards recolhidos (só a linha principal) — melhora a visualização com
+  // muitas inscrições. Set com os ids recolhidos + botão recolher/expandir todos.
+  const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
+  const toggleRecolhido = (id: string) => setRecolhidos(prev => {
+    const s = new Set(prev);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    return s;
+  });
   const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
   const [rolNum, setRolNum] = useState(0);
 
@@ -239,9 +248,22 @@ export default function EventoExternoDetalhe() {
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div className="text-sm font-semibold flex items-center gap-1.5"><Users className="h-4 w-4 text-primary" /> Inscritos ({ev.inscritos?.length || 0})</div>
           {(ev.inscritos?.length || 0) > 0 && (
-            <div className="relative">
-              <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Buscar por nome, telefone ou nº" value={busca} onChange={e => setBusca(e.target.value)} className="h-8 pl-8 text-sm w-64 max-w-full" />
+            <div className="flex items-center gap-2 flex-wrap">
+              {(() => {
+                const todosRecolhidos = (ev.inscritos || []).length > 0 && (ev.inscritos || []).every((i: any) => recolhidos.has(i.id));
+                return (
+                  <Button size="sm" variant="outline" className="h-8"
+                    onClick={() => setRecolhidos(todosRecolhidos ? new Set() : new Set((ev.inscritos || []).map((i: any) => i.id)))}>
+                    {todosRecolhidos
+                      ? <><ChevronsUpDown className="h-3.5 w-3.5 mr-1" /> Expandir todos</>
+                      : <><ChevronsDownUp className="h-3.5 w-3.5 mr-1" /> Recolher todos</>}
+                  </Button>
+                );
+              })()}
+              <div className="relative">
+                <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input placeholder="Buscar por nome, telefone ou nº" value={busca} onChange={e => setBusca(e.target.value)} className="h-8 pl-8 text-sm w-64 max-w-full" />
+              </div>
             </div>
           )}
         </div>
@@ -258,10 +280,11 @@ export default function EventoExternoDetalhe() {
                 const v = i.dados?.[c.key];
                 return Array.isArray(v) ? v.length > 0 : !!v;
               });
+              const recolhido = recolhidos.has(i.id);
               return (
                 <div key={i.id} onClick={() => setInscSel(i)}
                   className="rounded-lg border border-border p-3 cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
-                  {/* Linha principal: nº + nome + contato + quando */}
+                  {/* Linha principal: nº + nome + contato + quando + recolher */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="inline-flex items-center rounded-full bg-primary/15 text-primary text-xs font-bold px-2 py-0.5 tabular-nums shrink-0">
@@ -280,13 +303,26 @@ export default function EventoExternoDetalhe() {
                           <Gift className="h-3 w-3" /> {ganhos.length > 1 ? `${ganhos.length} prêmios` : (ganhos[0].premio || 'Prêmio')}
                         </span>
                       )}
+                      {recolhido && respostas.length > 0 && (
+                        <span className="text-[11px] text-muted-foreground shrink-0">{respostas.length} resposta{respostas.length > 1 ? 's' : ''}</span>
+                      )}
                     </div>
-                    <span className="text-[11px] text-muted-foreground shrink-0">
-                      {i.created_at ? new Date(i.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
-                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[11px] text-muted-foreground">
+                        {i.created_at ? new Date(i.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
+                      {respostas.length > 0 && (
+                        <button
+                          onClick={e => { e.stopPropagation(); toggleRecolhido(i.id); }}
+                          title={recolhido ? 'Expandir respostas' : 'Recolher respostas'}
+                          className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors">
+                          {recolhido ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {/* Respostas do formulário: pergunta em cima, resposta embaixo */}
-                  {respostas.length > 0 && (
+                  {!recolhido && respostas.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2 mt-2.5 pt-2.5 border-t border-border/50">
                       {respostas.map((c: any) => {
                         const v = i.dados?.[c.key];
