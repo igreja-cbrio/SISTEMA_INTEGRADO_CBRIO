@@ -57,7 +57,11 @@ export function KidsZoneShell({ children, fullscreen = false }: { children: Reac
         <div className="kz-blob kz-blob-d1 absolute top-1/3 -right-24 w-[28rem] h-[28rem] bg-cyan-400/20 rounded-full blur-3xl" />
         <div className="kz-blob kz-blob-d2 absolute bottom-0 left-1/4 w-80 h-80 bg-amber-400/20 rounded-full blur-3xl" />
       </div>
-      <div className="relative z-10 w-full max-w-[1500px] bg-white/95 backdrop-blur rounded-[2rem] shadow-2xl ring-1 ring-black/5 p-4 sm:p-8 text-slate-800 self-stretch">
+      {/* O card do totem é sempre branco/brand (sólido, não segue o tema do app).
+          Forçamos data-theme="light" pra os componentes shadcn (Button outline/ghost,
+          Input, Select) resolverem tokens CLAROS aqui dentro — senão, no dark mode do
+          app, ficam escuros sobre o branco (ex.: "Voltar pro Kids" preto no preto). */}
+      <div data-theme="light" className="relative z-10 w-full max-w-[1500px] bg-white/95 backdrop-blur rounded-[2rem] shadow-2xl ring-1 ring-black/5 p-4 sm:p-8 text-slate-800 self-stretch">
         {children}
       </div>
     </div>
