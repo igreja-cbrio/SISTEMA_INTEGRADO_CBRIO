@@ -872,10 +872,16 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
         if (!userIds.length) return;
         const { data: svc } = await supabase.from('vol_services')
           .select('service_type_name, scheduled_at').eq('id', service_id).maybeSingle();
-        const quando = svc?.scheduled_at
-          ? new Date(new Date(svc.scheduled_at).getTime() - 3 * 3600 * 1000)
-              .toISOString().replace('T', ' ').slice(0, 16).replace(/-/g, '/')
-          : '';
+        let quando = '';
+        if (svc?.scheduled_at) {
+          const b = new Date(new Date(svc.scheduled_at).getTime() - 3 * 3600 * 1000); // BRT
+          const dd = String(b.getUTCDate()).padStart(2, '0');
+          const mm = String(b.getUTCMonth() + 1).padStart(2, '0');
+          const aa = String(b.getUTCFullYear()).slice(2);
+          const hh = String(b.getUTCHours()).padStart(2, '0');
+          const mi = String(b.getUTCMinutes()).padStart(2, '0');
+          quando = `${dd}/${mm}/${aa} ${hh}:${mi}`;
+        }
         const culto = svc?.service_type_name || 'um culto';
         const teamTxt = team_name ? ` · ${team_name}` : '';
         await notificarApp(userIds, {
