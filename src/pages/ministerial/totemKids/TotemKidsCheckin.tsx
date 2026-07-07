@@ -115,6 +115,17 @@ export default function TotemKidsCheckin() {
   const [ajustesOpen, setAjustesOpen] = useState(false);
   const [ajustesAba, setAjustesAba] = useState('sessoes');
 
+  // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
+  const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
+  const [reimprimindo, setReimprimindo] = useState(false);
+  async function reimprimir() {
+    if (!ultimaEtiqueta) return;
+    setReimprimindo(true);
+    try { await imprimirEtiquetas(ultimaEtiqueta); toast.success('Etiquetas reenviadas pra impressora'); }
+    catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao reimprimir'); }
+    finally { setReimprimindo(false); }
+  }
+
   const buscaRef = useRef<HTMLInputElement>(null);
 
   const PIN_KEY = 'cbrio-totem-kids-pin';
@@ -138,7 +149,8 @@ export default function TotemKidsCheckin() {
     setTotemMode(true);
   }
   function iniciarModoTotem() {
-    const stored = localStorage.getItem(PIN_KEY);
+    let stored = '';
+    try { stored = localStorage.getItem(PIN_KEY) || ''; } catch { stored = ''; }
     if (!stored) { setPinSetup(true); setPinInput(''); setPinErro(''); setPinModal(true); }
     else ativarTotem();
   }
@@ -146,15 +158,20 @@ export default function TotemKidsCheckin() {
     setPinSetup(false); setPinInput(''); setPinErro(''); setPinModal(true);
   }
   function confirmarPin() {
+    const typed = pinInput.trim();
     if (pinSetup) {
-      if (pinInput.length < 4) { setPinErro('O PIN precisa ter ao menos 4 dígitos'); return; }
-      localStorage.setItem(PIN_KEY, pinInput);
-      setPinModal(false); setPinInput('');
+      if (typed.length < 4) { setPinErro('O PIN precisa ter ao menos 4 dígitos'); return; }
+      try { localStorage.setItem(PIN_KEY, typed); } catch { /* storage indisponível · segue */ }
+      setPinSetup(false);
+      setPinModal(false); setPinInput(''); setPinErro('');
       ativarTotem();
     } else {
-      const stored = localStorage.getItem(PIN_KEY) || '';
-      if (pinInput === stored) {
-        setPinModal(false); setPinInput('');
+      let stored = '';
+      try { stored = (localStorage.getItem(PIN_KEY) || '').trim(); } catch { stored = ''; }
+      // Fail-open quando NÃO há PIN salvo (storage limpo/indisponível) — não prende
+      // o voluntário no modo totem. Com PIN salvo, exige o PIN correto.
+      if (!stored || typed === stored) {
+        setPinModal(false); setPinInput(''); setPinErro('');
         setTotemMode(false);
         if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       } else { setPinErro('PIN incorreto'); setPinInput(''); }
@@ -341,8 +358,9 @@ export default function TotemKidsCheckin() {
         ? `${r.sessao.culto.nome}${r.sessao.culto.data ? ` · ${format(new Date(r.sessao.culto.data + 'T00:00:00'), 'dd/MM', { locale: ptBR })}` : ''}`
         : undefined;
 
-      // Dispara impressão
-      await imprimirEtiquetas({
+      // Monta os dados da etiqueta e imprime. Guarda pra permitir REIMPRIMIR
+      // (se a impressão falhar/borrar) sem criar outro check-in.
+      const dadosEtiqueta = {
         checkinId: r.checkin.id,
         estacaoId: estacao?.id || null,
         crianca: {
@@ -362,7 +380,9 @@ export default function TotemKidsCheckin() {
         dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
         cultoNome: r.sessao.culto?.nome,
         cultoDiaHora,
-      });
+      };
+      await imprimirEtiquetas(dadosEtiqueta);
+      setUltimaEtiqueta(dadosEtiqueta);
 
       toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
       dispararConfete();
@@ -510,6 +530,27 @@ export default function TotemKidsCheckin() {
 
       {!crianca ? (
         <div className="space-y-6">
+          {/* Último check-in · reimprimir etiqueta (se borrou/falhou) sem novo check-in */}
+          {ultimaEtiqueta && (
+            <div className="rounded-2xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-4 flex flex-wrap items-center gap-3">
+              <CheckCircle2 className="h-6 w-6 text-emerald-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-emerald-900 dark:text-emerald-100">
+                  Check-in feito · {ultimaEtiqueta.crianca?.nome}
+                </div>
+                <div className="text-sm text-emerald-700 dark:text-emerald-300">
+                  Código <b className="font-mono tracking-widest">{ultimaEtiqueta.codigoSeguranca}</b> · a etiqueta não saiu direito? Imprima de novo.
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={reimprimir} disabled={reimprimindo} variant="outline" className="border-emerald-400 text-emerald-700 dark:text-emerald-300">
+                  {reimprimindo ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Printer className="h-4 w-4 mr-1" />}
+                  Imprimir de novo
+                </Button>
+                <Button onClick={() => setUltimaEtiqueta(null)} variant="ghost" size="sm">Ok</Button>
+              </div>
+            </div>
+          )}
           {/* Título central */}
           <div className="text-center">
             <h1 className="text-3xl sm:text-4xl font-black tracking-tight">Vamos fazer o check-in! 🎈</h1>
