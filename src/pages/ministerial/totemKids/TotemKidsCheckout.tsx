@@ -41,7 +41,7 @@ type CheckinData = {
   }>;
 };
 
-export default function TotemKidsCheckout() {
+export default function TotemKidsCheckout({ embutido = false }: { embutido?: boolean } = {}) {
   const navigate = useNavigate();
   const { profile, isAdmin } = useAuth();
   const [codigoInput, setCodigoInput] = useState('');
@@ -161,9 +161,12 @@ export default function TotemKidsCheckout() {
     }
   }
 
+  // Embutido no totem de check-in: sem moldura/barra próprios (o pai já provê o
+  // KidsZoneShell + a barra com o toggle) → alterna check-in/out sem recarregar.
+  const Wrapper: any = embutido ? 'div' : KidsZoneShell;
   return (
-    <KidsZoneShell>
-      {/* Barra do topo · logo, estação, relógio e alternância check-in/check-out */}
+    <Wrapper>
+      {!embutido && (
       <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-dashed border-slate-200">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-2xl shadow-lg shadow-pink-500/30">🧸</div>
@@ -182,6 +185,7 @@ export default function TotemKidsCheckout() {
           <KidsZoneToggle ativo="checkout" onCheckin={() => navigate('/ministerial/totem-kids')} />
         </div>
       </div>
+      )}
 
       {!checkin ? (
         <div className="space-y-6">
@@ -366,6 +370,6 @@ export default function TotemKidsCheckout() {
           </div>
         </DialogContent>
       </Dialog>
-    </KidsZoneShell>
+    </Wrapper>
   );
 }
