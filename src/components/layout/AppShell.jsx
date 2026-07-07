@@ -137,7 +137,7 @@ const NAV_ITEMS = [
         title: 'Ferramentas',
         items: [
           { label: 'Totem Membro', description: 'Modo kiosk para self-service no hall', icon: MonitorSmartphone, path: '/totem', module: 'totem-membro' },
-          { label: 'Kids', description: 'Operação de culto · check-in, crianças, painel ao vivo, etiqueta, config', icon: Baby, path: '/ministerial/kids', module: 'kids' },
+          { label: 'Operacional Kids', description: 'Operação de culto · check-in, crianças, painel ao vivo, etiqueta, config', icon: Baby, path: '/ministerial/kids', module: 'kids' },
         ],
       },
     ],
