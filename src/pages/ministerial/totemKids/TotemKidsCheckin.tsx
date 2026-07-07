@@ -797,6 +797,207 @@ export default function TotemKidsCheckin() {
   );
 }
 
+// ── Pop-up: detalhes + edição da ficha da criança (protegido por senha do Kids) ──
+function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
+  crianca: Crianca; atualizarCrianca: (p: Partial<Crianca>) => void; onClose: () => void;
+}) {
+  const [fase, setFase] = useState<'senha' | 'edit'>('senha');
+  const [senhaDefinida, setSenhaDefinida] = useState<boolean | null>(null);
+  const [senha, setSenha] = useState('');
+  const [erro, setErro] = useState('');
+  const [verificando, setVerificando] = useState(false);
+  const [criandoSenha, setCriandoSenha] = useState(false);
+  const [novaSenha, setNovaSenha] = useState('');
+  const [salvandoSenha, setSalvandoSenha] = useState(false);
+
+  useEffect(() => {
+    totemKids.editSenha.status()
+      .then((r: any) => setSenhaDefinida(!!r?.definida))
+      .catch(() => setSenhaDefinida(false));
+  }, []);
+
+  async function verificar() {
+    setVerificando(true); setErro('');
+    try {
+      const r: any = await totemKids.editSenha.verificar(senha);
+      if (r?.naoDefinida) { setSenhaDefinida(false); setErro(''); }
+      else if (r?.ok) setFase('edit');
+      else { setErro('Senha incorreta.'); setSenha(''); }
+    } catch (e: unknown) { setErro((e as { message?: string })?.message || 'Erro'); }
+    finally { setVerificando(false); }
+  }
+  async function criarSenha() {
+    if (novaSenha.trim().length < 4) { setErro('A senha precisa ter ao menos 4 caracteres.'); return; }
+    setSalvandoSenha(true); setErro('');
+    try {
+      await totemKids.editSenha.definir(novaSenha.trim());
+      toast.success('Senha de edição criada');
+      setSenhaDefinida(true); setCriandoSenha(false); setNovaSenha('');
+    } catch (e: unknown) {
+      const err = e as { status?: number; message?: string };
+      setErro(err?.status === 403 ? 'Só um líder do Kids (Mari ou Milena) pode criar a senha.' : (err?.message || 'Erro ao criar a senha.'));
+    } finally { setSalvandoSenha(false); }
+  }
+
+  // ── form de edição ──
+  const [form, setForm] = useState({
+    nome: crianca.nome || '',
+    data_nascimento: crianca.data_nascimento || '',
+    observacoes_medicas: crianca.observacoes_medicas || '',
+    visitante: !!crianca.visitante,
+    tem_alergia: !!crianca.tem_alergia, alergia_qual: crianca.alergia_qual || '',
+    tem_espectro: !!crianca.tem_espectro, espectro_qual: crianca.espectro_qual || '',
+    tem_limitacao_fisica: !!crianca.tem_limitacao_fisica, limitacao_fisica_qual: crianca.limitacao_fisica_qual || '',
+  });
+  const setF = (k: string, v: unknown) => setForm(s => ({ ...s, [k]: v }));
+  const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '' })));
+  const [salvando, setSalvando] = useState(false);
+
+  async function salvarTudo() {
+    if (form.nome.trim().length < 2) { setErro('Nome da criança muito curto.'); return; }
+    setSalvando(true); setErro('');
+    try {
+      const patch = {
+        nome: form.nome.trim(),
+        data_nascimento: form.data_nascimento || null,
+        observacoes_medicas: form.observacoes_medicas.trim() || null,
+        visitante: form.visitante,
+        tem_alergia: form.tem_alergia, alergia_qual: form.tem_alergia ? form.alergia_qual.trim() || null : null,
+        tem_espectro: form.tem_espectro, espectro_qual: form.tem_espectro ? form.espectro_qual.trim() || null : null,
+        tem_limitacao_fisica: form.tem_limitacao_fisica, limitacao_fisica_qual: form.tem_limitacao_fisica ? form.limitacao_fisica_qual.trim() || null : null,
+      };
+      await totemKids.criancas.update(crianca.id, patch);
+      // Responsáveis com nome alterado
+      const mudados = resps.filter(r => {
+        const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
+        return r.nome.trim().length >= 2 && r.nome.trim() !== (orig?.membro?.nome || '');
+      });
+      for (const r of mudados) {
+        await totemKids.criancas.updateResponsavelMembro(r.membro_id, { nome: r.nome.trim() });
+      }
+      atualizarCrianca({
+        ...patch,
+        responsaveis: crianca.responsaveis.map(r => {
+          const m = resps.find(x => x.membro_id === r.membro_id);
+          return m && m.nome.trim() ? { ...r, membro: { ...(r.membro || {}), id: r.membro?.id || r.membro_id, nome: m.nome.trim() } } : r;
+        }),
+      } as Partial<Crianca>);
+      toast.success('Ficha atualizada');
+      onClose();
+    } catch (e: unknown) { setErro((e as { message?: string })?.message || 'Erro ao salvar'); }
+    finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto z-[80]">
+        <DialogHeader>
+          <DialogTitle>{fase === 'edit' ? `Editar ficha · ${crianca.nome.split(' ')[0]}` : 'Editar ficha da criança'}</DialogTitle>
+          <DialogDescription>
+            {fase === 'edit' ? 'Corrija os dados da criança e dos responsáveis.' : 'Por segurança, a edição exige a senha do Kids.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        {fase === 'senha' ? (
+          <div className="space-y-3">
+            {senhaDefinida === false ? (
+              <div className="space-y-3">
+                <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 text-sm">
+                  Ainda não há senha de edição. A <b>Mari Gaia</b> ou a <b>Milena Rochet</b> (líderes do Kids) precisam criá-la.
+                </div>
+                {!criandoSenha ? (
+                  <Button variant="outline" className="w-full" onClick={() => { setCriandoSenha(true); setErro(''); }}>
+                    Sou líder do Kids · criar senha
+                  </Button>
+                ) : (
+                  <div className="space-y-2">
+                    <Input type="password" inputMode="numeric" autoComplete="new-password" placeholder="Nova senha (mín. 4)"
+                      value={novaSenha} onChange={e => setNovaSenha(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') criarSenha(); }} className="h-12 text-center text-lg" />
+                    <div className="flex gap-2">
+                      <Button variant="ghost" className="flex-1" onClick={() => { setCriandoSenha(false); setErro(''); }}>Cancelar</Button>
+                      <Button className="flex-1 bg-pink-600 hover:bg-pink-700" onClick={criarSenha} disabled={salvandoSenha}>
+                        {salvandoSenha ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Criar senha'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Input type="password" inputMode="numeric" autoComplete="new-password" autoFocus placeholder="Senha do Kids"
+                  value={senha} onChange={e => setSenha(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') verificar(); }} className="h-12 text-center text-lg" />
+                <Button className="w-full bg-pink-600 hover:bg-pink-700" onClick={verificar} disabled={verificando || senhaDefinida === null}>
+                  {verificando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Desbloquear edição'}
+                </Button>
+              </div>
+            )}
+            {erro && <p className="text-sm text-destructive text-center">{erro}</p>}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Nome da criança</label>
+              <Input value={form.nome} onChange={e => setF('nome', e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Nascimento</label>
+                <Input type="date" value={form.data_nascimento} onChange={e => setF('data_nascimento', e.target.value)} />
+              </div>
+              <label className="flex items-center gap-2 mt-6 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.visitante} onChange={e => setF('visitante', e.target.checked)} /> Visitante
+              </label>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Observações médicas</label>
+              <Input value={form.observacoes_medicas} onChange={e => setF('observacoes_medicas', e.target.value)} placeholder="ex.: usa inalador" />
+            </div>
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.tem_alergia} onChange={e => setF('tem_alergia', e.target.checked)} /> Alergia
+              </label>
+              {form.tem_alergia && <Input value={form.alergia_qual} onChange={e => setF('alergia_qual', e.target.value)} placeholder="Qual alergia?" />}
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.tem_espectro} onChange={e => setF('tem_espectro', e.target.checked)} /> Espectro autista
+              </label>
+              {form.tem_espectro && <Input value={form.espectro_qual} onChange={e => setF('espectro_qual', e.target.value)} placeholder="Detalhe (opcional)" />}
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.tem_limitacao_fisica} onChange={e => setF('tem_limitacao_fisica', e.target.checked)} /> Limitação física
+              </label>
+              {form.tem_limitacao_fisica && <Input value={form.limitacao_fisica_qual} onChange={e => setF('limitacao_fisica_qual', e.target.value)} placeholder="Detalhe (opcional)" />}
+            </div>
+            {resps.length > 0 && (
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Responsáveis</label>
+                <div className="space-y-2">
+                  {resps.map((r, i) => {
+                    const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
+                    return (
+                      <div key={r.membro_id}>
+                        <Input value={r.nome} onChange={e => setResps(list => list.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))} />
+                        {orig?.parentesco && <span className="text-[11px] text-muted-foreground">{orig.parentesco}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {erro && <p className="text-sm text-destructive text-center">{erro}</p>}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={onClose} disabled={salvando}>Cancelar</Button>
+              <Button className="flex-1 bg-pink-600 hover:bg-pink-700" onClick={salvarTudo} disabled={salvando}>
+                {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Check className="h-4 w-4 mr-1" />} Salvar
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Captura de foto pela webcam (getUserMedia) · usada no check-in ──
 function WebcamCaptura({ titulo, salvando, onCapturar, onFechar }: {
   titulo: string; salvando: boolean; onCapturar: (dataUrl: string) => void; onFechar: () => void;
@@ -900,15 +1101,10 @@ function CheckinSelecao(props: {
     }
   }, [crianca.id, crianca.responsaveis]);
 
-  // Foto por webcam + correção de dados (nome da criança / do responsável) na hora.
+  // Foto por webcam + pop-up de detalhes/edição da ficha (protegido por senha do Kids).
   const [camAberta, setCamAberta] = useState(false);
   const [salvandoFoto, setSalvandoFoto] = useState(false);
-  const [editandoNome, setEditandoNome] = useState(false);
-  const [nomeEdit, setNomeEdit] = useState(crianca.nome);
-  const [salvandoNome, setSalvandoNome] = useState(false);
-  const [editRespId, setEditRespId] = useState<string | null>(null);
-  const [respNomeEdit, setRespNomeEdit] = useState('');
-  const [salvandoResp, setSalvandoResp] = useState(false);
+  const [detalhesOpen, setDetalhesOpen] = useState(false);
 
   async function salvarFoto(dataUrl: string) {
     setSalvandoFoto(true);
@@ -919,33 +1115,6 @@ function CheckinSelecao(props: {
       toast.success('Foto da criança atualizada');
     } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar foto'); }
     finally { setSalvandoFoto(false); }
-  }
-  async function salvarNomeCrianca() {
-    const nome = nomeEdit.trim();
-    if (nome.length < 2) { toast.error('Nome muito curto'); return; }
-    setSalvandoNome(true);
-    try {
-      await totemKids.criancas.update(crianca.id, { nome });
-      atualizarCrianca({ nome });
-      setEditandoNome(false);
-      toast.success('Nome da criança corrigido');
-    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar'); }
-    finally { setSalvandoNome(false); }
-  }
-  async function salvarNomeResp(membroId: string) {
-    const nome = respNomeEdit.trim();
-    if (nome.length < 2) { toast.error('Nome muito curto'); return; }
-    setSalvandoResp(true);
-    try {
-      await totemKids.criancas.updateResponsavelMembro(membroId, { nome });
-      atualizarCrianca({
-        responsaveis: crianca.responsaveis.map(r =>
-          r.membro_id === membroId ? { ...r, membro: { ...(r.membro || {}), id: r.membro?.id || membroId, nome } } : r),
-      });
-      setEditRespId(null);
-      toast.success('Nome do responsável corrigido');
-    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar'); }
-    finally { setSalvandoResp(false); }
   }
 
   return (
@@ -967,23 +1136,11 @@ function CheckinSelecao(props: {
             </span>
           </button>
           <div className="flex-1 min-w-0">
-            {editandoNome ? (
-              <div className="flex items-center gap-2">
-                <Input value={nomeEdit} onChange={e => setNomeEdit(e.target.value)} autoFocus
-                  onKeyDown={e => { if (e.key === 'Enter') salvarNomeCrianca(); if (e.key === 'Escape') setEditandoNome(false); }}
-                  className="h-10 text-lg font-bold" />
-                <Button size="sm" onClick={salvarNomeCrianca} disabled={salvandoNome} className="bg-pink-600 hover:bg-pink-700">
-                  {salvandoNome ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                </Button>
-                <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => { setEditandoNome(false); setNomeEdit(crianca.nome); }}><X className="h-4 w-4" /></Button>
-              </div>
-            ) : (
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                <span className="truncate">{crianca.nome}</span>
-                <button type="button" onClick={() => { setNomeEdit(crianca.nome); setEditandoNome(true); }} title="Corrigir nome da criança"
-                  className="text-muted-foreground hover:text-pink-600 shrink-0"><Pencil className="h-4 w-4" /></button>
-              </h2>
-            )}
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <span className="truncate">{crianca.nome}</span>
+              <button type="button" onClick={() => setDetalhesOpen(true)} title="Editar ficha da criança (exige senha do Kids)"
+                className="text-muted-foreground hover:text-pink-600 shrink-0"><Pencil className="h-4 w-4" /></button>
+            </h2>
             <p className="text-muted-foreground">
               {formatIdade(crianca.idade_meses) || 'idade não informada'}
               {crianca.familia?.nome && <> · {crianca.familia.nome}</>}
@@ -1001,6 +1158,14 @@ function CheckinSelecao(props: {
             salvando={salvandoFoto}
             onCapturar={salvarFoto}
             onFechar={() => setCamAberta(false)}
+          />
+        )}
+
+        {detalhesOpen && (
+          <ModalDetalhesCrianca
+            crianca={crianca}
+            atualizarCrianca={atualizarCrianca}
+            onClose={() => setDetalhesOpen(false)}
           />
         )}
 
@@ -1100,51 +1265,35 @@ function CheckinSelecao(props: {
             <>
               <div className="space-y-2">
                 {crianca.responsaveis.filter(r => r.autorizado_buscar).map(r => (
-                  editRespId === r.membro_id ? (
-                    <div key={r.membro_id} className="flex items-center gap-2 p-2 rounded-lg border border-pink-500 bg-pink-50 dark:bg-pink-950/30">
-                      <Input value={respNomeEdit} onChange={e => setRespNomeEdit(e.target.value)} autoFocus
-                        onKeyDown={e => { if (e.key === 'Enter') salvarNomeResp(r.membro_id); if (e.key === 'Escape') setEditRespId(null); }}
-                        placeholder="Nome do responsável" className="h-10" />
-                      <Button size="sm" onClick={() => salvarNomeResp(r.membro_id)} disabled={salvandoResp} className="bg-pink-600 hover:bg-pink-700">
-                        {salvandoResp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                      </Button>
-                      <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setEditRespId(null)}><X className="h-4 w-4" /></Button>
-                    </div>
-                  ) : (
-                  <div key={r.membro_id} className="flex items-center gap-1">
-                    <button
-                      onClick={() => setResponsavelSelecionado(r.membro_id)}
-                      className={`flex-1 min-w-0 text-left flex items-center gap-3 p-3 rounded-lg border transition ${
-                        responsavelSelecionado === r.membro_id
-                          ? 'bg-pink-50 dark:bg-pink-950/30 border-pink-500'
-                          : 'bg-card hover:bg-muted'
-                      }`}
-                    >
-                      {r.membro?.foto_url ? (
-                        <img src={r.membro.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
-                      ) : (
-                        <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
-                          {(r.membro?.nome || '?').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{r.membro?.nome}</div>
-                        <div className="text-xs text-muted-foreground flex items-center gap-2">
-                          {r.parentesco && <span>{r.parentesco}</span>}
-                          {r.membro?.telefone && (
-                            <span className="flex items-center gap-1">
-                              <Phone className="h-3 w-3" />
-                              {r.membro.telefone}
-                            </span>
-                          )}
-                        </div>
+                  <button
+                    key={r.membro_id}
+                    onClick={() => setResponsavelSelecionado(r.membro_id)}
+                    className={`w-full text-left flex items-center gap-3 p-3 rounded-lg border transition ${
+                      responsavelSelecionado === r.membro_id
+                        ? 'bg-pink-50 dark:bg-pink-950/30 border-pink-500'
+                        : 'bg-card hover:bg-muted'
+                    }`}
+                  >
+                    {r.membro?.foto_url ? (
+                      <img src={r.membro.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
+                    ) : (
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
+                        {(r.membro?.nome || '?').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
                       </div>
-                    </button>
-                    <button type="button" title="Corrigir nome do responsável"
-                      onClick={() => { setRespNomeEdit(r.membro?.nome || ''); setEditRespId(r.membro_id); }}
-                      className="p-2 text-muted-foreground hover:text-pink-600 shrink-0"><Pencil className="h-4 w-4" /></button>
-                  </div>
-                  )
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{r.membro?.nome}</div>
+                      <div className="text-xs text-muted-foreground flex items-center gap-2">
+                        {r.parentesco && <span>{r.parentesco}</span>}
+                        {r.membro?.telefone && (
+                          <span className="flex items-center gap-1">
+                            <Phone className="h-3 w-3" />
+                            {r.membro.telefone}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
                 ))}
                 {crianca.responsaveis.length === 0 && (
                   <div className="text-sm bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg p-3">

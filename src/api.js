@@ -1480,6 +1480,12 @@ export const totemKids = {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
     consumir: (id, data) => post(`/totem-kids/pre-checkin/${id}/consumir`, data),
   },
+  // Senha de edição da ficha da criança no totem (criada por líder do Kids)
+  editSenha: {
+    status: () => get('/totem-kids/edit-senha/status'),
+    definir: (senha) => post('/totem-kids/edit-senha', { senha }),
+    verificar: (senha) => post('/totem-kids/edit-senha/verificar', { senha }),
+  },
   // Solicitações de vínculo (criança↔responsável) feitas pelo app · equipe aprova
   vinculos: {
     list: (status = 'pendente') => get(`/totem-kids/vinculo-solicitacoes?status=${encodeURIComponent(status)}`),
