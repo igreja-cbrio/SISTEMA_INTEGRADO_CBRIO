@@ -8,6 +8,7 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
 
 const limiter = rateLimit({ windowMs: 60 * 1000, max: 15, message: { error: 'Muitas requisições. Aguarde um minuto.' } });
 router.use(limiter);
@@ -105,6 +106,14 @@ router.post('/:slug/inscrever', async (req, res) => {
       }
       throw error;
     }
+    // Sininho: avisa a equipe de eventos externos (Ariel/Jessica via regras).
+    notificar({
+      modulo: 'eventos-externos', tipo: 'nova_inscricao',
+      titulo: `Nova inscrição · ${ev.nome}`,
+      mensagem: `${nome.trim()} confirmou presença em "${ev.nome}".`,
+      link: `/eventos-externos?evento=${ev.id}`,
+    }).catch((err) => console.error('[publicEventoExterno] notificar:', err.message));
+
     res.status(201).json({ ok: true, numero_sorte: ins.numero_sorte, tem_sorteio: ev.tem_sorteio });
   } catch (e) {
     console.error('[publicEventoExterno] inscrever:', e.message);
