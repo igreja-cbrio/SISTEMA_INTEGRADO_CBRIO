@@ -278,7 +278,13 @@ export default function TotemKidsCheckout() {
             </div>
 
             <div>
-              <div className="text-sm font-medium mb-2">Quem está buscando?</div>
+              <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 p-3 mb-3">
+                <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">Último passo pra liberar a saída</div>
+                <div className="text-sm text-blue-800 dark:text-blue-200 mt-0.5">
+                  Confira a criança acima e <b>toque em quem veio buscar</b> — isso confirma o check-out e libera a saída.
+                </div>
+              </div>
+              <div className="text-sm font-medium mb-2">Quem veio buscar a criança?</div>
               <div className="space-y-2">
                 {/* Atalho: mesma pessoa que entregou */}
                 <Button
