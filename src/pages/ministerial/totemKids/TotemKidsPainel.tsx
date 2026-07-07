@@ -296,7 +296,7 @@ export default function TotemKidsPainel() {
   if (!cultosDia.length) {
     return (
       <div className="max-w-4xl mx-auto p-4 sm:p-6">
-        <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
+        <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
         <h1 className="text-xl sm:text-2xl font-bold text-pink-700 dark:text-pink-300">Kids · Painel ao vivo</h1>
         <Card className="mt-4">
           <CardContent className="p-8 text-center">
@@ -316,7 +316,7 @@ export default function TotemKidsPainel() {
       {/* Cabeçalho */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-1"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
+          <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-1"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
           <h1 className="text-xl sm:text-2xl font-bold text-pink-700 dark:text-pink-300 leading-tight">Kids · Painel ao vivo</h1>
           <p className="text-xs sm:text-sm text-muted-foreground capitalize">
             {dataDia && format(new Date(dataDia + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
@@ -582,7 +582,7 @@ export default function TotemKidsPainel() {
                             ehDecisaoMarcada ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800' : 'bg-card'
                           } ${c.checkout_at ? 'opacity-60' : ''}`}
                         >
-                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => { setCriancaSelCheckin(c); setOverridePainel(false); setOverrideMotivoPainel(''); abrirCrianca(c.crianca_id); }}>
+                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => { setCriancaSelCheckin(c); abrirCrianca(c.crianca_id); }}>
                             {c.crianca.foto_url ? (
                               <img src={c.crianca.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
                             ) : (
