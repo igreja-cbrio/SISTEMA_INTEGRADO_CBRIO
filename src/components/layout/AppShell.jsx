@@ -176,7 +176,7 @@ const NAV_ITEMS = [
 
 export default function AppShell() {
   const auth = useAuth();
-  const { profile, role, signOut, isAdmin, isVoluntario, rotaTravada, moduloTravado } = auth;
+  const { profile, role, signOut, isAdmin, isVoluntario, rotaTravada, moduloTravado, travaPrefixos } = auth;
   const labelTravado = moduloTravado ? moduloTravado.charAt(0).toUpperCase() + moduloTravado.slice(1) : '';
 
   // Visibilidade de item de menu · navItemAllowed (src/lib/menuAccess) espelha
@@ -204,13 +204,16 @@ export default function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Login travado num módulo (quiosque): qualquer rota fora do módulo redireciona
-  // de volta — o usuário só consegue ficar na tela dele (ex.: Marcelo só /batismo).
+  // Login travado num módulo (quiosque): qualquer rota fora dos prefixos do
+  // módulo redireciona de volta — o usuário só consegue ficar na tela dele
+  // (ex.: Marcelo só /batismo; totem Kids no hub + /ministerial/totem-kids).
   useEffect(() => {
-    if (rotaTravada && !location.pathname.startsWith(rotaTravada)) {
+    if (!rotaTravada) return;
+    const permitidos = travaPrefixos || [rotaTravada];
+    if (!permitidos.some((p) => location.pathname.startsWith(p))) {
       navigate(rotaTravada, { replace: true });
     }
-  }, [rotaTravada, location.pathname, navigate]);
+  }, [rotaTravada, travaPrefixos, location.pathname, navigate]);
 
   const initials = (profile?.name || '??')
     .split(' ')

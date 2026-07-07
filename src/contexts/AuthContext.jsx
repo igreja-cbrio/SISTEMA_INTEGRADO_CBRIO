@@ -19,6 +19,15 @@ const MODULO_ROTA_TRAVA = {
   'totem-membro': '/totem',
 };
 
+// Prefixos de rota PERMITIDOS dentro da trava, quando o módulo opera em mais de
+// um prefixo (a landing continua sendo MODULO_ROTA_TRAVA). Kids: o quiosque usa
+// o hub (/ministerial/kids) + as telas do totem (/ministerial/totem-kids/...).
+// O painel do culto kids (/kids · aba Cultos) fica FORA de propósito — conta
+// travada não vê o gerencial. Módulo sem entrada aqui → só a rota de landing.
+const MODULO_TRAVA_PREFIXOS = {
+  kids: ['/ministerial/kids', '/ministerial/totem-kids'],
+};
+
 // Set to true to bypass login and simulate an admin user
 const DEV_BYPASS_AUTH = false;
 
@@ -399,6 +408,9 @@ export function AuthProvider({ children }) {
     !!profile?.is_membro_only && !isAdmin && profile?.role !== 'diretor' && !isVoluntario && slugTravavel
   ) ? slugTravavel : null;
   const rotaTravada = moduloTravado ? MODULO_ROTA_TRAVA[moduloTravado] : null;
+  const travaPrefixos = moduloTravado
+    ? (MODULO_TRAVA_PREFIXOS[moduloTravado] || [MODULO_ROTA_TRAVA[moduloTravado]])
+    : null;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
   const canIA = isColaborador;
@@ -414,6 +426,7 @@ export function AuthProvider({ children }) {
     isMembroOnly,
     moduloTravado,
     rotaTravada,
+    travaPrefixos,
     isColaborador,
     modulePerms,
     modulosBloqueados,
@@ -446,7 +459,7 @@ export function useAuth() {
     // During HMR, context can temporarily be null — return a safe fallback
     return {
       user: null, profile: null, loading: true, role: null,
-      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, moduloTravado: null, rotaTravada: null, isColaborador: false, modulePerms: null,
+      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, moduloTravado: null, rotaTravada: null, travaPrefixos: null, isColaborador: false, modulePerms: null,
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,

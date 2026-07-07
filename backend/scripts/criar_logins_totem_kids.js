@@ -18,8 +18,10 @@
  *   - override em permissoes_modulo: kids nível 3 — o ÚNICO módulo da conta
  *     (override vence cargo/área · mesmo mecanismo do totem-membro).
  *   - NENHUMA área em usuario_areas (área daria boost nível 5; totem não precisa).
- *   - is_membro_only = false: a trava-quiosque (MODULO_ROTA_TRAVA) do kids
- *     aponta pro hub e bloquearia as telas do totem em /ministerial/totem-kids.
+ *   - is_membro_only = true → com um único módulo, o login TRAVA no Kids
+ *     operacional (hub /ministerial/kids + telas do totem, via
+ *     MODULO_TRAVA_PREFIXOS no AuthContext): sem menu, sem dashboard, sem
+ *     Inteligência e sem /kids (painel do culto). Ao logar, abre direto no hub.
  *   - senha forte gerada + profiles.password_changed_at preenchido — sem isso o
  *     PrimeiroAcessoSenhaModal (obrigatório) travaria o totem pedindo troca.
  *   Direção à prova de falha: qualquer erro deixa a conta com MENOS acesso,
@@ -164,7 +166,7 @@ async function main() {
     console.log(`   auth.users: ${existing ? 'JÁ EXISTE (id=' + existing.id + ') · senha ' + (RESET_SENHA ? 'SERÁ regenerada' : 'NÃO será alterada') : 'será criado com senha forte gerada'}`);
 
     if (!APPLY) {
-      console.log(`   [dry-run] criaria/garantiria: profile(role=assistente · password_changed_at) · usuarios(cargo=${CARGO_SLUG}) · SEM áreas · override kids=${NIVEL}`);
+      console.log(`   [dry-run] criaria/garantiria: profile(role=assistente · travado no kids · password_changed_at) · usuarios(cargo=${CARGO_SLUG}) · SEM áreas · override kids=${NIVEL}`);
       continue;
     }
 
@@ -187,9 +189,10 @@ async function main() {
     }
     if (senhaDefinida) senhasGeradas.push({ email, nome: c.nome, senha: senhaDefinida });
 
-    // profile: assistente comum (SEM is_membro_only — a trava do kids bloquearia o totem).
+    // profile: assistente + is_membro_only=true → com 1 único módulo, o login
+    // trava no Kids operacional (hub + totem · MODULO_TRAVA_PREFIXOS no front).
     // password_changed_at só quando a senha foi definida agora (suprime o modal de 1º acesso).
-    const profilePayload = { id: uid, name: c.nome, email, role: 'assistente', active: true, is_membro_only: false };
+    const profilePayload = { id: uid, name: c.nome, email, role: 'assistente', active: true, is_membro_only: true };
     if (senhaDefinida) profilePayload.password_changed_at = new Date().toISOString();
     const { error: pErr } = await supabase.from('profiles').upsert(profilePayload, { onConflict: 'id' });
     if (pErr) { console.error(`   ✗ erro no profile: ${pErr.message}`); continue; }
