@@ -103,6 +103,13 @@ const GROUP_LABELS = {
 };
 const GROUP_ORDER = ['cross', 'admin', 'acomp', 'min', 'intel'];
 
+// ─── Typing Indicator ──────────────────────────────────────────────────
+
+const dotStyle = {
+  width: 8, height: 8, borderRadius: '50%', background: C.primary, opacity: 0.4,
+  display: 'inline-block',
+};
+
 function TypingIndicator() {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 0' }}>
