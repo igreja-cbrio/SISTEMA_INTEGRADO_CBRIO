@@ -611,6 +611,30 @@ async function fetchIntegracaoContext() {
     .order('data_batismo', { ascending: false })
     .limit(15);
 
+  // Decisões de fé POR MÊS (fonte real = cultos: presenciais + online + kids,
+  // agregadas por cultos.data — mesma soma do Dashboard Semanal). Sem isto o
+  // Pedrinho não respondia "quantas decisões tivemos no mês passado".
+  const inicioSerie = new Date();
+  inicioSerie.setMonth(inicioSerie.getMonth() - 6, 1);
+  const { data: cultosDec } = await supabase
+    .from('cultos')
+    .select('data, decisoes_presenciais, decisoes_online, decisoes_kids')
+    .gte('data', inicioSerie.toISOString().slice(0, 10))
+    .order('data', { ascending: true });
+
+  const decPorMes = {};
+  for (const c of cultosDec || []) {
+    const ym = String(c.data || '').slice(0, 7); // AAAA-MM
+    if (!ym) continue;
+    const soma = (c.decisoes_presenciais || 0) + (c.decisoes_online || 0) + (c.decisoes_kids || 0);
+    decPorMes[ym] = (decPorMes[ym] || 0) + soma;
+  }
+  const agora = new Date();
+  const chaveMes = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+  const mesAtualKey = chaveMes(agora);
+  const mesPassadoKey = chaveMes(new Date(agora.getFullYear(), agora.getMonth() - 1, 1));
+  const decisoesPorMes = Object.keys(decPorMes).sort().map((ym) => ({ mes: ym, decisoes: decPorMes[ym] }));
+
   return {
     resumo: {
       total_visitantes: totalVisitantes,
@@ -619,6 +643,12 @@ async function fetchIntegracaoContext() {
       decisoes_ultimos_30d: decisoes30d,
       sem_followup_apos_30d: semFollowup,
       virou_membro_ultimos_90d: virouMembro,
+    },
+    decisoes_de_fe: {
+      obs: 'Decisões = presenciais + online + kids, somadas dos cultos por mês (mesma conta do Dashboard Semanal).',
+      mes_atual: decPorMes[mesAtualKey] || 0,
+      mes_passado: decPorMes[mesPassadoKey] || 0,
+      por_mes_ultimos_6: decisoesPorMes,
     },
     visitantes_novos_sem_responsavel: novosSemResp || [],
     batismos: {

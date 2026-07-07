@@ -213,17 +213,6 @@ export default function ChatIAFloating() {
         <HeaderBtn title="Fechar" onClick={() => setOpen(false)}><X className="h-4 w-4" /></HeaderBtn>
       </div>
 
-      {/* Onda (só enquanto fala) */}
-      {speaking && (
-        <div className="relative flex-shrink-0 flex items-center justify-center overflow-hidden" style={{ height: 96, background: '#000' }}>
-          <SiriWave variant="wave" size={400} renderScale={0.6} style={{ width: '100%', height: 260, borderRadius: 0 }} />
-          <button onClick={pararVoz} title="Parar voz"
-            className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur hover:bg-white/25">
-            <Square className="h-3 w-3" fill="currentColor" /> parar
-          </button>
-        </div>
-      )}
-
       {/* Mensagens */}
       <div className="flex-1 overflow-y-auto min-h-0 px-3.5 py-3 space-y-3">
         {messages.length === 0 && (
@@ -265,6 +254,22 @@ export default function ChatIAFloating() {
         ))}
         <div ref={endRef} />
       </div>
+
+      {/* Onda de voz · barra integrada logo acima do campo de digitar */}
+      {speaking && (
+        <div className="relative mx-3 mb-1 flex-shrink-0 overflow-hidden rounded-xl" style={{ height: 58, background: '#000' }}>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <SiriWave variant="wave" size={360} renderScale={0.6} style={{ width: '100%', height: 240, borderRadius: 0 }} />
+          </div>
+          <span className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-[11px] font-semibold text-white/85">
+            Pedrinho está falando…
+          </span>
+          <button onClick={pararVoz} title="Parar voz"
+            className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur transition-colors hover:bg-white/25">
+            <Square className="h-3 w-3" fill="currentColor" /> parar
+          </button>
+        </div>
+      )}
 
       {/* Input */}
       <div className="flex items-end gap-2 border-t px-3 py-2.5 flex-shrink-0" style={{ borderColor: 'var(--cbrio-border)' }}>
