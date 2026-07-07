@@ -23,8 +23,9 @@ import { imprimirEtiquetas } from './lib/imprimir';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-export default function TotemKidsTesteEtiqueta() {
-  const navigate = useNavigate();
+// Form reusável de teste de etiqueta (usado na página standalone e dentro do
+// modo totem do check-in). Estado próprio · não cria check-in real.
+export function EtiquetaTesteForm() {
   const [criancaNome, setCriancaNome] = useState('Maria Clara Teste');
   const [salaNome, setSalaNome] = useState('Infantil 1');
   const [salaCor, setSalaCor] = useState('#EC4899');
@@ -78,19 +79,6 @@ export default function TotemKidsTesteEtiqueta() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Teste de Etiqueta</h1>
-          <p className="text-sm text-muted-foreground">
-            Calibre a impressora antes do culto · gera dados fake, NÃO cria check-in real
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/kids')}>
-          <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Kids
-        </Button>
-      </div>
-
       <Card>
         <CardContent className="p-4 space-y-4">
           <div className="text-sm font-semibold text-pink-700 dark:text-pink-300 flex items-center gap-2">
@@ -155,6 +143,25 @@ export default function TotemKidsTesteEtiqueta() {
           </div>
         </CardContent>
       </Card>
+  );
+}
+
+export default function TotemKidsTesteEtiqueta() {
+  const navigate = useNavigate();
+  return (
+    <div className="max-w-3xl mx-auto p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-pink-700 dark:text-pink-300">Teste de Etiqueta</h1>
+          <p className="text-sm text-muted-foreground">
+            Calibre a impressora antes do culto · gera dados fake, NÃO cria check-in real
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/kids')}>
+          <ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Kids
+        </Button>
+      </div>
+      <EtiquetaTesteForm />
     </div>
   );
 }

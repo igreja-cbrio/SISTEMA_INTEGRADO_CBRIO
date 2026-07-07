@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { totemKids } from '@/api';
+import { TotemKidsConfigTabs } from '@/pages/admin/totemKids/TotemKidsAdmin';
 import { formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas } from './lib/imprimir';
 import confetti from 'canvas-confetti';
@@ -110,9 +111,27 @@ export default function TotemKidsCheckin() {
   const [pinInput, setPinInput] = useState('');
   const [pinErro, setPinErro] = useState('');
 
+  // Ajustes do totem (engrenagem): Sessões / Config / Testar etiqueta — sem sair do totem.
+  const [ajustesOpen, setAjustesOpen] = useState(false);
+  const [ajustesAba, setAjustesAba] = useState('sessoes');
+
   const buscaRef = useRef<HTMLInputElement>(null);
 
   const PIN_KEY = 'cbrio-totem-kids-pin';
+
+  function abrirAjustes(aba: string = 'sessoes') { setAjustesAba(aba); setAjustesOpen(true); }
+  // Recarrega a sessão atual (após mexer em sessões/config pela engrenagem).
+  function recarregarSessao() {
+    totemKids.sessoes.atual().then((s: any) => {
+      setSessao(s);
+      if (s?.culto?.data) {
+        totemKids.cultosDoDia(String(s.culto.data).slice(0, 10))
+          .then((cs: any[]) => setCultosDia((cs || []).filter((c: any) => c.id !== s.culto?.id)))
+          .catch(() => setCultosDia([]));
+      }
+    }).catch(() => {});
+    totemKids.salas.list().then(setSalas).catch(() => {});
+  }
 
   function ativarTotem() {
     document.documentElement.requestFullscreen?.().catch(() => {});
@@ -393,19 +412,43 @@ export default function TotemKidsCheckin() {
     );
   }
 
+  // Diálogo de ajustes do totem (engrenagem / clique na sessão) — Sessões, Config
+  // e Testar etiqueta, tudo sem sair do totem. Ao fechar, recarrega a sessão.
+  const ajustesDialog = (
+    <Dialog open={ajustesOpen} onOpenChange={(o) => { setAjustesOpen(o); if (!o) recarregarSessao(); }}>
+      <DialogContent className="max-w-4xl w-[95vw] max-h-[92vh] overflow-y-auto z-[80]">
+        <DialogHeader>
+          <DialogTitle>Ajustes do totem</DialogTitle>
+          <DialogDescription>Sessões, salas, estações, pagers e teste de etiqueta — sem sair do totem.</DialogDescription>
+        </DialogHeader>
+        <TotemKidsConfigTabs aba={ajustesAba} onAba={setAjustesAba} />
+      </DialogContent>
+    </Dialog>
+  );
+
   if (!sessao) {
     return (
-      <KidsZoneShell>
+      <div className={totemMode ? 'fixed inset-0 z-[60] overflow-y-auto' : ''}>
+      <KidsZoneShell fullscreen={totemMode}>
         <div className="text-center py-14 space-y-4">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-3xl shadow-lg shadow-pink-500/30">🧸</div>
           <h1 className="text-2xl font-black tracking-tight">Totem Kids</h1>
           <p className="text-lg text-slate-600">Nenhuma sessão aberta no momento</p>
-          <p className="text-sm text-slate-400">Crie uma sessão na administração antes de iniciar o check-in.</p>
-          <Button onClick={() => navigate('/ministerial/totem-kids/configuracoes?aba=sessoes')} className="bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold">
-            Gerenciar sessões
-          </Button>
+          <p className="text-sm text-slate-400">Abra uma sessão aqui mesmo pra iniciar o check-in.</p>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <Button onClick={() => abrirAjustes('sessoes')} className="bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold">
+              <Settings className="h-4 w-4 mr-1" /> Gerenciar sessões
+            </Button>
+            {totemMode ? (
+              <Button variant="destructive" onClick={pedirSairTotem}><Lock className="h-4 w-4 mr-1" /> Sair do modo totem</Button>
+            ) : (
+              <Button variant="outline" onClick={() => navigate('/ministerial/kids')}><ArrowLeft className="h-4 w-4 mr-1" /> Voltar ao Kids</Button>
+            )}
+          </div>
         </div>
+        {ajustesDialog}
       </KidsZoneShell>
+      </div>
     );
   }
 
@@ -420,10 +463,13 @@ export default function TotemKidsCheckin() {
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-2xl shadow-lg shadow-pink-500/30">🧸</div>
           <div>
             <p className="text-lg font-black leading-none">Totem Kids</p>
-            <p className="text-xs font-medium text-slate-400 tracking-wide">
+            {/* Sessão atual · clicável pra abrir/fechar/trocar sem sair do totem */}
+            <button onClick={() => abrirAjustes('sessoes')} title="Gerenciar sessão (abrir/fechar/trocar)"
+              className="text-xs font-medium text-slate-400 tracking-wide inline-flex items-center gap-1 hover:text-pink-600 transition-colors">
               {sessao.culto?.nome}
               {sessao.culto?.data && ` · ${format(new Date(sessao.culto.data + 'T00:00:00'), "EEE, dd/MM", { locale: ptBR })}`}
-            </p>
+              <Settings className="h-3 w-3 opacity-60" />
+            </button>
             {estacaoPareada ? (
               <Badge variant="secondary" className="mt-1 text-[10px]">
                 <Tablet className="h-3 w-3 mr-1" /> {estacaoPareada.nome}
@@ -439,6 +485,10 @@ export default function TotemKidsCheckin() {
         <div className="flex items-center gap-4 flex-wrap">
           <KidsZoneRelogio />
           <KidsZoneToggle ativo="checkin" onCheckout={() => navigate('/ministerial/totem-kids/checkout')} />
+          {/* Engrenagem discreta · ajustes (sessões, config, etiqueta) sem sair do totem */}
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-400 hover:text-pink-600" onClick={() => abrirAjustes('sessoes')} title="Ajustes · sessões, configurações e testar etiqueta">
+            <Settings className="h-5 w-5" />
+          </Button>
           {totemMode ? (
             <Button variant="destructive" size="sm" onClick={pedirSairTotem}>
               <Lock className="h-4 w-4 md:mr-1" /> <span className="hidden md:inline">Sair do modo totem</span>
@@ -455,6 +505,8 @@ export default function TotemKidsCheckin() {
           )}
         </div>
       </div>
+
+      {ajustesDialog}
 
       {!crianca ? (
         <div className="space-y-6">

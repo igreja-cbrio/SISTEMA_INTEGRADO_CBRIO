@@ -18,6 +18,7 @@ import { ColorPicker } from '@/components/ui/ColorPicker';
 import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, Vibrate, Trash2, Send, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
+import { EtiquetaTesteForm } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { formatIdadeShort } from '@/pages/ministerial/totemKids/lib/idade';
 import { format } from 'date-fns';
@@ -26,7 +27,7 @@ import { ptBR } from 'date-fns/locale';
 export default function TotemKidsAdmin() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const ABAS = ['sessoes', 'salas', 'estacoes', 'pagers', 'auditoria'];
+  const ABAS = ['sessoes', 'salas', 'estacoes', 'pagers', 'auditoria', 'etiqueta'];
   const abaParam = searchParams.get('aba') || '';
   const aba = ABAS.includes(abaParam) ? abaParam : 'sessoes';
   return (
@@ -55,21 +56,35 @@ export default function TotemKidsAdmin() {
         </div>
       </div>
 
-      <Tabs value={aba} onValueChange={(v) => setSearchParams({ aba: v })}>
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>
-          <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>
-          <TabsTrigger value="estacoes"><Printer className="h-4 w-4 mr-1" /> Estações</TabsTrigger>
-          <TabsTrigger value="pagers"><Vibrate className="h-4 w-4 mr-1" /> Pagers</TabsTrigger>
-          <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>
-        </TabsList>
-        <TabsContent value="sessoes"><AbaSessoes /></TabsContent>
-        <TabsContent value="salas"><AbaSalas /></TabsContent>
-        <TabsContent value="estacoes"><AbaEstacoes /></TabsContent>
-        <TabsContent value="pagers"><AbaPagers /></TabsContent>
-        <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>
-      </Tabs>
+      <TotemKidsConfigTabs aba={aba} onAba={(v) => setSearchParams({ aba: v })} />
     </div>
+  );
+}
+
+// Abas de configuração reutilizáveis (usadas na página /configuracoes E dentro do
+// modo totem do check-in, via engrenagem). Controlado se receber aba/onAba,
+// senão gerencia o próprio estado. Inclui a aba "Etiqueta" (teste de impressão).
+export function TotemKidsConfigTabs({ aba: abaProp, onAba }: { aba?: string; onAba?: (v: string) => void }) {
+  const [abaLocal, setAbaLocal] = useState('sessoes');
+  const aba = abaProp ?? abaLocal;
+  const setAba = onAba ?? setAbaLocal;
+  return (
+    <Tabs value={aba} onValueChange={setAba}>
+      <TabsList className="flex-wrap">
+        <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>
+        <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>
+        <TabsTrigger value="estacoes"><Printer className="h-4 w-4 mr-1" /> Estações</TabsTrigger>
+        <TabsTrigger value="pagers"><Vibrate className="h-4 w-4 mr-1" /> Pagers</TabsTrigger>
+        <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>
+        <TabsTrigger value="etiqueta"><Printer className="h-4 w-4 mr-1" /> Etiqueta</TabsTrigger>
+      </TabsList>
+      <TabsContent value="sessoes"><AbaSessoes /></TabsContent>
+      <TabsContent value="salas"><AbaSalas /></TabsContent>
+      <TabsContent value="estacoes"><AbaEstacoes /></TabsContent>
+      <TabsContent value="pagers"><AbaPagers /></TabsContent>
+      <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>
+      <TabsContent value="etiqueta"><EtiquetaTesteForm /></TabsContent>
+    </Tabs>
   );
 }
 
@@ -202,7 +217,7 @@ function AbaSessoes() {
             ) : (
               <Select value={cultoSelecionado} onValueChange={setCultoSelecionado}>
                 <SelectTrigger><SelectValue placeholder="Selecione o culto" /></SelectTrigger>
-                <SelectContent className="max-h-[300px]">
+                <SelectContent className="max-h-[300px] z-[1200]">
                   {cultos.map((c: any) => {
                     const dt = c.data && new Date(c.data + 'T00:00:00');
                     const jaTemSessao = sessoes.some(s => s.culto_id === c.id);
@@ -503,7 +518,7 @@ function AbaPagers() {
                     <label className="text-xs">Cor</label>
                     <Select value={editando.cor} onValueChange={(v) => setEditando({ ...editando, cor: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[1200]">
                         {CORES_LRS.map(c => (
                           <SelectItem key={c.v} value={c.v}>
                             <span className="inline-flex items-center gap-2">
@@ -681,7 +696,7 @@ function AbaEstacoes() {
                 <Input placeholder="Nome (ex: Totem Recepção 1)" value={editando.nome} onChange={ev => setEditando({ ...editando, nome: ev.target.value })} />
                 <Select value={editando.tipo} onValueChange={(v: any) => setEditando({ ...editando, tipo: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[1200]">
                     <SelectItem value="manned">Manned · voluntário opera o totem</SelectItem>
                     <SelectItem value="self">Self · PC touch (pai opera sem login)</SelectItem>
                     <SelectItem value="display">Display · TV de uma sala específica</SelectItem>
@@ -734,7 +749,7 @@ function SeletorSala({ salaId, onChange }: { salaId: string | null; onChange: (i
       <label className="text-xs text-muted-foreground block mb-1">Sala vinculada *</label>
       <Select value={salaId || ''} onValueChange={(v) => onChange(v || null)}>
         <SelectTrigger><SelectValue placeholder="Selecione a sala" /></SelectTrigger>
-        <SelectContent>
+        <SelectContent className="z-[1200]">
           {salas.filter((s: any) => s.ativo).map((s: any) => (
             <SelectItem key={s.id} value={s.id}>
               <span className="inline-block h-2 w-2 rounded-full mr-2" style={{ background: s.cor }} />
