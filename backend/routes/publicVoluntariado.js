@@ -36,6 +36,17 @@ function ehEmailValido(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+// Nome completo sem abreviação: rejeita partes com ponto ("J.") ou de 1 letra
+// (conectivos "de/da/do/das/dos/e" são permitidos).
+const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+function temAbreviacaoNome(s) {
+  return String(s || '').trim().split(/\s+/).some((p) => {
+    const limpo = p.replace(/\./g, '');
+    if (CONECTIVOS_NOME.has(limpo.toLowerCase())) return false;
+    return p.includes('.') || limpo.length === 1;
+  });
+}
+
 // Valida que serviceId é UUID v4 (evita open redirect via path injection)
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function ehUuidValido(s) {
@@ -395,8 +406,16 @@ router.post('/inscrever-form', publicLimiter, async (req, res) => {
 
     const cleanNome = String(nome || '').trim();
     const cleanSobrenome = String(sobrenome || '').trim();
-    if (cleanNome.length < 2) return res.status(400).json({ error: 'Nome obrigatorio' });
-    if (cleanSobrenome.length < 1) return res.status(400).json({ error: 'Sobrenome obrigatorio' });
+    if (cleanNome.length < 2) return res.status(400).json({ error: 'Nome obrigatório' });
+    if (cleanSobrenome.length < 2) return res.status(400).json({ error: 'Informe seu sobrenome completo' });
+    // Nome completo sem abreviação ("Maria S." / "J. Silva" não valem).
+    if (temAbreviacaoNome(cleanNome) || temAbreviacaoNome(cleanSobrenome)) {
+      return res.status(400).json({ error: 'Escreva seu nome completo, sem abreviações' });
+    }
+    // Participação no NEXT é resposta obrigatória (Sim/Não).
+    if (!participou_next || !String(participou_next).trim()) {
+      return res.status(400).json({ error: 'Conta pra gente se você já participou do NEXT' });
+    }
 
     const cleanEmail = email ? String(email).toLowerCase().trim() : null;
     if (!cleanEmail || !ehEmailValido(cleanEmail)) {
