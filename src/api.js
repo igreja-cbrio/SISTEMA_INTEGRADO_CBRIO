@@ -761,6 +761,26 @@ export const agents = {
     }
     return res; // caller reads SSE stream
   },
+  /**
+   * Ask SSE stream (Fase 2 · assistente com tools read-only + dados ao vivo).
+   * Mesmo contrato SSE do chat. Usado pelo Supervisor.
+   */
+  ask: async ({ message, sessionId }) => {
+    const token = await getToken();
+    const res = await fetch(`${API}/agents/ask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ message, sessionId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res;
+  },
 };
 
 export const financeiro = {
