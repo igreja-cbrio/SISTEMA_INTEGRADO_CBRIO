@@ -791,6 +791,30 @@ export const agents = {
     }
     return res;
   },
+  /**
+   * Text-to-speech do Pedrinho. Retorna um Blob de áudio (audio/mpeg).
+   * Em erro, lança com `.code` (ex.: 'tts_unconfigured') pra UI cair no fallback
+   * de voz do navegador.
+   */
+  tts: async (text, opts = {}) => {
+    const token = await getToken();
+    const res = await fetch(`${API}/agents/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ text, ...opts }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const e = new Error(err.error || `HTTP ${res.status}`);
+      e.code = err.code;
+      e.status = res.status;
+      throw e;
+    }
+    return await res.blob();
+  },
 };
 
 export const financeiro = {

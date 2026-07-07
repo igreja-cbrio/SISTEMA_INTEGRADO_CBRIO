@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { agents } from '../../api';
 import { Button } from '../../components/ui/button';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import ReactMarkdown from 'react-markdown';
 import FilaAprovacao from './FilaAprovacao';
@@ -471,24 +470,19 @@ export default function AssistenteIA() {
   return (
     <div style={s.page}>
       <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Assistente IA</div>
-        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>Agentes inteligentes para chat, auditoria e análise do sistema</div>
+        <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Agentes &amp; Auditoria</div>
+        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
+          Fila de aprovação e agentes de auditoria do sistema · acesso restrito aos desenvolvedores.
+          O assistente do dia a dia é o <strong>Pedrinho</strong>, no botão flutuante (canto inferior direito).
+        </div>
       </div>
 
-      <Tabs defaultValue="chat">
-        <TabsList className="mb-4">
-          <TabsTrigger value="chat">💬 Chat IA</TabsTrigger>
-          <TabsTrigger value="fila">🤖 Agentes de Auditoria</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="chat">
-          <ChatTab />
-        </TabsContent>
-
-        <TabsContent value="fila">
-          <FilaAprovacao />
-        </TabsContent>
-      </Tabs>
+      <FilaAprovacao />
     </div>
   );
 }
+
+// ChatTab abaixo ficou fora de uso (o chat virou o Pedrinho, pop lateral em
+// components/layout/ChatIAFloating). Mantido só como referência; não é renderizado.
+// eslint-disable-next-line no-unused-vars
+const _ChatTabLegado = ChatTab;

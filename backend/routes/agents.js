@@ -32,6 +32,22 @@ const chatLimiter = rateLimit({
   message: { error: 'Muitas mensagens. Aguarde um momento.' }
 });
 
+const ttsLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 40,
+  message: { error: 'Muitos pedidos de voz. Aguarde um momento.' }
+});
+
+// Devs (auditoria só pra eles · você + Marcos Paulo). Allowlist por e-mail,
+// sobrescritível via env DEV_EMAILS (CSV). Matheus/outros: adicionar aqui ou no env.
+const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br')
+  .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+function requireDev(req, res, next) {
+  const email = (req.user?.email || '').toLowerCase();
+  if (email && DEV_EMAILS.includes(email)) return next();
+  return res.status(403).json({ error: 'Acesso restrito aos desenvolvedores.', code: 'dev_only' });
+}
+
 // ─── MANAGED AGENTS: Chat via Sessions API ─────────────────────────────
 
 // GET /api/agents/modules — lista módulos disponíveis para o usuário atual
@@ -529,6 +545,57 @@ router.delete('/sessions/:id', async (req, res) => {
     res.status(500).json({ error: 'Erro ao remover sessão' });
   }
 });
+
+// ─── TTS · voz do Pedrinho (ElevenLabs, com fallback no cliente) ──────
+// Aberto a qualquer autenticado (o Pedrinho é o assistente de todos). Retorna
+// audio/mpeg. Sem ELEVENLABS_API_KEY → 503 tts_unconfigured (o cliente cai na
+// voz do navegador). ⚠️ A chave vive SÓ no env — nunca no código.
+router.post('/tts', ttsLimiter, async (req, res) => {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({ error: 'Voz premium não configurada', code: 'tts_unconfigured' });
+  }
+  const { text } = sanitizeObj(req.body || {});
+  if (!text || !String(text).trim()) {
+    return res.status(400).json({ error: 'Texto obrigatório' });
+  }
+  const clean = String(text).slice(0, 5000);
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB'; // voz masculina padrão (trocável no env)
+  const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2'; // pt-BR
+  try {
+    const r = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+      {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+        body: JSON.stringify({
+          text: clean,
+          model_id: modelId,
+          voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true },
+        }),
+      },
+    );
+    if (!r.ok) {
+      const errTxt = await r.text().catch(() => '');
+      console.error('[TTS] ElevenLabs', r.status, errTxt.slice(0, 200));
+      return res.status(502).json({ error: 'Falha ao gerar voz', code: 'tts_failed' });
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(buf);
+  } catch (e) {
+    console.error('[TTS] error:', e.message);
+    return res.status(502).json({ error: 'Falha ao gerar voz', code: 'tts_failed' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// A PARTIR DAQUI: auditoria/fila — SÓ DEVS (você + Marcos Paulo · requireDev).
+// Tudo abaixo (generate, queue, worker, log, run, runs, stats, scores, memory)
+// fica restrito. Chat/ask/sessions/tts acima seguem abertos aos usuários.
+// ═══════════════════════════════════════════════════════════════════════
+router.use(requireDev);
 
 // ─── LEGACY: Anthropic Messages API (auditorias) ──────────────────────
 

@@ -343,6 +343,11 @@ export function AuthProvider({ children }) {
   const cargoNome = permData?.cargoNome || null;
   const cargoSlug = permData?.cargoSlug || null;
 
+  // Devs (auditoria/agentes só pra eles · você + Marcos Paulo). Espelha o
+  // requireDev do backend (agents.js). Adicionar mais alguém: aqui + lá.
+  const DEV_EMAILS = ['gestao@cbrio.com.br', 'infra@cbrio.com.br'];
+  const isDev = DEV_EMAILS.includes(String(profile?.email || user?.email || '').toLowerCase());
+
   const isVoluntario = profile?.role === 'voluntario';
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
@@ -424,6 +429,7 @@ export function AuthProvider({ children }) {
     userSetores,
     cargoNome,
     cargoSlug,
+    isDev,
     signInWithMicrosoft,
     signInWithGoogle,
     signInWithEmail,
@@ -454,7 +460,7 @@ export function useAuth() {
       canProcessos: false, canSolicitacoes: false, canNPS: false,
       canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
-      cargoNome: null, cargoSlug: null,
+      cargoNome: null, cargoSlug: null, isDev: false,
       recarregarAuth: async () => {},
       refreshProfile: async () => {},
       signInWithMicrosoft: async () => ({}),

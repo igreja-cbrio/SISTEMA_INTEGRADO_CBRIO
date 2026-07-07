@@ -413,6 +413,15 @@ function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permK
   return <>{children}</>;
 }
 
+// Guard só-devs (você + Marcos Paulo) · usado na tela de agentes/auditoria.
+// O Pedrinho (assistente) NÃO usa isto — ele é o pop lateral, aberto a todos.
+function DevGuard({ children }: { children: ReactNode }) {
+  const auth = useAuth();
+  if (auth.loading) return <Loading />;
+  if (!(auth as Record<string, unknown>).isDev) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 function VoluntariadoGuard({ children }: { children: ReactNode }) {
   const auth = useAuth();
   if (auth.loading) return <Loading />;
@@ -638,7 +647,7 @@ function AppRoutes() {
         <Route path="/ministerial/bridge" element={<Navigate to="/bridge" replace />} />
         <Route path="/ministerial/next" element={<Navigate to="/ministerial/integracao?tab=next" replace />} />
         <Route path="/ministerial/batismos" element={<Navigate to="/ministerial/integracao?tab=batismos" replace />} />
-        <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
+        <Route path="/assistente-ia" element={<DevGuard><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></DevGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         {/* Telas substituidas pelo /painel (Sistema OKR/NSM 2026 — Fase 2) */}
         <Route path="/kpis" element={<Navigate to="/painel" replace />} />
