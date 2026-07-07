@@ -2017,6 +2017,34 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
   }
 });
 
+// POST /api/totem-kids/checkin/:id/reabrir · DESFAZ um check-out (feito sem
+// querer) → a criança volta a constar presente. Reabre o grupo multi-culto todo.
+router.post('/checkin/:id/reabrir', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { data: alvo } = await supabase.from('kids_checkins')
+      .select('id, checkin_grupo_id, checkout_at, sessao:kids_sessoes(status)')
+      .eq('id', req.params.id).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Check-in não encontrado' });
+    if (!alvo.checkout_at) return res.json({ ok: true, ja_presente: true });
+    if (alvo.sessao?.status && alvo.sessao.status !== 'aberta') {
+      return res.status(409).json({ error: 'A sessão já foi encerrada — não dá pra reabrir o check-in.' });
+    }
+    const patch = {
+      checkout_at: null, responsavel_checkout_id: null, responsavel_checkout_nome: null,
+      checkout_metodo: null, checkout_por: null, override_motivo: null, override_aprovado_por: null,
+      updated_at: new Date().toISOString(),
+    };
+    let q = supabase.from('kids_checkins').update(patch).not('checkout_at', 'is', null);
+    q = alvo.checkin_grupo_id ? q.eq('checkin_grupo_id', alvo.checkin_grupo_id) : q.eq('id', req.params.id);
+    const { data, error } = await q.select('id, crianca:kids_criancas(nome)');
+    if (error) throw error;
+    res.json({ ok: true, reabertos: (data || []).length });
+  } catch (e) {
+    console.error('[totemKids/checkin/reabrir]', e.message);
+    res.status(500).json({ error: 'Erro ao reabrir o check-in' });
+  }
+});
+
 // PATCH /api/totem-kids/checkin/:id · marca observacoes/decisao Jesus
 router.patch('/checkin/:id', authorizeModule('kids', 2), async (req, res) => {
   try {

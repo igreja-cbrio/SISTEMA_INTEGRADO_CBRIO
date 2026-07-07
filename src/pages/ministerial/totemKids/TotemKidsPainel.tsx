@@ -260,6 +260,23 @@ export default function TotemKidsPainel() {
     }
   }
 
+  // Desfaz um check-out feito sem querer → a criança volta a constar presente.
+  async function desfazerCheckoutPainel() {
+    if (!criancaSelCheckin || fazendoCheckout) return;
+    setFazendoCheckout(true);
+    try {
+      await totemKids.checkout.desfazer(criancaSelCheckin.id);
+      toast.success(`${criancaSelCheckin.crianca.nome} voltou pra sala (check-in refeito)`);
+      setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null);
+      if (salaDetalhe) await abrirDetalheSala(salaDetalhe);
+      carregar(true);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao refazer o check-in');
+    } finally {
+      setFazendoCheckout(false);
+    }
+  }
+
   async function encerrarSessao() {
     if (!cultoSel) return;
     if (!confirm(`Encerrar a sessão de ${cultoSel.culto_nome}? Vai consolidar ${cultoSel.presentes} criança(s) no culto.`)) return;
@@ -524,8 +541,13 @@ export default function TotemKidsPainel() {
                     {/* Fazer check-out direto do painel */}
                     {criancaSelCheckin && (
                       criancaSelCheckin.checkout_at ? (
-                        <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground text-center">
-                          Esta criança já saiu (check-out feito).
+                        <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-center">
+                          <p className="text-sm text-muted-foreground">Esta criança já saiu (check-out feito).</p>
+                          <p className="text-xs text-muted-foreground">Foi sem querer? Refaça o check-in:</p>
+                          <Button variant="outline" className="w-full" disabled={fazendoCheckout} onClick={desfazerCheckoutPainel}>
+                            {fazendoCheckout ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+                            Fazer check-in de novo
+                          </Button>
                         </div>
                       ) : (
                         <div>
