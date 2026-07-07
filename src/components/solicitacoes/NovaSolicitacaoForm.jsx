@@ -243,7 +243,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
   // Pedido em massa · helpers da lista de itens (compras)
   const addItem = () => setForm(f => ({
     ...f,
-    itens_lista: [...f.itens_lista, { descricao: '', quantidade: '1', link_referencia: '', valor_estimado: '', imagem_file: null, imagem_url: '' }],
+    itens_lista: [...f.itens_lista, { descricao: '', quantidade: '1', link_referencia: '', valor_estimado: '', valor_tipo: 'total', imagem_file: null, imagem_url: '' }],
   }));
   const updateItem = (idx, patch) => setForm(f => ({
     ...f,
@@ -337,6 +337,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
             quantidade: qtd > 0 ? qtd : 1,
             link_referencia: (it.link_referencia || '').trim() || null,
             valor_estimado: isFinite(valor) ? valor : null,
+            valor_tipo: it.valor_tipo === 'unitario' ? 'unitario' : 'total',
             imagem_url: imagem_url || null,
           });
         }
@@ -500,7 +501,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Adicione tudo que precisa num só pedido — uma linha por item. Anexe uma foto pra facilitar a identificação. No valor, informe o <strong>total da linha</strong> (todas as unidades juntas), não o preço de 1 unidade.
+            Adicione tudo que precisa num só pedido — uma linha por item. Anexe uma foto pra facilitar a identificação. No valor, escolha se está informando o <strong>total da linha</strong> ou o <strong>preço por unidade</strong>.
           </p>
 
           {form.itens_lista.length === 0 && (
@@ -540,20 +541,36 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
                   </div>
                   <div className="flex gap-2">
                     <Input
-                      className="flex-1"
+                      className="flex-1 min-w-0"
                       placeholder="Link de referência (opcional)"
                       value={it.link_referencia}
                       onChange={e => updateItem(idx, { link_referencia: e.target.value })}
                     />
+                    {/* Valor · a pessoa ESCOLHE a semântica (total da linha ou por
+                        unidade) · evita o caso "30 coletes × R$ 1.000 = R$ 30.000" */}
+                    <Select value={it.valor_tipo === 'unitario' ? 'unitario' : 'total'}
+                      onValueChange={v => updateItem(idx, { valor_tipo: v })}>
+                      <SelectTrigger className="w-[104px] shrink-0 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="z-[1200]">
+                        <SelectItem value="total">R$ total</SelectItem>
+                        <SelectItem value="unitario">R$ por unid.</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Input
-                      className="w-28 shrink-0"
+                      className="w-24 shrink-0"
                       type="number" min="0" step="0.01"
-                      placeholder="R$ total"
-                      title="Valor estimado TOTAL desta linha (todas as unidades juntas), não o preço de 1 unidade"
+                      placeholder="R$"
                       value={it.valor_estimado}
                       onChange={e => updateItem(idx, { valor_estimado: e.target.value })}
                     />
                   </div>
+                  {it.valor_tipo === 'unitario' && parseFloat(it.valor_estimado) > 0 && (
+                    <p className="text-[11px] text-muted-foreground text-right">
+                      = R$ {((parseFloat(it.quantidade) > 0 ? parseFloat(it.quantidade) : 1) * parseFloat(it.valor_estimado)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no total da linha
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

@@ -771,12 +771,19 @@ router.post('/', async (req, res) => {
         const qNum = Number(it.quantidade);
         const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
         const vNum = Number(it.valor_estimado);
+        const temValor = it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum);
+        // Semântica escolhida no form (2026-07-07): 'unitario' → normaliza pro
+        // TOTAL DA LINHA (× quantidade) antes de gravar. Sem valor_tipo (bundle
+        // antigo) = 'total' · valor já é o total da linha, não multiplica.
+        const valorLinha = temValor
+          ? (it.valor_tipo === 'unitario' ? vNum * quantidade : vNum)
+          : null;
         return {
           descricao: String(it.descricao).trim().slice(0, 500),
           quantidade,
           unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
           link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
-          valor_estimado: (it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum)) ? vNum : null,
+          valor_estimado: valorLinha,
           imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
           ordem: i,
         };
@@ -787,9 +794,9 @@ router.post('/', async (req, res) => {
       itensTexto = itensListaNorm
         .map(it => `${it.quantidade}x ${it.descricao}`)
         .join('\n');
-      // ⚠️ Semântica (2026-07-07 · caso aventais/coletes): o valor do item é o
-      // TOTAL DA LINHA (todas as unidades), NÃO o preço unitário — não
-      // multiplicar por quantidade (30 coletes · R$ 1.000 = R$ 1.000, não 30k).
+      // ⚠️ valor_estimado do item já está normalizado pro TOTAL DA LINHA acima
+      // (semântica 'unitario' multiplica × quantidade lá) — aqui só soma, NUNCA
+      // multiplicar de novo (caso aventais/coletes · 2026-07-07).
       const soma = itensListaNorm.reduce(
         (acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
       const semTotal = valorEstimadoFinal == null || valorEstimadoFinal === '' || Number(valorEstimadoFinal) === 0;
