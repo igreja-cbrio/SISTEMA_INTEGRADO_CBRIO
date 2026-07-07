@@ -246,13 +246,16 @@ function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
 </body></html>`;
 }
 
+// Recibo do responsável: por segurança NÃO leva o nome da criança (quem achar
+// a etiqueta perdida não descobre de qual criança é) — mostra o nome do
+// RESPONSÁVEL; o vínculo com a criança fica só pelo código, no sistema.
 function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS_ETIQUETA}</style></head>
 <body>
   <div class="etiqueta">
     <div class="col-esq" style="padding-left:0">
       <div class="header-resp">⛪ CB Rio · Recibo Kids</div>
-      <div class="nome-grande" style="font-size:11pt">${escapeHtml(d.crianca.nome)}</div>
+      <div class="nome-grande" style="font-size:11pt">${escapeHtml(d.responsavel.nome)}</div>
       <div class="sala" style="font-size:8pt;color:#555">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
       <div class="data-hora" style="text-align:left;margin-top:auto">
         ${escapeHtml(d.dataHora)} · Apresente este código para buscar
