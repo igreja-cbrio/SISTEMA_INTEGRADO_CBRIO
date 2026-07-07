@@ -751,6 +751,8 @@ router.post('/', async (req, res) => {
             recorrente, recorrencia,
             // Pedido em massa (compras/serviço) · lista de itens estruturados
             itens_lista,
+            // Fotos gerais da solicitação (Serviços/Serviço externo · 2026-07-07)
+            imagens_url,
             // Marketing · Spec 010 (etiquetas) + intake por DOR (Redesenho 2026-05-30)
             marketing_tipo_id, marketing_destino_id,
             mkt_publico_alvo, mkt_ideia_inicial,
@@ -790,6 +792,14 @@ router.post('/', async (req, res) => {
       const semTotal = valorEstimadoFinal == null || valorEstimadoFinal === '' || Number(valorEstimadoFinal) === 0;
       if (semTotal && soma > 0) valorEstimadoFinal = soma;
     }
+
+    // Fotos gerais · sanitiza (só strings de URL · cap de 5 · 2000 chars cada).
+    // Só entra no insert quando tem foto → flows antigos não tocam a coluna
+    // (tolera a migration 20260707120000 ainda não aplicada).
+    const imagensNorm = (Array.isArray(imagens_url) ? imagens_url : [])
+      .filter(u => typeof u === 'string' && u.trim())
+      .slice(0, 5)
+      .map(u => u.trim().slice(0, 2000));
 
     // Auto-mapeia area_responsavel + subcategoria
     const mapa = CATEGORIA_TO_AREA_RESP[categoria] || { area: null, subcategoria: 'default' };
@@ -895,6 +905,8 @@ router.post('/', async (req, res) => {
         eh_urgente: !!eh_urgente,
         justificativa_urgencia: justificativa_urgencia || null,
         data_necessaria: data_necessaria || null,
+        // Fotos gerais (Serviços/Serviço externo) · só quando anexadas
+        ...(imagensNorm.length && { imagens_url: imagensNorm }),
         // Reserva de espaco
         ...(finalAreaResp === 'reserva_espaco' && {
           espaco_solicitado: espaco_solicitado || null,
