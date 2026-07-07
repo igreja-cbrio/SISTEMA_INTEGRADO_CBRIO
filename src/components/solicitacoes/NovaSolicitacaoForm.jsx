@@ -65,7 +65,7 @@ export const CATEGORIA_HINT = {
 
 export const FORM_INITIAL = {
   titulo: '', descricao: '', justificativa: '',
-  categoria: '', urgencia: 'normal', valor_estimado: '',
+  categoria: '', valor_estimado: '',
   eh_urgente: false, justificativa_urgencia: '',
   // Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação
   eh_planejado: false,
@@ -265,6 +265,15 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
       delete payload.documento_file;
       delete payload.imagens;
 
+      // Urgência única (2026-07-07): manual OU automática (data necessária mais
+      // curta que o prazo padrão). A "Justificativa do pedido" cobre o porquê —
+      // copia pro campo de urgência pro mapa de urgência frequente continuar vivo.
+      payload.eh_urgente = ehUrgente;
+      if (ehUrgente && !payload.justificativa_urgencia) {
+        payload.justificativa_urgencia = (form.justificativa || '').trim()
+          || (urgenteAuto ? `Data necessária (${form.data_necessaria}) abaixo do prazo padrão da categoria` : '');
+      }
+
       if (payload.valor_estimado) payload.valor_estimado = parseFloat(payload.valor_estimado);
       else delete payload.valor_estimado;
 
@@ -360,7 +369,8 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
     }
   }
 
-  const showValueField = ['compras', 'reembolso', 'pagamento'].includes(form.categoria);
+  // Compras saiu daqui (2026-07-07 · dualidade #1): o total é CALCULADO dos itens
+  const showValueField = ['reembolso', 'pagamento'].includes(form.categoria);
   const isReembolso = form.categoria === 'reembolso';
   const isReservaEspaco = form.categoria === 'reserva_espaco';
   const isCompras = form.categoria === 'compras';
@@ -389,7 +399,32 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
     form.forma_pagamento &&
     (form.forma_pagamento === 'boleto' || dadosBancariosValid(form.forma_pagamento))
   );
-  const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
+  // SLA padrão (não-urgente) da categoria · base do urgente-automático
+  const slaPadrao = (() => {
+    const cat = CATEGORIAS.find(c => c.value === form.categoria);
+    if (!cat?.areaResp || form.categoria === 'marketing') return null;
+    const sub = cat.sub || 'default';
+    return slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === false)
+      || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === 'default' && s.eh_urgente === false)
+      || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === false)
+      || null;
+  })();
+  // Data necessária mais curta que o prazo padrão de conclusão → urgente automático
+  const urgenteAuto = !!(
+    form.data_necessaria && slaPadrao &&
+    (new Date(form.data_necessaria + 'T23:59:59') - Date.now()) < slaPadrao.sla_resolucao_horas * 3600e3
+  );
+  const ehUrgente = form.eh_urgente || urgenteAuto;
+  // Justificativa única (dualidade #3): urgência manual exige o porquê na
+  // "Justificativa do pedido" (não há mais 2ª caixa) · automática não trava.
+  const urgenciaValid = !form.eh_urgente || form.justificativa.trim().length >= 5;
+  // Compras · total estimado calculado dos itens (respeita R$ total/por unid.)
+  const totalCompras = !isCompras ? 0 : form.itens_lista.reduce((acc, it) => {
+    const v = parseFloat(it.valor_estimado);
+    if (!(v > 0)) return acc;
+    const q = parseFloat(it.quantidade) > 0 ? parseFloat(it.quantidade) : 1;
+    return acc + (it.valor_tipo === 'unitario' ? v * q : v);
+  }, 0);
 
   return (
     <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
@@ -426,7 +461,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         />
       </div>
       <div className="space-y-2">
-        <Label>Justificativa do pedido</Label>
+        <Label>Justificativa do pedido{form.eh_urgente ? ' (inclua o porquê da urgência) *' : ''}</Label>
         <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2}
           placeholder="Por que este pedido é importante agora?" />
       </div>
@@ -579,6 +614,13 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
           <Button type="button" variant="outline" size="sm" className="w-full" onClick={addItem}>
             <Plus className="h-4 w-4 mr-1" /> Adicionar item
           </Button>
+
+          {/* Total do pedido = soma dos itens (era campo digitável · dualidade #1) */}
+          {totalCompras > 0 && (
+            <p className="text-sm font-medium text-right text-orange-700 dark:text-orange-400">
+              Total estimado do pedido: R$ {totalCompras.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </p>
+          )}
 
           <div className="space-y-2">
             <Label className="text-xs">Fornecedor sugerido (opcional)</Label>
@@ -756,14 +798,17 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         </div>
       )}
 
-      {/* Urgente checkbox · reduz SLA · pra compras significa "sai pra rua mesmo dia" */}
+      {/* Urgente checkbox · reduz SLA · pra compras significa "sai pra rua mesmo dia".
+          Data necessária mais curta que o prazo padrão → urgente AUTOMÁTICO (aviso).
+          O porquê da urgência vai na "Justificativa do pedido" (uma caixa só). */}
       <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
-        <label className="flex items-center gap-2 cursor-pointer">
+        <label className={`flex items-center gap-2 ${urgenteAuto ? 'cursor-default' : 'cursor-pointer'}`}>
           <input
             type="checkbox"
-            checked={form.eh_urgente}
+            checked={ehUrgente}
+            disabled={urgenteAuto}
             onChange={e => setForm(f => ({ ...f, eh_urgente: e.target.checked }))}
-            className="h-4 w-4 cursor-pointer"
+            className="h-4 w-4 cursor-pointer disabled:cursor-default"
           />
           <span className="text-sm font-medium">Esta solicitação é urgente</span>
         </label>
@@ -771,17 +816,17 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
           Reduz o prazo. Compras urgentes não passam por cotação · alguém sai pra comprar no mesmo dia.
           Use só quando necessário · o sistema mapeia quem solicita urgência frequente.
         </p>
+        {urgenteAuto && slaPadrao && (
+          <p className="ml-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            A data necessária é menor que o prazo padrão da categoria
+            (~{Math.round(slaPadrao.sla_resolucao_horas / 24 * 10) / 10} dias) — a solicitação
+            será tratada como <strong>urgente</strong> automaticamente.
+          </p>
+        )}
         {form.eh_urgente && (
-          <div className="ml-6 mt-2">
-            <Label className="text-xs">Justificativa da urgência *</Label>
-            <Textarea
-              value={form.justificativa_urgencia}
-              onChange={e => setForm(f => ({ ...f, justificativa_urgencia: e.target.value }))}
-              rows={2}
-              placeholder="Por que precisa ser urgente?"
-              className="mt-1"
-            />
-          </div>
+          <p className="ml-6 text-xs text-muted-foreground">
+            Explique o porquê da urgência na <strong>Justificativa do pedido</strong> acima *
+          </p>
         )}
       </div>
 
@@ -789,7 +834,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
       {(() => {
         const cat = CATEGORIAS.find(c => c.value === form.categoria);
         if (!cat?.areaResp || form.categoria === 'marketing') return null;
-        const urg = !!form.eh_urgente;
+        const urg = ehUrgente;
         const sub = cat.sub || 'default';
         // Prefere a subcategoria exata · cai pra 'default' · cai pra área
         const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === urg)
@@ -799,7 +844,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         return (
           <div className="rounded-md bg-blue-500/5 border border-blue-500/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
             <strong>Prazo esperado:</strong> resposta em ~{Math.round(sla.sla_resposta_horas/24*10)/10} dias · conclusão em ~{Math.round(sla.sla_resolucao_horas/24*10)/10} dias
-            {form.eh_urgente && ' · modo urgente'}
+            {ehUrgente && ' · modo urgente'}
           </div>
         );
       })()}
