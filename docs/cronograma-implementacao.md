@@ -31,6 +31,9 @@
   NPS → dados_brutos → KPI já está ligado — os resultados alimentam o indicador.
 - 🔜 **Totem Kids · teste do check-in ao vivo** — quarta-feira **08/07**.
   O teste é, na prática, a Fase 2 (treinamento dos voluntários) + início da Fase 3.
+- 🔜 **Voluntariado · teste do módulo com a equipe** — semana de **13–19/07**
+  (adiantado do Grupo B). Cumpre F1+F2 de uma vez e abre a Fase 3 (escala real
+  populando) — com isso o GoLive dele antecipa de 28/09 pra **31/08**.
 
 ## Prazos por módulo (Grupos A e B)
 
@@ -56,26 +59,25 @@ Legenda: ✅ = fase já cumprida de fato (uso real) · datas = janela planejada.
 | Módulo | Dono | F1 Apresentação | F2 Treinamento | F3 Avaliação | F4 **GoLive** |
 |---|---|---|---|---|---|
 | Totem Kids | Mariane Gaia | ✅ | **08/07** (teste check-in) | jul–ago (cultos piloto) | **31/08** ⚠️ gate: hardware (Fire TVs + Brother) |
+| Voluntariado | Coordenação de voluntários | **13–19/07** (junto do teste) | **13–19/07** (teste do módulo com a equipe) | 20/07–28/08 (escala real populando) | **31/08** |
 | Grupos | Pr. Nélio + Natasha | **03–09/08** (supervisores) | **10–23/08** (turmas de líderes · ~100 pessoas) | 24/08–11/09 (coleta real de frequência) | **14/09** |
-| Voluntariado | Coordenação de voluntários | **17–23/08** | 31/08–06/09 | set | **28/09** |
 | Membresia | Matheus + Marcelo | ✅ | 24–30/08 | set | **14/09** |
 
 ## Agenda semanal — a novidade de cada segunda
 
 | Reunião | Novidade da semana anterior | Também em andamento |
 |---|---|---|
-| **13/07** | NPS rodou no AMI + resultado do teste de check-in do Kids (qua 08/07) | Integração e Cuidados em avaliação formal |
-| **20/07** | 🏁 **GoLive Integração** (1º GoLive do processo) | Apresentação de Solicitações marcada |
-| **27/07** | 🏁 **GoLive Cuidados** + Solicitações apresentada ao staff (F1 feita) | Produção fechando avaliação |
+| **13/07** | NPS rodou no AMI + resultado do teste de check-in do Kids (qua 08/07) | Integração e Cuidados em avaliação formal · **teste do Voluntariado nesta semana** |
+| **20/07** | 🏁 **GoLive Integração** (1º GoLive do processo) + resultado do teste do Voluntariado (F1+F2) | Apresentação de Solicitações marcada |
+| **27/07** | 🏁 **GoLive Cuidados** + Solicitações apresentada ao staff (F1 feita) | Produção fechando avaliação · Voluntariado: escala real populando |
 | **03/08** | 🏁 **GoLive Produção** + NPS: resultados do AMI no KPI | Treinamento de Solicitações rodando |
 | **10/08** | 🏁 **GoLive Marketing** + Grupos: apresentação pros supervisores (F1) | — |
-| **17/08** | 🏁 **GoLive Solicitações** + Grupos: 1ª turma de treinamento de líderes | Voluntariado: apresentação nesta semana |
-| **24/08** | Grupos: 2ª turma treinada + Voluntariado apresentado (F1) | Kids em cultos piloto |
-| **31/08** | 🏁 **GoLive Totem Kids** (se hardware ok) + Grupos: coleta real começou | Membresia: treinamento |
-| **07/09** ⚠️ feriado | (reunião desloca) Voluntariado: treinamento (F2) | Grupos em avaliação de coleta |
-| **14/09** | 🏁 **GoLive Grupos** + 🏁 **GoLive Membresia** | Voluntariado em avaliação |
-| **21/09** | Voluntariado: avaliação de coleta/escala real | — |
-| **28/09** | 🏁 **GoLive Voluntariado** — fecha os Grupos A e B | Planejar Onda 3 (Financeiro · RH · Eventos/Projetos · Governança) |
+| **17/08** | 🏁 **GoLive Solicitações** + Grupos: 1ª turma de treinamento de líderes | Voluntariado em avaliação (escala real) |
+| **24/08** | Grupos: 2ª turma treinada | Kids em cultos piloto · Voluntariado fechando avaliação |
+| **31/08** | 🏁 **GoLive Totem Kids** (se hardware ok) + 🏁 **GoLive Voluntariado** + Grupos: coleta real começou | Membresia: treinamento |
+| **07/09** ⚠️ feriado | (reunião desloca) Grupos em avaliação de coleta | — |
+| **14/09** | 🏁 **GoLive Grupos** + 🏁 **GoLive Membresia** — fecha os Grupos A e B | — |
+| **21/09** | Planejar Onda 3 (Financeiro · RH · Eventos/Projetos · Governança) | — |
 
 ## Gate técnico do GoLive (herdado da auditoria · não trava fases 1-3)
 
