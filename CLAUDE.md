@@ -1753,6 +1753,29 @@ form a partir da ocorrência do culto. **Ponto de entrada novo = reusar esse
 componente** (não duplicar intake) — aprovação/SLA/roteamento/KPI ficam 100% no
 backend, iguais pra qualquer host.
 
+### Form · dualidades resolvidas (decisões do Marcos · 2026-07-07)
+Auditoria de perguntas repetidas no intake. Decisões (só frontend · backend
+intocado → bundles antigos abertos seguem enviando normal):
+- **Total de Compras é CALCULADO** (não digitável): "Valor estimado (R$)" saiu
+  de `showValueField` pra compras; o form mostra "Total estimado do pedido"
+  somado dos itens (respeita R$ total/por unid.) e o backend soma server-side
+  (fallback que já existia). Reembolso/Pagamento mantêm o campo.
+- **Justificativa única**: urgente NÃO abre 2ª caixa — o porquê vai na
+  "Justificativa do pedido" (label ganha "(inclua o porquê da urgência) *" e a
+  validação exige ≥5 chars só na urgência MANUAL). No submit o form copia a
+  justificativa pra `justificativa_urgencia` (mapa de urgência frequente
+  continua alimentado).
+- **Urgente automático pela data**: `data_necessaria` mais curta que o
+  `sla_resolucao_horas` padrão (não-urgente) da categoria → `eh_urgente=true`
+  automático + aviso âmbar; checkbox fica marcado/desabilitado. Marketing fora
+  (prazo é da triagem). Urgência automática não exige justificativa (auto-texto
+  "Data necessária abaixo do prazo padrão").
+- **Mantidos de propósito**: Descrição × Itens (necessidade ≠ o que comprar) e
+  Fornecedor sugerido × Link por item (casos diferentes: contato conhecido ×
+  compra online).
+- Resíduo `urgencia: 'normal'` removido do FORM_INITIAL (select saiu da UI em
+  2026-05-30 · coluna segue com default 'normal' no backend).
+
 ### ⚠️ Compras · valor do item: seletor total/unitário · grava TOTAL DA LINHA (2026-07-07)
 Caso real (aventais/coletes): Marcos pôs 30 coletes · R$ 1.000 esperando "essa
 linha custa ~R$ 1.000", mas o backend somava `valor × quantidade` → pedido de
