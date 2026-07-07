@@ -1753,6 +1753,15 @@ form a partir da ocorrência do culto. **Ponto de entrada novo = reusar esse
 componente** (não duplicar intake) — aprovação/SLA/roteamento/KPI ficam 100% no
 backend, iguais pra qualquer host.
 
+### ⚠️ Compras · valor do item = TOTAL DA LINHA, não unitário (2026-07-07)
+Caso real (aventais/coletes): Marcos pôs 30 coletes · R$ 1.000 esperando "essa
+linha custa ~R$ 1.000", mas o backend somava `valor × quantidade` → pedido de
+R$ 60.000. Decisão do Marcos: o campo `R$ total` de cada item do pedido em
+massa é o **total da linha** (todas as unidades juntas). O POST soma os
+valores SEM multiplicar por quantidade; form deixa explícito (placeholder
+"R$ total" + hint). NÃO voltar a multiplicar. Dado histórico pode ter mistura
+de semânticas (era ambíguo) — o valor é estimativa editável, sem migração.
+
 ### Fotos anexadas no intake · Serviços/Serviço externo (2026-07-07)
 Pedido do Marcos: quem pede **Serviços (manutenção)** ou **Serviço externo
 (cotação)** pode anexar até 3 fotos no form pra quem atende/cota avaliar pela
