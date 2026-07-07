@@ -19,7 +19,7 @@ import {
   CalendarDays, FolderKanban, Map, ListChecks,
   UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
-  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
+  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, Check, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
   Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch, Droplets, Landmark,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
@@ -34,6 +34,27 @@ import { GlobalChartGradients } from '../charts/ChartGradients';
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
 const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
 const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos', nps: 'NPS', sistema: 'Sistema' };
+
+// Painel de notificações · agrupamento por data (Hoje / Ontem / …).
+const ORDEM_GRUPOS_NOTIF = ['Hoje', 'Ontem', 'Últimos 7 dias', 'Anteriores'];
+function grupoDaNotif(iso) {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return 'Anteriores';
+  const agora = new Date();
+  const hoje0 = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate()).getTime();
+  const DIA = 86400000;
+  if (t >= hoje0) return 'Hoje';
+  if (t >= hoje0 - DIA) return 'Ontem';
+  if (t >= hoje0 - 7 * DIA) return 'Últimos 7 dias';
+  return 'Anteriores';
+}
+function tempoAtras(iso) {
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'agora';
+  if (mins < 60) return `${mins}min`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h`;
+  return `${Math.floor(mins / 1440)}d`;
+}
 
 // 6 módulos macro · alinhados com o roadmap apresentado ao gestor
 // (Administração · Inteligência · Planejamento · Ministerial · Cultos · Criativo)
@@ -253,7 +274,29 @@ export default function AppShell() {
   const [notifs, setNotifs] = useState([]);
   const [notifsLoading, setNotifsLoading] = useState(false);
   const [notifAberta, setNotifAberta] = useState(null); // pop-up com a mensagem completa
+  const [notifFiltro, setNotifFiltro] = useState('todas'); // 'todas' | 'nao_lidas' | slug de módulo
   const prevNotifCount = useRef(-1);
+
+  // Abas de módulo dinâmicas: os módulos presentes na lista carregada (mais frequentes primeiro).
+  const notifModTabs = useMemo(() => {
+    const cont = {};
+    notifs.forEach(n => { const m = n.modulo || 'sistema'; cont[m] = (cont[m] || 0) + 1; });
+    return Object.entries(cont).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([m]) => m);
+  }, [notifs]);
+
+  const notifNaoLidas = useMemo(() => notifs.filter(n => !n.lida).length, [notifs]);
+
+  // Lista filtrada pela aba ativa + agrupada por data.
+  const notifGrupos = useMemo(() => {
+    const filtradas = notifs.filter(n => {
+      if (notifFiltro === 'todas') return true;
+      if (notifFiltro === 'nao_lidas') return !n.lida;
+      return (n.modulo || 'sistema') === notifFiltro;
+    });
+    const mapa = {};
+    filtradas.forEach(n => { const g = grupoDaNotif(n.created_at); (mapa[g] = mapa[g] || []).push(n); });
+    return ORDEM_GRUPOS_NOTIF.filter(g => mapa[g]?.length).map(g => ({ label: g, items: mapa[g] }));
+  }, [notifs, notifFiltro]);
 
   useEffect(() => {
     loadNotifCount();
@@ -335,14 +378,19 @@ export default function AppShell() {
     setNotifsLoading(false);
   }, []);
 
+  // Marca UMA notificação como lida (botão ✓ da linha ou ao clicar pra abrir).
+  async function marcarLida(n, e) {
+    e?.stopPropagation();
+    if (n.lida) return;
+    try {
+      await notifApi.ler(n.id);
+      setNotifs(prev => prev.map(x => x.id === n.id ? { ...x, lida: true } : x));
+      setNotifCount(prev => Math.max(0, prev - 1));
+    } catch { /* ignore */ }
+  }
+
   async function handleNotifClick(n) {
-    if (!n.lida) {
-      try {
-        await notifApi.ler(n.id);
-        setNotifs(prev => prev.map(x => x.id === n.id ? { ...x, lida: true } : x));
-        setNotifCount(prev => Math.max(0, prev - 1));
-      } catch { /* ignore */ }
-    }
+    await marcarLida(n);
     // Avisos (e notificações sem página de destino) abrem a MENSAGEM COMPLETA
     // num pop-up — a prévia da lista corta em 2 linhas. As demais continuam
     // navegando direto pro link (fluxos de aprovação etc).
@@ -426,7 +474,7 @@ export default function AppShell() {
             </button>
 
             {/* Notifications */}
-            <DropdownMenu open={notifOpen} onOpenChange={(v) => { setNotifOpen(v); if (v) loadNotifs(); }}>
+            <DropdownMenu open={notifOpen} onOpenChange={(v) => { setNotifOpen(v); if (v) { loadNotifs(); setNotifFiltro('todas'); } }}>
               <DropdownMenuTrigger asChild>
                 <button data-tour="notifications" className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
                   <Bell className="h-4 w-4" />
@@ -437,73 +485,142 @@ export default function AppShell() {
                   )}
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-[380px] p-0" sideOffset={8}>
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                  <span className="text-sm font-bold text-foreground">Notificações</span>
+              <DropdownMenuContent align="end" className="w-[400px] max-w-[calc(100vw-16px)] p-0 overflow-hidden" sideOffset={8}>
+                {/* Cabeçalho */}
+                <div className="flex items-center justify-between px-4 pt-3.5 pb-2.5">
                   <div className="flex items-center gap-2">
-                    {notifCount > 0 && (
-                      <button onClick={handleLerTodas} className="flex items-center gap-1 text-[11px] text-primary hover:underline">
-                        <CheckCheck className="h-3 w-3" /> Marcar todas como lidas
-                      </button>
+                    <span className="text-base font-bold text-foreground">Notificações</span>
+                    {notifNaoLidas > 0 && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary tabular-nums">
+                        {notifNaoLidas} nova{notifNaoLidas > 1 ? 's' : ''}
+                      </span>
                     )}
+                  </div>
+                  <div className="flex items-center gap-1">
                     {pushSupported && (
                       <button
                         onClick={togglePush}
                         disabled={pushBusy}
-                        className="p-1 rounded hover:bg-accent transition-colors"
+                        className="p-1.5 rounded-md hover:bg-accent transition-colors"
                         style={{ color: pushSubscribed ? '#00B39D' : 'var(--cbrio-text3)' }}
                         title={pushSubscribed ? 'Desativar notificações no celular/desktop' : 'Ativar notificações no celular/desktop'}
                       >
                         {pushSubscribed ? <BellRing className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
                       </button>
                     )}
-                    <button onClick={() => { setNotifOpen(false); navigate('/admin/notificacao-regras'); }} className="p-1 rounded hover:bg-accent text-muted-foreground" title="Configurar regras">
+                    <button onClick={() => { setNotifOpen(false); navigate('/admin/notificacao-regras'); }} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground" title="Configurar regras">
                       <Settings className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 </div>
-                <div className="max-h-[400px] overflow-y-auto overscroll-contain">
+
+                {/* Abas de filtro */}
+                <div className="flex items-center gap-1 px-3 pb-2 overflow-x-auto scrollbar-hide border-b border-border">
+                  {[
+                    { id: 'todas', label: 'Todas' },
+                    { id: 'nao_lidas', label: `Não lidas${notifNaoLidas ? ` (${notifNaoLidas})` : ''}` },
+                    ...notifModTabs.map(m => ({ id: m, label: MOD_LABELS[m] || m })),
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setNotifFiltro(t.id)}
+                      className={`shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                        notifFiltro === t.id
+                          ? 'bg-primary/15 text-primary'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Lista agrupada por data */}
+                <div className="max-h-[420px] overflow-y-auto overscroll-contain">
                   {notifsLoading ? (
-                    <div className="flex items-center justify-center py-8">
+                    <div className="flex items-center justify-center py-10">
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" />
                     </div>
-                  ) : notifs.length === 0 ? (
-                    <div className="flex flex-col items-center py-10 gap-2 text-muted-foreground">
-                      <Bell className="h-8 w-8 opacity-30" />
-                      <span className="text-xs">Nenhuma notificação</span>
+                  ) : notifGrupos.length === 0 ? (
+                    <div className="flex flex-col items-center py-12 gap-2 text-muted-foreground">
+                      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/60">
+                        <Bell className="h-5 w-5 opacity-50" />
+                      </span>
+                      <span className="text-xs font-medium">
+                        {notifs.length === 0 ? 'Nenhuma notificação por aqui' : 'Nada nesse filtro'}
+                      </span>
+                      {notifs.length === 0 && <span className="text-[11px] opacity-70">Quando algo precisar de você, aparece aqui.</span>}
                     </div>
                   ) : (
-                    <div className="py-1">
-                      {notifs.map(n => {
-                        const sevColor = SEV_COLORS[n.severidade] || '#00B39D';
-                        const modColor = MOD_COLORS[n.modulo] || '#6b7280';
-                        const diff = Date.now() - new Date(n.created_at).getTime();
-                        const mins = Math.floor(diff / 60000);
-                        const timeAgo = mins < 1 ? 'agora' : mins < 60 ? `${mins}min` : mins < 1440 ? `${Math.floor(mins / 60)}h` : `${Math.floor(mins / 1440)}d`;
-                        return (
-                          <div
-                            key={n.id}
-                            onClick={() => handleNotifClick(n)}
-                            className="px-4 py-3 hover:bg-accent/50 transition-colors cursor-pointer"
-                            style={{ borderLeft: `3px solid ${sevColor}`, background: n.lida ? undefined : 'var(--cbrio-input-bg)' }}
-                          >
-                            <div className="flex items-center justify-between mb-0.5">
-                              <div className="flex items-center gap-2">
-                                {!n.lida && <span className="h-2 w-2 rounded-full bg-primary flex-shrink-0" />}
-                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ color: modColor, background: `${modColor}15` }}>
-                                  {MOD_LABELS[n.modulo] || n.modulo}
-                                </span>
-                              </div>
-                              <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
-                            </div>
-                            <p className={`text-sm ${n.lida ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>{n.titulo}</p>
-                            {n.mensagem && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.mensagem}</p>}
+                    <div className="pb-1">
+                      {notifGrupos.map(grupo => (
+                        <div key={grupo.label}>
+                          <div className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80 sticky top-0 bg-popover/95 backdrop-blur-sm z-10">
+                            {grupo.label}
                           </div>
-                        );
-                      })}
+                          {grupo.items.map(n => {
+                            const sevColor = SEV_COLORS[n.severidade] || '#00B39D';
+                            const modColor = MOD_COLORS[n.modulo] || '#6b7280';
+                            return (
+                              <div
+                                key={n.id}
+                                onClick={() => handleNotifClick(n)}
+                                className="group relative px-4 py-2.5 hover:bg-accent/50 transition-colors cursor-pointer"
+                                style={{ borderLeft: `3px solid ${n.lida ? 'transparent' : sevColor}`, background: n.lida ? undefined : 'var(--cbrio-input-bg)' }}
+                              >
+                                <div className="flex items-start gap-2.5">
+                                  <span
+                                    className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                                    style={{ color: modColor, background: `${modColor}18` }}
+                                    title={MOD_LABELS[n.modulo] || n.modulo}
+                                  >
+                                    {(MOD_LABELS[n.modulo] || n.modulo || '?').slice(0, 2).toUpperCase()}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-baseline justify-between gap-2">
+                                      <p className={`text-sm leading-snug truncate ${n.lida ? 'text-muted-foreground' : 'text-foreground font-semibold'}`}>{n.titulo}</p>
+                                      <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{tempoAtras(n.created_at)}</span>
+                                    </div>
+                                    {n.mensagem && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.mensagem}</p>}
+                                    <div className="flex items-center gap-1.5 mt-1">
+                                      <span className="text-[10px] font-semibold px-1.5 py-px rounded" style={{ color: modColor, background: `${modColor}12` }}>
+                                        {MOD_LABELS[n.modulo] || n.modulo}
+                                      </span>
+                                      {n.severidade === 'urgente' && (
+                                        <span className="text-[10px] font-semibold px-1.5 py-px rounded text-red-500 bg-red-500/10">Urgente</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {!n.lida && (
+                                    <span className="mt-2 flex shrink-0 items-center">
+                                      <button
+                                        onClick={(e) => marcarLida(n, e)}
+                                        title="Marcar como lida"
+                                        className="hidden group-hover:flex h-5 w-5 items-center justify-center rounded-full text-primary hover:bg-primary/15"
+                                      >
+                                        <Check className="h-3.5 w-3.5" />
+                                      </button>
+                                      <span className="group-hover:hidden h-2 w-2 rounded-full bg-primary" />
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
+
+                {/* Rodapé */}
+                {notifNaoLidas > 0 && (
+                  <div className="border-t border-border px-3 py-2">
+                    <button onClick={handleLerTodas} className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-primary hover:bg-primary/10 rounded-md py-1.5 transition-colors">
+                      <CheckCheck className="h-3.5 w-3.5" /> Marcar todas como lidas
+                    </button>
+                  </div>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
 
