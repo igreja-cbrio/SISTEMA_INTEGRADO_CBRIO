@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { ColorPicker } from '@/components/ui/ColorPicker';
 import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, Vibrate, Trash2, Send, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
@@ -331,14 +332,14 @@ function AbaSalas() {
                 <p className="text-[11px] text-muted-foreground -mt-1">
                   Ex.: Berçário 0 anos 6 meses a 1 ano 11 meses · Maternal 2 a 3 anos. A criança é sugerida pra sala pela idade no check-in.
                 </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs">Capacidade</label>
-                    <Input type="number" value={editando.capacidade} onChange={e => setEditando({ ...editando, capacidade: Number(e.target.value) })} />
-                  </div>
-                  <div>
-                    <label className="text-xs">Cor (hex)</label>
-                    <Input value={editando.cor} onChange={e => setEditando({ ...editando, cor: e.target.value })} />
+                <div>
+                  <label className="text-xs">Capacidade</label>
+                  <Input type="number" value={editando.capacidade} onChange={e => setEditando({ ...editando, capacidade: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label className="text-xs">Cor da sala</label>
+                  <div className="mt-1">
+                    <ColorPicker value={editando.cor} onChange={(hex) => setEditando({ ...editando, cor: hex })} />
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
