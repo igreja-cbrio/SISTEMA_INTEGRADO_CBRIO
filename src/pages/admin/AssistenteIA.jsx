@@ -230,7 +230,11 @@ function ChatTab() {
     setMessages(prev => [...prev, { role: 'assistant', text: '' }]);
 
     try {
-      const res = await agents.chat({ message: userMsg, module, sessionId });
+      // Supervisor usa o caminho Fase 2 (tools read-only + dados ao vivo); os
+      // demais agentes seguem na Sessions API de managed agents. Mesmo SSE.
+      const res = module === 'supervisor'
+        ? await agents.ask({ message: userMsg, sessionId })
+        : await agents.chat({ message: userMsg, module, sessionId });
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
