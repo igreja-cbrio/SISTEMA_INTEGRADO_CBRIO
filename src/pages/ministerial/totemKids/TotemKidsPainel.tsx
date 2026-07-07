@@ -17,6 +17,7 @@ import { totemKids } from '@/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 type CultoDia = {
   culto_id: string;
@@ -102,6 +103,7 @@ function digitsTel(tel?: string | null): string | null {
 
 export default function TotemKidsPainel() {
   const { isAdmin, modulePerms } = useAuth();
+  const navigate = useNavigate();
   const [cultosDia, setCultosDia] = useState<CultoDia[]>([]);
   const [dataDia, setDataDia] = useState<string>('');
   const [cultoSel, setCultoSel] = useState<CultoDia | null>(null);
@@ -255,6 +257,7 @@ export default function TotemKidsPainel() {
   if (!cultosDia.length) {
     return (
       <div className="max-w-4xl mx-auto p-4 sm:p-6">
+        <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
         <h1 className="text-xl sm:text-2xl font-bold text-pink-700 dark:text-pink-300">Kids · Painel ao vivo</h1>
         <Card className="mt-4">
           <CardContent className="p-8 text-center">
@@ -274,6 +277,7 @@ export default function TotemKidsPainel() {
       {/* Cabeçalho */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
+          <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-1"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
           <h1 className="text-xl sm:text-2xl font-bold text-pink-700 dark:text-pink-300 leading-tight">Kids · Painel ao vivo</h1>
           <p className="text-xs sm:text-sm text-muted-foreground capitalize">
             {dataDia && format(new Date(dataDia + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
