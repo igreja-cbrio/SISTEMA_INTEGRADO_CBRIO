@@ -20,7 +20,7 @@ import { TotemKidsConfigTabs } from '@/pages/admin/totemKids/TotemKidsAdmin';
 import TotemKidsCheckout from './TotemKidsCheckout';
 import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
 import { formatIdade, formatIdadeShort } from './lib/idade';
-import { imprimirEtiquetas } from './lib/imprimir';
+import { imprimirEtiquetas, reimprimirEtiqueta } from './lib/imprimir';
 import confetti from 'canvas-confetti';
 import { getEstacaoPareada } from './lib/estacaoPareada';
 import { format } from 'date-fns';
@@ -127,6 +127,10 @@ export default function TotemKidsCheckin() {
   // reimprimir (mesmo código); novo check-in só depois do check-out.
   const [checkinAberto, setCheckinAberto] = useState<any>(null);
   const [reimprimindoAberto, setReimprimindoAberto] = useState(false);
+  // Check-ins abertos em OUTRAS sessões (culto anterior sem check-out) — não
+  // impedem o novo check-in; o totem avisa e oferece regularizar.
+  const [abertosAnteriores, setAbertosAnteriores] = useState<any[]>([]);
+  const [checkoutAnteriorId, setCheckoutAnteriorId] = useState<string | null>(null);
 
   // Monta o payload da etiqueta (usado no check-in novo E na reimpressão).
   function montarDadosEtiqueta(c: Crianca, args: {
@@ -178,17 +182,20 @@ export default function TotemKidsCheckin() {
     try {
       const r: any = await totemKids.checkin.aberto(sessaoId, criancaId);
       setCheckinAberto(r?.checkin || null);
-    } catch { setCheckinAberto(null); }
+      setAbertosAnteriores(Array.isArray(r?.abertos_anteriores) ? r.abertos_anteriores : []);
+    } catch { setCheckinAberto(null); setAbertosAnteriores([]); }
   }
 
   useEffect(() => {
     setCheckinAberto(null);
+    setAbertosAnteriores([]);
     if (!crianca?.id || !sessao?.id) return;
     consultarCheckinAberto(sessao.id, crianca.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id, sessao?.id]);
 
-  // Reimprime a etiqueta do check-in ABERTO (perdeu/borrou) · mesmo código.
+  // Reimprime SÓ a etiqueta da criança do check-in ABERTO (perdeu/borrou) ·
+  // mesmo código · a do responsável não precisa (decisão do Matheus 2026-07-07).
   async function reimprimirCheckinAberto() {
     if (!crianca || !checkinAberto) return;
     setReimprimindoAberto(true);
@@ -203,18 +210,31 @@ export default function TotemKidsCheckin() {
         cultoNome: checkinAberto.sessao?.culto?.nome || null,
         cultoData: checkinAberto.sessao?.culto?.data || null,
       });
-      await imprimirEtiquetas(dados);
-      setUltimaEtiqueta(dados);
-      toast.success(`Etiqueta reimpressa · mesmo código ${checkinAberto.codigo_seguranca}`);
+      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem');
+      toast.success(`Etiqueta da criança reimpressa · mesmo código ${checkinAberto.codigo_seguranca}`);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir a etiqueta');
     } finally { setReimprimindoAberto(false); }
+  }
+
+  // Regulariza o culto anterior: faz o check-out esquecido (método 'painel').
+  async function checkoutCultoAnterior(checkinId: string) {
+    if (checkoutAnteriorId) return;
+    setCheckoutAnteriorId(checkinId);
+    try {
+      await totemKids.checkout.realizar({ checkin_id: checkinId, metodo: 'painel' });
+      toast.success('Check-out do culto anterior registrado');
+      if (crianca?.id && sessao?.id) await consultarCheckinAberto(sessao.id, crianca.id);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao fazer o check-out do culto anterior');
+    } finally { setCheckoutAnteriorId(null); }
   }
   const [reimprimindo, setReimprimindo] = useState(false);
   async function reimprimir() {
     if (!ultimaEtiqueta) return;
     setReimprimindo(true);
-    try { await imprimirEtiquetas(ultimaEtiqueta); toast.success('Etiquetas reenviadas pra impressora'); }
+    // Só a etiqueta da CRIANÇA — a do responsável não precisa na reimpressão.
+    try { await reimprimirEtiqueta(ultimaEtiqueta, 'crianca', 'Reimpressão pelo totem (não saiu direito)'); toast.success('Etiqueta da criança reenviada pra impressora'); }
     catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao reimprimir'); }
     finally { setReimprimindo(false); }
   }
@@ -829,6 +849,9 @@ export default function TotemKidsCheckin() {
           checkinAberto={checkinAberto}
           onReimprimirEtiqueta={reimprimirCheckinAberto}
           reimprimindoEtiqueta={reimprimindoAberto}
+          abertosAnteriores={abertosAnteriores}
+          onCheckoutAnterior={checkoutCultoAnterior}
+          checkoutAnteriorId={checkoutAnteriorId}
           atualizarCrianca={(patch: Partial<Crianca>) => setCrianca(c => (c ? { ...c, ...patch } : c))}
           onResponsavelCadastrado={async () => {
             // Recarrega dados da criança (com os responsáveis novos)
@@ -949,7 +972,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
     tem_limitacao_fisica: !!crianca.tem_limitacao_fisica, limitacao_fisica_qual: crianca.limitacao_fisica_qual || '',
   });
   const setF = (k: string, v: unknown) => setForm(s => ({ ...s, [k]: v }));
-  const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '' })));
+  const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '', telefone: r.membro?.telefone || '' })));
   const [salvando, setSalvando] = useState(false);
 
   async function salvarTudo() {
@@ -966,19 +989,34 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
         tem_limitacao_fisica: form.tem_limitacao_fisica, limitacao_fisica_qual: form.tem_limitacao_fisica ? form.limitacao_fisica_qual.trim() || null : null,
       };
       await totemKids.criancas.update(crianca.id, patch);
-      // Responsáveis com nome alterado
-      const mudados = resps.filter(r => {
+      // Responsáveis com nome e/ou telefone alterado. A mudança grava no
+      // cadastro CENTRAL (mem_membros) e o backend propaga pros espelhos
+      // (conta de usuário, voluntariado) — mesmo número em todo o sistema.
+      for (const r of resps) {
         const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
-        return r.nome.trim().length >= 2 && r.nome.trim() !== (orig?.membro?.nome || '');
-      });
-      for (const r of mudados) {
-        await totemKids.criancas.updateResponsavelMembro(r.membro_id, { nome: r.nome.trim() });
+        const patchResp: Record<string, string> = {};
+        if (r.nome.trim().length >= 2 && r.nome.trim() !== (orig?.membro?.nome || '')) patchResp.nome = r.nome.trim();
+        const telLimpo = r.telefone.replace(/\D/g, '');
+        const telOrig = String(orig?.membro?.telefone || '');
+        if (r.telefone.trim() && telLimpo.length >= 10 && r.telefone.trim() !== telOrig) patchResp.telefone = r.telefone.trim();
+        if (Object.keys(patchResp).length) {
+          await totemKids.criancas.updateResponsavelMembro(r.membro_id, patchResp);
+        }
       }
       atualizarCrianca({
         ...patch,
         responsaveis: crianca.responsaveis.map(r => {
           const m = resps.find(x => x.membro_id === r.membro_id);
-          return m && m.nome.trim() ? { ...r, membro: { ...(r.membro || {}), id: r.membro?.id || r.membro_id, nome: m.nome.trim() } } : r;
+          if (!m) return r;
+          return {
+            ...r,
+            membro: {
+              ...(r.membro || {}),
+              id: r.membro?.id || r.membro_id,
+              nome: m.nome.trim() || r.membro?.nome || '',
+              telefone: m.telefone.trim() || r.membro?.telefone || null,
+            },
+          };
         }),
       } as Partial<Crianca>);
       toast.success('Ficha atualizada');
@@ -1075,13 +1113,19 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
                   {resps.map((r, i) => {
                     const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
                     return (
-                      <div key={r.membro_id}>
-                        <Input value={r.nome} onChange={e => setResps(list => list.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))} />
+                      <div key={r.membro_id} className="rounded-lg border border-border p-2 space-y-1.5">
+                        <Input value={r.nome} placeholder="Nome do responsável"
+                          onChange={e => setResps(list => list.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))} />
+                        <Input value={r.telefone} placeholder="Telefone (WhatsApp)" inputMode="tel"
+                          onChange={e => setResps(list => list.map((x, j) => j === i ? { ...x, telefone: e.target.value } : x))} />
                         {orig?.parentesco && <span className="text-[11px] text-muted-foreground">{orig.parentesco}</span>}
                       </div>
                     );
                   })}
                 </div>
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  Alterar aqui atualiza o cadastro da pessoa no sistema inteiro (membresia, voluntariado etc.).
+                </p>
               </div>
             )}
             {erro && <p className="text-sm text-destructive text-center">{erro}</p>}
@@ -1184,6 +1228,9 @@ function CheckinSelecao(props: {
   checkinAberto: any;
   onReimprimirEtiqueta: () => void;
   reimprimindoEtiqueta: boolean;
+  abertosAnteriores: any[];
+  onCheckoutAnterior: (checkinId: string) => void;
+  checkoutAnteriorId: string | null;
   atualizarCrianca: (patch: Partial<Crianca>) => void;
   onResponsavelCadastrado: () => void;
 }) {
@@ -1196,6 +1243,7 @@ function CheckinSelecao(props: {
     atualizarCrianca,
     onCancelar, onConfirmar, imprimindo,
     checkinAberto, onReimprimirEtiqueta, reimprimindoEtiqueta,
+    abertosAnteriores, onCheckoutAnterior, checkoutAnteriorId,
     onResponsavelCadastrado } = props;
 
   // Auto-abre modal de cadastro se criança chegar sem responsável
@@ -1449,6 +1497,32 @@ function CheckinSelecao(props: {
             </div>
           )}
         </div>
+
+        {/* Culto ANTERIOR sem check-out: avisa e oferece regularizar — NÃO
+            impede o novo check-in deste culto. */}
+        {abertosAnteriores.length > 0 && (
+          <div className="rounded-lg bg-sky-50 dark:bg-sky-950/30 border border-sky-300 dark:border-sky-800 p-3 space-y-2">
+            <p className="text-sm">
+              <b>{crianca.nome.split(' ')[0]}</b> ainda consta presente em outro culto — o check-out não foi feito:
+            </p>
+            {abertosAnteriores.map((a: any) => (
+              <div key={a.id} className="flex items-center justify-between gap-2 rounded-md border border-sky-200 dark:border-sky-900 px-2.5 py-1.5">
+                <span className="text-sm min-w-0 truncate">
+                  {a.sessao?.culto?.nome || 'Culto'}
+                  {a.sessao?.culto?.data ? ` · ${format(new Date(a.sessao.culto.data + 'T00:00:00'), 'dd/MM', { locale: ptBR })}` : ''}
+                  <span className="text-xs text-muted-foreground"> · código {a.codigo_seguranca}</span>
+                </span>
+                <Button size="sm" variant="outline" className="shrink-0 border-sky-400 text-sky-700 dark:text-sky-300"
+                  disabled={!!checkoutAnteriorId} onClick={() => onCheckoutAnterior(a.id)}>
+                  {checkoutAnteriorId === a.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Fazer check-out'}
+                </Button>
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              Isso não impede o check-in de agora — é só pra regularizar o registro do culto anterior.
+            </p>
+          </div>
+        )}
 
         {/* Criança já com check-in ABERTO: reimprimir a etiqueta (perdida/borrada)
             sem criar outro check-in. Novo check-in só depois do check-out. */}
