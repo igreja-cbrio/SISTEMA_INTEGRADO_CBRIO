@@ -463,6 +463,7 @@ function homeRoute(auth: Record<string, unknown>): string {
     for (const v of Object.values(modulePerms)) if (v && (v.leitura || 0) > 0) distintos.add(v);
     if (distintos.size === 1 && (modulePerms.producao?.leitura || 0) > 0) return '/producao';
     if (distintos.size === 1 && (modulePerms.batismo?.leitura || 0) > 0) return '/batismo';
+    if (distintos.size === 1 && (modulePerms.kids?.leitura || 0) > 0) return '/ministerial/kids';
   }
   return '/dashboard';
 }
