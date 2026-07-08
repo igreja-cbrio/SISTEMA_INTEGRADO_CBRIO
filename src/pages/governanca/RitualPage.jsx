@@ -32,7 +32,7 @@ import {
   ArrowLeft, ChevronDown, Loader2, CalendarDays, Camera, Info, BookOpen,
   ClipboardList, TrendingUp, Gavel, CheckCircle2, XCircle,
 } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { toast } from 'sonner';
 import { governanca as gov, painel as painelApi } from '../../api';
 import { formatErro } from '../../lib/formatErro';
@@ -99,6 +99,7 @@ export default function RitualPage() {
   const [novaOpen, setNovaOpen] = useState(false);
   const [ultimasOutras, setUltimasOutras] = useState({}); // sigla → última reunião ocorrida
   const [retro, setRetro] = useState(null); // { sigla, meeting } · retrospecto da última reunião de outro ritual
+  const [okrAberto, setOkrAberto] = useState(null); // { okr, bloco } · modal de gráficos de UM dos 9 OKRs
 
   const tipo = useMemo(() => tipos.find(t => t.sigla === sigla) || null, [tipos, sigla]);
   const cor = tipo?.cor || COR_RITUAL[sigla] || C.primary;
@@ -128,6 +129,8 @@ export default function RitualPage() {
   useEffect(() => { carregar(); }, [carregar]);
 
   // Painel vivo por sigla: OKR = vitrine do Juninho · KPI = objetivos gerais.
+  // No KPI, o comparativo de 5 anos precisa de 60 meses de série (senão 12 bastam).
+  const mesesFetchKpi = periodo >= 1825 ? 60 : 12;
   useEffect(() => {
     let ativo = true;
     if (sigla === 'OKR') {
@@ -138,13 +141,13 @@ export default function RitualPage() {
         .finally(() => { if (ativo) setPainelLoading(false); });
     } else if (sigla === 'KPI') {
       setPainelLoading(true);
-      gov.kpiObjetivos(12)
+      gov.kpiObjetivos(mesesFetchKpi)
         .then(r => { if (ativo) setKpiData(r); })
         .catch(e => toast.error(formatErro(e, 'Objetivos gerais')))
         .finally(() => { if (ativo) setPainelLoading(false); });
     }
     return () => { ativo = false; };
-  }, [sigla]);
+  }, [sigla, mesesFetchKpi]);
 
   const naoCanceladas = useMemo(() => reunioes.filter(m => m.status !== 'cancelada'), [reunioes]);
   const proxima = useMemo(() => naoCanceladas.find(m => m.date && m.date >= hojeStr) || null, [naoCanceladas, hojeStr]);
@@ -384,6 +387,7 @@ export default function RitualPage() {
             alvoRetrato={alvoRetrato}
             salvando={salvandoRetrato}
             onSalvarRetrato={salvarRetrato}
+            onAbrirOkr={(okr, bloco) => setOkrAberto({ okr, bloco })}
           />
         ) : sigla === 'KPI' ? (
           <KpiPainel
@@ -406,6 +410,15 @@ export default function RitualPage() {
           />
         ) : (
           <PainelEmDefinicao sigla={sigla} tipo={tipo} />
+        )}
+
+        {/* Comparativo por mês fechado (períodos ≥ 60 dias · pedido do Marcos:
+            colunas por mês, não acumulado — ex.: 90d = Maio | Junho | Julho atual) */}
+        {sigla === 'OKR' && periodo >= 60 && (
+          <OkrComparativoMensal periodo={periodo} escopo={escopo} data={okrData} reunioes={naoCanceladas} cor={cor} />
+        )}
+        {sigla === 'KPI' && periodo >= 60 && (
+          <KpiComparativoMensal periodo={periodo} objetivos={kpiData?.objetivos || []} cor={cor} />
         )}
 
         {/* Retrospecto cruzado: as outras reuniões do ciclo */}
@@ -471,6 +484,11 @@ export default function RitualPage() {
           onClose={() => setRetro(null)}
           onIrParaRitual={() => { setRetro(null); navigate(`/governanca/${retro.sigla.toLowerCase()}`); }} />
       )}
+      {okrAberto && (
+        <OkrDetalheModal okr={okrAberto.okr} blocoArea={okrAberto.bloco}
+          metricas={okrData?.metricas || {}} reunioes={naoCanceladas}
+          onClose={() => setOkrAberto(null)} />
+      )}
     </div>
   );
 }
@@ -520,7 +538,7 @@ function BotaoRetrato({ canEdit, alvoRetrato, salvando, onSalvar }) {
 
 // ────────────────────────────────────────────────────────────────────────
 // 3a · Painel da reunião de OKR — a cabeça do Juninho (leitura da vitrine).
-function OkrPainel({ escopo, data, loading, canEdit, alvoRetrato, salvando, onSalvarRetrato }) {
+function OkrPainel({ escopo, data, loading, canEdit, alvoRetrato, salvando, onSalvarRetrato, onAbrirOkr }) {
   const metricas = data?.metricas || {};
   const nsm = data?.nsm || null;
   const blocos = escopo === 'Todos' ? BLOCOS : BLOCOS.filter(b => b.area === escopo);
@@ -566,6 +584,7 @@ function OkrPainel({ escopo, data, loading, canEdit, alvoRetrato, salvando, onSa
           {semFonte > 0
             ? <><b style={{ color: C.t2 }}>{semFonte}</b> indicador(es) ainda sem fonte de dado — aparecem como "—" e entram no roadmap de medição.</>
             : 'Todos os indicadores do recorte têm número automático.'}
+          {' '}Clique num OKR pra abrir os gráficos dele.
         </span>
         <BotaoRetrato canEdit={canEdit} alvoRetrato={alvoRetrato} salvando={salvando} onSalvar={onSalvarRetrato} />
       </div>
@@ -578,7 +597,10 @@ function OkrPainel({ escopo, data, loading, canEdit, alvoRetrato, salvando, onSa
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: C.primaryBg, color: C.primary }}>{bloco.papel}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3" style={{ gridAutoRows: 'min-content' }}>
-            {bloco.okrs.map(okr => <OkrCardCompacto key={okr.nome} okr={okr} metricas={metricas} />)}
+            {bloco.okrs.map(okr => (
+              <OkrCardCompacto key={okr.nome} okr={okr} metricas={metricas}
+                onClick={onAbrirOkr ? () => onAbrirOkr(okr, bloco.area) : undefined} />
+            ))}
           </div>
         </div>
       ))}
@@ -586,10 +608,12 @@ function OkrPainel({ escopo, data, loading, canEdit, alvoRetrato, salvando, onSa
   );
 }
 
-function OkrCardCompacto({ okr, metricas }) {
+function OkrCardCompacto({ okr, metricas, onClick }) {
   const topo = valorTopoOkr(okr, metricas);
   return (
-    <div className="rounded-xl overflow-hidden" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+    <div className="rounded-xl overflow-hidden transition hover:opacity-95" onClick={onClick}
+      title={onClick ? 'Ver os gráficos deste OKR' : undefined}
+      style={{ background: C.card, border: `1px solid ${C.border}`, cursor: onClick ? 'pointer' : 'default' }}>
       <div className="p-3" style={{ borderBottom: `1px solid ${C.border}`, background: C.inputBg }}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
@@ -1385,6 +1409,368 @@ function RetrospectoModal({ sigla, meeting, onClose, onIrParaRitual }) {
           <button onClick={onClose} className="text-sm px-4 py-2 rounded-lg text-white" style={{ background: corTema }}>Fechar</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Comparativo por mês fechado (pedido do Marcos 2026-07-08): período ≥ 60d
+// mostra 1 coluna POR MÊS (ex.: 90d = Maio | Junho | Julho atual), não o
+// acumulado. Em 5 anos as colunas viram ANUAIS (média dos meses com dado).
+const COLS_MENSAIS = { 60: 2, 90: 3, 180: 6, 365: 12 };
+
+function ultimosMeses(n) {
+  const out = [];
+  const base = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
+// Colunas do comparativo: mensais (com "(atual)" no mês corrente) ou anuais (5a).
+function colunasDoPeriodo(periodo) {
+  const mesAtual = ultimosMeses(1)[0];
+  if (periodo < 1825) {
+    const n = COLS_MENSAIS[periodo] || 3;
+    return ultimosMeses(n).map(mes => ({
+      key: mes, meses: [mes],
+      label: mes === mesAtual ? `${mesCurto(mes)} (atual)` : mesCurto(mes),
+      atual: mes === mesAtual,
+    }));
+  }
+  const anoAtual = new Date().getFullYear();
+  const todos = ultimosMeses(60);
+  return [4, 3, 2, 1, 0].map(off => {
+    const ano = anoAtual - off;
+    return {
+      key: String(ano), meses: todos.filter(m => m.startsWith(String(ano))),
+      label: off === 0 ? `${ano} (atual)` : String(ano),
+      atual: off === 0,
+    };
+  });
+}
+
+const celulaSticky = { position: 'sticky', left: 0, background: C.card, zIndex: 1 };
+
+// ── OKR: linhas = NSM + 9 OKRs + táticos · fonte do mês fechado = retrato da
+// reunião do ciclo daquele mês; sem retrato, cai na série mensal viva do
+// indicador (quando existe); senão "—". Mês corrente = valores de agora.
+function OkrComparativoMensal({ periodo, escopo, data, reunioes, cor }) {
+  const metricas = data?.metricas || {};
+  const nsm = data?.nsm || null;
+  const mesAtual = ultimosMeses(1)[0];
+
+  const snapPorMes = useMemo(() => {
+    const map = {};
+    for (const m of reunioes) {
+      if (!m.snapshot || !m.date) continue;
+      const mes = String(m.date).slice(0, 7);
+      const cur = map[mes];
+      if (!cur || String(m.snapshot_em || '') > String(cur.snapshot_em || '')) map[mes] = m;
+    }
+    return map;
+  }, [reunioes]);
+
+  const blocos = escopo === 'Todos' ? BLOCOS : BLOCOS.filter(b => b.area === escopo);
+
+  const linhas = useMemo(() => {
+    const rows = [{ id: 'nsm', nivel: 'nsm', nome: 'NSM · % de convertidos engajados em 60d', cfg: { alvoNum: nsm?.meta ?? 50, cmp: 'gte' }, unidade: '%', casas: 1 }];
+    for (const b of blocos) {
+      rows.push({ id: `b:${b.area}`, nivel: 'bloco', nome: b.area });
+      for (const o of b.okrs) {
+        const topoVivo = valorTopoOkr(o, metricas);
+        rows.push({ id: `o:${o.nome}`, nivel: 'okr', nome: o.nome, cfg: o, chave: o.live, casas: o.casas ?? 1, unidade: topoVivo?.unidade ?? (o.fixo?.unidade || '%') });
+        for (const t of o.taticos) {
+          const vivo = valorTatico(t, metricas);
+          rows.push({ id: `t:${o.nome}:${t.ind}`, nivel: 'tatico', okrNome: o.nome, nome: t.ind, cfg: t, chave: t.live, casas: t.casas ?? 1, unidade: vivo?.unidade ?? (t.fixo?.unidade || '') });
+        }
+      }
+    }
+    return rows;
+  }, [blocos, metricas, nsm]);
+
+  const valorNoMes = (row, mesKey) => {
+    if (mesKey === mesAtual) {
+      if (row.nivel === 'nsm') return nsm?.percentual ?? null;
+      if (row.nivel === 'okr') { const t = valorTopoOkr(row.cfg, metricas); return t && t.valor != null ? Number(t.valor) : null; }
+      const m = valorTatico(row.cfg, metricas);
+      return m && m.valor != null ? Number(m.valor) : null;
+    }
+    const snap = snapPorMes[mesKey]?.snapshot;
+    if (snap) {
+      if (row.nivel === 'nsm') { if (snap.nsm?.percentual != null) return Number(snap.nsm.percentual); }
+      else {
+        const hit = (snap.indicadores || []).find(i =>
+          i.nivel === row.nivel && i.nome === row.nome && (row.nivel !== 'tatico' || i.okr === row.okrNome));
+        if (hit && hit.valor != null) return Number(hit.valor);
+      }
+    }
+    if (row.chave) {
+      const s = metricas[row.chave]?.serie;
+      const p = Array.isArray(s) ? s.find(x => x.mes === mesKey) : null;
+      if (p && p.valor != null) return Number(p.valor);
+    }
+    return null;
+  };
+
+  const colunas = colunasDoPeriodo(periodo);
+  const valorNaColuna = (row, col) => {
+    const vals = col.meses.map(m => valorNoMes(row, m)).filter(v => v != null && Number.isFinite(v));
+    if (!vals.length) return null;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  };
+  const retratos = Object.keys(snapPorMes).length;
+
+  return (
+    <section className="mb-5">
+      <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: C.text }}>
+        <TrendingUp size={15} style={{ color: cor }} /> Comparativo por mês fechado
+        <span className="font-normal text-xs" style={{ color: C.t3 }}>· verde no alvo · vermelho fora · "—" sem dado no mês</span>
+      </div>
+      <div className="rounded-xl overflow-x-auto" style={{ border: `1px solid ${C.border}` }}>
+        <table className="w-full text-sm" style={{ minWidth: 560 + colunas.length * 90, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: C.inputBg }}>
+              <th className="text-left p-2.5 text-xs font-bold" style={{ ...celulaSticky, background: C.inputBg, color: C.t2, minWidth: 300 }}>Indicador</th>
+              {colunas.map(col => (
+                <th key={col.key} className="text-center p-2.5 text-xs font-bold" style={{ color: col.atual ? cor : C.t2 }}>{col.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map(row => {
+              if (row.nivel === 'bloco') {
+                return (
+                  <tr key={row.id} style={{ background: C.inputBg }}>
+                    <td colSpan={1 + colunas.length} className="px-2.5 py-1.5 text-xs font-extrabold uppercase tracking-wide" style={{ ...celulaSticky, background: C.inputBg, color: C.t2 }}>{row.nome}</td>
+                  </tr>
+                );
+              }
+              const destaque = row.nivel !== 'tatico';
+              return (
+                <tr key={row.id} style={{ borderTop: `1px solid ${C.border}66` }}>
+                  <td className="p-2.5" style={{ ...celulaSticky, paddingLeft: row.nivel === 'tatico' ? 26 : 10 }}>
+                    <span className={destaque ? 'text-xs font-bold' : 'text-xs'} style={{ color: destaque ? C.text : C.t2 }}>{row.nome}</span>
+                    {row.cfg?.alvo && <span className="text-[10px] ml-1.5" style={{ color: C.t3 }}>alvo {row.cfg.alvo}</span>}
+                  </td>
+                  {colunas.map(col => {
+                    const v = valorNaColuna(row, col);
+                    const aval = v == null ? null : avaliar(v, row.cfg);
+                    const corNum = v == null ? CINZA : (aval.ok == null ? C.primary : aval.cor);
+                    return (
+                      <td key={col.key} className="p-2.5 text-center">
+                        <span className={destaque ? 'text-sm font-extrabold' : 'text-sm font-semibold'} style={{ color: corNum }}>
+                          {v == null ? '—' : `${fmt(v, row.casas)}${row.unidade || ''}`}
+                        </span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10.5px] mt-1.5 leading-relaxed" style={{ color: C.t3 }}>
+        Mês fechado = retrato salvo na reunião daquele ciclo ({retratos} retrato(s) no período); sem retrato, uso a série mensal viva do indicador quando existe.
+        Salve o retrato a cada reunião pra fechar todas as colunas daqui pra frente. Coluna "(atual)" = números de agora.
+      </p>
+    </section>
+  );
+}
+
+// ── KPI: linhas = objetivos gerais · colunas = meses fechados (% da meta médio
+// do mês, do histórico real) · em 5 anos vira média anual.
+function KpiComparativoMensal({ periodo, objetivos, cor }) {
+  const mesAtual = ultimosMeses(1)[0];
+  const colunas = colunasDoPeriodo(periodo);
+  if (!objetivos.length) return null;
+
+  const valorNaColuna = (o, col) => {
+    const sMap = Object.fromEntries((o.serie || []).map(s => [s.mes, s.pct]));
+    const vals = col.meses.map(m => {
+      let v = sMap[m];
+      if (v == null && m === mesAtual) v = o.pct_medio; // mês corrente cai no vivo
+      return v;
+    }).filter(v => v != null && Number.isFinite(Number(v))).map(Number);
+    if (!vals.length) return null;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  };
+
+  return (
+    <section className="mb-5">
+      <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: C.text }}>
+        <TrendingUp size={15} style={{ color: cor }} /> Comparativo por mês fechado <span className="font-normal text-xs" style={{ color: C.t3 }}>· % da meta por objetivo</span>
+      </div>
+      <div className="rounded-xl overflow-x-auto" style={{ border: `1px solid ${C.border}` }}>
+        <table className="w-full text-sm" style={{ minWidth: 420 + colunas.length * 90, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: C.inputBg }}>
+              <th className="text-left p-2.5 text-xs font-bold" style={{ ...celulaSticky, background: C.inputBg, color: C.t2, minWidth: 280 }}>Objetivo</th>
+              {colunas.map(col => (
+                <th key={col.key} className="text-center p-2.5 text-xs font-bold" style={{ color: col.atual ? cor : C.t2 }}>{col.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {objetivos.map(o => (
+              <tr key={o.id} style={{ borderTop: `1px solid ${C.border}66` }}>
+                <td className="p-2.5" style={celulaSticky}>
+                  <span className="text-xs font-medium" style={{ color: C.text }}>{o.nome}</span>
+                  <span className="text-[10px] ml-1.5" style={{ color: C.t3 }}>{o.medidos}/{o.total_taticos} medidos</span>
+                </td>
+                {colunas.map(col => {
+                  const v = valorNaColuna(o, col);
+                  return (
+                    <td key={col.key} className="p-2.5 text-center">
+                      <span className="text-sm font-bold" style={{ color: corPct(v != null ? Number(v) : null) }}>
+                        {v == null ? '—' : `${fmt(v)}%`}
+                      </span>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10.5px] mt-1.5" style={{ color: C.t3 }}>
+        % da meta médio dos KPIs medidos de cada objetivo, mês a mês (histórico real do sistema contra a meta normalizada atual). Coluna "(atual)" = mês corrente.
+      </p>
+    </section>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Modal de UM dos 9 OKRs (clique no card): gráficos mensais dos táticos com
+// série viva + evolução do OKR entre os retratos das reuniões. Read-only.
+function OkrDetalheModal({ okr, blocoArea, metricas, reunioes, onClose }) {
+  const topo = valorTopoOkr(okr, metricas);
+
+  const serieRetratos = useMemo(() => (
+    reunioes
+      .filter(m => m.snapshot && m.date)
+      .sort((a, b) => (a.date > b.date ? 1 : -1))
+      .map(m => {
+        const hit = (m.snapshot.indicadores || []).find(i => i.nivel === 'okr' && i.nome === okr.nome);
+        return { data: fmtData(m.date).slice(0, 5), dataFull: fmtData(m.date), valor: hit && hit.valor != null ? Number(hit.valor) : null };
+      })
+      .filter(p => p.valor != null)
+  ), [reunioes, okr]);
+
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: C.overlay, zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: 16 }}>
+      <div style={{ background: C.modalBg, border: `1px solid ${C.border}`, borderRadius: 14, width: '100%', maxWidth: 760, margin: '24px 0' }}>
+        <div className="flex items-start justify-between gap-3 p-4" style={{ borderBottom: `1px solid ${C.border}` }}>
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ background: C.primaryBg, color: C.primary }}>{blocoArea}</span>
+            <div className="font-semibold text-lg mt-1.5" style={{ color: C.text }}>{okr.nome}</div>
+            <div className="text-xs mt-0.5" style={{ color: C.t3 }}>Alvo: <b style={{ color: C.t2 }}>{okr.alvo}</b>{okr.envolvida ? ` · ${okr.envolvida}` : ''}</div>
+          </div>
+          <div className="flex items-start gap-3 flex-shrink-0">
+            {topo && (
+              <div className="text-right">
+                <div className="text-3xl font-extrabold leading-none" style={{ color: topo.cor }}>{fmt(topo.valor, topo.casas)}{topo.unidade}</div>
+                <div className="text-[9px] font-bold uppercase tracking-wide mt-1" style={{ color: C.t3 }}>{topo.label}</div>
+              </div>
+            )}
+            <button onClick={onClose} style={{ color: C.t2 }}><XCircle size={20} /></button>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-4">
+          <p className="text-sm leading-relaxed" style={{ color: C.t2 }}>{okr.objetivo}</p>
+
+          {serieRetratos.length >= 2 && (
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: C.primary }}>Evolução entre reuniões (retratos)</div>
+              <div className="rounded-lg p-2" style={{ border: `1px solid ${C.border}` }}>
+                <div style={{ height: 170 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={serieRetratos} margin={{ top: 8, right: 12, bottom: 0, left: -18 }}>
+                      <XAxis dataKey="data" tick={{ fontSize: 10, fill: C.t3 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: C.t3 }} axisLine={false} tickLine={false} width={36} />
+                      <Tooltip
+                        contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                        labelStyle={{ color: C.t2 }}
+                        formatter={(v) => [`${fmt(v)}${topo?.unidade || ''}`, okr.nome]}
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.dataFull || ''}
+                      />
+                      {okr.alvoNum != null && <ReferenceLine y={okr.alvoNum} stroke={C.t3} strokeDasharray="4 3" />}
+                      <Line type="monotone" dataKey="valor" stroke={C.primary} strokeWidth={2.5} dot={{ r: 4, fill: C.primary }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: C.primary }}>Indicadores táticos</div>
+            <div className="space-y-2">
+              {okr.taticos.map(t => <TaticoDetalheModal key={t.ind} t={t} metricas={metricas} />)}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-4" style={{ borderTop: `1px solid ${C.border}` }}>
+          <button onClick={onClose} className="text-sm px-4 py-2 rounded-lg text-white" style={{ background: C.primary }}>Fechar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TaticoDetalheModal({ t, metricas }) {
+  const m = valorTatico(t, metricas);
+  const aval = m ? avaliar(m.valor, t) : null;
+  const corNum = !m ? CINZA : (aval.ok == null ? C.primary : aval.cor);
+  const serie = m && Array.isArray(m.serie) && m.serie.length > 0
+    ? m.serie.map(s => ({ mes: mesCurto(s.mes), valor: s.valor }))
+    : null;
+
+  return (
+    <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${C.border}` }}>
+      <div className="flex items-center gap-2 p-2.5" style={{ background: C.inputBg }}>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold leading-snug" style={{ color: C.text }}>{t.ind}</div>
+          <div className="text-[10.5px]" style={{ color: C.t3 }}>Alvo: {t.alvo}</div>
+        </div>
+        <div className="text-lg font-extrabold flex-shrink-0" style={{ color: corNum }}>
+          {m ? `${fmt(m.valor, t.casas)}${m.unidade}` : '—'}
+        </div>
+      </div>
+      {serie ? (
+        <div className="p-2" style={{ height: 150 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={serie} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+              <XAxis dataKey="mes" tick={{ fontSize: 10, fill: C.t3 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: C.t3 }} axisLine={false} tickLine={false} width={36} allowDecimals={false} />
+              <Tooltip
+                cursor={{ fill: C.inputBg }}
+                contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                labelStyle={{ color: C.t2 }}
+                formatter={(v) => [`${fmt(v)}${m?.unidade || ''}`, 'valor']}
+              />
+              {t.alvoNum != null && <ReferenceLine y={t.alvoNum} stroke={C.t3} strokeDasharray="4 3" />}
+              <Bar dataKey="valor" fill={corNum} radius={[3, 3, 0, 0]} maxBarSize={40} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="text-xs p-2.5" style={{ color: C.t3 }}>
+          {m?.detalhe
+            ? m.detalhe
+            : m
+              ? 'Sem série mensal ainda — este indicador mostra o número oficial/atual.'
+              : t.precisa
+                ? `Para puxar automático, preciso de: ${t.precisa}`
+                : 'Sem fonte de dado ainda.'}
+        </p>
+      )}
     </div>
   );
 }
