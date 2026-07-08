@@ -1449,6 +1449,8 @@ export const totemKids = {
     update: (id, data) => patch(`/totem-kids/criancas/${id}`, data),
     // Corrige nome/telefone do responsável (mem_membros) direto do totem Kids.
     updateResponsavelMembro: (membroId, data) => patch(`/totem-kids/membro/${membroId}`, data),
+    updateResponsavelVinculo: (criancaId, membroId, data) => patch(`/totem-kids/criancas/${criancaId}/responsaveis/${membroId}`, data),
+    removeResponsavelVinculo: (criancaId, membroId) => del(`/totem-kids/criancas/${criancaId}/responsaveis/${membroId}`),
     historico: (id) => get(`/totem-kids/historico/crianca/${id}`),
     addResponsavel: (id, data) => post(`/totem-kids/criancas/${id}/responsaveis`, data),
     addResponsavelRapido: (id, data) => post(`/totem-kids/criancas/${id}/responsavel-rapido`, data),
