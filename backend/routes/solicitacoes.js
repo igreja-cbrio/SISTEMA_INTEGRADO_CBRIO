@@ -664,6 +664,79 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ── HISTÓRICO DE APROVAÇÕES ─────────────────────────────────
+// Log das DECISÕES do ator (aprovou/rejeitou · origem/gestão/mérito), pra quem
+// aprova ver o que já decidiu — a aba "Aprovar" só mostra pendências. Fonte =
+// solicitacoes_eventos (ator_id gravado por registrarEvento nos handlers de
+// aprovação/rejeição/mérito). Super-admin com ?todos=1 vê de todo mundo.
+router.get('/minhas-aprovacoes', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const isSuper = await isAdminFallback(req);
+    const dias = Math.min(parseInt(req.query.dias, 10) || 180, 730);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+    const todos = isSuper && ['1', 'true'].includes(String(req.query.todos));
+
+    let q = supabase
+      .from('solicitacoes_eventos')
+      .select('id, solicitacao_id, status_anterior, status_novo, ator_id, observacao, created_at')
+      .gte('created_at', desde)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (!todos) q = q.eq('ator_id', userId);
+    const { data: eventos, error } = await q;
+    if (error) throw error;
+
+    // Só eventos de decisão (aprovação/rejeição/mérito). Sobrestamento/retomada
+    // e mudanças de status genéricas ficam de fora.
+    const ehDecisao = (obs) => /^(aprova|rejei|reprov|m[eé]rito)/i.test((obs || '').trim());
+    const decisoes = (eventos || []).filter(e => ehDecisao(e.observacao));
+    if (!decisoes.length) return res.json([]);
+
+    const solIds = [...new Set(decisoes.map(e => e.solicitacao_id).filter(Boolean))];
+    const { data: sols } = await supabase
+      .from('solicitacoes')
+      .select('id, titulo, categoria, status, solicitante_id, valor_estimado')
+      .in('id', solIds);
+    const solMap = Object.fromEntries((sols || []).map(s => [s.id, s]));
+
+    const profIds = [...new Set([
+      ...decisoes.map(e => e.ator_id),
+      ...(sols || []).map(s => s.solicitante_id),
+    ].filter(Boolean))];
+    let profMap = {};
+    if (profIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', profIds);
+      profMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+    }
+
+    const out = decisoes.map(e => {
+      const s = solMap[e.solicitacao_id] || {};
+      const obs = e.observacao || '';
+      const decisao = /rejei|reprov/i.test(obs) ? 'rejeitada' : 'aprovada';
+      const etapa = /gest/i.test(obs) ? 'gestao' : /m[eé]rito/i.test(obs) ? 'merito' : 'origem';
+      return {
+        evento_id: e.id,
+        solicitacao_id: e.solicitacao_id,
+        titulo: s.titulo || null,
+        categoria: s.categoria || null,
+        status_atual: s.status || null,
+        valor_estimado: s.valor_estimado ?? null,
+        solicitante: s.solicitante_id ? (profMap[s.solicitante_id] || null) : null,
+        ator: e.ator_id ? (profMap[e.ator_id] || null) : null,
+        decisao,
+        etapa,
+        observacao: obs,
+        em: e.created_at,
+      };
+    });
+    res.json(out);
+  } catch (e) {
+    console.error('[SOLICITACOES] minhas-aprovacoes:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar histórico de aprovações' });
+  }
+});
+
 // ── MEU PAPEL ───────────────────────────────────────────────
 // Define se o usuário ve a fila "Para Atender": admin/diretor OU
 // responsável cadastrado de alguma área (area_solicitacoes_responsaveis).
