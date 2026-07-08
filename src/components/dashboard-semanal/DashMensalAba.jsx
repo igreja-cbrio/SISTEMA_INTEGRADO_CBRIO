@@ -16,6 +16,9 @@ const CORES_ANO = ['#1E3A8A', '#E97A3F', '#7C3AED', '#10b981', '#ef4444', '#f59e
 
 const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 
+const TIPOS_GRAFICO = ['barra', 'linha', 'area', 'tendencia'];
+const TIPO_LABEL = { barra: 'Barra', linha: 'Linha', area: 'Area', tendencia: 'Tendência' };
+
 export default function DashMensalAba() {
   const anoAtual = new Date().getFullYear();
   const [indicador, setIndicador] = useState('aceitacoes');
@@ -87,6 +90,40 @@ export default function DashMensalAba() {
     });
   }, [linhaSel, anos]);
 
+  // Tendência · série mensal CONTÍNUA (anos concatenados em ordem cronológica) +
+  // linha de tendência por regressão linear (mínimos quadrados). Tudo no cliente
+  // a partir do `series` (que já traz o valor de cada mês por ano).
+  const tendencia = useMemo(() => {
+    if (!series.length) return { pontos: [], slope: 0, deltaPct: null };
+    const anosOrd = [...anos].sort((a, b) => a - b);
+    const seriesOrd = [...series].sort((a, b) => a.mes - b.mes);
+    const pontos = [];
+    for (const a of anosOrd) {
+      for (const r of seriesOrd) {
+        const v = r[String(a)];
+        if (v == null) continue; // pula meses sem dado (não derruba a linha pra 0)
+        pontos.push({
+          label: anosOrd.length > 1 ? `${MESES[r.mes - 1]}/${String(a).slice(2)}` : MESES[r.mes - 1],
+          valor: Number(v),
+        });
+      }
+    }
+    const n = pontos.length;
+    if (n < 2) {
+      pontos.forEach(p => { p.tendencia = p.valor; });
+      return { pontos, slope: 0, deltaPct: null };
+    }
+    let sx = 0, sy = 0, sxy = 0, sxx = 0;
+    pontos.forEach((p, i) => { sx += i; sy += p.valor; sxy += i * p.valor; sxx += i * i; });
+    const slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+    const intercept = (sy - slope * sx) / n;
+    pontos.forEach((p, i) => { p.tendencia = Math.round((intercept + slope * i) * 10) / 10; });
+    const yIni = intercept;
+    const yFim = intercept + slope * (n - 1);
+    const deltaPct = yIni !== 0 ? ((yFim - yIni) / Math.abs(yIni)) * 100 : null;
+    return { pontos, slope, deltaPct };
+  }, [series, anos]);
+
   const onClickGrafico = (state) => {
     const p = state?.activePayload?.[0]?.payload;
     if (p?.mes != null) setMesSel(p.mes);
@@ -143,15 +180,15 @@ export default function DashMensalAba() {
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Tipo de gráfico</label>
               <div className="inline-flex rounded-lg border p-0.5">
-                {['barra', 'linha', 'area'].map(t => (
+                {TIPOS_GRAFICO.map(t => (
                   <button
                     key={t}
                     onClick={() => setTipoGrafico(t)}
-                    className={`px-3 py-1 text-xs font-medium rounded capitalize transition-colors ${
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
                       tipoGrafico === t ? 'bg-[#00B39D] text-white' : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    {t}
+                    {TIPO_LABEL[t]}
                   </button>
                 ))}
               </div>
@@ -210,17 +247,27 @@ export default function DashMensalAba() {
 
       {/* Gráfico principal */}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-sm font-medium">
-            {indDef?.label} acumulado por mês · comparativo {anos.join(' / ')}
+            {tipoGrafico === 'tendencia'
+              ? `${indDef?.label} · tendência mensal ${anos.length > 1 ? `(${[...anos].sort((a, b) => a - b).join(' → ')})` : `(${anos[0]})`}`
+              : `${indDef?.label} acumulado por mês · comparativo ${anos.join(' / ')}`}
           </CardTitle>
+          {tipoGrafico === 'tendencia' && tendencia.deltaPct != null && (
+            <span className={`inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap ${
+              tendencia.slope >= 0 ? 'text-emerald-600' : 'text-rose-600'
+            }`}>
+              {tendencia.slope >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+              {tendencia.deltaPct >= 0 ? '+' : ''}{tendencia.deltaPct.toFixed(1)}% no período
+            </span>
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="h-[420px] flex items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : series.length === 0 ? (
+          ) : series.length === 0 || (tipoGrafico === 'tendencia' && tendencia.pontos.length === 0) ? (
             <div className="h-[420px] flex items-center justify-center text-sm text-muted-foreground">
               Sem dados para os filtros selecionados.
             </div>
@@ -295,7 +342,7 @@ export default function DashMensalAba() {
                         />
                       ))}
                     </LineChart>
-                  ) : (
+                  ) : tipoGrafico === 'area' ? (
                     <AreaChart data={series} margin={{ top: 24, right: 20, left: 0, bottom: 20 }} onClick={onClickGrafico}>
                       <defs>
                         {anos.map((a, idx) => (
@@ -329,6 +376,38 @@ export default function DashMensalAba() {
                         />
                       ))}
                     </AreaChart>
+                  ) : (
+                    <LineChart data={tendencia.pontos} margin={{ top: 24, right: 20, left: 0, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                      <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={16} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <Tooltip
+                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                        formatter={(v, name) => [Number(v).toLocaleString('pt-BR'), name]}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                      <Line
+                        type="monotone"
+                        dataKey="valor"
+                        name={indDef?.label || 'Valor'}
+                        stroke="#00B39D"
+                        strokeWidth={3}
+                        dot={{ r: 3 }}
+                        activeDot={{ r: 6 }}
+                        animationDuration={900}
+                      />
+                      <Line
+                        type="linear"
+                        dataKey="tendencia"
+                        name="Tendência"
+                        stroke="#64748b"
+                        strokeWidth={2}
+                        strokeDasharray="6 4"
+                        dot={false}
+                        activeDot={false}
+                        animationDuration={900}
+                      />
+                    </LineChart>
                   )}
                 </ResponsiveContainer>
               </motion.div>
