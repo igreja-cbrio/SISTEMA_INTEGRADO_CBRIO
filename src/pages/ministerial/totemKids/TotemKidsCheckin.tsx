@@ -1547,11 +1547,15 @@ function ModalNovaCrianca(props: {
   const [temLimitacao, setTemLimitacao] = useState(false);
   const [limitacaoQual, setLimitacaoQual] = useState('');
   const [obsMed, setObsMed] = useState('');
-  // Responsável (modo novo)
-  const [respNome, setRespNome] = useState('');
-  const [respTel, setRespTel] = useState('');
-  const [respCpf, setRespCpf] = useState('');
-  const [respParentesco, setRespParentesco] = useState('mae');
+  // Responsáveis (modo novo · vários)
+  const [resps, setResps] = useState<any[]>([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
+  // Foto da criança + consentimento de uso de imagem (marketing) + alvo da webcam
+  const [fotoCrianca, setFotoCrianca] = useState<string | null>(null);
+  const [consentMkt, setConsentMkt] = useState(false);
+  const [captura, setCaptura] = useState<{ tipo: 'crianca' } | { tipo: 'resp'; i: number } | null>(null);
+  const setResp = (i: number, patch: any) => setResps(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addResp = () => setResps(rs => [...rs, { nome: '', telefone: '', cpf: '', parentesco: 'outro', autorizado_buscar: true, foto: null }]);
+  const delResp = (i: number) => setResps(rs => rs.length > 1 ? rs.filter((_, idx) => idx !== i) : rs);
   // Amigo de (modo amigo)
   const [amigoBusca, setAmigoBusca] = useState('');
   const [amigoResultados, setAmigoResultados] = useState<any[]>([]);
@@ -1564,7 +1568,8 @@ function ModalNovaCrianca(props: {
       setModo('novo'); setCriancaNome(props.nomeInicial); setCriancaNasc(''); setCriancaSexo('');
       setTemAlergia(false); setAlergiaQual(''); setTemEspectro(false); setEspectroQual('');
       setTemLimitacao(false); setLimitacaoQual(''); setObsMed('');
-      setRespNome(''); setRespTel(''); setRespCpf(''); setRespParentesco('mae');
+      setResps([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
+      setFotoCrianca(null); setConsentMkt(false); setCaptura(null);
       setAmigoBusca(''); setAmigoResultados([]); setAmigoSel(null);
     }
   }, [props.open, props.nomeInicial]);
@@ -1594,22 +1599,31 @@ function ModalNovaCrianca(props: {
     if (!criancaNome.trim()) { toast.error('Informe o nome da criança'); return; }
     const crianca: any = {
       nome: criancaNome.trim(), data_nascimento: criancaNasc || null, sexo: criancaSexo || null,
-      observacoes_medicas: obsMed.trim() || null,
+      observacoes_medicas: obsMed.trim() || null, consent_marketing: consentMkt,
       tem_alergia: temAlergia, alergia_qual: temAlergia ? alergiaQual.trim() || null : null,
       tem_espectro: temEspectro, espectro_qual: temEspectro ? espectroQual.trim() || null : null,
       tem_limitacao_fisica: temLimitacao, limitacao_fisica_qual: temLimitacao ? limitacaoQual.trim() || null : null,
     };
     let body: any;
+    let validos: any[] = [];
     if (modo === 'amigo') {
       if (!amigoSel) { toast.error('Escolha a criança de quem o visitante é amigo'); return; }
       body = { crianca, amigo_de_crianca_id: amigoSel.id };
     } else {
-      if (!respNome.trim() || !respTel.trim()) { toast.error('Nome e telefone do responsável são obrigatórios'); return; }
-      body = { crianca, responsavel: { nome: respNome.trim(), telefone: respTel.trim(), cpf: respCpf.trim() || null, parentesco: respParentesco } };
+      validos = resps.filter(r => r.nome.trim() && r.telefone.trim());
+      if (!validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
+      body = { crianca, responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })) };
     }
     setSalvando(true);
     try {
       const r = await totemKids.criancas.create(body);
+      // Fotos best-effort (não travam o cadastro). r.responsaveis volta na ordem dos validos.
+      const cid = r?.crianca?.id;
+      if (cid && fotoCrianca) { try { await totemKids.criancas.uploadFoto(cid, fotoCrianca); } catch { /* noop */ } }
+      const retResps = Array.isArray(r?.responsaveis) ? r.responsaveis : [];
+      for (let i = 0; i < retResps.length; i++) {
+        if (validos[i]?.foto && retResps[i]?.id) { try { await totemKids.criancas.uploadFotoResponsavel(retResps[i].id, validos[i].foto); } catch { /* noop */ } }
+      }
       toast.success(`${r.crianca.nome} cadastrada · pronto pra check-in`);
       const detalhe = await totemKids.criancas.buscar(criancaNome.trim());
       const found = detalhe.find((c: { id: string }) => c.id === r.crianca.id) || r.crianca;
@@ -1651,6 +1665,19 @@ function ModalNovaCrianca(props: {
                 </SelectContent>
               </Select>
             </div>
+            <div className="flex items-center gap-3 pt-1">
+              <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center overflow-hidden shrink-0">
+                {fotoCrianca ? <img src={fotoCrianca} alt="" className="h-full w-full object-cover" /> : <Baby className="h-6 w-6 text-muted-foreground" />}
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => setCaptura({ tipo: 'crianca' })}>
+                <Camera className="h-4 w-4 mr-1" /> {fotoCrianca ? 'Refazer foto' : 'Tirar foto'}
+              </Button>
+              {fotoCrianca && <Button type="button" variant="ghost" size="sm" onClick={() => setFotoCrianca(null)}>Remover</Button>}
+            </div>
+            <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={consentMkt} onChange={e => setConsentMkt(e.target.checked)} />
+              <span>Autoriza o <b>uso da imagem da criança</b> para divulgação/marketing (redes sociais, site, etc.)</span>
+            </label>
           </div>
 
           {/* Saúde */}
@@ -1668,26 +1695,49 @@ function ModalNovaCrianca(props: {
           {/* Responsável OU amigo */}
           {modo === 'novo' ? (
             <div className="space-y-2">
-              <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Responsável</div>
-              <Input placeholder="Nome do responsável *" value={respNome} onChange={e => setRespNome(e.target.value)} />
-              <div className="grid grid-cols-2 gap-2">
-                <Input placeholder="Telefone *" value={respTel} onChange={e => setRespTel(e.target.value)} />
-                <Input placeholder="CPF (opcional)" value={respCpf} onChange={e => setRespCpf(e.target.value)} />
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Responsáveis</div>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={addResp}><Plus className="h-3.5 w-3.5" /> Adicionar</Button>
               </div>
-              <Select value={respParentesco} onValueChange={setRespParentesco}>
-                <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mae">Mãe</SelectItem>
-                  <SelectItem value="pai">Pai</SelectItem>
-                  <SelectItem value="padrasto">Padrasto</SelectItem>
-                  <SelectItem value="madrasta">Madrasta</SelectItem>
-                  <SelectItem value="avo_a">Avô/Avó</SelectItem>
-                  <SelectItem value="tio_a">Tio/Tia</SelectItem>
-                  <SelectItem value="irmao_a">Irmão/Irmã</SelectItem>
-                  <SelectItem value="tutor">Tutor</SelectItem>
-                  <SelectItem value="outro">Outro</SelectItem>
-                </SelectContent>
-              </Select>
+              {resps.map((r, i) => (
+                <div key={i} className="rounded-md border border-border p-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">Responsável {i + 1}</span>
+                    {resps.length > 1 && <button type="button" onClick={() => delResp(i)} className="text-muted-foreground hover:text-red-500"><X className="h-3.5 w-3.5" /></button>}
+                  </div>
+                  <Input placeholder="Nome do responsável *" value={r.nome} onChange={e => setResp(i, { nome: e.target.value })} />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input placeholder="Telefone *" value={r.telefone} onChange={e => setResp(i, { telefone: e.target.value })} />
+                    <Input placeholder="CPF (opcional)" value={r.cpf} onChange={e => setResp(i, { cpf: e.target.value })} />
+                  </div>
+                  <Select value={r.parentesco} onValueChange={v => setResp(i, { parentesco: v })}>
+                    <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="mae">Mãe</SelectItem>
+                      <SelectItem value="pai">Pai</SelectItem>
+                      <SelectItem value="padrasto">Padrasto</SelectItem>
+                      <SelectItem value="madrasta">Madrasta</SelectItem>
+                      <SelectItem value="avo_a">Avô/Avó</SelectItem>
+                      <SelectItem value="tio_a">Tio/Tia</SelectItem>
+                      <SelectItem value="irmao_a">Irmão/Irmã</SelectItem>
+                      <SelectItem value="tutor">Tutor</SelectItem>
+                      <SelectItem value="outro">Outro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center overflow-hidden shrink-0">
+                        {r.foto ? <img src={r.foto} alt="" className="h-full w-full object-cover" /> : <Camera className="h-4 w-4 text-muted-foreground" />}
+                      </div>
+                      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setCaptura({ tipo: 'resp', i })}>{r.foto ? 'Refazer foto' : 'Tirar foto'}</Button>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      <input type="checkbox" checked={r.autorizado_buscar} onChange={e => setResp(i, { autorizado_buscar: e.target.checked })} />
+                      Autorizado a buscar
+                    </label>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="space-y-2">
@@ -1730,6 +1780,14 @@ function ModalNovaCrianca(props: {
         </div>
         </div>
       </DialogContent>
+      {captura && (
+        <WebcamCaptura
+          titulo={captura.tipo === 'crianca' ? 'Foto da criança' : 'Foto do responsável'}
+          salvando={false}
+          onCapturar={(dataUrl) => { if (captura.tipo === 'crianca') setFotoCrianca(dataUrl); else setResp(captura.i, { foto: dataUrl }); setCaptura(null); }}
+          onFechar={() => setCaptura(null)}
+        />
+      )}
     </Dialog>
   );
 }
