@@ -949,8 +949,9 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
     tem_limitacao_fisica: !!crianca.tem_limitacao_fisica, limitacao_fisica_qual: crianca.limitacao_fisica_qual || '',
   });
   const setF = (k: string, v: unknown) => setForm(s => ({ ...s, [k]: v }));
-  const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '', telefone: r.membro?.telefone || '', parentesco: r.parentesco || 'outro' })));
+  const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '', telefone: r.membro?.telefone || '', parentesco: r.parentesco || 'outro', foto_url: r.membro?.foto_url || null })));
   const [salvando, setSalvando] = useState(false);
+  const [capturaResp, setCapturaResp] = useState<string | null>(null); // membro_id em captura de foto
 
   async function salvarTudo() {
     if (form.nome.trim().length < 2) { setErro('Nome da criança muito curto.'); return; }
@@ -1130,6 +1131,14 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
                             <SelectItem value="outro">Outro</SelectItem>
                           </SelectContent>
                         </Select>
+                        <div className="flex items-center gap-2">
+                          <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center overflow-hidden shrink-0">
+                            {r.foto_url ? <img src={r.foto_url} alt="" className="h-full w-full object-cover" /> : <Camera className="h-4 w-4 text-muted-foreground" />}
+                          </div>
+                          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setCapturaResp(r.membro_id)}>
+                            {r.foto_url ? 'Refazer foto' : 'Tirar foto'}
+                          </Button>
+                        </div>
                       </div>
                     );
                   })}
@@ -1149,6 +1158,23 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
           </div>
         )}
       </DialogContent>
+      {capturaResp && (
+        <WebcamCaptura
+          titulo="Foto do responsável"
+          salvando={false}
+          onCapturar={async (dataUrl) => {
+            const mid = capturaResp;
+            try {
+              await totemKids.criancas.uploadFotoResponsavel(mid, dataUrl);
+              setResps(list => list.map(x => x.membro_id === mid ? { ...x, foto_url: dataUrl } : x));
+              atualizarCrianca({ responsaveis: crianca.responsaveis.map(rr => rr.membro_id === mid ? { ...rr, membro: { ...(rr.membro || {}), id: rr.membro?.id || mid, foto_url: dataUrl } } : rr) } as Partial<Crianca>);
+              toast.success('Foto do responsável atualizada');
+            } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar a foto'); }
+            setCapturaResp(null);
+          }}
+          onFechar={() => setCapturaResp(null)}
+        />
+      )}
     </Dialog>
   );
 }
