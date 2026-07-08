@@ -512,7 +512,7 @@ export default function TotemKidsCheckin() {
   // e Testar etiqueta, tudo sem sair do totem. Ao fechar, recarrega a sessão.
   const ajustesDialog = (
     <Dialog open={ajustesOpen} onOpenChange={(o) => { setAjustesOpen(o); if (!o) recarregarSessao(); }}>
-      <DialogContent className="max-w-4xl w-[95vw] max-h-[92vh] overflow-y-auto z-[80]">
+      <DialogContent className="max-w-4xl w-[95vw] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Ajustes do totem</DialogTitle>
           <DialogDescription>Sessões, estações e teste de etiqueta — sem sair do totem.</DialogDescription>
@@ -523,10 +523,14 @@ export default function TotemKidsCheckin() {
   );
 
   return (
-    // ⚠️ z-[40]: acima do header do AppShell (z-30), ABAIXO dos portais do Radix
-    // (Dialog/Select/Popover = z-50). Com z-[60] todo portal sem override abria
-    // INVISÍVEL atrás do overlay e ainda travava os cliques (bug do cadastro de
-    // criança em modo totem · Diego 2026-07-07). Não subir de volta.
+    // ⚠️ REGRA DE EMPILHAMENTO DESTA TELA (não regredir · Diego 2026-07-07/08):
+    // wrapper do modo totem = z-[40] (acima do header z-30, ABAIXO dos portais
+    // do Radix, que ficam TODOS no padrão z-50). NUNCA pôr z-index em
+    // DialogContent/SelectContent aqui: com z uniforme, a ordem do DOM empilha
+    // certo (select/confirmação abertos por último pintam por cima). Foi um
+    // cinto z-[80] num dialog que escondeu os dropdowns internos dele (z-50
+    // atrás do pai) e travou os cliques. Exceção legítima: o par 1100/1200 do
+    // TotemKidsAdmin (dialog aninhado + select), que é consistente entre si.
     <div className={totemMode ? 'fixed inset-0 z-[40] overflow-y-auto' : ''}>
     <KidsZoneShell fullscreen={totemMode}>
       {/* Barra do topo · logo, sessão, relógio e alternância check-in/check-out */}
@@ -577,7 +581,7 @@ export default function TotemKidsCheckin() {
 
       {scanAberto && (
         <Dialog open onOpenChange={(o) => { if (!o) setScanAberto(false); }}>
-          <DialogContent className="max-w-sm z-[80]">
+          <DialogContent className="max-w-sm">
             <DialogHeader>
               <DialogTitle>Escanear QR do app</DialogTitle>
               <DialogDescription>Aponte a câmera pro QR do pré-check-in do responsável.</DialogDescription>
@@ -843,7 +847,7 @@ export default function TotemKidsCheckin() {
 
       {/* Modo totem · cria/pede PIN */}
       <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
-        <DialogContent className="max-w-xs z-[80]">
+        <DialogContent className="max-w-xs">
           <DialogHeader>
             <DialogTitle>{pinSetup ? 'Ativar modo totem' : 'Sair do modo totem'}</DialogTitle>
             <DialogDescription>
@@ -993,7 +997,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto z-[80]">
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{fase === 'edit' ? `Editar ficha · ${crianca.nome.split(' ')[0]}` : 'Editar ficha da criança'}</DialogTitle>
           <DialogDescription>
@@ -1140,7 +1144,7 @@ function WebcamCaptura({ titulo, salvando, onCapturar, onFechar }: {
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }}>
-      <DialogContent className="max-w-md z-[80]">
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{titulo}</DialogTitle>
           <DialogDescription>Enquadre a criança e toque em Capturar.</DialogDescription>
@@ -1612,8 +1616,7 @@ function ModalNovaCrianca(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
-      {/* z-[80] · mesmo cinto dos demais dialogs desta página (modo totem) */}
-      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col z-[80]">
+      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Cadastrar criança · visitante</DialogTitle>
           <DialogDescription>Dados mínimos · LGPD com menores. Sem CPF da criança.</DialogDescription>
