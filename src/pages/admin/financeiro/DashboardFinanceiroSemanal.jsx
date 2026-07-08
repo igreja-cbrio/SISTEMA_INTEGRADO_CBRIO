@@ -79,16 +79,20 @@ function useFiltrosGlobais() {
 }
 
 // ============================================================
-// SEMANAS ISO seg-dom · UNIFICADAS com a aba de cultos (2026-06-01)
-// Antes era qua-ter (corte na terca pelo lag D+1 do extrato). Como a oferta
-// de culto já e lancada com a data do culto, mudamos pra segunda->domingo pra
-// "Semana 21" bater com os cultos. O backend (fin_semana_qua_ter, nome mantido)
-// também foi reescrito pra ISO seg-dom.
+// SEMANA FINANCEIRA · QUARTA→TERÇA (decisão do Matheus · 2026-07-08)
+// A gestão enxerga a semana da igreja de QUARTA (Quarta com Deus) até a TERÇA
+// seguinte — é assim que o sistema financeiro interno concilia. Entre 2026-06-01
+// e 2026-07-08 o dashboard usou ISO seg-dom (unificado com a aba de cultos), mas
+// isso divergia do fechamento contábil e dava números diferentes do interno
+// (ex.: 303k seg-dom × ~418k qua-ter na virada de junho/julho). Voltamos a
+// qua-ter APENAS no financeiro; a FREQUÊNCIA dos cultos (dashboardSemanal.js ·
+// isoWeekRange) segue seg-dom, intocada. O backend usa a MESMA função
+// fin_semana_qua_ter (reescrita pra qua-ter de novo) → views e endpoints herdam.
 // ============================================================
-function segundaDaSemana(date) {
+function quartaDaSemana(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  const offset = (d.getDay() + 6) % 7; // Seg=0 ... Dom=6
+  const offset = (d.getDay() + 4) % 7; // Qua=0 · Qui=1 ... Ter=6
   d.setDate(d.getDate() - offset);
   return d;
 }
@@ -105,13 +109,13 @@ function numeroSemanaIso(date) {
 }
 
 function gerarSemanasIso(qtd = 26) {
-  const segAtual = segundaDaSemana(new Date());
+  const quaAtual = quartaDaSemana(new Date());
 
   const out = [];
   for (let i = 0; i < qtd; i++) {
-    const inicio = new Date(segAtual);
-    inicio.setDate(segAtual.getDate() - i * 7);
-    const fim = new Date(inicio);
+    const inicio = new Date(quaAtual); // quarta
+    inicio.setDate(quaAtual.getDate() - i * 7);
+    const fim = new Date(inicio); // terça seguinte
     fim.setDate(inicio.getDate() + 6);
     const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
     const num = numeroSemanaIso(inicio);
@@ -252,7 +256,7 @@ export default function DashboardSemanal() {
 
             <div className="flex flex-col items-center flex-1 min-w-[240px]">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-                Semana (seg–dom)
+                Semana (qua–ter)
                 {loading && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
               </div>
               <select
@@ -1160,7 +1164,7 @@ function YoYSemanalChart({ dados, anoAtual, anoAnterior }) {
       <CardContent className="pt-6">
         <h3 className="text-base font-semibold mb-1">Comparativo Ano a Ano · Semanal</h3>
         <p className="text-xs text-muted-foreground mb-4">
-          Mesma semana (seg–dom) de {anoAtual} vs {anoAnterior}
+          Mesma semana (qua–ter) de {anoAtual} vs {anoAnterior}
         </p>
         <div style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
@@ -2149,7 +2153,7 @@ function FreqVsArrecadacaoSemanal() {
               </Badge>
             </h3>
             <p className="text-xs text-muted-foreground">
-              Semanas seg–dom · empréstimos excluídos · cards abaixo refletem a semana selecionada
+              Semanas qua–ter · empréstimos excluídos · cards abaixo refletem a semana selecionada
             </p>
           </div>
           <div className="flex gap-1">
@@ -2533,7 +2537,7 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
               </select>
             </div>
             <div className="md:col-span-2">
-              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (seg–dom)</label>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (qua–ter)</label>
               <select
                 value={filtroSemana}
                 onChange={(e) => setFiltroSemana(e.target.value)}
