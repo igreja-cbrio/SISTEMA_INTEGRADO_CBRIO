@@ -111,7 +111,7 @@ export default function Solicitacoes() {
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
   const [atenderLayout, setAtenderLayout] = useState('foco'); // 'foco' | 'kanban' | 'lista' | 'solicitante'
-  const [aprovarLayout, setAprovarLayout] = useState('lista'); // aba Aprovar · 'lista' | 'kanban' (por categoria)
+  const [aprovarLayout, setAprovarLayout] = useState('foco'); // aba Aprovar · 'foco' | 'kanban' | 'historico'
   const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
   // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
@@ -571,16 +571,6 @@ export default function Solicitacoes() {
                 className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'solicitante' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Por solicitante</button>
             </div>
           )}
-          {view === 'aprovar' && (
-            <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
-              <button type="button" onClick={() => setAprovarLayout('lista')}
-                className={`px-3 h-9 text-sm ${aprovarLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Pendentes</button>
-              <button type="button" onClick={() => setAprovarLayout('kanban')}
-                className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
-              <button type="button" onClick={() => setAprovarLayout('historico')}
-                className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'historico' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Histórico</button>
-            </div>
-          )}
           {view === 'minhas' && (
             <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
               <button type="button" onClick={() => setMinhasLayout('lista')}
@@ -589,6 +579,25 @@ export default function Solicitacoes() {
                 className={`px-3 h-9 text-sm border-l border-border ${minhasLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Barra da aba Aprovar · resumo + alternador (Foco | Kanban | Histórico) */}
+      {view === 'aprovar' && !loading && (
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="text-xs text-muted-foreground">
+            {aprovarLayout === 'historico'
+              ? 'Histórico das suas decisões (origem · gestão · mérito).'
+              : `${filtered.length} ${filtered.length === 1 ? 'solicitação aguardando' : 'solicitações aguardando'} sua aprovação.`}
+          </p>
+          <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
+            <button type="button" onClick={() => setAprovarLayout('foco')}
+              className={`px-3 h-9 text-sm ${aprovarLayout === 'foco' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Foco</button>
+            <button type="button" onClick={() => setAprovarLayout('kanban')}
+              className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+            <button type="button" onClick={() => setAprovarLayout('historico')}
+              className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'historico' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Histórico</button>
+          </div>
         </div>
       )}
 
@@ -621,7 +630,44 @@ export default function Solicitacoes() {
               </Card>
             );
           }
-          if (aprovarLayout !== 'kanban') return <div className="space-y-3">{filtered.map(renderCard)}</div>;
+          if (aprovarLayout !== 'kanban') {
+            // FOCO (padrão) · cards de resumo no topo + agrupado por urgência.
+            const ehUrg = (i) => i.eh_urgente || i.urgencia === 'urgente';
+            const urgentes = filtered.filter(ehUrg);
+            const demais = filtered.filter(i => !ehUrg(i));
+            const valor = filtered.reduce((s, i) => s + (Number(i.valor_estimado) || 0), 0);
+            const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg border bg-card">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock className="h-3.5 w-3.5" style={{ color: '#00B39D' }} /> Aguardando</div>
+                    <p className="text-2xl font-bold mt-1 tabular-nums" style={{ color: '#00B39D' }}>{filtered.length}</p>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-card">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock className="h-3.5 w-3.5 text-red-500" /> Urgentes</div>
+                    <p className="text-2xl font-bold mt-1 tabular-nums text-red-600">{urgentes.length}</p>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-card">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><FileText className="h-3.5 w-3.5 text-indigo-500" /> Valor em análise</div>
+                    <p className="text-2xl font-bold mt-1 tabular-nums text-indigo-600">{money(valor)}</p>
+                  </div>
+                </div>
+                {urgentes.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400 mb-2">Urgentes · {urgentes.length}</p>
+                    <div className="space-y-3">{urgentes.map(renderCard)}</div>
+                  </div>
+                )}
+                {demais.length > 0 && (
+                  <div>
+                    {urgentes.length > 0 && <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Demais · {demais.length}</p>}
+                    <div className="space-y-3">{demais.map(renderCard)}</div>
+                  </div>
+                )}
+              </div>
+            );
+          }
           // Kanban por categoria · só colunas com itens, na ordem de CATEGORIAS.
           const porCat = new Map();
           for (const it of filtered) {
@@ -749,7 +795,7 @@ export default function Solicitacoes() {
       {/* Detail dialog · vira painel lateral (Sheet) no layout Foco da aba Atender */}
       <DetailDialog
         item={detailItem}
-        asSheet={view === 'atender' && atenderLayout === 'foco'}
+        asSheet={(view === 'atender' && atenderLayout === 'foco') || (view === 'aprovar' && aprovarLayout === 'foco')}
         onClose={() => setDetailItem(null)}
         isAdmin={isResponsavel}
         currentUserId={profile?.id}
