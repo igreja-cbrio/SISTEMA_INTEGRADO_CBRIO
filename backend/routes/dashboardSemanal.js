@@ -161,25 +161,21 @@ router.get('/semanal', async (req, res) => {
     const { data: semanaData, error } = await q;
     if (error) throw error;
 
-    // Média histórica · últimos 52 semanas anteriores à atual por service_type
-    const { inicio: inicioAtual } = isoWeekRange(ano, semana);
-    const inicioJanela = new Date(inicioAtual);
-    inicioJanela.setUTCDate(inicioJanela.getUTCDate() - 52 * 7);
-
-    // Pega janela ampla e filtra "anterior à semana atual" em JS pra simplificar
-    // Volume é trivial (1 linha por (ano, semana, tipo) · ~1000 rows em 5 anos)
+    // Média do ANO selecionado · semanas 1..(semana atual) por service_type.
+    // Antes era janela móvel de 52 semanas (cruzava o ano anterior). Pedido do
+    // Matheus (2026-07-08): a média deve ser do ANO que se está vendo — na
+    // semana 27, usa as 27 semanas do ano; a cada semana que passa, entra mais
+    // uma. Inclui a semana atual (assim a média sempre tem ≥1 ponto e o número
+    // de semanas bate com a semana ISO).
     let qHist = supabase
       .from(fonte)
       .select(`service_type_id, ${colunasView(indicadorKey).join(', ')}, ano_iso, semana_iso`)
-      .gte('ano_iso', ano - 1)
-      .lte('ano_iso', ano);
+      .eq('ano_iso', ano)
+      .lte('semana_iso', semana);
     if (cultoId) qHist = qHist.eq('service_type_id', cultoId);
     const { data: histDataRaw, error: errHist } = await qHist;
     if (errHist) throw errHist;
-    const histData = (histDataRaw || []).filter(r => {
-      if (r.ano_iso < ano) return true;
-      return r.ano_iso === ano && r.semana_iso < semana;
-    });
+    const histData = histDataRaw || [];
 
     // Agrupa histórico por service_type
     const histPorTipo = new Map();
@@ -278,6 +274,8 @@ router.get('/semanal', async (req, res) => {
         media_geral: mediaGeral,
         variacao_pct,
         taxa_ocupacao_geral,
+        // Nº de semanas do ano usadas na média (pro rótulo "média de N semanas").
+        media_semanas_base: new Set((histData || []).map(r => r.semana_iso)).size,
         ...volResumo,
       },
       meta: meta ? { id: meta.id, meta_valor: Number(meta.meta_valor), rotulo: meta.rotulo } : null,

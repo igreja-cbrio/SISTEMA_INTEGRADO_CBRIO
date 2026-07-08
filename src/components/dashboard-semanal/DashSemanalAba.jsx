@@ -567,7 +567,13 @@ export default function DashSemanalAba() {
                 valor={primario?.data?.resumo.media_geral ?? 0}
                 loading={isLoading}
                 cor={C.media}
-                subtitulo="Média semanal das últimas 52 semanas"
+                subtitulo={(() => {
+                  const n = primario?.data?.resumo?.media_semanas_base;
+                  const anoRef = primario?.data?.ano;
+                  return anoRef
+                    ? `Média semanal de ${anoRef}${n ? ` · ${n} ${n === 1 ? 'semana' : 'semanas'}` : ''}`
+                    : 'Média semanal do ano';
+                })()}
               />
               <KpiCard
                 titulo="Variação %"
