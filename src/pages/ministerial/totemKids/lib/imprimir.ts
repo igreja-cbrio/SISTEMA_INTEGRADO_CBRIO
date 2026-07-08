@@ -210,6 +210,21 @@ function gerarBarcodeSvg(codigo: string): Promise<string> {
   }).catch(() => `<text>${codigo}</text>`);
 }
 
+// Nome na etiqueta: nome completo até o limite; acima disso vira
+// "Primeiro Último" (o clamp de 2 linhas cortava o fim com reticências e o
+// sobrenome sumia — pedido do Marcos 2026-07-08). Se um dia precisarem de
+// apelido/nome social, vira campo próprio na ficha; por ora é automático.
+const NOME_ETIQUETA_MAX = 24;
+function nomeParaEtiqueta(nome: string): string {
+  const limpo = String(nome || '').trim().replace(/\s+/g, ' ');
+  if (limpo.length <= NOME_ETIQUETA_MAX) return limpo;
+  const partes = limpo.split(' ');
+  const curto = partes.length >= 2 ? `${partes[0]} ${partes[partes.length - 1]}` : limpo;
+  return curto.length <= NOME_ETIQUETA_MAX ? curto : `${curto.slice(0, NOME_ETIQUETA_MAX - 1)}…`;
+}
+
+// ⚠️ Emoji em HTML de impressão é loteria (o 📷 saiu como ícone quebrado na
+// Brother/preview · Diego 2026-07-08) → só texto puro nos templates de etiqueta.
 function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
   // Alergia/necessidade em destaque (barra preta). Junta alergia + necessidade.
   const saude = [
@@ -217,13 +232,13 @@ function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
     d.crianca.necessidade || '',
     !d.crianca.alergia && !d.crianca.necessidade ? (d.crianca.observacoesMedicas || '') : '',
   ].filter(Boolean).join(' · ');
-  const alerta = saude ? `<div class="alerta">⚠ ${escapeHtml(saude)}</div>` : '';
-  // Ícone de câmera (com X se a foto não é autorizada).
+  const alerta = saude ? `<div class="alerta">! ${escapeHtml(saude)}</div>` : '';
+  // Selo de consentimento de foto (texto puro · sem emoji na impressão)
   const foto = d.crianca.fotoAutorizada
-    ? `<span class="foto-badge">📷 OK</span>`
-    : `<span class="foto-badge foto-no">📷 ✕</span>`;
+    ? `<span class="foto-badge">FOTO OK</span>`
+    : `<span class="foto-badge foto-no">SEM FOTO</span>`;
   const aniversario = d.crianca.aniversarioSemana
-    ? `<div class="aniversario">🎂 Feliz aniversário, ${escapeHtml((d.crianca.nome || '').split(' ')[0])}!</div>`
+    ? `<div class="aniversario">Feliz aniversário, ${escapeHtml((d.crianca.nome || '').split(' ')[0])}!</div>`
     : '';
   return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS_ETIQUETA}</style></head>
 <body>
@@ -231,7 +246,7 @@ function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
     <div class="faixa-cor"></div>
     <div class="col-esq">
       <div class="topo">
-        <div class="nome-grande" style="margin:0">${escapeHtml(d.crianca.nome)}</div>
+        <div class="nome-grande" style="margin:0">${escapeHtml(nomeParaEtiqueta(d.crianca.nome))}</div>
         ${foto}
       </div>
       <div class="sala">${escapeHtml(d.crianca.salaNome)} · ${escapeHtml(d.crianca.idadeLabel)}</div>
@@ -254,8 +269,8 @@ function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string 
 <body>
   <div class="etiqueta">
     <div class="col-esq" style="padding-left:0">
-      <div class="header-resp">⛪ CB Rio · Recibo Kids</div>
-      <div class="nome-grande" style="font-size:11pt">${escapeHtml(d.responsavel.nome)}</div>
+      <div class="header-resp">CB Rio · Recibo Kids</div>
+      <div class="nome-grande" style="font-size:11pt">${escapeHtml(nomeParaEtiqueta(d.responsavel.nome))}</div>
       <div class="sala" style="font-size:8pt;color:#555">${escapeHtml(d.cultoDiaHora || d.crianca.salaNome)}</div>
       <div class="data-hora" style="text-align:left;margin-top:auto">
         ${escapeHtml(d.dataHora)} · Apresente este código para buscar
