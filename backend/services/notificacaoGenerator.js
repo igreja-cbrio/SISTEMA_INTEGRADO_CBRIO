@@ -1378,4 +1378,7 @@ async function gerarNotificacoesKids() {
   return count;
 }
 
-module.exports = { gerarTodasNotificacoes };
+// gerarNotificacoesOnline também é consumida direto pelo cron /api/online/cron/verificar
+// (online.js) — sem o export, o require destruturado vinha undefined e o cron
+// quebrava com "gerarNotificacoesOnline is not a function" (500 diário).
+module.exports = { gerarTodasNotificacoes, gerarNotificacoesOnline };
