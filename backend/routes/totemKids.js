@@ -272,9 +272,14 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
     // Normaliza (minúscula + sem acento) pra casar com nome_norm — "jose" acha
     // "José", sem depender de acento/maiúscula.
     const qNorm = q.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    // Refino: cada PALAVRA precisa aparecer no nome (AND) — "pedro lit" acha
+    // "Pedro Theodoro Litwinczuk" mesmo com termos não adjacentes/fora de ordem.
+    const termos = qNorm.split(/\s+/).filter(t => t.length >= 1).slice(0, 6);
 
-    // Busca por nome (sem acento) OU por telefone do responsável
-    const { data: criancas } = await supabase
+    // Inclui INATIVAS (marcadas) pra criança que sumiu 6+ meses do PCO ou não
+    // apareceu na última importação continuar achável — o check-in reativa.
+    // Ativas vêm primeiro.
+    let buscaQ = supabase
       .from('kids_criancas')
       .select(`
         id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
@@ -286,11 +291,9 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
           membro:mem_membros(id, nome, telefone, cpf, foto_url)
         )
       `)
-      // Inclui INATIVAS (marcadas) pra criança que sumiu 6+ meses do PCO ou não
-      // apareceu na última importação continuar achável — o check-in reativa.
-      // Sem isso o voluntário recadastra e gera duplicata. Ativas vêm primeiro.
-      .ilike('nome_norm', `%${qNorm}%`)
-      .is('deleted_at', null)
+      .is('deleted_at', null);
+    for (const t of termos) buscaQ = buscaQ.ilike('nome_norm', `%${t}%`);
+    const { data: criancas } = await buscaQ
       .order('ativo', { ascending: false })
       .order('nome')
       .limit(30);
@@ -572,6 +575,53 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao editar criança' });
+  }
+});
+
+// PATCH /criancas/:criancaId/responsaveis/:membroId · atualiza o VÍNCULO
+// (parentesco / autorizado a buscar) na kids_responsaveis — o parentesco vive
+// no vínculo, não no mem_membros.
+router.patch('/criancas/:criancaId/responsaveis/:membroId', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const allowed = ['parentesco', 'autorizado_buscar', 'contato_emergencia'];
+    const update = {};
+    for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+    if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+    const { data, error } = await supabase
+      .from('kids_responsaveis')
+      .update(update)
+      .eq('crianca_id', req.params.criancaId)
+      .eq('membro_id', req.params.membroId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    res.json(data || { ok: true });
+  } catch (e) {
+    console.error('[totemKids] update vinculo responsavel:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o vínculo do responsável' });
+  }
+});
+
+// DELETE /criancas/:criancaId/responsaveis/:membroId · desvincula o responsável
+// da criança (remove só o VÍNCULO kids_responsaveis · NÃO apaga o membro). Não
+// deixa a criança ficar sem nenhum responsável.
+router.delete('/criancas/:criancaId/responsaveis/:membroId', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { criancaId, membroId } = req.params;
+    const { count } = await supabase.from('kids_responsaveis')
+      .select('id', { count: 'exact', head: true })
+      .eq('crianca_id', criancaId);
+    if ((count || 0) <= 1) {
+      return res.status(400).json({ error: 'A criança precisa ter ao menos um responsável. Adicione outro antes de remover este.' });
+    }
+    const { error } = await supabase.from('kids_responsaveis')
+      .delete()
+      .eq('crianca_id', criancaId).eq('membro_id', membroId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] remove vinculo responsavel:', e.message);
+    res.status(500).json({ error: 'Erro ao remover o responsável' });
   }
 });
 

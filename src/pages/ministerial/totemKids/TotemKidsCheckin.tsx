@@ -949,7 +949,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
     tem_limitacao_fisica: !!crianca.tem_limitacao_fisica, limitacao_fisica_qual: crianca.limitacao_fisica_qual || '',
   });
   const setF = (k: string, v: unknown) => setForm(s => ({ ...s, [k]: v }));
-  const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '', telefone: r.membro?.telefone || '' })));
+  const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '', telefone: r.membro?.telefone || '', parentesco: r.parentesco || 'outro' })));
   const [salvando, setSalvando] = useState(false);
 
   async function salvarTudo() {
@@ -979,6 +979,10 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
         if (Object.keys(patchResp).length) {
           await totemKids.criancas.updateResponsavelMembro(r.membro_id, patchResp);
         }
+        // Parentesco vive no VÍNCULO (kids_responsaveis), não no membro.
+        if (r.parentesco && r.parentesco !== (orig?.parentesco || '')) {
+          await totemKids.criancas.updateResponsavelVinculo(crianca.id, r.membro_id, { parentesco: r.parentesco });
+        }
       }
       atualizarCrianca({
         ...patch,
@@ -1000,6 +1004,17 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
       onClose();
     } catch (e: unknown) { setErro((e as { message?: string })?.message || 'Erro ao salvar'); }
     finally { setSalvando(false); }
+  }
+
+  async function removerResp(membroId: string) {
+    if (resps.length <= 1) { toast.error('A criança precisa ter ao menos um responsável.'); return; }
+    if (!window.confirm('Remover este responsável da criança? (não apaga o cadastro da pessoa, só o vínculo)')) return;
+    try {
+      await totemKids.criancas.removeResponsavelVinculo(crianca.id, membroId);
+      setResps(list => list.filter(x => x.membro_id !== membroId));
+      atualizarCrianca({ responsaveis: crianca.responsaveis.filter(x => x.membro_id !== membroId) } as Partial<Crianca>);
+      toast.success('Responsável removido');
+    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao remover'); }
   }
 
   return (
@@ -1091,11 +1106,30 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
                     const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
                     return (
                       <div key={r.membro_id} className="rounded-lg border border-border p-2 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground">Responsável {i + 1}</span>
+                          {resps.length > 1 && (
+                            <button type="button" onClick={() => removerResp(r.membro_id)} className="text-muted-foreground hover:text-red-500" title="Remover responsável"><X className="h-3.5 w-3.5" /></button>
+                          )}
+                        </div>
                         <Input value={r.nome} placeholder="Nome do responsável"
                           onChange={e => setResps(list => list.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))} />
                         <Input value={r.telefone} placeholder="Telefone (WhatsApp)" inputMode="tel"
                           onChange={e => setResps(list => list.map((x, j) => j === i ? { ...x, telefone: e.target.value } : x))} />
-                        {orig?.parentesco && <span className="text-[11px] text-muted-foreground">{orig.parentesco}</span>}
+                        <Select value={r.parentesco} onValueChange={v => setResps(list => list.map((x, j) => j === i ? { ...x, parentesco: v } : x))}>
+                          <SelectTrigger className="h-9"><SelectValue placeholder="Parentesco" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mae">Mãe</SelectItem>
+                            <SelectItem value="pai">Pai</SelectItem>
+                            <SelectItem value="padrasto">Padrasto</SelectItem>
+                            <SelectItem value="madrasta">Madrasta</SelectItem>
+                            <SelectItem value="avo_a">Avô/Avó</SelectItem>
+                            <SelectItem value="tio_a">Tio/Tia</SelectItem>
+                            <SelectItem value="irmao_a">Irmão/Irmã</SelectItem>
+                            <SelectItem value="tutor">Tutor</SelectItem>
+                            <SelectItem value="outro">Outro</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     );
                   })}
