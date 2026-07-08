@@ -430,7 +430,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 //     responsável: { nome, telefone, cpf, parentesco, email? } }
 router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
   try {
-    const { crianca, responsavel, amigo_de_crianca_id } = req.body || {};
+    const { crianca, responsavel, responsaveis, amigo_de_crianca_id } = req.body || {};
     if (!crianca?.nome) return res.status(400).json({ error: 'crianca.nome obrigatorio' });
 
     const txt = (cond, v) => (cond && v ? String(v).trim().slice(0, 500) : null);
@@ -1711,6 +1711,21 @@ router.post('/sync-pco', authorizeModule('kids', 3), async (req, res) => {
   } catch (e) {
     console.error('[totemKids/sync-pco]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao sincronizar com o Planning Center' });
+  }
+});
+
+// POST /api/totem-kids/responsaveis-pco · corrige os responsáveis poluídos
+// (household-dump de 22/05) podando pelos guardiões reais do PCO (checked_in_by).
+// Body { apply:true } grava · sem apply = prévia (dry-run · não altera nada).
+router.post('/responsaveis-pco', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const apply = ['1', 'true', true].includes(req.body?.apply);
+    const { corrigirResponsaveisPCO } = require('../services/planningCenterKidsCheckins');
+    const r = await corrigirResponsaveisPCO({ apply });
+    res.json(r);
+  } catch (e) {
+    console.error('[totemKids/responsaveis-pco]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao corrigir responsáveis pelo PCO' });
   }
 });
 
