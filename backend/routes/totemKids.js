@@ -445,6 +445,9 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       espectro_qual: txt(crianca.tem_espectro === true, crianca.espectro_qual),
       tem_limitacao_fisica: bool(crianca.tem_limitacao_fisica),
       limitacao_fisica_qual: txt(crianca.tem_limitacao_fisica === true, crianca.limitacao_fisica_qual),
+      consent_marketing: bool(crianca.consent_marketing),
+      consent_marketing_em: crianca.consent_marketing == null ? null : new Date().toISOString(),
+      consent_marketing_versao: crianca.consent_marketing == null ? null : 'v1',
       visitante: true,
       created_by: req.user.userId,
     };
@@ -515,13 +518,18 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
     const allowed = ['nome', 'data_nascimento', 'sexo', 'familia_id', 'observacoes_medicas',
                      'necessidades_especiais', 'foto_url', 'visitante', 'ativo', 'observacoes_internas',
-                     'serie', 'data_conversao', 'data_batismo',
+                     'serie', 'data_conversao', 'data_batismo', 'consent_marketing',
                      'tem_espectro', 'espectro_qual', 'tem_alergia', 'alergia_qual',
                      'tem_limitacao_fisica', 'limitacao_fisica_qual'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
     if (req.body.foto_url && !req.body.foto_consentimento_em) {
       update.foto_consentimento_em = new Date().toISOString();
+    }
+    // Consentimento de uso de imagem (marketing) · carimba quando é definido
+    if ('consent_marketing' in req.body) {
+      update.consent_marketing_em = req.body.consent_marketing == null ? null : new Date().toISOString();
+      update.consent_marketing_versao = req.body.consent_marketing == null ? null : 'v1';
     }
     const { data, error } = await supabase
       .from('kids_criancas')
@@ -1438,6 +1446,31 @@ router.post('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res) =
   } catch (e) {
     console.error('[totemKids] foto upload:', e.message);
     res.status(500).json({ error: 'Erro ao salvar a foto' });
+  }
+});
+
+// POST /responsaveis/:membroId/foto · equipe Kids adiciona/troca a foto do
+// responsável (mem_membros · bucket público fotos-membros, igual à membresia).
+router.post('/responsaveis/:membroId/foto', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { dataUrl } = req.body || {};
+    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+    const mime = m[1];
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 5 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 5MB)' });
+    const path = `membros/${req.params.membroId}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('fotos-membros').upload(path, buffer, { contentType: mime, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const foto_url = `${urlData.publicUrl}?t=${Date.now()}`;
+    const { error: dbErr } = await supabase.from('mem_membros').update({ foto_url }).eq('id', req.params.membroId).is('deleted_at', null);
+    if (dbErr) throw dbErr;
+    res.json({ foto_url });
+  } catch (e) {
+    console.error('[totemKids] foto responsavel:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a foto do responsável' });
   }
 });
 

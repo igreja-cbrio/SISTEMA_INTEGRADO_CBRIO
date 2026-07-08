@@ -1438,6 +1438,7 @@ export const totemKids = {
     get: (id) => get(`/totem-kids/criancas/${id}`),
     uploadFoto: (id, dataUrl) => post(`/totem-kids/criancas/${id}/foto`, { dataUrl }),
     removeFoto: (id) => del(`/totem-kids/criancas/${id}/foto`),
+    uploadFotoResponsavel: (membroId, dataUrl) => post(`/totem-kids/responsaveis/${membroId}/foto`, { dataUrl }),
     duplicados: () => get('/totem-kids/criancas/duplicados'),
     merge: (keep_id, merge_ids) => post('/totem-kids/criancas/merge', { keep_id, merge_ids }),
     list: (params = {}) => {
