@@ -117,6 +117,7 @@ export default function Governanca() {
 
   return (
     <div style={{ background: C.bg, minHeight: '100%', color: C.text }} className="p-4 md:p-6">
+      <div className="max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
@@ -194,6 +195,7 @@ export default function Governanca() {
 
       {openId && <DetalheReuniao id={openId} canEdit={canEdit} onClose={() => setOpenId(null)} onChange={carregar} />}
       {novaOpen && <NovaReuniaoModal types={types} dataPadrao={`${ano}-${pad(mes)}-01`} onClose={() => setNovaOpen(false)} onSaved={() => { setNovaOpen(false); carregar(); }} />}
+      </div>
     </div>
   );
 }
@@ -204,7 +206,7 @@ export default function Governanca() {
 function RituaisHome({ loading, tipoPorSigla, proximaPorSigla, onAbrir }) {
   const extras = ['DE', 'AG'].filter(s => tipoPorSigla[s] && tipoPorSigla[s].ativo !== false);
   return (
-    <div className="max-w-5xl">
+    <div>
       {/* Faixa do ciclo */}
       <div className="rounded-xl p-4 mb-4" style={{ background: `linear-gradient(135deg, ${C.primary}14, ${C.card})`, border: `1px solid ${C.border}` }}>
         <div className="text-xs font-bold uppercase tracking-wide" style={{ color: C.primary }}>Ciclo executivo do mês</div>
@@ -312,7 +314,7 @@ function TiposPanel({ types, canEdit, onChange }) {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <p className="text-sm mb-3" style={{ color: C.t2 }}>Tipos de reunião do ciclo. Os marcados como <b>mensal</b> são criados automaticamente ao gerar o ciclo do mês (na semana indicada).</p>
       <div className="grid gap-2 mb-5">
         {(types || []).map(t => (

@@ -243,7 +243,7 @@ export default function RitualPage() {
 
   return (
     <div style={{ background: C.bg, minHeight: '100%', color: C.text }} className="p-4 md:p-6">
-      <div className="max-w-5xl">
+      <div className="max-w-5xl mx-auto">
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
           <div>
