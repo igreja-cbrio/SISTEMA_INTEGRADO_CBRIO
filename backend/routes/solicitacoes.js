@@ -239,10 +239,48 @@ async function coaprovadorIdsParaDiretor(diretorId) {
 // Presidente). Planejado (checkbox do solicitante) pula tudo.
 const SETOR_GESTAO = 'Gestao';
 
-// IDs dos aprovadores do carimbo de GESTÃO = diretor do setor Gestao
-// (setor_diretor) + co-aprovadores do setor (setor_coaprovadores · Eduardo +
-// Juliana). Best-effort: tabela ausente → lista vazia (degrada sem 500).
-async function aprovadoresGestaoIds() {
+// Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
+// Diego + Matheus (substitui a Diretoria de Gestão). Best-effort: tabela
+// ausente/categoria sem linha → null (cai no padrão de Gestão).
+async function overrideGestaoPorCategoria(categoria) {
+  if (!categoria) return null;
+  try {
+    const { data, error } = await supabase
+      .from('solicitacoes_categoria_aprovadores')
+      .select('profile_id, nome')
+      .eq('categoria', categoria);
+    if (error || !data || !data.length) return null;
+    return {
+      ids: [...new Set(data.map(r => r.profile_id).filter(Boolean))],
+      nomes: [...new Set(data.map(r => r.nome).filter(Boolean))],
+    };
+  } catch { return null; }
+}
+
+// Mapa completo {categoria: {ids, nomes}} · usado pela fila/contagens (1 leitura).
+async function mapaGestaoOverride() {
+  const map = {};
+  try {
+    const { data } = await supabase
+      .from('solicitacoes_categoria_aprovadores')
+      .select('categoria, profile_id, nome');
+    for (const r of data || []) {
+      if (!r.categoria || !r.profile_id) continue;
+      const m = (map[r.categoria] = map[r.categoria] || { ids: [], nomes: [] });
+      if (!m.ids.includes(r.profile_id)) m.ids.push(r.profile_id);
+      if (r.nome && !m.nomes.includes(r.nome)) m.nomes.push(r.nome);
+    }
+  } catch { /* best-effort */ }
+  return map;
+}
+
+// IDs dos aprovadores do carimbo de GESTÃO. Com `categoria` que tem override
+// (ex.: TI), retorna os aprovadores específicos; senão = diretor do setor Gestao
+// (setor_diretor) + co-aprovadores (setor_coaprovadores · Eduardo + Juliana).
+// Best-effort: tabela ausente → lista vazia (degrada sem 500).
+async function aprovadoresGestaoIds(categoria) {
+  const ov = await overrideGestaoPorCategoria(categoria);
+  if (ov && ov.ids.length) return ov.ids;
   const ids = new Set();
   try {
     const { data } = await supabase
@@ -257,8 +295,11 @@ async function aprovadoresGestaoIds() {
   return [...ids];
 }
 
-// Nomes dos aprovadores de Gestão (pro front mostrar "Eduardo ou Juliana").
-async function aprovadoresGestaoNomes() {
+// Nomes dos aprovadores de Gestão (pro front mostrar "Eduardo ou Juliana", ou
+// "Diego ou Matheus" quando a categoria tem override).
+async function aprovadoresGestaoNomes(categoria) {
+  const ov = await overrideGestaoPorCategoria(categoria);
+  if (ov && ov.nomes.length) return ov.nomes;
   const nomes = [];
   try {
     const { data } = await supabase
@@ -380,8 +421,11 @@ router.get('/', async (req, res) => {
       // é frágil) · a fila de decisão é pequena e recente por natureza.
       const isSuper = await isAdminFallback(req);
       const aprovarIds = await diretorIdsQuePodeAprovar(userId);
-      const gestaoIds = await aprovadoresGestaoIds();
-      const ehGestao = gestaoIds.includes(userId);
+      // Gestão por categoria: TI vai pro Diego/Matheus · demais pro padrão.
+      const overrideMap = await mapaGestaoOverride();
+      const defaultGestaoIds = await aprovadoresGestaoIds();
+      const aprovaGestaoDe = (cat) => (overrideMap[cat]?.ids?.length ? overrideMap[cat].ids : defaultGestaoIds).includes(userId);
+      const ehAlgumGestao = defaultGestaoIds.includes(userId) || Object.values(overrideMap).some(o => (o.ids || []).includes(userId));
       const meritoIds = await aprovadoresMeritoIds();
       const ehMerito = meritoIds.includes(userId);
 
@@ -404,7 +448,7 @@ router.get('/', async (req, res) => {
       // 2º carimbo (Gestão) só entra na fila DEPOIS que o diretor do demandante
       // aprovou a origem (regra sequencial · 2026-07-06). Aprovar antes disso
       // invertia a decisão (ops decidindo antes da área dona da demanda).
-      if (isSuper || ehGestao) queries.push(mkBase().eq('aprovacao_gestao_status', 'pendente').in('aprovacao_origem_status', ['aprovada', 'dispensada']));
+      if (isSuper || ehAlgumGestao) queries.push(mkBase().eq('aprovacao_gestao_status', 'pendente').in('aprovacao_origem_status', ['aprovada', 'dispensada']));
       if (isSuper || ehMerito) queries.push(mkBase().eq('status', 'aguardando_merito'));
 
       const results = await Promise.all(queries);
@@ -431,10 +475,13 @@ router.get('/', async (req, res) => {
         if (origemPend && (isSuper || (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)))) {
           papeis.push('origem');
         }
-        if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && (isSuper || ehGestao)) papeis.push('gestao');
+        if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && (isSuper || aprovaGestaoDe(d.categoria))) papeis.push('gestao');
         if (d.status === 'aguardando_merito' && (isSuper || ehMerito)) papeis.push('merito');
         papeisPorId[d.id] = papeis;
       }
+      // A query de Gestão traz todas as categorias · o override por categoria
+      // filtra aqui: o ator só vê o que ele realmente pode decidir.
+      if (!isSuper) data = data.filter(d => (papeisPorId[d.id] || []).length);
     } else {
       let q = supabase
         .from('solicitacoes')
@@ -580,12 +627,20 @@ router.get('/', async (req, res) => {
       return [principal, ...[...new Set(coaps)]];
     };
 
-    // Nomes dos aprovadores do 2º carimbo (Gestão) · pro front mostrar
-    // "Aguardando aprovação de Eduardo ou Juliana". Best-effort.
-    let gestaoNomes = [];
-    if ((data || []).some(d => d.aprovacao_gestao_status)) {
-      gestaoNomes = await aprovadoresGestaoNomes();
+    // Nomes do 2º carimbo POR CATEGORIA (TI → Diego/Matheus · resto → Gestão).
+    // Best-effort. Uma leitura por categoria presente na página.
+    const gestaoNomesPorCat = {};
+    for (const cat of [...new Set((data || []).filter(d => d.aprovacao_gestao_status).map(d => d.categoria))]) {
+      gestaoNomesPorCat[cat] = await aprovadoresGestaoNomes(cat);
     }
+    // "Aguardando aprovação de X" = quem está pendente AGORA (origem → gestão).
+    // Antes o front mostrava sempre o diretor de origem, mesmo depois dele
+    // aprovar (parecia que ainda esperava por ele · bug do Arthur).
+    const pendenteDe = (d) => {
+      if (['pendente', 'triagem'].includes(d.aprovacao_origem_status)) return nomesAprovadores(d);
+      if (d.aprovacao_gestao_status === 'pendente') return gestaoNomesPorCat[d.categoria] || [];
+      return [];
+    };
 
     const enriched = (data || []).map(d => ({
       ...d,
@@ -593,7 +648,8 @@ router.get('/', async (req, res) => {
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
       aprovacao_origem_aprovadores: nomesAprovadores(d),
-      aprovacao_gestao_aprovadores: d.aprovacao_gestao_status ? gestaoNomes : [],
+      aprovacao_gestao_aprovadores: d.aprovacao_gestao_status ? (gestaoNomesPorCat[d.categoria] || []) : [],
+      aprovacao_pendente_de: pendenteDe(d),
       ...(papeisPorId ? { aprovacao_papel_pendente: papeisPorId[d.id] || [] } : {}),
       marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
       marketing_destino: destinoMap[d.marketing_destino_id] || null,
@@ -666,20 +722,26 @@ router.get('/meu-papel', async (req, res) => {
     // Fluxo BPMN (2026-07-02) · 2º carimbo (Gestão) + julgamento de mérito.
     // Flags = pertencimento real ao papel; contagens também pra super-admin
     // (fallback · ele vê/decide as filas inteiras).
-    const gestaoIds = await aprovadoresGestaoIds();
-    const ehAprovadorGestao = gestaoIds.includes(userId);
+    // Gestão por categoria (TI → Diego/Matheus). É aprovador de Gestão quem está
+    // no padrão OU em qualquer override; a contagem filtra por categoria.
+    const overrideMapMP = await mapaGestaoOverride();
+    const defaultGestaoIdsMP = await aprovadoresGestaoIds();
+    const aprovaGestaoDeMP = (cat) => (overrideMapMP[cat]?.ids?.length ? overrideMapMP[cat].ids : defaultGestaoIdsMP).includes(userId);
+    const ehAprovadorGestao = defaultGestaoIdsMP.includes(userId)
+      || Object.values(overrideMapMP).some(o => (o.ids || []).includes(userId));
     const meritoIds = await aprovadoresMeritoIds();
     const ehAprovadorMerito = meritoIds.includes(userId);
 
     let pendentesGestao = 0;
     if (ehAprovadorGestao || isSuper) {
-      const { count } = await supabase
+      const { data: gp } = await supabase
         .from('solicitacoes')
-        .select('id', { count: 'exact', head: true })
+        .select('categoria')
         .eq('aprovacao_gestao_status', 'pendente')
         .in('aprovacao_origem_status', ['aprovada', 'dispensada'])
-        .is('deleted_at', null);
-      pendentesGestao = count || 0;
+        .is('deleted_at', null)
+        .limit(1000);
+      pendentesGestao = (gp || []).filter(r => isSuper || aprovaGestaoDeMP(r.categoria)).length;
     }
     let pendentesMerito = 0;
     if (ehAprovadorMerito || isSuper) {
@@ -858,12 +920,17 @@ router.post('/', async (req, res) => {
     }
 
     if (!planejado) {
-      // 2º carimbo · diretoria de Gestão (best-effort · lista vazia degrada).
-      const gestaoIds = await aprovadoresGestaoIds();
-      if (setorHint === SETOR_GESTAO || gestaoIds.includes(userId)) {
+      // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
+      // Diego/Matheus). Best-effort · lista vazia degrada.
+      const temOverride = !!(await overrideGestaoPorCategoria(categoria));
+      const gestaoIds = await aprovadoresGestaoIds(categoria);
+      const demandanteEhAprovador = gestaoIds.includes(userId);
+      // Categoria com override só dispensa se o próprio demandante é aprovador
+      // dela; categoria padrão também dispensa p/ demandante do setor Gestão.
+      if (demandanteEhAprovador || (!temOverride && setorHint === SETOR_GESTAO)) {
         gestaoStatus = 'dispensada';
-        gestaoMotivo = gestaoIds.includes(userId)
-          ? 'Demandante é aprovador de Gestão · papéis colapsam no carimbo de origem'
+        gestaoMotivo = demandanteEhAprovador
+          ? 'Demandante é aprovador do 2º carimbo · papéis colapsam no carimbo de origem'
           : 'Demandante do setor Gestão · papéis colapsam no carimbo de origem';
       } else {
         gestaoStatus = 'pendente';
@@ -1176,7 +1243,7 @@ async function aprovarOrigemHandler(req, res) {
     const podeOrigem = origemPendente && (isDiretorAlvo || isCoaprovador || isSuperAdmin);
     let ehAprovadorGestao = false;
     if (gestaoPendente) {
-      const gestaoIds = await aprovadoresGestaoIds();
+      const gestaoIds = await aprovadoresGestaoIds(atual.categoria);
       ehAprovadorGestao = gestaoIds.includes(userId);
     }
     // Regra sequencial (2026-07-06): o carimbo de Gestão só libera DEPOIS que a
@@ -1276,13 +1343,13 @@ async function aprovarOrigemHandler(req, res) {
       // Origem acabou de sair e ainda falta a Gestão → AGORA é a vez dos
       // aprovadores de Gestão (aviso adiado da criação · regra sequencial).
       if (carimbo === 'origem' && data.aprovacao_gestao_status === 'pendente') {
-        const gestaoIds = await aprovadoresGestaoIds();
+        const gestaoIds = await aprovadoresGestaoIds(data.categoria);
         if (gestaoIds.length) {
           notificar({
             modulo,
             tipo: 'solicitacao_aprovacao_gestao',
             titulo: `Aprovar solicitação (Gestão): ${data.titulo}`,
-            mensagem: `O diretor da área do demandante aprovou · agora precisa do carimbo da diretoria de Gestão.`,
+            mensagem: `O diretor da área do demandante aprovou · agora precisa do carimbo do 2º aprovador.`,
             link: '/solicitacoes?aba=aprovar',
             severidade: 'info',
             chaveDedup: `solicitacao_aprovacao_gestao_${data.id}`,
@@ -1465,12 +1532,12 @@ async function rejeitarOrigemHandler(req, res) {
     const podeOrigem = origemPendente && (isDiretorAlvo || isCoaprovador || isSuperAdmin);
     let ehAprovadorGestao = false;
     if (gestaoPendente) {
-      const gestaoIds = await aprovadoresGestaoIds();
+      const gestaoIds = await aprovadoresGestaoIds(atual.categoria);
       ehAprovadorGestao = gestaoIds.includes(userId);
     }
     const podeGestao = gestaoPendente && (ehAprovadorGestao || isSuperAdmin);
     if (!podeOrigem && !podeGestao) {
-      return res.status(403).json({ error: 'Apenas o diretor de origem, um co-aprovador do setor ou a diretoria de Gestão pode rejeitar esta solicitação.' });
+      return res.status(403).json({ error: 'Apenas o diretor de origem, um co-aprovador do setor ou o 2º aprovador pode rejeitar esta solicitação.' });
     }
 
     const carimbo = podeOrigem ? 'origem' : 'gestao';
