@@ -287,6 +287,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
       data_conversao: c.data_conversao || '',
       data_batismo: c.data_batismo || '',
       visitante: !!c.visitante,
+      consent_marketing: c.consent_marketing === true,
       tem_alergia: !!c.tem_alergia,
       alergia_qual: c.alergia_qual || '',
       tem_espectro: !!c.tem_espectro,
@@ -409,6 +410,10 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                 <Input type="date" className="mt-0.5 h-9" value={form.data_batismo || ''} onChange={e => setForm((f: any) => ({ ...f, data_batismo: e.target.value }))} />
               </label>
             </div>
+            <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={!!form.consent_marketing} onChange={e => setForm((f: any) => ({ ...f, consent_marketing: e.target.checked }))} />
+              <span>Autoriza o <b>uso da imagem da criança</b> para divulgação/marketing da igreja (fotos e vídeos em redes sociais, site, etc.)</span>
+            </label>
             <div className="rounded-md border border-border p-2 space-y-2">
               <div className="text-xs font-semibold text-muted-foreground">Saúde</div>
               {([
@@ -467,6 +472,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                 {(c.responsaveis || []).length === 0 && <div className="text-xs text-muted-foreground">Nenhum responsável vinculado.</div>}
                 {(c.responsaveis || []).map((r: any) => (
                   <div key={r.id} className="flex items-center gap-2 rounded-md border border-border p-2">
+                    {r.membro?.id && <FotoMembroAvatar membro={r.membro} onChanged={load} />}
                     <div className="flex-1 min-w-0">
                       {r.membro?.id ? <button onClick={() => navigate(`/ministerial/membresia?membro=${r.membro.id}`)} className="font-medium truncate text-left text-primary hover:underline">{r.membro?.nome || '—'}</button> : <div className="font-medium truncate">{r.membro?.nome || '—'}</div>}
                       <div className="text-xs text-muted-foreground">{r.parentesco}{r.autorizado_buscar ? ' · autorizado a buscar' : ''}</div>
@@ -559,6 +565,32 @@ function FotoAvatar({ crianca, onChanged }: { crianca: any; onChanged: () => voi
     </div>
   );
 }
+// Foto do responsável (mem_membros · bucket público fotos-membros)
+function FotoMembroAvatar({ membro, onChanged }: { membro: any; onChanged: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  async function onFile(e: any) {
+    const file = e.target.files?.[0]; if (!file || !membro?.id) return;
+    if (file.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
+    setBusy(true);
+    try {
+      const dataUrl: string = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file); });
+      await api.criancas.uploadFotoResponsavel(membro.id, dataUrl);
+      toast.success('Foto do responsável atualizada'); onChanged();
+    } catch (err: any) { toast.error(err?.message || 'Erro ao enviar a foto'); }
+    finally { setBusy(false); if (inputRef.current) inputRef.current.value = ''; }
+  }
+  return (
+    <div className="relative h-10 w-10 shrink-0">
+      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : membro?.foto_url ? <img src={membro.foto_url} alt="" className="h-full w-full object-cover" /> : <span className="text-sm font-bold text-primary">{(membro?.nome || '?').charAt(0)}</span>}
+      </div>
+      <button type="button" onClick={() => inputRef.current?.click()} className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-primary text-white flex items-center justify-center shadow" title="Adicionar/trocar foto do responsável"><Camera className="h-3 w-3" /></button>
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+    </div>
+  );
+}
+
 function DuplicadosModal({ onClose, onMerged }: { onClose: () => void; onMerged: () => void }) {
   const [grupos, setGrupos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -631,6 +663,24 @@ function Campo({ label, v }: { label: string; v?: string | null }) {
   return <div><span className="text-xs text-muted-foreground">{label}: </span><span>{v}</span></div>;
 }
 
+// Seletor de foto (preview local · usado no cadastro de nova criança)
+function FotoPicker({ dataUrl, onPick, onClear, label }: { dataUrl: string | null; onPick: (e: any) => void; onClear: () => void; label: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex items-center gap-2">
+      <div className="relative h-12 w-12 shrink-0">
+        <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+          {dataUrl ? <img src={dataUrl} alt="" className="h-full w-full object-cover" /> : <Camera className="h-5 w-5 text-primary" />}
+        </div>
+        <button type="button" onClick={() => ref.current?.click()} className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-primary text-white flex items-center justify-center shadow" title="Adicionar foto"><Camera className="h-3 w-3" /></button>
+        {dataUrl && <button type="button" onClick={onClear} className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center shadow" title="Remover"><X className="h-2.5 w-2.5" /></button>}
+        <input ref={ref} type="file" accept="image/*" className="hidden" onChange={onPick} />
+      </div>
+      <span className="text-xs text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
 // ── Nova criança (cadastro manual) ───────────────────────────────────────────
 function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [nome, setNome] = useState('');
@@ -641,17 +691,30 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [respNome, setRespNome] = useState('');
   const [respTel, setRespTel] = useState('');
   const [parentesco, setParentesco] = useState('mae');
+  const [consentMkt, setConsentMkt] = useState(false);
+  const [fotoCrianca, setFotoCrianca] = useState<string | null>(null);
+  const [fotoResp, setFotoResp] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
+
+  const pick = (setter: (v: string) => void) => (e: any) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
+    const r = new FileReader(); r.onload = () => setter(r.result as string); r.readAsDataURL(f);
+  };
 
   async function salvar() {
     if (!nome.trim()) { toast.error('Informe o nome da criança'); return; }
     if (!respNome.trim() || !respTel.trim()) { toast.error('Informe nome e telefone do responsável'); return; }
     setSalvando(true);
     try {
-      await api.criancas.create({
-        crianca: { nome: nome.trim(), data_nascimento: nascimento || null, sexo: sexo || null, serie: serie.trim() || null, necessidades_especiais: necessidade.trim() || null },
+      const r = await api.criancas.create({
+        crianca: { nome: nome.trim(), data_nascimento: nascimento || null, sexo: sexo || null, serie: serie.trim() || null, necessidades_especiais: necessidade.trim() || null, consent_marketing: consentMkt },
         responsavel: { nome: respNome.trim(), telefone: respTel.trim(), parentesco },
       });
+      // Fotos (best-effort · não travam o cadastro se falharem)
+      const cid = r?.crianca?.id; const rid = r?.responsavel?.id;
+      if (cid && fotoCrianca) { try { await api.criancas.uploadFoto(cid, fotoCrianca); } catch { /* noop */ } }
+      if (rid && fotoResp) { try { await api.criancas.uploadFotoResponsavel(rid, fotoResp); } catch { /* noop */ } }
       toast.success('Criança cadastrada');
       onCreated();
     } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar'); } finally { setSalvando(false); }
@@ -675,6 +738,11 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
           </div>
           <div><Label className="text-xs">Série (opcional)</Label><Input value={serie} onChange={e => setSerie(e.target.value)} placeholder="Ex.: Maternal II" /></div>
           <div><Label className="text-xs">Necessidade / alergia (opcional)</Label><Textarea rows={2} value={necessidade} onChange={e => setNecessidade(e.target.value)} /></div>
+          <FotoPicker dataUrl={fotoCrianca} onPick={pick(setFotoCrianca)} onClear={() => setFotoCrianca(null)} label="Foto da criança (opcional)" />
+          <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={consentMkt} onChange={e => setConsentMkt(e.target.checked)} />
+            <span>Autoriza o <b>uso da imagem da criança</b> para divulgação/marketing da igreja (redes sociais, site, etc.)</span>
+          </label>
           <div className="border-t border-border pt-2 space-y-3">
             <div className="text-xs font-semibold text-muted-foreground">Responsável</div>
             <div className="grid grid-cols-2 gap-3">
@@ -691,6 +759,7 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
                 </SelectContent>
               </Select>
             </div>
+            <FotoPicker dataUrl={fotoResp} onPick={pick(setFotoResp)} onClear={() => setFotoResp(null)} label="Foto do responsável (opcional)" />
           </div>
           <Button onClick={salvar} disabled={salvando} className="w-full">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Cadastrar criança'}</Button>
         </div>
