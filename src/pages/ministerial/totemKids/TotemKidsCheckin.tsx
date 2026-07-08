@@ -38,6 +38,8 @@ type Crianca = {
   tem_limitacao_fisica: boolean | null;
   limitacao_fisica_qual: string | null;
   visitante: boolean;
+  ativo?: boolean;
+  motivo_inativacao?: string | null;
   idade_meses: number | null;
   idade_label: string;
   familia: { id: string; nome: string } | null;
@@ -746,6 +748,11 @@ export default function TotemKidsCheckin() {
                     <div className="flex items-center gap-2">
                       <span className="font-medium truncate">{c.nome}</span>
                       {c.visitante && <Badge variant="secondary" className="text-xs">visitante</Badge>}
+                      {c.ativo === false && (
+                        <Badge variant="outline" className="text-xs border-amber-500 text-amber-600" title={c.motivo_inativacao || 'Reativa ao fazer o check-in'}>
+                          inativa
+                        </Badge>
+                      )}
                       {(c.tem_alergia || c.tem_espectro || c.tem_limitacao_fisica) && (
                         <AlertTriangle className="h-4 w-4 text-red-500" aria-label="Atenção · saúde" />
                       )}

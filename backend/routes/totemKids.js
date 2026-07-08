@@ -276,17 +276,21 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
-        visitante, familia_id,
+        visitante, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
           membro:mem_membros(id, nome, telefone, cpf, foto_url)
         )
       `)
+      // Inclui INATIVAS (marcadas) pra criança que sumiu 6+ meses do PCO ou não
+      // apareceu na última importação continuar achável — o check-in reativa.
+      // Sem isso o voluntário recadastra e gera duplicata. Ativas vêm primeiro.
       .ilike('nome', `%${q}%`)
-      .eq('ativo', true)
+      .is('deleted_at', null)
+      .order('ativo', { ascending: false })
       .order('nome')
-      .limit(20);
+      .limit(30);
 
     // Também busca por telefone do responsável (se q parece telefone)
     const digits = q.replace(/\D/g, '');
@@ -309,7 +313,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
             .from('kids_criancas')
             .select(`
               id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-              visitante, familia_id,
+              visitante, ativo, motivo_inativacao, familia_id,
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
                 membro_id, parentesco, autorizado_buscar,
@@ -317,7 +321,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
               )
             `)
             .in('id', criancaIds)
-            .eq('ativo', true);
+            .is('deleted_at', null);
           extras = extras2 || [];
         }
       }
@@ -1906,6 +1910,13 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       return res.status(409).json({ error: 'Criança já está com check-in nessa sessão. Perdeu a etiqueta? Use "Imprimir etiqueta de novo".' });
     }
     if (errIns) throw errIns;
+
+    // Fez check-in → a criança está ativa de novo. Reativa se tinha sido
+    // auto-inativada (sumiu 6+ meses do PCO / não veio no último import).
+    supabase.from('kids_criancas')
+      .update({ ativo: true, motivo_inativacao: null, inativado_em: null })
+      .eq('id', crianca_id).eq('ativo', false)
+      .then(() => {}, (e) => console.error('[totemKids/checkin] reativar criança:', e?.message));
 
     // Cultos do grupo (pro recibo): começa com o atual.
     const cultosDoGrupo = [{ id: sessao.culto_id, nome: sessao.culto?.nome || null }];
