@@ -36,8 +36,14 @@ export function ColorPicker({
 
   function commitTexto(v: string) {
     setTexto(v);
-    const hex = normalizarHex(v);
-    if (hex) onChange(hex);
+    // ⚠️ Durante a digitação só propagamos um HEX COMPLETO de 6 dígitos.
+    // Não expandir o atalho de 3 dígitos aqui: se o usuário está escrevendo
+    // "eca899" e ao chegar em "eca" o normalizarHex expandisse pra "#EECCAA",
+    // o onChange dispararia, o useEffect resincronizaria o campo e a digitação
+    // ficava embaralhada (bug relatado ao escrever o HEX das salas). A expansão
+    // do atalho de 3 dígitos acontece só no onBlur.
+    const limpo = v.replace(/^#/, '').trim();
+    if (/^[0-9a-fA-F]{6}$/.test(limpo)) onChange('#' + limpo.toUpperCase());
   }
 
   return (

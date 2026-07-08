@@ -1531,6 +1531,8 @@ export const totemKids = {
     create: (data) => post('/totem-kids/salas', data),
     update: (id, data) => patch(`/totem-kids/salas/${id}`, data),
     remove: (id) => del(`/totem-kids/salas/${id}`),
+    uploadLogo: (id, dataUrl) => post(`/totem-kids/salas/${id}/logo`, { dataUrl }),
+    removerLogo: (id) => post(`/totem-kids/salas/${id}/logo/remover`, {}),
   },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),

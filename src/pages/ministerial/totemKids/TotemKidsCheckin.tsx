@@ -131,7 +131,7 @@ export default function TotemKidsCheckin() {
 
   // Monta o payload da etiqueta (usado no check-in novo E na reimpressão).
   function montarDadosEtiqueta(c: Crianca, args: {
-    checkinId: string; salaNome: string; salaCor?: string | null; respNome: string;
+    checkinId: string; salaNome: string; salaCor?: string | null; salaLogoUrl?: string | null; respNome: string;
     codigo: string; codigoBarras?: string | null; cultoNome?: string | null; cultoData?: string | null;
   }): Parameters<typeof imprimirEtiquetas>[0] {
     const alergiaLabel = c.tem_alergia ? (c.alergia_qual || 'sim') : null;
@@ -159,6 +159,7 @@ export default function TotemKidsCheckin() {
         idadeLabel: formatIdade(c.idade_meses),
         salaNome: args.salaNome,
         salaCor: args.salaCor,
+        salaLogoUrl: args.salaLogoUrl,
         observacoesMedicas: c.observacoes_medicas,
         alergia: alergiaLabel,
         necessidade: necessidadeLabel,
@@ -200,6 +201,7 @@ export default function TotemKidsCheckin() {
         checkinId: checkinAberto.id,
         salaNome: checkinAberto.sala?.nome || '',
         salaCor: checkinAberto.sala?.cor || null,
+        salaLogoUrl: checkinAberto.sala?.logo_url || null,
         respNome: checkinAberto.responsavel_checkin_nome || '',
         codigo: checkinAberto.codigo_seguranca,
         codigoBarras: checkinAberto.codigo_barras,
@@ -450,6 +452,7 @@ export default function TotemKidsCheckin() {
         checkinId: r.checkin.id,
         salaNome: r.sala.nome,
         salaCor: r.sala.cor,
+        salaLogoUrl: r.sala.logo_url,
         respNome: r.responsavel.nome,
         codigo: r.codigo_seguranca,
         codigoBarras: r.codigo_barras,
