@@ -258,6 +258,14 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   online + **kids** (`aceitacoes_kids` = `cultos.decisoes_kids`); card **Kids**
   segue como recorte separado. Não reverter pra só-templo (resumo-semana/mês em
   `backend/routes/dashboardSemanal.js`).
+- **⚠️ Semana: financeiro = QUARTA→TERÇA · frequência = SEG→DOM (2026-07-08):** as
+  DUAS semanas divergem DE PROPÓSITO — não reunificar. O **financeiro** (contribuições
+  do `DashboardFinanceiroSemanal.jsx` + views `vw_fin_semana_*` + endpoints
+  `/dashboard/semana*`) usa `fn fin_semana_qua_ter` = **quarta→terça** (semana da igreja,
+  como o financeiro interno concilia · revertido em `20260708160000` após a unificação
+  seg-dom de `20260601130000` dar número diferente do fechamento). A **frequência dos
+  cultos** (Dashboard Semanal de presença · `dashboardSemanal.js` · `isoWeekRange`) usa
+  função JS PRÓPRIA **seg→dom** e NÃO chama a RPC. Mexer numa NÃO deve mexer na outra.
 
 ### Backend
 
