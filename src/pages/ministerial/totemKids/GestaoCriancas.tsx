@@ -487,22 +487,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               <div className="text-xs"><span className="text-muted-foreground">Necessidades específicas: </span>{c.necessidades_especiais || <span className="italic text-muted-foreground">— a preencher</span>}</div>
               <div className="text-xs"><span className="text-muted-foreground">Mais informações: </span>{c.observacoes_medicas || <span className="italic text-muted-foreground">— a preencher</span>}</div>
             </div>
-                        <div>
-              <div className="text-xs text-muted-foreground mb-1">Responsáveis</div>
-              <div className="space-y-1.5">
-                {(c.responsaveis || []).length === 0 && <div className="text-xs text-muted-foreground">Nenhum responsável vinculado.</div>}
-                {(c.responsaveis || []).map((r: any) => (
-                  <div key={r.id} className="flex items-center gap-2 rounded-md border border-border p-2">
-                    {r.membro?.id && <FotoMembroAvatar membro={r.membro} onChanged={load} />}
-                    <div className="flex-1 min-w-0">
-                      {r.membro?.id ? <button onClick={() => navigate(`/ministerial/membresia?membro=${r.membro.id}`)} className="font-medium truncate text-left text-primary hover:underline">{r.membro?.nome || '—'}</button> : <div className="font-medium truncate">{r.membro?.nome || '—'}</div>}
-                      <div className="text-xs text-muted-foreground">{r.parentesco}{r.autorizado_buscar ? ' · autorizado a buscar' : ''}</div>
-                    </div>
-                    {r.membro?.telefone && <a href={`https://wa.me/55${String(r.membro.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-4 w-4" /></a>}
-                  </div>
-                ))}
-              </div>
-            </div>
+                        <ResponsaveisManager crianca={c} onChanged={load} />
             <div className="pt-1">
               <Button variant={c.ativo ? 'outline' : 'default'} size="sm" onClick={toggleAtivo}>
                 {c.ativo ? <><UserX className="h-4 w-4 mr-1" /> Desativar cadastro</> : <><UserCheck className="h-4 w-4 mr-1" /> Reativar</>}
@@ -608,6 +593,108 @@ function FotoMembroAvatar({ membro, onChanged }: { membro: any; onChanged: () =>
       </div>
       <button type="button" onClick={() => inputRef.current?.click()} className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-primary text-white flex items-center justify-center shadow" title="Adicionar/trocar foto do responsável"><Camera className="h-3 w-3" /></button>
       <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+    </div>
+  );
+}
+
+const PARENTESCOS: [string, string][] = [['mae', 'Mãe'], ['pai', 'Pai'], ['padrasto', 'Padrasto'], ['madrasta', 'Madrasta'], ['avo_a', 'Avô/Avó'], ['tio_a', 'Tio/Tia'], ['irmao_a', 'Irmão/Irmã'], ['tutor', 'Tutor'], ['outro', 'Outro']];
+
+// Gerenciar responsáveis na ficha (gestão): ver + editar (nome/telefone/
+// parentesco/foto) + remover + adicionar. Ações imediatas (não batelam no salvar).
+function ResponsaveisManager({ crianca, onChanged }: { crianca: any; onChanged: () => void }) {
+  const criancaId = crianca.id;
+  const [addOpen, setAddOpen] = useState(false);
+  const [novo, setNovo] = useState({ nome: '', telefone: '', cpf: '', parentesco: 'mae' });
+  const [busy, setBusy] = useState(false);
+  const resps = crianca.responsaveis || [];
+
+  async function salvarRow(r: any, edit: any) {
+    setBusy(true);
+    try {
+      const nomeMud = edit.nome.trim() && edit.nome.trim() !== (r.membro?.nome || '');
+      const telMud = edit.telefone.trim() !== String(r.membro?.telefone || '');
+      if ((nomeMud || telMud) && r.membro?.id) {
+        const patch: any = {};
+        if (nomeMud) patch.nome = edit.nome.trim();
+        if (telMud) patch.telefone = edit.telefone.trim();
+        await api.criancas.updateResponsavelMembro(r.membro.id, patch);
+      }
+      if (edit.parentesco !== (r.parentesco || 'outro')) {
+        await api.criancas.updateResponsavelVinculo(criancaId, r.membro_id, { parentesco: edit.parentesco });
+      }
+      toast.success('Responsável atualizado'); onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); } finally { setBusy(false); }
+  }
+  async function remover(r: any) {
+    if (!window.confirm('Remover este responsável? (não apaga o cadastro da pessoa, só o vínculo)')) return;
+    try { await api.criancas.removeResponsavelVinculo(criancaId, r.membro_id); toast.success('Responsável removido'); onChanged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
+  }
+  async function adicionar() {
+    if (!novo.nome.trim() || !novo.telefone.trim()) { toast.error('Nome e telefone são obrigatórios'); return; }
+    setBusy(true);
+    try {
+      await api.criancas.addResponsavelRapido(criancaId, { nome: novo.nome.trim(), telefone: novo.telefone.trim(), cpf: novo.cpf.trim() || null, parentesco: novo.parentesco });
+      toast.success('Responsável adicionado');
+      setNovo({ nome: '', telefone: '', cpf: '', parentesco: 'mae' }); setAddOpen(false); onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao adicionar'); } finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-xs text-muted-foreground">Responsáveis</div>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setAddOpen(v => !v)}><Plus className="h-3.5 w-3.5" /> Adicionar</Button>
+      </div>
+      <div className="space-y-2">
+        {resps.length === 0 && !addOpen && <div className="text-xs text-muted-foreground">Nenhum responsável vinculado.</div>}
+        {resps.map((r: any) => (
+          <RowResp key={`${r.membro_id}-${r.membro?.nome}-${r.membro?.telefone}-${r.parentesco}`} r={r} busy={busy} onChanged={onChanged} onSave={salvarRow} onRemove={remover} />
+        ))}
+        {addOpen && (
+          <div className="rounded-md border border-primary/40 p-2 space-y-2">
+            <div className="text-[11px] font-medium text-muted-foreground">Novo responsável</div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input className="h-8" placeholder="Nome *" value={novo.nome} onChange={e => setNovo(n => ({ ...n, nome: e.target.value }))} />
+              <Input className="h-8" placeholder="Telefone *" value={novo.telefone} onChange={e => setNovo(n => ({ ...n, telefone: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input className="h-8" placeholder="CPF (opcional)" value={novo.cpf} onChange={e => setNovo(n => ({ ...n, cpf: e.target.value }))} />
+              <Select value={novo.parentesco} onValueChange={v => setNovo(n => ({ ...n, parentesco: v }))}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>{PARENTESCOS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setAddOpen(false)}>Cancelar</Button>
+              <Button size="sm" onClick={adicionar} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Adicionar'}</Button>
+            </div>
+          </div>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground mt-1.5">Editar nome/telefone atualiza o cadastro da pessoa no sistema inteiro.</p>
+    </div>
+  );
+}
+
+function RowResp({ r, busy, onChanged, onSave, onRemove }: { r: any; busy: boolean; onChanged: () => void; onSave: (r: any, e: any) => void; onRemove: (r: any) => void }) {
+  const [edit, setEdit] = useState({ nome: r.membro?.nome || '', telefone: String(r.membro?.telefone || ''), parentesco: r.parentesco || 'outro' });
+  const dirty = edit.nome.trim() !== (r.membro?.nome || '') || edit.telefone.trim() !== String(r.membro?.telefone || '') || edit.parentesco !== (r.parentesco || 'outro');
+  return (
+    <div className="rounded-md border border-border p-2 space-y-2">
+      <div className="flex items-center gap-2">
+        {r.membro?.id && <FotoMembroAvatar membro={r.membro} onChanged={onChanged} />}
+        <Input className="flex-1 h-8" value={edit.nome} placeholder="Nome" onChange={e => setEdit(x => ({ ...x, nome: e.target.value }))} />
+        <button type="button" onClick={() => onRemove(r)} className="text-muted-foreground hover:text-red-500 shrink-0" title="Remover responsável"><X className="h-4 w-4" /></button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Input className="h-8" placeholder="Telefone" inputMode="tel" value={edit.telefone} onChange={e => setEdit(x => ({ ...x, telefone: e.target.value }))} />
+        <Select value={edit.parentesco} onValueChange={v => setEdit(x => ({ ...x, parentesco: v }))}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>{PARENTESCOS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      {dirty && <div className="flex justify-end"><Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => onSave(r, edit)}>Salvar</Button></div>}
     </div>
   );
 }
