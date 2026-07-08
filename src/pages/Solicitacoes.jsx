@@ -571,9 +571,11 @@ export default function Solicitacoes() {
           {view === 'aprovar' && (
             <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
               <button type="button" onClick={() => setAprovarLayout('lista')}
-                className={`px-3 h-9 text-sm ${aprovarLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
+                className={`px-3 h-9 text-sm ${aprovarLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Pendentes</button>
               <button type="button" onClick={() => setAprovarLayout('kanban')}
                 className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+              <button type="button" onClick={() => setAprovarLayout('historico')}
+                className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'historico' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Histórico</button>
             </div>
           )}
           {view === 'minhas' && (
@@ -592,6 +594,9 @@ export default function Solicitacoes() {
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
         </div>
+      ) : view === 'aprovar' && aprovarLayout === 'historico' ? (
+        /* ── Aba Aprovar · Histórico das minhas decisões ── */
+        <HistoricoAprovacoes isAdmin={isAdmin} />
       ) : view === 'aprovar' ? (
         /* ── Aba Aprovar · diretor de origem/Gestão/mérito ── */
         (() => {
@@ -1230,6 +1235,77 @@ function CarimboLinha({ rotulo, status, nomes }) {
       <span className={`font-medium shrink-0 ${aprovada ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
         {aprovada ? 'aprovada' : 'pendente'}
       </span>
+    </div>
+  );
+}
+
+// Histórico das decisões de quem aprova (aba Aprovar → Histórico). Mostra o que
+// o ator já aprovou/rejeitou (origem/2º carimbo/mérito). Admin pode ver de todos.
+function HistoricoAprovacoes({ isAdmin }) {
+  const [rows, setRows] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [todos, setTodos] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    setRows(null); setErro(null);
+    api.minhasAprovacoes({ dias: 180, ...(isAdmin && todos ? { todos: 1 } : {}) })
+      .then(d => { if (vivo) setRows(Array.isArray(d) ? d : []); })
+      .catch(() => { if (vivo) setErro('Não foi possível carregar o histórico.'); });
+    return () => { vivo = false; };
+  }, [isAdmin, todos]);
+
+  const etapaLabel = { origem: 'Origem (área)', gestao: '2º carimbo', merito: 'Mérito' };
+  const catLabel = (c) => (CATEGORIAS.find(x => x.value === c)?.label) || c || '—';
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  };
+
+  if (erro) return <Card className="p-8 text-center text-muted-foreground">{erro}</Card>;
+  if (rows === null) return <div className="flex items-center justify-center min-h-[30vh]"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" /></div>;
+
+  return (
+    <div className="space-y-3">
+      {isAdmin && (
+        <label className="flex items-center justify-end gap-2 text-xs text-muted-foreground cursor-pointer">
+          <input type="checkbox" checked={todos} onChange={e => setTodos(e.target.checked)} className="accent-primary" />
+          Ver decisões de todos os aprovadores
+        </label>
+      )}
+      {rows.length === 0 ? (
+        <Card className="p-8 text-center">
+          <ClipboardList className="h-10 w-10 text-muted-foreground/50 mx-auto mb-3" />
+          <p className="text-muted-foreground">Nenhuma decisão registrada nos últimos 180 dias.</p>
+        </Card>
+      ) : (
+        <Card className="divide-y divide-border">
+          {rows.map(r => (
+            <div key={r.evento_id} className="flex items-start gap-3 p-3">
+              <div className="mt-0.5 shrink-0">
+                {r.decisao === 'rejeitada'
+                  ? <XCircle className="h-5 w-5 text-red-500" />
+                  : <CheckCircle2 className="h-5 w-5 text-emerald-500" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-sm truncate">{r.titulo || 'Solicitação'}</span>
+                  <Badge className="text-[10px] bg-muted text-muted-foreground">{catLabel(r.categoria)}</Badge>
+                  <Badge className={`text-[10px] ${r.decisao === 'rejeitada' ? 'bg-red-500/10 text-red-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                    {r.decisao === 'rejeitada' ? 'Rejeitada' : 'Aprovada'} · {etapaLabel[r.etapa] || r.etapa}
+                  </Badge>
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {r.solicitante ? `Pedido de ${r.solicitante}` : ''}
+                  {isAdmin && todos && r.ator ? ` · por ${r.ator}` : ''}
+                  {r.status_atual ? ` · agora: ${STATUS_LABELS[r.status_atual]?.label || r.status_atual}` : ''}
+                </div>
+              </div>
+              <div className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums shrink-0">{fmt(r.em)}</div>
+            </div>
+          ))}
+        </Card>
+      )}
     </div>
   );
 }
