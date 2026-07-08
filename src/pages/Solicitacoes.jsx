@@ -8,6 +8,7 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
@@ -109,7 +110,7 @@ export default function Solicitacoes() {
   const [busca, setBusca] = useState('');
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
-  const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'kanban' | 'lista' | 'solicitante'
+  const [atenderLayout, setAtenderLayout] = useState('foco'); // 'foco' | 'kanban' | 'lista' | 'solicitante'
   const [aprovarLayout, setAprovarLayout] = useState('lista'); // aba Aprovar · 'lista' | 'kanban' (por categoria)
   const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
@@ -560,8 +561,10 @@ export default function Solicitacoes() {
           )}
           {view === 'atender' && (
             <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
+              <button type="button" onClick={() => setAtenderLayout('foco')}
+                className={`px-3 h-9 text-sm ${atenderLayout === 'foco' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Foco</button>
               <button type="button" onClick={() => setAtenderLayout('kanban')}
-                className={`px-3 h-9 text-sm ${atenderLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+                className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
               <button type="button" onClick={() => setAtenderLayout('lista')}
                 className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
               <button type="button" onClick={() => setAtenderLayout('solicitante')}
@@ -647,7 +650,9 @@ export default function Solicitacoes() {
         /* ── Kanban Board (managers/admins) ── */
         <>
         <TermometroRefeitas />
-        {atenderLayout === 'lista' ? (
+        {atenderLayout === 'foco' ? (
+          <AtenderFoco items={filtered} onOpen={setDetailItem} selectedId={detailItem?.id} />
+        ) : atenderLayout === 'lista' ? (
           <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
         ) : atenderLayout === 'solicitante' ? (
@@ -741,9 +746,10 @@ export default function Solicitacoes() {
         />
       )}
 
-      {/* Detail dialog */}
+      {/* Detail dialog · vira painel lateral (Sheet) no layout Foco da aba Atender */}
       <DetailDialog
         item={detailItem}
+        asSheet={view === 'atender' && atenderLayout === 'foco'}
         onClose={() => setDetailItem(null)}
         isAdmin={isResponsavel}
         currentUserId={profile?.id}
@@ -1038,6 +1044,101 @@ function isSlaEstourando(item) {
 // "Para Atender" (a "Caixa da Área": filtre por área e veja a fila daquela área).
 // comTracker (aba Minhas): adiciona o stepper compacto + "está com quem" em cada
 // card — e o tracker passa a cobrir as linhas antigas de aprovação/rejeição.
+// ── Layout "Foco" da aba Para Atender (2026-07-08) ──────────────────────
+// Cards no topo + lista priorizada (Urgentes → Demais); clicar abre o detalhe
+// no painel lateral direito (DetailDialog asSheet). Estilo adaptado do design
+// do Matheus (Claude Design) pras cores/tipografia do sistema.
+function AtenderFoco({ items, onOpen, selectedId }) {
+  const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const ehUrgente = (i) => i.eh_urgente || i.urgencia === 'urgente';
+  const urgentes = items.filter(ehUrgente);
+  const demais = items.filter(i => !ehUrgente(i));
+  const atrasadas = items.filter(isSlaEstourando);
+  const valorAnalise = items.reduce((s, i) => s + (Number(i.valor_estimado) || 0), 0);
+
+  const cards = [
+    { label: 'Na fila', valor: items.length, cor: '#00B39D', icon: ClipboardList },
+    { label: 'Urgentes', valor: urgentes.length, cor: '#ef4444', icon: Clock },
+    { label: 'SLA estourando', valor: atrasadas.length, cor: '#f59e0b', icon: Clock },
+    { label: 'Valor em análise', valor: money(valorAnalise), cor: '#6366f1', icon: FileText },
+  ];
+
+  const Row = (item) => {
+    const cat = getCatMeta(item.categoria);
+    const sla = getSlaBadge(item);
+    const ini = (item.solicitante?.name || item.titulo || '?').trim().charAt(0).toUpperCase();
+    const sub = comQuemEsta(item) || (item.solicitante?.name ? `por ${item.solicitante.name}` : '');
+    return (
+      <button
+        key={item.id}
+        onClick={() => onOpen(item)}
+        className={`w-full text-left flex items-center gap-3 px-3 py-3 rounded-lg border transition-colors hover:bg-muted/40 ${
+          selectedId === item.id ? 'border-primary ring-1 ring-primary/30 bg-primary/5' : 'border-border bg-card'
+        }`}
+      >
+        <span className="h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold text-white" style={{ backgroundColor: '#00B39D' }}>
+          {ini}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-sm truncate">{item.titulo}</span>
+            <Badge className={`text-[10px] ${cat.color}`}>{cat.label}</Badge>
+            {ehUrgente(item) && <Badge className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400">Urgente</Badge>}
+          </div>
+          {sub && <p className="text-xs text-muted-foreground truncate mt-0.5">{sub}</p>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {Number(item.valor_estimado) > 0 && (
+            <span className="text-xs font-medium tabular-nums hidden sm:inline">{money(item.valor_estimado)}</span>
+          )}
+          {sla && <Badge className={`text-[10px] ${sla.color}`}>{sla.label}</Badge>}
+          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </button>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {cards.map(c => (
+          <div key={c.label} className="p-3 rounded-lg border bg-card">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <c.icon className="h-3.5 w-3.5" style={{ color: c.cor }} /> {c.label}
+            </div>
+            <p className="text-2xl font-bold mt-1 tabular-nums" style={{ color: c.cor }}>{c.valor}</p>
+          </div>
+        ))}
+      </div>
+
+      {items.length === 0 ? (
+        <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação na fila para os filtros atuais.</Card>
+      ) : (
+        <div className="space-y-5">
+          {urgentes.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400 mb-2">
+                Urgentes <span className="text-muted-foreground">· {urgentes.length}</span>
+              </p>
+              <div className="space-y-2">{urgentes.map(Row)}</div>
+            </div>
+          )}
+          {demais.length > 0 && (
+            <div>
+              {urgentes.length > 0 && (
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                  Demais <span>· {demais.length}</span>
+                </p>
+              )}
+              <div className="space-y-2">{demais.map(Row)}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = false }) {
   if (!items || items.length === 0) {
     return (
@@ -2242,12 +2343,20 @@ function SobrestarBlock({ item, onChanged }) {
   );
 }
 
-function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
+function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh, asSheet = false }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
   const [atenderEstoque, setAtenderEstoque] = useState(false); // ponte estoque (Fase 3a-2)
 
   if (!item) return null;
+  // Mesmo corpo, dois invólucros: Dialog (modal) ou Sheet (painel lateral direito).
+  const Root = asSheet ? Sheet : Dialog;
+  const Content = asSheet ? SheetContent : DialogContent;
+  const HeaderW = asSheet ? SheetHeader : DialogHeader;
+  const TitleW = asSheet ? SheetTitle : DialogTitle;
+  const contentProps = asSheet
+    ? { side: 'right', className: 'w-full sm:max-w-xl flex flex-col p-4 sm:p-6' }
+    : { className: 'sm:max-w-lg max-h-[90vh] flex flex-col' };
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
   const st = getStatusMeta(item.status);
@@ -2273,14 +2382,14 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
   }
 
   return (
-    <Dialog open={!!item} onOpenChange={v => { if (!v) { cancelAction(); onClose(); } }}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <Root open={!!item} onOpenChange={v => { if (!v) { cancelAction(); onClose(); } }}>
+      <Content {...contentProps}>
+        <HeaderW>
+          <TitleW className="flex items-center gap-2">
             <Badge className={cat.color}>{cat.label}</Badge>
             {item.titulo}
-          </DialogTitle>
-        </DialogHeader>
+          </TitleW>
+        </HeaderW>
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
           {/* Rastreio do pedido · etapas macro + com quem está (versão completa) */}
           <TrackerSolicitacao item={item} />
@@ -2593,8 +2702,8 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+      </Content>
+    </Root>
   );
 }
 
