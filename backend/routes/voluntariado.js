@@ -331,8 +331,9 @@ router.get('/frequencia', async (req, res) => {
       let q = supabase.from('vw_vol_frequencia').select('*');
       if (req.query.status === 'ativos') q = q.eq('ativo', true);
       else if (req.query.status === 'inativos') q = q.eq('ativo', false);
-      if (req.query.vinculo === 'nao') q = q.is('vol_profile_id', null);
-      else if (req.query.vinculo === 'sim') q = q.not('vol_profile_id', 'is', null);
+      // Vínculo = ligado a um MEMBRO (CPF). A lista já é de voluntários reais.
+      if (req.query.vinculo === 'nao') q = q.is('membro_id', null);
+      else if (req.query.vinculo === 'sim') q = q.not('membro_id', 'is', null);
       if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
       return q.order('ativo', { ascending: false }).order('ultimo_servico', { ascending: false, nullsFirst: false });
     };
