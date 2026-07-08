@@ -89,6 +89,24 @@ export default function GestaoCriancas() {
     } finally { setSincronizando(false); }
   }
 
+  const [corrigindoResp, setCorrigindoResp] = useState(false);
+  async function corrigirRespPco() {
+    setCorrigindoResp(true);
+    try {
+      const prev: any = await api.criancas.corrigirResponsaveisPco(false); // prévia (dry-run)
+      if (!prev?.criancas_afetadas) {
+        toast.info(`Nenhuma correção proposta (varri ${prev?.checkins_varridos ?? 0} check-ins do PCO; nada casou com guardião confirmado).`);
+        return;
+      }
+      if (!window.confirm(`Encontrei ${prev.criancas_afetadas} criança(s) com responsáveis a mais. Vou MANTER só quem faz o check-in delas no Planning Center e REMOVER ${prev.vinculos_removidos} vínculo(s) errado(s). Ninguém fica sem responsável. Aplicar?`)) return;
+      const r: any = await api.criancas.corrigirResponsaveisPco(true);
+      toast.success(`Corrigido · ${r?.criancas_afetadas ?? 0} crianças · ${r?.vinculos_removidos ?? 0} vínculos removidos.`);
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao corrigir responsáveis pelo PCO.');
+    } finally { setCorrigindoResp(false); }
+  }
+
   const [depurando, setDepurando] = useState(false);
   async function depurarInativos() {
     if (!window.confirm('Desativar (tirar da lista) as crianças sem check-in no Planning Center nos últimos 6 meses? É reversível — elas ficam como inativas, não são apagadas.')) return;
@@ -132,6 +150,9 @@ export default function GestaoCriancas() {
           </Button>
           <Button variant="outline" onClick={depurarInativos} disabled={depurando}>
             {depurando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserX className="h-4 w-4 mr-1" />} Depurar inativos (6m)
+          </Button>
+          <Button variant="outline" onClick={corrigirRespPco} disabled={corrigindoResp} title="Poda responsáveis errados usando quem faz o check-in no Planning Center">
+            {corrigindoResp ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserCheck className="h-4 w-4 mr-1" />} Corrigir responsáveis (PCO)
           </Button>
           <Button variant="outline" onClick={() => setDupOpen(true)}><Copy className="h-4 w-4 mr-1" /> Duplicados</Button>
           <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>
