@@ -37,7 +37,7 @@ import { toast } from 'sonner';
 import { governanca as gov, painel as painelApi } from '../../api';
 import { formatErro } from '../../lib/formatErro';
 import { useAuth } from '../../contexts/AuthContext';
-import { C, STATUS_MEETING, ymd, fmtData, diaSemana, inputStyle, DetalheReuniao, BlocoMarkdownEditavel } from './compartilhado';
+import { C, MESES, STATUS_MEETING, ymd, fmtData, diaSemana, inputStyle, DetalheReuniao, NovaReuniaoModal, BlocoMarkdownEditavel } from './compartilhado';
 import { RITUAIS, PERIODOS, ESCOPOS_OKR, ORDEM_RITUAIS } from './rituais';
 import {
   NSM, BLOCOS, avaliar, valorTopoOkr, valorTatico, retratoIndicadores, fmt,
@@ -94,7 +94,11 @@ export default function RitualPage() {
   const [painelLoading, setPainelLoading] = useState(sigla === 'OKR' || sigla === 'KPI');
   const [salvandoRetrato, setSalvandoRetrato] = useState(false);
   const [gerandoMemoria, setGerandoMemoria] = useState(false);
+  const [gerandoAgenda, setGerandoAgenda] = useState(false);
   const [openId, setOpenId] = useState(null);
+  const [novaOpen, setNovaOpen] = useState(false);
+  const [ultimasOutras, setUltimasOutras] = useState({}); // sigla → última reunião ocorrida
+  const [retro, setRetro] = useState(null); // { sigla, meeting } · retrospecto da última reunião de outro ritual
 
   const tipo = useMemo(() => tipos.find(t => t.sigla === sigla) || null, [tipos, sigla]);
   const cor = tipo?.cor || COR_RITUAL[sigla] || C.primary;
@@ -175,6 +179,41 @@ export default function RitualPage() {
     return map;
   }, [delibs]);
 
+  // Última reunião ocorrida de CADA ritual (pro retrospecto cruzado):
+  // 1 busca dos últimos 12 meses, agrupada por sigla no cliente.
+  useEffect(() => {
+    let ativo = true;
+    const from = ymd(new Date(Date.now() - 370 * 86400000));
+    gov.meetings.list({ from, to: hojeStr })
+      .then(ms => {
+        if (!ativo) return;
+        const map = {};
+        for (const m of (ms || [])) {
+          const s = m.governance_meeting_types?.sigla;
+          if (!s || m.status === 'cancelada' || !m.date) continue;
+          if (!map[s] || m.date > map[s].date) map[s] = m;
+        }
+        setUltimasOutras(map);
+      })
+      .catch(() => {});
+    return () => { ativo = false; };
+  }, [sigla, hojeStr]);
+
+  // Gera a agenda do ano (mês atual → dezembro · idempotente) direto da página.
+  async function gerarAgenda() {
+    if (gerandoAgenda) return;
+    const agora = new Date();
+    const anoA = agora.getFullYear(), mesA = agora.getMonth() + 1;
+    if (!window.confirm(`Gerar a agenda das reuniões mensais de ${MESES[mesA - 1]} a Dezembro de ${anoA}? Meses já gerados são pulados.`)) return;
+    setGerandoAgenda(true);
+    try {
+      const r = await gov.cycles.generateYear(anoA, mesA);
+      toast.success(`${r?.reunioes_criadas || 0} reunião(ões) gerada(s)`);
+      await carregar();
+    } catch (e) { toast.error(formatErro(e)); }
+    finally { setGerandoAgenda(false); }
+  }
+
   function montarRetrato() {
     if (sigla === 'OKR' && okrData) {
       const metricas = okrData.metricas || {};
@@ -243,7 +282,7 @@ export default function RitualPage() {
 
   return (
     <div style={{ background: C.bg, minHeight: '100%', color: C.text }} className="p-4 md:p-6">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
           <div>
@@ -259,10 +298,12 @@ export default function RitualPage() {
               {ritual?.termo ? <> · <span style={{ color: C.t3 }}>{ritual.termo}</span></> : null}
             </p>
           </div>
-          <button onClick={() => navigate('/governanca?view=agenda')} className="text-sm px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
-            style={{ border: `1px solid ${C.border}`, color: C.t2 }}>
-            <CalendarDays size={15} /> Gerenciar prazos
-          </button>
+          {canEdit && tipo && (
+            <button onClick={() => setNovaOpen(true)} className="text-sm px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
+              style={{ border: `1px solid ${C.border}`, color: C.t2 }}>
+              <CalendarDays size={15} /> Nova reunião
+            </button>
+          )}
         </div>
 
         {/* 1 · Instruções */}
@@ -285,14 +326,20 @@ export default function RitualPage() {
                 </span>
               </div>
             ) : (
-              <div className="text-sm" style={{ color: C.t2 }}>Nenhuma agendada — gere o ciclo do mês na aba Agenda.</div>
+              <div className="text-sm" style={{ color: C.t2 }}>Nenhuma agendada daqui pra frente.</div>
             )}
           </div>
-          {proxima && (
+          {proxima ? (
             <button onClick={() => setOpenId(proxima.id)} className="text-sm px-3 py-2 rounded-lg text-white" style={{ background: cor }}>
               Abrir reunião
             </button>
-          )}
+          ) : canEdit ? (
+            <button onClick={gerarAgenda} disabled={gerandoAgenda} className="text-sm px-3 py-2 rounded-lg text-white inline-flex items-center gap-1.5"
+              style={{ background: cor, opacity: gerandoAgenda ? 0.6 : 1 }}>
+              {gerandoAgenda ? <Loader2 className="animate-spin" size={14} /> : <CalendarDays size={14} />}
+              {gerandoAgenda ? 'Gerando…' : 'Gerar agenda do ano'}
+            </button>
+          ) : null}
         </div>
 
         {/* Filtros: período + escopo (OKR) */}
@@ -361,6 +408,9 @@ export default function RitualPage() {
           <PainelEmDefinicao sigla={sigla} tipo={tipo} />
         )}
 
+        {/* Retrospecto cruzado: as outras reuniões do ciclo */}
+        <OutrasReunioes atual={sigla} ultimas={ultimasOutras} onVer={(s, m) => setRetro({ sigla: s, meeting: m })} />
+
         {/* Evolução dos retratos (OKR) */}
         {sigla === 'OKR' && <EvolucaoRetratos reunioes={naoCanceladas} cor={cor} />}
 
@@ -412,6 +462,15 @@ export default function RitualPage() {
       </div>
 
       {openId && <DetalheReuniao id={openId} canEdit={canEdit} onClose={() => setOpenId(null)} onChange={carregar} />}
+      {novaOpen && tipo && (
+        <NovaReuniaoModal types={[tipo]} dataPadrao={ymd(new Date())}
+          onClose={() => setNovaOpen(false)} onSaved={() => { setNovaOpen(false); carregar(); }} />
+      )}
+      {retro && (
+        <RetrospectoModal sigla={retro.sigla} meeting={retro.meeting}
+          onClose={() => setRetro(null)}
+          onIrParaRitual={() => { setRetro(null); navigate(`/governanca/${retro.sigla.toLowerCase()}`); }} />
+      )}
     </div>
   );
 }
@@ -518,7 +577,7 @@ function OkrPainel({ escopo, data, loading, canEdit, alvoRetrato, salvando, onSa
             <h2 className="text-sm font-extrabold" style={{ color: C.text }}>{bloco.area}</h2>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: C.primaryBg, color: C.primary }}>{bloco.papel}</span>
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3" style={{ gridAutoRows: 'min-content' }}>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3" style={{ gridAutoRows: 'min-content' }}>
             {bloco.okrs.map(okr => <OkrCardCompacto key={okr.nome} okr={okr} metricas={metricas} />)}
           </div>
         </div>
@@ -1169,5 +1228,163 @@ function LinhaDoTempo({ passadas, periodo, cor, onAbrir, delibsPorMeeting }) {
         </div>
       )}
     </section>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Retrospecto cruzado — dentro de um ritual, os OUTROS rituais do ciclo com
+// a última reunião ocorrida de cada um; clicar abre a visão estática do que
+// foi visto lá (retrato + decisões + pendências + resumo).
+function OutrasReunioes({ atual, ultimas, onVer }) {
+  const outras = ORDEM_RITUAIS.filter(s => s !== atual);
+  return (
+    <section className="mb-5">
+      <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: C.text }}>
+        <BookOpen size={15} style={{ color: C.t3 }} /> As outras reuniões do ciclo
+        <span className="font-normal text-xs" style={{ color: C.t3 }}>· o que foi visto na última de cada uma</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        {outras.map(s => {
+          const corTema = COR_RITUAL[s];
+          const m = ultimas[s];
+          return (
+            <button key={s} disabled={!m} onClick={() => m && onVer(s, m)}
+              className="text-left rounded-xl p-3 transition hover:opacity-95"
+              style={{ background: C.card, border: `1px solid ${C.border}`, opacity: m ? 1 : 0.6, cursor: m ? 'pointer' : 'default' }}>
+              <div className="flex items-center gap-2">
+                <span style={{ width: 9, height: 9, borderRadius: 99, background: corTema, flexShrink: 0 }} />
+                <span className="text-sm font-semibold flex-1 truncate" style={{ color: C.text }}>{RITUAIS[s]?.titulo || s}</span>
+              </div>
+              <div className="text-xs mt-1.5" style={{ color: C.t3 }}>
+                {m ? (
+                  <>
+                    Última: <b style={{ color: C.t2 }}>{fmtData(m.date)}</b>
+                    {m.snapshot && <span className="ml-1.5" style={{ color: C.primary }}>· retrato ✓</span>}
+                    {m.ata && <span className="ml-1.5" style={{ color: C.t2 }}>· ata ✓</span>}
+                  </>
+                ) : 'Nenhuma reunião ocorrida ainda'}
+              </div>
+              {m && <div className="text-xs font-semibold mt-1.5 inline-flex items-center gap-1" style={{ color: corTema }}>Ver o que foi visto <ChevronDown size={12} style={{ transform: 'rotate(-90deg)' }} /></div>}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// Visão estática da última reunião de um ritual: retrato + resumo do que foi
+// discutido (ata) + deliberações com status + pendências. Read-only.
+function RetrospectoModal({ sigla, meeting, onClose, onIrParaRitual }) {
+  const corTema = COR_RITUAL[sigla] || C.primary;
+  const nome = RITUAIS[sigla]?.titulo || sigla;
+  const [full, setFull] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let ativo = true;
+    gov.meetings.get(meeting.id)
+      .then(m => { if (ativo) setFull(m); })
+      .catch(e => toast.error(formatErro(e)))
+      .finally(() => { if (ativo) setLoading(false); });
+    return () => { ativo = false; };
+  }, [meeting.id]);
+
+  const delibs = (full?.tasks || []).filter(t => t.origem === 'deliberacao');
+  const pendencias = (full?.tasks || []).filter(t => t.origem !== 'deliberacao');
+  const st = STATUS_MEETING[meeting.status] || STATUS_MEETING.agendada;
+
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: C.overlay, zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: 16 }}>
+      <div style={{ background: C.modalBg, border: `1px solid ${C.border}`, borderRadius: 14, width: '100%', maxWidth: 640, margin: '24px 0' }}>
+        <div className="flex items-start justify-between gap-3 p-4" style={{ borderBottom: `1px solid ${C.border}` }}>
+          <div className="flex items-center gap-2">
+            <span style={{ width: 10, height: 10, borderRadius: 99, background: corTema, display: 'inline-block' }} />
+            <div>
+              <div className="font-semibold text-lg" style={{ color: C.text }}>{nome}</div>
+              <div className="text-xs" style={{ color: C.t3 }}>
+                Última reunião · {diaSemana(meeting.date)} {fmtData(meeting.date)} ·{' '}
+                <span style={{ color: st.cor }}>{st.label}</span>
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ color: C.t2 }}><XCircle size={20} /></button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Retrato (números congelados na data) */}
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: corTema }}>O que os números mostravam</div>
+            {meeting.snapshot ? (
+              <div className="rounded-lg p-3" style={{ border: `1px solid ${C.border}` }}>
+                <ResumoRetrato snap={meeting.snapshot} />
+              </div>
+            ) : (
+              <p className="text-sm" style={{ color: C.t3 }}>Sem retrato salvo nesta reunião.</p>
+            )}
+          </div>
+
+          {/* Resumo do que foi discutido */}
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: corTema }}>Resumo do que foi discutido</div>
+            {meeting.ata
+              ? <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: C.t2 }}>{meeting.ata}</p>
+              : <p className="text-sm" style={{ color: C.t3 }}>Sem ata registrada nesta reunião.</p>}
+            {meeting.deliberacoes && (
+              <div className="text-sm mt-2 rounded-lg p-2" style={{ background: `${corTema}0f`, border: `1px solid ${corTema}33`, color: C.t2 }}>
+                <b style={{ color: C.text }}>Deliberações (texto):</b> {meeting.deliberacoes}
+              </div>
+            )}
+          </div>
+
+          {/* Decisões + pendências */}
+          {loading ? (
+            <div className="flex items-center gap-2 py-3 justify-center" style={{ color: C.t3 }}><Loader2 className="animate-spin" size={16} /> Carregando decisões…</div>
+          ) : (
+            <>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: corTema }}>Decisões ({delibs.length})</div>
+                {delibs.length === 0 ? (
+                  <p className="text-sm" style={{ color: C.t3 }}>Nenhuma deliberação rastreável registrada.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {delibs.map(t => {
+                      const sd = STATUS_DELIB[t.status] || STATUS_DELIB.pendente;
+                      return (
+                        <div key={t.id} className="flex items-center gap-2 text-sm p-2 rounded-lg" style={{ border: `1px solid ${C.border}` }}>
+                          <span className="flex-1" style={{ color: C.text }}>{t.titulo}</span>
+                          <span className="text-xs flex-shrink-0" style={{ color: C.t3 }}>{t.responsavel || ''}</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0" style={{ background: `${sd.cor}22`, color: sd.cor }}>{sd.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {pendencias.length > 0 && (
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: corTema }}>Pendências ({pendencias.length})</div>
+                  <div className="space-y-1">
+                    {pendencias.map(t => (
+                      <div key={t.id} className="text-sm p-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2, textDecoration: t.status === 'concluida' ? 'line-through' : 'none' }}>
+                        {t.titulo}{t.responsavel ? ` · ${t.responsavel}` : ''}{t.prazo ? ` · prazo ${fmtData(t.prazo)}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 p-4" style={{ borderTop: `1px solid ${C.border}` }}>
+          <button onClick={onIrParaRitual} className="text-sm px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: corTema }}>
+            Ir pra página do ritual
+          </button>
+          <button onClick={onClose} className="text-sm px-4 py-2 rounded-lg text-white" style={{ background: corTema }}>Fechar</button>
+        </div>
+      </div>
+    </div>
   );
 }
