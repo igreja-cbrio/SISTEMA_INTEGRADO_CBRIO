@@ -21,7 +21,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Mail, Plus, Pencil, Trash2, XCircle, Loader2, Clock, CheckCircle2, AlertTriangle, Ban, Eye, Search, type LucideIcon } from 'lucide-react';
 import VolEmailComposer, { type VolEmailDisparo } from './components/VolEmailComposer';
 
-type DestLog = { nome: string | null; email: string; status: 'pendente' | 'enviado' | 'erro'; erro_msg: string | null; enviado_em: string | null };
+type DestLog = { nome: string | null; email: string; status: 'pendente' | 'enviado' | 'erro'; erro_msg: string | null; enviado_em: string | null; aberto_em: string | null; aberturas: number };
 
 const STATUS_META: Record<string, { label: string; cls: string; icon: LucideIcon }> = {
   rascunho:  { label: 'Rascunho',   cls: 'bg-muted text-muted-foreground',                 icon: Pencil },
@@ -247,7 +247,7 @@ export default function VolEmails() {
 // leitura); "Erro" traz o motivo da falha.
 function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; onClose: () => void }) {
   const [busca, setBusca] = useState('');
-  const [filtro, setFiltro] = useState<'todos' | 'enviado' | 'erro'>('todos');
+  const [filtro, setFiltro] = useState<'todos' | 'enviado' | 'erro' | 'abriu'>('todos');
 
   const { data: log = [], isLoading } = useQuery<DestLog[]>({
     queryKey: ['vol', 'emails', 'destinatarios', disparo.id],
@@ -258,8 +258,10 @@ function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; 
   const meta = STATUS_META[disparo.status] || STATUS_META.rascunho;
   const MetaIcon = meta.icon;
 
+  const abriram = log.filter((d) => !!d.aberto_em).length;
   const filtrado = log.filter((d) => {
-    if (filtro !== 'todos' && d.status !== filtro) return false;
+    if (filtro === 'abriu') { if (!d.aberto_em) return false; }
+    else if (filtro !== 'todos' && d.status !== filtro) return false;
     const q = busca.trim().toLowerCase();
     return !q || (d.nome || '').toLowerCase().includes(q) || d.email.toLowerCase().includes(q);
   });
@@ -290,6 +292,10 @@ function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; 
             <strong className="text-foreground">{disparo.total_enviados}</strong>/{disparo.total_destinatarios} enviados
             {disparo.total_erros > 0 && <span className="text-red-500 ml-1">· {disparo.total_erros} erros</span>}
           </span>
+          <span title="Abertura aproximada (pixel) — clientes que bloqueiam imagem não contam">
+            <strong className="text-foreground">{abriram}</strong> abriram
+            {disparo.total_enviados > 0 && <span className="text-muted-foreground"> ({Math.round((abriram / disparo.total_enviados) * 100)}%)</span>}
+          </span>
           <span>{fmtData(disparo.enviado_em || disparo.agendado_para || disparo.created_at)}</span>
           {disparo.criado_por_nome && <span>por {disparo.criado_por_nome}</span>}
         </div>
@@ -303,6 +309,7 @@ function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; 
             <TabsList>
               <TabsTrigger value="todos">Todos ({log.length})</TabsTrigger>
               <TabsTrigger value="enviado">Enviados ({log.filter((d) => d.status === 'enviado').length})</TabsTrigger>
+              <TabsTrigger value="abriu">Abriram ({abriram})</TabsTrigger>
               <TabsTrigger value="erro">Erros ({log.filter((d) => d.status === 'erro').length})</TabsTrigger>
             </TabsList>
           </Tabs>
@@ -320,6 +327,7 @@ function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; 
                   <th className="py-2 px-3 font-medium">Nome</th>
                   <th className="py-2 px-3 font-medium">E-mail</th>
                   <th className="py-2 px-3 font-medium">Status</th>
+                  <th className="py-2 px-3 font-medium">Abriu</th>
                   <th className="py-2 px-3 font-medium">Quando</th>
                 </tr>
               </thead>
@@ -335,6 +343,11 @@ function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; 
                         {d.status === 'erro' && d.erro_msg && (
                           <span className="block text-xs text-red-500/90 mt-0.5 max-w-[220px]">{d.erro_msg}</span>
                         )}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        {d.aberto_em
+                          ? <span className="text-emerald-600 dark:text-emerald-400" title={`${d.aberturas || 1}× · ${fmtData(d.aberto_em)}`}>✓ abriu</span>
+                          : <span className="text-muted-foreground/50">—</span>}
                       </td>
                       <td className="py-2 px-3 whitespace-nowrap text-muted-foreground">{fmtData(d.enviado_em)}</td>
                     </tr>

@@ -145,6 +145,8 @@ const publicLimiter = rateLimit({
 // primeiro, o NPS não passa pelo teto de 30 · usa o limiter próprio (generoso) do
 // routes/publicNps.js. Os demais forms públicos seguem no publicLimiter.
 app.use('/api/public/nps', require('./routes/publicNps'));
+// Pixel de abertura de e-mail (fora do publicLimiter · proxies carregam por 1 IP)
+app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
