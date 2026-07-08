@@ -22,6 +22,7 @@ export interface DadosImpressao {
     idadeLabel: string;
     salaNome: string;
     salaCor?: string;
+    salaLogoUrl?: string | null;      // logo da categoria/sala (por faixa de idade)
     observacoesMedicas?: string | null;
     alergia?: string | null;          // alergia em destaque (vermelho/preto)
     necessidade?: string | null;      // espectro/limitação/necessidade
@@ -164,6 +165,12 @@ const CSS_ETIQUETA = `
     gap: 1.5mm;
     margin-bottom: 0.5mm;
   }
+  .logo-sala {
+    height: 6mm;
+    max-width: 16mm;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
   .foto-badge {
     border: 1.2px solid #000;
     border-radius: 1mm;
@@ -240,12 +247,17 @@ function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
   const aniversario = d.crianca.aniversarioSemana
     ? `<div class="aniversario">Feliz aniversário, ${escapeHtml((d.crianca.nome || '').split(' ')[0])}!</div>`
     : '';
+  // Logo da categoria/sala (por faixa de idade) · sai à esquerda do nome
+  const logo = d.crianca.salaLogoUrl
+    ? `<img class="logo-sala" src="${escapeHtml(d.crianca.salaLogoUrl)}" alt="" />`
+    : '';
   return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS_ETIQUETA}</style></head>
 <body>
   <div class="etiqueta" style="--cor: ${d.crianca.salaCor || '#EC4899'}">
     <div class="faixa-cor"></div>
     <div class="col-esq">
       <div class="topo">
+        ${logo}
         <div class="nome-grande" style="margin:0">${escapeHtml(nomeParaEtiqueta(d.crianca.nome))}</div>
         ${foto}
       </div>
@@ -282,6 +294,20 @@ function htmlEtiquetaResponsavel(d: DadosImpressao, barcodeSvg: string): string 
     </div>
   </div>
 </body></html>`;
+}
+
+// Pré-carrega a logo antes de mandar pra impressora — o iframe imprime com um
+// delay curto e uma imagem externa não-cacheada poderia não renderizar a tempo.
+function preloadImg(url?: string | null): Promise<void> {
+  if (!url) return Promise.resolve();
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = url;
+    // rede-de-segurança: não trava a impressão se a imagem demorar
+    setTimeout(resolve, 2500);
+  });
 }
 
 function escapeHtml(s: string): string {
@@ -351,7 +377,7 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
 // API pública · imprime as 2 etiquetas e loga
 // preview=true abre as etiquetas em popup ao inves de mandar pra impressora
 export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Promise<void> {
-  const barcodeSvg = await gerarBarcodeSvg(d.codigoBarras);
+  const [barcodeSvg] = await Promise.all([gerarBarcodeSvg(d.codigoBarras), preloadImg(d.crianca.salaLogoUrl)]);
 
   // No CHECK-IN: 2 etiquetas da criança (uma na criança, outra na sacola/
   // pertences) + 1 do responsável (recibo). Na reimpressão sai só a da criança.
@@ -393,7 +419,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Pro
 
 // Reimpressao (etiqueta rasgou ou impressora falhou)
 export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'responsavel', motivo: string): Promise<void> {
-  const barcodeSvg = await gerarBarcodeSvg(d.codigoBarras);
+  const [barcodeSvg] = await Promise.all([gerarBarcodeSvg(d.codigoBarras), preloadImg(d.crianca.salaLogoUrl)]);
   const html = tipo === 'crianca' ? htmlEtiquetaCrianca(d, barcodeSvg) : htmlEtiquetaResponsavel(d, barcodeSvg);
   await imprimirHtml(html);
   totemKids.etiquetas.log({

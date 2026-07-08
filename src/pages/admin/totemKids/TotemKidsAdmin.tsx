@@ -15,10 +15,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ColorPicker } from '@/components/ui/ColorPicker';
-import { Loader2, Plus, Pencil, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
-import { EtiquetaTesteForm } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
+import { EtiquetaTesteForm, LogosEtiquetaManager } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { formatIdadeShort } from '@/pages/ministerial/totemKids/lib/idade';
 import { format } from 'date-fns';
@@ -83,7 +83,7 @@ export function TotemKidsConfigTabs({ aba: abaProp, onAba, abas }: { aba?: strin
       {mostra('sessoes') && <TabsContent value="sessoes"><AbaSessoes /></TabsContent>}
       {mostra('salas') && <TabsContent value="salas"><AbaSalas /></TabsContent>}
       {mostra('auditoria') && <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>}
-      {mostra('etiqueta') && <TabsContent value="etiqueta"><EtiquetaTesteForm /></TabsContent>}
+      {mostra('etiqueta') && <TabsContent value="etiqueta"><div className="space-y-4"><LogosEtiquetaManager /><EtiquetaTesteForm /></div></TabsContent>}
     </Tabs>
   );
 }
@@ -277,6 +277,17 @@ function AbaSalas() {
     }
   }
 
+  async function excluir(s: any) {
+    if (!window.confirm(`Excluir a sala "${s.nome}" permanentemente? Esta ação não pode ser desfeita.`)) return;
+    try {
+      await totemKids.salas.remove(s.id);
+      toast.success('Sala excluída');
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao excluir sala');
+    }
+  }
+
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
@@ -299,9 +310,14 @@ function AbaSalas() {
                     </div>
                   </div>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => abrir(s)}>
-                  <Pencil className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => abrir(s)}>
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => excluir(s)} title="Excluir sala">
+                    <Trash2 className="h-4 w-4 text-red-500" />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

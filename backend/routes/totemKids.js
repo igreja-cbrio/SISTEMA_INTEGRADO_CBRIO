@@ -1894,7 +1894,7 @@ router.get('/checkin/aberto', authorizeModule('kids', 1), async (req, res) => {
     if (!sessao_id || !crianca_id) return res.status(400).json({ error: 'sessao_id e crianca_id obrigatórios' });
     const { data } = await supabase
       .from('kids_checkins')
-      .select('id, codigo_seguranca, codigo_barras, checkin_grupo_id, responsavel_checkin_nome, created_at, sala:kids_salas(id, nome, cor), sessao:kids_sessoes(id, culto:cultos(id, nome, data))')
+      .select('id, codigo_seguranca, codigo_barras, checkin_grupo_id, responsavel_checkin_nome, created_at, sala:kids_salas(id, nome, cor, logo_url), sessao:kids_sessoes(id, culto:cultos(id, nome, data))')
       .eq('sessao_id', sessao_id)
       .eq('crianca_id', crianca_id)
       .is('checkout_at', null)
@@ -1984,7 +1984,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     // Buscar sala
     const { data: sala } = await supabase
       .from('kids_salas')
-      .select('id, nome, cor')
+      .select('id, nome, cor, logo_url')
       .eq('id', sala_id)
       .maybeSingle();
     if (!sala) return res.status(404).json({ error: 'Sala não encontrada' });
@@ -2105,7 +2105,7 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
       .select(`
         *,
         crianca:kids_criancas(id, nome, data_nascimento, foto_url, observacoes_medicas, tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual),
-        sala:kids_salas(id, nome, cor),
+        sala:kids_salas(id, nome, cor, logo_url),
         sessao:kids_sessoes(id, status, culto:cultos(id, nome, data))
       `)
       .eq('codigo_seguranca', codigo)
@@ -2265,7 +2265,7 @@ router.post('/portao/scan', authorizeModule('kids', 2), async (req, res) => {
     // 1) Match vivo: check-in ABERTO em sessão ABERTA → saída autorizada
     const { data: aberto, error: e1 } = await supabase
       .from('kids_checkins')
-      .select('id, checkin_grupo_id, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome, cor), sessao:kids_sessoes(id, status)')
+      .select('id, checkin_grupo_id, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome, cor, logo_url), sessao:kids_sessoes(id, status)')
       .eq('codigo_seguranca', codigo)
       .is('checkout_at', null)
       .order('checkin_at', { ascending: false })
@@ -2588,14 +2588,74 @@ router.patch('/salas/:id', authorizeModule('kids', 3), async (req, res) => {
   }
 });
 
+// DELETE /salas/:id · exclui a sala DE VERDADE (não é PII · é config).
+// Guard: se a sala já tem check-ins no histórico, não dá pra excluir (FK
+// RESTRICT) — devolve 409 pedindo pra desativar. Estoque/voluntários da sala
+// têm ON DELETE CASCADE, então somem junto.
 router.delete('/salas/:id', authorizeModule('kids', 5), async (req, res) => {
   try {
-    // Soft delete via ativo=false
-    const { error } = await supabase.from('kids_salas').update({ ativo: false }).eq('id', req.params.id);
+    const salaId = req.params.id;
+    const { count: nChk } = await supabase
+      .from('kids_checkins').select('id', { count: 'exact', head: true }).eq('sala_id', salaId);
+    if (nChk && nChk > 0) {
+      return res.status(409).json({
+        error: `Esta sala tem ${nChk} check-in(s) no histórico e não pode ser excluída permanentemente. Desative-a em vez de excluir.`,
+      });
+    }
+    const { error } = await supabase.from('kids_salas').delete().eq('id', salaId);
+    if (error) {
+      if (error.code === '23503') {
+        return res.status(409).json({
+          error: 'Esta sala está em uso (registros vinculados) e não pode ser excluída. Desative-a em vez de excluir.',
+        });
+      }
+      throw error;
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] excluir sala:', e.message);
+    res.status(500).json({ error: 'Erro ao excluir sala' });
+  }
+});
+
+// POST /salas/:id/logo · logo da categoria (impressa na etiqueta da criança).
+// Bucket público fotos-membros (prefixo kids-logos/) pra o iframe de impressão
+// carregar a imagem sem header de auth. Branding · sem PII.
+router.post('/salas/:id/logo', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { dataUrl } = req.body || {};
+    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+    const mime = m[1];
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 3 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 3MB)' });
+    const path = `kids-logos/${req.params.id}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('fotos-membros').upload(path, buffer, { contentType: mime, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const logo_url = `${urlData.publicUrl}?t=${Date.now()}`;
+    const { error: dbErr } = await supabase.from('kids_salas').update({ logo_url }).eq('id', req.params.id);
+    if (dbErr) throw dbErr;
+    res.json({ logo_url });
+  } catch (e) {
+    console.error('[totemKids] logo sala:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a logo da sala' });
+  }
+});
+
+// POST /salas/:id/logo/remover · tira a logo (volta pra sem logo na etiqueta)
+router.post('/salas/:id/logo/remover', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    for (const ext of ['png', 'jpg', 'webp']) {
+      await supabase.storage.from('fotos-membros').remove([`kids-logos/${req.params.id}.${ext}`]).catch(() => {});
+    }
+    const { error } = await supabase.from('kids_salas').update({ logo_url: null }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao desativar sala' });
+    console.error('[totemKids] remover logo sala:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a logo' });
   }
 });
 
