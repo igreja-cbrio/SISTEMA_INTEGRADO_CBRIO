@@ -300,4 +300,102 @@ async function sincronizarPresencasKidsPCO({ dias = 90, datas = null } = {}) {
   return { dias_processados: diasProcessados, presencas_upsert: inseridas, sem_vinculo: semVinculo, datas: alvo.length };
 }
 
-module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO, ehEventoKids, idsComCheckinDesde, sincronizarPresencasKidsPCO };
+// ============================================================================
+// Corrige os RESPONSÁVEIS poluídos (import de 22/05 jogou a household inteira).
+// Sinal confiável de guardião = quem FAZ o check-in da criança no PCO
+// (relationship `checked_in_by`). Estratégia: PODAR — mantém só os responsáveis
+// atuais cujo nome casa com um "checker" do PCO; remove o resto. NUNCA deixa a
+// criança sem nenhum responsável (se nenhum casar, não mexe · fica pro manual).
+// dryRun (padrão) só devolve a proposta, sem gravar.
+// ============================================================================
+function _normNome(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+async function corrigirResponsaveisPCO({ meses = 18, apply = false } = {}) {
+  const { basic } = getPCCredentials();
+  const headers = { Authorization: `Basic ${basic}` };
+  const desde = new Date(); desde.setMonth(desde.getMonth() - meses);
+  const start = desde.toISOString();
+
+  // 1) Varre os check-ins → childPcoId -> Set(nome normalizado de quem fez o check-in)
+  const childCheckers = new Map();
+  const perPage = 100; let offset = 0; let varridos = 0;
+  while (true) {
+    const url = `${PC_CHECKINS_BASE}/check_ins`
+      + `?where[created_at][gte]=${encodeURIComponent(start)}`
+      + `&include=checked_in_by&per_page=${perPage}&offset=${offset}`;
+    const resp = await fetchWithRetry(url, headers);
+    if (!resp || !resp.ok) throw new Error(`PCO Check-Ins ${resp?.status || '???'}: falha ao listar check_ins`);
+    const json = await resp.json();
+    const nomePorId = new Map();
+    for (const inc of (json.included || [])) {
+      if (inc.type === 'Person') nomePorId.set(inc.id, inc.attributes?.name || `${inc.attributes?.first_name || ''} ${inc.attributes?.last_name || ''}`.trim());
+    }
+    const data = json.data || [];
+    varridos += data.length;
+    for (const ci of data) {
+      const childId = ci.relationships?.person?.data?.id;
+      const byId = ci.relationships?.checked_in_by?.data?.id;
+      if (!childId || !byId || byId === childId) continue;
+      const nm = _normNome(nomePorId.get(byId));
+      if (!nm) continue;
+      if (!childCheckers.has(childId)) childCheckers.set(childId, new Set());
+      childCheckers.get(childId).add(nm);
+    }
+    if (data.length < perPage) break;
+    offset += perPage;
+    if (offset > 300000) break;
+  }
+
+  // 2) Carrega crianças COM pco id e 2+ responsáveis (as candidatas a poda) +
+  //    os responsáveis (id do vínculo + nome do membro), paginado.
+  const criancas = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, planning_center_id, responsaveis:kids_responsaveis(id, membro_id, membro:mem_membros(nome))')
+      .not('planning_center_id', 'is', null)
+      .is('deleted_at', null)
+      .range(from, from + 999);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    criancas.push(...data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  const proposta = [];
+  let removidos = 0, criancasAfetadas = 0;
+  for (const c of criancas) {
+    const checkers = childCheckers.get(String(c.planning_center_id));
+    const resps = c.responsaveis || [];
+    if (!checkers || resps.length < 2) continue; // sem sinal ou já enxuto
+    const manter = resps.filter(r => checkers.has(_normNome(r.membro?.nome)));
+    const remover = resps.filter(r => !checkers.has(_normNome(r.membro?.nome)));
+    if (!manter.length || !remover.length) continue; // não casou nenhum → não arrisca
+    criancasAfetadas++;
+    proposta.push({
+      crianca: c.nome,
+      manter: manter.map(r => r.membro?.nome),
+      remover: remover.map(r => r.membro?.nome),
+    });
+    if (apply) {
+      const ids = remover.map(r => r.id);
+      const { error } = await supabase.from('kids_responsaveis').delete().in('id', ids);
+      if (!error) removidos += ids.length;
+    }
+  }
+
+  return {
+    modo: apply ? 'aplicado' : 'previa',
+    checkins_varridos: varridos,
+    criancas_com_checker: childCheckers.size,
+    criancas_afetadas: criancasAfetadas,
+    vinculos_removidos: apply ? removidos : proposta.reduce((s, p) => s + p.remover.length, 0),
+    amostra: proposta.slice(0, 30),
+  };
+}
+
+module.exports = { coletarFrequenciaKidsPCO, detalhePessoaPCO, ehEventoKids, idsComCheckinDesde, sincronizarPresencasKidsPCO, corrigirResponsaveisPCO };
