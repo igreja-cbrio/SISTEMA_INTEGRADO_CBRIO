@@ -923,7 +923,8 @@ function periodoParaMes(p) {
 
 router.get('/kpi-objetivos', rd, async (req, res) => {
   try {
-    const meses = Math.max(3, Math.min(24, Number(req.query.meses) || 12));
+    // Até 60 meses: o comparativo de 5 anos da reunião de KPI agrega por ano.
+    const meses = Math.max(3, Math.min(60, Number(req.query.meses) || 12));
 
     const [objRes, taticos] = await Promise.all([
       supabase.from('kpi_objetivos_gerais')
