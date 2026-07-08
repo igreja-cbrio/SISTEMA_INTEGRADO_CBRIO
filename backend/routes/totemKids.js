@@ -269,8 +269,11 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     if (q.length < 2) return res.json([]);
+    // Normaliza (minúscula + sem acento) pra casar com nome_norm — "jose" acha
+    // "José", sem depender de acento/maiúscula.
+    const qNorm = q.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
-    // Busca por nome (trigram) OU por nome do responsável OU telefone
+    // Busca por nome (sem acento) OU por telefone do responsável
     const { data: criancas } = await supabase
       .from('kids_criancas')
       .select(`
@@ -286,7 +289,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
       // Inclui INATIVAS (marcadas) pra criança que sumiu 6+ meses do PCO ou não
       // apareceu na última importação continuar achável — o check-in reativa.
       // Sem isso o voluntário recadastra e gera duplicata. Ativas vêm primeiro.
-      .ilike('nome', `%${q}%`)
+      .ilike('nome_norm', `%${qNorm}%`)
       .is('deleted_at', null)
       .order('ativo', { ascending: false })
       .order('nome')
