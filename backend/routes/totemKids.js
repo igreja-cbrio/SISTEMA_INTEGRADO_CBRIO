@@ -475,36 +475,64 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       return res.status(201).json({ crianca: criancaCriada, amigo_de: { id: amigo.id, nome: amigo.nome }, familia_id: amigo.familia_id });
     }
 
-    // ── Fluxo normal: exige responsável (nome + telefone) ──
-    if (!responsavel?.nome || !responsavel?.telefone) {
-      return res.status(400).json({ error: 'responsavel.nome e responsavel.telefone obrigatórios' });
+    // ── Fluxo normal: exige AO MENOS 1 responsável (nome + telefone) ──
+    // Aceita `responsaveis` (lista) ou `responsavel` (único · retrocompat).
+    const listaResp = (Array.isArray(responsaveis) && responsaveis.length)
+      ? responsaveis
+      : (responsavel ? [responsavel] : []);
+    const validos = listaResp.filter(r => r?.nome && r?.telefone);
+    if (!validos.length) {
+      return res.status(400).json({ error: 'Informe ao menos um responsável (nome e telefone)' });
     }
-    const tel = normalizarTelefone(responsavel.telefone);
-    const cpf = normalizarCpf(responsavel.cpf);
-    const r = await acharOuCriarGuardado({
-      cpf, email: responsavel.email || null, telefone: tel, nome: responsavel.nome, status: 'visitante',
-    });
-    const { data: membro } = await supabase.from('mem_membros')
-      .select('id, nome, familia_id').eq('id', r.membro_id).single();
-    let familiaId = membro.familia_id;
+
+    // Resolve cada responsável (find-or-create membro) + resolve a família
+    // (compartilhada por todos · a do 1º que já tiver, senão cria uma nova).
+    const membros = [];
+    let familiaId = null;
+    for (const resp of validos) {
+      const tel = normalizarTelefone(resp.telefone);
+      const cpf = normalizarCpf(resp.cpf);
+      const rr = await acharOuCriarGuardado({
+        cpf, email: resp.email || null, telefone: tel, nome: resp.nome, status: 'visitante',
+      });
+      const { data: membro } = await supabase.from('mem_membros')
+        .select('id, nome, familia_id').eq('id', rr.membro_id).single();
+      if (!familiaId) familiaId = membro.familia_id || null;
+      membros.push({ membro, tel, cpf, parentesco: resp.parentesco || 'outro', autorizado_buscar: resp.autorizado_buscar !== false });
+    }
     if (!familiaId) {
+      const base = membros[0].membro;
       const { data: f, error: fe } = await supabase.from('mem_familias')
-        .insert({ nome: `Familia ${membro.nome.split(' ')[0]}` }).select('id').single();
+        .insert({ nome: `Familia ${base.nome.split(' ')[0]}` }).select('id').single();
       if (fe) throw fe;
       familiaId = f.id;
-      await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', membro.id);
     }
+    // Vincula à família quem ainda não tem
+    for (const m of membros) {
+      if (!m.membro.familia_id) {
+        await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', m.membro.id);
+      }
+    }
+
     const { data: criancaCriada, error: errCrianca } = await supabase.from('kids_criancas')
       .insert({ ...camposCrianca, familia_id: familiaId })
       .select('*, familia:mem_familias(id, nome)').single();
     if (errCrianca) throw errCrianca;
-    await supabase.from('kids_responsaveis').insert({
-      crianca_id: criancaCriada.id, membro_id: membro.id,
-      parentesco: responsavel.parentesco || 'outro', autorizado_buscar: true,
-    });
+
+    // Vínculos (dedup por membro)
+    const vistos = new Set();
+    const vinc = [];
+    for (const m of membros) {
+      if (vistos.has(m.membro.id)) continue;
+      vistos.add(m.membro.id);
+      vinc.push({ crianca_id: criancaCriada.id, membro_id: m.membro.id, parentesco: m.parentesco, autorizado_buscar: m.autorizado_buscar });
+    }
+    if (vinc.length) await supabase.from('kids_responsaveis').insert(vinc);
+
     res.status(201).json({
       crianca: criancaCriada,
-      responsavel: { id: membro.id, nome: membro.nome, telefone: tel, cpf },
+      responsavel: { id: membros[0].membro.id, nome: membros[0].membro.nome, telefone: membros[0].tel, cpf: membros[0].cpf },
+      responsaveis: membros.map(m => ({ id: m.membro.id, nome: m.membro.nome, telefone: m.tel })),
       familia_id: familiaId,
     });
   } catch (e) {

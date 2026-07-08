@@ -688,33 +688,38 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [sexo, setSexo] = useState('');
   const [serie, setSerie] = useState('');
   const [necessidade, setNecessidade] = useState('');
-  const [respNome, setRespNome] = useState('');
-  const [respTel, setRespTel] = useState('');
-  const [parentesco, setParentesco] = useState('mae');
   const [consentMkt, setConsentMkt] = useState(false);
   const [fotoCrianca, setFotoCrianca] = useState<string | null>(null);
-  const [fotoResp, setFotoResp] = useState<string | null>(null);
+  const [resps, setResps] = useState<any[]>([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
   const [salvando, setSalvando] = useState(false);
 
-  const pick = (setter: (v: string) => void) => (e: any) => {
+  const setResp = (i: number, patch: any) => setResps(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addResp = () => setResps(rs => [...rs, { nome: '', telefone: '', cpf: '', parentesco: 'outro', autorizado_buscar: true, foto: null }]);
+  const delResp = (i: number) => setResps(rs => rs.length > 1 ? rs.filter((_, idx) => idx !== i) : rs);
+  const lerFoto = (cb: (v: string) => void) => (e: any) => {
     const f = e.target.files?.[0]; if (!f) return;
     if (f.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
-    const r = new FileReader(); r.onload = () => setter(r.result as string); r.readAsDataURL(f);
+    const r = new FileReader(); r.onload = () => cb(r.result as string); r.readAsDataURL(f);
   };
 
   async function salvar() {
     if (!nome.trim()) { toast.error('Informe o nome da criança'); return; }
-    if (!respNome.trim() || !respTel.trim()) { toast.error('Informe nome e telefone do responsável'); return; }
+    const validos = resps.filter(r => r.nome.trim() && r.telefone.trim());
+    if (!validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
     setSalvando(true);
     try {
       const r = await api.criancas.create({
         crianca: { nome: nome.trim(), data_nascimento: nascimento || null, sexo: sexo || null, serie: serie.trim() || null, necessidades_especiais: necessidade.trim() || null, consent_marketing: consentMkt },
-        responsavel: { nome: respNome.trim(), telefone: respTel.trim(), parentesco },
+        responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })),
       });
-      // Fotos (best-effort · não travam o cadastro se falharem)
-      const cid = r?.crianca?.id; const rid = r?.responsavel?.id;
+      // Fotos (best-effort · não travam o cadastro se falharem). r.responsaveis
+      // volta na MESMA ordem dos validos → casa a foto pelo índice.
+      const cid = r?.crianca?.id;
       if (cid && fotoCrianca) { try { await api.criancas.uploadFoto(cid, fotoCrianca); } catch { /* noop */ } }
-      if (rid && fotoResp) { try { await api.criancas.uploadFotoResponsavel(rid, fotoResp); } catch { /* noop */ } }
+      const retResps = Array.isArray(r?.responsaveis) ? r.responsaveis : [];
+      for (let i = 0; i < retResps.length; i++) {
+        if (validos[i]?.foto && retResps[i]?.id) { try { await api.criancas.uploadFotoResponsavel(retResps[i].id, validos[i].foto); } catch { /* noop */ } }
+      }
       toast.success('Criança cadastrada');
       onCreated();
     } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar'); } finally { setSalvando(false); }
@@ -738,28 +743,48 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
           </div>
           <div><Label className="text-xs">Série (opcional)</Label><Input value={serie} onChange={e => setSerie(e.target.value)} placeholder="Ex.: Maternal II" /></div>
           <div><Label className="text-xs">Necessidade / alergia (opcional)</Label><Textarea rows={2} value={necessidade} onChange={e => setNecessidade(e.target.value)} /></div>
-          <FotoPicker dataUrl={fotoCrianca} onPick={pick(setFotoCrianca)} onClear={() => setFotoCrianca(null)} label="Foto da criança (opcional)" />
+          <FotoPicker dataUrl={fotoCrianca} onPick={lerFoto(setFotoCrianca)} onClear={() => setFotoCrianca(null)} label="Foto da criança (opcional)" />
           <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
             <input type="checkbox" className="mt-0.5" checked={consentMkt} onChange={e => setConsentMkt(e.target.checked)} />
             <span>Autoriza o <b>uso da imagem da criança</b> para divulgação/marketing da igreja (redes sociais, site, etc.)</span>
           </label>
           <div className="border-t border-border pt-2 space-y-3">
-            <div className="text-xs font-semibold text-muted-foreground">Responsável</div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Nome *</Label><Input value={respNome} onChange={e => setRespNome(e.target.value)} /></div>
-              <div><Label className="text-xs">Telefone *</Label><Input value={respTel} onChange={e => setRespTel(e.target.value)} placeholder="(21) 99999-9999" /></div>
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold text-muted-foreground">Responsáveis</div>
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={addResp}><Plus className="h-3.5 w-3.5" /> Adicionar responsável</Button>
             </div>
-            <div>
-              <Label className="text-xs">Parentesco</Label>
-              <Select value={parentesco} onValueChange={setParentesco}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mae">Mãe</SelectItem><SelectItem value="pai">Pai</SelectItem>
-                  <SelectItem value="avo_a">Avó/Avô</SelectItem><SelectItem value="tutor">Tutor</SelectItem><SelectItem value="outro">Outro</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <FotoPicker dataUrl={fotoResp} onPick={pick(setFotoResp)} onClear={() => setFotoResp(null)} label="Foto do responsável (opcional)" />
+            {resps.map((r, i) => (
+              <div key={i} className="rounded-md border border-border p-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Responsável {i + 1}</span>
+                  {resps.length > 1 && <button type="button" onClick={() => delResp(i)} className="text-muted-foreground hover:text-red-500"><X className="h-3.5 w-3.5" /></button>}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><Label className="text-xs">Nome *</Label><Input value={r.nome} onChange={e => setResp(i, { nome: e.target.value })} /></div>
+                  <div><Label className="text-xs">Telefone *</Label><Input value={r.telefone} onChange={e => setResp(i, { telefone: e.target.value })} placeholder="(21) 99999-9999" /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><Label className="text-xs">CPF (opcional)</Label><Input value={r.cpf} onChange={e => setResp(i, { cpf: e.target.value })} /></div>
+                  <div>
+                    <Label className="text-xs">Parentesco</Label>
+                    <Select value={r.parentesco} onValueChange={v => setResp(i, { parentesco: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mae">Mãe</SelectItem><SelectItem value="pai">Pai</SelectItem>
+                        <SelectItem value="avo_a">Avó/Avô</SelectItem><SelectItem value="tutor">Tutor</SelectItem><SelectItem value="outro">Outro</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <FotoPicker dataUrl={r.foto} onPick={lerFoto(v => setResp(i, { foto: v }))} onClear={() => setResp(i, { foto: null })} label="Foto (opcional)" />
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input type="checkbox" checked={r.autorizado_buscar} onChange={e => setResp(i, { autorizado_buscar: e.target.checked })} />
+                    Autorizado a buscar
+                  </label>
+                </div>
+              </div>
+            ))}
           </div>
           <Button onClick={salvar} disabled={salvando} className="w-full">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Cadastrar criança'}</Button>
         </div>
