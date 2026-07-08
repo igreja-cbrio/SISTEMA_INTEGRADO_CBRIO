@@ -2468,21 +2468,29 @@ router.post('/etiquetas-log', authorizeModule('kids', 2), async (req, res) => {
     const { checkin_id, estacao_id, tipo, conteudo, reimpressao, motivo_reimpressao, status, erro } = req.body;
     if (!checkin_id || !tipo) return res.status(400).json({ error: 'checkin_id e tipo obrigatórios' });
 
-    const { data, error } = await supabase
-      .from('kids_etiquetas_log')
-      .insert({
-        checkin_id,
-        estacao_id: estacao_id || null,
-        tipo,
-        conteudo_json: conteudo || {},
-        reimpressao: !!reimpressao,
-        motivo_reimpressao: motivo_reimpressao || null,
-        impressa_por: req.user.userId,
-        status: status || 'enviada',
-        erro: erro || null,
-      })
-      .select('id')
-      .single();
+    const row = {
+      checkin_id,
+      estacao_id: estacao_id || null,
+      tipo,
+      conteudo_json: conteudo || {},
+      reimpressao: !!reimpressao,
+      motivo_reimpressao: motivo_reimpressao || null,
+      impressa_por: req.user.userId,
+      status: status || 'enviada',
+      erro: erro || null,
+    };
+    let { data, error } = await supabase.from('kids_etiquetas_log').insert(row).select('id').single();
+    // Estação é auditoria OPCIONAL: pareamento antigo no localStorage do totem
+    // apontando pra estação inexistente derrubava o log com FK (8× 500 em
+    // 2026-07-07 · caso Diego). Descarta a estação e loga mesmo assim.
+    if (error && error.code === '23503' && String(error.message || '').includes('estacao')) {
+      ({ data, error } = await supabase.from('kids_etiquetas_log')
+        .insert({ ...row, estacao_id: null }).select('id').single());
+    }
+    // Valor fora do CHECK (tipo/status) é erro do chamador, não do servidor
+    if (error && error.code === '23514') {
+      return res.status(400).json({ error: 'tipo ou status inválido', detalhe: error.message });
+    }
     if (error) throw error;
 
     // Incrementa contador no checkin (best effort)

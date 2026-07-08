@@ -523,7 +523,11 @@ export default function TotemKidsCheckin() {
   );
 
   return (
-    <div className={totemMode ? 'fixed inset-0 z-[60] overflow-y-auto' : ''}>
+    // ⚠️ z-[40]: acima do header do AppShell (z-30), ABAIXO dos portais do Radix
+    // (Dialog/Select/Popover = z-50). Com z-[60] todo portal sem override abria
+    // INVISÍVEL atrás do overlay e ainda travava os cliques (bug do cadastro de
+    // criança em modo totem · Diego 2026-07-07). Não subir de volta.
+    <div className={totemMode ? 'fixed inset-0 z-[40] overflow-y-auto' : ''}>
     <KidsZoneShell fullscreen={totemMode}>
       {/* Barra do topo · logo, sessão, relógio e alternância check-in/check-out */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-dashed border-slate-200">
@@ -1608,7 +1612,8 @@ function ModalNovaCrianca(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
+      {/* z-[80] · mesmo cinto dos demais dialogs desta página (modo totem) */}
+      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col z-[80]">
         <DialogHeader>
           <DialogTitle>Cadastrar criança · visitante</DialogTitle>
           <DialogDescription>Dados mínimos · LGPD com menores. Sem CPF da criança.</DialogDescription>
