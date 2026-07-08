@@ -36,8 +36,10 @@ function normNome(s) {
 
 // Lê TODAS as crianças locais (paginado · contorna o cap de 1000 do PostgREST).
 // Retorna:
-//   porPco  · Map(planning_center_id -> id)         (já vinculadas)
+//   porPco  · Map(planning_center_id -> {id, nome, data_nascimento, sexo})  (já vinculadas)
 //   semPcoPorNome · Map(nome normalizado -> [ids])  (sem vínculo · pra casar por nome)
+// Guarda nome/nascimento/sexo pra o sync PULAR quem não mudou (evita milhares de
+// UPDATEs redundantes → sync fica quase instantâneo nas rodadas seguintes).
 async function carregarLocais() {
   const porPco = new Map();
   const semPcoPorNome = new Map();
@@ -46,13 +48,16 @@ async function carregarLocais() {
   while (true) {
     const { data, error } = await supabase
       .from('kids_criancas')
-      .select('id, nome, planning_center_id')
+      .select('id, nome, planning_center_id, data_nascimento, sexo')
       .is('deleted_at', null)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`Supabase: ${error.message}`);
     if (!data || data.length === 0) break;
     for (const r of data) {
-      if (r.planning_center_id) { porPco.set(String(r.planning_center_id), r.id); continue; }
+      if (r.planning_center_id) {
+        porPco.set(String(r.planning_center_id), { id: r.id, nome: r.nome, data_nascimento: r.data_nascimento, sexo: r.sexo });
+        continue;
+      }
       const nm = normNome(r.nome);
       if (!nm) continue;
       if (!semPcoPorNome.has(nm)) semPcoPorNome.set(nm, []);
@@ -62,6 +67,17 @@ async function carregarLocais() {
     from += pageSize;
   }
   return { porPco, semPcoPorNome };
+}
+
+// Roda promessas em lotes concorrentes (o cliente supabase-js usa HTTP/PostgREST,
+// então dá pra paralelizar sem estourar o pool pg). Retorna quantas deram certo.
+async function runBatched(items, fn, size = 25) {
+  let ok = 0;
+  for (const grp of chunk(items, size)) {
+    const res = await Promise.all(grp.map(fn));
+    ok += res.filter(Boolean).length;
+  }
+  return ok;
 }
 
 // Puxa todas as people do Check-Ins (paginado por offset) e devolve só as crianças
@@ -143,16 +159,15 @@ async function syncCriancasPCO({ maxIdade = 12 } = {}) {
   }
 
   // (1) Vincula os existentes (planilha) à pessoa do PCO por nome → grava o
-  // planning_center_id pra ligar o histórico de frequência.
-  let vinculadas = 0;
-  for (const v of aVincular) {
+  // planning_center_id pra ligar o histórico de frequência. Em lotes concorrentes.
+  const vinculadas = await runBatched(aVincular, async (v) => {
     const { error } = await supabase.from('kids_criancas')
       .update({ planning_center_id: v.pco.planning_center_id, data_nascimento: v.pco.data_nascimento, sexo: v.pco.sexo, updated_at: new Date().toISOString() })
       .eq('id', v.localId);
-    if (!error) vinculadas++;
-  }
+    return !error;
+  });
 
-  // (2) Cria as que não casaram.
+  // (2) Cria as que não casaram (insert em lote de 500).
   let criadas = 0, erros = 0;
   for (const lote of chunk(novas, 500)) {
     const rows = lote.map(c => ({ ...c, visitante: true, ativo: true }));
@@ -161,15 +176,23 @@ async function syncCriancasPCO({ maxIdade = 12 } = {}) {
     criadas += count ?? rows.length;
   }
 
-  // (3) Atualiza nome/nascimento/sexo das já vinculadas (mantém o resto intacto).
-  let atualizadas = 0;
-  for (const c of jaExistem) {
-    const id = porPco.get(c.planning_center_id);
+  // (3) Atualiza nome/nascimento/sexo das já vinculadas — SÓ das que realmente
+  // mudaram (pula milhares de UPDATEs redundantes) e em lotes concorrentes.
+  const d10 = (v) => String(v || '').slice(0, 10);
+  const mudaram = jaExistem.filter((c) => {
+    const loc = porPco.get(c.planning_center_id);
+    if (!loc) return false;
+    return (loc.nome || '') !== (c.nome || '')
+      || d10(loc.data_nascimento) !== d10(c.data_nascimento)
+      || (loc.sexo || null) !== (c.sexo || null);
+  });
+  const atualizadas = await runBatched(mudaram, async (c) => {
+    const loc = porPco.get(c.planning_center_id);
     const { error } = await supabase.from('kids_criancas')
       .update({ nome: c.nome, data_nascimento: c.data_nascimento, sexo: c.sexo, updated_at: new Date().toISOString() })
-      .eq('id', id);
-    if (!error) atualizadas++;
-  }
+      .eq('id', loc.id);
+    return !error;
+  });
 
   return {
     total_pessoas_pco: totalPessoas,
@@ -177,6 +200,7 @@ async function syncCriancasPCO({ maxIdade = 12 } = {}) {
     vinculadas,
     criadas,
     atualizadas,
+    inalteradas: jaExistem.length - mudaram.length,
     erros,
   };
 }
