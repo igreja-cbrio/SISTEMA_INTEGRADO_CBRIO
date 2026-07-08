@@ -126,7 +126,7 @@ function sanitizarHtml(html) {
 // Shell de e-mail (estilos inline · compatível com Outlook/Gmail) envolvendo o
 // corpo do Tiptap. {{nome}} é substituído pelo primeiro nome do destinatário.
 // assinaturaHtml (opcional) entra entre o corpo e o rodapé.
-function montarHtmlEmail(corpoHtml, { nome, assinaturaHtml } = {}) {
+function montarHtmlEmail(corpoHtml, { nome, assinaturaHtml, pixelUrl } = {}) {
   const primeiroNome = (nome || '').trim().split(/\s+/)[0] || 'voluntário';
   const corpo = sanitizarHtml(corpoHtml).replace(/\{\{\s*nome\s*\}\}/gi, primeiroNome);
   // Logo da assinatura sempre pequena (padrão de assinatura corporativa):
@@ -158,6 +158,7 @@ function montarHtmlEmail(corpoHtml, { nome, assinaturaHtml } = {}) {
       </table>
     </td></tr>
   </table>
+  ${pixelUrl ? `<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;opacity:0;overflow:hidden" />` : ''}
 </body>
 </html>`;
 }
@@ -236,7 +237,9 @@ async function enviarUm(disparo, dest, assinaturaHtml) {
   if (claimErr) throw claimErr;
   if (!claimed?.length) return 'pulado'; // outro processo pegou
 
-  const html = montarHtmlEmail(disparo.corpo_html, { nome: dest.nome, assinaturaHtml });
+  const base = (process.env.FRONTEND_URL || 'https://cbrio.org').replace(/\/$/, '');
+  const pixelUrl = `${base}/api/public/vol-email/px/${dest.id}.gif`;
+  const html = montarHtmlEmail(disparo.corpo_html, { nome: dest.nome, assinaturaHtml, pixelUrl });
   const REMETENTE_NOME = 'Voluntariado CBRio';
   let r = await enviarEmail({ to: dest.email, subject: disparo.assunto, html, fromName: REMETENTE_NOME });
   if (!r?.ok && /429/.test(r?.error || '')) {
