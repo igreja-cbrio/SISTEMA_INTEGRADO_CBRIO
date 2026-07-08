@@ -338,8 +338,11 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
 export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Promise<void> {
   const barcodeSvg = await gerarBarcodeSvg(d.codigoBarras);
 
-  // Etiqueta da criança
-  await imprimirHtml(htmlEtiquetaCrianca(d, barcodeSvg), preview);
+  // No CHECK-IN: 2 etiquetas da criança (uma na criança, outra na sacola/
+  // pertences) + 1 do responsável (recibo). Na reimpressão sai só a da criança.
+  const htmlCrianca = htmlEtiquetaCrianca(d, barcodeSvg);
+  await imprimirHtml(htmlCrianca, preview);
+  await imprimirHtml(htmlCrianca, preview);
   if (!preview) {
     totemKids.etiquetas.log({
       checkin_id: d.checkinId,
@@ -351,6 +354,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false): Pro
         idade: d.crianca.idadeLabel,
         codigo: d.codigoSeguranca,
         observacoes_medicas: d.crianca.observacoesMedicas,
+        copias: 2,
       },
       status: 'enviada',
     }).catch(() => {});
