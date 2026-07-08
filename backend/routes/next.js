@@ -542,10 +542,15 @@ router.get('/turmas', async (req, res) => {
 // GET /lista-espera — contagem de inscritos SEM turma (aguardando a próxima
 // turma abrir). São puxados automaticamente quando uma turma nova é aberta.
 router.get('/lista-espera', async (req, res) => {
-  const { count, error } = await supabase.from('next_matriculas')
-    .select('id', { count: 'exact', head: true }).is('turma_id', null).is('deleted_at', null);
+  // Fila de espera = matrículas sem turma (turma_id NULL). Retorna a LISTA de
+  // pessoas (pros responsáveis alocarem numa turma) + a contagem.
+  const { data, error } = await supabase.from('next_matriculas')
+    .select('id, nome, sobrenome, telefone, email, cpf, membro_id, observacoes, created_at')
+    .is('turma_id', null).is('deleted_at', null)
+    .order('created_at', { ascending: true })
+    .limit(1000);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ count: count || 0 });
+  res.json({ count: (data || []).length, pessoas: data || [] });
 });
 
 // POST /turmas — cria turma (+ os encontros · default 2)
