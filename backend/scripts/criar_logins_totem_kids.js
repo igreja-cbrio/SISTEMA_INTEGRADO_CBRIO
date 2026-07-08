@@ -5,6 +5,7 @@
  * check-in/checkout do ministério infantil:
  *   - Totem Kids 1 · totem.kids1@cbrio.org
  *   - Totem Kids 2 · totem.kids2@cbrio.org
+ *   - Totem Kids 3 · totem.kids3@cbrio.org
  *
  * Acesso desejado: SÓ o módulo `kids` (Ministerial), nível 3 — suficiente pra
  * operar o totem inteiro (abrir/encerrar sessão, check-in, checkout, cadastro
@@ -49,6 +50,7 @@ const NIVEL = 3;
 const CONTAS = [
   { email: 'totem.kids1@cbrio.org', nome: 'Totem Kids 1' },
   { email: 'totem.kids2@cbrio.org', nome: 'Totem Kids 2' },
+  { email: 'totem.kids3@cbrio.org', nome: 'Totem Kids 3' },
 ];
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
