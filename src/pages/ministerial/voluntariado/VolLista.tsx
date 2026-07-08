@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus } from 'lucide-react';
+import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import Paginacao, { usePaginacaoLocal } from '@/components/Paginacao';
@@ -61,6 +61,15 @@ function TodosList() {
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ full_name: '', email: '', phone: '', cpf: '' });
   const [detalheId, setDetalheId] = useState<string | null>(null);
+  const [gerenciar, setGerenciar] = useState<any | null>(null);
+  const [addTeam, setAddTeam] = useState('');
+  const { data: teamsManaged = [] } = useVolTeamsManaged();
+  const allocate = useAllocateVolunteer();
+  const removeMember = useMutation({
+    mutationFn: (tmId: string) => voluntariado.teamMembers.remove(tmId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vol', 'volunteers-pool'] }),
+    onError: (err: any) => toast.error(err.message || 'Erro ao remover da equipe'),
+  });
 
   const createVol = useMutation({
     mutationFn: (data: typeof addForm) => voluntariado.profiles.create(data),
@@ -98,7 +107,9 @@ function TodosList() {
         v.cpf?.includes(q)
       );
     }
-    if (teamFilter !== 'all') {
+    if (teamFilter === 'none') {
+      list = list.filter(v => !((v.team_members || []).length));
+    } else if (teamFilter !== 'all') {
       list = list.filter(v =>
         (v.team_members || []).some((tm: any) => tm.team_id === teamFilter)
       );
@@ -127,6 +138,9 @@ function TodosList() {
       onError: (err: any) => toast.error(err.message || 'Erro ao sincronizar'),
     });
   };
+
+  // vol "vivo" (reflete add/remove após o refetch do pool)
+  const gvol = gerenciar ? ((pool as any[]).find(v => v.id === gerenciar.id) || gerenciar) : null;
 
   return (
     <>
@@ -158,6 +172,7 @@ function TodosList() {
           <SelectTrigger className="w-full sm:w-44"><SelectValue placeholder="Equipe" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todas equipes</SelectItem>
+            <SelectItem value="none">Sem equipe atribuída</SelectItem>
             {allTeams.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
           </SelectContent>
         </Select>
@@ -226,10 +241,17 @@ function TodosList() {
                     }
                   </div>
                 </div>
-                <div className="hidden md:block text-right shrink-0">
+                <div className="hidden md:block text-right shrink-0 min-w-0">
                   {vol.email && <p className="text-xs text-muted-foreground truncate max-w-44">{vol.email}</p>}
                   {vol.cpf && <p className="text-xs text-muted-foreground/60">{vol.cpf}</p>}
                 </div>
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 shrink-0"
+                  onClick={(e) => { e.stopPropagation(); setGerenciar(vol); }}
+                >
+                  <Users className="h-3 w-3" /> {teamsOf.length ? 'Equipe' : 'Atribuir'}
+                </Button>
               </div>
             );
           })}
@@ -272,6 +294,61 @@ function TodosList() {
               {createVol.isPending ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
               Salvar
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Gerenciar equipes do voluntário (atribuir / trocar / remover) */}
+      <Dialog open={!!gerenciar} onOpenChange={o => { if (!o) { setGerenciar(null); setAddTeam(''); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="truncate">Equipes de {gvol?.full_name}</DialogTitle>
+          </DialogHeader>
+          <div className="py-1 space-y-4">
+            <div>
+              <Label className="text-xs text-muted-foreground">Equipes atuais</Label>
+              {(gvol?.team_members || []).length ? (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {(gvol.team_members as any[]).map(tm => (
+                    <span key={tm.id} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-muted">
+                      {tm.team?.color && <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tm.team.color }} />}
+                      {tm.team?.name}{tm.position ? ` · ${tm.position.name}` : ''}
+                      <button onClick={() => removeMember.mutate(tm.id)} disabled={removeMember.isPending}
+                        className="text-muted-foreground hover:text-red-600" title="Remover desta equipe"><X className="h-3 w-3" /></button>
+                    </span>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-muted-foreground mt-1.5">Sem equipe atribuída.</p>}
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Adicionar equipe</Label>
+              <div className="flex gap-2 mt-1.5">
+                <Select value={addTeam} onValueChange={setAddTeam}>
+                  <SelectTrigger className="flex-1"><SelectValue placeholder="Escolher equipe" /></SelectTrigger>
+                  <SelectContent>
+                    {(teamsManaged as any[]).filter(t => t.is_active && !((gvol?.team_members || []).some((tm: any) => tm.team_id === t.id))).map(t => (
+                      <SelectItem key={t.id} value={t.id}>
+                        <span className="flex items-center gap-2">
+                          {t.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: t.color }} />}
+                          {t.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button className="bg-[#00B39D] hover:bg-[#00B39D]/80" disabled={!addTeam || allocate.isPending}
+                  onClick={() => allocate.mutate({ id: gvol.id, team_id: addTeam }, {
+                    onSuccess: () => { toast.success('Equipe atribuída'); setAddTeam(''); },
+                    onError: (e: any) => toast.error(e.message || 'Erro ao atribuir'),
+                  })}>
+                  {allocate.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Adicionar'}
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5">Pra trocar de equipe, remova a atual (×) e adicione a nova.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setGerenciar(null); setAddTeam(''); }}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
