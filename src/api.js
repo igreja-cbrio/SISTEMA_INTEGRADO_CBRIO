@@ -2355,6 +2355,11 @@ export const voluntariado = {
   // Services
   // Dados do relatório de presença por período (server-side · cap-proof)
   relatorioDados: (desde, ate) => get(`/voluntariado/relatorio-dados?desde=${desde}&ate=${ate}`),
+  // Config do módulo · régua do Termômetro (limiares de check-ins por categoria)
+  config: {
+    get: () => get('/voluntariado/config'),
+    update: (body) => put('/voluntariado/config', body),
+  },
   services: {
     list: () => get('/voluntariado/services'),
     upcoming: () => get('/voluntariado/services/upcoming'),
