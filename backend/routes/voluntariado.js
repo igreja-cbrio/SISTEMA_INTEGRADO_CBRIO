@@ -64,6 +64,51 @@ router.use(authenticate, authorizeModule('membresia', 1));
 router.use('/emails', require('./volEmails'));
 
 // ══════════════════════════════════════════════════════════════
+// CONFIG · régua do Termômetro (limiares de check-ins por categoria)
+// GET aberto (herda membresia>=1) · PUT exige voluntariado>=3.
+// ══════════════════════════════════════════════════════════════
+const VOL_CONFIG_DEFAULT = { muito_ativo_min: 8, regular_min: 4, pouco_ativo_min: 1, sobrecarga_limite: 8 };
+
+router.get('/config', async (req, res) => {
+  try {
+    const { data } = await supabase.from('vol_config').select('*').eq('id', 1).maybeSingle();
+    res.json({ ...VOL_CONFIG_DEFAULT, ...(data || {}) });
+  } catch (e) {
+    console.error('[vol/config get]', e.message);
+    res.json(VOL_CONFIG_DEFAULT); // degrada pros defaults · o termômetro nunca quebra
+  }
+});
+
+router.put('/config', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const toInt = (v, def) => {
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) && n >= 0 ? n : def;
+    };
+    const cfg = {
+      muito_ativo_min: toInt(req.body?.muito_ativo_min, VOL_CONFIG_DEFAULT.muito_ativo_min),
+      regular_min: toInt(req.body?.regular_min, VOL_CONFIG_DEFAULT.regular_min),
+      pouco_ativo_min: toInt(req.body?.pouco_ativo_min, VOL_CONFIG_DEFAULT.pouco_ativo_min),
+      sobrecarga_limite: toInt(req.body?.sobrecarga_limite, VOL_CONFIG_DEFAULT.sobrecarga_limite),
+    };
+    // Ordem coerente: muito_ativo_min >= regular_min >= pouco_ativo_min >= 1.
+    if (!(cfg.muito_ativo_min >= cfg.regular_min && cfg.regular_min >= cfg.pouco_ativo_min && cfg.pouco_ativo_min >= 1)) {
+      return res.status(400).json({ error: 'Os limites devem ser decrescentes: Muito Ativo ≥ Regular ≥ Pouco Ativo ≥ 1.' });
+    }
+    const { data, error } = await supabase
+      .from('vol_config')
+      .upsert({ id: 1, ...cfg, updated_at: new Date().toISOString(), updated_by: req.user?.id || null }, { onConflict: 'id' })
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[vol/config put]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a régua do termômetro' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // CONTROLE DE FREQUÊNCIA · histórico de serviços (planilha) + vínculo
 // "Quantas vezes serviu e em qual culto" · ativos/inativos (90 dias).
 // ══════════════════════════════════════════════════════════════
