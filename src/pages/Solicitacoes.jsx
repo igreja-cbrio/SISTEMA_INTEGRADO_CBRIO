@@ -865,8 +865,14 @@ function comQuemEsta(item) {
   switch (item.status) {
     case 'aguardando_aprovacao_origem': {
       if (item.aprovacao_origem_status === 'triagem') return `Em triagem · definindo o aprovador${suf}`;
-      const aprovadores = Array.isArray(item.aprovacao_origem_aprovadores)
-        ? item.aprovacao_origem_aprovadores.filter(Boolean) : [];
+      // Quem está pendente AGORA (origem → 2º carimbo). O backend já resolve
+      // isso em aprovacao_pendente_de; se a origem já foi aprovada, mostra o 2º
+      // aprovador (Gestão ou, no caso de TI, Diego/Matheus) — não o diretor que
+      // já carimbou.
+      const pendentes = Array.isArray(item.aprovacao_pendente_de)
+        ? item.aprovacao_pendente_de.filter(Boolean) : [];
+      const aprovadores = pendentes.length ? pendentes : (Array.isArray(item.aprovacao_origem_aprovadores)
+        ? item.aprovacao_origem_aprovadores.filter(Boolean) : []);
       const quem = aprovadores.length
         ? aprovadores.join(' ou ')
         : (item.aprovacao_origem_diretor?.name || 'diretor de origem');
@@ -1717,12 +1723,17 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
           <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
         </div>
       )}
-      {item.status === 'aguardando_aprovacao_origem' && (
-        <div className="mt-2 flex items-center gap-1 text-[10px] text-violet-700 dark:text-violet-400 bg-violet-500/10 border border-violet-500/30 rounded px-2 py-1">
-          <Clock className="h-3 w-3 shrink-0" />
-          <span>Aguardando aprovação{Array.isArray(item.aprovacao_origem_aprovadores) && item.aprovacao_origem_aprovadores.length ? ` de ${item.aprovacao_origem_aprovadores.join(' ou ')}` : ' de origem'}</span>
-        </div>
-      )}
+      {item.status === 'aguardando_aprovacao_origem' && (() => {
+        const pend = (Array.isArray(item.aprovacao_pendente_de) && item.aprovacao_pendente_de.length
+          ? item.aprovacao_pendente_de
+          : (Array.isArray(item.aprovacao_origem_aprovadores) ? item.aprovacao_origem_aprovadores : [])).filter(Boolean);
+        return (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-violet-700 dark:text-violet-400 bg-violet-500/10 border border-violet-500/30 rounded px-2 py-1">
+            <Clock className="h-3 w-3 shrink-0" />
+            <span>Aguardando aprovação{pend.length ? ` de ${pend.join(' ou ')}` : ''}</span>
+          </div>
+        );
+      })()}
       {isAdmin && item.status === 'pendente' && (
         <div className="flex gap-1.5 mt-2 pt-2 border-t border-border">
           <Button size="sm" variant="outline" className="h-6 text-[10px] flex-1" onClick={e => { e.stopPropagation(); onStatusChange(item.id, 'em_analise'); }}>
