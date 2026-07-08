@@ -1469,7 +1469,10 @@ export const totemKids = {
     // URL pra abrir e baixar modelo (browser cuida da auth via cookie/header)
     modeloImportacaoUrl: () => `${API}/totem-kids/criancas/modelo-importacao`,
     // Sync com a API do Planning Center Check-Ins (upsert idempotente)
-    syncPco: (data = {}) => post('/totem-kids/sync-pco', data),
+    // Sync do Planning Center pagina por TODAS as pessoas do PCO → leva minutos.
+    // Timeout de 5 min (a função serverless tem maxDuration 300s) pra a UI não
+    // abortar em 30s achando que deu erro (a sync continua e conclui no servidor).
+    syncPco: (data = {}) => post('/totem-kids/sync-pco', data, { timeout: 300_000 }),
     depurarInativos: (meses = 6) => post('/totem-kids/criancas/depurar-inativos', { meses }),
   },
   checkin: {
