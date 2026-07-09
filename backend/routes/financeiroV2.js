@@ -2144,6 +2144,113 @@ Regras:
   }
 });
 
+// ── Análise APROFUNDADA (sob demanda · botão no card do assistente) ─────────
+// Diferente do resumo (1-2 frases · Haiku), aqui a IA recebe a série mensal
+// dos 2 anos + nº de semanas de contribuição (qua→ter) por mês + saúde + YTD
+// e explica CAUSAS (ex.: mês arrecadou mais porque teve 5 semanas), riscos e
+// recomendações. Modelo maior, só quando o usuário clica. Cache 30 min.
+const _analiseCache = new Map(); // inicio-semana -> { texto, ts }
+
+router.get('/dashboard/analise-profunda', async (req, res) => {
+  const fmt = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const delta = (a, b) => Number(b) > 0 ? ((Number(a) - Number(b)) / Number(b)) * 100 : null;
+  const pct = (v) => v == null ? null : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`;
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: 'IA não configurada no servidor' });
+    }
+    const dataRef = req.query.semana || new Date().toISOString().slice(0, 10);
+    const { data: rangeRow } = await supabase.rpc('fin_semana_qua_ter', { p_data: dataRef });
+    const range = (rangeRow || [])[0];
+    if (!range) return res.status(400).json({ error: 'Semana inválida' });
+
+    const hit = _analiseCache.get(range.inicio);
+    if (hit && Date.now() - hit.ts < ASSISTENTE_TTL_MS) {
+      return res.json({ texto: hit.texto, cached: true });
+    }
+
+    const ano = Number(range.inicio.slice(0, 4));
+    const anteriorIni = new Date(range.inicio); anteriorIni.setDate(anteriorIni.getDate() - 7);
+
+    const [resumoAtual, resumoAnt, ytdRes, saudeRes, mensalRes] = await Promise.all([
+      supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', range.inicio).maybeSingle(),
+      supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', anteriorIni.toISOString().slice(0, 10)).maybeSingle(),
+      supabase.from('vw_fin_ano_acumulado').select('*').in('ano', [ano, ano - 1]),
+      supabase.rpc('fin_saude_financeira', { p_ano: ano }),
+      supabase.from('vw_fin_arrecadacao_mensal')
+        .select('ano, mes, receita, despesa, resultado')
+        .in('ano', [ano, ano - 1]).order('mes', { ascending: true }),
+    ]);
+
+    const r = resumoAtual.data || {};
+    const ra = resumoAnt.data || {};
+    const ytdMap = new Map((ytdRes.data || []).map(x => [x.ano, x]));
+    const yA = ytdMap.get(ano) || {};
+    const yB = ytdMap.get(ano - 1) || {};
+    const saude = saudeRes.data || {};
+
+    // Série mensal dos 2 anos com nº de semanas de contribuição (qua→ter)
+    const mensal = (mensalRes.data || []).map(m => {
+      const [aY, aM] = String(m.mes).split('-').map(Number);
+      return {
+        mes: m.mes,
+        receita: fmt(m.receita),
+        despesa: fmt(m.despesa),
+        resultado: fmt(m.resultado),
+        semanas_de_contribuicao: contarQuartasNoMes(aY, aM),
+      };
+    });
+
+    const dados = {
+      semana_analisada: `${range.inicio} a ${range.fim}`,
+      semana: {
+        receita: fmt(r.receita_total), presenca: Number(r.total_presencial || 0),
+        ticket_medio: fmt(r.ticket_medio_presencial),
+        variacao_receita_vs_semana_anterior: pct(delta(r.receita_total, ra.receita_total)),
+        variacao_presenca_vs_semana_anterior: pct(delta(r.total_presencial, ra.total_presencial)),
+      },
+      acumulado_ano: {
+        [ano]: { receita: fmt(yA.receita_ytd), despesa: fmt(yA.despesa_ytd), resultado: fmt(yA.resultado_ytd) },
+        [ano - 1]: { receita: fmt(yB.receita_ytd), despesa: fmt(yB.despesa_ytd), resultado: fmt(yB.resultado_ytd) },
+        variacao_receita_yoy: pct(delta(yA.receita_ytd, yB.receita_ytd)),
+      },
+      saude: {
+        resultado_do_mes: fmt(saude.resultado_mes),
+        folha_pct_da_receita: `${Number(saude.pct_folha || 0).toFixed(1)}%`,
+        concentracao_top20pct_doadores: `${Number(saude.concentracao_top20pct_pct || 0).toFixed(1)}%`,
+      },
+      serie_mensal_2_anos: mensal,
+      nota_semanas: 'A semana de contribuição da igreja vai de quarta a terça. Meses com 5 semanas de contribuição arrecadam naturalmente mais que meses com 4 — considere isso ao comparar meses.',
+    };
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic();
+    const system = `Você é o analista financeiro sênior da igreja CBRio, escrevendo pro gestor.
+Com base nos dados JÁ CALCULADOS, escreva uma análise aprofundada e ACIONÁVEL.
+Regras:
+- Português do Brasil com acentuação correta. Sem saudação, sem emojis, sem markdown de títulos (#).
+- Estruture em parágrafos curtos e bullets começando com "• " quando listar.
+- EXPLIQUE CAUSAS: se um mês arrecadou mais/menos, verifique se teve 5 semanas de contribuição (campo semanas_de_contribuicao) e diga isso explicitamente; compare com o mesmo mês do ano anterior; comente ticket médio vs. presença.
+- Aponte riscos (concentração de doadores, folha, tendência) e 2-3 recomendações práticas no final.
+- Use SOMENTE os números fornecidos. NUNCA invente valores.
+- Entre 150 e 300 palavras.`;
+    const resp = await client.messages.create({
+      model: 'claude-sonnet-5',
+      max_tokens: 1200,
+      system,
+      messages: [{ role: 'user', content: `Dados do dashboard financeiro:\n${JSON.stringify(dados, null, 2)}` }],
+    });
+    const texto = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    if (!texto) return res.status(502).json({ error: 'A IA não retornou análise' });
+
+    _analiseCache.set(range.inicio, { texto, ts: Date.now() });
+    res.json({ texto, semana: `${range.inicio} a ${range.fim}` });
+  } catch (e) {
+    console.error('[FIN-V2] analise-profunda:', e);
+    res.status(500).json({ error: e.message || 'Erro na análise aprofundada' });
+  }
+});
+
 // ====================================================================
 // METAS FINANCEIRAS · PR B do roadmap
 // ====================================================================
@@ -2340,6 +2447,18 @@ router.get('/freq-arrecadacao-semanal', async (req, res) => {
 // ARRECADAÇÃO MENSAL POR ANO · 2026-05-28
 // Retorna os 12 meses (Jan-Dez) do ano + acumulado · filtra empréstimo
 // ====================================================================
+// Nº de quartas-feiras num mês calendário = nº de semanas de contribuição
+// (qua→ter) daquele mês. 4 na maioria; 5 em ~4 meses/ano.
+function contarQuartasNoMes(ano, mes1a12) {
+  let n = 0;
+  const d = new Date(Date.UTC(ano, mes1a12 - 1, 1));
+  while (d.getUTCMonth() === mes1a12 - 1) {
+    if (d.getUTCDay() === 3) n++;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return n;
+}
+
 router.get('/arrecadacao-anual', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
@@ -2404,6 +2523,10 @@ router.get('/arrecadacao-anual', async (req, res) => {
         resultado: Number(linha?.resultado || 0),
         acumulado,
         qtd: Number(linha?.qtd || 0),
+        // Semanas de contribuição (qua→ter) do mês = nº de QUARTAS no mês
+        // calendário (a semana da igreja pertence ao mês da sua quarta-feira).
+        // Meses com 5 semanas arrecadam naturalmente mais — o front sinaliza.
+        semanas_qua_ter: contarQuartasNoMes(ano, m),
       });
     }
 

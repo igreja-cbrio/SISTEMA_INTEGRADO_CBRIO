@@ -1004,6 +1004,8 @@ export const financeiroV2 = {
       if (semana) qs.set('semana', semana);
       return get(`/financeiro-v2/dashboard/assistente?${qs}`);
     },
+    // Análise aprofundada por IA (sob demanda · modelo maior · pode demorar)
+    analiseProfunda: (semana) => request('/financeiro-v2/dashboard/analise-profunda' + (semana ? `?semana=${semana}` : ''), { timeout: 120_000 }),
   },
   metas: {
     list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
