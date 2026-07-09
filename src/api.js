@@ -1926,8 +1926,23 @@ export const gruposPublic = {
       body: JSON.stringify(data),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    if (!r.ok) {
+      // Preserva os campos estruturados (codigo:'possivel_duplicado', onde, ...)
+      // pro form tratar o "é você?" sem perder o contexto.
+      const error = new Error(j.error || `HTTP ${r.status}`);
+      Object.assign(error, j);
+      error.status = r.status;
+      throw error;
+    }
     return j;
+  },
+  uploadFoto: async (file) => {
+    const fd = new FormData();
+    fd.append('foto', file);
+    const r = await fetch(`${API}/public/grupos/upload-foto`, { method: 'POST', body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao enviar foto');
+    return j; // { foto_url }
   },
 };
 

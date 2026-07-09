@@ -1,7 +1,41 @@
 // Endpoints públicos (sem auth) para o formulário de cadastro / inscrição
 // poder buscar grupos. Read-only — sem mutation aqui.
 const router = require('express').Router();
+const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 const { supabase } = require('../utils/supabase');
+const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
+const {
+  normalizarCpf, normalizarTelefone, normalizarEmail, nomesMesmaPessoa,
+  acharMembroGuardado,
+} = require('../services/membroMatch');
+
+// ── Rate limit dedicado do totem de inscrição de grupos ──
+// O formulário roda num navegador quiosque no lounge (1 IP) e, num domingo
+// cheio, dezenas de pessoas se inscrevem pela MESMA rede → o teto público
+// global (30/15min por IP) travaria o totem no meio do culto. Aqui é generoso
+// e configurável (mesma ideia do NPS público). O mount em server.js coloca
+// /api/public/grupos ANTES do publicLimiter estrito e o isenta do teto global,
+// então este é o único limiter que governa as rotas de grupos públicos.
+const totemLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.GRUPOS_PUBLIC_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 300 : 5000),
+  message: { error: 'Muitas tentativas em pouco tempo. Aguarde um instante e tente de novo.' },
+  skip: () => process.env.NODE_ENV !== 'production',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+router.use(totemLimiter);
+
+// Upload de foto (opcional) — memory storage, mesmo padrão do form de membresia.
+const uploadMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Formato de imagem não suportado.'));
+  },
+});
 
 const RATE_HEADERS = ['x-forwarded-for'];
 function getIp(req) {
@@ -189,10 +223,138 @@ function cpfValido(cpfMasked) {
 }
 function ehEmailValido(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || ''); }
 
+// Só aceita foto_url que o NOSSO /upload-foto devolveu (bucket público
+// fotos-membros do próprio Supabase) — nunca uma URL externa arbitrária, que
+// viraria um recurso de 3º renderizado depois no ERP autenticado do líder.
+function fotoUrlValida(u) {
+  if (!u || typeof u !== 'string') return false;
+  const s = u.slice(0, 1000);
+  const raiz = process.env.SUPABASE_URL
+    ? `${process.env.SUPABASE_URL.replace(/\/+$/, '')}/storage/v1/object/public/fotos-membros/`
+    : null;
+  if (raiz) return s.startsWith(raiz);
+  return /^https:\/\/[^/]+\/storage\/v1\/object\/public\/fotos-membros\//.test(s);
+}
+
+// Pagina qualquer SELECT contornando o cap de 1000 linhas do PostgREST.
+async function fetchAllRange(tabela, sel, filtros = []) {
+  let todos = [], from = 0; const size = 1000;
+  for (;;) {
+    let q = supabase.from(tabela).select(sel).range(from, from + size - 1);
+    for (const [fn, ...args] of filtros) q = q[fn](...args);
+    const { data, error } = await q;
+    if (error) throw error;
+    todos = todos.concat(data || []);
+    if (!data || data.length < size) break;
+    from += size;
+  }
+  return todos;
+}
+
+// matchInfo · aplica a regra de dedup do Marcos entre a pessoa que está se
+// inscrevendo (inc) e um cadastro já existente (cand): DISPARA se o CPF é
+// exatamente igual OU se pelo menos 2 de {nome, telefone, e-mail} batem.
+// O nome usa a comparação conservadora (dice ≥0.90) do membroMatch, então
+// homônimos frouxos não contam. Telefone/e-mail sozinhos (1 chave fraca) não
+// disparam — é o caso da família que compartilha número.
+function matchInfo(inc, cand) {
+  const cpfI = normalizarCpf(inc.cpf), cpfC = normalizarCpf(cand.cpf);
+  const telI = normalizarTelefone(inc.telefone), telC = normalizarTelefone(cand.telefone);
+  const emI = normalizarEmail(inc.email), emC = normalizarEmail(cand.email);
+  const cpfMatch = !!(cpfI && cpfC && cpfI === cpfC);
+  const motivos = []; let fracos = 0;
+  if (cpfMatch) motivos.push('cpf');
+  if (telI && telC && telI === telC) { fracos++; motivos.push('telefone'); }
+  if (emI && emC && emI === emC) { fracos++; motivos.push('email'); }
+  if (inc.nome && cand.nome && nomesMesmaPessoa(inc.nome, cand.nome)) { fracos++; motivos.push('nome'); }
+  return { dispara: cpfMatch || fracos >= 2, motivos };
+}
+
+// checarDuplicataInscricao · procura, DENTRO do grupo alvo, alguém que já bata
+// com a pessoa (roster ativo OU pedido pendente). Retorna o tipo do achado
+// ('membro_ativo' | 'pedido_pendente') pra alimentar o "é você?"; null se nada.
+async function checarDuplicataInscricao(grupoId, inc) {
+  // 1) roster ativo do grupo (com dados do membro pra comparar por chave)
+  const links = await fetchAllRange('mem_grupo_membros', 'membro_id',
+    [['eq', 'grupo_id', grupoId], ['is', 'saiu_em', null]]);
+  const ids = [...new Set(links.map(l => l.membro_id).filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data: membros } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, telefone, email').in('id', ids.slice(i, i + 200));
+    for (const m of (membros || [])) {
+      if (matchInfo(inc, m).dispara) return { tipo: 'membro_ativo' };
+    }
+  }
+  // 2) pedidos pendentes do grupo (snapshot nome/tel/email; CPF vem do vínculo)
+  const peds = await fetchAllRange('mem_grupo_pedidos',
+    'id, nome, email, telefone, membro_id, cadastro_pendente_id',
+    [['eq', 'grupo_id', grupoId], ['eq', 'status', 'pendente']]);
+  for (const p of peds) {
+    let cand = { nome: p.nome, email: p.email, telefone: p.telefone, cpf: null };
+    if (p.membro_id) {
+      const { data } = await supabase.from('mem_membros')
+        .select('nome, cpf, telefone, email').eq('id', p.membro_id).maybeSingle();
+      if (data) cand = { nome: data.nome || p.nome, cpf: data.cpf, telefone: data.telefone || p.telefone, email: data.email || p.email };
+    } else if (p.cadastro_pendente_id) {
+      const { data } = await supabase.from('mem_cadastros_pendentes')
+        .select('nome, cpf, telefone, email').eq('id', p.cadastro_pendente_id).maybeSingle();
+      if (data) cand = { nome: data.nome || p.nome, cpf: data.cpf, telefone: data.telefone || p.telefone, email: data.email || p.email };
+    }
+    if (matchInfo(inc, cand).dispara) return { tipo: 'pedido_pendente', pedido_id: p.id };
+  }
+  return null;
+}
+
+// Traduz erros do multer (formato não suportado / >5MB) em 400 JSON claro —
+// senão eles pulam o handler e caem no error handler global (500 genérico).
+function uploadFotoMw(req, res, next) {
+  uploadMw.single('foto')(req, res, (err) => {
+    if (!err) return next();
+    const msg = err instanceof multer.MulterError
+      ? (err.code === 'LIMIT_FILE_SIZE' ? 'Imagem muito grande (máximo 5MB).' : 'Falha no envio da imagem.')
+      : (err.message || 'Formato de imagem não suportado.');
+    return res.status(400).json({ error: msg });
+  });
+}
+
+// POST /api/public/grupos/upload-foto — foto opcional (mesmo bucket do form de
+// membresia). Governado pelo totemLimiter (generoso) pro totem não travar.
+router.post('/upload-foto', uploadFotoMw, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Imagem não fornecida' });
+    const id = `grp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const ext = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
+    const path = `cadastros/${id}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from('fotos-membros')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) throw upErr;
+
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+
+    // Espelha no SharePoint "CRM e Pessoas" (foto de pessoa · mesmo módulo do
+    // form de membresia) em background · não bloqueia a resposta.
+    if (SHAREPOINT_CONFIGURED) {
+      uploadModuleFile('membresia', 'Cadastros_Publicos', `${id}.${ext}`, req.file.buffer)
+        .then(() => console.log(`[public grupos] foto sincronizada com SharePoint: ${id}`))
+        .catch(spErr => console.error('[public grupos] SharePoint sync (nao-critico):', spErr.message));
+    }
+
+    res.json({ foto_url: urlData.publicUrl });
+  } catch (e) {
+    console.error('[public grupos upload-foto]', e.message);
+    res.status(500).json({ error: 'Erro ao enviar foto' });
+  }
+});
+
 // POST /api/public/grupos/inscrever
 // Formulário público dedicado (acessado pelo QR code de inscrição).
-// Cria mem_cadastros_pendentes (se a pessoa ainda não for membro) +
-// mem_grupo_pedidos com origem='formulario_publico'.
+// Roteia a pessoa pro membro existente (matcher forte) ou cria
+// mem_cadastros_pendentes; sempre cria mem_grupo_pedidos (origem='formulario_publico').
+// Anti-duplicata "é você?": se detecta cadastro parecido NESTE grupo, devolve
+// 409 { codigo:'possivel_duplicado' } em vez de criar — o front confirma e
+// reenvia com sou_eu:true (liga ao existente) ou confirmar_novo:true (cria).
 router.post('/inscrever', async (req, res) => {
   try {
     const {
@@ -203,9 +365,12 @@ router.post('/inscrever', async (req, res) => {
       telefone,
       data_nascimento,
       observacao,
+      foto_url,
       aceita_termos,
       consentimento_texto,
-      website, // honeypot
+      website,        // honeypot
+      sou_eu,         // confirmação "é você?" → liga ao existente (não duplica)
+      confirmar_novo, // confirmação "não sou eu" → cria mesmo assim
     } = req.body || {};
 
     if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
@@ -213,20 +378,14 @@ router.post('/inscrever', async (req, res) => {
     if (!grupo_id) return res.status(400).json({ error: 'Grupo obrigatório.' });
     if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Nome obrigatório (min 3 caracteres).' });
     if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Celular obrigatório.' });
-    if (!cpf || !cpfValido(cpf)) return res.status(400).json({ error: 'CPF invalido.' });
-    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail invalido.' });
-    if (!aceita_termos) return res.status(400).json({ error: 'E necessário aceitar os termos.' });
+    // CPF agora é OPCIONAL (ajuda no dedup) · valida o formato só se preenchido.
+    if (cpf && !cpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido.' });
+    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido.' });
+    if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.' });
 
-    const cpfLimpo = soDigitos(cpf);
+    const cpfLimpo = cpf ? soDigitos(cpf) : null;
     const emailLimpo = email ? email.trim().toLowerCase() : null;
-
-    // Verifica se já existe membro pelo CPF (evita duplicar cadastros)
-    let membroId = null;
-    if (cpfLimpo) {
-      const { data: m } = await supabase.from('mem_membros')
-        .select('id').eq('cpf', cpfLimpo).eq('active', true).maybeSingle();
-      if (m) membroId = m.id;
-    }
+    const fotoUrl = fotoUrlValida(foto_url) ? String(foto_url).slice(0, 1000) : null;
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
@@ -247,6 +406,67 @@ router.post('/inscrever', async (req, res) => {
       }
     }
 
+    const incoming = { nome: nome.trim(), cpf: cpfLimpo, telefone, email: emailLimpo };
+
+    // Roteia pro membro já existente. Quando a pessoa afirmou "não sou eu"
+    // (confirmar_novo), liga SÓ por CPF (sinal individual) — e-mail/telefone/
+    // nome são deniáveis e a família os compartilha.
+    const achado = await acharMembroGuardado(
+      { cpf: cpfLimpo, email: emailLimpo, telefone, nome: nome.trim(), dataNascimento: data_nascimento || null },
+      { soChaveForte: !!confirmar_novo },
+    );
+    let membroId = achado?.membro_id || null;
+
+    // Resposta amigável de "já existe" — usada no sou_eu e quando o CPF já tem
+    // participação/pedido, pra o modal "é você?" sempre ter uma saída (sem loop).
+    const jaExiste = (tipo) => tipo === 'membro_ativo'
+      ? res.json({ ok: true, ja_membro: true, mensagem: 'Você já participa deste grupo. Nos vemos no encontro!' })
+      : res.json({ ok: true, ja_pedido: true, mensagem: 'Seu pedido já está registrado — o líder vai te chamar em breve.' });
+
+    // Anti-duplicata. Duas fontes complementares:
+    //  (a) DIRETA por membro resolvido — casa exatamente com o índice único
+    //      (grupo,membro) do pedido e com o roster, cobrindo os matches que o
+    //      acharMembroGuardado faz por chave que o scan fuzzy não pontua (e-mail
+    //      sozinho, nascimento+nome). É o que evita o 409 no INSERT (loop do modal).
+    //  (b) FUZZY (nome/telefone/e-mail ≥2, ou CPF) contra roster+pedidos do grupo
+    //      — pega reenvio de NÃO-membro / match fraco. Pulada no confirmar_novo.
+    let dup = null;
+    if (membroId) {
+      const { data: ativo } = await supabase.from('mem_grupo_membros')
+        .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).is('saiu_em', null).limit(1);
+      if (ativo && ativo.length) dup = { tipo: 'membro_ativo' };
+      else {
+        const { data: ped } = await supabase.from('mem_grupo_pedidos')
+          .select('id').eq('grupo_id', grupo_id).eq('membro_id', membroId).eq('status', 'pendente').limit(1);
+        if (ped && ped.length) dup = { tipo: 'pedido_pendente' };
+      }
+    }
+    if (!dup && !confirmar_novo) {
+      dup = await checarDuplicataInscricao(grupo_id, incoming);
+    }
+
+    if (dup) {
+      // "Sim, sou eu" OU um CPF que já tem participação/pedido → não duplica.
+      // (Sob confirmar_novo só se chega aqui pelo check direto por CPF: mesmo
+      // "não sou eu" não cria 2 pedidos do MESMO CPF no mesmo grupo.)
+      if (sou_eu === true || confirmar_novo === true) return jaExiste(dup.tipo);
+      return res.status(409).json({
+        codigo: 'possivel_duplicado',
+        onde: dup.tipo,
+        error: dup.tipo === 'membro_ativo'
+          ? 'Parece que você já participa deste grupo.'
+          : 'Já recebemos um pedido parecido para este grupo.',
+      });
+    }
+
+    // Já é membro e a foto veio (e ele ainda não tem) → aproveita o reforço visual.
+    if (membroId && fotoUrl) {
+      const { data: mem } = await supabase.from('mem_membros').select('foto_url').eq('id', membroId).maybeSingle();
+      if (mem && !mem.foto_url) {
+        await supabase.from('mem_membros').update({ foto_url: fotoUrl }).eq('id', membroId);
+      }
+    }
+
     let cadastroPendenteId = null;
     if (!membroId) {
       // Cria cadastro pendente
@@ -258,6 +478,7 @@ router.post('/inscrever', async (req, res) => {
         email: emailLimpo,
         telefone: telefone || null,
         data_nascimento: data_nascimento || null,
+        foto_url: fotoUrl,
         origem: 'qr_code',
         aceita_termos: !!aceita_termos,
         aceita_contato: true,
@@ -288,10 +509,10 @@ router.post('/inscrever', async (req, res) => {
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
     if (ePed) {
-      // 23505 = conflito (já existe pedido pendente)
-      if (ePed.code === '23505') {
-        return res.status(409).json({ error: 'Você já tem um pedido pendente para este grupo.' });
-      }
+      // 23505 = corrida: um pedido do mesmo membro neste grupo surgiu entre o
+      // check direto e o INSERT. Já existe → responde amigável (não reabre o
+      // "é você?", que ficaria em loop se devolvêssemos 409 aqui).
+      if (ePed.code === '23505') return jaExiste('pedido_pendente');
       console.error('[public grupos inscrever] pedido:', ePed.message);
       return res.status(500).json({ error: 'Erro ao registrar pedido.' });
     }

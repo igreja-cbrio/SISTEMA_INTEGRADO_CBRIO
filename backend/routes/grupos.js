@@ -1112,9 +1112,17 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
         } else {
           const r = await acharOuCriarGuardado({
             cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
-            extra: { data_nascimento: cad.data_nascimento || null },
+            extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null },
           });
           membroId = r.membro_id;
+        }
+        // Carrega a foto do cadastro público pro membro (F1) quando ele ainda
+        // não tem — vale tanto pro membro recém-criado quanto pro ligado por dedup.
+        if (cad.foto_url && membroId) {
+          const { data: mem } = await supabase.from('mem_membros').select('foto_url').eq('id', membroId).maybeSingle();
+          if (mem && !mem.foto_url) {
+            await supabase.from('mem_membros').update({ foto_url: cad.foto_url }).eq('id', membroId);
+          }
         }
         // Marca cadastro como aprovado
         await supabase.from('mem_cadastros_pendentes')
@@ -1126,16 +1134,19 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
       return res.status(400).json({ error: 'Pedido sem membro nem cadastro pendente valido' });
     }
 
-    // Fecha participação anterior do membro
-    await supabase.from('mem_grupo_membros')
-      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: 'Trocou de grupo via aprovação' })
-      .eq('membro_id', membroId).is('saiu_em', null);
-
-    // Cria nova participação
-    await supabase.from('mem_grupo_membros').insert({
-      grupo_id: pedido.grupo_id, membro_id: membroId,
-      entrou_em: new Date().toISOString().slice(0, 10),
-    });
+    // Multi-grupo é permitido (uma pessoa participa de vários grupos ao mesmo
+    // tempo), então aprovar um pedido NÃO fecha as participações da pessoa em
+    // outros grupos — só a inscreve NESTE grupo. Idempotente: se já houver um
+    // vínculo ativo neste grupo, não cria outro.
+    const { data: jaAtivo } = await supabase.from('mem_grupo_membros')
+      .select('id').eq('grupo_id', pedido.grupo_id).eq('membro_id', membroId)
+      .is('saiu_em', null).limit(1);
+    if (!jaAtivo || !jaAtivo.length) {
+      await supabase.from('mem_grupo_membros').insert({
+        grupo_id: pedido.grupo_id, membro_id: membroId,
+        entrou_em: new Date().toISOString().slice(0, 10),
+      });
+    }
 
     // Atualiza pedido
     await supabase.from('mem_grupo_pedidos').update({

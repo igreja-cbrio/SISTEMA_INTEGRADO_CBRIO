@@ -99,7 +99,7 @@ async function acharOuCriar({ cpf, email, telefone, nome, status = 'visitante' }
     const { data } = await supabase
       .from('mem_membros')
       .select('id')
-      .ilike('email', emailLc)
+      .ilike('email', escapePostgrestValue(emailLc))
       .limit(1);
     if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
   }
@@ -167,7 +167,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
   }
   if (emailLc) {
-    const { data } = await supabase.from('mem_membros').select('id').ilike('email', emailLc).limit(1);
+    const { data } = await supabase.from('mem_membros').select('id').ilike('email', escapePostgrestValue(emailLc)).limit(1);
     if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
   }
   if (tel && nome) {
@@ -198,6 +198,45 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   return { membro_id: data.id, created: true, matched_by: null };
 }
 
+// acharMembroGuardado · versão SÓ-LEITURA de acharOuCriarGuardado (NÃO cria).
+// Para pontos de entrada que querem apenas ROTEAR pro membro já existente sem
+// materializar um stub agora (ex.: inscrição pública de grupos, onde o membro
+// só vira membro na aprovação do líder). Mesma política conservadora de
+// acharOuCriarGuardado: cpf → email → telefone+nome → nascimento+nome → null.
+// NUNCA liga por telefone/e-mail sozinho (família compartilha o número).
+// `soChaveForte`: quando true, liga SÓ por CPF exato (pula e-mail, telefone+nome
+//   e nascimento+nome). Usado quando a pessoa afirma "não sou eu" no dedup — aí
+//   nenhum sinal deniável (e-mail/telefone/nome, que a família compartilha) pode
+//   ligá-la a outro cadastro; só o CPF, que é individual, resolve.
+async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento } = {}, { soChaveForte = false } = {}) {
+  const cpf11 = normalizarCpf(cpf);
+  const emailLc = normalizarEmail(email);
+  const tel = normalizarTelefone(telefone);
+  const nasc = dataNascimento || null;
+
+  if (cpf11) {
+    const { data } = await supabase.from('mem_membros').select('id').eq('cpf', cpf11).maybeSingle();
+    if (data?.id) return { membro_id: data.id, matched_by: 'cpf' };
+  }
+  if (soChaveForte) return null;
+  if (emailLc) {
+    const { data } = await supabase.from('mem_membros').select('id').ilike('email', escapePostgrestValue(emailLc)).limit(1);
+    if (data && data[0]?.id) return { membro_id: data[0].id, matched_by: 'email' };
+  }
+  if (tel && nome) {
+    const cands = await buscarCandidatos({ telefone }, { limit: 8 });
+    const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
+    if (hit) return { membro_id: hit.id, matched_by: 'telefone+nome' };
+  }
+  if (nasc && nome) {
+    const { data } = await supabase.from('mem_membros')
+      .select('id, nome').eq('data_nascimento', nasc).is('deleted_at', null).limit(30);
+    const hit = (data || []).find((c) => nomesMesmaPessoa(c.nome, nome));
+    if (hit) return { membro_id: hit.id, matched_by: 'nome+nascimento' };
+  }
+  return null;
+}
+
 module.exports = {
   normalizarCpf,
   normalizarTelefone,
@@ -207,4 +246,5 @@ module.exports = {
   buscarCandidatos,
   acharOuCriar,
   acharOuCriarGuardado,
+  acharMembroGuardado,
 };
