@@ -164,6 +164,8 @@ export default function EventoExternoDetalhe() {
         inscricao={inscSel}
         campos={ev.campos || []}
         premios={premiosGanhos(inscSel.id)}
+        eventoId={ev.id}
+        onSaved={(atualizada: any) => { setInscSel(atualizada); carregar(); }}
         onClose={() => setInscSel(null)}
       />
     )}
@@ -358,8 +360,64 @@ export default function EventoExternoDetalhe() {
 }
 
 // Pop-up com o detalhamento completo de UMA inscrição.
-function InscricaoDetalheDialog({ inscricao, campos, premios, onClose }: { inscricao: any; campos: any[]; premios: any[]; onClose: () => void }) {
+// Editor de resposta de "rede social" ("Rede · @handle" numa string só)
+const REDES_SOCIAIS_ADM = ['Instagram', 'Facebook', 'X (Twitter)', 'TikTok', 'YouTube', 'LinkedIn', 'Kwai', 'Outra'];
+function RedeSocialEdit({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const i = String(value || '').indexOf(' · ');
+  const rede = i >= 0 ? String(value).slice(0, i) : '';
+  const handle = i >= 0 ? String(value).slice(i + 3) : String(value || '');
+  const emit = (r: string, h: string) => onChange(r && h ? `${r} · ${h}` : (h || r || ''));
+  return (
+    <div className="flex gap-2">
+      <select value={rede} onChange={e => emit(e.target.value, handle)}
+        className="h-9 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-2 w-36 shrink-0">
+        <option value="">Rede…</option>
+        {REDES_SOCIAIS_ADM.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+      <Input value={handle} placeholder="@usuário ou link" onChange={e => emit(rede, e.target.value)} className="h-9" />
+    </div>
+  );
+}
+
+function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved, onClose }: {
+  inscricao: any; campos: any[]; premios: any[]; eventoId: string;
+  onSaved: (atualizada: any) => void; onClose: () => void;
+}) {
   const tel = String(inscricao.telefone || '').replace(/\D/g, '');
+  const [editando, setEditando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [form, setForm] = useState<{ nome: string; telefone: string; email: string; dados: Record<string, string> }>({ nome: '', telefone: '', email: '', dados: {} });
+
+  function entrarEdicao() {
+    setForm({
+      nome: inscricao.nome || '',
+      telefone: inscricao.telefone || '',
+      email: inscricao.email || '',
+      dados: Object.fromEntries(campos.filter((c: any) => c.tipo !== 'imagem').map((c: any) => {
+        const v = inscricao.dados?.[c.key];
+        return [c.key, Array.isArray(v) ? v.join(', ') : String(v ?? '')];
+      })),
+    });
+    setEditando(true);
+  }
+
+  async function salvar() {
+    if (form.nome.trim().length < 2) { toast.error('Nome inválido'); return; }
+    setSalvando(true);
+    try {
+      const atualizada = await api.atualizarInscricao(eventoId, inscricao.id, form);
+      toast.success('Inscrição atualizada');
+      setEditando(false);
+      onSaved(atualizada);
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao salvar');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  const setDado = (key: string, v: string) => setForm(f => ({ ...f, dados: { ...f.dados, [key]: v } }));
+
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-lg flex flex-col max-h-[88vh]">
@@ -369,60 +427,122 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, onClose }: { inscr
             <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 text-primary text-xs font-semibold px-2 py-0.5 shrink-0">
               <Ticket className="h-3 w-3" /> Nº {inscricao.numero_sorte}
             </span>
+            {!editando && (
+              <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={entrarEdicao}>
+                <Pencil className="h-3.5 w-3.5 mr-1" /> Editar
+              </Button>
+            )}
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div className="rounded-lg border border-border p-2.5">
-              <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">WhatsApp</div>
-              {inscricao.telefone ? (
-                <a href={`https://wa.me/55${tel}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-emerald-600 hover:text-emerald-700 font-medium">
-                  <MessageCircle className="h-4 w-4" /> {inscricao.telefone}
-                </a>
-              ) : <span className="text-muted-foreground">—</span>}
-            </div>
-            <div className="rounded-lg border border-border p-2.5">
-              <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">Inscrição feita em</div>
-              {inscricao.created_at ? new Date(inscricao.created_at).toLocaleString('pt-BR') : '—'}
-            </div>
-            {inscricao.email && (
-              <div className="rounded-lg border border-border p-2.5 sm:col-span-2">
-                <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">E-mail</div>
-                <span className="break-all">{inscricao.email}</span>
+          {editando ? (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="sm:col-span-2">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">Nome</div>
+                  <Input value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} className="h-9" />
+                </div>
+                <div>
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">WhatsApp</div>
+                  <Input value={form.telefone} inputMode="tel" onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))} className="h-9" />
+                </div>
+                <div>
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">E-mail</div>
+                  <Input value={form.email} type="email" onChange={e => setForm(f => ({ ...f, email: e.target.value }))} className="h-9" />
+                </div>
               </div>
-            )}
-          </div>
-
-          {premios.length > 0 && (
-            <div className="rounded-lg border border-primary/40 bg-primary/5 p-2.5">
-              <div className="text-[11px] text-primary uppercase tracking-wide mb-1 flex items-center gap-1"><Gift className="h-3 w-3" /> Ganhou no sorteio</div>
-              {premios.map((s: any) => (
-                <div key={s.id} className="text-sm font-medium">🎉 {s.premio || 'Prêmio'}</div>
-              ))}
-            </div>
-          )}
-
-          {campos.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Respostas do formulário</div>
-              {campos.map((c: any) => {
-                const v = inscricao.dados?.[c.key];
-                return (
-                  <div key={c.key} className="rounded-lg border border-border p-2.5">
-                    <div className="text-[11px] text-muted-foreground mb-0.5">{c.label}</div>
-                    {c.tipo === 'imagem' ? (
-                      v ? (
-                        <a href={v} target="_blank" rel="noreferrer" title="Abrir imagem em tamanho real">
-                          <img src={v} alt={c.label} className="max-h-40 w-auto max-w-full object-contain rounded border border-border" />
-                        </a>
-                      ) : <span className="text-muted-foreground">—</span>
-                    ) : (
-                      <div className="whitespace-pre-wrap break-words">{Array.isArray(v) ? v.join(', ') : (v || <span className="text-muted-foreground">—</span>)}</div>
-                    )}
+              {campos.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Respostas do formulário</div>
+                  {campos.map((c: any) => (
+                    <div key={c.key} className="rounded-lg border border-border p-2.5">
+                      <div className="text-[11px] text-muted-foreground mb-1">{c.label}</div>
+                      {c.tipo === 'imagem' ? (
+                        <span className="text-xs text-muted-foreground">Imagem não é editável aqui (mantida como está).</span>
+                      ) : c.tipo === 'rede_social' ? (
+                        <RedeSocialEdit value={form.dados[c.key] || ''} onChange={v => setDado(c.key, v)} />
+                      ) : (c.tipo === 'select' || c.tipo === 'escolha') ? (
+                        <select value={form.dados[c.key] || ''} onChange={e => setDado(c.key, e.target.value)}
+                          className="h-9 w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-2">
+                          <option value="">—</option>
+                          {(c.opcoes || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+                          {form.dados[c.key] && !(c.opcoes || []).includes(form.dados[c.key]) && (
+                            <option value={form.dados[c.key]}>{form.dados[c.key]}</option>
+                          )}
+                        </select>
+                      ) : c.tipo === 'textarea' ? (
+                        <textarea value={form.dados[c.key] || ''} onChange={e => setDado(c.key, e.target.value)}
+                          className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-sm min-h-[70px]" />
+                      ) : (
+                        <Input value={form.dados[c.key] || ''} onChange={e => setDado(c.key, e.target.value)} className="h-9"
+                          placeholder={c.tipo === 'multi' ? 'separe as opções por vírgula' : undefined} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={() => setEditando(false)} disabled={salvando}>Cancelar</Button>
+                <Button size="sm" onClick={salvar} disabled={salvando} className="bg-primary text-primary-foreground">
+                  {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Salvar
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="rounded-lg border border-border p-2.5">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">WhatsApp</div>
+                  {inscricao.telefone ? (
+                    <a href={`https://wa.me/55${tel}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-emerald-600 hover:text-emerald-700 font-medium">
+                      <MessageCircle className="h-4 w-4" /> {inscricao.telefone}
+                    </a>
+                  ) : <span className="text-muted-foreground">—</span>}
+                </div>
+                <div className="rounded-lg border border-border p-2.5">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">Inscrição feita em</div>
+                  {inscricao.created_at ? new Date(inscricao.created_at).toLocaleString('pt-BR') : '—'}
+                </div>
+                {inscricao.email && (
+                  <div className="rounded-lg border border-border p-2.5 sm:col-span-2">
+                    <div className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">E-mail</div>
+                    <span className="break-all">{inscricao.email}</span>
                   </div>
-                );
-              })}
-            </div>
+                )}
+              </div>
+
+              {premios.length > 0 && (
+                <div className="rounded-lg border border-primary/40 bg-primary/5 p-2.5">
+                  <div className="text-[11px] text-primary uppercase tracking-wide mb-1 flex items-center gap-1"><Gift className="h-3 w-3" /> Ganhou no sorteio</div>
+                  {premios.map((s: any) => (
+                    <div key={s.id} className="text-sm font-medium">🎉 {s.premio || 'Prêmio'}</div>
+                  ))}
+                </div>
+              )}
+
+              {campos.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Respostas do formulário</div>
+                  {campos.map((c: any) => {
+                    const v = inscricao.dados?.[c.key];
+                    return (
+                      <div key={c.key} className="rounded-lg border border-border p-2.5">
+                        <div className="text-[11px] text-muted-foreground mb-0.5">{c.label}</div>
+                        {c.tipo === 'imagem' ? (
+                          v ? (
+                            <a href={v} target="_blank" rel="noreferrer" title="Abrir imagem em tamanho real">
+                              <img src={v} alt={c.label} className="max-h-40 w-auto max-w-full object-contain rounded border border-border" />
+                            </a>
+                          ) : <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <div className="whitespace-pre-wrap break-words">{Array.isArray(v) ? v.join(', ') : (v || <span className="text-muted-foreground">—</span>)}</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
         </div>
       </DialogContent>
