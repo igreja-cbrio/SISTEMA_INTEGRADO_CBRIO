@@ -82,11 +82,8 @@ router.post('/checkin', authApp, limiterNormal, async (req, res) => {
     if (!service_type_id || !dataCheckin) {
       return res.status(400).json({ error: 'service_type_id e data são obrigatórios' });
     }
-    const { data: membro } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
+    // Vínculo do app é via profiles.membro_id (mem_membros não tem auth_user_id)
+    const membro = await resolveMembroApp(req);
 
     const { data, error } = await supabase
       .from('mem_checkins')
@@ -125,11 +122,7 @@ router.get('/grupos', limiterNormal, async (_req, res) => {
 // ── Meus grupos (autenticado) ─────────────────────────────────────────────
 router.get('/membro/grupos', authApp, async (req, res) => {
   try {
-    const { data: membro } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
+    const membro = await resolveMembroApp(req);
     if (!membro) return res.json([]);
 
     const { data: participacoes } = await supabase
@@ -147,10 +140,17 @@ router.get('/membro/grupos', authApp, async (req, res) => {
 // ── Perfil do membro (autenticado) ────────────────────────────────────────
 router.get('/membro/perfil', authApp, async (req, res) => {
   try {
+    // ⚠️ mem_membros NÃO tem coluna auth_user_id — o vínculo do app é via
+    // profiles.membro_id (fallback e-mail). Usar resolveMembroApp (padrão da
+    // casa) senão a query quebra na coluna inexistente e o perfil some / não
+    // salva ("Não foi possível salvar" no app).
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json(null);
+
     const { data } = await supabase
       .from('mem_membros')
       .select('id, nome, telefone, email, data_nascimento, endereco, situacao, foto_url, membro_desde')
-      .eq('auth_user_id', req.user.id)
+      .eq('id', membro.id)
       .maybeSingle();
 
     if (!data) return res.json(null);
@@ -179,11 +179,14 @@ router.put('/membro/perfil', authApp, async (req, res) => {
     const update  = Object.fromEntries(
       Object.entries(req.body).filter(([k]) => allowed.includes(k))
     );
+    // Campo de data vazio vira NULL (coluna date estoura com string '')
+    if ('data_nascimento' in update && !update.data_nascimento) update.data_nascimento = null;
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: 'Nenhum campo válido para atualizar' });
     }
-    const { data: membro } = await supabase
-      .from('mem_membros').select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    // Vínculo via profiles.membro_id (fallback e-mail) — mem_membros não tem
+    // auth_user_id. Sem isto o save 404 sempre ("Não foi possível salvar").
+    const membro = await resolveMembroApp(req);
     if (!membro) return res.status(404).json({ error: 'Membro não encontrado' });
 
     const { data, error } = await supabase
@@ -204,10 +207,15 @@ router.post('/membro/vincular', limiterStrict, authApp, async (req, res) => {
     }
     const cpfDigitos = cpf.replace(/\D/g, '');
 
+    // ⚠️ O vínculo do app é profiles.membro_id → mem_membros.id (mem_membros
+    // NÃO tem auth_user_id). A versão antiga lia/escrevia mem_membros.auth_user_id
+    // (coluna inexistente): a trava de segurança nunca disparava e o vínculo era
+    // um no-op silencioso (update numa coluna que não existe).
     const { data: membro } = await supabase
       .from('mem_membros')
-      .select('id, nome, cpf, data_nascimento, auth_user_id')
+      .select('id, nome, cpf, data_nascimento')
       .eq('cpf', cpfDigitos)
+      .is('deleted_at', null)
       .maybeSingle();
 
     if (!membro) {
@@ -226,19 +234,30 @@ router.post('/membro/vincular', limiterStrict, authApp, async (req, res) => {
       return res.status(400).json({ error: 'Data de nascimento não confere' });
     }
 
-    // SEGURANCA: nao permitir re-vincular um cadastro ja reivindicado por OUTRA
-    // conta. CPF+nascimento sao de baixa entropia (frequentemente vazados no BR);
-    // sem essa trava, quem adivinhasse esses dados sequestraria o cadastro de um
-    // membro ja vinculado. Idempotente se ja for o proprio usuario.
-    if (membro.auth_user_id && membro.auth_user_id !== req.user.id) {
+    // SEGURANÇA: não permitir reivindicar um cadastro já vinculado a OUTRA conta.
+    // CPF+nascimento são de baixa entropia (frequentemente vazados no BR); sem
+    // essa trava, quem adivinhasse esses dados sequestraria o cadastro de um
+    // membro já vinculado. Idempotente se já for o próprio usuário.
+    const { data: jaVinculado } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('membro_id', membro.id)
+      .neq('id', req.user.id)
+      .limit(1);
+    if (jaVinculado && jaVinculado.length > 0) {
       return res.status(409).json({ error: 'Este cadastro já está vinculado a outra conta. Fale com a secretaria.' });
     }
 
-    // Vincula
-    await supabase
-      .from('mem_membros')
-      .update({ auth_user_id: req.user.id })
-      .eq('id', membro.id);
+    // Vincula: grava profiles.membro_id do usuário logado. O profile já existe
+    // (handle_new_user cria no cadastro) → UPDATE direto, sem risco de NOT NULL.
+    const { data: linked, error: linkErr } = await supabase
+      .from('profiles')
+      .update({ membro_id: membro.id })
+      .eq('id', req.user.id)
+      .select('id')
+      .maybeSingle();
+    if (linkErr) throw linkErr;
+    if (!linked) return res.status(404).json({ error: 'Conta não encontrada. Saia e entre de novo.' });
 
     res.json({ ok: true, nome: membro.nome });
   } catch (e) {
