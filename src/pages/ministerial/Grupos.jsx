@@ -11,12 +11,13 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen, RefreshCw } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import PedidosGrupo from './PedidosGrupo';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
+import GruposRenovacao from './GruposRenovacao';
 import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
@@ -1326,6 +1327,7 @@ export default function Grupos() {
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {[
               { key: 'temporadas', label: 'Temporadas', Icon: Calendar },
+              { key: 'renovacao', label: 'Renovação', Icon: RefreshCw },
               { key: 'geocode', label: 'Endereços (validação no mapa)', Icon: Compass },
             ].map(st => {
               const ativo = configTab === st.key;
@@ -1342,7 +1344,7 @@ export default function Grupos() {
             })}
           </div>
           <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-            {configTab === 'temporadas' ? <TemporadasGrupos /> : <GruposGeocode />}
+            {configTab === 'temporadas' ? <TemporadasGrupos /> : configTab === 'renovacao' ? <GruposRenovacao /> : <GruposGeocode />}
           </div>
         </div>
       )}

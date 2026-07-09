@@ -532,6 +532,12 @@ export const grupos = {
   semRelato: () => get('/grupos/kpis/sem-relato'),
   listObservacoes: (grupoId) => get(`/grupos/${grupoId}/observacoes`),
   setObservacao: (grupoId, periodo, observacao) => put(`/grupos/${grupoId}/observacoes/${periodo}`, { observacao }),
+  renovacao: {
+    listar: (params) => get('/grupos/renovacao' + (params ? '?' + new URLSearchParams(params) : '')),
+    confirmar: (grupoDestinoId, itens) => post('/grupos/renovacao/confirmar', { grupo_destino_id: grupoDestinoId, itens }),
+    encerrar: (temporada) => post('/grupos/renovacao/encerrar', { temporada }),
+    reabrir: (temporada) => post('/grupos/renovacao/reabrir', { temporada }),
+  },
 };
 
 export const whatsapp = {

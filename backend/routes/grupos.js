@@ -1267,6 +1267,212 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
   } catch (e) { console.error('[Pedido rejeitar]', e.message); res.status(500).json({ error: 'Erro ao rejeitar pedido' }); }
 });
 
+// ══════════════════════════════════════════════════════════════════
+// RENOVAÇÃO DE TEMPORADA · confirmação de permanência entre temporadas
+//
+// Modelo (decisão do Marcos 2026-07-09): uma pessoa PODE estar em vários
+// grupos ao mesmo tempo. A duplicidade a evitar é ENTRE temporadas — quando
+// a temporada vira, os vínculos da anterior ficam "ativos" pra sempre.
+//
+// Fluxo: o líder confirma quem CONTINUA no grupo dele na temporada nova
+// (cria vínculo na temporada nova, sem fechar o da anterior). Ao virar a
+// temporada, "encerrar" fecha em bloco os vínculos da temporada anterior
+// (reversível). Deriva de mem_grupo_membros + mem_grupos.temporada/lider_id.
+//
+// (rotas /renovacao/* ANTES de /:id pra não colidir com o detalhe do grupo)
+// ══════════════════════════════════════════════════════════════════
+
+// GET /api/grupos/renovacao?de=<temporada>&para=<temporada>&lider_id=<opcional>
+// Blocos por líder: o roster da temporada anterior + o grupo da temporada nova,
+// marcando quem já foi renovado. Roster "pelo líder" (via lider_id do grupo).
+router.get('/renovacao', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    let { de, para, lider_id } = req.query;
+
+    const { data: temps } = await supabase.from('mem_temporadas')
+      .select('id, label, ano, numero, ativa').order('ano').order('numero');
+    const lista = temps || [];
+    if (!de) de = (lista.find(t => t.ativa) || {}).id || null;
+    if (!para && de) {
+      const idx = lista.findIndex(t => t.id === de);
+      para = idx >= 0 && lista[idx + 1] ? lista[idx + 1].id : null;
+    }
+    const tDe = lista.find(t => t.id === de) || (de ? { id: de, label: de } : null);
+    const tPara = lista.find(t => t.id === para) || (para ? { id: para, label: para } : null);
+    if (!de) return res.json({ de: null, para: tPara, blocos: [], resumo: null });
+
+    const { data: gruposDeRaw } = await supabase.from('mem_grupos')
+      .select('id, nome, codigo, lider_id').eq('temporada', de).eq('ativo', true);
+    let gruposPara = [];
+    if (para) {
+      const { data: gp } = await supabase.from('mem_grupos')
+        .select('id, nome, codigo, lider_id').eq('temporada', para).eq('ativo', true);
+      gruposPara = gp || [];
+    }
+    let gDe = gruposDeRaw || [];
+    if (lider_id) gDe = gDe.filter(g => g.lider_id === lider_id);
+
+    const carregarVinculos = async (ids) => {
+      if (!ids.length) return [];
+      let out = [], from = 0;
+      for (;;) {
+        const { data } = await supabase.from('mem_grupo_membros')
+          .select('grupo_id, membro_id, funcao')
+          .in('grupo_id', ids).is('saiu_em', null).is('deleted_at', null)
+          .range(from, from + 999);
+        out = out.concat(data || []);
+        if (!data || data.length < 1000) break;
+        from += 1000;
+      }
+      return out;
+    };
+    const vincDe = await carregarVinculos(gDe.map(g => g.id));
+    const vincPara = await carregarVinculos(gruposPara.map(g => g.id));
+
+    const membroIds = [...new Set([...vincDe, ...vincPara].map(v => v.membro_id))];
+    const membroById = {};
+    for (let i = 0; i < membroIds.length; i += 500) {
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, foto_url').in('id', membroIds.slice(i, i + 500));
+      (data || []).forEach(m => { membroById[m.id] = m; });
+    }
+
+    // já renovado = membro tem vínculo ativo em algum grupo da temporada nova do MESMO líder
+    const liderDoGrupoPara = {}; gruposPara.forEach(g => { liderDoGrupoPara[g.id] = g.lider_id; });
+    const renovadoPorLider = {};
+    vincPara.forEach(v => {
+      const lid = liderDoGrupoPara[v.grupo_id]; if (!lid) return;
+      (renovadoPorLider[lid] = renovadoPorLider[lid] || new Set()).add(v.membro_id);
+    });
+
+    const grupoDeById = {}; gDe.forEach(g => { grupoDeById[g.id] = g; });
+    const porLider = {};
+    gDe.forEach(g => {
+      const lid = g.lider_id || '(sem_lider)';
+      const b = (porLider[lid] = porLider[lid] || { grupos_de: {}, grupos_para: [] });
+      b.grupos_de[g.id] = { id: g.id, nome: g.nome, codigo: g.codigo, membros: [] };
+    });
+    vincDe.forEach(v => {
+      const g = grupoDeById[v.grupo_id]; if (!g) return;
+      const lid = g.lider_id || '(sem_lider)';
+      const gd = porLider[lid] && porLider[lid].grupos_de[v.grupo_id]; if (!gd) return;
+      const jaRen = !!(renovadoPorLider[lid] && renovadoPorLider[lid].has(v.membro_id));
+      gd.membros.push({
+        membro_id: v.membro_id,
+        nome: membroById[v.membro_id]?.nome || '—',
+        foto_url: membroById[v.membro_id]?.foto_url || null,
+        funcao: v.funcao || 'frequentador',
+        ja_renovado: jaRen,
+      });
+    });
+    gruposPara.forEach(g => {
+      const lid = g.lider_id || '(sem_lider)';
+      if (porLider[lid]) porLider[lid].grupos_para.push({ id: g.id, nome: g.nome, codigo: g.codigo });
+    });
+
+    const liderIds = Object.keys(porLider).filter(k => k !== '(sem_lider)');
+    const liderNome = {};
+    if (liderIds.length) {
+      const { data } = await supabase.from('mem_membros').select('id, nome').in('id', liderIds);
+      (data || []).forEach(m => { liderNome[m.id] = m.nome; });
+    }
+
+    const blocos = Object.entries(porLider).map(([lid, b]) => ({
+      lider: {
+        id: lid === '(sem_lider)' ? null : lid,
+        nome: lid === '(sem_lider)' ? 'Sem líder definido' : (liderNome[lid] || '—'),
+      },
+      grupos_de: Object.values(b.grupos_de).sort((a, c) => (a.nome || '').localeCompare(c.nome || '')),
+      grupos_para: b.grupos_para,
+    })).sort((a, b) => (a.lider.nome || '').localeCompare(b.lider.nome || ''));
+
+    let pendentes = 0, jaRenovados = 0;
+    blocos.forEach(b => b.grupos_de.forEach(g => g.membros.forEach(m => { m.ja_renovado ? jaRenovados++ : pendentes++; })));
+    const lideresSemPara = blocos.filter(b => b.lider.id && b.grupos_para.length === 0).length;
+
+    res.json({
+      de: tDe, para: tPara, blocos,
+      resumo: {
+        membros_de: new Set(vincDe.map(v => v.membro_id)).size,
+        vinculos_de: vincDe.length,
+        ja_renovados: jaRenovados, pendentes,
+        lideres_sem_grupo_para: lideresSemPara,
+      },
+    });
+  } catch (e) { console.error('[Grupos renovacao get]', e.message); res.status(500).json({ error: 'Erro ao carregar renovação' }); }
+});
+
+// POST /api/grupos/renovacao/confirmar — cria vínculos na temporada nova
+// body: { grupo_destino_id, itens: [{ membro_id, funcao? }] }. Idempotente.
+router.post('/renovacao/confirmar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { grupo_destino_id, itens } = req.body || {};
+    if (!grupo_destino_id || !Array.isArray(itens) || !itens.length) {
+      return res.status(400).json({ error: 'grupo_destino_id e itens são obrigatórios' });
+    }
+    const { data: existentes } = await supabase.from('mem_grupo_membros')
+      .select('membro_id').eq('grupo_id', grupo_destino_id).is('saiu_em', null).is('deleted_at', null);
+    const jaTem = new Set((existentes || []).map(v => v.membro_id));
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    const novos = itens
+      .filter(it => it && it.membro_id && !jaTem.has(it.membro_id))
+      .map(it => ({ grupo_id: grupo_destino_id, membro_id: it.membro_id, entrou_em: hoje, funcao: it.funcao || 'frequentador' }));
+
+    let criados = 0;
+    if (novos.length) {
+      const { error } = await supabase.from('mem_grupo_membros').insert(novos);
+      if (error) throw error;
+      criados = novos.length;
+    }
+    res.json({ criados, ja_existiam: itens.length - criados });
+  } catch (e) { console.error('[Grupos renovacao confirmar]', e.message); res.status(500).json({ error: 'Erro ao confirmar renovação' }); }
+});
+
+// POST /api/grupos/renovacao/encerrar — fecha em bloco os vínculos de uma temporada.
+// body: { temporada }. Reversível via /renovacao/reabrir. Nível 4.
+router.post('/renovacao/encerrar', authorizeModule('grupos', 4), async (req, res) => {
+  try {
+    const { temporada } = req.body || {};
+    if (!temporada) return res.status(400).json({ error: 'temporada obrigatória' });
+    const { data: grupos } = await supabase.from('mem_grupos').select('id').eq('temporada', temporada);
+    const ids = (grupos || []).map(g => g.id);
+    if (!ids.length) return res.json({ fechados: 0 });
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    const motivo = `Encerramento ${temporada}`;
+    let fechados = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const { count } = await supabase.from('mem_grupo_membros')
+        .select('id', { count: 'exact', head: true })
+        .in('grupo_id', lote).is('saiu_em', null).is('deleted_at', null);
+      fechados += count || 0;
+      const { error } = await supabase.from('mem_grupo_membros')
+        .update({ saiu_em: hoje, motivo_saida: motivo })
+        .in('grupo_id', lote).is('saiu_em', null).is('deleted_at', null);
+      if (error) throw error;
+    }
+    res.json({ fechados });
+  } catch (e) { console.error('[Grupos renovacao encerrar]', e.message); res.status(500).json({ error: 'Erro ao encerrar temporada' }); }
+});
+
+// POST /api/grupos/renovacao/reabrir — desfaz o encerrar (reabre os fechados por ele).
+// body: { temporada }. Nível 4.
+router.post('/renovacao/reabrir', authorizeModule('grupos', 4), async (req, res) => {
+  try {
+    const { temporada } = req.body || {};
+    if (!temporada) return res.status(400).json({ error: 'temporada obrigatória' });
+    const motivo = `Encerramento ${temporada}`;
+    const { count } = await supabase.from('mem_grupo_membros')
+      .select('id', { count: 'exact', head: true }).eq('motivo_saida', motivo);
+    const { error } = await supabase.from('mem_grupo_membros')
+      .update({ saiu_em: null, motivo_saida: null }).eq('motivo_saida', motivo);
+    if (error) throw error;
+    res.json({ reabertos: count || 0 });
+  } catch (e) { console.error('[Grupos renovacao reabrir]', e.message); res.status(500).json({ error: 'Erro ao reabrir temporada' }); }
+});
+
 // ══════════════════════════════════════════════
 // CRUD do grupo (rotas com /:id por último)
 // ══════════════════════════════════════════════
