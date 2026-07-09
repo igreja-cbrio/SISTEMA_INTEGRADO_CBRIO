@@ -1534,6 +1534,10 @@ export const totemKids = {
     uploadLogo: (id, dataUrl) => post(`/totem-kids/salas/${id}/logo`, { dataUrl }),
     removerLogo: (id) => post(`/totem-kids/salas/${id}/logo/remover`, {}),
   },
+  etiquetaConfig: {
+    get: () => get('/totem-kids/etiqueta-config'),
+    save: (data) => put('/totem-kids/etiqueta-config', data),
+  },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),
   },
