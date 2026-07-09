@@ -7,6 +7,8 @@
 const { supabase } = require('../utils/supabase');
 const wpp = require('./whatsappService');
 
+// Ativado em prod 2026-07-09: template 'aprovacao_solicitacao' aprovado na Meta
+// (4 variáveis: nome/título/solicitante/categoria) + env setada no Vercel.
 const TEMPLATE_APROVACAO = process.env.WHATSAPP_TEMPLATE_APROVACAO_SOLIC;
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 const CATEGORIA_LABEL = {
