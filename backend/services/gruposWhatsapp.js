@@ -16,7 +16,11 @@ const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { sendTemplate } = require('./whatsappService');
 
-const SECRET = process.env.CRON_SECRET;
+// GRUPOS_TOKEN_SECRET (opcional) isola esta superfície dos demais usos do
+// CRON_SECRET (bearer de crons, clientState do Graph no Cérebro — que é
+// ecoado a terceiro). Sem ela, cai no CRON_SECRET como o resto do repo.
+const SECRET = process.env.GRUPOS_TOKEN_SECRET || process.env.CRON_SECRET;
+const WHATSAPP_LIGADO = () => process.env.WHATSAPP_ENABLED === 'true';
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider';
 const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado';
@@ -74,6 +78,10 @@ function formatarOnde(grupo) {
 // {{1}} líder · {{2}} grupo · {{3}} nome da pessoa · {{4}} contato · {{5}} link
 async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
   try {
+    // Gate ANTES de assinar o token: com o envio desligado, o sendTemplate
+    // cairia no DRY-RUN e logaria os params — incluindo o link-capability de
+    // aprovar. Token não pode parar em log de produção.
+    if (!WHATSAPP_LIGADO()) return { sent: false, reason: 'disabled' };
     if (!grupo?.lider_id) return { sent: false, reason: 'sem_lider' };
     const { data: lider } = await supabase.from('mem_membros')
       .select('nome, telefone').eq('id', grupo.lider_id).maybeSingle();
@@ -81,7 +89,10 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
 
     let link;
     try {
-      link = `${baseUrl()}/g/a/${assinarToken('aprov', pedidoId)}`;
+      // `l` amarra o token ao líder que o recebeu: se a liderança do grupo
+      // trocar dentro dos 7 dias, o link antigo deixa de valer (verificado
+      // nos endpoints públicos).
+      link = `${baseUrl()}/g/a/${assinarToken('aprov', pedidoId, { l: grupo.lider_id })}`;
     } catch (e) {
       console.error('[GruposWPP] token não assinado:', e.message);
       return { sent: false, reason: 'sem_secret' };
@@ -128,6 +139,9 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
 // {{1}} nome da pessoa · {{2}} grupo sugerido · {{3}} dia/hora · {{4}} local · {{5}} link
 async function notificarPessoaSugestao({ telefone, pessoaNome, grupoSugerido, pedidoId }) {
   try {
+    // Mesmo gate do template do líder: não assina token com o envio desligado
+    // (o DRY-RUN logaria o link-capability).
+    if (!WHATSAPP_LIGADO()) return { sent: false, reason: 'disabled' };
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
     let link;
     try {

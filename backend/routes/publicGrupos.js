@@ -580,11 +580,17 @@ router.get('/pedido/por-token', async (req, res) => {
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode aprovar pelo sistema em /grupos.' });
 
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-      .select('id, nome, telefone, email, observacao, status, created_at, motivo_rejeicao, grupo_id, mem_grupos(id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade)')
+      .select('id, nome, telefone, email, observacao, status, created_at, motivo_rejeicao, grupo_id, mem_grupos(id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade, lider_id)')
       .eq('id', payload.p).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
 
     const grupo = pedido.mem_grupos || {};
+    // O token é amarrado ao líder que o recebeu (payload.l). Se a liderança
+    // do grupo mudou, o link antigo deixa de valer.
+    if (!payload.l || grupo.lider_id !== payload.l) {
+      return res.status(403).json({ error: 'A liderança deste grupo mudou — este link não vale mais. O novo líder decide pelo sistema em /grupos.' });
+    }
+    delete grupo.lider_id;
     let membrosAtivos = null;
     if (grupo.id) {
       const { count } = await supabase.from('mem_grupo_membros')
@@ -627,10 +633,15 @@ router.post('/aprovar', async (req, res) => {
     }
 
     // Quem decide por este link é o líder do grupo (foi ele quem o recebeu).
+    // O token carrega o líder da época (payload.l): se a liderança mudou, o
+    // link antigo deixa de valer.
     let liderNome = 'Líder do grupo';
     const { data: grupo } = await supabase.from('mem_grupos')
       .select('id, nome, lider_id').eq('id', pedido.grupo_id).maybeSingle();
-    if (grupo?.lider_id) {
+    if (!payload.l || !grupo || grupo.lider_id !== payload.l) {
+      return res.status(403).json({ error: 'A liderança deste grupo mudou — este link não vale mais. O novo líder decide pelo sistema em /grupos.' });
+    }
+    if (grupo.lider_id) {
       const { data: lider } = await supabase.from('mem_membros')
         .select('nome').eq('id', grupo.lider_id).maybeSingle();
       if (lider?.nome) liderNome = lider.nome;
@@ -646,13 +657,17 @@ router.post('/aprovar', async (req, res) => {
       return res.json({ ok: true, acao: 'aprovado' });
     }
 
-    await supabase.from('mem_grupo_pedidos').update({
+    // Guarda de corrida: só rejeita se AINDA está pendente.
+    const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
       status: 'rejeitado',
       motivo_rejeicao: motivo ? String(motivo).trim().slice(0, 500) : null,
       decidido_por: null,
       decidido_por_nome: decididoPorNome,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id);
+    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+    if (!claimed || !claimed.length) {
+      return res.status(409).json({ error: 'Este pedido já foi decidido.', status: 'decidido' });
+    }
 
     // Notifica a pessoa in-app (se tiver login) — espelho do rejeitar autenticado.
     (async () => {
