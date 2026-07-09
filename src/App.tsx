@@ -273,6 +273,7 @@ const Processos = lazyWithRetry(() => import('./pages/Processos'));
 const Nps = lazyWithRetry(() => import('./pages/Nps'));
 const NpsResponder = lazyWithRetry(() => import('./pages/nps/NpsResponder'));
 const NpsPublica = lazyWithRetry(() => import('./pages/public/NpsPublica'));
+const KidsRetirada = lazyWithRetry(() => import('./pages/public/KidsRetirada'));
 const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const GruposSupervisao = lazyWithRetry(() => import('./pages/ministerial/GruposSupervisao'));
 const PedidosGrupo = lazyWithRetry(() => import('./pages/ministerial/PedidosGrupo'));
@@ -521,6 +522,8 @@ function AppRoutes() {
       <Route path="/novosite" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/novosite/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
+      {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
+      <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
 
       {/* Devocional · migrou pro app de membros. As telas web saíram; estas rotas

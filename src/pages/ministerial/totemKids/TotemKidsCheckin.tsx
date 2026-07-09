@@ -85,6 +85,7 @@ export default function TotemKidsCheckin() {
   const [respManualTel, setRespManualTel] = useState('');
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
+  const [enviarWpp, setEnviarWpp] = useState(true); // enviar código+QR de retirada por WhatsApp
 
   // Multi-culto: outros cultos do dia (com Kids) em que a criança também fica
   const [cultosDia, setCultosDia] = useState<any[]>([]);
@@ -452,6 +453,7 @@ export default function TotemKidsCheckin() {
         payload.responsavel_id = responsavelSelecionado;
         payload.responsavel_parentesco = resp?.parentesco || 'outro';
       }
+      payload.enviar_wpp = enviarWpp; // backend só envia se houver telefone
 
       const r = await totemKids.checkin.criar(payload);
 
@@ -842,6 +844,8 @@ export default function TotemKidsCheckin() {
           onCheckoutAnterior={checkoutCultoAnterior}
           checkoutAnteriorId={checkoutAnteriorId}
           atualizarCrianca={(patch: Partial<Crianca>) => setCrianca(c => (c ? { ...c, ...patch } : c))}
+          enviarWpp={enviarWpp}
+          setEnviarWpp={setEnviarWpp}
           onResponsavelCadastrado={async () => {
             // Recarrega dados da criança (com os responsáveis novos)
             try {
@@ -1279,6 +1283,8 @@ function CheckinSelecao(props: {
   checkoutAnteriorId: string | null;
   atualizarCrianca: (patch: Partial<Crianca>) => void;
   onResponsavelCadastrado: () => void;
+  enviarWpp: boolean;
+  setEnviarWpp: (b: boolean) => void;
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
@@ -1289,7 +1295,12 @@ function CheckinSelecao(props: {
     onCancelar, onConfirmar, imprimindo,
     checkinAberto, onReimprimirEtiqueta, reimprimindoEtiqueta,
     abertosAnteriores, onCheckoutAnterior, checkoutAnteriorId,
-    onResponsavelCadastrado } = props;
+    onResponsavelCadastrado, enviarWpp, setEnviarWpp } = props;
+
+  // Tem telefone do responsável? (manual digitado OU o selecionado tem telefone)
+  const temTelefoneResp = usarRespManual
+    ? respManualTel.replace(/\D/g, '').length >= 10
+    : !!crianca.responsaveis.find(r => r.membro_id === responsavelSelecionado)?.membro?.telefone;
 
   // Auto-abre modal de cadastro se criança chegar sem responsável
   const [modalCadResp, setModalCadResp] = useState(false);
@@ -1567,6 +1578,14 @@ function CheckinSelecao(props: {
               Imprimir etiqueta de novo
             </Button>
           </div>
+        )}
+
+        {temTelefoneResp && !checkinAberto && (
+          <label className="flex items-center gap-2 pt-1 text-sm cursor-pointer select-none">
+            <input type="checkbox" className="h-4 w-4 accent-pink-600"
+              checked={enviarWpp} onChange={e => setEnviarWpp(e.target.checked)} />
+            <span>Enviar código + QR de retirada por WhatsApp pro responsável <span className="text-muted-foreground">(a etiqueta é impressa de qualquer jeito)</span></span>
+          </label>
         )}
 
         <div className="flex justify-end pt-2">
