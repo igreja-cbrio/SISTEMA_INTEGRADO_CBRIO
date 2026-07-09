@@ -625,17 +625,20 @@ export default function TotemKidsCheckin() {
           </Button>
         </div>
       ) : !crianca ? (
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* Último check-in · reimprimir etiqueta (se borrou/falhou) sem novo check-in */}
           {ultimaEtiqueta && (
             <div className="rounded-2xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-4 flex flex-wrap items-center gap-3">
               <CheckCircle2 className="h-6 w-6 text-emerald-600 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="font-semibold text-emerald-900 dark:text-emerald-100">
-                  Check-in feito · {ultimaEtiqueta.crianca?.nome}
+                  Check-in feito ✓
                 </div>
+                {/* Sem nome/código aqui por segurança — o próximo da fila não vê
+                    dados da criança anterior. Se a etiqueta não saiu direito, dá
+                    pra reimprimir (usa o payload guardado internamente). */}
                 <div className="text-sm text-emerald-700 dark:text-emerald-300">
-                  Código <b className="font-mono tracking-widest">{ultimaEtiqueta.codigoSeguranca}</b> · a etiqueta não saiu direito? Imprima de novo.
+                  Etiqueta enviada. Não saiu direito? Imprima de novo.
                 </div>
               </div>
               <div className="flex gap-2">
@@ -647,10 +650,10 @@ export default function TotemKidsCheckin() {
               </div>
             </div>
           )}
-          {/* Título central */}
+          {/* Título central · compacto pra a busca ficar mais alta (teclado não tapa as sugestões) */}
           <div className="text-center">
-            <h1 className="text-3xl sm:text-4xl font-black tracking-tight">Vamos fazer o check-in! 🎈</h1>
-            <p className="text-slate-500 mt-2 text-sm sm:text-base">
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight">Vamos fazer o check-in! 🎈</h1>
+            <p className="text-slate-500 mt-0.5 text-xs sm:text-sm">
               Digite o código do app do responsável ou busque a criança pelo nome.
             </p>
           </div>
@@ -719,6 +722,7 @@ export default function TotemKidsCheckin() {
                   placeholder="Ex.: Sofia, Lucas, Helena... ou telefone"
                   value={busca}
                   onChange={e => setBusca(e.target.value)}
+                  onFocus={e => { try { e.currentTarget.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch { /* noop */ } }}
                   className="pl-10 h-14 text-lg rounded-xl border-2 border-slate-200 bg-slate-50 focus:bg-white text-slate-700"
                   autoFocus
                   autoComplete="off"
@@ -1454,18 +1458,21 @@ function CheckinSelecao(props: {
         )}
 
         <div>
-          <label className="text-sm font-medium block mb-2">Quem está trazendo</label>
+          <label className="text-sm font-semibold block">Quem está trazendo? <span className="text-pink-600">*</span></label>
+          <p className="text-xs text-muted-foreground mb-2">Toque no responsável pra liberar a impressão.</p>
           {!usarRespManual ? (
             <>
               <div className="space-y-2">
-                {crianca.responsaveis.filter(r => r.autorizado_buscar).map(r => (
+                {crianca.responsaveis.filter(r => r.autorizado_buscar).map(r => {
+                  const sel = responsavelSelecionado === r.membro_id;
+                  return (
                   <button
                     key={r.membro_id}
                     onClick={() => setResponsavelSelecionado(r.membro_id)}
-                    className={`w-full text-left flex items-center gap-3 p-3 rounded-lg border transition ${
-                      responsavelSelecionado === r.membro_id
-                        ? 'bg-pink-50 dark:bg-pink-950/30 border-pink-500'
-                        : 'bg-card hover:bg-muted'
+                    className={`w-full text-left flex items-center gap-3 p-3 rounded-xl border-2 transition cursor-pointer ${
+                      sel
+                        ? 'bg-pink-50 dark:bg-pink-950/30 border-pink-500 ring-1 ring-pink-300'
+                        : 'bg-card border-slate-200 dark:border-slate-700 hover:border-pink-300 hover:bg-pink-50/40'
                     }`}
                   >
                     {r.membro?.foto_url ? (
@@ -1487,8 +1494,14 @@ function CheckinSelecao(props: {
                         )}
                       </div>
                     </div>
+                    <div className="shrink-0">
+                      {sel
+                        ? <CheckCircle2 className="h-6 w-6 text-pink-600" />
+                        : <span className="block h-5 w-5 rounded-full border-2 border-slate-300" />}
+                    </div>
                   </button>
-                ))}
+                  );
+                })}
                 {crianca.responsaveis.length === 0 && (
                   <div className="text-sm bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg p-3">
                     <p className="font-semibold mb-1">⚠ Sem responsáveis cadastrados</p>
@@ -1594,7 +1607,10 @@ function CheckinSelecao(props: {
           </label>
         )}
 
-        <div className="flex justify-end pt-2">
+        <div className="flex justify-end items-center gap-3 pt-2">
+          {!checkinAberto && !usarRespManual && !responsavelSelecionado && (
+            <span className="text-xs text-pink-600 font-medium">↑ Toque em quem está trazendo pra imprimir</span>
+          )}
           <Button
             size="lg"
             onClick={onConfirmar}
