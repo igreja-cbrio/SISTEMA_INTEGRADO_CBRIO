@@ -43,6 +43,10 @@ export default function PedidosGrupo({ embedded = false }) {
   const [motivoRej, setMotivoRej] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+  const [sugerindoId, setSugerindoId] = useState(null);
+  const [grupoSugestao, setGrupoSugestao] = useState('');
+  const [gruposAtivos, setGruposAtivos] = useState(null); // lazy: carrega no 1º uso
+  const [enviandoSugestao, setEnviandoSugestao] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -119,6 +123,36 @@ export default function PedidosGrupo({ embedded = false }) {
       load();
     } catch (e) { toast.error(e.message || 'Erro ao aprovar em lote'); }
     finally { setBatchLoading(false); }
+  };
+
+  const abrirSugestao = async (p) => {
+    setSugerindoId(p.id);
+    setGrupoSugestao('');
+    if (gruposAtivos === null) {
+      try {
+        const data = await api.list();
+        setGruposAtivos(Array.isArray(data) ? data : []);
+      } catch (e) {
+        toast.error('Erro ao carregar grupos');
+        setSugerindoId(null);
+      }
+    }
+  };
+
+  const sugerir = async (p) => {
+    if (!grupoSugestao) return;
+    setEnviandoSugestao(true);
+    try {
+      const r = await api.sugerirPedido(p.id, grupoSugestao);
+      if (r.whatsapp_enviado) {
+        toast.success('Sugestão enviada por WhatsApp — a pessoa decide pelo link');
+      } else {
+        toast.success('Sugestão registrada (WhatsApp não enviado' + (r.whatsapp_motivo ? `: ${r.whatsapp_motivo}` : '') + '). A pessoa recebe a notificação no sistema, se tiver login.');
+      }
+      setSugerindoId(null);
+      setGrupoSugestao('');
+    } catch (e) { toast.error(e.message || 'Erro ao sugerir grupo'); }
+    finally { setEnviandoSugestao(false); }
   };
 
   const pausarInscricoes = async (grupo) => {
@@ -206,6 +240,7 @@ export default function PedidosGrupo({ embedded = false }) {
             const lider = grupo?.mem_membros;
             const status = STATUS_LABEL[p.status];
             const isRejecting = rejectingId === p.id;
+            const isSugerindo = sugerindoId === p.id;
             return (
               <div key={p.id} style={{ background: C.card, borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
@@ -260,19 +295,55 @@ export default function PedidosGrupo({ embedded = false }) {
                   </div>
                 </div>
 
-                {p.status === 'pendente' && !isRejecting && (
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+                {p.status === 'pendente' && !isRejecting && !isSugerindo && (
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
                     {capacidadeInfo(grupo)?.cheio && grupo?.aceitando_inscricoes !== false && (
                       <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
                         Pausar novas inscrições
                       </Button>
                     )}
+                    <Button size="sm" variant="ghost" onClick={() => abrirSugestao(p)} style={{ color: C.t2 }}>
+                      Sugerir outro grupo
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
                       <X size={14} style={{ marginRight: 4 }} /> Rejeitar
                     </Button>
                     <Button size="sm" onClick={() => aprovar(p)}>
                       <Check size={14} style={{ marginRight: 4 }} /> Aprovar
                     </Button>
+                  </div>
+                )}
+
+                {isSugerindo && (
+                  <div style={{ background: C.bg, borderRadius: 8, padding: 10, marginTop: 8 }}>
+                    <div style={{ fontSize: 12, color: C.t2, marginBottom: 8 }}>
+                      Sugerir outro grupo para <strong>{p.nome}</strong> — a pessoa recebe a sugestão no WhatsApp e decide pelo link. O pedido atual continua pendente até ela aceitar.
+                    </div>
+                    {gruposAtivos === null ? (
+                      <div style={{ fontSize: 12, color: C.t3, padding: '6px 0' }}>Carregando grupos...</div>
+                    ) : (
+                      <select
+                        value={grupoSugestao}
+                        onChange={e => setGrupoSugestao(e.target.value)}
+                        style={{
+                          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13,
+                          border: `1px solid ${C.border}`, background: C.card, color: C.text,
+                        }}
+                      >
+                        <option value="">Escolha o grupo...</option>
+                        {gruposAtivos.filter(g => g.id !== p.grupo_id && g.aceitando_inscricoes !== false).map(g => (
+                          <option key={g.id} value={g.id}>
+                            {g.nome}{g.bairro ? ` · ${g.bairro}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                      <Button size="sm" variant="outline" onClick={() => { setSugerindoId(null); setGrupoSugestao(''); }}>Cancelar</Button>
+                      <Button size="sm" disabled={!grupoSugestao || enviandoSugestao} onClick={() => sugerir(p)}>
+                        {enviandoSugestao ? 'Enviando...' : 'Enviar sugestão'}
+                      </Button>
+                    </div>
                   </div>
                 )}
 
