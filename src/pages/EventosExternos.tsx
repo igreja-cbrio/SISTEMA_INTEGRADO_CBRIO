@@ -145,6 +145,7 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
               <option value="select">Lista suspensa</option>
               <option value="escolha">Escolha</option>
               <option value="multi">Múltipla escolha</option>
+              <option value="rede_social">Rede social (Instagram, etc.)</option>
               <option value="imagem">Imagem / Logo (upload)</option>
             </select>
             <button onClick={() => setCampos(campos.filter((_, j) => j !== i))} className="text-red-500 px-1"><Trash2 className="h-4 w-4" /></button>

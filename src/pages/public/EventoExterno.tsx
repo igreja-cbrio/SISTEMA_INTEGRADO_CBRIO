@@ -109,6 +109,41 @@ function PillSelect({ label, value, onPick, required, opcoes, multi }: {
   );
 }
 
+// Rede social · dropdown da rede + campo do @/handle, combinados numa string
+// "Rede · @handle" guardada numa única chave de `dados`.
+const REDES_SOCIAIS = ['Instagram', 'Facebook', 'X (Twitter)', 'TikTok', 'YouTube', 'LinkedIn', 'Kwai', 'Outra'];
+function RedeSocialField({ label, value, onChange, required }: {
+  label: string; value: string; onChange: (v: string) => void; required?: boolean;
+}) {
+  const parse = (v: string) => { const s = String(v || ''); const i = s.indexOf(' · '); return i >= 0 ? [s.slice(0, i), s.slice(i + 3)] : ['', s]; };
+  const [rede, setRede] = useState(() => parse(value)[0]);
+  const [handle, setHandle] = useState(() => parse(value)[1]);
+  const [foco, setFoco] = useState(false);
+  function emit(r: string, h: string) {
+    const v = r && h ? `${r} · ${h}` : (h || r || '');
+    onChange(v);
+  }
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>{label}{required ? ' *' : ''}</div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: '0 0 140px' }}>
+          <select value={rede} onChange={e => { setRede(e.target.value); emit(e.target.value, handle); }}
+            required={required}
+            style={{ display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: '2px solid var(--cbrio-border)', outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}>
+            <option value="">Rede…</option>
+            {REDES_SOCIAIS.map((o, i) => <option key={i} value={o} style={{ background: 'var(--cbrio-modal-bg)', color: 'var(--cbrio-text)' }}>{o}</option>)}
+          </select>
+          <span style={{ position: 'absolute', right: 4, bottom: 12, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
+        </div>
+        <input value={handle} onChange={e => { setHandle(e.target.value); emit(rede, e.target.value); }}
+          onFocus={() => setFoco(true)} onBlur={() => setFoco(false)} placeholder="@usuário ou link"
+          style={{ flex: 1, minWidth: 160, padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: `2px solid ${foco ? '#00B39D' : 'var(--cbrio-border)'}`, outline: 'none' }} />
+      </div>
+    </div>
+  );
+}
+
 // Campo de upload de imagem (ex.: logo da empresa parceira). Sobe pro Storage
 // via endpoint público e guarda a URL; avisa o pai enquanto está enviando pra
 // travar o "Confirmar" até terminar.
@@ -271,6 +306,9 @@ export default function EventoExterno() {
                 ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
                   <PillSelect key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio} opcoes={c.opcoes || []} multi={c.tipo === 'multi'}
                     onPick={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
+                ) : c.tipo === 'rede_social' ? (
+                  <RedeSocialField key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
+                    onChange={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
                 ) : c.tipo === 'imagem' ? (
                   <ImagemField key={c.key} slug={slug} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
                     onChange={(url) => setDados(d => ({ ...d, [c.key]: url }))} onBusy={marcarBusy} />
