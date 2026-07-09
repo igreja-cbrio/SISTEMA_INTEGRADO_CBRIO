@@ -109,6 +109,42 @@ router.put('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PATCH /:id/inscricoes/:inscricaoId — editar uma inscrição (nome/telefone/
+// email + respostas do formulário, ex.: corrigir a rede social digitada errada).
+// ⚠️ `dados` é MESCLADO sobre o existente (nunca substituído inteiro) — assim
+// campos que o editor não mostra (ex.: imagem) não são apagados por engano.
+// Valor string vazia = limpa a resposta daquela chave.
+router.patch('/:id/inscricoes/:inscricaoId', authorizeModule('eventos-externos', 3), async (req, res) => {
+  try {
+    const { data: atual } = await supabase.from('ext_inscricoes')
+      .select('id, dados').eq('id', req.params.inscricaoId)
+      .eq('evento_id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const patch = {};
+    if (typeof req.body?.nome === 'string' && req.body.nome.trim().length >= 2) patch.nome = req.body.nome.trim().slice(0, 200);
+    if ('telefone' in (req.body || {})) patch.telefone = String(req.body.telefone || '').replace(/\D/g, '') || null;
+    if ('email' in (req.body || {})) patch.email = req.body.email ? String(req.body.email).toLowerCase().trim().slice(0, 200) : null;
+    if (req.body?.dados && typeof req.body.dados === 'object' && !Array.isArray(req.body.dados)) {
+      const dados = { ...(atual.dados || {}) };
+      for (const [k, v] of Object.entries(req.body.dados)) {
+        const key = String(k).slice(0, 80);
+        if (v === null || v === undefined || String(v).trim() === '') delete dados[key];
+        else dados[key] = String(v).slice(0, 500); // mesma régua do form público
+      }
+      patch.dados = dados;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+
+    const { data, error } = await supabase.from('ext_inscricoes')
+      .update(patch)
+      .eq('id', req.params.inscricaoId).eq('evento_id', req.params.id).is('deleted_at', null)
+      .select('id, nome, telefone, email, numero_sorte, dados, created_at').maybeSingle();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // DELETE /:id — soft delete
 router.delete('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {
