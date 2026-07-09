@@ -251,8 +251,10 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
       .select('id, status, encerrada_at')
       .single();
     if (error) throw error;
-    // Resumo do Kids pros líderes (WhatsApp + in-app/e-mail) · best-effort
-    enviarResumoKids(req.params.id).catch(() => {});
+    // O resumo do Kids pros líderes NÃO sai mais daqui: o cron /cron/resumo-pco
+    // é o emissor ÚNICO (crianças únicas = PCO + totem, dedup por
+    // planning_center_id, com kids_resumo_enviado_at + chaveDedup). Evita dois
+    // resumos pro mesmo culto (encerrar sessão × cron).
     res.json(data);
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar]', e.message);
@@ -1243,19 +1245,56 @@ router.get('/pco-pessoa/:pcoId', authorizeModule('kids', 1), async (req, res) =>
 // pra notificação in-app/e-mail (a Mari não tem WhatsApp, recebe por aqui).
 const RESUMO_KIDS_EMAILS = ['mariane.gaia@cbrio.org', 'milena.rochet@cbrio.org', 'matheus.toscano@cbrio.org', 'matheus@cbrio.com.br'];
 
-// Dispara o resumo de UM culto (total de crianças do PCO) pros líderes.
-async function dispararResumoKidsCulto(culto, total) {
+// Check-ins do NOSSO sistema (totem) pra um culto → crianças ÚNICAS.
+// Retorna { comPco: Set(planning_center_id), semPco: Set(crianca_id sem vínculo
+// PCO) }. Serve pra combinar com o PCO sem dupla contagem (dedup por
+// planning_center_id quando a criança está vinculada aos dois lados).
+async function nossosCheckinsDoCulto(cultoId) {
+  const { data: sessoes } = await supabase.from('kids_sessoes').select('id').eq('culto_id', cultoId);
+  const sessIds = (sessoes || []).map((s) => s.id);
+  if (!sessIds.length) return { comPco: new Set(), semPco: new Set() };
+  const { data: cis } = await supabase.from('kids_checkins')
+    .select('crianca_id, crianca:kids_criancas(planning_center_id)')
+    .in('sessao_id', sessIds).is('deleted_at', null);
+  const comPco = new Set();
+  const semPco = new Set();
+  for (const ci of cis || []) {
+    const pco = ci.crianca?.planning_center_id;
+    if (pco) comPco.add(String(pco));
+    else if (ci.crianca_id) semPco.add(ci.crianca_id);
+  }
+  return { comPco, semPco };
+}
+
+// Total combinado de crianças ÚNICAS no culto = PCO ∪ nosso sistema (totem),
+// deduplicado por planning_center_id. `entry` é a linha por_culto do
+// coletarFrequenciaKidsPCO. Devolve { total, pco, totem } (totem = extras do
+// nosso sistema que NÃO estavam no PCO).
+async function totalKidsCombinado(cultoId, entry) {
+  const pco = entry?.total || 0;
+  const pcoSet = new Set((entry?.criancas || []).map((c) => c.pco_id).filter(Boolean).map(String));
+  const nossos = await nossosCheckinsDoCulto(cultoId);
+  let extras = nossos.semPco.size;
+  for (const p of nossos.comPco) if (!pcoSet.has(p)) extras += 1;
+  return { total: pco + extras, pco, totem: extras };
+}
+
+// Dispara o resumo de UM culto (crianças únicas: PCO + totem) pros líderes.
+async function dispararResumoKidsCulto(culto, total, fontes) {
   const dataFmt = culto.data ? new Date(culto.data + 'T00:00:00').toLocaleDateString('pt-BR') : '';
+  const detalhe = fontes && (fontes.totem || 0) > 0
+    ? `PCO ${fontes.pco || 0} · Totem ${fontes.totem || 0}`
+    : 'Frequência do Planning Center';
   const linhas = [
     '🧒 *Resumo do Kids*',
     `${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`,
     '',
     `👶 Crianças no check-in: *${total}*`,
     '',
-    '_Frequência do Planning Center · confira a lista em /ministerial/totem-kids/frequencia_',
+    `_${detalhe} · confira a lista em /ministerial/totem-kids/frequencia_`,
   ];
   const texto = linhas.join('\n');
-  const params = [`${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`, String(total), '—', 'Frequência do Planning Center'];
+  const params = [`${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`, String(total), '—', detalhe];
   // WhatsApp pros líderes com telefone (Matheus, Milena)
   const lideres = await lideresKidsComTelefone();
   for (const l of lideres) { await enviarResumoWpp(l.telefone, { texto, params }).catch(() => {}); }
@@ -1324,24 +1363,27 @@ router.get('/cron/resumo-pco', async (req, res) => {
       const col = porData[c.data];
       if (!col) continue; // coleta falhou → tenta de novo na próxima hora
       const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
-      const total = entry?.total || 0;
-      if (total <= 0) continue; // sem dado ainda (ou culto sem Kids) → não envia "0", reavalia depois
+      // Crianças únicas = PCO ∪ nosso sistema (totem), sem dupla contagem.
+      const comb = await totalKidsCombinado(c.id, entry);
+      const total = comb.total;
+      if (total <= 0) continue; // sem check-in em NENHUMA fonte ainda → não envia "0", reavalia depois
       await supabase.from('cultos')
         .update({ presencial_kids: total, kids_resumo_enviado_at: new Date().toISOString() })
         .eq('id', c.id);
-      await dispararResumoKidsCulto(c, total);
+      await dispararResumoKidsCulto(c, total, comb);
       enviados += 1;
-      detalhe.push({ culto: c.nome, total });
+      detalhe.push({ culto: c.nome, total, pco: comb.pco, totem: comb.totem });
     }
 
-    // Reconciliação: check-ins corrigidos no PCO depois da foto → atualiza o
+    // Reconciliação: check-ins corrigidos no PCO/totem depois → atualiza o
     // número SEM reenviar o resumo (kids_resumo_enviado_at fica como está).
     let reconciliados = 0;
     for (const c of reconciliar) {
       const col = porData[c.data];
       if (!col) continue;
       const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
-      const total = entry?.total || 0;
+      const comb = await totalKidsCombinado(c.id, entry);
+      const total = comb.total;
       if (total > 0 && total !== c.presencial_kids) {
         await supabase.from('cultos').update({ presencial_kids: total }).eq('id', c.id);
         reconciliados += 1;
