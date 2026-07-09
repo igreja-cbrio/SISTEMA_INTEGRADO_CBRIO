@@ -2024,6 +2024,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       sessao_id, crianca_id, sala_id, estacao_id,
       responsavel_id, responsavel_nome_manual, responsavel_telefone_manual, responsavel_parentesco,
       cultos_extras, // ids de OUTROS cultos do dia em que a criança também fica (multi-culto)
+      enviar_wpp,    // enviar código + QR de retirada por WhatsApp pro responsável (plus · etiqueta sempre imprime)
     } = req.body;
 
     if (!sessao_id) return res.status(400).json({ error: 'sessao_id obrigatorio' });
@@ -2176,6 +2177,25 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         // 23505 = criança já tinha check-in nesse culto · ignora
         if (!e2 || e2.code === '23505') cultosDoGrupo.push({ id: cultoId, nome: sx.culto?.nome || null });
       } catch (ex) { console.error('[totemKids/checkin] culto extra:', ex.message); }
+    }
+
+    // Envio opcional do código + QR de retirada por WhatsApp (best-effort · NUNCA
+    // derruba o check-in). A etiqueta é impressa de qualquer jeito; isto é um plus
+    // (pais perdem a etiqueta). O QR da página codifica o mesmo código → o leitor
+    // 2D do portão lê e o /portao/scan já faz o checkout.
+    if (enviar_wpp && respTel) {
+      const template = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA;
+      if (template) {
+        const primeiroNome = String(crianca?.nome || '').trim().split(/\s+/)[0] || 'sua criança';
+        const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+        const link = `${base}/kids/retirada/${codigoFinal}`;
+        const lang = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR';
+        enviarTemplateWpp(respTel, template, lang, [primeiroNome, codigoFinal, link])
+          .then((r) => { if (!r?.ok) console.warn('[totemKids/checkin] wpp retirada pulado:', r?.error); })
+          .catch((e) => console.warn('[totemKids/checkin] wpp retirada erro:', e?.message));
+      } else {
+        console.warn('[totemKids/checkin] WHATSAPP_TEMPLATE_KIDS_RETIRADA não configurado · envio pulado');
+      }
     }
 
     // Retorna tudo pro frontend renderizar as 2 etiquetas
