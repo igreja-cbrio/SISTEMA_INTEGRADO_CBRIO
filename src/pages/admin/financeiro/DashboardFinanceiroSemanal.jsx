@@ -2884,13 +2884,23 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, semanasOpcoes, anoA
 // ============================================================
 function ArrecadacaoAnualChart() {
   const anoAtual = new Date().getFullYear();
-  const [ano, setAno] = useState(anoAtual);
-  const [dados, setDados] = useState(null);
+  // Multi-seleção de anos: 1 ano = visão clássica (barras + acumulado);
+  // 2+ anos = comparativo, uma barra por ano em cada mês.
+  const [anosSel, setAnosSel] = useState([anoAtual]);
+  const [dadosPorAno, setDadosPorAno] = useState({});
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [filtrosVersion, setFiltrosVersion] = useState(0);
 
   const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+  const ano = anosSel[anosSel.length - 1]; // ano mais recente selecionado
+  const multi = anosSel.length > 1;
+  const CORES_ANO = [C.blue, C.amber, C.purple, C.green];
+  const corDoAno = (i) => (i === anosSel.length - 1 ? C.primary : CORES_ANO[i % CORES_ANO.length]);
+
+  const toggleAno = (a) => setAnosSel(prev => prev.includes(a)
+    ? (prev.length > 1 ? prev.filter(x => x !== a) : prev) // nunca zera
+    : [...prev, a].sort((x, y) => x - y));
 
   useEffect(() => {
     const h = () => setFiltrosVersion(v => v + 1);
@@ -2901,19 +2911,22 @@ function ArrecadacaoAnualChart() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    financeiroV2.arrecadacaoAnual(ano, lerFiltrosGlobais())
-      .then((r) => {
+    Promise.all(anosSel.map(a => financeiroV2.arrecadacaoAnual(a, lerFiltrosGlobais()).then(r => [a, r])))
+      .then((entries) => {
         if (cancelled) return;
-        setDados(r);
-        const meses = r?.meses || [];
-        const ultimo = meses.reduceRight((acc, m, i) => acc !== null ? acc : (m.receita > 0 ? i : null), null);
+        const map = Object.fromEntries(entries);
+        setDadosPorAno(map);
+        const mesesBase = map[anosSel[anosSel.length - 1]]?.meses || [];
+        const ultimo = mesesBase.reduceRight((acc, m, i) => acc !== null ? acc : (m.receita > 0 ? i : null), null);
         setSelectedIdx(ultimo);
       })
       .catch((e) => console.warn('[ArrecAnual]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano, filtrosVersion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anosSel.join(','), filtrosVersion]);
 
+  const dados = dadosPorAno[ano] || null;
   const meses = dados?.meses || [];
   const total = dados?.total || 0;
   const sel = selectedIdx !== null ? meses[selectedIdx] : null;
@@ -2939,40 +2952,116 @@ function ArrecadacaoAnualChart() {
   }));
   const temMes5 = meses.some(m => m.semanas_qua_ter === 5);
 
+  // Comparativo multi-ano: 12 meses, uma série (barra) por ano selecionado.
+  const MES_LABELS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+  const formatadoMulti = multi
+    ? MES_LABELS.map((label, i) => {
+        const row = { idx: i, label };
+        for (const a of anosSel) row[String(a)] = Number(dadosPorAno[a]?.meses?.[i]?.receita || 0);
+        return row;
+      })
+    : [];
+  const algumDado = multi ? anosSel.some(a => (dadosPorAno[a]?.total || 0) > 0) : total > 0;
+
   return (
     <Card>
       <CardContent className="pt-6">
         <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
           <div>
             <h3 className="text-base font-semibold flex items-center gap-2">
-              Arrecadação Anual · {ano}
+              Arrecadação Anual · {multi ? anosSel.join(' vs ') : ano}
               <Badge variant="outline" className="text-[10px] font-normal">
                 <MousePointer2 className="h-2.5 w-2.5 mr-1" />
                 clique num mês
               </Badge>
             </h3>
             <p className="text-xs text-muted-foreground">
-              Total no ano: <strong>{fmtMoney(total)}</strong> · barras mensais + acumulado · empréstimos excluídos
+              {multi
+                ? <>Totais: {anosSel.map((a, i) => <span key={a}>{i > 0 && ' · '}<strong>{a}</strong> {fmtMoney(dadosPorAno[a]?.total || 0)}</span>)} · empréstimos excluídos</>
+                : <>Total no ano: <strong>{fmtMoney(total)}</strong> · barras mensais + acumulado · empréstimos excluídos</>}
             </p>
           </div>
-          <div className="flex gap-1 flex-wrap">
-            {anos.map(a => (
-              <button
-                key={a}
-                onClick={() => setAno(a)}
-                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
-                  ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                }`}
-              >
-                {a}
-              </button>
-            ))}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex gap-1 flex-wrap">
+              {anos.map(a => (
+                <button
+                  key={a}
+                  onClick={() => toggleAno(a)}
+                  className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
+                    anosSel.includes(a) ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                  }`}
+                >
+                  {a}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-muted-foreground">selecione mais de um ano pra comparar</span>
           </div>
         </div>
         {loading ? (
           <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
-        ) : total === 0 ? (
-          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano} · selecione outro ano</div>
+        ) : !algumDado ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {multi ? anosSel.join('/') : ano} · selecione outro ano</div>
+        ) : multi ? (
+          <>
+            <div style={{ width: '100%', height: 320 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={formatadoMulti} onClick={onBarClick} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.08)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  {anosSel.map((a, i) => (
+                    <Bar key={a} dataKey={String(a)} fill={corDoAno(i)} radius={[5, 5, 0, 0]} animationDuration={900} cursor="pointer" />
+                  ))}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <AnimatePresence mode="wait">
+              {selectedIdx !== null && (
+                <motion.div
+                  key={`anosel-multi-${selectedIdx}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <span className="text-xs text-muted-foreground">Mês selecionado · comparação entre os anos</span>
+                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      {MES_LABELS[selectedIdx]}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {anosSel.map((a, i) => {
+                      const mA = dadosPorAno[a]?.meses?.[selectedIdx];
+                      const anoAnt = anosSel[i - 1];
+                      const mAnt = anoAnt ? dadosPorAno[anoAnt]?.meses?.[selectedIdx] : null;
+                      const d = mA && mAnt && mAnt.receita > 0 ? ((mA.receita - mAnt.receita) / mAnt.receita) * 100 : null;
+                      const subPartes = [
+                        mA?.semanas_qua_ter === 5 ? '5 semanas' : null,
+                        anoAnt ? `vs ${anoAnt}` : null,
+                      ].filter(Boolean);
+                      return (
+                        <SemanaCard
+                          key={a}
+                          label={`${MES_LABELS[selectedIdx]} ${a}`}
+                          icon={Banknote}
+                          accent={corDoAno(i)}
+                          valor={fmtMoney(mA?.receita || 0)}
+                          delta={d}
+                          sub={subPartes.join(' · ') || 'no mês'}
+                          anim={`my-${a}-${selectedIdx}`}
+                        />
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
         ) : (
           <>
             <div style={{ width: '100%', height: 320 }}>

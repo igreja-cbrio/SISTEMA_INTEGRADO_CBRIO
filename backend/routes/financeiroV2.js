@@ -2234,13 +2234,35 @@ Regras:
 - Aponte riscos (concentração de doadores, folha, tendência) e 2-3 recomendações práticas no final.
 - Use SOMENTE os números fornecidos. NUNCA invente valores.
 - Entre 150 e 300 palavras.`;
-    const resp = await client.messages.create({
-      model: 'claude-sonnet-5',
-      max_tokens: 1200,
-      system,
-      messages: [{ role: 'user', content: `Dados do dashboard financeiro:\n${JSON.stringify(dados, null, 2)}` }],
-    });
-    const texto = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    const userMsg = `Dados do dashboard financeiro:\n${JSON.stringify(dados, null, 2)}`;
+    const extrairTexto = (resp) => (resp?.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+
+    // max_tokens folgado: modelos com raciocínio podem gastar tokens "pensando"
+    // antes de escrever — com budget curto a resposta vinha SEM bloco de texto
+    // ("A IA não retornou análise" · bug 2026-07-09).
+    let texto = '';
+    try {
+      const resp = await client.messages.create({
+        model: 'claude-sonnet-5',
+        max_tokens: 4000,
+        system,
+        messages: [{ role: 'user', content: userMsg }],
+      });
+      texto = extrairTexto(resp);
+      if (!texto) console.warn('[FIN-V2] analise-profunda sonnet vazio:', resp?.stop_reason, (resp?.content || []).map(b => b.type).join(','));
+    } catch (e) {
+      console.warn('[FIN-V2] analise-profunda sonnet falhou:', e?.message);
+    }
+    // Fallback: Haiku (sempre devolve texto direto)
+    if (!texto) {
+      const resp2 = await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1500,
+        system,
+        messages: [{ role: 'user', content: userMsg }],
+      });
+      texto = extrairTexto(resp2);
+    }
     if (!texto) return res.status(502).json({ error: 'A IA não retornou análise' });
 
     _analiseCache.set(range.inicio, { texto, ts: Date.now() });
