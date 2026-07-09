@@ -672,6 +672,65 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
   }
 });
 
+// POST /api/app/voluntariado/vincular-cpf — quem JÁ serve informa o CPF na
+// primeira vez que abre a aba, e o sistema cruza com o cadastro de voluntário
+// (vol_profiles). Se achar, vincula (auth_user_id + membresia) e grava o CPF no
+// membro pra a resolução automática funcionar nas próximas vezes.
+router.post('/voluntariado/vincular-cpf', authApp, limiterStrict, async (req, res) => {
+  try {
+    const cpfDigitos = String(req.body?.cpf || '').replace(/\D/g, '');
+    if (cpfDigitos.length !== 11) {
+      return res.status(400).json({ error: 'Informe um CPF válido (11 dígitos)' });
+    }
+    const membro = await resolveMembroApp(req);
+
+    // Procura o perfil de voluntário por CPF (com e sem máscara)
+    const fmt = `${cpfDigitos.slice(0, 3)}.${cpfDigitos.slice(3, 6)}.${cpfDigitos.slice(6, 9)}-${cpfDigitos.slice(9)}`;
+    const { data: achados } = await supabase
+      .from('vol_profiles')
+      .select('id, full_name, auth_user_id, membresia_id, allocation_status, status')
+      .or(`cpf.eq.${cpfDigitos},cpf.eq.${fmt}`)
+      .limit(1);
+    const vp = (achados && achados[0]) || null;
+
+    if (!vp) {
+      // Não achou como voluntário — mas guarda o CPF no membro (se vazio) pra
+      // ajudar futuras buscas e o fluxo de inscrição normal.
+      if (membro?.id) {
+        await supabase.from('mem_membros').update({ cpf: cpfDigitos })
+          .eq('id', membro.id).or('cpf.is.null,cpf.eq.').then(() => {}, () => {});
+      }
+      return res.json({ found: false });
+    }
+
+    // Segurança: não sequestrar um vol_profile já ligado a OUTRA conta
+    if (vp.auth_user_id && vp.auth_user_id !== req.user.id) {
+      return res.status(409).json({ error: 'Este cadastro de voluntário já está vinculado a outra conta. Fale com a coordenação.' });
+    }
+
+    // Vincula o perfil de voluntário à conta (e ao membro, se conhecido)
+    const patch = { auth_user_id: req.user.id };
+    if (membro?.id && !vp.membresia_id) patch.membresia_id = membro.id;
+    const { error: upErr } = await supabase.from('vol_profiles').update(patch).eq('id', vp.id);
+    if (upErr) throw upErr;
+
+    // Guarda o CPF no membro se estiver vazio (resolução automática futura)
+    if (membro?.id) {
+      await supabase.from('mem_membros').update({ cpf: cpfDigitos })
+        .eq('id', membro.id).or('cpf.is.null,cpf.eq.').then(() => {}, () => {});
+    }
+
+    res.json({
+      found: true,
+      nome: vp.full_name || null,
+      integrado: vp.status === 'ativo' || vp.allocation_status === 'integrado',
+    });
+  } catch (e) {
+    console.error('[APP vol/vincular-cpf]', e.message);
+    res.status(500).json({ error: 'Erro ao cruzar o CPF' });
+  }
+});
+
 // GET /api/app/voluntariado/escalas — próximas escalas + histórico de check-in.
 // Resolve o voluntário por auth_user_id/CPF/membresia/e-mail (service_role,
 // sem as travas de RLS do client).
