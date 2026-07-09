@@ -20,7 +20,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Eye, Printer, ArrowLeft, Loader2, Baby, Image as ImageIcon, Upload, Trash2, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids } from '@/api';
-import { imprimirEtiquetas } from './lib/imprimir';
+import { imprimirEtiquetas, gerarHtmlPreviewCrianca, type EtiquetaLayout } from './lib/imprimir';
 import { formatIdadeShort } from './lib/idade';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -163,9 +163,48 @@ export function EtiquetaTesteForm() {
   const [cultoNome, setCultoNome] = useState('Domingo Manhã');
   const [codigoSeguranca, setCodigoSeguranca] = useState('F8K3');
   const [processando, setProcessando] = useState(false);
+  const [fotoOk, setFotoOk] = useState(true);
 
-  // Carrega as salas pra prévia por categoria (com a logo configurada)
+  // Layout da etiqueta (config persistida · snake do backend)
+  const [cfg, setCfg] = useState<{ logo_tamanho: string; logo_posicao: string; nome_tamanho: string }>(
+    { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto' }
+  );
+  const [salvandoLayout, setSalvandoLayout] = useState(false);
+
+  const layout: EtiquetaLayout = {
+    logoTamanho: cfg.logo_tamanho as EtiquetaLayout['logoTamanho'],
+    logoPosicao: cfg.logo_posicao as EtiquetaLayout['logoPosicao'],
+    nomeTamanho: cfg.nome_tamanho as EtiquetaLayout['nomeTamanho'],
+  };
+
+  // Carrega as salas pra prévia por categoria (com a logo configurada) + o layout
   useEffect(() => { totemKids.salas.list().then(setSalas).catch(() => {}); }, []);
+  useEffect(() => { totemKids.etiquetaConfig.get().then((c) => c && setCfg(c)).catch(() => {}); }, []);
+
+  async function salvarLayout() {
+    setSalvandoLayout(true);
+    try {
+      await totemKids.etiquetaConfig.save(cfg);
+      toast.success('Layout salvo · vale pras próximas impressões');
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao salvar layout');
+    } finally {
+      setSalvandoLayout(false);
+    }
+  }
+
+  // Dados da etiqueta da criança pra prévia ao vivo
+  const dadosPreview = {
+    checkinId: 'preview-only',
+    crianca: {
+      nome: criancaNome, idadeLabel, salaNome, salaCor, salaLogoUrl,
+      observacoesMedicas: obsMedica || null, alergia: obsMedica || null,
+      fotoAutorizada: fotoOk, aniversarioSemana: false,
+    },
+    responsavel: { nome: responsavelNome },
+    codigoSeguranca, codigoBarras: codigoSeguranca,
+    dataHora: '', cultoNome, cultoDiaHora: cultoNome, layout,
+  };
 
   function escolherSala(salaId: string) {
     const s = salas.find(x => x.id === salaId);
@@ -195,7 +234,7 @@ export function EtiquetaTesteForm() {
           salaLogoUrl,
           observacoesMedicas: obsMedica || null,
           alergia: obsMedica || 'Amendoim',
-          fotoAutorizada: true,
+          fotoAutorizada: fotoOk,
           aniversarioSemana: true,
         },
         responsavel: { nome: responsavelNome },
@@ -204,6 +243,7 @@ export function EtiquetaTesteForm() {
         dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
         cultoNome,
         cultoDiaHora: cultoNome,
+        layout,
       }, preview);
 
       if (preview) {
@@ -283,6 +323,64 @@ export function EtiquetaTesteForm() {
                 <Button variant="outline" size="sm" onClick={gerarCodigo}>Gerar</Button>
               </div>
             </div>
+            <div className="col-span-2 flex items-center gap-2">
+              <input id="fotoOk" type="checkbox" checked={fotoOk} onChange={e => setFotoOk(e.target.checked)} />
+              <label htmlFor="fotoOk" className="text-xs text-muted-foreground">Foto autorizada (desmarque pra ver o ícone de câmera cortada)</label>
+            </div>
+          </div>
+
+          {/* Prévia ao vivo da etiqueta da criança (reflete logo + layout) */}
+          <div className="border-t pt-4 space-y-2">
+            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Prévia da etiqueta</div>
+            <div className="rounded-lg border bg-neutral-100 dark:bg-neutral-800 p-4 flex justify-center overflow-x-auto">
+              <div style={{ width: '90mm', transform: 'scale(1.5)', transformOrigin: 'top center' }}>
+                <iframe
+                  title="Prévia da etiqueta"
+                  srcDoc={gerarHtmlPreviewCrianca(dadosPreview)}
+                  style={{ width: '90mm', height: '29mm', border: '1px solid #ccc', background: '#fff', display: 'block' }}
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">Tamanho real 90×29mm (ampliado 1,5× aqui). Escolha uma categoria acima pra ver a logo.</p>
+          </div>
+
+          {/* Layout da etiqueta (persistido · vale pra impressão real) */}
+          <div className="border-t pt-4 space-y-3">
+            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Layout da etiqueta</div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Tamanho da logo</label>
+                <select className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
+                  value={cfg.logo_tamanho} onChange={e => setCfg({ ...cfg, logo_tamanho: e.target.value })}>
+                  <option value="P">Pequena</option>
+                  <option value="M">Média</option>
+                  <option value="G">Grande</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Posição da logo</label>
+                <select className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
+                  value={cfg.logo_posicao} onChange={e => setCfg({ ...cfg, logo_posicao: e.target.value })}>
+                  <option value="esquerda">À esquerda do nome</option>
+                  <option value="direita">À direita do nome</option>
+                  <option value="acima">Acima do nome</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Tamanho do nome</label>
+                <select className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
+                  value={cfg.nome_tamanho} onChange={e => setCfg({ ...cfg, nome_tamanho: e.target.value })}>
+                  <option value="auto">Automático (cabe o nome todo)</option>
+                  <option value="P">Pequeno</option>
+                  <option value="M">Médio</option>
+                  <option value="G">Grande</option>
+                </select>
+              </div>
+            </div>
+            <Button onClick={salvarLayout} disabled={salvandoLayout} size="sm" className="bg-pink-600 hover:bg-pink-700">
+              {salvandoLayout ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Salvar layout
+            </Button>
           </div>
 
           <div className="border-t pt-4 flex flex-wrap gap-2">

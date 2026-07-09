@@ -120,6 +120,14 @@ export default function TotemKidsCheckin() {
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
 
+  // Layout configurável da etiqueta (tamanho/posição da logo, fonte do nome)
+  const [etqLayout, setEtqLayout] = useState<Parameters<typeof imprimirEtiquetas>[0]['layout']>(undefined);
+  useEffect(() => {
+    totemKids.etiquetaConfig.get().then((c: any) => {
+      if (c) setEtqLayout({ logoTamanho: c.logo_tamanho, logoPosicao: c.logo_posicao, nomeTamanho: c.nome_tamanho });
+    }).catch(() => {});
+  }, []);
+
   // Check-in ABERTO da criança selecionada nessa sessão: etiqueta perdida →
   // reimprimir (mesmo código); novo check-in só depois do check-out.
   const [checkinAberto, setCheckinAberto] = useState<any>(null);
@@ -172,6 +180,7 @@ export default function TotemKidsCheckin() {
       dataHora: format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }),
       cultoNome: args.cultoNome || undefined,
       cultoDiaHora,
+      layout: etqLayout,
     };
   }
 

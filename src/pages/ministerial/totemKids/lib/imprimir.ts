@@ -37,7 +37,24 @@ export interface DadosImpressao {
   dataHora: string;                   // ISO ou label pronto
   cultoNome?: string;
   cultoDiaHora?: string;              // dia + horário do culto (etiqueta do responsável)
+  layout?: EtiquetaLayout;           // ajustes de layout (tamanho/posição da logo…)
 }
+
+// Configuração de layout da etiqueta (ajustável nas Configurações → Etiqueta)
+export interface EtiquetaLayout {
+  logoTamanho?: 'P' | 'M' | 'G';                 // tamanho da logo da categoria
+  logoPosicao?: 'esquerda' | 'direita' | 'acima'; // posição da logo em relação ao nome
+  nomeTamanho?: 'auto' | 'P' | 'M' | 'G';        // fonte do nome (auto = pelo comprimento)
+}
+
+export const LAYOUT_ETIQUETA_PADRAO: EtiquetaLayout = {
+  logoTamanho: 'M',
+  logoPosicao: 'esquerda',
+  nomeTamanho: 'auto',
+};
+
+// Altura da logo (mm) por tamanho
+const LOGO_MM: Record<string, number> = { P: 4.5, M: 6, G: 8.5 };
 
 // CSS comum das etiquetas · 90mm x 29mm (Brother DK-1201, paisagem)
 // Etiqueta de endereço · COMPRIDA na horizontal, estreita na vertical.
@@ -172,14 +189,18 @@ const CSS_ETIQUETA = `
     flex-shrink: 0;
   }
   .foto-badge {
-    border: 1.2px solid #000;
-    border-radius: 1mm;
-    padding: 0 1mm;
-    font-size: 7pt;
-    font-weight: 800;
-    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+    flex-shrink: 0;
   }
-  .foto-no { background: #000; color: #fff; }
+  .foto-badge svg { display: block; }
+  .topo-logo {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 0.5mm;
+  }
   .aniversario {
     background: #000;
     color: #fff;
@@ -217,18 +238,31 @@ function gerarBarcodeSvg(codigo: string): Promise<string> {
   }).catch(() => `<text>${codigo}</text>`);
 }
 
-// Nome na etiqueta: nome completo até o limite; acima disso vira
-// "Primeiro Último" (o clamp de 2 linhas cortava o fim com reticências e o
-// sobrenome sumia — pedido do Marcos 2026-07-08). Se um dia precisarem de
-// apelido/nome social, vira campo próprio na ficha; por ora é automático.
-const NOME_ETIQUETA_MAX = 24;
+// Nome na etiqueta: SEMPRE o nome completo (pedido do Matheus 2026-07-09). Pra
+// caber no espaço, a fonte diminui conforme o comprimento e o nome pode quebrar
+// em até 2 linhas (sem reticências cortando o sobrenome).
 function nomeParaEtiqueta(nome: string): string {
-  const limpo = String(nome || '').trim().replace(/\s+/g, ' ');
-  if (limpo.length <= NOME_ETIQUETA_MAX) return limpo;
-  const partes = limpo.split(' ');
-  const curto = partes.length >= 2 ? `${partes[0]} ${partes[partes.length - 1]}` : limpo;
-  return curto.length <= NOME_ETIQUETA_MAX ? curto : `${curto.slice(0, NOME_ETIQUETA_MAX - 1)}…`;
+  return String(nome || '').trim().replace(/\s+/g, ' ');
 }
+
+// Tamanho de fonte do nome em função do comprimento (pt) — nome completo cabe.
+// Se o layout fixar um tamanho (P/M/G), usa esse; senão calcula pelo comprimento.
+function fonteNome(nome: string, tamanho?: EtiquetaLayout['nomeTamanho']): number {
+  if (tamanho === 'P') return 9;
+  if (tamanho === 'M') return 11;
+  if (tamanho === 'G') return 13;
+  const n = nomeParaEtiqueta(nome).length;
+  if (n <= 16) return 13;
+  if (n <= 22) return 11.5;
+  if (n <= 30) return 10;
+  if (n <= 40) return 8.5;
+  return 7.5;
+}
+
+// Ícone SVG (não emoji — emoji sai quebrado na Brother). Câmera OK / câmera
+// cortada (proibido) pro voluntário saber quando NÃO há autorização de foto.
+const ICONE_CAMERA_OK = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
+const ICONE_CAMERA_NAO = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/><line x1="2" y1="2" x2="22" y2="22" stroke-width="2.4"/></svg>`;
 
 // ⚠️ Emoji em HTML de impressão é loteria (o 📷 saiu como ícone quebrado na
 // Brother/preview · Diego 2026-07-08) → só texto puro nos templates de etiqueta.
@@ -240,27 +274,36 @@ function htmlEtiquetaCrianca(d: DadosImpressao, barcodeSvg: string): string {
     !d.crianca.alergia && !d.crianca.necessidade ? (d.crianca.observacoesMedicas || '') : '',
   ].filter(Boolean).join(' · ');
   const alerta = saude ? `<div class="alerta">! ${escapeHtml(saude)}</div>` : '';
-  // Selo de consentimento de foto (texto puro · sem emoji na impressão)
+  // Selo de foto: ícone SVG de câmera. Sem autorização → câmera cortada
+  // (proibido) pro voluntário saber na hora (nada de escrever "SEM FOTO").
   const foto = d.crianca.fotoAutorizada
-    ? `<span class="foto-badge">FOTO OK</span>`
-    : `<span class="foto-badge foto-no">SEM FOTO</span>`;
+    ? `<span class="foto-badge">${ICONE_CAMERA_OK}</span>`
+    : `<span class="foto-badge">${ICONE_CAMERA_NAO}</span>`;
   const aniversario = d.crianca.aniversarioSemana
     ? `<div class="aniversario">Feliz aniversário, ${escapeHtml((d.crianca.nome || '').split(' ')[0])}!</div>`
     : '';
-  // Logo da categoria/sala (por faixa de idade) · sai à esquerda do nome
+  // Layout ajustável (tamanho/posição da logo, fonte do nome)
+  const layout = { ...LAYOUT_ETIQUETA_PADRAO, ...(d.layout || {}) };
+  const logoMm = LOGO_MM[layout.logoTamanho || 'M'] || 6;
   const logo = d.crianca.salaLogoUrl
-    ? `<img class="logo-sala" src="${escapeHtml(d.crianca.salaLogoUrl)}" alt="" />`
+    ? `<img class="logo-sala" style="height:${logoMm}mm" src="${escapeHtml(d.crianca.salaLogoUrl)}" alt="" />`
     : '';
+  const nome = `<div class="nome-grande" style="margin:0;font-size:${fonteNome(d.crianca.nome, layout.nomeTamanho)}pt">${escapeHtml(nomeParaEtiqueta(d.crianca.nome))}</div>`;
+  // Monta a linha topo conforme a posição da logo
+  let topo: string;
+  if (layout.logoPosicao === 'acima' && logo) {
+    topo = `<div class="topo-logo">${logo}</div><div class="topo">${nome}${foto}</div>`;
+  } else if (layout.logoPosicao === 'direita') {
+    topo = `<div class="topo">${nome}${foto}${logo}</div>`;
+  } else {
+    topo = `<div class="topo">${logo}${nome}${foto}</div>`;
+  }
   return `<!doctype html><html><head><meta charset="utf-8"><style>${CSS_ETIQUETA}</style></head>
 <body>
   <div class="etiqueta" style="--cor: ${d.crianca.salaCor || '#EC4899'}">
     <div class="faixa-cor"></div>
     <div class="col-esq">
-      <div class="topo">
-        ${logo}
-        <div class="nome-grande" style="margin:0">${escapeHtml(nomeParaEtiqueta(d.crianca.nome))}</div>
-        ${foto}
-      </div>
+      ${topo}
       <div class="sala">${escapeHtml(d.crianca.salaNome)} · ${escapeHtml(d.crianca.idadeLabel)}</div>
       ${aniversario}
       ${alerta}
@@ -372,6 +415,12 @@ function imprimirHtml(html: string, preview = false): Promise<void> {
       }, 3000);
     }, 400);
   });
+}
+
+// HTML da etiqueta da criança pra PRÉVIA na tela (iframe srcDoc). Sem barcode
+// (a etiqueta da criança não tem) — reflete logo + layout escolhidos.
+export function gerarHtmlPreviewCrianca(d: DadosImpressao): string {
+  return htmlEtiquetaCrianca(d, '');
 }
 
 // API pública · imprime as 2 etiquetas e loga
