@@ -20,7 +20,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Eye, Printer, ArrowLeft, Loader2, Baby, Image as ImageIcon, Upload, Trash2, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids } from '@/api';
-import { imprimirEtiquetas, gerarHtmlPreviewCrianca, type EtiquetaLayout } from './lib/imprimir';
+import { imprimirEtiquetas, gerarHtmlPreviewCrianca, gerarHtmlPreviewAniversario, type EtiquetaLayout } from './lib/imprimir';
 import { formatIdadeShort } from './lib/idade';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -166,10 +166,41 @@ export function EtiquetaTesteForm() {
   const [fotoOk, setFotoOk] = useState(true);
 
   // Layout da etiqueta (config persistida · snake do backend)
-  const [cfg, setCfg] = useState<{ logo_tamanho: string; logo_posicao: string; nome_tamanho: string }>(
-    { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto' }
+  const [cfg, setCfg] = useState<{ logo_tamanho: string; logo_posicao: string; nome_tamanho: string; logo_aniversario_url?: string | null }>(
+    { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto', logo_aniversario_url: null }
   );
   const [salvandoLayout, setSalvandoLayout] = useState(false);
+  const [enviandoLogoAniv, setEnviandoLogoAniv] = useState(false);
+  const logoAnivInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function enviarLogoAniv(file?: File | null) {
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return toast.error('Use PNG, JPG ou WEBP');
+    if (file.size > 3 * 1024 * 1024) return toast.error('Imagem muito grande (máx 3MB)');
+    setEnviandoLogoAniv(true);
+    try {
+      const dataUrl = await lerArquivoComoDataUrl(file);
+      const { logo_aniversario_url } = await totemKids.etiquetaConfig.uploadLogoAniversario(dataUrl);
+      setCfg(c => ({ ...c, logo_aniversario_url }));
+      toast.success('Logo de aniversário salva');
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao salvar a logo');
+    } finally {
+      setEnviandoLogoAniv(false);
+    }
+  }
+  async function removerLogoAniv() {
+    setEnviandoLogoAniv(true);
+    try {
+      await totemKids.etiquetaConfig.removerLogoAniversario();
+      setCfg(c => ({ ...c, logo_aniversario_url: null }));
+      toast.success('Logo removida');
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao remover');
+    } finally {
+      setEnviandoLogoAniv(false);
+    }
+  }
 
   const layout: EtiquetaLayout = {
     logoTamanho: cfg.logo_tamanho as EtiquetaLayout['logoTamanho'],
@@ -197,13 +228,14 @@ export function EtiquetaTesteForm() {
   const dadosPreview = {
     checkinId: 'preview-only',
     crianca: {
-      nome: criancaNome, idadeLabel, salaNome, salaCor, salaLogoUrl,
+      nome: criancaNome, idadeLabel, idadeAnos: 6, salaNome, salaCor, salaLogoUrl,
       observacoesMedicas: obsMedica || null, alergia: obsMedica || null,
       fotoAutorizada: fotoOk, aniversarioSemana: false,
     },
     responsavel: { nome: responsavelNome },
     codigoSeguranca, codigoBarras: codigoSeguranca,
     dataHora: '', cultoNome, cultoDiaHora: cultoNome, layout,
+    logoAniversarioUrl: cfg.logo_aniversario_url || null,
   };
 
   function escolherSala(salaId: string) {
@@ -342,6 +374,41 @@ export function EtiquetaTesteForm() {
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground">Tamanho real 90×29mm (ampliado 1,5× aqui). Escolha uma categoria acima pra ver a logo.</p>
+          </div>
+
+          {/* Etiqueta de aniversário · logo do Kids + prévia */}
+          <div className="border-t pt-4 space-y-2">
+            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Etiqueta de aniversário</div>
+            <p className="text-[11px] text-muted-foreground -mt-1">
+              Sai uma etiqueta extra na semana do aniversário da criança. Suba aqui a logo do Kids que aparece nela.
+            </p>
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-20 rounded border bg-white flex items-center justify-center overflow-hidden shrink-0">
+                {cfg.logo_aniversario_url
+                  ? <img src={cfg.logo_aniversario_url} alt="" className="max-h-full max-w-full object-contain" />
+                  : <ImageIcon className="h-5 w-5 text-muted-foreground" />}
+              </div>
+              <input ref={logoAnivInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                onChange={e => { enviarLogoAniv(e.target.files?.[0]); e.target.value = ''; }} />
+              <Button size="sm" variant="outline" disabled={enviandoLogoAniv} onClick={() => logoAnivInputRef.current?.click()}>
+                {enviandoLogoAniv ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
+                {cfg.logo_aniversario_url ? 'Trocar logo' : 'Enviar logo'}
+              </Button>
+              {cfg.logo_aniversario_url && (
+                <Button size="sm" variant="ghost" disabled={enviandoLogoAniv} onClick={removerLogoAniv}>
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
+              )}
+            </div>
+            <div className="rounded-lg border bg-neutral-100 dark:bg-neutral-800 p-4 flex justify-center overflow-x-auto">
+              <div style={{ width: '90mm', transform: 'scale(1.5)', transformOrigin: 'top center' }}>
+                <iframe
+                  title="Prévia da etiqueta de aniversário"
+                  srcDoc={gerarHtmlPreviewAniversario(dadosPreview)}
+                  style={{ width: '90mm', height: '29mm', border: '1px solid #ccc', background: '#fff', display: 'block' }}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Layout da etiqueta (persistido · vale pra impressão real) */}

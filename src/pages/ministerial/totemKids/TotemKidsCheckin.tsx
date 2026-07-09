@@ -123,9 +123,13 @@ export default function TotemKidsCheckin() {
 
   // Layout configurável da etiqueta (tamanho/posição da logo, fonte do nome)
   const [etqLayout, setEtqLayout] = useState<Parameters<typeof imprimirEtiquetas>[0]['layout']>(undefined);
+  const [logoAniv, setLogoAniv] = useState<string | null>(null); // logo do Kids na etiqueta de aniversário
   useEffect(() => {
     totemKids.etiquetaConfig.get().then((c: any) => {
-      if (c) setEtqLayout({ logoTamanho: c.logo_tamanho, logoPosicao: c.logo_posicao, nomeTamanho: c.nome_tamanho });
+      if (c) {
+        setEtqLayout({ logoTamanho: c.logo_tamanho, logoPosicao: c.logo_posicao, nomeTamanho: c.nome_tamanho });
+        setLogoAniv(c.logo_aniversario_url || null);
+      }
     }).catch(() => {});
   }, []);
 
@@ -166,6 +170,7 @@ export default function TotemKidsCheckin() {
       crianca: {
         nome: c.nome,
         idadeLabel: formatIdade(c.idade_meses),
+        idadeAnos: c.idade_meses != null ? Math.floor(c.idade_meses / 12) : null,
         salaNome: args.salaNome,
         salaCor: args.salaCor,
         salaLogoUrl: args.salaLogoUrl,
@@ -182,6 +187,7 @@ export default function TotemKidsCheckin() {
       cultoNome: args.cultoNome || undefined,
       cultoDiaHora,
       layout: etqLayout,
+      logoAniversarioUrl: logoAniv,
     };
   }
 

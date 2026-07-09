@@ -1538,6 +1538,8 @@ export const totemKids = {
   etiquetaConfig: {
     get: () => get('/totem-kids/etiqueta-config'),
     save: (data) => put('/totem-kids/etiqueta-config', data),
+    uploadLogoAniversario: (dataUrl) => post('/totem-kids/etiqueta-config/logo', { dataUrl }),
+    removerLogoAniversario: () => post('/totem-kids/etiqueta-config/logo/remover', {}),
   },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),
