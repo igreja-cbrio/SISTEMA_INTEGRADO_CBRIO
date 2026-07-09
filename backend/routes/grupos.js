@@ -876,7 +876,7 @@ router.get('/pedidos/list', async (req, res) => {
   try {
     const { status, grupo_id, mine } = req.query;
     let query = supabase.from('mem_grupo_pedidos')
-      .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, mem_membros!lider_id(id, nome))')
+      .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, capacidade, aceitando_inscricoes, mem_membros!lider_id(id, nome))')
       .order('created_at', { ascending: false });
 
     if (status) query = query.eq('status', status);
@@ -900,7 +900,26 @@ router.get('/pedidos/list', async (req, res) => {
 
     const { data, error } = await query;
     if (error) throw error;
-    res.json(data || []);
+    const rows = data || [];
+
+    // Ocupação atual dos grupos — alimenta o aviso de capacidade no frontend
+    // (capacidade é conselho, não trava). Só na fila pendente: pedidos
+    // pendentes tocam poucos grupos, então count exato por grupo é barato.
+    if ((status || 'pendente') === 'pendente') {
+      const grupoIds = [...new Set(rows.map(p => p.grupo_id).filter(Boolean))].slice(0, 50);
+      const ocupacao = {};
+      await Promise.all(grupoIds.map(async (gid) => {
+        const { count } = await supabase.from('mem_grupo_membros')
+          .select('id', { count: 'exact', head: true })
+          .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null);
+        ocupacao[gid] = count || 0;
+      }));
+      rows.forEach(p => {
+        if (p.mem_grupos && ocupacao[p.grupo_id] !== undefined) p.mem_grupos.membros_ativos = ocupacao[p.grupo_id];
+      });
+    }
+
+    res.json(rows);
   } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
 });
 
@@ -1086,14 +1105,16 @@ router.get('/:id/historico-membros', async (req, res) => {
   }
 });
 
-// POST /api/grupos/pedidos/:pedidoId/aprovar
-router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (req, res) => {
-  try {
+// Núcleo da aprovação de pedido — compartilhado pelo endpoint individual e
+// pelo lote (aprovar-lote). Não toca no res: devolve { ok: true } ou
+// { ok: false, code, error }.
+async function aprovarPedidoCore(pedidoId, user) {
     const { data: pedido, error: ePedido } = await supabase.from('mem_grupo_pedidos')
-      .select('*').eq('id', req.params.pedidoId).single();
-    if (ePedido) throw ePedido;
+      .select('*').eq('id', pedidoId).maybeSingle();
+    if (ePedido) throw ePedido; // erro de infra → 500 no chamador (não é "não encontrado")
+    if (!pedido) return { ok: false, code: 404, error: 'Pedido não encontrado' };
     if (pedido.status !== 'pendente') {
-      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+      return { ok: false, code: 409, error: `Pedido já foi ${pedido.status}` };
     }
 
     let membroId = pedido.membro_id;
@@ -1131,7 +1152,7 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
     }
 
     if (!membroId) {
-      return res.status(400).json({ error: 'Pedido sem membro nem cadastro pendente valido' });
+      return { ok: false, code: 400, error: 'Pedido sem membro nem cadastro pendente valido' };
     }
 
     // Multi-grupo é permitido (uma pessoa participa de vários grupos ao mesmo
@@ -1151,8 +1172,8 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
     // Atualiza pedido
     await supabase.from('mem_grupo_pedidos').update({
       status: 'aprovado',
-      decidido_por: req.user.userId,
-      decidido_por_nome: req.user.name,
+      decidido_por: user.userId,
+      decidido_por_nome: user.name,
       decidido_em: new Date().toISOString(),
       membro_id: membroId,
     }).eq('id', pedido.id);
@@ -1226,6 +1247,41 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
     })();
 
+    return { ok: true };
+}
+
+// POST /api/grupos/pedidos/aprovar-lote — body { pedido_ids: [] }
+// Aprova em sequência com a mesma lógica do individual; devolve o resultado
+// por pedido (um pedido inválido não derruba o lote).
+router.post('/pedidos/aprovar-lote', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.pedido_ids)
+      ? [...new Set(req.body.pedido_ids.filter(v => typeof v === 'string' && v))]
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'Informe pedido_ids' });
+    if (ids.length > 100) return res.status(400).json({ error: 'Máximo de 100 pedidos por lote' });
+
+    let aprovados = 0;
+    const falhas = [];
+    for (const id of ids) {
+      try {
+        const r = await aprovarPedidoCore(id, req.user);
+        if (r.ok) aprovados += 1;
+        else falhas.push({ id, error: r.error });
+      } catch (e) {
+        console.error('[Pedidos aprovar-lote item]', id, e.message);
+        falhas.push({ id, error: 'Erro ao aprovar' });
+      }
+    }
+    res.json({ success: true, aprovados, falhas });
+  } catch (e) { console.error('[Pedidos aprovar-lote]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedidos' }); }
+});
+
+// POST /api/grupos/pedidos/:pedidoId/aprovar
+router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await aprovarPedidoCore(req.params.pedidoId, req.user);
+    if (!r.ok) return res.status(r.code).json({ error: r.error });
     res.json({ success: true });
   } catch (e) { console.error('[Pedido aprovar]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedido' }); }
 });
@@ -1436,6 +1492,20 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
     syncWhatsappLideres();
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar grupo' }); }
+});
+
+// PATCH /api/grupos/:id/aceitando — toggle parcial de aceitando_inscricoes
+// (o PUT /:id é update completo; este PATCH muda SÓ o toggle, usado pelo
+// atalho "pausar/retomar inscrições" na tela de pedidos).
+router.patch('/:id/aceitando', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const aceitando = req.body?.aceitando === true;
+    const { data, error } = await supabase.from('mem_grupos')
+      .update({ aceitando_inscricoes: aceitando })
+      .eq('id', req.params.id).select('id, nome, aceitando_inscricoes').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Grupos aceitando]', e.message); res.status(500).json({ error: 'Erro ao atualizar grupo' }); }
 });
 
 // GET /api/grupos/temporadas — lista temporadas

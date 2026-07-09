@@ -41,6 +41,8 @@ export default function PedidosGrupo({ embedded = false }) {
   const [filterStatus, setFilterStatus] = useState('pendente');
   const [rejectingId, setRejectingId] = useState(null);
   const [motivoRej, setMotivoRej] = useState('');
+  const [selected, setSelected] = useState(() => new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -49,6 +51,7 @@ export default function PedidosGrupo({ embedded = false }) {
       if (!showAll) params.mine = 'true';
       const data = await api.listarPedidos(params);
       setPedidos(data || []);
+      setSelected(new Set());
     } catch (e) {
       toast.error('Erro ao carregar pedidos');
     } finally {
@@ -58,13 +61,73 @@ export default function PedidosGrupo({ embedded = false }) {
 
   useEffect(() => { load(); }, [filterStatus, showAll]);
 
+  // Capacidade é conselho, não trava: o aviso aparece, mas a aprovação
+  // nunca é bloqueada (decisão do líder).
+  const capacidadeInfo = (grupo) => {
+    if (!grupo || grupo.capacidade == null || grupo.membros_ativos == null) return null;
+    return { atual: grupo.membros_ativos, limite: grupo.capacidade, cheio: grupo.membros_ativos >= grupo.capacidade };
+  };
+
   const aprovar = async (p) => {
-    if (!confirm(`Aprovar ${p.nome} no grupo "${p.mem_grupos?.nome}"?`)) return;
+    const cap = capacidadeInfo(p.mem_grupos);
+    const aviso = cap?.cheio
+      ? `\n\nAtenção: o grupo já está com ${cap.atual} de ${cap.limite} pessoas (a capacidade é um conselho, você decide).`
+      : '';
+    if (!confirm(`Aprovar ${p.nome} no grupo "${p.mem_grupos?.nome}"?${aviso}`)) return;
     try {
       await api.aprovarPedido(p.id);
       toast.success('Pedido aprovado');
       load();
     } catch (e) { toast.error(e.message || 'Erro ao aprovar'); }
+  };
+
+  const toggleSelecionado = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const pendentes = pedidos.filter(p => p.status === 'pendente');
+  const todosSelecionados = pendentes.length > 0 && pendentes.every(p => selected.has(p.id));
+
+  const toggleTodos = () => {
+    setSelected(todosSelecionados ? new Set() : new Set(pendentes.map(p => p.id)));
+  };
+
+  const aprovarSelecionados = async () => {
+    const itens = pendentes.filter(p => selected.has(p.id));
+    if (!itens.length) return;
+    const lotados = [...new Map(
+      itens.filter(p => capacidadeInfo(p.mem_grupos)?.cheio).map(p => [p.mem_grupos.id, p.mem_grupos])
+    ).values()];
+    let msg = `Aprovar ${itens.length} pedido(s) selecionado(s)?`;
+    if (lotados.length) {
+      msg += '\n\nAtenção — grupos no limite de capacidade (conselho, não trava):\n'
+        + lotados.map(g => `· ${g.nome}: ${g.membros_ativos}/${g.capacidade}`).join('\n');
+    }
+    if (!confirm(msg)) return;
+    setBatchLoading(true);
+    try {
+      const r = await api.aprovarPedidosLote(itens.map(p => p.id));
+      if (r.falhas?.length) {
+        toast.warning(`${r.aprovados} aprovado(s) · ${r.falhas.length} falha(s): ${r.falhas.map(f => f.error).join('; ')}`);
+      } else {
+        toast.success(`${r.aprovados} pedido(s) aprovado(s)`);
+      }
+      load();
+    } catch (e) { toast.error(e.message || 'Erro ao aprovar em lote'); }
+    finally { setBatchLoading(false); }
+  };
+
+  const pausarInscricoes = async (grupo) => {
+    if (!confirm(`Pausar novas inscrições do grupo "${grupo.nome}"? Ele sai do formulário público até você reativar (no cadastro do grupo).`)) return;
+    try {
+      await api.setAceitandoInscricoes(grupo.id, false);
+      toast.success('Inscrições pausadas — o grupo saiu do formulário público');
+      load();
+    } catch (e) { toast.error(e.message || 'Erro ao pausar inscrições'); }
   };
 
   const rejeitar = async (p) => {
@@ -109,6 +172,27 @@ export default function PedidosGrupo({ embedded = false }) {
         )}
       </div>
 
+      {filterStatus === 'pendente' && !loading && pendentes.length > 1 && (
+        <div style={{
+          display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, padding: '8px 12px',
+          background: selected.size ? C.primaryBg : C.card, borderRadius: 10,
+          border: `1px solid ${selected.size ? C.primary : C.border}`,
+        }}>
+          <label style={{ fontSize: 12, color: C.t2, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={todosSelecionados} onChange={toggleTodos} style={{ accentColor: C.primary }} />
+            Selecionar todos ({pendentes.length})
+          </label>
+          {selected.size > 0 && (
+            <>
+              <span style={{ fontSize: 12, color: C.primary, fontWeight: 700 }}>{selected.size} selecionado(s)</span>
+              <Button size="sm" onClick={aprovarSelecionados} disabled={batchLoading} style={{ marginLeft: 'auto' }}>
+                <Check size={14} style={{ marginRight: 4 }} /> {batchLoading ? 'Aprovando...' : `Aprovar selecionados (${selected.size})`}
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>
       ) : pedidos.length === 0 ? (
@@ -125,6 +209,15 @@ export default function PedidosGrupo({ embedded = false }) {
             return (
               <div key={p.id} style={{ background: C.card, borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+                  {p.status === 'pendente' && (
+                    <input
+                      type="checkbox"
+                      checked={selected.has(p.id)}
+                      onChange={() => toggleSelecionado(p.id)}
+                      style={{ accentColor: C.primary, marginTop: 12, cursor: 'pointer' }}
+                      aria-label={`Selecionar pedido de ${p.nome}`}
+                    />
+                  )}
                   <div style={{ width: 40, height: 40, borderRadius: '50%', background: C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.primary, fontWeight: 700 }}>
                     {p.nome?.charAt(0)?.toUpperCase() || '?'}
                   </div>
@@ -153,11 +246,27 @@ export default function PedidosGrupo({ embedded = false }) {
                       {grupo?.bairro && <><MapPin size={10} style={{ display: 'inline', marginRight: 3 }} /> {grupo.bairro}</>}
                       {lider?.nome && <> · líder: {lider.nome}</>}
                     </div>
+                    {(() => {
+                      const cap = capacidadeInfo(grupo);
+                      return cap ? (
+                        <div style={{ fontSize: 11, marginTop: 4, color: cap.cheio ? C.amber : C.t3, fontWeight: cap.cheio ? 700 : 500 }}>
+                          {cap.atual}/{cap.limite} pessoas{cap.cheio ? ' · no limite' : ''}
+                        </div>
+                      ) : null;
+                    })()}
+                    {grupo?.aceitando_inscricoes === false && (
+                      <div style={{ fontSize: 10, marginTop: 3, color: C.t3 }}>Inscrições pausadas</div>
+                    )}
                   </div>
                 </div>
 
                 {p.status === 'pendente' && !isRejecting && (
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+                    {capacidadeInfo(grupo)?.cheio && grupo?.aceitando_inscricoes !== false && (
+                      <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
+                        Pausar novas inscrições
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
                       <X size={14} style={{ marginRight: 4 }} /> Rejeitar
                     </Button>
