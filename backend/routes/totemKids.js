@@ -1172,6 +1172,65 @@ router.post('/resumo-pco/testar', authorizeModule('kids', 1), async (req, res) =
   }
 });
 
+// GET /frequencia-sistema?data=YYYY-MM-DD · check-ins feitos PELO SISTEMA (totem)
+// naquele dia, agrupados por culto. Complementa a frequência do PCO (a mesma
+// tela mostra as duas fontes).
+router.get('/frequencia-sistema', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const data = String(req.query.data || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ error: 'Data inválida' });
+
+    const { data: cultos } = await supabase.from('cultos').select('id, nome, data').eq('data', data);
+    if (!cultos || cultos.length === 0) return res.json({ data, total_criancas: 0, total_checkins: 0, por_culto: [] });
+    const cultoIds = cultos.map(c => c.id);
+    const nomeCulto = Object.fromEntries(cultos.map(c => [c.id, c.nome]));
+
+    const { data: sessoes } = await supabase.from('kids_sessoes').select('id, culto_id').in('culto_id', cultoIds);
+    if (!sessoes || sessoes.length === 0) return res.json({ data, total_criancas: 0, total_checkins: 0, por_culto: [] });
+    const sessaoCulto = Object.fromEntries(sessoes.map(s => [s.id, s.culto_id]));
+
+    const { data: checkins } = await supabase.from('kids_checkins')
+      .select('id, sessao_id, crianca_id, checkin_at, checkout_at, codigo_seguranca, responsavel_checkin_nome, crianca:kids_criancas(id, nome, data_nascimento)')
+      .in('sessao_id', sessoes.map(s => s.id))
+      .order('checkin_at', { ascending: true });
+
+    const horaBRT = (iso) => {
+      if (!iso) return '';
+      const d = new Date(new Date(iso).getTime() - 3 * 3600 * 1000);
+      return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+    };
+
+    const porCultoMap = {};
+    const criancasDistintas = new Set();
+    for (const ck of (checkins || [])) {
+      const cultoId = sessaoCulto[ck.sessao_id];
+      if (!cultoId) continue;
+      if (!porCultoMap[cultoId]) porCultoMap[cultoId] = { culto_id: cultoId, nome: nomeCulto[cultoId] || 'Culto', total: 0, criancas: [] };
+      const cr = Array.isArray(ck.crianca) ? ck.crianca[0] : ck.crianca;
+      porCultoMap[cultoId].criancas.push({
+        crianca_id: ck.crianca_id,
+        nome: cr?.nome || '—',
+        hora: horaBRT(ck.checkin_at),
+        codigo: ck.codigo_seguranca || null,
+        saiu: !!ck.checkout_at,
+        trazida_por: ck.responsavel_checkin_nome || null,
+      });
+      porCultoMap[cultoId].total++;
+      if (ck.crianca_id) criancasDistintas.add(ck.crianca_id);
+    }
+
+    res.json({
+      data,
+      total_criancas: criancasDistintas.size,
+      total_checkins: (checkins || []).length,
+      por_culto: Object.values(porCultoMap),
+    });
+  } catch (e) {
+    console.error('[totemKids] frequencia-sistema:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar check-ins do sistema' });
+  }
+});
+
 // POST /criancas/depurar-inativos · desativa as crianças (com vínculo PCO) que
 // NÃO tiveram check-in nos últimos N meses (default 6). Saem da lista (que mostra
 // só ativos). Reversível (ativo=false · não apaga). Body: { meses }.
