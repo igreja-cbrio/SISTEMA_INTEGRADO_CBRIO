@@ -521,7 +521,9 @@ export const grupos = {
   contarPedidos: () => get('/grupos/pedidos/count'),
   historicoMembros: (grupoId) => get(`/grupos/${grupoId}/historico-membros`),
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
+  aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
+  setAceitandoInscricoes: (grupoId, aceitando) => patch(`/grupos/${grupoId}/aceitando`, { aceitando }),
   geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
   // Supervisao
   supervisaoMe: () => get('/grupos/supervisao/me'),
