@@ -9,6 +9,7 @@ const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { importarParticipantes } = require('../services/gruposImporter');
+const { notificarPessoaAprovada } = require('../services/gruposWhatsapp');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -1182,7 +1183,7 @@ async function aprovarPedidoCore(pedidoId, user) {
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos')
-          .select('id, nome, codigo, dia_semana, horario, local, complemento, bairro, lider_id')
+          .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, lider_id')
           .eq('id', pedido.grupo_id).single();
         if (!grupo) return;
         let liderNome = null;
@@ -1202,7 +1203,7 @@ async function aprovarPedidoCore(pedidoId, user) {
         const quando = grupo.dia_semana != null
           ? `${DIAS[grupo.dia_semana]}${grupo.horario ? ` as ${String(grupo.horario).slice(0,5)}` : ''}`
           : null;
-        const ondePartes = [grupo.local, grupo.complemento, grupo.bairro].filter(Boolean);
+        const ondePartes = [grupo.local, grupo.endereco, grupo.complemento, grupo.bairro].filter(Boolean);
         const onde = ondePartes.length ? ondePartes.join(' — ') : null;
 
         const partesPessoa = [];
@@ -1244,6 +1245,16 @@ async function aprovarPedidoCore(pedidoId, user) {
             targetIds: [liderAuthUserId],
           });
         }
+
+        // F3 · WhatsApp de boas-vindas à pessoa aprovada (template
+        // grupos_pedido_aprovado). Cobre aprovação logada E via link do
+        // líder. Gated por WHATSAPP_ENABLED no whatsappService.
+        await notificarPessoaAprovada({
+          telefone: pedido.telefone,
+          grupo,
+          liderNome,
+          liderTelefone,
+        });
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
     })();
 
@@ -2579,3 +2590,5 @@ router.post('/importar-lideres/aplicar', authorizeModule('grupos', 3), async (re
 });
 
 module.exports = router;
+// Compartilhado com a rota pública de aprovação por token (publicGrupos.js /aprovar)
+module.exports.aprovarPedidoCore = aprovarPedidoCore;

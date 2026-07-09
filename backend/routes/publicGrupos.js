@@ -9,6 +9,9 @@ const {
   normalizarCpf, normalizarTelefone, normalizarEmail, nomesMesmaPessoa,
   acharMembroGuardado,
 } = require('../services/membroMatch');
+const {
+  verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
+} = require('../services/gruposWhatsapp');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
 // O formulário roda num navegador quiosque no lounge (1 IP) e, num domingo
@@ -543,6 +546,14 @@ router.post('/inscrever', async (req, res) => {
           chaveDedup: `pedido_grupo_${pedido.id}`,
           extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
         });
+
+        // F3 · WhatsApp pro líder com o link de aprovar sem login.
+        // Gated por WHATSAPP_ENABLED no whatsappService (sem env → dry-run).
+        await notificarLiderNovoPedido({
+          grupo,
+          pedidoId: pedido.id,
+          pessoa: { nome: nome.trim(), telefone: telefone || null, email: emailLimpo },
+        });
       } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
     })();
 
@@ -550,6 +561,125 @@ router.post('/inscrever', async (req, res) => {
   } catch (e) {
     console.error('[public grupos inscrever]', e.message);
     res.status(500).json({ error: 'Erro ao processar inscrição.' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// F3 · aprovação pelo líder via link do WhatsApp (sem login).
+// Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e
+// expira em 7 dias. Fail-closed: sem CRON_SECRET nenhum token valida.
+// Rota com 2 segmentos de propósito — o GET /:id (acima) captura qualquer
+// caminho de 1 segmento.
+// ─────────────────────────────────────────────────────────────
+
+// GET /api/public/grupos/pedido/por-token?token=...
+// Dados que o líder vê na página de aprovação (o token É a credencial).
+router.get('/pedido/por-token', async (req, res) => {
+  try {
+    const payload = verificarToken(req.query.token, 'aprov');
+    if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode aprovar pelo sistema em /grupos.' });
+
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, nome, telefone, email, observacao, status, created_at, motivo_rejeicao, grupo_id, mem_grupos(id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade)')
+      .eq('id', payload.p).maybeSingle();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
+
+    const grupo = pedido.mem_grupos || {};
+    let membrosAtivos = null;
+    if (grupo.id) {
+      const { count } = await supabase.from('mem_grupo_membros')
+        .select('id', { count: 'exact', head: true })
+        .eq('grupo_id', grupo.id).is('saiu_em', null).is('deleted_at', null);
+      membrosAtivos = count || 0;
+    }
+
+    res.json({
+      pedido: {
+        id: pedido.id, nome: pedido.nome, telefone: pedido.telefone, email: pedido.email,
+        observacao: pedido.observacao, status: pedido.status, created_at: pedido.created_at,
+        motivo_rejeicao: pedido.motivo_rejeicao,
+      },
+      grupo: {
+        nome: grupo.nome, codigo: grupo.codigo, bairro: grupo.bairro,
+        quando: formatarQuando(grupo), onde: formatarOnde(grupo),
+        capacidade: grupo.capacidade ?? null, membros_ativos: membrosAtivos,
+      },
+    });
+  } catch (e) {
+    console.error('[public grupos pedido-por-token]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar pedido.' });
+  }
+});
+
+// POST /api/public/grupos/aprovar — body { token, acao: 'aprovar'|'rejeitar', motivo? }
+router.post('/aprovar', async (req, res) => {
+  try {
+    const { token, acao, motivo } = req.body || {};
+    const payload = verificarToken(token, 'aprov');
+    if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode decidir pelo sistema em /grupos.' });
+    if (!['aprovar', 'rejeitar'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
+
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, membro_id, nome').eq('id', payload.p).maybeSingle();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    if (pedido.status !== 'pendente') {
+      return res.status(409).json({ error: `Este pedido já foi ${pedido.status}.`, status: pedido.status });
+    }
+
+    // Quem decide por este link é o líder do grupo (foi ele quem o recebeu).
+    let liderNome = 'Líder do grupo';
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome, lider_id').eq('id', pedido.grupo_id).maybeSingle();
+    if (grupo?.lider_id) {
+      const { data: lider } = await supabase.from('mem_membros')
+        .select('nome').eq('id', grupo.lider_id).maybeSingle();
+      if (lider?.nome) liderNome = lider.nome;
+    }
+    const decididoPorNome = `${liderNome} (link WhatsApp)`;
+
+    if (acao === 'aprovar') {
+      // Mesmo núcleo da aprovação autenticada (promoção de cadastro pendente,
+      // matcher anti-duplicata, vínculo idempotente, notificações e WhatsApp).
+      const { aprovarPedidoCore } = require('./grupos');
+      const r = await aprovarPedidoCore(pedido.id, { userId: null, name: decididoPorNome });
+      if (!r.ok) return res.status(r.code).json({ error: r.error });
+      return res.json({ ok: true, acao: 'aprovado' });
+    }
+
+    await supabase.from('mem_grupo_pedidos').update({
+      status: 'rejeitado',
+      motivo_rejeicao: motivo ? String(motivo).trim().slice(0, 500) : null,
+      decidido_por: null,
+      decidido_por_nome: decididoPorNome,
+      decidido_em: new Date().toISOString(),
+    }).eq('id', pedido.id);
+
+    // Notifica a pessoa in-app (se tiver login) — espelho do rejeitar autenticado.
+    (async () => {
+      try {
+        if (!pedido.membro_id) return;
+        const { data: prof } = await supabase.from('vol_profiles')
+          .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
+        if (!prof?.auth_user_id) return;
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'pedido_rejeitado',
+          titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
+          mensagem: motivo
+            ? `Seu pedido foi recusado: ${String(motivo).trim().slice(0, 500)}. Você pode tentar outro grupo.`
+            : 'Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.',
+          link: '/grupos',
+          severidade: 'info',
+          chaveDedup: `pedido_rejeitado_${pedido.id}`,
+          targetIds: [prof.auth_user_id],
+        });
+      } catch (err) { console.error('[public grupos aprovar notify]', err.message); }
+    })();
+
+    res.json({ ok: true, acao: 'rejeitado' });
+  } catch (e) {
+    console.error('[public grupos aprovar]', e.message);
+    res.status(500).json({ error: 'Erro ao processar decisão.' });
   }
 });
 
