@@ -391,6 +391,27 @@ function leituraClienteFallback(aba, kpis, buckets) {
 function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerDetalhe, onComparar }) {
   const [texto, setTexto] = useState('');
   const [loading, setLoading] = useState(true);
+  // Análise aprofundada (sob demanda · IA maior · explica causas como mês com 5 semanas)
+  const [analise, setAnalise] = useState('');
+  const [analisando, setAnalisando] = useState(false);
+  const [analiseErro, setAnaliseErro] = useState('');
+
+  async function gerarAnalise() {
+    if (analisando) return;
+    setAnalisando(true);
+    setAnaliseErro('');
+    try {
+      const r = await financeiroV2.dashboard.analiseProfunda(semana);
+      setAnalise(r?.texto || '');
+      if (!r?.texto) setAnaliseErro('A IA não retornou análise. Tente de novo.');
+    } catch (e) {
+      setAnaliseErro(e?.message || 'Não foi possível gerar a análise agora.');
+    } finally {
+      setAnalisando(false);
+    }
+  }
+  // Semana mudou → a análise antiga não vale mais
+  useEffect(() => { setAnalise(''); setAnaliseErro(''); }, [semana]);
 
   useEffect(() => {
     let cancelled = false;
@@ -439,7 +460,28 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
           </p>
         )}
 
-        <div className="flex items-center gap-2 mt-4">
+        {/* Análise aprofundada (gerada sob demanda) */}
+        {(analise || analisando || analiseErro) && (
+          <div className="mt-4 rounded-xl border border-primary/25 bg-primary/5 p-3.5">
+            <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: C.primary }}>
+              Análise aprofundada
+            </div>
+            {analisando ? (
+              <div className="space-y-2">
+                <div className="h-3.5 rounded bg-muted animate-pulse w-[95%]" />
+                <div className="h-3.5 rounded bg-muted animate-pulse w-[88%]" />
+                <div className="h-3.5 rounded bg-muted animate-pulse w-[60%]" />
+                <p className="text-[11px] text-muted-foreground pt-1">Analisando a série mensal, semanas de contribuição e saúde financeira…</p>
+              </div>
+            ) : analiseErro ? (
+              <p className="text-sm text-red-600">{analiseErro}</p>
+            ) : (
+              <div className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">{analise}</div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mt-4 flex-wrap">
           <Button
             size="sm"
             onClick={onVerDetalhe}
@@ -450,6 +492,10 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
           </Button>
           <Button size="sm" variant="outline" onClick={onComparar}>
             Comparar semanas
+          </Button>
+          <Button size="sm" variant="outline" onClick={gerarAnalise} disabled={analisando} className="border-primary/40" style={{ color: C.primary }}>
+            {analisando ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1.5" />}
+            {analise ? 'Gerar de novo' : 'Análise aprofundada'}
           </Button>
         </div>
       </CardContent>
@@ -2881,13 +2927,17 @@ function ArrecadacaoAnualChart() {
     }
   };
 
+  // Meses com 5 semanas de contribuição (qua→ter) arrecadam naturalmente mais
+  // → sinalizados com "•5" no eixo e badge no mês selecionado.
   const formatado = meses.map((m, i) => ({
     idx: i,
-    label: m.mes_label,
+    label: m.semanas_qua_ter === 5 ? `${m.mes_label} •5` : m.mes_label,
     Receita: m.receita,
     Acumulado: m.acumulado,
     qtd: m.qtd,
+    semanas: m.semanas_qua_ter,
   }));
+  const temMes5 = meses.some(m => m.semanas_qua_ter === 5);
 
   return (
     <Card>
@@ -2942,7 +2992,15 @@ function ArrecadacaoAnualChart() {
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
                   <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
-                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.08)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                    formatter={(v) => fmtMoney(v)}
+                    labelFormatter={(label, payload) => {
+                      const p = payload?.[0]?.payload;
+                      return p?.semanas === 5 ? `${label} · mês com 5 semanas de contribuição` : label;
+                    }}
+                    contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
+                  />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
                   <Bar yAxisId="left" dataKey="Receita" fill={C.primary} radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
                     {formatado.map((entry, i) => (
@@ -2953,6 +3011,11 @@ function ArrecadacaoAnualChart() {
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+            {temMes5 && (
+              <p className="text-[11px] text-muted-foreground mt-1">
+                <b>•5</b> = mês com <b>5 semanas de contribuição</b> (semana da igreja: quarta→terça) — tende a arrecadar mais que meses com 4.
+              </p>
+            )}
             <AnimatePresence mode="wait">
               {sel && (
                 <motion.div
@@ -2965,8 +3028,15 @@ function ArrecadacaoAnualChart() {
                 >
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <span className="text-xs text-muted-foreground">Mês selecionado</span>
-                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                      {sel.mes_label}/{String(ano).slice(2)}
+                    <span className="flex items-center gap-2">
+                      {sel.semanas_qua_ter === 5 && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
+                          5 semanas de contribuição
+                        </span>
+                      )}
+                      <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                        {sel.mes_label}/{String(ano).slice(2)}
+                      </span>
                     </span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
