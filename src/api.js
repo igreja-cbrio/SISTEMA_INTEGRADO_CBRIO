@@ -501,6 +501,11 @@ export const grupos = {
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
+  redes: {
+    list: () => get('/grupos/redes'),
+    create: (data) => post('/grupos/redes', data),
+    update: (id, data) => put(`/grupos/redes/${id}`, data),
+  },
   // Flag global de temporada de inscrições (app lê pra liberar auto-inscrição)
   temporadaInscricoes: {
     get: () => get('/grupos/temporada-inscricoes'),

@@ -109,7 +109,6 @@ export default function Grupos() {
   const [gruposForSelect, setGruposForSelect] = useState([]);
   const [filterTipo, setFilterTipo] = useState('all');
   const [filterDia, setFilterDia] = useState('all');
-  const [filterTema, setFilterTema] = useState('all');
   const [filterBairro, setFilterBairro] = useState('all');
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
   const [filterTemporada, setFilterTemporada] = useState('');
@@ -483,23 +482,22 @@ export default function Grupos() {
 
   // Extrair opções únicas para filtros
   const tiposUnicos = [...new Set(gruposList.map(g => g.categoria).filter(Boolean))].sort();
-  const temasUnicos = [...new Set(gruposList.map(g => g.tema).filter(Boolean))].sort();
+  const diasUnicos = [...new Set(gruposList.map(g => g.dia_semana).filter(v => v != null))].sort((a, b) => a - b);
   const bairrosUnicos = [...new Set(gruposList.map(g => g.bairro).filter(Boolean))].sort();
 
   const filtered = gruposList.filter(g => {
     if (search) {
       const s = search.toLowerCase();
-      if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.tema?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
+      if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
     if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
-    if (filterTema !== 'all' && g.tema !== filterTema) return false;
     if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
     if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
     return true;
   });
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterTema !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all';
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all';
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -1387,7 +1385,7 @@ export default function Grupos() {
 
       <div style={{ marginBottom: 12, position: 'relative' }}>
         <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
-        <Input placeholder="Buscar por código, grupo, líder, local, bairro ou tema..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
+        <Input placeholder="Buscar por código, grupo, líder, local ou bairro..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
       </div>
 
       {/* Filtros */}
@@ -1405,15 +1403,7 @@ export default function Grupos() {
           <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue placeholder="Dia" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos os dias</SelectItem>
-            {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-          </SelectContent>
-        </ShadSelect>
-
-        <ShadSelect value={filterTema} onValueChange={setFilterTema}>
-          <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Tema" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os temas</SelectItem>
-            {temasUnicos.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            {diasUnicos.map(i => <SelectItem key={i} value={String(i)}>{DIAS[i]}</SelectItem>)}
           </SelectContent>
         </ShadSelect>
 
@@ -1450,7 +1440,7 @@ export default function Grupos() {
         )}
 
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all'); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -1481,7 +1471,7 @@ export default function Grupos() {
               <button
                 onClick={() => {
                   setFilterTipo('all'); setFilterDia('all');
-                  setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all');
+                  setFilterBairro('all'); setFilterStatusTemp('all');
                   setFilterTemporada('');
                 }}
                 style={{ marginTop: 8, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}

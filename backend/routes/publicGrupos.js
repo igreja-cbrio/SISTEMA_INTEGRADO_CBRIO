@@ -66,8 +66,9 @@ router.get('/buscar', async (req, res) => {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, q } = req.query;
 
     let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url')
-      .eq('ativo', true);
+      .select('id, codigo, nome, categoria, faixa_etaria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url')
+      .eq('ativo', true)
+      .eq('aceitando_inscricoes', true); // líder pode ter parado de receber pedidos
     // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
     query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
     if (categoria) query = query.eq('categoria', categoria);
@@ -389,9 +390,15 @@ router.post('/inscrever', async (req, res) => {
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, status_temporada, temporada, lider_id').eq('id', grupo_id).single();
+      .select('id, nome, ativo, aceitando_inscricoes, status_temporada, temporada, lider_id').eq('id', grupo_id).single();
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
+    }
+    if (grupo.aceitando_inscricoes === false) {
+      return res.status(403).json({
+        error: 'Este grupo não está recebendo novas inscrições no momento.',
+        codigo: 'inscricoes_fechadas',
+      });
     }
 
     // Verifica se a temporada do grupo esta com inscrições abertas
