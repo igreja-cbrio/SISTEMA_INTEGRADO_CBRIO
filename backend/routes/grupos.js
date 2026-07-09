@@ -1279,6 +1279,49 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
 });
 
 // ══════════════════════════════════════════════
+// Redes (rede → supervisor → grupos) · ANTES das rotas /:id (Express casaria)
+// ══════════════════════════════════════════════
+router.get('/redes', async (req, res) => {
+  try {
+    const { data: redes, error } = await supabase.from('mem_redes')
+      .select('id, nome, cor, supervisor_id, ativa').eq('ativa', true).order('nome');
+    if (error) throw error;
+    const supIds = [...new Set((redes || []).map(r => r.supervisor_id).filter(Boolean))];
+    let sup = {};
+    if (supIds.length) {
+      const { data: ms } = await supabase.from('mem_membros').select('id, nome').in('id', supIds).is('deleted_at', null);
+      (ms || []).forEach(m => { sup[m.id] = m.nome; });
+    }
+    res.json((redes || []).map(r => ({ ...r, supervisor_nome: sup[r.supervisor_id] || null })));
+  } catch (e) { console.error('[Grupos redes]', e.message); res.status(500).json({ error: 'Erro ao listar redes' }); }
+});
+
+router.post('/redes', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { nome, cor, supervisor_id } = req.body || {};
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome da rede obrigatório.' });
+    const { data, error } = await supabase.from('mem_redes')
+      .insert({ nome: nome.trim(), cor: cor || null, supervisor_id: supervisor_id || null }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Grupos rede create]', e.message); res.status(500).json({ error: 'Erro ao criar rede' }); }
+});
+
+router.put('/redes/:id', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { nome, cor, supervisor_id, ativa } = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (nome !== undefined) patch.nome = nome;
+    if (cor !== undefined) patch.cor = cor;
+    if (supervisor_id !== undefined) patch.supervisor_id = supervisor_id || null;
+    if (ativa !== undefined) patch.ativa = ativa;
+    const { data, error } = await supabase.from('mem_redes').update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Grupos rede update]', e.message); res.status(500).json({ error: 'Erro ao atualizar rede' }); }
+});
+
+// ══════════════════════════════════════════════
 // CRUD do grupo (rotas com /:id por último)
 // ══════════════════════════════════════════════
 
@@ -1352,6 +1395,10 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
       complemento: d.complemento || null,
       bairro: d.bairro || null,
+      faixa_etaria: d.faixa_etaria || null,
+      capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
+      aceitando_inscricoes: d.aceitando_inscricoes !== false,
+      rede_id: d.rede_id || null,
       status_temporada: d.status_temporada || 'novo',
       temporada: d.temporada || null,
       codigo: d.codigo || null, // se null, trigger auto-gera
@@ -1377,6 +1424,10 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
       complemento: d.complemento || null,
       bairro: d.bairro || null,
+      faixa_etaria: d.faixa_etaria || null,
+      capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
+      aceitando_inscricoes: d.aceitando_inscricoes !== false,
+      rede_id: d.rede_id || null,
       status_temporada: d.status_temporada || null,
       temporada: d.temporada || null,
       descricao: d.descricao || '', ativo: d.ativo ?? true,
