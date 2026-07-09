@@ -2809,6 +2809,48 @@ router.put('/etiqueta-config', authorizeModule('kids', 3), async (req, res) => {
   }
 });
 
+// POST /etiqueta-config/logo · logo do Kids da etiqueta de ANIVERSÁRIO (global).
+// Bucket público fotos-membros (kids-logos/_aniversario) pra o iframe imprimir.
+router.post('/etiqueta-config/logo', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { dataUrl } = req.body || {};
+    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+    const mime = m[1];
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 3 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 3MB)' });
+    const path = `kids-logos/_aniversario.${ext}`;
+    const { error: upErr } = await supabase.storage.from('fotos-membros').upload(path, buffer, { contentType: mime, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const logo_aniversario_url = `${urlData.publicUrl}?t=${Date.now()}`;
+    const { error: dbErr } = await supabase.from('kids_etiqueta_config')
+      .upsert({ id: 1, logo_aniversario_url, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (dbErr) throw dbErr;
+    res.json({ logo_aniversario_url });
+  } catch (e) {
+    console.error('[totemKids] etiqueta-config logo:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a logo' });
+  }
+});
+
+// POST /etiqueta-config/logo/remover · tira a logo de aniversário
+router.post('/etiqueta-config/logo/remover', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    for (const ext of ['png', 'jpg', 'webp']) {
+      await supabase.storage.from('fotos-membros').remove([`kids-logos/_aniversario.${ext}`]).catch(() => {});
+    }
+    const { error } = await supabase.from('kids_etiqueta_config')
+      .upsert({ id: 1, logo_aniversario_url: null, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] etiqueta-config logo remover:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a logo' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ETIQUETAS · LOG (auditoria de impressão)
 // ═══════════════════════════════════════════════════════════════════════════
