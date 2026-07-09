@@ -911,7 +911,7 @@ router.get('/pedidos/list', async (req, res) => {
       await Promise.all(grupoIds.map(async (gid) => {
         const { count } = await supabase.from('mem_grupo_membros')
           .select('id', { count: 'exact', head: true })
-          .eq('grupo_id', gid).is('saiu_em', null);
+          .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null);
         ocupacao[gid] = count || 0;
       }));
       rows.forEach(p => {
@@ -1110,8 +1110,9 @@ router.get('/:id/historico-membros', async (req, res) => {
 // { ok: false, code, error }.
 async function aprovarPedidoCore(pedidoId, user) {
     const { data: pedido, error: ePedido } = await supabase.from('mem_grupo_pedidos')
-      .select('*').eq('id', pedidoId).single();
-    if (ePedido || !pedido) return { ok: false, code: 404, error: 'Pedido não encontrado' };
+      .select('*').eq('id', pedidoId).maybeSingle();
+    if (ePedido) throw ePedido; // erro de infra → 500 no chamador (não é "não encontrado")
+    if (!pedido) return { ok: false, code: 404, error: 'Pedido não encontrado' };
     if (pedido.status !== 'pendente') {
       return { ok: false, code: 409, error: `Pedido já foi ${pedido.status}` };
     }
