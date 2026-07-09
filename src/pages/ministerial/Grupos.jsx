@@ -1786,14 +1786,17 @@ function GrupoQRModal({ open, onClose, grupo, temporada, copied, setCopied }) {
 function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, loadMembros, temporadas, bairrosUnicos }) {
   const [form, setForm] = useState({});
   const [liderSearch, setLiderSearch] = useState('');
+  const [redesList, setRedesList] = useState([]);
 
   useEffect(() => {
     if (open) {
       loadMembros();
+      api.redes.list().then(setRedesList).catch(() => setRedesList([]));
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
       setForm(data ? { ...data } : {
         nome: '', categoria: '', area: 'sede', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
+        faixa_etaria: '', capacidade: '', aceitando_inscricoes: true, rede_id: '',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
       });
@@ -1867,6 +1870,39 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               </ShadSelect>
             </div>
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Faixa etária</Label>
+              <ShadSelect value={form.faixa_etaria || '__none__'} onValueChange={v => set('faixa_etaria', v === '__none__' ? '' : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Não definida</SelectItem>
+                  {['Adolescentes', 'Jovens', 'Jovens Adultos', 'Adultos', 'Todas as idades'].map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                </SelectContent>
+              </ShadSelect>
+            </div>
+            <div>
+              <Label>Capacidade (limite de pessoas)</Label>
+              <Input type="number" min={0} value={form.capacidade ?? ''} onChange={e => set('capacidade', e.target.value)} placeholder="Sem limite" />
+            </div>
+          </div>
+
+          <div>
+            <Label>Rede</Label>
+            <ShadSelect value={form.rede_id || '__none__'} onValueChange={v => set('rede_id', v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Sem rede</SelectItem>
+                {redesList.map(r => <SelectItem key={r.id} value={r.id}>{r.nome}{r.supervisor_nome ? ` — ${r.supervisor_nome}` : ''}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
+          </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.aceitando_inscricoes !== false} onChange={e => set('aceitando_inscricoes', e.target.checked)} style={{ accentColor: '#00B39D', cursor: 'pointer' }} />
+            Aceitar novas inscrições (desligue para tirar o grupo do formulário público)
+          </label>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
