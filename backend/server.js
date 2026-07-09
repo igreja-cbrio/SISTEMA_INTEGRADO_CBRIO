@@ -63,10 +63,13 @@ app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 500 : 5000),
   message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
-  // Isenta o NPS público do teto global · num culto, 100 pessoas no MESMO WiFi
-  // (1 IP público) estourariam o limite por-IP. O NPS público tem limiter próprio
-  // generoso (ver mount abaixo · routes/publicNps.js).
-  skip: (req) => process.env.NODE_ENV !== 'production' || req.path.startsWith('/api/public/nps'),
+  // Isenta o NPS e a inscrição pública de grupos do teto global · num culto,
+  // dezenas de pessoas no MESMO WiFi (1 IP público) estourariam o limite por-IP.
+  // Ambos têm limiter próprio generoso (routes/publicNps.js · routes/publicGrupos.js
+  // · totem no lounge). Ver mounts abaixo.
+  skip: (req) => process.env.NODE_ENV !== 'production'
+    || req.path.startsWith('/api/public/nps')
+    || req.path.startsWith('/api/public/grupos'),
 }));
 app.use(hpp());
 app.use(compression());
@@ -147,12 +150,15 @@ const publicLimiter = rateLimit({
 app.use('/api/public/nps', require('./routes/publicNps'));
 // Pixel de abertura de e-mail (fora do publicLimiter · proxies carregam por 1 IP)
 app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
+// Inscrição pública de grupos montada ANTES do publicLimiter estrito (30/15min):
+// é o totem do lounge (1 IP, muitas inscrições num domingo cheio). Usa o limiter
+// próprio generoso do routes/publicGrupos.js (mesma lógica do NPS acima).
+app.use('/api/public/grupos', require('./routes/publicGrupos'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
-app.use('/api/public/grupos', require('./routes/publicGrupos'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentacao'));
 app.use('/api/public/evento', require('./routes/publicEventoExterno'));
