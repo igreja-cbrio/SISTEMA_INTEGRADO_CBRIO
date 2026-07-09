@@ -124,6 +124,40 @@ export default function TotemKidsPainel() {
   // Check-out direto do painel
   const [criancaSelCheckin, setCriancaSelCheckin] = useState<CriancaNaSala | null>(null);
   const [fazendoCheckout, setFazendoCheckout] = useState(false);
+  // Check-out em lote: check-ins selecionados na lista da sala
+  const [selCheckout, setSelCheckout] = useState<Set<string>>(new Set());
+  const [checkoutLote, setCheckoutLote] = useState(false);
+
+  function toggleSel(id: string) {
+    setSelCheckout(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  }
+
+  async function fazerCheckoutSelecionados() {
+    const ids = [...selCheckout];
+    if (ids.length === 0 || checkoutLote) return;
+    setCheckoutLote(true);
+    let ok = 0;
+    try {
+      for (const checkinId of ids) {
+        try {
+          await totemKids.checkout.realizar({ checkin_id: checkinId, metodo: 'painel' });
+          ok++;
+        } catch { /* segue os demais */ }
+      }
+      toast.success(`Check-out de ${ok} criança${ok === 1 ? '' : 's'} registrado${ok === 1 ? '' : 's'}`);
+      setSelCheckout(new Set());
+      if (salaDetalhe) await abrirDetalheSala(salaDetalhe);
+      await carregar(true);
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro no check-out em lote');
+    } finally {
+      setCheckoutLote(false);
+    }
+  }
 
   const podeEncerrar = isAdmin || (modulePerms?.kids?.escrita ?? 0) >= 3;
   const podeMarcarDecisao = isAdmin || (modulePerms?.kids?.escrita ?? 0) >= 2;
@@ -178,6 +212,7 @@ export default function TotemKidsPainel() {
     setSalaDetalhe(s);
     setCriancaSelId(null);
     setCriancaDet(null);
+    setSelCheckout(new Set());
     setCarregandoSala(true);
     try {
       const lista = await totemKids.painel.sala(s.sala_id, s.sessao_id);
@@ -442,7 +477,7 @@ export default function TotemKidsPainel() {
       </div>
 
       {/* Modal · sala → lista de crianças ↔ ficha da criança (drilldown mobile) */}
-      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); } }}>
+      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); setSelCheckout(new Set()); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0 gap-0">
           {/* ── Ficha da criança ── */}
           {criancaSelId ? (
@@ -582,6 +617,15 @@ export default function TotemKidsPainel() {
                             ehDecisaoMarcada ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800' : 'bg-card'
                           } ${c.checkout_at ? 'opacity-60' : ''}`}
                         >
+                          {!c.checkout_at && (
+                            <input
+                              type="checkbox"
+                              className="h-5 w-5 shrink-0 accent-pink-600"
+                              checked={selCheckout.has(c.id)}
+                              onChange={() => toggleSel(c.id)}
+                              aria-label={`Selecionar ${c.crianca.nome} pra check-out`}
+                            />
+                          )}
                           <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => { setCriancaSelCheckin(c); abrirCrianca(c.crianca_id); }}>
                             {c.crianca.foto_url ? (
                               <img src={c.crianca.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
@@ -629,6 +673,33 @@ export default function TotemKidsPainel() {
                   </div>
                 )}
               </div>
+              {/* Barra de check-out em lote */}
+              {criancasNaSala.some(c => !c.checkout_at) && (
+                <div className="border-t p-3 flex items-center gap-2 bg-card">
+                  {(() => {
+                    const presentes = criancasNaSala.filter(c => !c.checkout_at);
+                    const todosSel = presentes.length > 0 && presentes.every(c => selCheckout.has(c.id));
+                    return (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => setSelCheckout(todosSel ? new Set() : new Set(presentes.map(c => c.id)))}
+                      >
+                        {todosSel ? 'Limpar' : 'Selecionar todos'}
+                      </Button>
+                    );
+                  })()}
+                  <Button
+                    className="flex-1 bg-pink-600 hover:bg-pink-700"
+                    disabled={selCheckout.size === 0 || checkoutLote}
+                    onClick={fazerCheckoutSelecionados}
+                  >
+                    {checkoutLote ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                    Fazer check-out{selCheckout.size > 0 ? ` (${selCheckout.size})` : ''}
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </DialogContent>
