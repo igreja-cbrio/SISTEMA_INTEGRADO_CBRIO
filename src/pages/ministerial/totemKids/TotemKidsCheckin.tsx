@@ -654,59 +654,14 @@ export default function TotemKidsCheckin() {
           <div className="text-center">
             <h1 className="text-xl sm:text-2xl font-black tracking-tight">Vamos fazer o check-in! 🎈</h1>
             <p className="text-slate-500 mt-0.5 text-xs sm:text-sm">
-              Digite o código do app do responsável ou busque a criança pelo nome.
+              Busque a criança pelo nome ou telefone do responsável.
             </p>
           </div>
 
-          {/* Duas colunas: código do app | ou | busca por nome */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1.4fr] gap-6 items-start">
-            {/* ESQUERDA · código do app (pré-check-in) */}
-            <div className="rounded-2xl border-2 border-slate-100 bg-slate-50/70 p-5 sm:p-6 space-y-4">
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center text-base">🔑</span>
-                <h2 className="font-bold text-slate-700 text-sm sm:text-base">Código do app do responsável</h2>
-              </div>
-              <Input
-                placeholder="EX.: 6UCHWQ"
-                value={preCodigo}
-                onChange={e => setPreCodigo(e.target.value.toUpperCase())}
-                onKeyDown={e => { if (e.key === 'Enter') buscarPreCheckin(); }}
-                className="h-16 text-center text-3xl tracking-[0.4em] uppercase font-black text-slate-700 rounded-xl border-2 border-slate-200 bg-white"
-                maxLength={8}
-                autoCapitalize="characters"
-              />
-              <Button
-                onClick={() => buscarPreCheckin()}
-                disabled={preBuscando || !preCodigo.trim()}
-                className="w-full h-12 bg-gradient-to-r from-orange-400 to-pink-500 hover:opacity-90 text-white font-bold text-base rounded-xl"
-              >
-                {preBuscando ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Aplicar código'}
-              </Button>
-              <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                <span className="flex-1 h-px bg-slate-200" /> ou <span className="flex-1 h-px bg-slate-200" />
-              </div>
-              <Button variant="outline" onClick={() => setScanAberto(true)}
-                className="w-full h-12 rounded-xl border-2 font-semibold gap-2">
-                <Camera className="h-5 w-5" /> Escanear QR do app
-              </Button>
-              <p className="text-xs text-slate-400 text-center">
-                Confira a criança com o responsável antes de imprimir — a entrada continua presencial.
-              </p>
-            </div>
-
-            {/* divisor */}
-            <div className="hidden lg:flex flex-col items-center self-stretch pt-4">
-              <div className="w-px flex-1 bg-slate-200" />
-              <span className="my-2 w-10 h-10 rounded-full bg-slate-100 text-slate-400 text-xs font-bold flex items-center justify-center border border-slate-200">ou</span>
-              <div className="w-px flex-1 bg-slate-200" />
-            </div>
-            <div className="flex lg:hidden items-center gap-3">
-              <div className="h-px flex-1 bg-slate-200" />
-              <span className="text-xs font-bold text-slate-400">ou busque pelo nome</span>
-              <div className="h-px flex-1 bg-slate-200" />
-            </div>
-
-            {/* DIREITA · busca por nome */}
+          {/* Busca da criança centralizada (código do app do responsável fica
+              desativado até o app de membros ser lançado). */}
+          <div className="max-w-2xl mx-auto w-full">
+            {/* busca por nome */}
             <div className="rounded-2xl border-2 border-slate-100 p-5 sm:p-6 space-y-4">
               <div className="flex items-center gap-2">
                 <span className="w-8 h-8 rounded-lg bg-fuchsia-100 text-fuchsia-500 flex items-center justify-center text-base">🔍</span>
