@@ -294,8 +294,10 @@ export function GruposMapView({
                 </div>
               )}
 
+              {/* No celular os chips de bairro tomam a tela (pedido do Marcos:
+                  a pessoa navega no mapa/lista e escolhe) — só desktop. */}
               {bairros.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
+                <div className="hidden sm:flex flex-wrap gap-1.5">
                   <span className={cn("px-2 py-1 text-[10px] uppercase tracking-wide self-center", theme === "dark" ? "text-white/40" : "text-gray-400")}>Bairro:</span>
                   <button
                     onClick={() => setFilterBairro("")}
