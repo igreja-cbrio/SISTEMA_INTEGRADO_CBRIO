@@ -55,9 +55,15 @@ function Pill({ ativo, onClick, children }) {
   );
 }
 
-export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full', temporadaId, usePublicApi = false }) {
+// preferirAberta: default = temporada com inscrições ABERTAS (em vez da ativa)
+// — usado pelo formulário público, onde só faz sentido mostrar grupos em que a
+// pessoa consegue de fato se inscrever (ex.: piloto = só a Temporada Teste).
+export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full', temporadaId, usePublicApi = false, preferirAberta = false }) {
   const api = usePublicApi ? gruposPublic : authApi;
   const full = mode !== 'simple';
+  // Detecção simples de tela estreita (QR → celular). Estático no mount é
+  // suficiente — ninguém redimensiona no meio da inscrição.
+  const isMobile = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 640px)').matches;
 
   const [temporada, setTemporada] = useState(temporadaId || '');
   const [grupos, setGrupos] = useState([]);
@@ -81,7 +87,11 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
     api.temporadas().then(ts => {
       const lista = ts || [];
       const ativa = lista.find(t => t.ativa);
-      if (!temporadaId && ativa) setTemporada(ativa.id);
+      const aberta = lista.find(t => t.inscricoes_abertas);
+      if (!temporadaId) {
+        const escolha = (preferirAberta && aberta) ? aberta : (ativa || aberta);
+        if (escolha) setTemporada(escolha.id);
+      }
       const ops = [];
       if (ativa) ops.push({ id: ativa.id, label: ativa.label || ativa.id });
       for (const t of lista.filter(x => x.inscricoes_abertas && !x.ativa)) {
@@ -207,7 +217,10 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
               {recorrencias.map(r => <option key={r} value={r}>{recorrenciaLabel(r)}</option>)}
             </select>
           )}
-          {bairros.length >= 1 && (
+          {/* No celular o seletor de bairros abre em tela cheia e atrapalha a
+              navegação (pedido do Marcos) — a pessoa rola a lista/mapa e
+              escolhe; a busca por texto continua cobrindo bairro. */}
+          {!isMobile && bairros.length >= 1 && (
             <select value={fBairro} onChange={e => setFBairro(e.target.value)} style={selStyle}>
               <option value="">Todos os bairros</option>
               {bairros.map(b => <option key={b} value={b}>{b}</option>)}
@@ -239,18 +252,18 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
           />
         </div>
       ) : (
-        <ResultsList grupos={filtrados} loading={loading} selectedGrupoId={selectedGrupoId} onSelect={onSelect} />
+        <ResultsList grupos={filtrados} loading={loading} selectedGrupoId={selectedGrupoId} onSelect={onSelect} isMobile={isMobile} />
       )}
     </div>
   );
 }
 
-function ResultsList({ grupos, loading, selectedGrupoId, onSelect }) {
+function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = false }) {
   if (loading) return <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>;
   if (!grupos.length) return <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum grupo encontrado com esses filtros.</div>;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 380, overflowY: 'auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: isMobile ? '62vh' : 380, overflowY: 'auto' }}>
       {grupos.map(g => {
         const ativo = g.id === selectedGrupoId;
         return (
