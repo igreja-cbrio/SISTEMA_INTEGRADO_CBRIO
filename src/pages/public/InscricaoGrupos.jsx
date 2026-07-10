@@ -249,28 +249,8 @@ export default function InscricaoGrupos() {
                 preferirAberta
                 selectedGrupoId={grupoEscolhido?.id}
                 onSelect={setGrupoEscolhido}
+                onInscrever={(g) => { setGrupoEscolhido(g); setStep(1); }}
               />
-              {grupoEscolhido && (
-                <div style={{
-                  marginTop: 16, padding: 12,
-                  background: C.isDark ? 'rgba(8, 34, 30, 0.94)' : 'rgba(222, 244, 240, 0.96)',
-                  border: '1px solid #00B39D', borderRadius: 10, fontSize: 13, color: '#00B39D',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-                  // Gruda no rodapé enquanto a pessoa rola a lista no celular —
-                  // sem isso, quem escolhe um grupo no meio da lista não vê o
-                  // botão Continuar. Fundo quase opaco pra ler sobre a lista.
-                  position: 'sticky', bottom: 8, zIndex: 5,
-                  backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-                }}>
-                  <span>✓ Grupo selecionado: <strong>{grupoEscolhido.nome}</strong>{grupoEscolhido.lider_nome && <> · líder: {grupoEscolhido.lider_nome}</>}</span>
-                  <button onClick={() => setStep(1)} style={{
-                    padding: '8px 18px', borderRadius: 8, background: '#00B39D', color: '#fff',
-                    border: 'none', fontWeight: 700, cursor: 'pointer', fontSize: 13,
-                  }}>
-                    Continuar →
-                  </button>
-                </div>
-              )}
             </div>
           ) : (
             <div>
@@ -344,6 +324,24 @@ export default function InscricaoGrupos() {
           )}
         </div>
       </div>
+
+      {/* Botão FIXO de Inscrever — aparece no instante em que um grupo é
+          selecionado (na lista ou no pin do mapa) e fica sempre visível: a
+          pessoa pode trocar de grupo à vontade sem precisar rolar a página. */}
+      {step === 0 && grupoEscolhido && (
+        <button
+          onClick={() => setStep(1)}
+          style={{
+            position: 'fixed', bottom: 18, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 1000, padding: '14px 46px', borderRadius: 999,
+            background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer',
+            fontWeight: 800, fontSize: 16, letterSpacing: 0.3, whiteSpace: 'nowrap',
+            boxShadow: '0 8px 24px rgba(0, 179, 157, 0.45)',
+          }}
+        >
+          Inscrever
+        </button>
+      )}
 
       {/* Modal "é você?" — confirmação de possível duplicata (não bloqueia) */}
       {dup && (
