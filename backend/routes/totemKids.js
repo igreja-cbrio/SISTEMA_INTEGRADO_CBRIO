@@ -23,6 +23,7 @@ const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
+const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
 const { enviarTexto: enviarTextoWpp, enviarTemplate: enviarTemplateWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { syncCriancasPCO } = require('../services/planningCenterKids');
@@ -544,6 +545,8 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       familia_id: familiaId,
     });
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     console.error('[totemKids/criancas POST]', e.message);
     res.status(500).json({ error: 'Erro ao cadastrar criança' });
   }
@@ -599,6 +602,8 @@ router.patch('/criancas/:criancaId/responsaveis/:membroId', authorizeModule('kid
     if (error) throw error;
     res.json(data || { ok: true });
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     console.error('[totemKids] update vinculo responsavel:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar o vínculo do responsável' });
   }
@@ -1853,11 +1858,15 @@ router.post('/criancas/:id/responsaveis', authorizeModule('kids', 2), async (req
       .select('*, membro:mem_membros(id, nome, telefone, foto_url)')
       .single();
     if (error) {
+      const t = traduzErroUmPaiUmaMae(error);
+      if (t) return res.status(t.status).json({ error: t.error });
       if (error.code === '23505') return res.status(409).json({ error: 'Responsável já cadastrado' });
       throw error;
     }
     res.status(201).json(data);
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     res.status(500).json({ error: 'Erro ao adicionar responsável' });
   }
 });
@@ -1912,6 +1921,8 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
 
     res.status(201).json(ligacao);
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     console.error('[totemKids/responsavel-rapido]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao adicionar responsável' });
   }
@@ -3487,7 +3498,11 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
         parentesco: s.solicitante_parentesco || 'outro',
         autorizado_buscar: true,
       }, { onConflict: 'crianca_id,membro_id' });
-    if (ve) throw ve;
+    if (ve) {
+      const t = traduzErroUmPaiUmaMae(ve);
+      if (t) return res.status(t.status).json({ error: t.error });
+      throw ve;
+    }
 
     // 3. Marca a solicitação como aprovada.
     const { error: ue } = await supabase
@@ -3509,6 +3524,8 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
 
     res.json({ ok: true, crianca_id: criancaId });
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     console.error('[TOTEM-KIDS] vinculo-solicitacoes aprovar:', e.message);
     res.status(500).json({ error: 'Erro ao aprovar solicitação' });
   }
