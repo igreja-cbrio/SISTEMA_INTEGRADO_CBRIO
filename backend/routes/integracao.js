@@ -130,9 +130,19 @@ router.get('/historico-batismos', async (req, res) => {
 // autenticado passava direto (gap achado na auditoria da coleta · 2026-07-10).
 router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (req, res) => {
   try {
+    // Range opcional ?inicio=&fim= (YYYY-MM-DD · máx. 31 dias) pro app Staff
+    // navegar por semana — inclusive a PRÓXIMA (cultos futuros já existem em
+    // `cultos`, materializados pela gerar_cultos_recorrentes até o fim do ano).
+    // Sem params, o default segue idêntico: últimos 14 dias até hoje.
+    const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
     const hoje = new Date().toISOString().slice(0, 10);
     const limite = new Date(); limite.setDate(limite.getDate() - 14);
-    const desde = limite.toISOString().slice(0, 10);
+    const desde = isYmd(req.query.inicio) ? String(req.query.inicio) : limite.toISOString().slice(0, 10);
+    const fim = isYmd(req.query.fim) ? String(req.query.fim) : hoje;
+    if (fim < desde) return res.status(400).json({ error: 'fim anterior ao início' });
+    if ((new Date(fim) - new Date(desde)) / 86400000 > 31) {
+      return res.status(400).json({ error: 'range máximo de 31 dias' });
+    }
 
     const { data: cultos, error: errCultos } = await supabase
       .from('cultos')
@@ -142,7 +152,7 @@ router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (re
         service_type:vol_service_types(id, name, recurrence_time, has_kids)
       `)
       .gte('data', desde)
-      .lte('data', hoje)
+      .lte('data', fim)
       .order('data', { ascending: false })
       .limit(40);
     if (errCultos) return res.status(400).json({ error: errCultos.message });
