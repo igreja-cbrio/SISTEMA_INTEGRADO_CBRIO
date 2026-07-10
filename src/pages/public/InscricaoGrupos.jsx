@@ -129,6 +129,20 @@ export default function InscricaoGrupos() {
 
   const set = (k, masked) => (e) => setForm(f => ({ ...f, [k]: masked ? masked(e.target.value) : e.target.value }));
 
+  // "Tem certeza?" ao voltar/fechar/recarregar a página COM dados digitados
+  // (regra de ouro do repo: sem digitar nada, não pergunta). Depois do envio
+  // (step 2) pode sair livre. O navegador mostra o confirm nativo.
+  const temDadosDigitados = !!(
+    form.nome || soDigitos(form.telefone) || soDigitos(form.cpf)
+    || form.email || form.data_nascimento || form.observacao || form.foto_url
+  );
+  useEffect(() => {
+    if (!temDadosDigitados || step === 2) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [temDadosDigitados, step]);
+
   // CPF é OPCIONAL agora — só nome, telefone e aceite dos termos são obrigatórios.
   const formValido = () => {
     if (!form.nome || form.nome.trim().length < 3) return false;
@@ -324,24 +338,6 @@ export default function InscricaoGrupos() {
           )}
         </div>
       </div>
-
-      {/* Botão FIXO de Inscrever — aparece no instante em que um grupo é
-          selecionado (na lista ou no pin do mapa) e fica sempre visível: a
-          pessoa pode trocar de grupo à vontade sem precisar rolar a página. */}
-      {step === 0 && grupoEscolhido && (
-        <button
-          onClick={() => setStep(1)}
-          style={{
-            position: 'fixed', bottom: 18, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 1000, padding: '14px 46px', borderRadius: 999,
-            background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer',
-            fontWeight: 800, fontSize: 16, letterSpacing: 0.3, whiteSpace: 'nowrap',
-            boxShadow: '0 8px 24px rgba(0, 179, 157, 0.45)',
-          }}
-        >
-          Inscrever
-        </button>
-      )}
 
       {/* Modal "é você?" — confirmação de possível duplicata (não bloqueia) */}
       {dup && (
