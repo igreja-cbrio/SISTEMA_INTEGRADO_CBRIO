@@ -381,6 +381,61 @@ router.get('/voluntariado-composicao', async (req, res) => {
 //             pior:   { semana, total, label, início, fim } | null,
 //             amostra }
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /serie · série semanal BRUTA do ano (total do indicador por semana ISO)
+//   query: ano, indicador, culto (uuid | 'todos')
+// Criado pro app CBRio Staff (detalhe histórico por culto + médias no cliente).
+// Mesma mecânica do /ranking, mas devolve a série inteira em vez de top/bottom.
+// Resposta: { ano, indicador, rotulo, serie: [{ semana, total, inicio, fim }] }
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/serie', async (req, res) => {
+  try {
+    const ano = parseInt(req.query.ano, 10);
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    if (!ano) return res.status(400).json({ error: 'ano é obrigatório' });
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    let q = supabase
+      .from(fonteView(indicadorKey))
+      .select(`service_type_id, semana_iso, ${colunasView(indicadorKey).join(', ')}`)
+      .eq('ano_iso', ano);
+    if (cultoId) q = q.eq('service_type_id', cultoId);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Indicadores de Kids não se aplicam a cultos sem ministério infantil
+    let excluir = new Set();
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      excluir = new Set((semKids || []).map(s => s.id));
+    }
+
+    const porSemana = new Map();
+    for (const r of (data || [])) {
+      if (excluir.has(r.service_type_id)) continue;
+      const v = somaColunas(r, colunasView(indicadorKey));
+      porSemana.set(r.semana_iso, (porSemana.get(r.semana_iso) || 0) + v);
+    }
+
+    const serie = [...porSemana.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([semana, total]) => {
+        const { inicio, fim } = isoWeekRange(ano, semana);
+        return { semana, total, inicio: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+      });
+
+    res.json({ ano, indicador: indicadorKey, rotulo: indDef.rotulo, serie });
+  } catch (e) {
+    console.error('[DASH-SEM] serie', e.message);
+    res.status(500).json({ error: 'Erro ao montar série semanal' });
+  }
+});
+
 router.get('/ranking', async (req, res) => {
   try {
     const ano = parseInt(req.query.ano, 10);

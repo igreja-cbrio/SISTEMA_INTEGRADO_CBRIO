@@ -130,15 +130,19 @@ router.get('/historico-batismos', async (req, res) => {
 // backend usa service_role (bypassa RLS), então sem authorizeModule qualquer
 // autenticado passava direto (gap achado na auditoria da coleta · 2026-07-10).
 //
-// ?ano=&semana= (ISO seg→dom · opcionais): recorta a semana pedida em vez da
-// janela de 14 dias — usado pelo app CBRio Staff (seletor de semana + ver a
-// PRÓXIMA semana; os cultos futuros já existem em `cultos`, materializados até
-// o fim do ano). Sem os params o comportamento é idêntico ao original.
+// Recorte opcional da janela (sem params = últimos 14 dias, idêntico ao
+// original) — usado pelo app CBRio Staff pra navegar a coleta por semana,
+// inclusive a PRÓXIMA (cultos futuros já existem em `cultos`, materializados
+// pela gerar_cultos_recorrentes até o fim do ano). Dois formatos aceitos:
+//   ?ano=&semana=   · semana ISO seg→dom (tem precedência)
+//   ?inicio=&fim=   · datas YYYY-MM-DD (máx. 31 dias)
 router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (req, res) => {
   try {
-    let ate = new Date().toISOString().slice(0, 10);
+    const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+    const hoje = new Date().toISOString().slice(0, 10);
     const limite = new Date(); limite.setDate(limite.getDate() - 14);
     let desde = limite.toISOString().slice(0, 10);
+    let ate = hoje;
 
     const anoQ = parseInt(req.query.ano, 10);
     const semanaQ = parseInt(req.query.semana, 10);
@@ -146,6 +150,13 @@ router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (re
       const { inicio, fim } = isoWeekRange(anoQ, semanaQ);
       desde = inicio.toISOString().slice(0, 10);
       ate = fim.toISOString().slice(0, 10); // pode ser futuro (próxima semana)
+    } else if (isYmd(req.query.inicio) || isYmd(req.query.fim)) {
+      desde = isYmd(req.query.inicio) ? String(req.query.inicio) : desde;
+      ate = isYmd(req.query.fim) ? String(req.query.fim) : hoje;
+      if (ate < desde) return res.status(400).json({ error: 'fim anterior ao início' });
+      if ((new Date(ate) - new Date(desde)) / 86400000 > 31) {
+        return res.status(400).json({ error: 'range máximo de 31 dias' });
+      }
     }
 
     const { data: cultos, error: errCultos } = await supabase
