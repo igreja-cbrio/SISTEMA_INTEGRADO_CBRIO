@@ -9,7 +9,7 @@ const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { importarParticipantes } = require('../services/gruposImporter');
-const { notificarPessoaAprovada } = require('../services/gruposWhatsapp');
+const { notificarPessoaAprovada, notificarPessoaSugestao } = require('../services/gruposWhatsapp');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -1280,6 +1280,73 @@ async function aprovarPedidoCore(pedidoId, user) {
     // de sugestão usa pra responder com o grupo certo).
     return { ok: true, grupo_id: pedido.grupo_id };
 }
+
+// POST /api/grupos/pedidos/:pedidoId/sugerir — body { grupo_sugerido_id }
+// Realocação: em vez de aprovar/rejeitar, quem triageia sugere OUTRO grupo
+// pra pessoa (WhatsApp com link de aceite /g/s/<token> + notificação in-app).
+// O pedido continua pendente no grupo original até a pessoa aceitar.
+router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { grupo_sugerido_id } = req.body || {};
+    if (!grupo_sugerido_id) return res.status(400).json({ error: 'Informe grupo_sugerido_id' });
+
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, nome, telefone, membro_id')
+      .eq('id', req.params.pedidoId).maybeSingle();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
+    if (pedido.status !== 'pendente') return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    if (grupo_sugerido_id === pedido.grupo_id) {
+      return res.status(400).json({ error: 'Sugira um grupo diferente do pedido original' });
+    }
+
+    const { data: grupoSugerido } = await supabase.from('mem_grupos')
+      .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, ativo, aceitando_inscricoes')
+      .eq('id', grupo_sugerido_id).is('deleted_at', null).maybeSingle();
+    if (!grupoSugerido || !grupoSugerido.ativo) {
+      return res.status(404).json({ error: 'Grupo sugerido não encontrado ou inativo' });
+    }
+    if (grupoSugerido.aceitando_inscricoes === false) {
+      // Trava explícita do líder do grupo sugerido — a sugestão não passa por
+      // cima (capacidade é conselho; a pausa não).
+      return res.status(400).json({ error: 'Esse grupo pausou novas inscrições — combine com o líder dele antes de sugerir' });
+    }
+
+    // WhatsApp com o link de aceite (gated por WHATSAPP_ENABLED · sem
+    // telefone no pedido, só a notificação in-app abaixo alcança a pessoa).
+    const wpp = await notificarPessoaSugestao({
+      telefone: pedido.telefone,
+      pessoaNome: pedido.nome,
+      grupoSugerido,
+      pedidoId: pedido.id,
+    });
+
+    // In-app, se a pessoa tem login
+    (async () => {
+      try {
+        if (!pedido.membro_id) return;
+        const { data: prof } = await supabase.from('vol_profiles')
+          .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
+        if (!prof?.auth_user_id) return;
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'pedido_sugestao',
+          titulo: `Sugestão de grupo: ${grupoSugerido.nome}`,
+          // Só manda a pessoa "conferir o WhatsApp" se o WhatsApp de fato
+          // saiu — sem envio, o link de aceite não existe em lugar nenhum.
+          mensagem: wpp?.sent
+            ? `A liderança sugeriu o grupo ${grupoSugerido.nome} para você. Confira a sugestão que chegou no seu WhatsApp.`
+            : `A liderança sugeriu o grupo ${grupoSugerido.nome} para você. Fale com o líder do grupo para combinar sua entrada.`,
+          link: '/grupos',
+          severidade: 'info',
+          chaveDedup: `pedido_sugestao_${pedido.id}_${grupoSugerido.id}`,
+          targetIds: [prof.auth_user_id],
+        });
+      } catch (e) { console.error('[Pedido sugerir notify]', e.message); }
+    })();
+
+    res.json({ success: true, whatsapp_enviado: wpp?.sent === true, whatsapp_motivo: wpp?.sent ? null : (wpp?.reason || null) });
+  } catch (e) { console.error('[Pedido sugerir]', e.message); res.status(500).json({ error: 'Erro ao sugerir grupo' }); }
+});
 
 // POST /api/grupos/pedidos/aprovar-lote — body { pedido_ids: [] }
 // Aprova em sequência com a mesma lógica do individual; devolve o resultado

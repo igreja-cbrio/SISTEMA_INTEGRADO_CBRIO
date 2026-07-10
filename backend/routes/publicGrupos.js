@@ -700,4 +700,115 @@ router.post('/aprovar', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// Realocação · a PESSOA aceita a sugestão de outro grupo pelo link do
+// WhatsApp (/g/s/<token>). Token tipo 'suges' carrega { p: pedidoId,
+// g: grupoSugeridoId }. Aceitar move o pedido pro grupo sugerido e aprova
+// com o mesmo núcleo da aprovação (quem sugeriu tem nível 3 — o aceite da
+// pessoa fecha o combinado). Recusar não existe no backend: a pessoa
+// simplesmente ignora e o pedido original continua pendente.
+// ─────────────────────────────────────────────────────────────
+
+// GET /api/public/grupos/pedido/sugestao?token=...
+router.get('/pedido/sugestao', async (req, res) => {
+  try {
+    const payload = verificarToken(req.query.token, 'suges');
+    if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado.' });
+
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, nome, status, grupo_id, mem_grupos(nome)')
+      .eq('id', payload.p).maybeSingle();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
+
+    const { data: sugerido } = await supabase.from('mem_grupos')
+      .select('id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade, ativo, aceitando_inscricoes')
+      .eq('id', payload.g).is('deleted_at', null).maybeSingle();
+    if (!sugerido || !sugerido.ativo) {
+      return res.status(410).json({ error: 'O grupo sugerido não está mais disponível. Seu pedido original continua valendo.' });
+    }
+
+    res.json({
+      pedido: { nome: pedido.nome, status: pedido.status, grupo_original: pedido.mem_grupos?.nome || null },
+      grupo: {
+        nome: sugerido.nome, codigo: sugerido.codigo, bairro: sugerido.bairro,
+        quando: formatarQuando(sugerido), onde: formatarOnde(sugerido),
+      },
+    });
+  } catch (e) {
+    console.error('[public grupos sugestao]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar sugestão.' });
+  }
+});
+
+// POST /api/public/grupos/sugestao/aceitar — body { token }
+router.post('/sugestao/aceitar', async (req, res) => {
+  try {
+    const payload = verificarToken(req.body?.token, 'suges');
+    if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado.' });
+
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, nome').eq('id', payload.p).maybeSingle();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    if (pedido.status !== 'pendente') {
+      return res.status(409).json({ error: `Este pedido já foi ${pedido.status}.`, status: pedido.status });
+    }
+
+    const { data: sugerido } = await supabase.from('mem_grupos')
+      .select('id, nome, ativo, aceitando_inscricoes').eq('id', payload.g).is('deleted_at', null).maybeSingle();
+    if (!sugerido || !sugerido.ativo || sugerido.aceitando_inscricoes === false) {
+      // aceitando=false: o líder do grupo sugerido pausou as entradas DEPOIS
+      // da sugestão — respeita a trava dele (capacidade é conselho; pausa não).
+      return res.status(410).json({ error: 'O grupo sugerido não está mais disponível. Seu pedido original continua valendo.' });
+    }
+
+    // Move o pedido pro grupo sugerido e aprova com o núcleo compartilhado.
+    // Se a pessoa já tiver pedido pendente no grupo sugerido, o índice único
+    // barra o UPDATE (23505) → resposta amigável.
+    const { error: eMove } = await supabase.from('mem_grupo_pedidos')
+      .update({ grupo_id: payload.g }).eq('id', pedido.id).eq('status', 'pendente');
+    if (eMove) {
+      if (eMove.code === '23505') {
+        return res.status(409).json({ error: 'Você já tem um pedido para esse grupo — o líder vai te responder por lá.' });
+      }
+      throw eMove;
+    }
+
+    // O revert do move precisa cobrir TAMBÉM exceção do core (erro de infra /
+    // falha no vínculo — o core repõe status pendente e relança): sem isso o
+    // pedido ficaria pendente órfão no grupo errado.
+    const reverterMove = () => supabase.from('mem_grupo_pedidos')
+      .update({ grupo_id: pedido.grupo_id }).eq('id', pedido.id).eq('status', 'pendente');
+
+    const { aprovarPedidoCore } = require('./grupos');
+    let r;
+    try {
+      r = await aprovarPedidoCore(pedido.id, { userId: null, name: 'Aceite da pessoa (sugestão de grupo)' });
+    } catch (e) {
+      await reverterMove().then(() => {}, () => {});
+      throw e;
+    }
+    if (!r.ok) {
+      // Só se AINDA está pendente: se outro decisor aprovou no meio (já com o
+      // grupo_id movido), o vínculo foi pro grupo sugerido — reverter o
+      // grupo_id deixaria o registro apontando pro grupo errado.
+      await reverterMove();
+      return res.status(r.code).json({ error: r.error });
+    }
+
+    // O core devolve o grupo em que a aprovação DE FATO caiu (dois aceites de
+    // sugestões diferentes podem correr — responde com o grupo certo).
+    let grupoFinal = sugerido.nome;
+    if (r.grupo_id && r.grupo_id !== payload.g) {
+      const { data: real } = await supabase.from('mem_grupos')
+        .select('nome').eq('id', r.grupo_id).maybeSingle();
+      if (real?.nome) grupoFinal = real.nome;
+    }
+
+    res.json({ ok: true, grupo: grupoFinal });
+  } catch (e) {
+    console.error('[public grupos sugestao aceitar]', e.message);
+    res.status(500).json({ error: 'Erro ao processar aceite.' });
+  }
+});
+
 module.exports = router;

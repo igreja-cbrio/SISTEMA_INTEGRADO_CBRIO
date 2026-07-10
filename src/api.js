@@ -524,6 +524,7 @@ export const grupos = {
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
   aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
+  sugerirPedido: (pedidoId, grupoSugeridoId) => post(`/grupos/pedidos/${pedidoId}/sugerir`, { grupo_sugerido_id: grupoSugeridoId }),
   setAceitandoInscricoes: (grupoId, aceitando) => patch(`/grupos/${grupoId}/aceitando`, { aceitando }),
   geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
   // Supervisao
@@ -1971,6 +1972,22 @@ export const gruposPublic = {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'Erro ao registrar decisão');
     return j; // { ok, acao }
+  },
+  // Realocação · pessoa aceita a sugestão de outro grupo (token = credencial)
+  sugestaoPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/pedido/sugestao?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar sugestão');
+    return j; // { pedido, grupo }
+  },
+  aceitarSugestao: async (token) => {
+    const r = await fetch(`${API}/public/grupos/sugestao/aceitar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao confirmar');
+    return j; // { ok, grupo }
   },
 };
 
