@@ -1956,6 +1956,22 @@ export const gruposPublic = {
     if (!r.ok) throw new Error(j.error || 'Erro ao enviar foto');
     return j; // { foto_url }
   },
+  // F3 · aprovação pelo líder via link do WhatsApp (token = credencial)
+  pedidoPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/pedido/por-token?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar pedido');
+    return j; // { pedido, grupo }
+  },
+  aprovarPorToken: async (token, acao, motivo) => {
+    const r = await fetch(`${API}/public/grupos/aprovar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, acao, motivo }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao registrar decisão');
+    return j; // { ok, acao }
+  },
 };
 
 export const apresentacaoCriancasPublico = {

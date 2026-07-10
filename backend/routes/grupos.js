@@ -9,6 +9,7 @@ const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { importarParticipantes } = require('../services/gruposImporter');
+const { notificarPessoaAprovada } = require('../services/gruposWhatsapp');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -1155,34 +1156,52 @@ async function aprovarPedidoCore(pedidoId, user) {
       return { ok: false, code: 400, error: 'Pedido sem membro nem cadastro pendente valido' };
     }
 
-    // Multi-grupo é permitido (uma pessoa participa de vários grupos ao mesmo
-    // tempo), então aprovar um pedido NÃO fecha as participações da pessoa em
-    // outros grupos — só a inscreve NESTE grupo. Idempotente: se já houver um
-    // vínculo ativo neste grupo, não cria outro.
-    const { data: jaAtivo } = await supabase.from('mem_grupo_membros')
-      .select('id').eq('grupo_id', pedido.grupo_id).eq('membro_id', membroId)
-      .is('saiu_em', null).limit(1);
-    if (!jaAtivo || !jaAtivo.length) {
-      await supabase.from('mem_grupo_membros').insert({
-        grupo_id: pedido.grupo_id, membro_id: membroId,
-        entrou_em: new Date().toISOString().slice(0, 10),
-      });
-    }
-
-    // Atualiza pedido
-    await supabase.from('mem_grupo_pedidos').update({
+    // Trava anti-corrida: o UPDATE condicional em status='pendente' é atômico
+    // no banco — só UM decisor "reivindica" o pedido (aprovação logada × lote
+    // × link do WhatsApp podem correr em paralelo). Quem perde recebe 409.
+    // O guard de grupo_id cobre a realocação: se o pedido foi movido pra outro
+    // grupo entre a leitura e o claim, esta aprovação não vale mais (o vínculo
+    // iria pro grupo antigo com o pedido apontando pro novo).
+    const { data: claimed, error: eClaim } = await supabase.from('mem_grupo_pedidos').update({
       status: 'aprovado',
       decidido_por: user.userId,
       decidido_por_nome: user.name,
       decidido_em: new Date().toISOString(),
       membro_id: membroId,
-    }).eq('id', pedido.id);
+    }).eq('id', pedido.id).eq('status', 'pendente').eq('grupo_id', pedido.grupo_id).select('id');
+    if (eClaim) throw eClaim;
+    if (!claimed || !claimed.length) {
+      return { ok: false, code: 409, error: 'Pedido já foi decidido por outra pessoa' };
+    }
+
+    // Multi-grupo é permitido (uma pessoa participa de vários grupos ao mesmo
+    // tempo), então aprovar um pedido NÃO fecha as participações da pessoa em
+    // outros grupos — só a inscreve NESTE grupo. Idempotente: se já houver um
+    // vínculo ativo neste grupo, não cria outro. Se o vínculo falhar, o pedido
+    // volta pra pendente (não fica "aprovado" sem a pessoa no roster).
+    try {
+      const { data: jaAtivo } = await supabase.from('mem_grupo_membros')
+        .select('id').eq('grupo_id', pedido.grupo_id).eq('membro_id', membroId)
+        .is('saiu_em', null).is('deleted_at', null).limit(1);
+      if (!jaAtivo || !jaAtivo.length) {
+        const { error: eVinc } = await supabase.from('mem_grupo_membros').insert({
+          grupo_id: pedido.grupo_id, membro_id: membroId,
+          entrou_em: new Date().toISOString().slice(0, 10),
+        });
+        if (eVinc) throw eVinc;
+      }
+    } catch (e) {
+      await supabase.from('mem_grupo_pedidos').update({
+        status: 'pendente', decidido_por: null, decidido_por_nome: null, decidido_em: null,
+      }).eq('id', pedido.id);
+      throw e;
+    }
 
     // Fluxo de boas-vindas: notifica a pessoa (rica) e o líder (novo membro)
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos')
-          .select('id, nome, codigo, dia_semana, horario, local, complemento, bairro, lider_id')
+          .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, lider_id')
           .eq('id', pedido.grupo_id).single();
         if (!grupo) return;
         let liderNome = null;
@@ -1202,7 +1221,7 @@ async function aprovarPedidoCore(pedidoId, user) {
         const quando = grupo.dia_semana != null
           ? `${DIAS[grupo.dia_semana]}${grupo.horario ? ` as ${String(grupo.horario).slice(0,5)}` : ''}`
           : null;
-        const ondePartes = [grupo.local, grupo.complemento, grupo.bairro].filter(Boolean);
+        const ondePartes = [grupo.local, grupo.endereco, grupo.complemento, grupo.bairro].filter(Boolean);
         const onde = ondePartes.length ? ondePartes.join(' — ') : null;
 
         const partesPessoa = [];
@@ -1244,10 +1263,22 @@ async function aprovarPedidoCore(pedidoId, user) {
             targetIds: [liderAuthUserId],
           });
         }
+
+        // F3 · WhatsApp de boas-vindas à pessoa aprovada (template
+        // grupos_pedido_aprovado). Cobre aprovação logada E via link do
+        // líder. Gated por WHATSAPP_ENABLED no whatsappService.
+        await notificarPessoaAprovada({
+          telefone: pedido.telefone,
+          grupo,
+          liderNome,
+          liderTelefone,
+        });
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
     })();
 
-    return { ok: true };
+    // grupo_id devolvido = onde a aprovação DE FATO caiu (o chamador do aceite
+    // de sugestão usa pra responder com o grupo certo).
+    return { ok: true, grupo_id: pedido.grupo_id };
 }
 
 // POST /api/grupos/pedidos/aprovar-lote — body { pedido_ids: [] }
@@ -1297,13 +1328,18 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
-    await supabase.from('mem_grupo_pedidos').update({
+    // Guarda de corrida: só rejeita se AINDA está pendente (uma aprovação
+    // simultânea — logada ou via link — não pode ser sobrescrita).
+    const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
       status: 'rejeitado',
       motivo_rejeicao: motivo || null,
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id);
+    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+    if (!claimed || !claimed.length) {
+      return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
+    }
 
     // Notifica a pessoa
     (async () => {
@@ -2579,3 +2615,5 @@ router.post('/importar-lideres/aplicar', authorizeModule('grupos', 3), async (re
 });
 
 module.exports = router;
+// Compartilhado com a rota pública de aprovação por token (publicGrupos.js /aprovar)
+module.exports.aprovarPedidoCore = aprovarPedidoCore;

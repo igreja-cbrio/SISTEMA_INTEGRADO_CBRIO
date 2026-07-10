@@ -23,7 +23,11 @@
 //     Acompanhe em: {{5}}
 
 const ENABLED = process.env.WHATSAPP_ENABLED === 'true';
-const TOKEN = process.env.WHATSAPP_TOKEN;
+// WHATSAPP_ACCESS_TOKEN é a credencial viva do bot em prod (todo o stack usa:
+// whatsappSend/Flows/Grupos/Nota/Auto). WHATSAPP_TOKEN fica de fallback
+// legado — sem o alinhamento, ligar WHATSAPP_ENABLED deixava configurado()
+// false e este serviço caía em dry-run pra sempre.
+const TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v18.0';
 const TEMPLATE_PEDIDO = process.env.WHATSAPP_TEMPLATE_PEDIDO || 'pedido_atualizado';
@@ -75,6 +79,7 @@ async function sendTemplate(toRaw, templateName, language, parameters) {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000), // Graph lenta não pode prender o handler
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -103,6 +108,7 @@ async function sendText(toRaw, texto) {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: String(texto).slice(0, 4096) } }),
+      signal: AbortSignal.timeout(15000),
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) { console.error('[WPP] text erro %d: %s', res.status, JSON.stringify(json)); return { sent: false, status: res.status }; }
