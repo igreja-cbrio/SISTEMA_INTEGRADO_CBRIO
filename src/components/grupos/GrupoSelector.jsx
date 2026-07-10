@@ -31,6 +31,12 @@ const C = {
 const DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const DIAS_CURTO = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+// Frequência dos encontros (valores do banco são slugs sem acento; o rótulo
+// exibido é acentuado). Ordem canônica na lista do filtro.
+const RECORRENCIA_LABEL = { diario: 'Diário', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' };
+const RECORRENCIA_ORDEM = ['diario', 'semanal', 'quinzenal', 'mensal'];
+const recorrenciaLabel = (r) => RECORRENCIA_LABEL[r] || (r ? r.charAt(0).toUpperCase() + r.slice(1) : '');
+
 const selStyle = {
   padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
   fontSize: 12, background: 'var(--cbrio-input-bg)', color: C.text, flex: 1, minWidth: 150,
@@ -63,14 +69,29 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   const [fFaixa, setFFaixa] = useState('');
   const [fBairro, setFBairro] = useState('');
   const [fDia, setFDia] = useState('');
+  const [fRecorrencia, setFRecorrencia] = useState('');
   const [view, setView] = useState('lista'); // 'lista' | 'mapa'
+  // Temporadas selecionáveis no form: a ativa (default) + qualquer outra com
+  // inscrições abertas (ex.: "Temporada Teste"). Só vira select quando há ≥2.
+  const [temporadaOpcoes, setTemporadaOpcoes] = useState([]);
 
-  // Resolve a temporada ativa (se não veio por prop)
+  // Resolve a temporada ativa (se não veio por prop) + opções do seletor
   useEffect(() => {
-    if (temporadaId) { setTemporada(temporadaId); return; }
+    if (temporadaId) setTemporada(temporadaId);
     api.temporadas().then(ts => {
-      const ativa = (ts || []).find(t => t.ativa);
-      if (ativa) setTemporada(ativa.id);
+      const lista = ts || [];
+      const ativa = lista.find(t => t.ativa);
+      if (!temporadaId && ativa) setTemporada(ativa.id);
+      const ops = [];
+      if (ativa) ops.push({ id: ativa.id, label: ativa.label || ativa.id });
+      for (const t of lista.filter(x => x.inscricoes_abertas && !x.ativa)) {
+        ops.push({ id: t.id, label: t.label || t.id });
+      }
+      if (temporadaId && !ops.some(o => o.id === temporadaId)) {
+        const t = lista.find(x => x.id === temporadaId);
+        ops.push({ id: temporadaId, label: t?.label || temporadaId });
+      }
+      setTemporadaOpcoes(ops);
     }).catch(() => {});
   }, [temporadaId]);
 
@@ -78,6 +99,9 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   useEffect(() => {
     if (!temporada) return;
     setLoading(true);
+    // Trocar de temporada zera os filtros (as opções são data-driven da
+    // temporada carregada — valor antigo poderia não existir na nova).
+    setFCategoria(''); setFFaixa(''); setFBairro(''); setFDia(''); setFRecorrencia('');
     api.buscar({ temporada, status_temporada: 'ativo' })
       .then(d => setGrupos(d || []))
       .catch(() => setGrupos([]))
@@ -89,6 +113,13 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   const categorias = useMemo(() => [...new Set(grupos.map(g => g.categoria).filter(Boolean))].sort(), [grupos]);
   const bairros = useMemo(() => [...new Set(grupos.map(g => g.bairro).filter(Boolean))].sort(), [grupos]);
   const dias = useMemo(() => [...new Set(grupos.map(g => g.dia_semana).filter(v => v != null))].sort((a, b) => a - b), [grupos]);
+  const recorrencias = useMemo(() => {
+    const set = [...new Set(grupos.map(g => (g.recorrencia || '').toLowerCase().trim()).filter(Boolean))];
+    return set.sort((a, b) => {
+      const ia = RECORRENCIA_ORDEM.indexOf(a), ib = RECORRENCIA_ORDEM.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+    });
+  }, [grupos]);
   // Faixa etária: só aparece quando os grupos tiverem o campo `faixa_etaria`
   // preenchido (vem no rebuild da 2ª temporada). Hoje = vazio → filtro oculto.
   const faixas = useMemo(() => [...new Set(grupos.map(g => g.faixa_etaria).filter(Boolean))].sort(), [grupos]);
@@ -100,6 +131,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       if (fFaixa && g.faixa_etaria !== fFaixa) return false;
       if (fBairro && g.bairro !== fBairro) return false;
       if (fDia !== '' && String(g.dia_semana) !== fDia) return false;
+      if (fRecorrencia && (g.recorrencia || '').toLowerCase().trim() !== fRecorrencia) return false;
       if (s) {
         if (searchMode === 'lider') {
           if (!g.lider_nome?.toLowerCase().includes(s)) return false;
@@ -110,9 +142,9 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       }
       return true;
     });
-  }, [grupos, busca, searchMode, fCategoria, fFaixa, fBairro, fDia]);
+  }, [grupos, busca, searchMode, fCategoria, fFaixa, fBairro, fDia, fRecorrencia]);
 
-  const temFiltros = full && (categorias.length >= 1 || faixas.length >= 1 || bairros.length >= 1 || dias.length >= 1);
+  const temFiltros = full && (categorias.length >= 1 || faixas.length >= 1 || bairros.length >= 1 || dias.length >= 1 || recorrencias.length >= 1);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -137,6 +169,17 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
         </div>
       </div>
 
+      {/* Temporada: aparece como seletor quando existe mais de uma acessível
+          (a ativa + ex.: "Temporada Teste" com inscrições abertas) */}
+      {full && temporadaOpcoes.length >= 2 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: C.t3, whiteSpace: 'nowrap' }}>Temporada:</span>
+          <select value={temporada} onChange={e => setTemporada(e.target.value)} style={{ ...selStyle, flex: 'initial', minWidth: 200 }}>
+            {temporadaOpcoes.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </div>
+      )}
+
       {/* Filtros (data-driven · só os que têm valores aparecem) */}
       {temFiltros && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -156,6 +199,12 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
             <select value={fDia} onChange={e => setFDia(e.target.value)} style={selStyle}>
               <option value="">Todos os dias</option>
               {dias.map(d => <option key={d} value={String(d)}>{DIAS[d]}</option>)}
+            </select>
+          )}
+          {recorrencias.length >= 1 && (
+            <select value={fRecorrencia} onChange={e => setFRecorrencia(e.target.value)} style={selStyle}>
+              <option value="">Toda frequência</option>
+              {recorrencias.map(r => <option key={r} value={r}>{recorrenciaLabel(r)}</option>)}
             </select>
           )}
           {bairros.length >= 1 && (
@@ -224,6 +273,7 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect }) {
               {g.lider_nome && <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.lider_nome}</span>}
               {g.bairro && <span><MapPin size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.bairro}</span>}
               {g.dia_semana != null && <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> {DIAS_CURTO[g.dia_semana]}{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>}
+              {g.recorrencia && g.recorrencia.toLowerCase().trim() !== 'semanal' && <span>· {recorrenciaLabel(g.recorrencia.toLowerCase().trim())}</span>}
               {g.dist_km != null && <span style={{ color: C.primary, fontWeight: 600 }}>{g.dist_km < 1 ? `${Math.round(g.dist_km * 1000)}m` : `${g.dist_km.toFixed(1)}km`}</span>}
               {g.categoria && <span>· {g.categoria}</span>}
             </div>

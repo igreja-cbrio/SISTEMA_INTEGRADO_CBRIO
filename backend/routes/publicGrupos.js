@@ -58,7 +58,7 @@ function distanciaKm(lat1, lng1, lat2, lng2) {
 // GET /api/public/grupos/temporadas
 router.get('/temporadas', async (req, res) => {
   try {
-    const { data } = await supabase.from('mem_temporadas').select('id, label, ano, numero, ativa').order('ano', { ascending: false }).order('numero', { ascending: false });
+    const { data } = await supabase.from('mem_temporadas').select('id, label, ano, numero, ativa, inscricoes_abertas').order('ano', { ascending: false }).order('numero', { ascending: false });
     res.json(data || []);
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
