@@ -27,10 +27,10 @@ const WHATSAPP_LIGADO = () => configurado();
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider';
 const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado';
-// O template de sugestão foi submetido na Meta com o nome legado
-// grupos_pedido_recusado (corpo de 6 variáveis: nome · grupo original ·
-// mensagem · grupo sugerido · link de aceite · link de outras opções).
-const TPL_SUGESTAO_GRUPO = process.env.WHATSAPP_TEMPLATE_GRUPOS_SUGESTAO || 'grupos_pedido_recusado';
+// grupos_sugestao_grupo (UTILITY · 5 variáveis) — a 1ª versão, submetida como
+// grupos_pedido_recusado, foi reclassificada pela Meta como MARKETING (2º link
+// de navegação + tom promocional); a UTILITY é mais barata e não é pausável.
+const TPL_SUGESTAO_GRUPO = process.env.WHATSAPP_TEMPLATE_GRUPOS_SUGESTAO || 'grupos_sugestao_grupo';
 
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
@@ -143,12 +143,13 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
 }
 
 // Template 3 (realocação) · grupos_pedido_recusado — corpo real na Meta:
-// «Olá, {{1}}! Sobre sua inscrição no grupo "{{2}}": {{3}} · Mas você não
-// fica de fora — separamos uma ótima opção: {{4}} · Se quiser entrar nesse
-// grupo, é só confirmar aqui: {{5}} · Prefere ver outras opções? Acesse: {{6}}»
+// «Olá, {{1}}! Atualização sobre sua inscrição no grupo "{{2}}": {{3}} ·
+// Você pode concluir sua inscrição neste grupo com vagas: {{4}} ·
+// Para confirmar sua entrada, acesse: {{5}}»
 // {{1}} primeiro nome · {{2}} grupo ORIGINAL do pedido · {{3}} mensagem ·
-// {{4}} grupo sugerido (nome — quando — onde) · {{5}} link de aceite /g/s/ ·
-// {{6}} link do formulário público (outras opções).
+// {{4}} grupo sugerido (nome — quando — onde) · {{5}} link de aceite /g/s/.
+// Sem 2º link de navegação nem tom promocional — é o que mantém a categoria
+// UTILITY na revisão da Meta (a versão com "veja outras opções" virou MARKETING).
 async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome, grupoSugerido, pedidoId }) {
   try {
     // Mesmo gate do template do líder: não assina token com o envio desligado
@@ -170,10 +171,9 @@ async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome
     const r = await sendTemplate(telefone, TPL_SUGESTAO_GRUPO, TEMPLATE_LANG, [
       (pessoaNome || '').trim().split(/\s+/)[0] || 'Olá',
       (grupoOriginalNome || '').trim() || 'grupo escolhido',
-      'a liderança encontrou um grupo que combina ainda mais com você.',
+      'a liderança indicou um grupo com vagas para você.',
       sugeridoResumo,
       link,
-      `${baseUrl()}/inscricao-grupos`,
     ]);
     if (!r.sent) console.log('[GruposWPP] template sugestão não enviado:', r.reason || r.status);
     return r;
