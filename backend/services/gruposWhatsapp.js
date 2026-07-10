@@ -14,13 +14,16 @@
 // envia — o fluxo do sistema fica idêntico ao de hoje).
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
-const { sendTemplate } = require('./whatsappService');
+const { sendTemplate, configurado } = require('./whatsappService');
 
 // GRUPOS_TOKEN_SECRET (opcional) isola esta superfície dos demais usos do
 // CRON_SECRET (bearer de crons, clientState do Graph no Cérebro — que é
 // ecoado a terceiro). Sem ela, cai no CRON_SECRET como o resto do repo.
 const SECRET = process.env.GRUPOS_TOKEN_SECRET || process.env.CRON_SECRET;
-const WHATSAPP_LIGADO = () => process.env.WHATSAPP_ENABLED === 'true';
+// Gate = a MESMA condição que faz o sendTemplate enviar de verdade
+// (ENABLED + token + phone id). Um gate mais estreito (só ENABLED) deixaria
+// o sendTemplate cair em dry-run e logar o link-capability em produção.
+const WHATSAPP_LIGADO = () => configurado();
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider';
 const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado';
@@ -99,10 +102,12 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
     }
 
     const contato = [pessoa.telefone, pessoa.email].filter(Boolean).join(' · ') || 'sem contato';
+    // trim + fallback DEPOIS do split: nome importado com espaço à esquerda
+    // viraria param '' e a Meta rejeita o template inteiro
     const r = await sendTemplate(lider.telefone, TPL_NOVO_PEDIDO_LIDER, TEMPLATE_LANG, [
-      (lider.nome || 'Líder').split(' ')[0],
-      grupo.nome || 'seu grupo',
-      pessoa.nome || 'Alguém',
+      (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
+      (grupo.nome || '').trim() || 'seu grupo',
+      (pessoa.nome || '').trim() || 'Alguém',
       contato,
       link,
     ]);
@@ -120,11 +125,11 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
   try {
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
     const r = await sendTemplate(telefone, TPL_PEDIDO_APROVADO, TEMPLATE_LANG, [
-      grupo?.nome || 'seu grupo',
+      (grupo?.nome || '').trim() || 'seu grupo',
       formatarQuando(grupo),
       formatarOnde(grupo),
-      liderNome || 'o líder do grupo',
-      liderTelefone || 'em breve pelo WhatsApp',
+      (liderNome || '').trim() || 'o líder do grupo',
+      (liderTelefone || '').trim() || 'em breve pelo WhatsApp',
     ]);
     if (!r.sent) console.log('[GruposWPP] template aprovado não enviado:', r.reason || r.status);
     return r;
@@ -151,8 +156,8 @@ async function notificarPessoaSugestao({ telefone, pessoaNome, grupoSugerido, pe
       return { sent: false, reason: 'sem_secret' };
     }
     const r = await sendTemplate(telefone, TPL_SUGESTAO_GRUPO, TEMPLATE_LANG, [
-      (pessoaNome || 'Olá').split(' ')[0],
-      grupoSugerido?.nome || 'outro grupo',
+      (pessoaNome || '').trim().split(/\s+/)[0] || 'Olá',
+      (grupoSugerido?.nome || '').trim() || 'outro grupo',
       formatarQuando(grupoSugerido),
       formatarOnde(grupoSugerido),
       link,

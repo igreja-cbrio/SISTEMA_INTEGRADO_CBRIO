@@ -579,9 +579,10 @@ router.get('/pedido/por-token', async (req, res) => {
     const payload = verificarToken(req.query.token, 'aprov');
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode aprovar pelo sistema em /grupos.' });
 
-    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+    const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
       .select('id, nome, telefone, email, observacao, status, created_at, motivo_rejeicao, grupo_id, mem_grupos(id, nome, codigo, bairro, dia_semana, horario, local, endereco, complemento, capacidade, lider_id)')
       .eq('id', payload.p).maybeSingle();
+    if (ePed) throw ePed; // falha de infra é 500, não "não encontrado" terminal
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
 
     const grupo = pedido.mem_grupos || {};
@@ -625,8 +626,9 @@ router.post('/aprovar', async (req, res) => {
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode decidir pelo sistema em /grupos.' });
     if (!['aprovar', 'rejeitar'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
 
-    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+    const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome').eq('id', payload.p).maybeSingle();
+    if (ePed) throw ePed; // falha de infra é 500, não "não encontrado" terminal
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
     if (pedido.status !== 'pendente') {
       return res.status(409).json({ error: `Este pedido já foi ${pedido.status}.`, status: pedido.status });

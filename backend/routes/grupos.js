@@ -1159,13 +1159,16 @@ async function aprovarPedidoCore(pedidoId, user) {
     // Trava anti-corrida: o UPDATE condicional em status='pendente' é atômico
     // no banco — só UM decisor "reivindica" o pedido (aprovação logada × lote
     // × link do WhatsApp podem correr em paralelo). Quem perde recebe 409.
+    // O guard de grupo_id cobre a realocação: se o pedido foi movido pra outro
+    // grupo entre a leitura e o claim, esta aprovação não vale mais (o vínculo
+    // iria pro grupo antigo com o pedido apontando pro novo).
     const { data: claimed, error: eClaim } = await supabase.from('mem_grupo_pedidos').update({
       status: 'aprovado',
       decidido_por: user.userId,
       decidido_por_nome: user.name,
       decidido_em: new Date().toISOString(),
       membro_id: membroId,
-    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+    }).eq('id', pedido.id).eq('status', 'pendente').eq('grupo_id', pedido.grupo_id).select('id');
     if (eClaim) throw eClaim;
     if (!claimed || !claimed.length) {
       return { ok: false, code: 409, error: 'Pedido já foi decidido por outra pessoa' };
@@ -1273,7 +1276,9 @@ async function aprovarPedidoCore(pedidoId, user) {
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
     })();
 
-    return { ok: true };
+    // grupo_id devolvido = onde a aprovação DE FATO caiu (o chamador do aceite
+    // de sugestão usa pra responder com o grupo certo).
+    return { ok: true, grupo_id: pedido.grupo_id };
 }
 
 // POST /api/grupos/pedidos/aprovar-lote — body { pedido_ids: [] }
