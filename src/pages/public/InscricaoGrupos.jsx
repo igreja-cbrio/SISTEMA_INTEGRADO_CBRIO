@@ -191,15 +191,15 @@ export default function InscricaoGrupos() {
     <PublicPaletteCtx.Provider value={C}>
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      position: 'relative', overflow: 'hidden', padding: '40px 16px', background: C.pageBg,
+      position: 'relative', overflow: 'hidden', padding: 'clamp(20px, 5vw, 40px) clamp(10px, 3vw, 16px)', background: C.pageBg,
     }}>
       <AnimatedBackground />
       <PublicThemeToggle />
 
       <div style={{ position: 'relative', zIndex: 10, width: '100%', maxWidth: 720 }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+        <div style={{ textAlign: 'center', marginBottom: 'clamp(14px, 3vw, 24px)' }}>
           <h1 style={{
-            fontSize: 28, fontWeight: 800, margin: 0, letterSpacing: -0.5,
+            fontSize: 'clamp(22px, 6vw, 28px)', fontWeight: 800, margin: 0, letterSpacing: -0.5,
             background: 'linear-gradient(90deg, #00B39D, #00d9bd)',
             WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
           }}>
@@ -212,7 +212,7 @@ export default function InscricaoGrupos() {
 
         <div style={{
           background: C.card, border: `1px solid ${C.cardBorder}`,
-          borderRadius: 20, padding: 24, backdropFilter: 'blur(16px)',
+          borderRadius: 20, padding: 'clamp(14px, 3.5vw, 24px)', backdropFilter: 'blur(16px)',
         }}>
           {step === 2 ? (
             <div style={{ textAlign: 'center', padding: 24 }}>
@@ -226,8 +226,7 @@ export default function InscricaoGrupos() {
                 ) : (
                   <>
                     Seu pedido para entrar no grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong> foi
-                    enviado. O líder vai analisar e você receberá uma confirmação por
-                    {form.email ? ' e-mail' : ''}{form.telefone ? ' / WhatsApp' : ''} em breve.
+                    enviado. O líder vai analisar e você recebe a confirmação no seu WhatsApp em breve.
                   </>
                 )}
               </p>
@@ -247,14 +246,21 @@ export default function InscricaoGrupos() {
                 mode="full"
                 usePublicApi
                 temporadaId={temporadaParam || undefined}
+                preferirAberta
                 selectedGrupoId={grupoEscolhido?.id}
                 onSelect={setGrupoEscolhido}
               />
               {grupoEscolhido && (
                 <div style={{
-                  marginTop: 16, padding: 12, background: 'rgba(0,179,157,0.10)',
+                  marginTop: 16, padding: 12,
+                  background: C.isDark ? 'rgba(8, 34, 30, 0.94)' : 'rgba(222, 244, 240, 0.96)',
                   border: '1px solid #00B39D', borderRadius: 10, fontSize: 13, color: '#00B39D',
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                  // Gruda no rodapé enquanto a pessoa rola a lista no celular —
+                  // sem isso, quem escolhe um grupo no meio da lista não vê o
+                  // botão Continuar. Fundo quase opaco pra ler sobre a lista.
+                  position: 'sticky', bottom: 8, zIndex: 5,
+                  backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
                 }}>
                   <span>✓ Grupo selecionado: <strong>{grupoEscolhido.nome}</strong>{grupoEscolhido.lider_nome && <> · líder: {grupoEscolhido.lider_nome}</>}</span>
                   <button onClick={() => setStep(1)} style={{
