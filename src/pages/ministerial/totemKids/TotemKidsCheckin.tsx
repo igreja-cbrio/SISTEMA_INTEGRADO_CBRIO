@@ -1101,8 +1101,9 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
                         <Select value={r.parentesco} onValueChange={v => setResps(list => list.map((x, j) => j === i ? { ...x, parentesco: v } : x))}>
                           <SelectTrigger className="h-9"><SelectValue placeholder="Parentesco" /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="mae">Mãe</SelectItem>
-                            <SelectItem value="pai">Pai</SelectItem>
+                            {/* Só 1 mãe e 1 pai por criança — desabilita se outro já usa */}
+                            <SelectItem value="mae" disabled={r.parentesco !== 'mae' && resps.some((x, j) => j !== i && x.parentesco === 'mae')}>Mãe{r.parentesco !== 'mae' && resps.some((x, j) => j !== i && x.parentesco === 'mae') ? ' (já tem)' : ''}</SelectItem>
+                            <SelectItem value="pai" disabled={r.parentesco !== 'pai' && resps.some((x, j) => j !== i && x.parentesco === 'pai')}>Pai{r.parentesco !== 'pai' && resps.some((x, j) => j !== i && x.parentesco === 'pai') ? ' (já tem)' : ''}</SelectItem>
                             <SelectItem value="padrasto">Padrasto</SelectItem>
                             <SelectItem value="madrasta">Madrasta</SelectItem>
                             <SelectItem value="avo_a">Avô/Avó</SelectItem>
@@ -1415,6 +1416,14 @@ function CheckinSelecao(props: {
         <div>
           <label className="text-sm font-semibold block">Quem está trazendo? <span className="text-pink-600">*</span></label>
           <p className="text-xs text-muted-foreground mb-2">Toque no responsável pra liberar a impressão.</p>
+          {!checkinAberto && (!usarRespManual ? !responsavelSelecionado : (!respManualNome.trim() || !respManualTel.trim())) && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border-2 border-pink-300 bg-pink-50 dark:bg-pink-950/30 px-3 py-2.5">
+              <AlertTriangle className="h-5 w-5 text-pink-600 shrink-0" />
+              <span className="text-sm font-semibold text-pink-700 dark:text-pink-300">
+                Selecione quem está trazendo a criança para liberar a impressão da etiqueta.
+              </span>
+            </div>
+          )}
           {!usarRespManual ? (
             <>
               <div className="space-y-2">
@@ -1796,8 +1805,9 @@ function ModalNovaCrianca(props: {
                   <Select value={r.parentesco} onValueChange={v => setResp(i, { parentesco: v })}>
                     <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="mae">Mãe</SelectItem>
-                      <SelectItem value="pai">Pai</SelectItem>
+                      {/* Só 1 mãe e 1 pai por criança */}
+                      <SelectItem value="mae" disabled={r.parentesco !== 'mae' && resps.some((x, j) => j !== i && x.parentesco === 'mae')}>Mãe{r.parentesco !== 'mae' && resps.some((x, j) => j !== i && x.parentesco === 'mae') ? ' (já tem)' : ''}</SelectItem>
+                      <SelectItem value="pai" disabled={r.parentesco !== 'pai' && resps.some((x, j) => j !== i && x.parentesco === 'pai')}>Pai{r.parentesco !== 'pai' && resps.some((x, j) => j !== i && x.parentesco === 'pai') ? ' (já tem)' : ''}</SelectItem>
                       <SelectItem value="padrasto">Padrasto</SelectItem>
                       <SelectItem value="madrasta">Madrasta</SelectItem>
                       <SelectItem value="avo_a">Avô/Avó</SelectItem>
