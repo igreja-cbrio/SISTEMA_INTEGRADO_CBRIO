@@ -149,16 +149,22 @@ const CARGO_SETOR = {
   'coordenador-bridge': 'Ministerial', 'coordenador-online': 'Ministerial', 'supervisor-jornada': 'Ministerial',
   'coordenador-voluntarios': 'Ministerial',
 };
-// Cascata: kpi_areas → usuario_areas (granular.areas) → profile.area → cargo
+// Cascata: profile.area → cargo → usuario_areas (granular.areas) → kpi_areas.
+// ⚠️ A ordem importa (bug 2026-07-09: compra de gente da Gestão roteada pro
+// diretor do Criativo): kpi_areas/usuario_areas são listas LARGAS de permissão/
+// medição (uma pessoa da Gestão pode ter 'marketing' ali só pra ver KPI) — o
+// setor da pessoa vem do CADASTRO dela (profile.area) e do CARGO; as listas
+// entram por último, como resgate.
 function resolverSetorHint(user) {
-  const cands = [
-    ...(Array.isArray(user.kpi_areas) ? user.kpi_areas : []),
-    ...(Array.isArray(user.granular?.areas) ? user.granular.areas : []),
-    user.area,
-  ];
-  for (const c of cands) { const s = _setorPorArea(c); if (s) return s; }
+  const setorArea = _setorPorArea(user.area);
+  if (setorArea) return setorArea;
   const cs = user.granular?.cargoSlug;
   if (cs && CARGO_SETOR[cs]) return CARGO_SETOR[cs];
+  const cands = [
+    ...(Array.isArray(user.granular?.areas) ? user.granular.areas : []),
+    ...(Array.isArray(user.kpi_areas) ? user.kpi_areas : []),
+  ];
+  for (const c of cands) { const s = _setorPorArea(c); if (s) return s; }
   return null;
 }
 

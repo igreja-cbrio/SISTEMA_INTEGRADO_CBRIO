@@ -125,7 +125,10 @@ router.get('/historico-batismos', async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════
 
 // GET /coleta/cultos-abertos · lista cultos dos últimos 14 dias com status por ambiente
-router.get('/coleta/cultos-abertos', async (req, res) => {
+// Guards espelham a RLS da 20260526120000 (lançar >=2 · decidir >=3) — o
+// backend usa service_role (bypassa RLS), então sem authorizeModule qualquer
+// autenticado passava direto (gap achado na auditoria da coleta · 2026-07-10).
+router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (req, res) => {
   try {
     const hoje = new Date().toISOString().slice(0, 10);
     const limite = new Date(); limite.setDate(limite.getDate() - 14);
@@ -183,7 +186,7 @@ router.get('/coleta/cultos-abertos', async (req, res) => {
 });
 
 // POST /coleta · submeter dados de um culto (templo OU kids)
-router.post('/coleta', async (req, res) => {
+router.post('/coleta', authorizeModule('integracao', 2), async (req, res) => {
   try {
     const { culto_id, ambiente, presencial, decisoes, observacao } = req.body || {};
     if (!culto_id) return res.status(400).json({ error: 'culto_id obrigatorio' });
@@ -259,7 +262,7 @@ router.post('/coleta', async (req, res) => {
 });
 
 // GET /coleta/minhas · submissoes do próprio usuário (histórico pessoal)
-router.get('/coleta/minhas', async (req, res) => {
+router.get('/coleta/minhas', authorizeModule('integracao', 1), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cultos_dados_submissoes')
@@ -280,7 +283,7 @@ router.get('/coleta/minhas', async (req, res) => {
 });
 
 // GET /coleta/pendentes · lista submissoes pendentes pro coord aprovar
-router.get('/coleta/pendentes', async (req, res) => {
+router.get('/coleta/pendentes', authorizeModule('integracao', 3), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cultos_dados_submissoes')
@@ -302,7 +305,7 @@ router.get('/coleta/pendentes', async (req, res) => {
 });
 
 // POST /coleta/:id/aprovar · aplica os valores em cultos.* e marca aprovado
-router.post('/coleta/:id/aprovar', async (req, res) => {
+router.post('/coleta/:id/aprovar', authorizeModule('integracao', 3), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: sub, error: errFetch } = await supabase
@@ -347,7 +350,7 @@ router.post('/coleta/:id/aprovar', async (req, res) => {
 });
 
 // POST /coleta/:id/rejeitar · marca rejeitada · libera novo envio do mesmo (culto,ambiente)
-router.post('/coleta/:id/rejeitar', async (req, res) => {
+router.post('/coleta/:id/rejeitar', authorizeModule('integracao', 3), async (req, res) => {
   try {
     const { id } = req.params;
     const { motivo } = req.body || {};
