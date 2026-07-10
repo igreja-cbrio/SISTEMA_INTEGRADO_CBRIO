@@ -27,7 +27,10 @@ const WHATSAPP_LIGADO = () => configurado();
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 const TPL_NOVO_PEDIDO_LIDER = process.env.WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER || 'grupos_pedido_novo_lider';
 const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'grupos_pedido_aprovado';
-const TPL_SUGESTAO_GRUPO = process.env.WHATSAPP_TEMPLATE_GRUPOS_SUGESTAO || 'grupos_sugestao_grupo';
+// O template de sugestão foi submetido na Meta com o nome legado
+// grupos_pedido_recusado (corpo de 6 variáveis: nome · grupo original ·
+// mensagem · grupo sugerido · link de aceite · link de outras opções).
+const TPL_SUGESTAO_GRUPO = process.env.WHATSAPP_TEMPLATE_GRUPOS_SUGESTAO || 'grupos_pedido_recusado';
 
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
@@ -139,10 +142,14 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
   }
 }
 
-// Template 3 · grupos_sugestao_grupo — realocação: sugere OUTRO grupo à
-// pessoa, com link de aceite sem login (/g/s/<token>).
-// {{1}} nome da pessoa · {{2}} grupo sugerido · {{3}} dia/hora · {{4}} local · {{5}} link
-async function notificarPessoaSugestao({ telefone, pessoaNome, grupoSugerido, pedidoId }) {
+// Template 3 (realocação) · grupos_pedido_recusado — corpo real na Meta:
+// «Olá, {{1}}! Sobre sua inscrição no grupo "{{2}}": {{3}} · Mas você não
+// fica de fora — separamos uma ótima opção: {{4}} · Se quiser entrar nesse
+// grupo, é só confirmar aqui: {{5}} · Prefere ver outras opções? Acesse: {{6}}»
+// {{1}} primeiro nome · {{2}} grupo ORIGINAL do pedido · {{3}} mensagem ·
+// {{4}} grupo sugerido (nome — quando — onde) · {{5}} link de aceite /g/s/ ·
+// {{6}} link do formulário público (outras opções).
+async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome, grupoSugerido, pedidoId }) {
   try {
     // Mesmo gate do template do líder: não assina token com o envio desligado
     // (o DRY-RUN logaria o link-capability).
@@ -155,12 +162,18 @@ async function notificarPessoaSugestao({ telefone, pessoaNome, grupoSugerido, pe
       console.error('[GruposWPP] token não assinado:', e.message);
       return { sent: false, reason: 'sem_secret' };
     }
+    const sugeridoResumo = [
+      (grupoSugerido?.nome || '').trim() || 'outro grupo',
+      formatarQuando(grupoSugerido) !== 'a combinar' ? formatarQuando(grupoSugerido) : null,
+      formatarOnde(grupoSugerido) !== 'a combinar' ? formatarOnde(grupoSugerido) : null,
+    ].filter(Boolean).join(' — ');
     const r = await sendTemplate(telefone, TPL_SUGESTAO_GRUPO, TEMPLATE_LANG, [
       (pessoaNome || '').trim().split(/\s+/)[0] || 'Olá',
-      (grupoSugerido?.nome || '').trim() || 'outro grupo',
-      formatarQuando(grupoSugerido),
-      formatarOnde(grupoSugerido),
+      (grupoOriginalNome || '').trim() || 'grupo escolhido',
+      'a liderança encontrou um grupo que combina ainda mais com você.',
+      sugeridoResumo,
       link,
+      `${baseUrl()}/inscricao-grupos`,
     ]);
     if (!r.sent) console.log('[GruposWPP] template sugestão não enviado:', r.reason || r.status);
     return r;
