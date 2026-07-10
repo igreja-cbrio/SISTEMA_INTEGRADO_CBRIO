@@ -165,7 +165,12 @@ export function GruposMapView({
   const [filterCat, setFilterCat] = useState<string>("");
   const [filterBairro, setFilterBairro] = useState<string>("");
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Painel lateral SEMPRE começa fechado (Marcos · 2026-07-10): o mapa é o
+  // protagonista; quem quiser a lista abre pelo botão.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Tela estreita (QR → celular): o balão ancorado no pin estoura a tela —
+  // vira cartão fixo no rodapé do mapa. Estático no mount é suficiente.
+  const isMobile = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(max-width: 640px)").matches;
   const flyTargetRef = useRef<MapGroup | null>(null);
   const [flyTarget, setFlyTarget] = useState<MapGroup | null>(null);
   const [locatedCoords, setLocatedCoords] = useState<Coords | null>(null);
@@ -456,91 +461,53 @@ export function GruposMapView({
               <MarkerContent>
                 <GroupPin active={activeId === g.id} />
               </MarkerContent>
-              <MarkerPopup>
-                <div className="min-w-[220px] space-y-1.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold">{g.nome}</p>
-                    {g.codigo && <code className="text-[10px] text-muted-foreground font-mono">{g.codigo}</code>}
-                  </div>
-                  {(g.lider?.nome || g.lider_nome) && (
-                    <p className="text-xs text-muted-foreground">
-                      Líder: <span className="text-foreground">{g.lider?.nome || g.lider_nome}</span>
-                    </p>
-                  )}
-                  {g.categoria && (
-                    <p className="text-xs text-muted-foreground">{g.categoria}</p>
-                  )}
-                  <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    {g.dia_semana != null && (
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {DIAS_MAP[g.dia_semana]}
-                        {g.horario ? ` • ${String(g.horario).slice(0, 5)}` : ""}
-                      </span>
-                    )}
-                    {g.bairro && (
-                      <span className="flex items-center gap-1">
-                        <MapPin className="h-3 w-3" />
-                        {g.bairro}
-                      </span>
-                    )}
-                  </div>
-                  {g.local && (
-                    <p className="text-xs text-muted-foreground">
-                      {g.local}{g.complemento ? ` — ${g.complemento}` : ''}
-                    </p>
-                  )}
-                  {g.descricao && (
-                    <p className="text-xs text-muted-foreground line-clamp-3">{g.descricao}</p>
-                  )}
-                  {g.dist != null && (
-                    <p className="text-xs text-[#00B39D] font-medium">
-                      {fmtDist(g.dist)} de você
-                    </p>
-                  )}
-                  {(g.lat != null && g.lng != null) && (
-                    <AbrirRotaMenu
-                      lat={g.lat} lng={g.lng}
-                      endereco={[g.local, g.bairro, "Rio de Janeiro"].filter(Boolean).join(", ")}
-                      className="inline-flex items-center gap-1 mt-1 text-xs font-medium text-[#00B39D] hover:underline"
-                    >
-                      <NavIcon className="h-3 w-3" /> Como chegar
-                    </AbrirRotaMenu>
-                  )}
-                  {onGroupSelect && (
-                    <Button
-                      onClick={() => onGroupSelect(g)}
-                      size="sm"
-                      className="w-full mt-1 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white"
-                    >
-                      {onGroupSelectLabel}
-                    </Button>
-                  )}
-                  {mostrarBotaoInscricao && !onGroupSelect && (() => {
-                    const t = g.temporada && temporadasMap ? temporadasMap[g.temporada] : undefined;
-                    const aberta = t ? t.inscricoes_abertas : false;
-                    if (aberta) {
-                      return (
-                        <a
-                          href={`/inscricao-grupos?grupo=${g.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block w-full mt-1 text-center px-3 py-1.5 rounded-md bg-[#00B39D] hover:bg-[#00B39D]/90 text-white text-sm font-semibold"
-                        >
-                          Inscrever-se neste grupo
-                        </a>
-                      );
-                    }
-                    return (
-                      <div className="mt-1 px-3 py-2 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 text-xs text-center">
-                        Inscrições fechadas. Aguarde a próxima abertura.
-                      </div>
-                    );
-                  })()}
-                </div>
-              </MarkerPopup>
+              {/* No celular a info vai pro cartão fixo no rodapé (abaixo) —
+                  o balão ancorado estoura a tela estreita. */}
+              {!isMobile && (
+                <MarkerPopup>
+                  <GrupoInfo
+                    g={g}
+                    onGroupSelect={onGroupSelect}
+                    onGroupSelectLabel={onGroupSelectLabel}
+                    mostrarBotaoInscricao={mostrarBotaoInscricao}
+                    temporadasMap={temporadasMap}
+                  />
+                </MarkerPopup>
+              )}
             </MapMarker>
           ))}
+
+          {/* Cartão do grupo no rodapé (só celular) */}
+          {isMobile && (() => {
+            const ativo = withCoords.find((g) => g.id === activeId);
+            if (!ativo) return null;
+            return (
+              <div
+                className={cn(
+                  "absolute bottom-3 left-3 right-3 z-30 rounded-xl p-3 pr-9 shadow-xl border max-h-[46%] overflow-y-auto",
+                  theme === "dark" ? "bg-gray-900/95 border-white/10 text-white" : "bg-white/95 border-gray-200 text-gray-900"
+                )}
+              >
+                <button
+                  onClick={() => setActiveId(null)}
+                  className={cn(
+                    "absolute top-2 right-2 h-7 w-7 rounded-md flex items-center justify-center",
+                    theme === "dark" ? "text-white/60 hover:bg-white/10" : "text-gray-500 hover:bg-gray-100"
+                  )}
+                  aria-label="Fechar"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+                <GrupoInfo
+                  g={ativo}
+                  onGroupSelect={onGroupSelect}
+                  onGroupSelectLabel={onGroupSelectLabel}
+                  mostrarBotaoInscricao={mostrarBotaoInscricao}
+                  temporadasMap={temporadasMap}
+                />
+              </div>
+            );
+          })()}
 
           <MapControls
             position="bottom-right"
@@ -549,6 +516,7 @@ export function GruposMapView({
             showFullscreen={isKiosk}
             onLocate={(c) => setLocatedCoords({ lat: c.latitude, lng: c.longitude })}
           />
+
 
           {/* Theme toggle */}
           <button
@@ -579,6 +547,106 @@ export function GruposMapView({
           </div>
         </Map>
       </div>
+    </div>
+  );
+}
+
+// Conteúdo do grupo — compartilhado pelo balão do pin (desktop) e pelo
+// cartão fixo do rodapé (celular).
+function GrupoInfo({
+  g,
+  onGroupSelect,
+  onGroupSelectLabel,
+  mostrarBotaoInscricao,
+  temporadasMap,
+}: {
+  g: any;
+  onGroupSelect?: (g: any) => void;
+  onGroupSelectLabel?: string;
+  mostrarBotaoInscricao?: boolean;
+  temporadasMap?: Record<string, { inscricoes_abertas?: boolean }>;
+}) {
+  return (
+    <div className="min-w-[220px] space-y-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="text-sm font-bold">{g.nome}</p>
+        {g.codigo && <code className="text-[10px] text-muted-foreground font-mono">{g.codigo}</code>}
+      </div>
+      {(g.lider?.nome || g.lider_nome) && (
+        <p className="text-xs text-muted-foreground">
+          Líder: <span className="text-foreground">{g.lider?.nome || g.lider_nome}</span>
+        </p>
+      )}
+      {g.categoria && (
+        <p className="text-xs text-muted-foreground">{g.categoria}</p>
+      )}
+      <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        {g.dia_semana != null && (
+          <span className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            {DIAS_MAP[g.dia_semana]}
+            {g.horario ? ` • ${String(g.horario).slice(0, 5)}` : ""}
+          </span>
+        )}
+        {g.bairro && (
+          <span className="flex items-center gap-1">
+            <MapPin className="h-3 w-3" />
+            {g.bairro}
+          </span>
+        )}
+      </div>
+      {g.local && (
+        <p className="text-xs text-muted-foreground">
+          {g.local}{g.complemento ? ` — ${g.complemento}` : ''}
+        </p>
+      )}
+      {g.descricao && (
+        <p className="text-xs text-muted-foreground line-clamp-3">{g.descricao}</p>
+      )}
+      {g.dist != null && (
+        <p className="text-xs text-[#00B39D] font-medium">
+          {fmtDist(g.dist)} de você
+        </p>
+      )}
+      {(g.lat != null && g.lng != null) && (
+        <AbrirRotaMenu
+          lat={g.lat} lng={g.lng}
+          endereco={[g.local, g.bairro, "Rio de Janeiro"].filter(Boolean).join(", ")}
+          className="inline-flex items-center gap-1 mt-1 text-xs font-medium text-[#00B39D] hover:underline"
+        >
+          <NavIcon className="h-3 w-3" /> Como chegar
+        </AbrirRotaMenu>
+      )}
+      {onGroupSelect && (
+        <Button
+          onClick={() => onGroupSelect(g)}
+          size="sm"
+          className="w-full mt-1 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white"
+        >
+          {onGroupSelectLabel}
+        </Button>
+      )}
+      {mostrarBotaoInscricao && !onGroupSelect && (() => {
+        const t = g.temporada && temporadasMap ? temporadasMap[g.temporada] : undefined;
+        const aberta = t ? t.inscricoes_abertas : false;
+        if (aberta) {
+          return (
+            <a
+              href={`/inscricao-grupos?grupo=${g.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full mt-1 text-center px-3 py-1.5 rounded-md bg-[#00B39D] hover:bg-[#00B39D]/90 text-white text-sm font-semibold"
+            >
+              Inscrever-se neste grupo
+            </a>
+          );
+        }
+        return (
+          <div className="mt-1 px-3 py-2 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 text-xs text-center">
+            Inscrições fechadas. Aguarde a próxima abertura.
+          </div>
+        );
+      })()}
     </div>
   );
 }
