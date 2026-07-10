@@ -10,6 +10,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
+import { useAuth } from '../../../contexts/AuthContext';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
 import {
@@ -179,7 +180,30 @@ const SLIDES = [
   { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Alvos financeiros com filtros' },
 ];
 
+// ⚠️ Aba "Saídas" (detalhamento de despesas · expõe folha por pessoa) é
+// RESTRITA à lista nominal abaixo (pedido do Matheus · 2026-07-10). O backend
+// devolve 403 em /dashboard/saidas-detalhadas pra quem está fora; aqui o slide
+// some da navegação. Alterar a lista = decisão de diretoria.
+const SAIDAS_ALLOWLIST = new Set([
+  'matheus.toscano@cbrio.org', 'matheus@cbrio.com.br',
+  'marcospaulo.almeida@cbrio.org', 'marcos@cbrio.com',
+  'yago.torres@cbrio.org',
+  'eduardo@cbrio.com.br',
+  'juliana.leao@cbrio.org',
+  'juninho.lit@cbrio.org', 'juninho@cbrio.com.br',
+  'pepe.menezes@cbrio.org',
+  'arthur.serpa@cbrio.org',
+]);
+
 export default function DashboardSemanal() {
+  const { user, profile } = useAuth();
+  const emailUser = String(profile?.email || user?.email || '').toLowerCase();
+  const podeVerSaidas = SAIDAS_ALLOWLIST.has(emailUser);
+  // Slides visíveis · esconde "Saídas" (controle) de quem não está na allowlist.
+  const slides = useMemo(
+    () => (podeVerSaidas ? SLIDES : SLIDES.filter(s => s.key !== 'controle')),
+    [podeVerSaidas],
+  );
   const [data, setData] = useState(null);
   const [completo, setCompleto] = useState(null);
   const [melhorSemana, setMelhorSemana] = useState(null);
@@ -195,12 +219,12 @@ export default function DashboardSemanal() {
     const handler = (e) => {
       // ignora se está digitando em input/textarea
       if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA' || e.target?.tagName === 'SELECT') return;
-      if (e.key === 'ArrowRight') setSlide(i => Math.min(i + 1, SLIDES.length - 1));
+      if (e.key === 'ArrowRight') setSlide(i => Math.min(i + 1, slides.length - 1));
       else if (e.key === 'ArrowLeft') setSlide(i => Math.max(i - 1, 0));
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, []);
+  }, [slides.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,60 +314,60 @@ export default function DashboardSemanal() {
 
       {/* Assistente financeiro · leitura automática por aba */}
       <AssistenteFinanceiroCard
-        aba={SLIDES[slide].key}
-        abaLabel={SLIDES[slide].label}
+        aba={slides[slide].key}
+        abaLabel={slides[slide].label}
         semana={refData}
         kpis={kpis}
         buckets={buckets}
-        onVerDetalhe={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'resumo')))}
-        onComparar={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'performance')))}
+        onVerDetalhe={() => setSlide(Math.max(0, slides.findIndex(s => s.key === 'resumo')))}
+        onComparar={() => setSlide(Math.max(0, slides.findIndex(s => s.key === 'performance')))}
       />
 
       {/* CONTENT · slides animados com AnimatePresence */}
       <AnimatePresence mode="wait">
         <motion.div
-          key={SLIDES[slide].key}
+          key={slides[slide].key}
           initial={{ opacity: 0, x: 30 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: -30 }}
           transition={{ duration: 0.25, ease: 'easeOut' }}
           className="space-y-6"
         >
-          {SLIDES[slide].key === 'resumo' && (
+          {slides[slide].key === 'resumo' && (
             <Slide0Resumo
               kpis={kpis} cultos={cultos} top_contribuintes={top_contribuintes}
               historico={historico}
             />
           )}
-          {SLIDES[slide].key === 'saude' && <SlideSaudeFinanceira />}
-          {SLIDES[slide].key === 'por_culto' && (
+          {slides[slide].key === 'saude' && <SlideSaudeFinanceira />}
+          {slides[slide].key === 'por_culto' && (
             <Slide1PorCulto
               buckets={buckets}
               melhorSemana={melhorSemana}
               semana={semana}
             />
           )}
-          {SLIDES[slide].key === 'tendencias' && (
+          {slides[slide].key === 'tendencias' && (
             <Slide2Tendencias />
           )}
-          {SLIDES[slide].key === 'comparativos' && (
+          {slides[slide].key === 'comparativos' && (
             <Slide3Comparativos
               completo={completo}
             />
           )}
-          {SLIDES[slide].key === 'performance' && (
+          {slides[slide].key === 'performance' && (
             <Slide4Performance
               completo={completo}
               melhorSemana={melhorSemana}
             />
           )}
-          {SLIDES[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
-          {SLIDES[slide].key === 'controle' && (
+          {slides[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
+          {slides[slide].key === 'controle' && (
             <Slide5Controle
               saidas={saidas}
             />
           )}
-          {SLIDES[slide].key === 'metas' && (
+          {slides[slide].key === 'metas' && (
             <Slide6Metas
               metas={metas}
               onMetasChange={reloadMetas}
@@ -355,7 +379,7 @@ export default function DashboardSemanal() {
       {/* Footer · atalhos + bloco narrativo atual */}
       <div className="text-center text-[10px] text-muted-foreground flex items-center justify-center gap-2 flex-wrap">
         {(() => {
-          const bloco = SLIDE_BLOCO[SLIDES[slide].key] || {};
+          const bloco = SLIDE_BLOCO[slides[slide].key] || {};
           return bloco.label ? (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
               style={{ background: `${bloco.color}1f`, color: bloco.color }}>
@@ -363,7 +387,7 @@ export default function DashboardSemanal() {
             </span>
           ) : null;
         })()}
-        <span>Use ← → no teclado · {slide + 1} de {SLIDES.length}</span>
+        <span>Use ← → no teclado · {slide + 1} de {slides.length}</span>
       </div>
     </div>
   );
@@ -522,11 +546,11 @@ const SLIDE_BLOCO = {
 function SlideNav({ current, onChange }) {
   return (
     <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
-      {SLIDES.map((s, i) => {
+      {slides.map((s, i) => {
         const active = i === current;
         const Icon = s.icon;
         const bloco = SLIDE_BLOCO[s.key] || { id: 0, label: '', color: '#888' };
-        const blocoAnterior = i > 0 ? SLIDE_BLOCO[SLIDES[i - 1].key]?.id : null;
+        const blocoAnterior = i > 0 ? SLIDE_BLOCO[slides[i - 1].key]?.id : null;
         const showSep = blocoAnterior != null && blocoAnterior !== bloco.id;
         return (
           <span key={s.key} className="contents">
