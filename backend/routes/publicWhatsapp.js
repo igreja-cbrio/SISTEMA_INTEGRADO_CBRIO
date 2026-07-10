@@ -137,17 +137,25 @@ async function processarMensagem(m, cfg) {
   // Identifica lider/assistente cadastrado
   const { data: lider } = await supabase
     .from('whatsapp_lideres')
-    .select('id, nome_exibicao, escopo, grupo_id')
+    .select('id, nome_exibicao, escopo, grupo_id, papel')
     .eq('telefone', telefone).eq('ativo', true).is('deleted_at', null)
     .maybeSingle();
 
-  // ── Persona 1 · numero desconhecido -> assistente institucional ────
-  if (!lider) {
+  // ── COLETA RESTRITA (Marcos · 2026-07-10): a persona de coleta (números
+  // de culto/grupos, formulários Flow) só atende papel='coordenador' —
+  // hoje Marcos e Matheus. Líder comum reportando número por conta própria
+  // quebraria a contagem oficial; ele cai na persona institucional (CBZap +
+  // links) como qualquer número. Reabrir por pessoa = mudar `papel` em
+  // /admin/whatsapp, sem deploy.
+  const podeColetar = lider && lider.papel === 'coordenador';
+
+  // ── Persona 1 · numero desconhecido (ou sem permissão de coleta) ────
+  if (!podeColetar) {
     if (m.type !== 'text') return; // mídia de desconhecido · ignora (não custa LLM)
     const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });
     await supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto,
-      status: 'ignorado', erro: 'institucional', modulo_destino: 'institucional',
+      status: 'ignorado', erro: lider ? 'coleta_restrita' : 'institucional', modulo_destino: 'institucional',
     });
     await enviarTexto(telefone, resposta);
     return;
@@ -267,9 +275,19 @@ async function processarFlowReply(m) {
   if (jaVisto) return;
   const { data: lider } = await supabase
     .from('whatsapp_lideres')
-    .select('id, nome_exibicao, escopo, grupo_id')
+    .select('id, nome_exibicao, escopo, grupo_id, papel')
     .eq('telefone', telefone).eq('ativo', true).is('deleted_at', null)
     .maybeSingle();
+  // Coleta restrita a coordenadores (Marcos · 2026-07-10): resposta de
+  // formulário de quem não é coordenador é registrada e descartada — não
+  // vira coleta (líder comum não pode alimentar contagem oficial).
+  if (!lider || lider.papel !== 'coordenador') {
+    await supabase.from('whatsapp_coletas').insert({
+      whatsapp_message_id: m.id, telefone, raw_text: '[nfm_reply descartado]',
+      status: 'ignorado', erro: 'coleta_restrita', modulo_destino: 'desconhecido',
+    }).catch(() => {});
+    return;
+  }
   await flowColeta.tratarFlowReply(m, telefone, lider);
 }
 
