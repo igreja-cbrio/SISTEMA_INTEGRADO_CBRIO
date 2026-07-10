@@ -2328,8 +2328,27 @@ router.delete('/metas/:id', authorizeModule('financeiro', 4), async (req, res) =
 // ====================================================================
 // SAÍDAS DETALHADAS · por categoria, plano, centro
 // ====================================================================
+// ⚠️ RESTRIÇÃO (pedido do Matheus · 2026-07-10): o detalhamento de saídas
+// expõe pagamento de FOLHA por pessoa. Acesso APENAS pra lista nominal
+// abaixo — mais ninguém vê a aba Saídas do dashboard semanal (o front
+// esconde o slide ao receber 403). Alterar a lista = decisão de diretoria.
+const SAIDAS_ALLOWLIST = new Set([
+  'matheus.toscano@cbrio.org', 'matheus@cbrio.com.br',            // Matheus Toscano
+  'marcospaulo.almeida@cbrio.org', 'marcos@cbrio.com',            // Marcos Paulo
+  'yago.torres@cbrio.org',                                        // Yago Torres
+  'eduardo@cbrio.com.br',                                         // Eduardo Gnisci
+  'juliana.leao@cbrio.org',                                       // Juliana Leão
+  'juninho.lit@cbrio.org', 'juninho@cbrio.com.br',                // Pedro Luis Litwinczuk Júnior
+  'pepe.menezes@cbrio.org',                                       // Pedro Paulo Menezes
+  'arthur.serpa@cbrio.org',                                       // Arthur Serpa
+]);
+const podeVerSaidas = (req) => SAIDAS_ALLOWLIST.has(String(req.user?.email || '').toLowerCase());
+
 router.get('/dashboard/saidas-detalhadas', async (req, res) => {
   try {
+    if (!podeVerSaidas(req)) {
+      return res.status(403).json({ error: 'Sem acesso ao detalhamento de saídas' });
+    }
     const { mes } = req.query;
     const refMes = mes && /^\d{4}-\d{2}$/.test(mes) ? mes : new Date().toISOString().slice(0, 7);
 
