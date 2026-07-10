@@ -174,7 +174,7 @@ export default function InscricaoGrupos() {
         ...extra,
       });
       setDup(null);
-      setResultado(r && (r.ja_membro || r.ja_pedido) ? { mensagem: r.mensagem } : null);
+      setResultado(r && (r.ja_membro || r.ja_pedido) ? { mensagem: r.mensagem, renovado: r.renovado === true } : null);
       setStep(2);
     } catch (e) {
       if (e.status === 409 && e.codigo === 'possivel_duplicado') {
@@ -218,7 +218,7 @@ export default function InscricaoGrupos() {
             <div style={{ textAlign: 'center', padding: 24 }}>
               <CheckCircle2 size={56} style={{ color: '#10b981', margin: '0 auto 16px' }} />
               <h2 style={{ color: C.text, fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-                {resultado ? 'Tudo certo!' : 'Pedido enviado!'}
+                {resultado ? (resultado.renovado ? 'Inscrição renovada!' : 'Tudo certo!') : 'Pedido enviado!'}
               </h2>
               <p style={{ color: C.text3, fontSize: 14, lineHeight: 1.6 }}>
                 {resultado ? (

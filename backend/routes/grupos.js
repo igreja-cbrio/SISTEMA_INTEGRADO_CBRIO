@@ -1133,10 +1133,12 @@ async function aprovarPedidoCore(pedidoId, user) {
         if (cad.duplicado_de_id) {
           membroId = cad.duplicado_de_id;
         } else {
+          // nao_vincular_fraco = a pessoa afirmou "não sou eu" na inscrição —
+          // o matcher só pode religar por CPF (nunca por e-mail/telefone de família).
           const r = await acharOuCriarGuardado({
             cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
             extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null },
-          });
+          }, { soChaveForte: cad.nao_vincular_fraco === true });
           membroId = r.membro_id;
         }
         // Carrega a foto do cadastro público pro membro (F1) quando ele ainda
@@ -1312,11 +1314,16 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       return res.status(400).json({ error: 'Esse grupo pausou novas inscrições — combine com o líder dele antes de sugerir' });
     }
 
+    // O template da sugestão cita o grupo ORIGINAL do pedido ({{2}}).
+    const { data: grupoOriginal } = await supabase.from('mem_grupos')
+      .select('nome').eq('id', pedido.grupo_id).maybeSingle();
+
     // WhatsApp com o link de aceite (gated por WHATSAPP_ENABLED · sem
     // telefone no pedido, só a notificação in-app abaixo alcança a pessoa).
     const wpp = await notificarPessoaSugestao({
       telefone: pedido.telefone,
       pessoaNome: pedido.nome,
+      grupoOriginalNome: grupoOriginal?.nome || null,
       grupoSugerido,
       pedidoId: pedido.id,
     });

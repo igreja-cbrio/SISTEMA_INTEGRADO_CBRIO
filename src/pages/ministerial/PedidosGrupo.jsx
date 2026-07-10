@@ -114,11 +114,20 @@ export default function PedidosGrupo({ embedded = false }) {
     if (!confirm(msg)) return;
     setBatchLoading(true);
     try {
-      const r = await api.aprovarPedidosLote(itens.map(p => p.id));
-      if (r.falhas?.length) {
-        toast.warning(`${r.aprovados} aprovado(s) · ${r.falhas.length} falha(s): ${r.falhas.map(f => f.error).join('; ')}`);
+      // O backend aceita no máximo 100 por chamada — fatia em blocos
+      // sequenciais e agrega o resultado (700 selecionados = 7 chamadas).
+      const ids = itens.map(p => p.id);
+      let aprovados = 0;
+      const falhas = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const r = await api.aprovarPedidosLote(ids.slice(i, i + 100));
+        aprovados += r.aprovados || 0;
+        if (r.falhas?.length) falhas.push(...r.falhas);
+      }
+      if (falhas.length) {
+        toast.warning(`${aprovados} aprovado(s) · ${falhas.length} falha(s): ${falhas.slice(0, 5).map(f => f.error).join('; ')}${falhas.length > 5 ? '…' : ''}`);
       } else {
-        toast.success(`${r.aprovados} pedido(s) aprovado(s)`);
+        toast.success(`${aprovados} pedido(s) aprovado(s)`);
       }
       load();
     } catch (e) { toast.error(e.message || 'Erro ao aprovar em lote'); }
@@ -265,6 +274,11 @@ export default function PedidosGrupo({ embedded = false }) {
                       <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: C.bg, color: C.t3, fontWeight: 500 }}>
                         {p.origem === 'formulario_publico' ? 'via QR' : p.origem === 'cadastro_interno' ? 'via cadastro' : 'manual'}
                       </span>
+                      {p.observacao?.includes('[Verificar identidade]') && (
+                        <span style={{ fontSize: 10, padding: '1px 8px', borderRadius: 99, background: C.amberBg, color: C.amber, fontWeight: 700 }}>
+                          Verificar identidade
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: C.t3, marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                       {p.email && <span><Mail size={11} style={{ display: 'inline', marginRight: 3 }} /> {p.email}</span>}

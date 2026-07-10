@@ -22,7 +22,9 @@ const {
 // então este é o único limiter que governa as rotas de grupos públicos.
 const totemLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.GRUPOS_PUBLIC_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 300 : 5000),
+  // 1000 (não 300): totem e WiFi da igreja compartilham 1 IP — num domingo
+  // cheio, ~6 requests por inscrição × dezenas de pessoas estoura 300/15min.
+  max: parseInt(process.env.GRUPOS_PUBLIC_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 1000 : 5000),
   message: { error: 'Muitas tentativas em pouco tempo. Aguarde um instante e tente de novo.' },
   skip: () => process.env.NODE_ENV !== 'production',
   standardHeaders: true,
@@ -429,8 +431,11 @@ router.post('/inscrever', async (req, res) => {
 
     // Resposta amigável de "já existe" — usada no sou_eu e quando o CPF já tem
     // participação/pedido, pra o modal "é você?" sempre ter uma saída (sem loop).
+    // Reinscrição de quem JÁ está no grupo = RENOVAÇÃO (Marcos: na virada de
+    // temporada todo mundo pode se reinscrever no próprio grupo — não é trava,
+    // é confirmação de permanência).
     const jaExiste = (tipo) => tipo === 'membro_ativo'
-      ? res.json({ ok: true, ja_membro: true, mensagem: 'Você já participa deste grupo. Nos vemos no encontro!' })
+      ? res.json({ ok: true, ja_membro: true, renovado: true, mensagem: 'Renovamos a sua inscrição no grupo para esta temporada. Nos vemos no encontro!' })
       : res.json({ ok: true, ja_pedido: true, mensagem: 'Seu pedido já está registrado — o líder vai te chamar em breve.' });
 
     // Anti-duplicata. Duas fontes complementares:
@@ -456,6 +461,9 @@ router.post('/inscrever', async (req, res) => {
     }
 
     if (dup) {
+      // Match FORTE (membro resolvido pelo matcher) já ATIVO neste grupo =
+      // reinscrição no próprio grupo → renovação direta, sem modal.
+      if (dup.tipo === 'membro_ativo' && membroId) return jaExiste('membro_ativo');
       // "Sim, sou eu" OU um CPF que já tem participação/pedido → não duplica.
       // (Sob confirmar_novo só se chega aqui pelo check direto por CPF: mesmo
       // "não sou eu" não cria 2 pedidos do MESMO CPF no mesmo grupo.)
@@ -496,6 +504,9 @@ router.post('/inscrever', async (req, res) => {
         status: 'pendente',
         ip_origem: ip,
         user_agent: userAgent,
+        // "não sou eu" persiste: a aprovação só pode religar este cadastro por
+        // CPF (soChaveForte) — nunca por e-mail/telefone de família.
+        nao_vincular_fraco: confirmar_novo === true,
       }).select('id').single();
       if (eCad) {
         console.error('[public grupos inscrever] cadastro pendente:', eCad.message);
@@ -504,14 +515,19 @@ router.post('/inscrever', async (req, res) => {
       cadastroPendenteId = cad.id;
     }
 
-    // Cria pedido pendente
+    // Cria pedido pendente. Quando a pessoa afirmou "não sou eu" no dedup, o
+    // pedido chega marcado pra triagem humana (a caixa de entrada mostra o
+    // aviso — são os casos em que a duplicata é difícil de resolver sozinho).
+    const obsPartes = [];
+    if (confirmar_novo === true) obsPartes.push('[Verificar identidade] A pessoa confirmou que NÃO é o cadastro parecido já existente.');
+    if (observacao) obsPartes.push(String(observacao).trim().slice(0, 400));
     const pedidoBase = {
       grupo_id,
       nome: nome.trim(),
       email: emailLimpo,
       telefone: telefone || null,
       origem: 'formulario_publico',
-      observacao: observacao ? String(observacao).trim().slice(0, 500) : null,
+      observacao: obsPartes.length ? obsPartes.join(' · ').slice(0, 500) : null,
       status: 'pendente',
     };
     if (membroId) pedidoBase.membro_id = membroId;
