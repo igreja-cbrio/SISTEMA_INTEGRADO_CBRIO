@@ -258,6 +258,29 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       ) : (
         <ResultsList grupos={filtrados} loading={loading} selectedGrupoId={selectedGrupoId} onSelect={onSelect} isMobile={isMobile} />
       )}
+
+      {/* Botão FIXO de Inscrever — SÓ na visão LISTA (no mapa a ação vive no
+          balão/cartão do pin, decisão do Marcos). Aparece no instante da
+          seleção e não sai do lugar: trocar de grupo mantém o botão. */}
+      {full && view === 'lista' && onInscrever && selectedGrupoId && (() => {
+        const grupoSel = grupos.find(g => g.id === selectedGrupoId);
+        if (!grupoSel) return null;
+        return (
+          <button
+            onClick={() => onInscrever(grupoSel)}
+            type="button"
+            style={{
+              position: 'fixed', bottom: 18, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 1000, padding: '14px 46px', borderRadius: 999,
+              background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer',
+              fontWeight: 800, fontSize: 16, letterSpacing: 0.3, whiteSpace: 'nowrap',
+              boxShadow: '0 8px 24px rgba(0, 179, 157, 0.45)',
+            }}
+          >
+            Inscrever
+          </button>
+        );
+      })()}
     </div>
   );
 }

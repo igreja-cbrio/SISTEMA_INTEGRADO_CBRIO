@@ -481,36 +481,41 @@ export function GruposMapView({
             </MapMarker>
           ))}
 
-          {/* Cartão do grupo no rodapé (só celular) */}
+          {/* Cartão do grupo no rodapé (só celular). O botão de ação fica
+              PINADO no rodapé do cartão — sempre visível sem rolar; só o
+              texto (descrição etc.) rola quando não cabe. */}
           {isMobile && (() => {
             const ativo = withCoords.find((g) => g.id === activeId);
             if (!ativo) return null;
             return (
               <div
                 className={cn(
-                  // bottom-16 deixa livre a faixa do botão fixo "Inscrever"
-                  // do formulário público (viewport-fixed no rodapé)
-                  "absolute bottom-16 left-3 right-3 z-30 rounded-xl p-3 pr-9 shadow-xl border max-h-[46%] overflow-y-auto",
+                  "absolute bottom-3 left-3 right-3 z-30 rounded-xl p-3 shadow-xl border max-h-[52%] flex flex-col",
                   theme === "dark" ? "bg-gray-900/95 border-white/10 text-white" : "bg-white/95 border-gray-200 text-gray-900"
                 )}
               >
                 <button
                   onClick={() => setActiveId(null)}
                   className={cn(
-                    "absolute top-2 right-2 h-7 w-7 rounded-md flex items-center justify-center",
+                    "absolute top-2 right-2 h-7 w-7 rounded-md flex items-center justify-center z-10",
                     theme === "dark" ? "text-white/60 hover:bg-white/10" : "text-gray-500 hover:bg-gray-100"
                   )}
                   aria-label="Fechar"
                 >
                   <X className="h-4 w-4" />
                 </button>
-                <GrupoInfo
-                  g={ativo}
-                  onGroupSelect={onGroupSelect}
-                  onGroupSelectLabel={onGroupSelectLabel}
-                  mostrarBotaoInscricao={mostrarBotaoInscricao}
-                  temporadasMap={temporadasMap}
-                />
+                <div className="flex-1 min-h-0 overflow-y-auto pr-8">
+                  <GrupoInfo g={ativo} comAcao={false} />
+                </div>
+                <div className="pt-2 shrink-0">
+                  <GrupoAcao
+                    g={ativo}
+                    onGroupSelect={onGroupSelect}
+                    onGroupSelectLabel={onGroupSelectLabel}
+                    mostrarBotaoInscricao={mostrarBotaoInscricao}
+                    temporadasMap={temporadasMap}
+                  />
+                </div>
               </div>
             );
           })()}
@@ -558,19 +563,22 @@ export function GruposMapView({
 }
 
 // Conteúdo do grupo — compartilhado pelo balão do pin (desktop) e pelo
-// cartão fixo do rodapé (celular).
+// cartão fixo do rodapé (celular). `comAcao=false` deixa a ação de fora
+// (o cartão mobile a pina no rodapé, via GrupoAcao, pra ficar sempre visível).
 function GrupoInfo({
   g,
   onGroupSelect,
   onGroupSelectLabel,
   mostrarBotaoInscricao,
   temporadasMap,
+  comAcao = true,
 }: {
   g: any;
   onGroupSelect?: (g: any) => void;
   onGroupSelectLabel?: string;
   mostrarBotaoInscricao?: boolean;
   temporadasMap?: Record<string, { inscricoes_abertas?: boolean }>;
+  comAcao?: boolean;
 }) {
   return (
     <div className="min-w-[220px] space-y-1.5">
@@ -623,38 +631,67 @@ function GrupoInfo({
           <NavIcon className="h-3 w-3" /> Como chegar
         </AbrirRotaMenu>
       )}
-      {onGroupSelect && (
-        <Button
-          onClick={() => onGroupSelect(g)}
-          size="sm"
-          className="w-full mt-1 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white"
-        >
-          {onGroupSelectLabel}
-        </Button>
+      {comAcao && (
+        <GrupoAcao
+          g={g}
+          onGroupSelect={onGroupSelect}
+          onGroupSelectLabel={onGroupSelectLabel}
+          mostrarBotaoInscricao={mostrarBotaoInscricao}
+          temporadasMap={temporadasMap}
+        />
       )}
-      {mostrarBotaoInscricao && !onGroupSelect && (() => {
-        const t = g.temporada && temporadasMap ? temporadasMap[g.temporada] : undefined;
-        const aberta = t ? t.inscricoes_abertas : false;
-        if (aberta) {
-          return (
-            <a
-              href={`/inscricao-grupos?grupo=${g.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block w-full mt-1 text-center px-3 py-1.5 rounded-md bg-[#00B39D] hover:bg-[#00B39D]/90 text-white text-sm font-semibold"
-            >
-              Inscrever-se neste grupo
-            </a>
-          );
-        }
-        return (
-          <div className="mt-1 px-3 py-2 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 text-xs text-center">
-            Inscrições fechadas. Aguarde a próxima abertura.
-          </div>
-        );
-      })()}
     </div>
   );
+}
+
+// A AÇÃO do grupo (escolher/inscrever/fechadas) — separada pra o cartão
+// mobile poder piná-la no rodapé, sempre visível sem rolar.
+function GrupoAcao({
+  g,
+  onGroupSelect,
+  onGroupSelectLabel,
+  mostrarBotaoInscricao,
+  temporadasMap,
+}: {
+  g: any;
+  onGroupSelect?: (g: any) => void;
+  onGroupSelectLabel?: string;
+  mostrarBotaoInscricao?: boolean;
+  temporadasMap?: Record<string, { inscricoes_abertas?: boolean }>;
+}) {
+  if (onGroupSelect) {
+    return (
+      <Button
+        onClick={() => onGroupSelect(g)}
+        size="sm"
+        className="w-full mt-1 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white"
+      >
+        {onGroupSelectLabel}
+      </Button>
+    );
+  }
+  if (mostrarBotaoInscricao) {
+    const t = g.temporada && temporadasMap ? temporadasMap[g.temporada] : undefined;
+    const aberta = t ? t.inscricoes_abertas : false;
+    if (aberta) {
+      return (
+        <a
+          href={`/inscricao-grupos?grupo=${g.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block w-full mt-1 text-center px-3 py-1.5 rounded-md bg-[#00B39D] hover:bg-[#00B39D]/90 text-white text-sm font-semibold"
+        >
+          Inscrever-se neste grupo
+        </a>
+      );
+    }
+    return (
+      <div className="mt-1 px-3 py-2 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 text-xs text-center">
+        Inscrições fechadas. Aguarde a próxima abertura.
+      </div>
+    );
+  }
+  return null;
 }
 
 export default GruposMapView;
