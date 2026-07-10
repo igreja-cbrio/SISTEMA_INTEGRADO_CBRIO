@@ -1719,6 +1719,13 @@ export const solicitacoes = {
   retomar:        (id) => post(`/solicitacoes/${id}/retomar`, {}),
   // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
   registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
+  // Cotações múltiplas · lista de fornecedores + botão de envio ao financeiro
+  listarCotacoes:   (id) => get(`/solicitacoes/${id}/cotacoes`),
+  adicionarCotacao: (id, payload) => post(`/solicitacoes/${id}/cotacoes`, payload),
+  editarCotacao:    (cotacaoId, payload) => patch(`/solicitacoes/cotacoes/${cotacaoId}`, payload),
+  removerCotacao:   (cotacaoId) => del(`/solicitacoes/cotacoes/${cotacaoId}`),
+  sugerirCotacao:   (id, cotacaoId) => post(`/solicitacoes/${id}/cotacoes/${cotacaoId}/sugerir`, {}),
+  enviarCotacoesFinanceiro: (id) => post(`/solicitacoes/${id}/enviar-cotacoes-financeiro`, {}),
   areaResponsaveis: {
     list:    () => get('/solicitacoes/area-responsaveis'),
     save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),

@@ -14,7 +14,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -2230,68 +2230,192 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   );
 }
 
-// Cotação (compras/serviço) · a logística registra valor+fornecedor ANTES do financeiro.
-// Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação do financeiro" · o Yago
-// decide sobre o valor real. jaCotado mostra read-only (todos veem · inclusive o Yago) ·
-// em_cotacao + canCotar mostra o formulário pra logística registrar.
+// Cotação (compras/serviço) · o Amaury (logística) registra VÁRIAS cotações de
+// fornecedores e, com um botão dedicado reenviável, dispara um e-mail rico ao
+// financeiro (Yago) com todas as cotações + a sugerida + total, pra aprovar o
+// pagamento. Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação
+// do financeiro". Compatível com a cotação inline antiga (valor_cotado) quando
+// ainda não há linhas na tabela nova.
 function CotacaoBlock({ item, canCotar, onChanged }) {
-  const emCotacao = item.status === 'em_cotacao';
-  const jaCotado = item.valor_cotado != null;
-  const [valor, setValor] = useState('');
-  const [fornecedor, setFornecedor] = useState('');
-  const [obs, setObs] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const fmtBRL = (n) => `R$ ${Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro (Yago) ainda
+  // não aprovou e a solicitação não é terminal — não só durante em_cotacao.
+  const podeEditar = canCotar
+    && !item.aprovado_financeiro_em
+    && !['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(item.status);
+  const fmtBRL = (n) => `R$ ${Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  async function registrar() {
-    const v = Number(valor);
-    if (valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor cotado.'); return; }
-    setSubmitting(true);
+  const [cotacoes, setCotacoes] = useState([]);
+  const [carregando, setCarregando] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' });
+
+  async function recarregar() {
     try {
-      await api.registrarCotacao(item.id, {
-        valor_cotado: v,
-        fornecedor: fornecedor.trim() || undefined,
-        observacao: obs.trim() || undefined,
-      });
-      toast.success('Cotação registrada · enviada pro financeiro.');
-      onChanged?.();
-    } catch (e) { toast.error(e.message || 'Erro ao registrar cotação'); }
-    finally { setSubmitting(false); }
+      const rows = await api.listarCotacoes(item.id);
+      setCotacoes(Array.isArray(rows) ? rows : []);
+    } catch (e) { /* silencioso · mostra inline antiga se houver */ }
+    finally { setCarregando(false); }
+  }
+  useEffect(() => { recarregar(); /* eslint-disable-next-line */ }, [item.id]);
+
+  function resetForm() { setForm({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' }); setEditId(null); }
+
+  async function salvar() {
+    const nome = form.fornecedor.trim();
+    const v = Number(form.valor);
+    if (!nome) { toast.error('Informe o fornecedor.'); return; }
+    if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor da cotação.'); return; }
+    setSalvando(true);
+    try {
+      const payload = {
+        fornecedor: nome, valor: v,
+        prazo: form.prazo.trim() || undefined,
+        link: form.link.trim() || undefined,
+        observacao: form.observacao.trim() || undefined,
+      };
+      if (editId) { await api.editarCotacao(editId, payload); toast.success('Cotação atualizada.'); }
+      else { await api.adicionarCotacao(item.id, payload); toast.success('Cotação adicionada.'); }
+      resetForm();
+      await recarregar();
+    } catch (e) { toast.error(e.message || 'Erro ao salvar cotação'); }
+    finally { setSalvando(false); }
   }
 
+  function iniciarEdicao(c) {
+    setEditId(c.id);
+    setForm({ fornecedor: c.fornecedor || '', valor: c.valor ?? '', prazo: c.prazo || '', link: c.link || '', observacao: c.observacao || '' });
+  }
+
+  async function remover(c) {
+    if (!window.confirm(`Remover a cotação de ${c.fornecedor}?`)) return;
+    try { await api.removerCotacao(c.id); toast.success('Cotação removida.'); if (editId === c.id) resetForm(); await recarregar(); }
+    catch (e) { toast.error(e.message || 'Erro ao remover'); }
+  }
+
+  async function marcarSugerida(c) {
+    try { await api.sugerirCotacao(item.id, c.id); await recarregar(); }
+    catch (e) { toast.error(e.message || 'Erro ao marcar sugerida'); }
+  }
+
+  async function enviarFinanceiro() {
+    setEnviando(true);
+    try {
+      const r = await api.enviarCotacoesFinanceiro(item.id);
+      if (r?.email_ok) toast.success('Cotações enviadas ao financeiro por e-mail.');
+      else toast.warning(r?.motivo ? `Enviado ao financeiro no sistema, mas o e-mail não saiu — ${r.motivo}` : 'Enviado ao financeiro no sistema, mas o e-mail não saiu — verifique.');
+      onChanged?.();
+      await recarregar();
+    } catch (e) { toast.error(e.message || 'Erro ao enviar cotações'); }
+    finally { setEnviando(false); }
+  }
+
+  // Compat · sem linhas novas mas com cotação inline antiga → mostra read-only.
+  const inlineLegado = !cotacoes.length && item.valor_cotado != null;
+  const jaEnviado = !!item.cotacoes_email_em;
+
   return (
-    <div className="space-y-2 pt-3 border-t border-border">
-      <p className="text-sm font-semibold text-foreground">Cotação</p>
-      {jaCotado ? (
-        <div className="grid grid-cols-2 gap-4 text-sm">
+    <div className="space-y-3 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground">Cotações</p>
+
+      {carregando ? (
+        <p className="text-xs text-muted-foreground">Carregando cotações...</p>
+      ) : inlineLegado ? (
+        <div className="grid grid-cols-2 gap-4 text-sm rounded-md border border-border p-3">
           <div><span className="text-muted-foreground">Valor cotado</span><p className="font-medium">{fmtBRL(item.valor_cotado)}</p></div>
           {item.cotacao_fornecedor && <div><span className="text-muted-foreground">Fornecedor</span><p className="font-medium">{item.cotacao_fornecedor}</p></div>}
           {item.cotacao_observacao && <div className="col-span-2"><span className="text-muted-foreground">Observação</span><p className="text-sm whitespace-pre-wrap">{item.cotacao_observacao}</p></div>}
         </div>
-      ) : emCotacao && canCotar ? (
+      ) : cotacoes.length ? (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">Levante o valor com o fornecedor. Ao registrar, segue pro financeiro aprovar.</p>
+          {cotacoes.map(c => (
+            <div key={c.id} className={`rounded-md border p-2.5 text-sm ${c.sugerida ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      title={c.sugerida ? 'Sugerida' : 'Marcar como sugerida'}
+                      disabled={!podeEditar}
+                      onClick={() => podeEditar && marcarSugerida(c)}
+                      className={`inline-flex ${podeEditar ? 'cursor-pointer' : 'cursor-default'}`}
+                    >
+                      <Star className={`h-4 w-4 ${c.sugerida ? 'text-primary fill-primary' : 'text-muted-foreground'}`} />
+                    </button>
+                    <span className="font-medium truncate">{c.fornecedor}</span>
+                    <span className="font-semibold">· {fmtBRL(c.valor)}</span>
+                    {c.prazo && <span className="text-xs text-muted-foreground">· {c.prazo}</span>}
+                  </div>
+                  {c.link && (
+                    <a href={c.link} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline break-all">{c.link}</a>
+                  )}
+                  {c.observacao && <p className="text-xs text-muted-foreground whitespace-pre-wrap mt-0.5">{c.observacao}</p>}
+                </div>
+                {podeEditar && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => iniciarEdicao(c)}><Pencil className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => remover(c)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Nenhuma cotação registrada ainda.</p>
+      )}
+
+      {podeEditar && (
+        <div className="space-y-2 rounded-md border border-dashed border-border p-3">
+          <p className="text-xs font-medium text-foreground">{editId ? 'Editar cotação' : 'Adicionar cotação'}</p>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <Label className="text-xs">Valor cotado (R$) *</Label>
-              <Input type="number" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+              <Label className="text-xs">Fornecedor *</Label>
+              <Input value={form.fornecedor} onChange={e => setForm(f => ({ ...f, fornecedor: e.target.value }))} placeholder="Nome do fornecedor" />
             </div>
             <div>
-              <Label className="text-xs">Fornecedor</Label>
-              <Input value={fornecedor} onChange={e => setFornecedor(e.target.value)} placeholder="Nome do fornecedor" />
+              <Label className="text-xs">Valor (R$) *</Label>
+              <Input type="number" step="0.01" min="0" value={form.valor} onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} placeholder="0,00" />
+            </div>
+            <div>
+              <Label className="text-xs">Prazo</Label>
+              <Input value={form.prazo} onChange={e => setForm(f => ({ ...f, prazo: e.target.value }))} placeholder="ex.: 5 dias úteis" />
+            </div>
+            <div>
+              <Label className="text-xs">Link</Label>
+              <Input value={form.link} onChange={e => setForm(f => ({ ...f, link: e.target.value }))} placeholder="https://..." />
             </div>
           </div>
           <div>
-            <Label className="text-xs">Observação (opcional)</Label>
-            <Textarea rows={2} value={obs} onChange={e => setObs(e.target.value)} placeholder="Condições, prazo de entrega, link da cotação..." />
+            <Label className="text-xs">Observação</Label>
+            <Textarea rows={2} value={form.observacao} onChange={e => setForm(f => ({ ...f, observacao: e.target.value }))} placeholder="Condições, forma de pagamento, garantia..." />
           </div>
-          <div className="flex justify-end">
-            <Button size="sm" onClick={registrar} disabled={submitting}>{submitting ? 'Registrando...' : 'Registrar cotação → financeiro'}</Button>
+          <div className="flex justify-end gap-2">
+            {editId && <Button size="sm" variant="outline" onClick={resetForm} disabled={salvando}>Cancelar</Button>}
+            <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : editId ? 'Salvar' : 'Adicionar'}</Button>
           </div>
         </div>
-      ) : emCotacao ? (
-        <p className="text-xs text-muted-foreground">Aguardando a logística registrar a cotação (valor + fornecedor).</p>
-      ) : null}
+      )}
+
+      {podeEditar && (
+        <div className="space-y-1.5">
+          <Button
+            onClick={enviarFinanceiro}
+            disabled={enviando || !cotacoes.length}
+            className="w-full bg-teal-600 hover:bg-teal-700 text-white"
+          >
+            <Mail className="h-4 w-4 mr-2" />
+            {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar cotações ao financeiro' : 'Enviar cotações por e-mail ao financeiro'}
+          </Button>
+          {jaEnviado && (
+            <p className="text-[11px] text-muted-foreground text-center">
+              Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
+            </p>
+          )}
+          {!cotacoes.length && <p className="text-[11px] text-muted-foreground text-center">Adicione ao menos uma cotação para habilitar o envio.</p>}
+        </div>
+      )}
     </div>
   );
 }
