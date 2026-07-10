@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { enviarEmail } = require('../services/email');
 const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
 
@@ -1576,6 +1577,382 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
   } catch (e) {
     console.error('[SOLICITACOES] registrar-cotacao:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao registrar cotação' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// COTAÇÕES MÚLTIPLAS (compras/serviço) · o Amaury registra VÁRIAS cotações de
+// fornecedores e, com um botão reenviável, dispara um e-mail rico ao financeiro
+// (Yago) com todas as cotações separadas + a sugerida + total, pra aprovar o
+// pagamento. Tabela `solicitacao_cotacoes`. A cotação inline antiga segue
+// preenchida com a de referência (retrocompat com telas/KPIs que a leem).
+// ══════════════════════════════════════════════════════════════════════════
+
+// Carrega a solicitação-mãe (ativa) a partir de uma cotação · reusa o gate podeCotar.
+async function carregarSolDaCotacao(cotacaoId) {
+  const { data: cot } = await supabase
+    .from('solicitacao_cotacoes').select('*').eq('id', cotacaoId).maybeSingle();
+  if (!cot) return { cot: null, sol: null };
+  const { data: sol } = await supabase
+    .from('solicitacoes').select('*').eq('id', cot.solicitacao_id).is('deleted_at', null).maybeSingle();
+  return { cot, sol };
+}
+
+function fmtBRLServer(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 'R$ 0,00';
+  return 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function escapeHtmlCot(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Lista as cotações de uma solicitação (qualquer um que já vê a solicitação).
+router.get('/:id/cotacoes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes')
+      .select('*')
+      .eq('solicitacao_id', req.params.id)
+      .order('ordem', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[SOLICITACOES] listar-cotacoes:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar cotações' });
+  }
+});
+
+// Cria uma cotação (gate podeCotar · exige que a solicitação esteja em cotação).
+router.post('/:id/cotacoes', async (req, res) => {
+  try {
+    const { fornecedor, valor, prazo, link, observacao, anexo_url } = req.body || {};
+    const nomeForn = (fornecedor || '').trim();
+    if (!nomeForn) return res.status(400).json({ error: 'Informe o fornecedor.' });
+    const v = Number(valor);
+    if (valor == null || valor === '' || Number.isNaN(v) || v < 0) {
+      return res.status(400).json({ error: 'Informe o valor da cotação (número ≥ 0).' });
+    }
+    const { data: sol, error: getErr } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (getErr) throw getErr;
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!['compras', 'servico'].includes(sol.categoria)) {
+      return res.status(400).json({ error: 'Cotações só se aplicam a compras/serviço.' });
+    }
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar cotações.' });
+    }
+
+    // ordem = próxima posição
+    const { count } = await supabase
+      .from('solicitacao_cotacoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('solicitacao_id', sol.id);
+
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes')
+      .insert({
+        solicitacao_id: sol.id,
+        fornecedor: nomeForn,
+        valor: v,
+        prazo: (prazo || '').trim() || null,
+        link: (link || '').trim() || null,
+        observacao: (observacao || '').trim() || null,
+        anexo_url: (anexo_url || '').trim() || null,
+        ordem: count || 0,
+        created_by: req.user.userId,
+      })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] criar-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao criar cotação' });
+  }
+});
+
+// Edita campos de uma cotação (gate via solicitação-mãe).
+router.patch('/cotacoes/:cotacaoId', async (req, res) => {
+  try {
+    const { sol } = await carregarSolDaCotacao(req.params.cotacaoId);
+    if (!sol) return res.status(404).json({ error: 'Cotação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode editar cotações.' });
+    }
+    const { fornecedor, valor, prazo, link, observacao, anexo_url } = req.body || {};
+    const updates = {};
+    if (fornecedor !== undefined) {
+      const nome = (fornecedor || '').trim();
+      if (!nome) return res.status(400).json({ error: 'Fornecedor não pode ficar vazio.' });
+      updates.fornecedor = nome;
+    }
+    if (valor !== undefined) {
+      const v = Number(valor);
+      if (Number.isNaN(v) || v < 0) return res.status(400).json({ error: 'Valor inválido.' });
+      updates.valor = v;
+    }
+    if (prazo !== undefined) updates.prazo = (prazo || '').trim() || null;
+    if (link !== undefined) updates.link = (link || '').trim() || null;
+    if (observacao !== undefined) updates.observacao = (observacao || '').trim() || null;
+    if (anexo_url !== undefined) updates.anexo_url = (anexo_url || '').trim() || null;
+    if (!Object.keys(updates).length) return res.status(400).json({ error: 'Nada para atualizar.' });
+
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes').update(updates).eq('id', req.params.cotacaoId).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] editar-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao editar cotação' });
+  }
+});
+
+// Remove uma cotação (hard delete · sem PII).
+router.delete('/cotacoes/:cotacaoId', async (req, res) => {
+  try {
+    const { sol } = await carregarSolDaCotacao(req.params.cotacaoId);
+    if (!sol) return res.status(404).json({ error: 'Cotação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode remover cotações.' });
+    }
+    const { error } = await supabase
+      .from('solicitacao_cotacoes').delete().eq('id', req.params.cotacaoId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[SOLICITACOES] remover-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao remover cotação' });
+  }
+});
+
+// Marca uma cotação como sugerida e desmarca as demais da mesma solicitação.
+router.post('/:id/cotacoes/:cotacaoId/sugerir', async (req, res) => {
+  try {
+    const { data: sol } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode marcar a cotação sugerida.' });
+    }
+    // Desmarca todas antes (respeita o índice único parcial) e marca a escolhida.
+    const { error: e1 } = await supabase
+      .from('solicitacao_cotacoes').update({ sugerida: false })
+      .eq('solicitacao_id', req.params.id).eq('sugerida', true);
+    if (e1) throw e1;
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes').update({ sugerida: true })
+      .eq('id', req.params.cotacaoId).eq('solicitacao_id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] sugerir-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao marcar cotação sugerida' });
+  }
+});
+
+// Monta o HTML do e-mail de cotações pro financeiro (builder próprio · sem rodapé
+// de voluntariado). Valores em pt-BR, acentuação correta.
+function montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, catLabel, link }) {
+  const total = cotacoes.reduce((s, c) => s + (Number(c.valor) || 0), 0);
+  const dataNec = sol.data_necessaria
+    ? new Date(sol.data_necessaria).toLocaleDateString('pt-BR')
+    : null;
+
+  const linhasCot = cotacoes.map(c => {
+    const eSug = !!c.sugerida;
+    const fw = eSug ? 'font-weight:700;' : '';
+    const bg = eSug ? 'background:#e8faf6;' : '';
+    const estrela = eSug ? '★ ' : '';
+    const linkHtml = c.link
+      ? `<a href="${escapeHtmlCot(c.link)}" style="color:#00857a">abrir</a>`
+      : '<span style="color:#bbb">—</span>';
+    const obs = c.observacao
+      ? `<div style="color:#666;font-size:12px;margin-top:2px">${escapeHtmlCot(c.observacao)}</div>` : '';
+    return `<tr style="${bg}">
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;${fw}">${estrela}${escapeHtmlCot(c.fornecedor)}${obs}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;${fw}">${fmtBRLServer(c.valor)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;">${escapeHtmlCot(c.prazo || '—')}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;">${linkHtml}</td>
+    </tr>`;
+  }).join('');
+
+  const itensHtml = (itens && itens.length)
+    ? `<p style="margin:20px 0 6px;font-weight:700;color:#1a1a1a">Itens do pedido</p>
+       <table style="border-collapse:collapse;width:100%;font-size:13px">
+         <thead><tr style="background:#f5f5f5;text-align:left">
+           <th style="padding:6px 10px">Item</th>
+           <th style="padding:6px 10px;text-align:right">Qtd</th>
+         </tr></thead>
+         <tbody>${itens.map(it => `<tr>
+           <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapeHtmlCot(it.descricao)}</td>
+           <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right">${escapeHtmlCot(it.quantidade)} ${escapeHtmlCot(it.unidade || '')}</td>
+         </tr>`).join('')}</tbody>
+       </table>` : '';
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1a1a;line-height:1.5;max-width:640px">
+    <h2 style="margin:0 0 4px;font-size:18px;color:#00857a">Cotações para aprovação</h2>
+    <p style="margin:0 0 16px;color:#666">${escapeHtmlCot(sol.titulo || 'Solicitação')}</p>
+
+    <table style="border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px">
+      <tbody>
+        <tr><td style="padding:3px 0;color:#888;width:130px">Solicitante</td><td style="padding:3px 0">${escapeHtmlCot(solicitanteNome || '—')}</td></tr>
+        <tr><td style="padding:3px 0;color:#888">Categoria</td><td style="padding:3px 0">${escapeHtmlCot(catLabel || sol.categoria || '—')}</td></tr>
+        ${dataNec ? `<tr><td style="padding:3px 0;color:#888">Data necessária</td><td style="padding:3px 0">${dataNec}</td></tr>` : ''}
+      </tbody>
+    </table>
+
+    <p style="margin:16px 0 6px;font-weight:700">Cotações (${cotacoes.length})</p>
+    <table style="border-collapse:collapse;width:100%;font-size:13px">
+      <thead><tr style="background:#f5f5f5;text-align:left">
+        <th style="padding:8px 10px">Fornecedor</th>
+        <th style="padding:8px 10px;text-align:right">Valor</th>
+        <th style="padding:8px 10px">Prazo</th>
+        <th style="padding:8px 10px">Link</th>
+      </tr></thead>
+      <tbody>${linhasCot}</tbody>
+    </table>
+
+    <p style="margin:12px 0 0;font-size:13px;color:#444">
+      ${refCot ? `<strong>Sugerida:</strong> ${escapeHtmlCot(refCot.fornecedor)} — ${fmtBRLServer(refCot.valor)}<br/>` : ''}
+      <span style="color:#888">Soma de todas as cotações listadas:</span> ${fmtBRLServer(total)}
+    </p>
+
+    ${itensHtml}
+
+    ${link ? `<p style="margin:22px 0 8px"><a href="${escapeHtmlCot(link)}" style="background:#00B39D;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block">Abrir no sistema</a></p>` : ''}
+    <p style="margin:16px 0 0;color:#999;font-size:12px">Mensagem automática do sistema CBRio · módulo de Solicitações.</p>
+  </div>`;
+}
+
+// O BOTÃO · dispara o e-mail rico ao financeiro com todas as cotações (reenviável).
+router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
+  try {
+    const { data: sol, error: getErr } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (getErr) throw getErr;
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode enviar as cotações.' });
+    }
+
+    const { data: cotacoes, error: cotErr } = await supabase
+      .from('solicitacao_cotacoes').select('*')
+      .eq('solicitacao_id', sol.id)
+      .order('ordem', { ascending: true }).order('created_at', { ascending: true });
+    if (cotErr) throw cotErr;
+    if (!cotacoes || !cotacoes.length) {
+      return res.status(400).json({ error: 'Adicione ao menos uma cotação antes de enviar ao financeiro.' });
+    }
+
+    // Referência: a sugerida; se nenhuma, a de MENOR valor.
+    const refCot = cotacoes.find(c => c.sugerida)
+      || [...cotacoes].sort((a, b) => (Number(a.valor) || 0) - (Number(b.valor) || 0))[0];
+
+    // Atualiza a solicitação (retrocompat inline + carimbo do e-mail).
+    const updates = {
+      valor_cotado: Number(refCot.valor),
+      valor_estimado: Number(refCot.valor),
+      precisa_aprovacao_financeira: true,
+      cotacao_fornecedor: refCot.fornecedor || null,
+      cotacao_observacao: refCot.observacao || null,
+      cotacao_em: new Date().toISOString(),
+      cotacao_por: req.user.userId,
+      cotacoes_email_em: new Date().toISOString(),
+      cotacoes_email_por: req.user.userId,
+    };
+    // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
+    if (sol.status === 'em_cotacao') updates.status = 'aguardando_aprovacao_financeira';
+
+    const { data: solAtualizada, error: upErr } = await supabase
+      .from('solicitacoes').update(updates).eq('id', sol.id).select('*').single();
+    if (upErr) throw upErr;
+
+    // Itens do pedido (opcional no e-mail).
+    const { data: itens } = await supabase
+      .from('solicitacao_itens').select('descricao, quantidade, unidade, ordem')
+      .eq('solicitacao_id', sol.id).order('ordem', { ascending: true });
+
+    // Nome do solicitante.
+    let solicitanteNome = null;
+    if (sol.solicitante_id) {
+      const { data: prof } = await supabase
+        .from('profiles').select('name').eq('id', sol.solicitante_id).maybeSingle();
+      solicitanteNome = prof?.name || null;
+    }
+
+    // Destinatários do financeiro: união de (a) responsáveis nominais da área
+    // 'financeiro' e (b) resolverDestinatarios('financeiro'). + CC o próprio Amaury.
+    const finProfileIds = new Set();
+    const { data: respFin } = await supabase
+      .from('area_solicitacoes_responsaveis').select('profile_id').eq('area', 'financeiro');
+    (respFin || []).forEach(r => r.profile_id && finProfileIds.add(r.profile_id));
+    const resolvidos = await resolverDestinatarios('financeiro').catch(() => []);
+    (resolvidos || []).forEach(id => id && finProfileIds.add(id));
+
+    const idsArr = [...finProfileIds];
+    let emails = [];
+    if (idsArr.length) {
+      const { data: profs } = await supabase.from('profiles').select('email').in('id', idsArr);
+      emails = (profs || []).map(p => p.email);
+    }
+    // CC o próprio solicitante do envio (Amaury).
+    let remetenteEmail = null;
+    if (req.user.userId) {
+      const { data: me } = await supabase.from('profiles').select('email').eq('id', req.user.userId).maybeSingle();
+      remetenteEmail = me?.email || null;
+    }
+    const to = [...new Set([...emails, remetenteEmail].filter(e => e && /@/.test(e)))];
+
+    const catLabel = ({ compras: 'Compras', servico: 'Serviço' })[sol.categoria] || sol.categoria;
+    const base = process.env.FRONTEND_URL || '';
+    const link = base ? `${base}/solicitacoes?id=${sol.id}` : '';
+    const html = montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, catLabel, link });
+
+    let emailResultado = { ok: false, error: 'sem destinatários' };
+    if (to.length) {
+      emailResultado = await enviarEmail({
+        to,
+        subject: `Cotações para aprovação — ${sol.titulo || 'Solicitação'}`,
+        html,
+      }).catch(e => ({ ok: false, error: e.message }));
+    }
+
+    // Notificação no sistema (email:false · o e-mail rico já foi enviado acima).
+    notificar({
+      modulo: 'financeiro',
+      tipo: 'cotacao_financeiro',
+      titulo: 'Cotações prontas para aprovação',
+      mensagem: `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
+      link: `/solicitacoes?id=${sol.id}`,
+      severidade: 'info',
+      chaveDedup: `solicitacao_cotacoes_${sol.id}`,
+      targetIds: idsArr,
+      email: false,
+    }).catch(err => console.error('[SOLICITACOES] notify cotacoes:', err.message));
+
+    if (!to.length) {
+      return res.json({
+        ok: true, email_ok: false, enviados: 0,
+        motivo: 'Nenhum e-mail de financeiro encontrado.',
+        solicitacao: solAtualizada,
+      });
+    }
+    if (!emailResultado?.ok) {
+      return res.json({
+        ok: true, email_ok: false, enviados: to.length,
+        motivo: emailResultado?.error || 'Falha no envio do e-mail.',
+        solicitacao: solAtualizada,
+      });
+    }
+    res.json({ ok: true, email_ok: true, enviados: to.length, solicitacao: solAtualizada });
+  } catch (e) {
+    console.error('[SOLICITACOES] enviar-cotacoes-financeiro:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao enviar cotações ao financeiro' });
   }
 });
 
