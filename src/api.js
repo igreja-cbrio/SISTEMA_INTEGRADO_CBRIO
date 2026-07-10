@@ -1487,8 +1487,9 @@ export const totemKids = {
     // Timeout de 5 min (a função serverless tem maxDuration 300s) pra a UI não
     // abortar em 30s achando que deu erro (a sync continua e conclui no servidor).
     syncPco: (data = {}) => post('/totem-kids/sync-pco', data, { timeout: 300_000 }),
-    // Corrige responsáveis poluídos (household-dump) pelos guardiões do PCO.
-    // apply=false = prévia (dry-run). Longo → timeout de 5 min.
+    // Corrige responsáveis poluídos (household-dump) podando pelos guardiões
+    // reais (quem fez o check-in da criança no PCO OU no nosso totem).
+    // apply=false = prévia (dry-run · não altera nada). Longo → timeout de 5 min.
     corrigirResponsaveisPco: (apply = false) => post('/totem-kids/responsaveis-pco', { apply }, { timeout: 300_000 }),
     depurarInativos: (meses = 6) => post('/totem-kids/criancas/depurar-inativos', { meses }),
   },
