@@ -19,7 +19,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, X, Save,
   Clock, ShieldAlert, ListChecks, FileText, Plus, Trash2,
-  Gauge, Activity,
+  Gauge, Activity, GripVertical,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
@@ -368,7 +368,7 @@ function MiniCard({ culto, onClick }) {
   const prev = culto.producao?.duracao_prevista_min;
   const meta = culto.producao?.meta_duracao_min ?? 60;
   const atrasou = dur != null && dur > meta;
-  const ocorr = (culto.ocorrencias?.tecnica || 0) + (culto.ocorrencias?.estrutura || 0);
+  const ocorr = (culto.ocorrencias?.tecnica || 0) + (culto.ocorrencias?.humana || 0) + (culto.ocorrencias?.estrutura || 0);
   return (
     <button onClick={onClick} style={{
       textAlign: 'left', padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
@@ -398,10 +398,36 @@ const CATS_ESP = [
 ];
 const labelCatEsp = (v) => (CATS_ESP.find(c => c.v === v)?.label) || 'Especial';
 
+// Tipos de ocorrência · rótulo, badge e cor. Os slugs (`tecnica`/`humana`/
+// `estrutura`) são identificadores estáveis no banco — só o rótulo mudou:
+// `tecnica` = "Falha de equipamento" (2026-07-10).
+const OCORR_TIPOS = [
+  { v: 'tecnica',   label: 'Falha de equipamento',       badge: 'EQUIPAMENTO', cor: '#EF4444' },
+  { v: 'humana',    label: 'Falha humana',               badge: 'HUMANA',      cor: '#8B5CF6' },
+  { v: 'estrutura', label: 'Instabilidade de estrutura', badge: 'ESTRUTURA',   cor: '#F59E0B' },
+];
+const ocorrMeta = (v) => OCORR_TIPOS.find(t => t.v === v) || { v, label: 'Ocorrência', badge: 'OCORR.', cor: C.t3 };
+
+// Momentos gerados ao incluir a atividade especial "Batismo": são as DUAS falas
+// que efetivamente somam tempo (a entrada/saída da água não é cronometrada aqui).
+const BATISMO_MOMENTOS = ['Fala inicial batismo', 'Fala final batismo'];
+
 function EtapasEditor({ etapas, setEtapas }) {
   const setRow = (key, patch) => setEtapas(arr => arr.map(e => e.key === key ? { ...e, ...patch } : e));
   const removeRow = (key) => setEtapas(arr => arr.filter(e => e.key !== key));
   const [novaEsp, setNovaEsp] = useState(null); // { categoria, nome, executado_str, aposKey }
+  // Reordenar momentos por arrasto (drag-and-drop nativo · sem lib) · Pedro 2026-07.
+  const dragIdx = useRef(null);
+  const [overIdx, setOverIdx] = useState(null);
+  const moveRow = (from, to) => {
+    if (from == null || to == null || from === to) return;
+    setEtapas(arr => {
+      const copy = [...arr];
+      const [m] = copy.splice(from, 1);
+      if (m) copy.splice(to, 0, m);
+      return copy;
+    });
+  };
 
   const culto = somaSecao(etapas, 'culto');     // inclui as especiais (estão na seção culto)
   const pos = somaSecao(etapas, 'pos_culto');
@@ -409,7 +435,7 @@ function EtapasEditor({ etapas, setEtapas }) {
   const especiais = etapas.filter(e => e.tipo === 'especial');
   const ancoras = etapas.filter(e => (e.secao || 'culto') === 'culto'); // pra "entrou após"
 
-  const colGrid = '22px 1fr 54px 54px minmax(72px,1fr) 22px';
+  const colGrid = '16px 20px 1fr 52px 52px minmax(64px,1fr) 20px';
 
   let nStd = 0;
   const linhas = etapas.map(e => {
@@ -421,16 +447,24 @@ function EtapasEditor({ etapas, setEtapas }) {
 
   const adicionarEspecial = () => {
     const cat = novaEsp.categoria;
-    const nome = (novaEsp.nome || '').trim() || labelCatEsp(cat);
-    const nova = { key: rid(), titulo: nome, previsto_str: '', executado_str: novaEsp.executado_str || '', observacao: '', secao: 'culto', tipo: 'especial', categoria_especial: cat };
+    // Batismo entra como DOIS momentos (fala inicial + fala final) · são eles que
+    // adicionam tempo. Cada fala entra vazia e a equipe lança o tempo na tabela.
+    const nomes = cat === 'batismo'
+      ? [...BATISMO_MOMENTOS]
+      : [(novaEsp.nome || '').trim() || labelCatEsp(cat)];
+    const novas = nomes.map(nome => ({
+      key: rid(), titulo: nome, previsto_str: '',
+      executado_str: cat === 'batismo' ? '' : (novaEsp.executado_str || ''),
+      observacao: '', secao: 'culto', tipo: 'especial', categoria_especial: cat,
+    }));
     setEtapas(arr => {
       const copy = [...arr];
-      if (novaEsp.aposKey === '__inicio__') { copy.unshift(nova); return copy; }
+      if (novaEsp.aposKey === '__inicio__') { copy.unshift(...novas); return copy; }
       const idx = copy.findIndex(x => x.key === novaEsp.aposKey);
       if (idx < 0) {
         const posIdx = copy.findIndex(x => (x.secao || 'culto') === 'pos_culto');
-        if (posIdx < 0) copy.push(nova); else copy.splice(posIdx, 0, nova);
-      } else copy.splice(idx + 1, 0, nova);
+        if (posIdx < 0) copy.push(...novas); else copy.splice(posIdx, 0, ...novas);
+      } else copy.splice(idx + 1, 0, ...novas);
       return copy;
     });
     setNovaEsp(null);
@@ -439,13 +473,13 @@ function EtapasEditor({ etapas, setEtapas }) {
   return (
     <div>
       <p style={{ fontSize: 11, color: C.t3, margin: '0 0 8px' }}>
-        Lance o <strong>tempo executado</strong> de cada momento em <strong>mm:ss</strong> (ex.: 5:45). O <strong>previsto</strong> vem do roteiro (aba “Modelos”), mas pode ser ajustado neste culto se as músicas ou a liturgia mudarem. Use <strong>+ Atividade especial</strong> pra registrar ceia, batismo, etc.
+        Lance o <strong>tempo executado</strong> de cada momento em <strong>mm:ss</strong> (ex.: 5:45). O <strong>previsto</strong> vem do roteiro (aba “Modelos”), mas pode ser ajustado neste culto se as músicas ou a liturgia mudarem. <strong>Arraste pelo ícone à esquerda</strong> pra reordenar os momentos. Use <strong>+ Atividade especial</strong> pra registrar ceia, batismo, etc.
       </p>
       <div style={{ overflowX: 'auto' }}>
         <div style={{ minWidth: 400 }}>
           {/* cabeçalho */}
           <div style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, padding: '0 2px 4px', fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            <span>#</span><span>Momento</span><span style={{ textAlign: 'center' }}>Prev.</span><span style={{ textAlign: 'center' }}>Exec.</span><span>Obs.</span><span />
+            <span /><span>#</span><span>Momento</span><span style={{ textAlign: 'center' }}>Prev.</span><span style={{ textAlign: 'center' }}>Exec.</span><span>Obs.</span><span />
           </div>
           {etapas.length === 0 && (
             <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic', padding: '8px 2px' }}>
@@ -458,7 +492,20 @@ function EtapasEditor({ etapas, setEtapas }) {
             const estourouEtapa = !ehEsp && exSeg != null && prSeg != null && exSeg > prSeg;
             const bg = ehEsp ? '#F59E0B14' : ehPos ? `${C.primary}08` : 'transparent';
             return (
-              <div key={e.key} style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '3px 2px', borderTop: i === 0 ? 'none' : `1px dashed ${C.border}`, background: bg }}>
+              <div
+                key={e.key}
+                onDragOver={ev => { ev.preventDefault(); if (overIdx !== i) setOverIdx(i); }}
+                onDragLeave={() => setOverIdx(cur => (cur === i ? null : cur))}
+                onDrop={() => { moveRow(dragIdx.current, i); dragIdx.current = null; setOverIdx(null); }}
+                style={{ display: 'grid', gridTemplateColumns: colGrid, gap: 6, alignItems: 'center', padding: '3px 2px', borderTop: overIdx === i ? `2px solid ${C.primary}` : (i === 0 ? 'none' : `1px dashed ${C.border}`), background: bg }}
+              >
+                <span
+                  draggable
+                  onDragStart={() => { dragIdx.current = i; }}
+                  onDragEnd={() => { dragIdx.current = null; setOverIdx(null); }}
+                  title="Arraste para reordenar"
+                  style={{ cursor: 'grab', color: C.t3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                ><GripVertical size={12} /></span>
                 <span style={{ fontSize: 10, color: ehEsp ? '#B45309' : C.t3, textAlign: 'center' }}>{num}</span>
                 {ehEsp ? (
                   <input value={e.titulo} onChange={ev => setRow(e.key, { titulo: ev.target.value })} placeholder="Atividade especial" title={`Atividade especial · ${labelCatEsp(e.categoria_especial)}`} style={{ ...inpSm, padding: '4px 6px' }} />
@@ -494,7 +541,11 @@ function EtapasEditor({ etapas, setEtapas }) {
             {novaEsp.categoria === 'outros' && (
               <input value={novaEsp.nome} onChange={ev => setNovaEsp(s => ({ ...s, nome: ev.target.value }))} placeholder="Qual atividade?" style={{ ...inpSm, width: 140 }} />
             )}
-            <input value={novaEsp.executado_str} onChange={ev => setNovaEsp(s => ({ ...s, executado_str: maskMMSS(ev.target.value) }))} inputMode="numeric" maxLength={5} placeholder="mm:ss" style={{ ...inpSm, width: 64, textAlign: 'center' }} />
+            {novaEsp.categoria === 'batismo' ? (
+              <span style={{ fontSize: 11, color: '#B45309' }}>entra como <strong>Fala inicial</strong> + <strong>Fala final</strong> · lance o tempo de cada na tabela</span>
+            ) : (
+              <input value={novaEsp.executado_str} onChange={ev => setNovaEsp(s => ({ ...s, executado_str: maskMMSS(ev.target.value) }))} inputMode="numeric" maxLength={5} placeholder="mm:ss" style={{ ...inpSm, width: 64, textAlign: 'center' }} />
+            )}
             <span style={{ fontSize: 11, color: C.t3 }}>após:</span>
             <select value={novaEsp.aposKey} onChange={ev => setNovaEsp(s => ({ ...s, aposKey: ev.target.value }))} style={{ ...inpSm, width: 'auto' }}>
               <option value="__inicio__">(início do culto)</option>
@@ -684,8 +735,8 @@ function ModalProducao({ culto, onClose, onSaved }) {
           <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {(det?.ocorrencias || []).length === 0 && <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic' }}>Nenhuma ocorrência registrada neste culto.</div>}
             {(det?.ocorrencias || []).map(o => (
-              <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${o.tipo === 'tecnica' ? '#EF4444' : '#F59E0B'}`, borderRadius: 4, fontSize: 11 }}>
-                <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.inputBg, color: C.t2, fontWeight: 700 }}>{o.tipo === 'tecnica' ? 'TÉCNICA' : 'ESTRUTURA'}</span>
+              <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${ocorrMeta(o.tipo).cor}`, borderRadius: 4, fontSize: 11 }}>
+                <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: C.inputBg, color: C.t2, fontWeight: 700 }}>{ocorrMeta(o.tipo).badge}</span>
                 <span style={{ fontSize: 9, color: sevCor(o.severidade), fontWeight: 700 }}>{o.severidade}</span>
                 <span style={{ flex: 1, color: C.text }}>{o.descricao}{o.momento ? ` · ${o.momento}` : ''}</span>
                 {o.solicitacao_id ? (
@@ -712,8 +763,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
           <div style={{ background: C.inputBg, borderRadius: 8, padding: 10, marginBottom: 16 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
               <select value={novaOcorr.tipo} onChange={e => setNovaOcorr(o => ({ ...o, tipo: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
-                <option value="tecnica">Falha técnica</option>
-                <option value="estrutura">Instabilidade estrutura</option>
+                {OCORR_TIPOS.map(t => <option key={t.v} value={t.v}>{t.label}</option>)}
               </select>
               <select value={novaOcorr.severidade} onChange={e => setNovaOcorr(o => ({ ...o, severidade: e.target.value }))} style={{ ...inp, padding: '6px 8px' }}>
                 <option value="baixa">Baixa</option><option value="media">Média</option>
@@ -794,7 +844,7 @@ function SolicitacaoOcorrenciaModal({ ocorrencia, culto, onClose, onVinculada })
   const { dia, diaSemana } = formataDataCurta(culto.data);
   const quando = `${diaSemana} ${dia} ${MESES[Number(culto.data.split('-')[1]) - 1]}${culto.hora ? ' · ' + culto.hora.slice(0, 5) : ''}`;
   const cabecalho = `${culto.nome || culto.service_type_name} (${quando})`;
-  const tipoLabel = ocorrencia.tipo === 'tecnica' ? 'Falha técnica' : 'Instabilidade de estrutura';
+  const tipoLabel = ocorrMeta(ocorrencia.tipo).label;
   const critica = ocorrencia.severidade === 'critica';
   // Urgente pré-marcado SÓ na severidade crítica (sempre desmarcável) · decisão
   // do Marcos 2026-07-03 · evita inflar o radar de urgência frequente.
@@ -952,8 +1002,9 @@ function AbaDetalhado() {
                     { h: 'Dur. média', d: 'Duração média EXECUTADA dos cultos (min).' },
                     { h: 'Prev. média', d: 'Duração média PREVISTA no cronograma (min).' },
                     { h: 'Checklist', d: '% de itens do checklist técnico marcados como feitos.' },
-                    { h: 'Falhas', d: 'Ocorrências técnicas registradas.' },
-                    { h: 'Estrutura', d: 'Ocorrências de estrutura registradas.' },
+                    { h: 'Equipam.', d: 'Ocorrências de falha de equipamento registradas.' },
+                    { h: 'Humanas', d: 'Ocorrências de falha humana registradas.' },
+                    { h: 'Estrutura', d: 'Ocorrências de instabilidade de estrutura registradas.' },
                   ].map(({ h, d }) => <th key={h} title={d || undefined} style={{ padding: '8px 10px', fontWeight: 700, ...(d ? { cursor: 'help', textDecoration: 'underline dotted', textUnderlineOffset: 3 } : {}) }}>{h}</th>)}
                 </tr>
               </thead>
@@ -969,6 +1020,7 @@ function AbaDetalhado() {
                     <td style={td}>{t.duracao_prevista_media_min == null ? '—' : `${t.duracao_prevista_media_min}min`}</td>
                     <td style={td}>{t.checklist_pct == null ? '—' : `${t.checklist_pct}%`}</td>
                     <td style={{ ...td, color: t.falhas_tecnicas > 0 ? '#EF4444' : C.t3 }}>{t.falhas_tecnicas}</td>
+                    <td style={{ ...td, color: t.falhas_humanas > 0 ? '#8B5CF6' : C.t3 }}>{t.falhas_humanas ?? 0}</td>
                     <td style={{ ...td, color: t.ocorrencias_estrutura > 0 ? '#F59E0B' : C.t3 }}>{t.ocorrencias_estrutura}</td>
                   </tr>
                 ))}
@@ -983,10 +1035,11 @@ function AbaDetalhado() {
                     <td style={td}>{data.totais.duracao_prevista_media_min == null ? '—' : `${data.totais.duracao_prevista_media_min}min`}</td>
                     <td style={td}>{data.totais.checklist_pct == null ? '—' : `${data.totais.checklist_pct}%`}</td>
                     <td style={td}>{data.totais.falhas_tecnicas}</td>
+                    <td style={td}>{data.totais.falhas_humanas ?? 0}</td>
                     <td style={td}>{data.totais.ocorrencias_estrutura}</td>
                   </tr>
                 )}
-                {data.detalhado.length === 0 && <tr><td colSpan={10} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem dados no período.</td></tr>}
+                {data.detalhado.length === 0 && <tr><td colSpan={11} style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Sem dados no período.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1243,6 +1296,31 @@ function RoteiroEditor({ tipos }) {
 
   const setLocal = (id, patch) => setRoteiro(arr => arr.map(r => r.id === id ? { ...r, ...patch } : r));
 
+  // Reordenar por arrasto · reatribui `ordem` sequencial dentro do escopo e
+  // persiste (PATCH) só as linhas que mudaram (drag-and-drop nativo · Pedro 2026-07).
+  const dragId = useRef(null);
+  const [overId, setOverId] = useState(null);
+  const reordenar = async (fromId, toId) => {
+    if (!fromId || !toId || fromId === toId) return;
+    const ordemIds = filtradas.map(r => r.id);
+    const from = ordemIds.indexOf(fromId), to = ordemIds.indexOf(toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const [m] = ordemIds.splice(from, 1);
+    ordemIds.splice(to, 0, m);
+    const patches = [];
+    ordemIds.forEach((id, i) => {
+      const atual = roteiro.find(r => r.id === id);
+      if (atual && atual.ordem !== i + 1) patches.push({ id, ordem: i + 1 });
+    });
+    if (!patches.length) return;
+    setRoteiro(arr => arr.map(r => {
+      const p = patches.find(x => x.id === r.id);
+      return p ? { ...r, ordem: p.ordem } : r;
+    }));
+    try { await Promise.all(patches.map(p => prodApi.roteiroEtapas.update(p.id, { ordem: p.ordem }))); }
+    catch (e) { toast.error(formatErro(e)); carregar(); }
+  };
+
   const salvarCampo = async (id, campo, valor) => {
     try { await prodApi.roteiroEtapas.update(id, { [campo]: valor }); }
     catch (e) { toast.error(formatErro(e)); carregar(); }
@@ -1276,7 +1354,7 @@ function RoteiroEditor({ tipos }) {
     <div>
       <h3 style={subTit}>Roteiro do culto (cronograma · tempo previsto)</h3>
       <p style={{ fontSize: 12, color: C.t3, margin: '0 0 10px' }}>
-        O “Previsto” de cada momento. Pré-carrega o modal de preenchimento. O “Geral” vale para qualquer tipo sem roteiro próprio.
+        O “Previsto” de cada momento. Pré-carrega o modal de preenchimento. O “Geral” vale para qualquer tipo sem roteiro próprio. <strong>Arraste pelo ícone</strong> pra reordenar os momentos.
       </p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: C.t3 }}>Roteiro de:</span>
@@ -1292,7 +1370,14 @@ function RoteiroEditor({ tipos }) {
       {loading ? <div style={loadingBox}>Carregando…</div> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {filtradas.map(r => (
-            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, opacity: r.ativo ? 1 : 0.5 }}>
+            <div
+              key={r.id}
+              onDragOver={ev => { ev.preventDefault(); if (overId !== r.id) setOverId(r.id); }}
+              onDragLeave={() => setOverId(cur => (cur === r.id ? null : cur))}
+              onDrop={() => { reordenar(dragId.current, r.id); dragId.current = null; setOverId(null); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: C.card, border: `1px solid ${overId === r.id ? C.primary : C.border}`, borderRadius: 8, opacity: r.ativo ? 1 : 0.5 }}
+            >
+              <span draggable onDragStart={() => { dragId.current = r.id; }} onDragEnd={() => { dragId.current = null; setOverId(null); }} title="Arraste para reordenar" style={{ cursor: 'grab', color: C.t3, display: 'inline-flex', alignItems: 'center' }}><GripVertical size={14} /></span>
               <span style={{ fontSize: 10, color: C.t3, width: 18, textAlign: 'center' }}>{r.ordem}</span>
               <input value={r.titulo} onChange={e => setLocal(r.id, { titulo: e.target.value })} onBlur={e => salvarCampo(r.id, 'titulo', e.target.value.trim())} style={{ ...inp, flex: 1, padding: '6px 8px' }} />
               <input value={r.previsto_str} onChange={e => setLocal(r.id, { previsto_str: maskMMSS(e.target.value) })} onBlur={() => salvarPrevisto(r)} inputMode="numeric" maxLength={5} placeholder="mm:ss" style={{ ...inp, width: 70, padding: '6px 8px', textAlign: 'center' }} />
