@@ -1171,6 +1171,10 @@ async function aprovarPedidoCore(pedidoId, user) {
       decidido_por_nome: user.name,
       decidido_em: new Date().toISOString(),
       membro_id: membroId,
+      // CHECK chk_pedido_um_solicitante é XOR estrito (membro OU cadastro):
+      // com o membro resolvido/promovido, o ponteiro pro cadastro precisa ser
+      // limpo no MESMO update — senão 23514 (o cadastro em si segue guardado).
+      cadastro_pendente_id: null,
     }).eq('id', pedido.id).eq('status', 'pendente').eq('grupo_id', pedido.grupo_id).select('id');
     if (eClaim) throw eClaim;
     if (!claimed || !claimed.length) {
