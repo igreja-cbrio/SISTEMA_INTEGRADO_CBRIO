@@ -1608,14 +1608,26 @@ function CheckinSelecao(props: {
         )}
 
         <div className="flex justify-end items-center gap-3 pt-2">
-          {!checkinAberto && !usarRespManual && !responsavelSelecionado && (
-            <span className="text-xs text-pink-600 font-medium">↑ Toque em quem está trazendo pra imprimir</span>
+          {(() => {
+            // Trava a impressão: precisa de sala + responsável (da lista OU manual completo).
+            const faltaResp = !usarRespManual ? !responsavelSelecionado : (!respManualNome.trim() || !respManualTel.trim());
+            const bloqueado = !checkinAberto && (!salaSelecionada || faltaResp);
+            return (
+          <>
+          {!checkinAberto && faltaResp && (
+            <span className="text-xs text-pink-600 font-medium">
+              {usarRespManual ? '↑ Preencha o responsável pra imprimir' : '↑ Toque em quem está trazendo pra imprimir'}
+            </span>
           )}
           <Button
             size="lg"
             onClick={onConfirmar}
-            disabled={imprimindo || !!checkinAberto}
-            title={checkinAberto ? 'Já existe check-in aberto — reimprima a etiqueta ou faça o check-out antes.' : undefined}
+            disabled={imprimindo || !!checkinAberto || bloqueado}
+            title={
+              checkinAberto ? 'Já existe check-in aberto — reimprima a etiqueta ou faça o check-out antes.'
+              : bloqueado ? 'Selecione a sala e o responsável que está trazendo pra liberar a impressão.'
+              : undefined
+            }
             className="bg-pink-600 hover:bg-pink-700 text-white"
           >
             {imprimindo ? (
@@ -1624,6 +1636,9 @@ function CheckinSelecao(props: {
               <><Printer className="h-5 w-5 mr-2" /> Imprimir & Confirmar</>
             )}
           </Button>
+          </>
+            );
+          })()}
         </div>
       </CardContent>
 
