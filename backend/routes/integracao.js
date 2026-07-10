@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { isoWeekRange } = require('../utils/isoWeek');
 
 router.use(authenticate);
 
@@ -128,11 +129,24 @@ router.get('/historico-batismos', async (req, res) => {
 // Guards espelham a RLS da 20260526120000 (lançar >=2 · decidir >=3) — o
 // backend usa service_role (bypassa RLS), então sem authorizeModule qualquer
 // autenticado passava direto (gap achado na auditoria da coleta · 2026-07-10).
+//
+// ?ano=&semana= (ISO seg→dom · opcionais): recorta a semana pedida em vez da
+// janela de 14 dias — usado pelo app CBRio Staff (seletor de semana + ver a
+// PRÓXIMA semana; os cultos futuros já existem em `cultos`, materializados até
+// o fim do ano). Sem os params o comportamento é idêntico ao original.
 router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (req, res) => {
   try {
-    const hoje = new Date().toISOString().slice(0, 10);
+    let ate = new Date().toISOString().slice(0, 10);
     const limite = new Date(); limite.setDate(limite.getDate() - 14);
-    const desde = limite.toISOString().slice(0, 10);
+    let desde = limite.toISOString().slice(0, 10);
+
+    const anoQ = parseInt(req.query.ano, 10);
+    const semanaQ = parseInt(req.query.semana, 10);
+    if (anoQ && semanaQ && semanaQ >= 1 && semanaQ <= 53) {
+      const { inicio, fim } = isoWeekRange(anoQ, semanaQ);
+      desde = inicio.toISOString().slice(0, 10);
+      ate = fim.toISOString().slice(0, 10); // pode ser futuro (próxima semana)
+    }
 
     const { data: cultos, error: errCultos } = await supabase
       .from('cultos')
@@ -142,7 +156,7 @@ router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (re
         service_type:vol_service_types(id, name, recurrence_time, has_kids)
       `)
       .gte('data', desde)
-      .lte('data', hoje)
+      .lte('data', ate)
       .order('data', { ascending: false })
       .limit(40);
     if (errCultos) return res.status(400).json({ error: errCultos.message });
@@ -200,6 +214,21 @@ router.post('/coleta', authorizeModule('integracao', 2), async (req, res) => {
     }
     if (!Number.isFinite(dec) || dec < 0) {
       return res.status(400).json({ error: 'decisões deve ser número >= 0' });
+    }
+
+    // Culto futuro não recebe lançamento (o app mostra a semana seguinte só
+    // pra visualização). Data local de São Paulo — toISOString() em UTC viraria
+    // o dia seguinte a partir das 21h BRT e bloquearia o culto da noite.
+    const { data: cultoAlvo, error: errCulto } = await supabase
+      .from('cultos')
+      .select('data')
+      .eq('id', culto_id)
+      .maybeSingle();
+    if (errCulto) return res.status(400).json({ error: errCulto.message });
+    if (!cultoAlvo) return res.status(404).json({ error: 'Culto não encontrado' });
+    const hojeSp = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    if (cultoAlvo.data > hojeSp) {
+      return res.status(422).json({ error: 'Este culto ainda não aconteceu — lance depois do culto.' });
     }
 
     const { data, error } = await supabase
