@@ -32,7 +32,11 @@ async function responsaveisProducao() {
 }
 
 const SEVERIDADES = ['baixa', 'media', 'alta', 'critica'];
-const TIPOS_OCORR = ['tecnica', 'estrutura'];
+// Tipos de ocorrência: falha de equipamento (`tecnica`), falha humana (`humana`)
+// e instabilidade de estrutura (`estrutura`). Os slugs são mantidos como
+// identificadores estáveis; só os rótulos exibidos mudaram (2026-07-10).
+const TIPOS_OCORR = ['tecnica', 'humana', 'estrutura'];
+const OCORR_LABEL = { tecnica: 'falha de equipamento', humana: 'falha humana', estrutura: 'instabilidade de estrutura' };
 const SECOES = ['culto', 'pos_culto'];
 const CATEGORIAS_ESPECIAIS = ['ceia', 'batismo', 'apresentacao_bebes', 'outros'];
 const CATEGORIAS_ROTINA = ['ceia', 'batismo', 'apresentacao_bebes']; // 'outros' = fora da rotina
@@ -161,8 +165,8 @@ router.get('/semana', authorizeModule('producao', 1), async (req, res) => {
       ]);
       (prod || []).forEach(p => { prodById[p.culto_id] = p; });
       (ocorr || []).forEach(o => {
-        if (!ocorrByCulto[o.culto_id]) ocorrByCulto[o.culto_id] = { tecnica: 0, estrutura: 0 };
-        if (o.tipo === 'tecnica' || o.tipo === 'estrutura') ocorrByCulto[o.culto_id][o.tipo]++;
+        if (!ocorrByCulto[o.culto_id]) ocorrByCulto[o.culto_id] = { tecnica: 0, humana: 0, estrutura: 0 };
+        if (TIPOS_OCORR.includes(o.tipo)) ocorrByCulto[o.culto_id][o.tipo]++;
       });
       (marks || []).forEach(m => {
         if (!marksByCulto[m.culto_id]) marksByCulto[m.culto_id] = { feitos: 0, marcados: 0 };
@@ -175,9 +179,9 @@ router.get('/semana', authorizeModule('producao', 1), async (req, res) => {
       const prod = prodById[c.id] || null;
       const totalAplicavel = itensAplicaveis(template, c.service_type_id).length;
       const marcas = marksByCulto[c.id] || { feitos: 0, marcados: 0 };
-      const ocorr = ocorrByCulto[c.id] || { tecnica: 0, estrutura: 0 };
+      const ocorr = ocorrByCulto[c.id] || { tecnica: 0, humana: 0, estrutura: 0 };
       const preenchido = !!(prod && prod.duracao_minutos != null) || marcas.marcados > 0
-        || ocorr.tecnica > 0 || ocorr.estrutura > 0;
+        || ocorr.tecnica > 0 || ocorr.humana > 0 || ocorr.estrutura > 0;
       return {
         ...c,
         producao: {
@@ -410,7 +414,7 @@ router.post('/culto/:id/ocorrencias', authorizeModule('producao', 2), async (req
   try {
     const cultoId = req.params.id;
     const { tipo, descricao, severidade, momento } = req.body || {};
-    if (!TIPOS_OCORR.includes(tipo)) return res.status(400).json({ error: 'tipo inválido (técnica|estrutura)' });
+    if (!TIPOS_OCORR.includes(tipo)) return res.status(400).json({ error: 'tipo inválido (equipamento|humana|estrutura)' });
     if (!descricao || String(descricao).trim().length < 3) {
       return res.status(400).json({ error: 'descrição obrigatória (o rastro do erro)' });
     }
@@ -434,7 +438,7 @@ router.post('/culto/:id/ocorrencias', authorizeModule('producao', 2), async (req
         const { data: culto } = await supabase
           .from('cultos').select('nome, data').eq('id', cultoId).maybeSingle();
         const ctx = culto ? `${culto.nome || 'culto'}${culto.data ? ` (${culto.data})` : ''}` : 'um culto';
-        const labelTipo = data.tipo === 'tecnica' ? 'falha técnica' : 'instabilidade de estrutura';
+        const labelTipo = OCORR_LABEL[data.tipo] || 'ocorrência';
         notificar({
           modulo: 'producao',
           tipo: 'producao_ocorrencia_critica',
@@ -681,6 +685,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     }).length;
     const marcasFeitas = marks.filter(m => m.feito).length;
     const falhasTec = ocorr.filter(o => o.tipo === 'tecnica').length;
+    const falhasHum = ocorr.filter(o => o.tipo === 'humana').length;
     const ocorrEstr = ocorr.filter(o => o.tipo === 'estrutura').length;
 
     // Previsto × executado (aderência ao roteiro)
@@ -706,6 +711,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
         ? Math.round(mediaSeg(comAmbos, p => p.duracao_segundos - p.duracao_prevista_seg)) : null,
       checklist_pct: marks.length ? Math.round((marcasFeitas / marks.length) * 100) : null,
       falhas_tecnicas: falhasTec,
+      falhas_humanas: falhasHum,
       ocorrencias_estrutura: ocorrEstr,
     };
 
@@ -714,7 +720,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
     for (const c of cultos || []) {
       const key = c.service_type_name || 'Outros';
       if (!porTipo[key]) porTipo[key] = { tipo: key, cultos: 0, preenchidos: 0, no_horario: 0,
-        soma_dur: 0, soma_prev_seg: 0, n_prev: 0, soma_desvio_pct: 0, n_ader: 0, falhas: 0, estrutura: 0, marcas: 0, marcas_feitas: 0 };
+        soma_dur: 0, soma_prev_seg: 0, n_prev: 0, soma_desvio_pct: 0, n_ader: 0, falhas: 0, humanas: 0, estrutura: 0, marcas: 0, marcas_feitas: 0 };
       porTipo[key].cultos++;
     }
     for (const p of prodComDur) {
@@ -742,7 +748,9 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
       const c = cultoById[o.culto_id]; if (!c) continue;
       const key = c.service_type_name || 'Outros';
       if (!porTipo[key]) continue;
-      if (o.tipo === 'tecnica') porTipo[key].falhas++; else porTipo[key].estrutura++;
+      if (o.tipo === 'tecnica') porTipo[key].falhas++;
+      else if (o.tipo === 'humana') porTipo[key].humanas++;
+      else porTipo[key].estrutura++;
     }
     for (const m of marks) {
       const c = cultoById[m.culto_id]; if (!c) continue;
@@ -761,6 +769,7 @@ router.get('/acumulado', authorizeModule('producao', 1), async (req, res) => {
       duracao_prevista_media_min: t.n_prev ? Math.round(t.soma_prev_seg / t.n_prev / 60) : null,
       checklist_pct: t.marcas ? Math.round((t.marcas_feitas / t.marcas) * 100) : null,
       falhas_tecnicas: t.falhas,
+      falhas_humanas: t.humanas,
       ocorrencias_estrutura: t.estrutura,
     })).sort((a, b) => b.cultos - a.cultos);
 
