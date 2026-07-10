@@ -73,6 +73,10 @@ app.use(rateLimit({
 }));
 app.use(hpp());
 app.use(compression());
+// Parser dedicado do app CBRio Staff ANTES do global de 1mb: foto/documento
+// chegam como dataUrl base64 (até 5MB de arquivo ≈ 7MB de JSON). O body-parser
+// marca o body como consumido, então o parser global abaixo vira no-op aqui.
+app.use('/api/staff', express.json({ limit: '10mb' }));
 // rawBody capturado pra validar HMAC do webhook do WhatsApp (X-Hub-Signature-256)
 app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
@@ -104,6 +108,7 @@ app.use((req, res, next) => {
 app.use('/api/app', require('./routes/app'));               // Mobile app (sem auth ERP)
 app.use('/api/auth/planning-center', require('./routes/authPlanningCenter'));
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/staff', require('./routes/staff'));           // App CBRio Staff (self-service do colaborador)
 app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));

@@ -12,6 +12,42 @@ async function membrosParaUsuarios(membroIds) {
   return (data || []).map((p) => p.id);
 }
 
+// Dispara push Expo (SEM gravar histórico in-app) pros tokens registrados em
+// app_push_tokens dos usuários informados. Best-effort: nunca lança — loga e
+// retorna { enviados: 0 } em caso de erro. Lotes de até 100 (limite da Expo
+// Push API por request).
+async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
+  try {
+    const ids = [...new Set((userIds || []).filter(Boolean))];
+    if (!ids.length || !title) return { enviados: 0 };
+
+    const { data: toks } = await supabase.from('app_push_tokens').select('token').in('user_id', ids);
+    const tokens = [...new Set((toks || []).map((t) => t.token).filter(Boolean))];
+    if (!tokens.length) return { enviados: 0 };
+
+    const messages = tokens.map((to) => ({
+      to,
+      sound: 'cbrio-chime.wav',
+      channelId: 'default',
+      title,
+      body,
+      data: data || {},
+    }));
+
+    for (let i = 0; i < messages.length; i += 100) {
+      await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(messages.slice(i, i + 100)),
+      }).catch((e) => console.error('[appPush] Expo:', e.message));
+    }
+    return { enviados: messages.length };
+  } catch (e) {
+    console.error('[appPush] pushExpoParaUsers erro:', e.message);
+    return { enviados: 0 };
+  }
+}
+
 async function notificarApp(userIds, payload) {
   try {
     const ids = [...new Set((userIds || []).filter(Boolean))];
@@ -25,28 +61,16 @@ async function notificarApp(userIds, payload) {
     await supabase.from('app_notificacoes').insert(rows);
 
     // 2) push Expo pros tokens
-    const { data: toks } = await supabase.from('app_push_tokens').select('token').in('user_id', ids);
-    const tokens = [...new Set((toks || []).map((t) => t.token).filter(Boolean))];
-    if (!tokens.length) return { enviados: 0, persistidos: rows.length };
-
-    const messages = tokens.map((to) => ({
-      to,
-      sound: 'cbrio-chime.wav',
-      channelId: 'default',
+    const { enviados } = await pushExpoParaUsers(ids, {
       title: payload.titulo,
       body: payload.body,
       data: { tipo: payload.tipo, ...(payload.data || {}) },
-    }));
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(messages),
-    }).catch((e) => console.error('[appPush] Expo:', e.message));
-    return { enviados: messages.length, persistidos: rows.length };
+    });
+    return { enviados, persistidos: rows.length };
   } catch (e) {
     console.error('[appPush] erro:', e.message);
     return { enviados: 0 };
   }
 }
 
-module.exports = { notificarApp, membrosParaUsuarios };
+module.exports = { notificarApp, membrosParaUsuarios, pushExpoParaUsers };
