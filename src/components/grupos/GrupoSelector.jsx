@@ -58,7 +58,10 @@ function Pill({ ativo, onClick, children }) {
 // preferirAberta: default = temporada com inscrições ABERTAS (em vez da ativa)
 // — usado pelo formulário público, onde só faz sentido mostrar grupos em que a
 // pessoa consegue de fato se inscrever (ex.: piloto = só a Temporada Teste).
-export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full', temporadaId, usePublicApi = false, preferirAberta = false }) {
+// onInscrever: quando presente (form público), o botão do mapa vira
+// "Inscrever" e avança direto pros dados; o clique no PIN só seleciona
+// (o botão fixo da página cuida do avanço).
+export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full', temporadaId, usePublicApi = false, preferirAberta = false, onInscrever }) {
   const api = usePublicApi ? gruposPublic : authApi;
   const full = mode !== 'simple';
   // Detecção simples de tela estreita (QR → celular). Estático no mount é
@@ -247,8 +250,9 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
             grupos={filtrados}
             variant="admin"
             defaultTheme="light"
-            onGroupSelect={onSelect}
-            onGroupSelectLabel="Escolher este grupo"
+            onPinClick={onSelect}
+            onGroupSelect={onInscrever ? (g) => { onSelect?.(g); onInscrever(g); } : onSelect}
+            onGroupSelectLabel={onInscrever ? 'Inscrever' : 'Escolher este grupo'}
           />
         </div>
       ) : (

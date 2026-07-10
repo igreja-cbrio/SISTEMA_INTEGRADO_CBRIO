@@ -60,6 +60,9 @@ interface GruposMapViewProps {
   defaultTheme?: "light" | "dark";
   onGroupSelect?: (g: MapGroup) => void;
   onGroupSelectLabel?: string;
+  /** Chamado no CLIQUE do pin (além de abrir o balão/cartão) — o form público
+      usa pra já selecionar o grupo e mostrar o botão fixo de Inscrever. */
+  onPinClick?: (g: MapGroup) => void;
   className?: string;
   /** Mapa { temporada_id: { inscricoes_abertas } } para decidir se mostra botão de inscrição */
   temporadasMap?: Record<string, { inscricoes_abertas: boolean; label?: string }>;
@@ -156,6 +159,7 @@ export function GruposMapView({
   defaultTheme = "dark",
   onGroupSelect,
   onGroupSelectLabel = "Quero participar",
+  onPinClick,
   className,
   temporadasMap,
   mostrarBotaoInscricao = false,
@@ -456,7 +460,7 @@ export function GruposMapView({
               key={g.id}
               longitude={g.lng!}
               latitude={g.lat!}
-              onClick={() => setActiveId(g.id)}
+              onClick={() => { setActiveId(g.id); onPinClick?.(g); }}
             >
               <MarkerContent>
                 <GroupPin active={activeId === g.id} />
@@ -484,7 +488,9 @@ export function GruposMapView({
             return (
               <div
                 className={cn(
-                  "absolute bottom-3 left-3 right-3 z-30 rounded-xl p-3 pr-9 shadow-xl border max-h-[46%] overflow-y-auto",
+                  // bottom-16 deixa livre a faixa do botão fixo "Inscrever"
+                  // do formulário público (viewport-fixed no rodapé)
+                  "absolute bottom-16 left-3 right-3 z-30 rounded-xl p-3 pr-9 shadow-xl border max-h-[46%] overflow-y-auto",
                   theme === "dark" ? "bg-gray-900/95 border-white/10 text-white" : "bg-white/95 border-gray-200 text-gray-900"
                 )}
               >
