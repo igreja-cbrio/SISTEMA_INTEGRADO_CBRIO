@@ -28,10 +28,23 @@ const IDLE_MS = 90_000; // totem: volta ao início após ~90s sem interação
 
 const FORM_VAZIO = {
   nome: '', cpf: '', email: '', telefone: '',
-  data_nascimento: '', observacao: '', website: '', foto_url: '',
+  data_nascimento: '', genero: '', observacao: '', website: '', foto_url: '',
 };
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
+
+// Data de nascimento plausível (obrigatória desde 2026-07-10): formato ok,
+// não-futura e ano >= 1900. Devolve a idade em anos, ou null se inválida.
+function idadeDe(dataNascimento) {
+  if (!dataNascimento || !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimento)) return null;
+  const nasc = new Date(dataNascimento + 'T12:00:00');
+  const hoje = new Date();
+  if (Number.isNaN(nasc.getTime()) || nasc.getFullYear() < 1900 || nasc > hoje) return null;
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const m = hoje.getMonth() - nasc.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--;
+  return idade;
+}
 function mascaraCpf(v) {
   const d = soDigitos(v).slice(0, 11);
   if (d.length <= 3) return d;
@@ -134,7 +147,7 @@ export default function InscricaoGrupos() {
   // (step 2) pode sair livre. O navegador mostra o confirm nativo.
   const temDadosDigitados = !!(
     form.nome || soDigitos(form.telefone) || soDigitos(form.cpf)
-    || form.email || form.data_nascimento || form.observacao || form.foto_url
+    || form.email || form.data_nascimento || form.genero || form.observacao || form.foto_url
   );
   useEffect(() => {
     if (!temDadosDigitados || step === 2) return;
@@ -143,13 +156,36 @@ export default function InscricaoGrupos() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [temDadosDigitados, step]);
 
-  // CPF é OPCIONAL agora — só nome, telefone e aceite dos termos são obrigatórios.
+  // Obrigatórios: nome, telefone, data de nascimento, sexo e aceite.
+  // CPF e e-mail seguem opcionais (ajudam no dedup).
   const formValido = () => {
     if (!form.nome || form.nome.trim().length < 3) return false;
     if (soDigitos(form.telefone).length < 10) return false;
+    if (idadeDe(form.data_nascimento) == null) return false;
+    if (form.genero !== 'masculino' && form.genero !== 'feminino') return false;
     if (!aceitaTermos) return false;
     return true;
   };
+
+  // Avisos de compatibilidade — NÃO bloqueiam (decisão do Marcos): a pessoa
+  // pode se inscrever mesmo assim, mas já sabe que o grupo pode não ser pra ela.
+  const avisosCompatibilidade = useMemo(() => {
+    const avisos = [];
+    if (!grupoEscolhido) return avisos;
+    const cat = (grupoEscolhido.categoria || '').toLowerCase();
+    if (form.genero === 'masculino' && cat === 'mulheres') {
+      avisos.push('Este é um grupo de mulheres e você marcou masculino.');
+    }
+    if (form.genero === 'feminino' && cat === 'homens') {
+      avisos.push('Este é um grupo de homens e você marcou feminino.');
+    }
+    const idade = idadeDe(form.data_nascimento);
+    const faixa = (grupoEscolhido.faixa_etaria || '').toLowerCase();
+    if (idade != null && idade >= 18 && faixa.includes('adolescent')) {
+      avisos.push(`Este grupo é para adolescentes e você tem ${idade} anos.`);
+    }
+    return avisos;
+  }, [grupoEscolhido, form.genero, form.data_nascimento]);
 
   const onFoto = async (e) => {
     const file = e.target.files?.[0];
@@ -180,6 +216,7 @@ export default function InscricaoGrupos() {
         email: form.email.trim() || null,
         telefone: form.telefone,
         data_nascimento: form.data_nascimento || null,
+        genero: form.genero || null,
         observacao: form.observacao || null,
         foto_url: form.foto_url || null,
         aceita_termos: aceitaTermos,
@@ -282,10 +319,45 @@ export default function InscricaoGrupos() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
                 <Field label="Nome completo *" value={form.nome} onChange={set('nome')} />
                 <Field label="Celular / WhatsApp *" value={form.telefone} onChange={set('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
+                <Field label="Data de nascimento *" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} />
+                <div>
+                  <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[['masculino', 'Masculino'], ['feminino', 'Feminino']].map(([valor, rotulo]) => (
+                      <button
+                        key={valor}
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, genero: valor }))}
+                        style={{
+                          flex: 1, padding: '9px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                          fontWeight: form.genero === valor ? 700 : 500,
+                          border: `1px solid ${form.genero === valor ? '#00B39D' : C.inputBorder}`,
+                          background: form.genero === valor ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                          color: form.genero === valor ? '#00B39D' : C.text,
+                        }}
+                      >
+                        {rotulo}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <Field label="CPF (opcional · evita duplicidade)" value={form.cpf} onChange={set('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
                 <Field label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} />
-                <Field label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} />
               </div>
+
+              {/* Avisos de compatibilidade — informam sem impedir */}
+              {avisosCompatibilidade.length > 0 && (
+                <div style={{
+                  padding: '10px 12px', marginBottom: 12, borderRadius: 10,
+                  background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.5)',
+                  fontSize: 12.5, color: C.isDark ? '#fbbf24' : '#92400e', lineHeight: 1.55,
+                }}>
+                  {avisosCompatibilidade.map((a, i) => <p key={i} style={{ margin: 0 }}>⚠ {a}</p>)}
+                  <p style={{ margin: '6px 0 0', opacity: 0.85 }}>
+                    Isso não impede a sua inscrição — siga em frente se for isso mesmo, ou volte e escolha outro grupo.
+                  </p>
+                </div>
+              )}
 
               {/* Foto opcional — reforço de identidade / anti-duplicata */}
               <FotoOpcional

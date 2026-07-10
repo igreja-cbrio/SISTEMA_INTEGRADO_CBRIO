@@ -1137,16 +1137,19 @@ async function aprovarPedidoCore(pedidoId, user) {
           // o matcher só pode religar por CPF (nunca por e-mail/telefone de família).
           const r = await acharOuCriarGuardado({
             cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
-            extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null },
+            extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null, genero: cad.genero || null },
           }, { soChaveForte: cad.nao_vincular_fraco === true });
           membroId = r.membro_id;
         }
-        // Carrega a foto do cadastro público pro membro (F1) quando ele ainda
-        // não tem — vale tanto pro membro recém-criado quanto pro ligado por dedup.
-        if (cad.foto_url && membroId) {
-          const { data: mem } = await supabase.from('mem_membros').select('foto_url').eq('id', membroId).maybeSingle();
-          if (mem && !mem.foto_url) {
-            await supabase.from('mem_membros').update({ foto_url: cad.foto_url }).eq('id', membroId);
+        // Carrega foto e sexo do cadastro público pro membro quando ele ainda
+        // não os tem — vale tanto pro recém-criado quanto pro ligado por dedup.
+        if ((cad.foto_url || cad.genero) && membroId) {
+          const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero').eq('id', membroId).maybeSingle();
+          if (mem) {
+            const upd = {};
+            if (cad.foto_url && !mem.foto_url) upd.foto_url = cad.foto_url;
+            if (cad.genero && !mem.genero) upd.genero = cad.genero;
+            if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
           }
         }
         // Marca cadastro como aprovado
