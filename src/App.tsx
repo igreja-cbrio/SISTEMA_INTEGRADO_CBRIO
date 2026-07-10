@@ -471,6 +471,7 @@ const HOME_MODULO_UNICO: Record<string, string> = {
   producao: '/producao',
   batismo: '/batismo',
   kids: '/ministerial/kids',
+  grupos: '/grupos',
 };
 function homeRoute(auth: Record<string, unknown>): string {
   if (auth.rotaTravada) return auth.rotaTravada as string; // login travado num módulo (quiosque)
