@@ -302,10 +302,18 @@ async function sincronizarPresencasKidsPCO({ dias = 90, datas = null } = {}) {
 
 // ============================================================================
 // Corrige os RESPONSÁVEIS poluídos (import de 22/05 jogou a household inteira).
-// Sinal confiável de guardião = quem FAZ o check-in da criança no PCO
-// (relationship `checked_in_by`). Estratégia: PODAR — mantém só os responsáveis
-// atuais cujo nome casa com um "checker" do PCO; remove o resto. NUNCA deixa a
-// criança sem nenhum responsável (se nenhum casar, não mexe · fica pro manual).
+// Sinal de guardião REAL da criança = união de dois históricos de check-in:
+//   (a) PCO · quem FEZ o check-in dela (relationship `checked_in_by`);
+//   (b) NOSSO banco · quem já fez o check-in real dela no totem
+//       (kids_checkins.responsavel_checkin_id / responsavel_checkin_nome).
+// Assim crianças SEM histórico PCO mas COM check-in no totem também são limpas.
+// Estratégia: PODAR — mantém só os responsáveis cujo membro_id/nome casa com um
+// guardião real (ou que são contato de emergência · sinal explícito, preservado);
+// remove o resto. Regras conservadoras: só age em criança com 2+ responsáveis e
+// NUNCA deixa a criança sem nenhum responsável (se nenhum casar, não mexe).
+// Regra extra de sanidade: dentro da MESMA criança "mae"/"pai" duplicados são
+// biologicamente impossíveis; se houver >1 e NENHUM casar com guardião real, não
+// remove nenhum (não arrisca) — só marca em `revisar_manualmente`.
 // dryRun (padrão) só devolve a proposta, sem gravar.
 // ============================================================================
 function _normNome(s) {
@@ -313,73 +321,156 @@ function _normNome(s) {
 }
 
 async function corrigirResponsaveisPCO({ meses = 18, apply = false } = {}) {
-  const { basic } = getPCCredentials();
-  const headers = { Authorization: `Basic ${basic}` };
-  const desde = new Date(); desde.setMonth(desde.getMonth() - meses);
-  const start = desde.toISOString();
-
-  // 1) Varre os check-ins → childPcoId -> Set(nome normalizado de quem fez o check-in)
+  // 1) Sinal PCO (best-effort) → childPcoId -> Set(nome normalizado do checker).
+  //    Se o PCO estiver indisponível (sem credencial/rede · ex.: rodando local),
+  //    seguimos SÓ com o sinal do nosso banco em vez de quebrar.
   const childCheckers = new Map();
-  const perPage = 100; let offset = 0; let varridos = 0;
-  while (true) {
-    const url = `${PC_CHECKINS_BASE}/check_ins`
-      + `?where[created_at][gte]=${encodeURIComponent(start)}`
-      + `&include=checked_in_by&per_page=${perPage}&offset=${offset}`;
-    const resp = await fetchWithRetry(url, headers);
-    if (!resp || !resp.ok) throw new Error(`PCO Check-Ins ${resp?.status || '???'}: falha ao listar check_ins`);
-    const json = await resp.json();
-    const nomePorId = new Map();
-    for (const inc of (json.included || [])) {
-      if (inc.type === 'Person') nomePorId.set(inc.id, inc.attributes?.name || `${inc.attributes?.first_name || ''} ${inc.attributes?.last_name || ''}`.trim());
+  let varridos = 0;
+  let pcoDisponivel = true;
+  try {
+    const { basic } = getPCCredentials();
+    const headers = { Authorization: `Basic ${basic}` };
+    const desde = new Date(); desde.setMonth(desde.getMonth() - meses);
+    const start = desde.toISOString();
+    const perPage = 100; let offset = 0;
+    while (true) {
+      const url = `${PC_CHECKINS_BASE}/check_ins`
+        + `?where[created_at][gte]=${encodeURIComponent(start)}`
+        + `&include=checked_in_by&per_page=${perPage}&offset=${offset}`;
+      const resp = await fetchWithRetry(url, headers);
+      if (!resp || !resp.ok) throw new Error(`PCO Check-Ins ${resp?.status || '???'}: falha ao listar check_ins`);
+      const json = await resp.json();
+      const nomePorId = new Map();
+      for (const inc of (json.included || [])) {
+        if (inc.type === 'Person') nomePorId.set(inc.id, inc.attributes?.name || `${inc.attributes?.first_name || ''} ${inc.attributes?.last_name || ''}`.trim());
+      }
+      const data = json.data || [];
+      varridos += data.length;
+      for (const ci of data) {
+        const childId = ci.relationships?.person?.data?.id;
+        const byId = ci.relationships?.checked_in_by?.data?.id;
+        if (!childId || !byId || byId === childId) continue;
+        const nm = _normNome(nomePorId.get(byId));
+        if (!nm) continue;
+        if (!childCheckers.has(childId)) childCheckers.set(childId, new Set());
+        childCheckers.get(childId).add(nm);
+      }
+      if (data.length < perPage) break;
+      offset += perPage;
+      if (offset > 300000) break;
     }
-    const data = json.data || [];
-    varridos += data.length;
-    for (const ci of data) {
-      const childId = ci.relationships?.person?.data?.id;
-      const byId = ci.relationships?.checked_in_by?.data?.id;
-      if (!childId || !byId || byId === childId) continue;
-      const nm = _normNome(nomePorId.get(byId));
-      if (!nm) continue;
-      if (!childCheckers.has(childId)) childCheckers.set(childId, new Set());
-      childCheckers.get(childId).add(nm);
-    }
-    if (data.length < perPage) break;
-    offset += perPage;
-    if (offset > 300000) break;
+  } catch (e) {
+    pcoDisponivel = false;
+    console.warn('[corrigirResponsaveis] PCO indisponível · usando só o sinal do nosso banco:', e.message);
   }
 
-  // 2) Carrega crianças COM pco id e 2+ responsáveis (as candidatas a poda) +
-  //    os responsáveis (id do vínculo + nome do membro), paginado.
-  const criancas = [];
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from('kids_criancas')
-      .select('id, nome, planning_center_id, responsaveis:kids_responsaveis(id, membro_id, membro:mem_membros(nome))')
-      .not('planning_center_id', 'is', null)
-      .is('deleted_at', null)
-      .range(from, from + 999);
-    if (error) throw error;
-    if (!data || !data.length) break;
-    criancas.push(...data);
-    if (data.length < 1000) break;
-    from += 1000;
+  // 2) Sinal LOCAL (nosso kids_checkins) → crianca_id -> guardiões reais que já
+  //    fizeram o check-in dela (por membro_id E por nome normalizado).
+  const localMembro = new Map(); // crianca_id -> Set(membro_id)
+  const localNome = new Map();   // crianca_id -> Set(nome normalizado)
+  {
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('kids_checkins')
+        .select('crianca_id, responsavel_checkin_id, responsavel_checkin_nome')
+        .is('deleted_at', null)
+        .not('crianca_id', 'is', null)
+        .range(from, from + 999);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      for (const ci of data) {
+        const cid = ci.crianca_id;
+        if (ci.responsavel_checkin_id) {
+          if (!localMembro.has(cid)) localMembro.set(cid, new Set());
+          localMembro.get(cid).add(ci.responsavel_checkin_id);
+        }
+        const nm = _normNome(ci.responsavel_checkin_nome);
+        if (nm) {
+          if (!localNome.has(cid)) localNome.set(cid, new Set());
+          localNome.get(cid).add(nm);
+        }
+      }
+      if (data.length < 1000) break;
+      from += 1000;
+    }
   }
+
+  // 3) Carrega TODAS as crianças ativas com seus responsáveis (o sinal local não
+  //    depende de pco id, então não filtramos por planning_center_id), paginado.
+  const criancas = [];
+  {
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('kids_criancas')
+        .select('id, nome, planning_center_id, responsaveis:kids_responsaveis(id, membro_id, parentesco, contato_emergencia, membro:mem_membros(nome))')
+        .is('deleted_at', null)
+        .range(from, from + 999);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      criancas.push(...data);
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+  }
+
+  // Guardiões reais da criança (união PCO ∪ local). `temSinal` = há ao menos um
+  // histórico de check-in pra usar como sinal.
+  function guardioesDaCrianca(c) {
+    const nomesPco = c.planning_center_id ? childCheckers.get(String(c.planning_center_id)) : null;
+    const membroIds = localMembro.get(c.id) || null;
+    const nomesLocal = localNome.get(c.id) || null;
+    const temSinal = !!((nomesPco && nomesPco.size) || (membroIds && membroIds.size) || (nomesLocal && nomesLocal.size));
+    return { nomesPco, membroIds, nomesLocal, temSinal };
+  }
+  // casa com um guardião REAL (check-in de fato · exclui contato de emergência)
+  function casaReal(r, g) {
+    const nm = _normNome(r.membro?.nome);
+    if (g.nomesPco && nm && g.nomesPco.has(nm)) return true;
+    if (g.membroIds && r.membro_id && g.membroIds.has(r.membro_id)) return true;
+    if (g.nomesLocal && nm && g.nomesLocal.has(nm)) return true;
+    return false;
+  }
+  // deve ser MANTIDO = casa com guardião real OU é contato de emergência (preserva)
+  const deveManter = (r, g) => r.contato_emergencia === true || casaReal(r, g);
 
   const proposta = [];
+  const revisarManual = [];
+  const criancasComCheckinLocal = new Set([...localMembro.keys(), ...localNome.keys()]);
   let removidos = 0, criancasAfetadas = 0;
+
   for (const c of criancas) {
-    const checkers = childCheckers.get(String(c.planning_center_id));
     const resps = c.responsaveis || [];
-    if (!checkers || resps.length < 2) continue; // sem sinal ou já enxuto
-    const manter = resps.filter(r => checkers.has(_normNome(r.membro?.nome)));
-    const remover = resps.filter(r => !checkers.has(_normNome(r.membro?.nome)));
-    if (!manter.length || !remover.length) continue; // não casou nenhum → não arrisca
+    const g = guardioesDaCrianca(c);
+    if (!g.temSinal || resps.length < 2) continue; // sem sinal ou já enxuto
+
+    let manter = resps.filter(r => deveManter(r, g));
+    let remover = resps.filter(r => !deveManter(r, g));
+
+    // Regra de sanidade: "mae"/"pai" duplicados na MESMA criança são impossíveis.
+    // Se houver >1 de um parentesco e NENHUM casar com guardião real, não removemos
+    // nenhum (não arrisca escolher no chute) — protege o grupo e marca pra revisão.
+    const revisarGrupos = [];
+    for (const par of ['mae', 'pai']) {
+      const grupo = resps.filter(r => _normNome(r.parentesco) === par);
+      if (grupo.length <= 1) continue;
+      const algumReal = grupo.some(r => casaReal(r, g));
+      if (!algumReal) {
+        const ids = new Set(grupo.map(r => r.id));
+        remover = remover.filter(r => !ids.has(r.id));
+        for (const r of grupo) if (!manter.some(m => m.id === r.id)) manter.push(r);
+        revisarGrupos.push({ parentesco: par, quantidade: grupo.length, nomes: grupo.map(r => r.membro?.nome || '—') });
+      }
+    }
+    if (revisarGrupos.length) revisarManual.push({ crianca: c.nome, grupos: revisarGrupos });
+
+    if (!manter.length || !remover.length) continue; // nunca zera · não age
     criancasAfetadas++;
     proposta.push({
       crianca: c.nome,
-      manter: manter.map(r => r.membro?.nome),
-      remover: remover.map(r => r.membro?.nome),
+      manter: manter.map(r => `${r.membro?.nome || '—'}${r.parentesco ? ` (${r.parentesco})` : ''}`),
+      remover: remover.map(r => `${r.membro?.nome || '—'}${r.parentesco ? ` (${r.parentesco})` : ''}`),
     });
     if (apply) {
       const ids = remover.map(r => r.id);
@@ -390,10 +481,14 @@ async function corrigirResponsaveisPCO({ meses = 18, apply = false } = {}) {
 
   return {
     modo: apply ? 'aplicado' : 'previa',
-    checkins_varridos: varridos,
-    criancas_com_checker: childCheckers.size,
+    fonte: { pco: pcoDisponivel, local: true },
+    checkins_pco_varridos: varridos,
+    criancas_com_checker_pco: childCheckers.size,
+    criancas_com_checkin_local: criancasComCheckinLocal.size,
     criancas_afetadas: criancasAfetadas,
     vinculos_removidos: apply ? removidos : proposta.reduce((s, p) => s + p.remover.length, 0),
+    total_revisar: revisarManual.length,
+    revisar_manualmente: revisarManual.slice(0, 50),
     amostra: proposta.slice(0, 30),
   };
 }
