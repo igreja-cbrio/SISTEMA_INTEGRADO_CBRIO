@@ -114,7 +114,7 @@ router.get('/', async (req, res) => {
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
-      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').is('deleted_at', null).in('id', liderIds);
+      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, telefone, foto_url').is('deleted_at', null).in('id', liderIds);
       (lideres || []).forEach(l => { lideresMap[l.id] = l; });
     }
 
@@ -133,6 +133,7 @@ router.get('/', async (req, res) => {
       ...g,
       membros_count: contagem[g.id] || 0,
       lider_nome: lideresMap[g.lider_id]?.nome || null,
+      lider_telefone: lideresMap[g.lider_id]?.telefone || null,
       lider_foto: lideresMap[g.lider_id]?.foto_url || null,
       grupo_origem_nome: origensMap[g.grupo_origem_id] || null,
     }));

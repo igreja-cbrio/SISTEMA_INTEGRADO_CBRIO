@@ -75,6 +75,23 @@ function tabDaUrl() {
 
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
 
+// Campos exigidos pro cadastro do grupo estar completo (capacidade e foto são
+// opcionais). Devolve os rótulos do que falta — lista vazia = cadastro completo.
+// Telefone do líder: na lista vem em lider_telefone; no detalhe, em lider.telefone.
+function camposFaltantes(g) {
+  const faltas = [];
+  if (!g.lider_id) faltas.push('Líder');
+  else if (!(g.lider?.telefone ?? g.lider_telefone)) faltas.push('Telefone do líder');
+  if (g.dia_semana == null) faltas.push('Dia da semana');
+  if (!g.horario) faltas.push('Horário');
+  if (!g.endereco) faltas.push('Endereço');
+  if (!g.bairro) faltas.push('Bairro');
+  if (!g.faixa_etaria) faltas.push('Faixa etária');
+  if (!g.categoria) faltas.push('Categoria');
+  if (!g.rede_id) faltas.push('Rede');
+  return faltas;
+}
+
 // v2 - tabs membros/arquivos
 export default function Grupos() {
   const navigate = useNavigate();
@@ -111,6 +128,7 @@ export default function Grupos() {
   const [filterDia, setFilterDia] = useState('all');
   const [filterBairro, setFilterBairro] = useState('all');
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
+  const [filterIncompleto, setFilterIncompleto] = useState(false);
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
   // Aba inicial pode vir da URL (/grupos?tab=visitas · usado por notificações).
@@ -494,10 +512,13 @@ export default function Grupos() {
     if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
     if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
     if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
+    if (filterIncompleto && camposFaltantes(g).length === 0) return false;
     return true;
   });
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all';
+  const incompletosCount = gruposList.filter(g => camposFaltantes(g).length > 0).length;
+
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterIncompleto;
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -581,6 +602,20 @@ export default function Grupos() {
             )}
           </div>
         </div>
+
+        {/* Cadastro incompleto · checklist do que falta (não renderiza se completo) */}
+        {(() => {
+          const faltas = camposFaltantes(g);
+          if (!faltas.length) return null;
+          return (
+            <div style={{ background: `${C.amber}12`, borderRadius: 12, padding: '12px 16px', border: `1px solid ${C.amber}40`, marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <AlertTriangle size={16} style={{ color: C.amber, flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 13, color: C.t2 }}>
+                <strong style={{ color: C.amber }}>Cadastro incompleto</strong> — falta: {faltas.join(' · ')}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Supervisão do grupo · fonte da verdade do organograma (1 supervisor por grupo) */}
         <div style={{ background: C.card, borderRadius: 12, padding: '12px 16px', border: `1px solid ${C.border}`, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -1439,8 +1474,17 @@ export default function Grupos() {
           </ShadSelect>
         )}
 
+        <button onClick={() => setFilterIncompleto(v => !v)} title="Grupos com dados de cadastro faltando" style={{
+          fontSize: 11, padding: '4px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,
+          border: filterIncompleto ? `1px solid ${C.amber}` : `1px solid ${C.amber}40`,
+          background: filterIncompleto ? `${C.amber}28` : `${C.amber}12`, color: C.amber,
+          display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          <AlertTriangle size={11} /> Cadastro incompleto ({incompletosCount})
+        </button>
+
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterIncompleto(false); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -1472,7 +1516,7 @@ export default function Grupos() {
                 onClick={() => {
                   setFilterTipo('all'); setFilterDia('all');
                   setFilterBairro('all'); setFilterStatusTemp('all');
-                  setFilterTemporada('');
+                  setFilterIncompleto(false); setFilterTemporada('');
                 }}
                 style={{ marginTop: 8, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
               >
@@ -1511,6 +1555,15 @@ export default function Grupos() {
                       </span>
                     )}
                     {!g.ativo && !g.status_temporada && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, textTransform: 'uppercase' }}>Arquivado</span>}
+                    {(() => {
+                      const n = camposFaltantes(g).length;
+                      if (!n) return null;
+                      return (
+                        <span title="Cadastro incompleto — abra o grupo para ver o que falta" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: `${C.amber}20`, color: C.amber, fontWeight: 600 }}>
+                          {n === 1 ? 'falta 1 dado' : `faltam ${n} dados`}
+                        </span>
+                      );
+                    })()}
                   </div>
                   {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
