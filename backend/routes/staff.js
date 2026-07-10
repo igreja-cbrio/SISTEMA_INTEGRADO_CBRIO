@@ -316,8 +316,12 @@ router.get('/me/documentos', async (req, res) => {
 // ── POST /api/staff/me/documentos — sobe documento do próprio funcionário ──
 router.post('/me/documentos', async (req, res) => {
   try {
-    const { dataUrl, nome, tipo } = req.body || {};
+    const { dataUrl, nome, tipo, data_expiracao } = req.body || {};
     if (!nome || !tipo) return res.status(400).json({ error: 'Nome e tipo são obrigatórios' });
+    // Validade opcional (YYYY-MM-DD) — liga o alerta de vencimento do módulo RH
+    if (data_expiracao != null && data_expiracao !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(String(data_expiracao))) {
+      return res.status(400).json({ error: 'data_expiracao deve estar no formato AAAA-MM-DD' });
+    }
 
     const funcionario = await resolverFuncionario(req.user.email);
     if (!funcionario) {
@@ -346,6 +350,7 @@ router.post('/me/documentos', async (req, res) => {
         tipo,
         nome,
         storage_path: urlData.publicUrl,
+        ...(data_expiracao ? { data_expiracao } : {}),
       })
       .select('id, tipo, nome, storage_path, sharepoint_url, data_expiracao')
       .single();

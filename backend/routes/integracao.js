@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { isoWeekRange } = require('../utils/isoWeek');
 
 router.use(authenticate);
 
@@ -128,20 +129,34 @@ router.get('/historico-batismos', async (req, res) => {
 // Guards espelham a RLS da 20260526120000 (lançar >=2 · decidir >=3) — o
 // backend usa service_role (bypassa RLS), então sem authorizeModule qualquer
 // autenticado passava direto (gap achado na auditoria da coleta · 2026-07-10).
+//
+// Recorte opcional da janela (sem params = últimos 14 dias, idêntico ao
+// original) — usado pelo app CBRio Staff pra navegar a coleta por semana,
+// inclusive a PRÓXIMA (cultos futuros já existem em `cultos`, materializados
+// pela gerar_cultos_recorrentes até o fim do ano). Dois formatos aceitos:
+//   ?ano=&semana=   · semana ISO seg→dom (tem precedência)
+//   ?inicio=&fim=   · datas YYYY-MM-DD (máx. 31 dias)
 router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (req, res) => {
   try {
-    // Range opcional ?inicio=&fim= (YYYY-MM-DD · máx. 31 dias) pro app Staff
-    // navegar por semana — inclusive a PRÓXIMA (cultos futuros já existem em
-    // `cultos`, materializados pela gerar_cultos_recorrentes até o fim do ano).
-    // Sem params, o default segue idêntico: últimos 14 dias até hoje.
     const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
     const hoje = new Date().toISOString().slice(0, 10);
     const limite = new Date(); limite.setDate(limite.getDate() - 14);
-    const desde = isYmd(req.query.inicio) ? String(req.query.inicio) : limite.toISOString().slice(0, 10);
-    const fim = isYmd(req.query.fim) ? String(req.query.fim) : hoje;
-    if (fim < desde) return res.status(400).json({ error: 'fim anterior ao início' });
-    if ((new Date(fim) - new Date(desde)) / 86400000 > 31) {
-      return res.status(400).json({ error: 'range máximo de 31 dias' });
+    let desde = limite.toISOString().slice(0, 10);
+    let ate = hoje;
+
+    const anoQ = parseInt(req.query.ano, 10);
+    const semanaQ = parseInt(req.query.semana, 10);
+    if (anoQ && semanaQ && semanaQ >= 1 && semanaQ <= 53) {
+      const { inicio, fim } = isoWeekRange(anoQ, semanaQ);
+      desde = inicio.toISOString().slice(0, 10);
+      ate = fim.toISOString().slice(0, 10); // pode ser futuro (próxima semana)
+    } else if (isYmd(req.query.inicio) || isYmd(req.query.fim)) {
+      desde = isYmd(req.query.inicio) ? String(req.query.inicio) : desde;
+      ate = isYmd(req.query.fim) ? String(req.query.fim) : hoje;
+      if (ate < desde) return res.status(400).json({ error: 'fim anterior ao início' });
+      if ((new Date(ate) - new Date(desde)) / 86400000 > 31) {
+        return res.status(400).json({ error: 'range máximo de 31 dias' });
+      }
     }
 
     const { data: cultos, error: errCultos } = await supabase
@@ -152,7 +167,7 @@ router.get('/coleta/cultos-abertos', authorizeModule('integracao', 2), async (re
         service_type:vol_service_types(id, name, recurrence_time, has_kids)
       `)
       .gte('data', desde)
-      .lte('data', fim)
+      .lte('data', ate)
       .order('data', { ascending: false })
       .limit(40);
     if (errCultos) return res.status(400).json({ error: errCultos.message });
@@ -210,6 +225,21 @@ router.post('/coleta', authorizeModule('integracao', 2), async (req, res) => {
     }
     if (!Number.isFinite(dec) || dec < 0) {
       return res.status(400).json({ error: 'decisões deve ser número >= 0' });
+    }
+
+    // Culto futuro não recebe lançamento (o app mostra a semana seguinte só
+    // pra visualização). Data local de São Paulo — toISOString() em UTC viraria
+    // o dia seguinte a partir das 21h BRT e bloquearia o culto da noite.
+    const { data: cultoAlvo, error: errCulto } = await supabase
+      .from('cultos')
+      .select('data')
+      .eq('id', culto_id)
+      .maybeSingle();
+    if (errCulto) return res.status(400).json({ error: errCulto.message });
+    if (!cultoAlvo) return res.status(404).json({ error: 'Culto não encontrado' });
+    const hojeSp = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    if (cultoAlvo.data > hojeSp) {
+      return res.status(422).json({ error: 'Este culto ainda não aconteceu — lance depois do culto.' });
     }
 
     const { data, error } = await supabase
