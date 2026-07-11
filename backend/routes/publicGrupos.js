@@ -175,7 +175,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { data: grupo, error } = await supabase
       .from('mem_grupos')
-      .select('id, codigo, nome, categoria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo')
+      .select('id, codigo, nome, categoria, faixa_etaria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
@@ -370,6 +370,7 @@ router.post('/inscrever', async (req, res) => {
       email,
       telefone,
       data_nascimento,
+      genero,
       observacao,
       foto_url,
       aceita_termos,
@@ -388,6 +389,18 @@ router.post('/inscrever', async (req, res) => {
     if (cpf && !cpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido.' });
     if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido.' });
     if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.' });
+    // Nascimento e sexo OBRIGATÓRIOS (Marcos · 2026-07-10): filtram inscrição
+    // acidental e alimentam os avisos de compatibilidade (não-bloqueantes).
+    if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
+      return res.status(400).json({ error: 'Data de nascimento obrigatória.' });
+    }
+    const nascDate = new Date(String(data_nascimento) + 'T12:00:00');
+    if (Number.isNaN(nascDate.getTime()) || nascDate.getFullYear() < 1900 || nascDate > new Date()) {
+      return res.status(400).json({ error: 'Data de nascimento inválida.' });
+    }
+    const generoLimpo = ['masculino', 'feminino'].includes(String(genero || '').toLowerCase())
+      ? String(genero).toLowerCase() : null;
+    if (!generoLimpo) return res.status(400).json({ error: 'Informe o sexo (masculino ou feminino).' });
 
     const cpfLimpo = cpf ? soDigitos(cpf) : null;
     const emailLimpo = email ? email.trim().toLowerCase() : null;
@@ -477,11 +490,15 @@ router.post('/inscrever', async (req, res) => {
       });
     }
 
-    // Já é membro e a foto veio (e ele ainda não tem) → aproveita o reforço visual.
-    if (membroId && fotoUrl) {
-      const { data: mem } = await supabase.from('mem_membros').select('foto_url').eq('id', membroId).maybeSingle();
-      if (mem && !mem.foto_url) {
-        await supabase.from('mem_membros').update({ foto_url: fotoUrl }).eq('id', membroId);
+    // Já é membro: aproveita a foto e o sexo declarados quando o cadastro
+    // ainda não os tem (enriquecimento só-onde-vazio).
+    if (membroId && (fotoUrl || generoLimpo)) {
+      const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero').eq('id', membroId).maybeSingle();
+      if (mem) {
+        const upd = {};
+        if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
+        if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
+        if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
       }
     }
 
@@ -496,6 +513,7 @@ router.post('/inscrever', async (req, res) => {
         email: emailLimpo,
         telefone: telefone || null,
         data_nascimento: data_nascimento || null,
+        genero: generoLimpo,
         foto_url: fotoUrl,
         origem: 'qr_code',
         aceita_termos: !!aceita_termos,
