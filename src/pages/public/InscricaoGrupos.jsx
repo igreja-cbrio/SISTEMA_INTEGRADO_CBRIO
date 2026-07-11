@@ -94,18 +94,31 @@ export default function InscricaoGrupos() {
   const [fotoUploading, setFotoUploading] = useState(false);
   const [fotoErro, setFotoErro] = useState('');
 
-  // Quando vem com ?grupo=<id> (ex: clique no mapa), pre-carrega o
-  // grupo e pula direto para o passo 1 (dados).
+  // Quando vem com ?grupo=<id> (QR específico do grupo / clique no mapa),
+  // pré-carrega o grupo e pula direto para o passo 1 (dados) — MAS avisa
+  // CEDO se as inscrições estão fechadas (grupo pausado ou temporada
+  // encerrada): antes a pessoa preenchia tudo e só era recusada no envio.
+  const [avisoDeepLink, setAvisoDeepLink] = useState(null); // { grupoNome }
   useEffect(() => {
     if (!grupoParam) return;
     let cancelled = false;
     (async () => {
       try {
         const g = await gruposPublic.getById(grupoParam);
-        if (!cancelled && g && g.id) {
-          setGrupoEscolhido(g);
-          setStep(1);
+        if (cancelled || !g || !g.id) return;
+        let fechado = g.aceitando_inscricoes === false;
+        if (!fechado && g.temporada) {
+          const ts = await gruposPublic.temporadas().catch(() => []);
+          const t = (ts || []).find(x => x.id === g.temporada);
+          if (t && !t.inscricoes_abertas) fechado = true;
         }
+        if (cancelled) return;
+        if (fechado) {
+          setAvisoDeepLink({ grupoNome: g.nome });
+          return; // fica no passo 0 — o seletor mostra os grupos abertos
+        }
+        setGrupoEscolhido(g);
+        setStep(1);
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -115,9 +128,12 @@ export default function InscricaoGrupos() {
     setForm(FORM_VAZIO);
     setAceitaTermos(false);
     setError(''); setDup(null); setResultado(null); setFotoErro('');
-    setStep(grupoParam ? 1 : 0);
-    if (!grupoParam) setGrupoEscolhido(null);
-  }, [grupoParam]);
+    // Deep-link com inscrições fechadas NÃO volta pro passo 1 (o grupo do
+    // QR nem foi selecionado — a pessoa fica na escolha dos grupos abertos).
+    const deepLinkValido = grupoParam && !avisoDeepLink;
+    setStep(deepLinkValido ? 1 : 0);
+    if (!deepLinkValido) setGrupoEscolhido(null);
+  }, [grupoParam, avisoDeepLink]);
 
   // ── Auto-reset por ociosidade (SÓ no totem) ──
   const busyRef = useRef(false);
@@ -290,6 +306,16 @@ export default function InscricaoGrupos() {
             </div>
           ) : step === 0 ? (
             <div>
+              {avisoDeepLink && (
+                <div style={{
+                  padding: '10px 12px', marginBottom: 14, borderRadius: 10,
+                  background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.5)',
+                  fontSize: 12.5, color: C.isDark ? '#fbbf24' : '#92400e', lineHeight: 1.55,
+                }}>
+                  O grupo <strong>{avisoDeepLink.grupoNome}</strong> não está recebendo inscrições no momento.
+                  Veja abaixo os grupos com inscrições abertas.
+                </div>
+              )}
               <h2 style={{ color: C.text, fontSize: 16, fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Users size={18} style={{ color: '#00B39D' }} /> 1. Escolha o grupo
               </h2>

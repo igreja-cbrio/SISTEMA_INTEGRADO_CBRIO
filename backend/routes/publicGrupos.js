@@ -175,7 +175,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { data: grupo, error } = await supabase
       .from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo')
+      .select('id, codigo, nome, categoria, faixa_etaria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
