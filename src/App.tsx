@@ -705,6 +705,26 @@ function AppRoutes() {
   );
 }
 
+// Domínio público oficial da igreja. Nesses hosts o app carrega SÓ o site
+// institucional (isolado do ERP), com a home na raiz. O ERP segue em cbrio.org.
+const SITE_PUBLICO_HOSTS = ['cbrio.com.br', 'www.cbrio.com.br'];
+function isSitePublicoHost() {
+  return typeof window !== 'undefined' && SITE_PUBLICO_HOSTS.includes(window.location.hostname);
+}
+
+function SitePublicoRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
+      <Route path="/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      {/* caminhos antigos da prévia continuam funcionando */}
+      <Route path="/novosite" element={<Navigate to="/" replace />} />
+      <Route path="/novosite/quem-somos" element={<Navigate to="/quem-somos" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 export default function App() {
   // Se o app rodar estável por 5s, a navegação deu certo → tira _chunk_retry/_cb
   // da URL pra ZERAR o contador de retries (senão um retry grudado come as
@@ -724,6 +744,15 @@ export default function App() {
     }, 5000);
     return () => clearTimeout(t);
   }, []);
+  if (isSitePublicoHost()) {
+    return (
+      <ErrorBoundary>
+        <BrowserRouter>
+          <SitePublicoRoutes />
+        </BrowserRouter>
+      </ErrorBoundary>
+    );
+  }
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
