@@ -1086,6 +1086,141 @@ router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, re
   }
 });
 
+// GET /app/voluntariado/escala/:serviceId/checkins — quem já tem presença
+// (pra UI de gestão de check-in do supervisor saber quem bateu ponto no culto).
+router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { data, error } = await supabase.from('vol_check_ins')
+      .select('id, schedule_id, volunteer_id, checked_in_at, method, volunteer_name, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+      .eq('service_id', req.params.serviceId)
+      .order('checked_in_at', { ascending: false });
+    if (error) throw error;
+    res.json((data || []).map((c) => ({
+      id: c.id,
+      schedule_id: c.schedule_id,
+      volunteer_id: c.volunteer_id,
+      volunteer_name: c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || null,
+      checked_in_at: c.checked_in_at,
+      method: c.method,
+    })));
+  } catch (e) {
+    console.error('[APP vol/escala checkins]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os check-ins' });
+  }
+});
+
+// POST /app/voluntariado/checkin — supervisor registra presença pelo app.
+// Reusa a lógica de check-in de voluntariado.js POST /check-ins: resolve a
+// escala do dia (prioriza o bloco manhã/noite) e faz DEDUP por BLOCO de culto
+// (a manhã 08:30/10:00/11:30 cobre com 1 check-in) → duplicado devolve 409.
+// checked_in_by = o membro logado do app (req.user = auth.users). method
+// default 'manual'. NÃO mexe em cultos/Integração — só controle do voluntariado.
+router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { service_id, schedule_id, volunteer_id, method } = req.body || {};
+    if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
+    const metodo = ['qr_code', 'manual', 'facial', 'self_service'].includes(method) ? method : 'manual';
+
+    const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
+    const periodoSP = (iso) => { try { const h = Number(new Date(iso).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2)); return h < 14 ? 'manha' : 'noite'; } catch { return 'noite'; } };
+
+    let resolvedScheduleId = schedule_id || null;
+    let resolvedVolunteerId = volunteer_id || null;
+    let resolvedUnscheduled;
+
+    const { data: ciSvc } = await supabase.from('vol_services').select('scheduled_at').eq('id', service_id).maybeSingle();
+    const ciDate = ciSvc?.scheduled_at ? dateSP(ciSvc.scheduled_at) : null;
+    const ciPer = ciSvc?.scheduled_at ? periodoSP(ciSvc.scheduled_at) : null;
+
+    if (ciDate) {
+      const { data: svcsDia } = await supabase.from('vol_services')
+        .select('id, scheduled_at')
+        .gte('scheduled_at', `${ciDate}T00:00:00-03:00`).lt('scheduled_at', `${ciDate}T23:59:59-03:00`);
+      const idsDia = (svcsDia || []).map((s) => s.id);
+      const idsBloco = (svcsDia || []).filter((s) => periodoSP(s.scheduled_at) === ciPer).map((s) => s.id);
+
+      // Se veio só a escala, resolve o volunteer_id por ela (pra deduplicar).
+      if (!resolvedVolunteerId && resolvedScheduleId) {
+        const { data: sch } = await supabase.from('vol_schedules').select('volunteer_id').eq('id', resolvedScheduleId).maybeSingle();
+        if (sch?.volunteer_id) resolvedVolunteerId = sch.volunteer_id;
+      }
+
+      // DEDUP por bloco: 1 check-in cobre a manhã (ou a noite) inteira → 409.
+      if (resolvedVolunteerId && idsBloco.length) {
+        const { data: jaTem } = await supabase.from('vol_check_ins')
+          .select('id, checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+          .eq('volunteer_id', resolvedVolunteerId).in('service_id', idsBloco)
+          .order('checked_in_at', { ascending: true }).limit(1);
+        if (jaTem && jaTem[0]) {
+          const ex = jaTem[0];
+          return res.status(409).json({
+            error: 'Check-in já foi realizado', alreadyCheckedIn: true,
+            volunteerName: ex.volunteer?.full_name || ex.schedule?.volunteer_name || null,
+            checkedInAt: ex.checked_in_at, method: ex.method,
+          });
+        }
+      }
+
+      // MATCH da escala no dia inteiro (prioriza o mesmo bloco) quando não veio.
+      if (!resolvedScheduleId && idsDia.length) {
+        let vp = null;
+        if (resolvedVolunteerId) ({ data: vp } = await supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', resolvedVolunteerId).maybeSingle());
+        const vpName = norm(vp?.full_name);
+        const { data: scheds } = await supabase.from('vol_schedules')
+          .select('id, volunteer_id, planning_center_person_id, volunteer_name, service_id').in('service_id', idsDia);
+        const casa = (s) => (
+          (resolvedVolunteerId && s.volunteer_id && s.volunteer_id === resolvedVolunteerId) ||
+          (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
+          (vpName && norm(s.volunteer_name) === vpName)
+        );
+        const match = (scheds || []).filter((s) => idsBloco.includes(s.service_id)).find(casa) || (scheds || []).find(casa);
+        if (match) {
+          resolvedScheduleId = match.id;
+          resolvedUnscheduled = false;
+          if (!resolvedVolunteerId && match.volunteer_id) resolvedVolunteerId = match.volunteer_id;
+        } else {
+          resolvedUnscheduled = true;
+        }
+      }
+    }
+
+    if (!resolvedVolunteerId && !resolvedScheduleId) {
+      return res.status(400).json({ error: 'Informe o voluntário (volunteer_id) ou a escala (schedule_id) pra registrar o check-in.' });
+    }
+
+    const { data, error } = await supabase.from('vol_check_ins').insert({
+      schedule_id: resolvedScheduleId,
+      volunteer_id: resolvedVolunteerId,
+      service_id,
+      checked_in_by: req.user.id,
+      method: metodo,
+      is_unscheduled: resolvedUnscheduled || false,
+    }).select('id, schedule_id, volunteer_id, service_id, checked_in_at, method, is_unscheduled').single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Check-in já foi realizado', alreadyCheckedIn: true });
+      }
+      throw error;
+    }
+
+    // Confirma a escala se ainda pendente (mesmo comportamento do totem).
+    if (resolvedScheduleId) {
+      await supabase.from('vol_schedules')
+        .update({ confirmation_status: 'confirmed' }).eq('id', resolvedScheduleId).eq('confirmation_status', 'pending');
+    }
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[APP vol/checkin post]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar check-in' });
+  }
+});
+
 // ── NEXT · inscrição + próximos encontros + check-in geolocalizado ────────
 // Tudo vinculado ao mem_membros (resolveMembroApp) → alimenta a jornada.
 // Geofence configurável por env (defina as coordenadas EXATAS no Vercel):
