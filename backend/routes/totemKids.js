@@ -1197,6 +1197,7 @@ router.get('/frequencia-sistema', authorizeModule('kids', 1), async (req, res) =
     const { data: checkins } = await supabase.from('kids_checkins')
       .select('id, sessao_id, crianca_id, checkin_at, checkout_at, codigo_seguranca, responsavel_checkin_nome, crianca:kids_criancas(id, nome, data_nascimento)')
       .in('sessao_id', sessoes.map(s => s.id))
+      .is('deleted_at', null)
       .order('checkin_at', { ascending: true });
 
     const horaBRT = (iso) => {
