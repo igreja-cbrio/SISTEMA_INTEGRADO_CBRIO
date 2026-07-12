@@ -33,11 +33,14 @@ const STATUS_LABEL = {
 // embedded: renderizado dentro da Caixa de entrada do /grupos (a aba já tem
 // título/explicação — esconde o cabeçalho próprio, mantém a linha de escopo).
 export default function PedidosGrupo({ embedded = false }) {
-  const { profile } = useAuth();
-  const isAdmin = ['admin', 'diretor'].includes(profile?.role);
+  const { profile, getAccessLevel } = useAuth();
+  // Ver TUDO não é só role admin/diretor: quem gere o módulo Grupos (nível 4+
+  // — ex.: Nana/Nélio, donos via boost de área) também acompanha e aprova a
+  // caixa inteira quando o líder não responde.
+  const isAdmin = ['admin', 'diretor'].includes(profile?.role) || (getAccessLevel?.(['grupos']) ?? 0) >= 4;
   const [pedidos, setPedidos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showAll, setShowAll] = useState(isAdmin); // admin ve tudo por padrão
+  const [showAll, setShowAll] = useState(isAdmin); // gestão vê tudo por padrão
   const [filterStatus, setFilterStatus] = useState('pendente');
   const [rejectingId, setRejectingId] = useState(null);
   const [motivoRej, setMotivoRej] = useState('');
@@ -47,6 +50,7 @@ export default function PedidosGrupo({ embedded = false }) {
   const [grupoSugestao, setGrupoSugestao] = useState('');
   const [gruposAtivos, setGruposAtivos] = useState(null); // lazy: carrega no 1º uso
   const [enviandoSugestao, setEnviandoSugestao] = useState(false);
+  const [resumo, setResumo] = useState(null); // cockpit (gestão)
 
   const load = async () => {
     setLoading(true);
@@ -54,7 +58,11 @@ export default function PedidosGrupo({ embedded = false }) {
       const params = { status: filterStatus };
       if (!showAll) params.mine = 'true';
       const data = await api.listarPedidos(params);
-      setPedidos(data || []);
+      // Pendentes: mais ANTIGOS primeiro (é a fila de cobrança da gestão);
+      // demais status seguem do mais recente pro mais antigo.
+      const lista = data || [];
+      if (filterStatus === 'pendente') lista.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      setPedidos(lista);
       setSelected(new Set());
     } catch (e) {
       toast.error('Erro ao carregar pedidos');
@@ -64,6 +72,22 @@ export default function PedidosGrupo({ embedded = false }) {
   };
 
   useEffect(() => { load(); }, [filterStatus, showAll]);
+
+  // Cockpit de acompanhamento (só pra quem vê tudo) — recarrega junto da lista
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.resumoPedidos().then(setResumo).catch(() => {});
+  }, [isAdmin, filterStatus, showAll]);
+
+  // Envelhecimento do pedido pendente: verde <24h · âmbar 1-3 dias · vermelho 3+
+  const idadePedido = (p) => {
+    const horas = (Date.now() - new Date(p.created_at)) / 36e5;
+    const dias = Math.floor(horas / 24);
+    const rotulo = horas < 24 ? 'hoje' : dias === 1 ? 'há 1 dia' : `há ${dias} dias`;
+    const cor = horas < 24 ? C.green : horas < 72 ? C.amber : C.red;
+    const bg = horas < 24 ? C.greenBg : horas < 72 ? C.amberBg : C.redBg;
+    return { rotulo, cor, bg };
+  };
 
   // Capacidade é conselho, não trava: o aviso aparece, mas a aprovação
   // nunca é bloqueada (decisão do líder).
@@ -195,6 +219,34 @@ export default function PedidosGrupo({ embedded = false }) {
         </p>
       </div>
 
+      {/* Cockpit de acompanhamento (gestão): volume, fila e envelhecimento */}
+      {isAdmin && resumo && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 16 }}>
+          <ResumoCard titulo="Pedidos hoje" valor={resumo.hoje} />
+          <ResumoCard
+            titulo="Pendentes"
+            valor={resumo.pendentes}
+            destaque={resumo.pendentes_72h > 0
+              ? `${resumo.pendentes_72h} há 3+ dias`
+              : (resumo.pendentes_24h > 0 ? `${resumo.pendentes_24h} há 1+ dia` : null)}
+            corDestaque={resumo.pendentes_72h > 0 ? C.red : C.amber}
+          />
+          <ResumoCard titulo="Aprovados · 30 dias" valor={resumo.aprovados_30d} />
+          <ResumoCard
+            titulo="Tempo médio de resposta"
+            valor={resumo.tempo_medio_horas == null ? '—'
+              : resumo.tempo_medio_horas < 48 ? `${resumo.tempo_medio_horas}h`
+              : `${Math.round(resumo.tempo_medio_horas / 24)} dias`}
+          />
+          <ResumoCard
+            titulo="Pendente mais antigo"
+            valor={resumo.mais_antigo_dias == null ? '—'
+              : resumo.mais_antigo_dias === 0 ? 'hoje'
+              : `${resumo.mais_antigo_dias} dia${resumo.mais_antigo_dias === 1 ? '' : 's'}`}
+          />
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         {['pendente', 'aprovado', 'rejeitado'].map(s => (
           <button key={s} onClick={() => setFilterStatus(s)} style={{
@@ -279,6 +331,14 @@ export default function PedidosGrupo({ embedded = false }) {
                           Verificar identidade
                         </span>
                       )}
+                      {p.status === 'pendente' && (() => {
+                        const a = idadePedido(p);
+                        return (
+                          <span style={{ fontSize: 10, padding: '1px 8px', borderRadius: 99, background: a.bg, color: a.cor, fontWeight: 700 }}>
+                            {a.rotulo}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div style={{ fontSize: 11, color: C.t3, marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                       {p.email && <span><Mail size={11} style={{ display: 'inline', marginRight: 3 }} /> {p.email}</span>}
@@ -390,6 +450,19 @@ export default function PedidosGrupo({ embedded = false }) {
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Cartão do cockpit de acompanhamento (gestão da caixa de entrada)
+function ResumoCard({ titulo, valor, destaque, corDestaque }) {
+  return (
+    <div style={{ background: C.card, borderRadius: 12, padding: '10px 14px', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
+      <div style={{ fontSize: 11, color: C.t3, marginBottom: 2 }}>{titulo}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, lineHeight: 1.1 }}>{valor}</div>
+      {destaque && (
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: corDestaque || C.amber, marginTop: 2 }}>{destaque}</div>
       )}
     </div>
   );
