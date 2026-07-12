@@ -520,6 +520,7 @@ export const grupos = {
   criarPedido: (grupoId, data) => post(`/grupos/${grupoId}/pedidos`, data),
   listarPedidos: (params) => get('/grupos/pedidos/list' + (params ? '?' + new URLSearchParams(params) : '')),
   contarPedidos: () => get('/grupos/pedidos/count'),
+  resumoPedidos: () => get('/grupos/pedidos/resumo'),
   historicoMembros: (grupoId) => get(`/grupos/${grupoId}/historico-membros`),
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
   aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),

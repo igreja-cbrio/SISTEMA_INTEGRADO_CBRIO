@@ -925,6 +925,61 @@ router.get('/pedidos/list', async (req, res) => {
   } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
 });
 
+// GET /api/grupos/pedidos/resumo — cockpit da caixa de entrada (Nana):
+// pedidos de hoje, pendentes com envelhecimento, decididos em 30 dias e
+// tempo médio de resposta. Leitura agregada, sem PII além de contagens.
+router.get('/pedidos/resumo', async (req, res) => {
+  try {
+    const agora = Date.now();
+    const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
+    const d30 = new Date(agora - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const h24 = new Date(agora - 24 * 60 * 60 * 1000).toISOString();
+    const h72 = new Date(agora - 72 * 60 * 60 * 1000).toISOString();
+
+    const contar = async (mod) => {
+      let q = supabase.from('mem_grupo_pedidos').select('id', { count: 'exact', head: true }).is('deleted_at', null);
+      q = mod(q);
+      const { count } = await q;
+      return count || 0;
+    };
+
+    const [hoje, pendentes, pend24, pend72, aprov30, rejei30] = await Promise.all([
+      contar(q => q.gte('created_at', hoje0.toISOString())),
+      contar(q => q.eq('status', 'pendente')),
+      contar(q => q.eq('status', 'pendente').lt('created_at', h24)),
+      contar(q => q.eq('status', 'pendente').lt('created_at', h72)),
+      contar(q => q.eq('status', 'aprovado').gte('decidido_em', d30)),
+      contar(q => q.eq('status', 'rejeitado').gte('decidido_em', d30)),
+    ]);
+
+    // Pendente mais antigo + tempo médio de decisão (últimos 30d)
+    const { data: maisAntigo } = await supabase.from('mem_grupo_pedidos')
+      .select('created_at').eq('status', 'pendente').is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(1).maybeSingle();
+    const { data: decididos } = await supabase.from('mem_grupo_pedidos')
+      .select('created_at, decidido_em').in('status', ['aprovado', 'rejeitado'])
+      .gte('decidido_em', d30).is('deleted_at', null).limit(1000);
+    let tempoMedioHoras = null;
+    if (decididos?.length) {
+      const soma = decididos.reduce((acc, p) => acc + (new Date(p.decidido_em) - new Date(p.created_at)), 0);
+      tempoMedioHoras = Math.round(soma / decididos.length / 36e5 * 10) / 10;
+    }
+
+    res.json({
+      hoje,
+      pendentes,
+      pendentes_24h: pend24,
+      pendentes_72h: pend72,
+      aprovados_30d: aprov30,
+      rejeitados_30d: rejei30,
+      mais_antigo_dias: maisAntigo
+        ? Math.floor((agora - new Date(maisAntigo.created_at)) / 864e5)
+        : null,
+      tempo_medio_horas: tempoMedioHoras,
+    });
+  } catch (e) { console.error('[Pedidos resumo]', e.message); res.status(500).json({ error: 'Erro ao carregar o resumo' }); }
+});
+
 // GET /api/grupos/pedidos/count — contador de pedidos pendentes do user logado
 // (grupos que ele lidera). Usado por badge na sidebar / aba Pedidos.
 router.get('/pedidos/count', async (req, res) => {
