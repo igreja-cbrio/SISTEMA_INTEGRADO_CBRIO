@@ -852,7 +852,8 @@ router.post('/sugestao/aceitar', async (req, res) => {
 // 1×/mês o cron manda o template com o link; o líder marca quem participou
 // dos encontros do mês → vira mem_grupo_encontros + presenças (data = último
 // dia do mês), pelos MESMOS RPCs do fluxo autenticado (contadores ok).
-// Token 'freq' = { g: grupoId, m: 'YYYY-MM', l: liderId } · amarrado ao líder.
+// Token 'freq' = { p: grupoId, m: 'YYYY-MM', l: liderId } · amarrado ao líder
+// (o assinarToken sempre grava o id do assunto em `p`).
 // ─────────────────────────────────────────────────────────────
 
 // Último dia do mês 'YYYY-MM' → 'YYYY-MM-DD'
@@ -870,7 +871,7 @@ async function contextoFrequencia(token) {
   const dataEncontro = ultimoDiaDoMes(payload.m);
   if (!dataEncontro) return { erro: { status: 400, msg: 'Mês inválido no link.' } };
   const { data: grupo, error } = await supabase.from('mem_grupos')
-    .select('id, nome, lider_id, ativo').eq('id', payload.g).is('deleted_at', null).maybeSingle();
+    .select('id, nome, lider_id, ativo').eq('id', payload.p).is('deleted_at', null).maybeSingle();
   if (error) throw error;
   if (!grupo || !grupo.ativo) return { erro: { status: 404, msg: 'Grupo não encontrado.' } };
   if (!payload.l || grupo.lider_id !== payload.l) {
@@ -943,14 +944,31 @@ router.post('/grupo/frequencia', async (req, res) => {
 
     const observacoes = `Frequência do mês (${rotuloMes(payload.m)}) registrada pelo líder via WhatsApp.`;
     const { data: encontro } = await supabase.from('mem_grupo_encontros')
-      .select('id').eq('grupo_id', grupo.id).eq('data', dataEncontro).maybeSingle();
+      .select('id, tema, observacoes').eq('grupo_id', grupo.id).eq('data', dataEncontro).maybeSingle();
 
     if (encontro) {
-      // Reedição: mesmo RPC do PATCH autenticado (ajusta presenças + contadores)
+      // Já existe encontro nesta data. Dois casos:
+      //  - É o NOSSO (marcador "Frequência do mês" nas observações): reedição
+      //    legítima → substitui as presenças pelo set novo.
+      //  - É um encontro MANUAL do líder que caiu no último dia do mês: NÃO
+      //    pode ser corrompido → preserva tema/observações (anexa o marcador)
+      //    e faz UNIÃO das presenças (frequência nunca REMOVE presença manual).
+      const nosso = (encontro.observacoes || '').includes('Frequência do mês');
+      let presencasFinais = marcados;
+      let temaFinal = encontro.tema || 'Frequência do mês';
+      let obsFinal = observacoes;
+      if (!nosso) {
+        const { data: presAtuais } = await supabase.from('mem_grupo_encontro_presencas')
+          .select('membro_id').eq('encontro_id', encontro.id).eq('presente', true);
+        presencasFinais = [...new Set([...(presAtuais || []).map(p => p.membro_id), ...marcados])];
+        temaFinal = encontro.tema || null;
+        obsFinal = [encontro.observacoes, observacoes].filter(Boolean).join(' · ');
+      }
+      // Mesmo RPC do PATCH autenticado (diff de presenças + contadores)
       const { error } = await supabase.rpc('atualizar_encontro_grupo', {
         p_encontro_id: encontro.id,
-        p_data: null, p_tema: null, p_observacoes: observacoes,
-        p_membros_presentes: marcados,
+        p_data: null, p_tema: temaFinal, p_observacoes: obsFinal,
+        p_membros_presentes: presencasFinais,
       });
       if (error) throw error;
     } else {
@@ -976,6 +994,9 @@ router.post('/grupo/frequencia', async (req, res) => {
 // GET /api/public/grupos/cron/frequencia-mensal — Vercel Cron (dia 28) manda
 // o template a cada líder de grupo ativo com roster. Gated por CRON_SECRET
 // (fail-closed) e pelo WHATSAPP_ENABLED (sem ele, nada é enviado).
+// ⚠️ Sem idempotência por mês DE PROPÓSITO: re-executar manualmente reenvia
+// o template a todos os líderes (~1 conversa paga por líder) — use com
+// intenção (ex.: reenvio deliberado no fim do mês pra quem não respondeu).
 router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
   try {
     const mes = new Date().toISOString().slice(0, 7); // mês corrente
