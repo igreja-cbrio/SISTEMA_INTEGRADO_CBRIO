@@ -23,8 +23,16 @@ export const LINKS = {
   next: 'https://www.cbrio.org/next/inscrever',
 };
 
-export const HOME = '/novosite';
-export const QUEM_SOMOS = '/novosite/quem-somos';
+/**
+ * No domínio público (cbrio.com.br) o site vive na raiz; dentro do ERP
+ * (cbrio.org) ele fica sob /novosite como prévia interna. `SITE_PUBLICO`
+ * decide os caminhos da navegação, o noindex e a tarja de prévia.
+ */
+export const SITE_PUBLICO = typeof window !== 'undefined'
+  && ['cbrio.com.br', 'www.cbrio.com.br'].includes(window.location.hostname);
+
+export const HOME = SITE_PUBLICO ? '/' : '/novosite';
+export const QUEM_SOMOS = SITE_PUBLICO ? '/quem-somos' : '/novosite/quem-somos';
 
 export const NAV = [
   { label: 'Início', to: HOME },
@@ -192,15 +200,20 @@ export function useChrome(title?: string) {
   useEffect(() => {
     const prevBg = document.body.style.background;
     document.body.style.background = '#F2ECE8';
-    const meta = document.createElement('meta');
-    meta.name = 'robots';
-    meta.content = 'noindex, nofollow';
-    document.head.appendChild(meta);
+    // No ERP (/novosite) mantém noindex pra não competir com o site oficial;
+    // no domínio público (cbrio.com.br) o site DEVE ser indexado pelo Google.
+    let meta: HTMLMetaElement | null = null;
+    if (!SITE_PUBLICO) {
+      meta = document.createElement('meta');
+      meta.name = 'robots';
+      meta.content = 'noindex, nofollow';
+      document.head.appendChild(meta);
+    }
     const prevTitle = document.title;
     document.title = title || 'CBRio · Comunidade Batista do Rio de Janeiro';
     return () => {
       document.body.style.background = prevBg;
-      if (meta.parentNode) document.head.removeChild(meta);
+      if (meta && meta.parentNode) document.head.removeChild(meta);
       document.title = prevTitle;
     };
   }, [title]);
@@ -243,5 +256,6 @@ export function useHashScroll() {
 }
 
 export function Badge() {
+  if (SITE_PUBLICO) return null;
   return <span className="ns-badge">prévia · /novosite</span>;
 }
