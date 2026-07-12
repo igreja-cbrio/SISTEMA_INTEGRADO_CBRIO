@@ -31,6 +31,15 @@ const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'gr
 // grupos_pedido_recusado, foi reclassificada pela Meta como MARKETING (2º link
 // de navegação + tom promocional); a UTILITY é mais barata e não é pausável.
 const TPL_SUGESTAO_GRUPO = process.env.WHATSAPP_TEMPLATE_GRUPOS_SUGESTAO || 'grupos_sugestao_grupo';
+const TPL_FREQUENCIA_MES = process.env.WHATSAPP_TEMPLATE_GRUPOS_FREQUENCIA || 'grupos_frequencia_mes';
+
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+// 'YYYY-MM' → 'julho/2026'
+function rotuloMes(m) {
+  const [ano, mes] = String(m || '').split('-').map(Number);
+  return (mes >= 1 && mes <= 12) ? `${MESES[mes - 1]}/${ano}` : String(m || '');
+}
 
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
@@ -183,12 +192,43 @@ async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome
   }
 }
 
+// Template 4 · grupos_frequencia_mes — 1×/mês pede ao LÍDER a chamada do mês
+// pelo link /g/f/<token> (marca quem participou · vira encontro+presenças).
+// {{1}} primeiro nome do líder · {{2}} mês (julho/2026) · {{3}} grupo · {{4}} link
+async function notificarLiderFrequencia({ grupo, lider, mes }) {
+  try {
+    // Gate ANTES de assinar (token não pode parar em log de dry-run).
+    if (!WHATSAPP_LIGADO()) return { sent: false, reason: 'disabled' };
+    if (!lider?.telefone) return { sent: false, reason: 'lider_sem_telefone' };
+    let link;
+    try {
+      link = `${baseUrl()}/g/f/${assinarToken('freq', grupo.id, { m: mes, l: grupo.lider_id })}`;
+    } catch (e) {
+      console.error('[GruposWPP] token não assinado:', e.message);
+      return { sent: false, reason: 'sem_secret' };
+    }
+    const r = await sendTemplate(lider.telefone, TPL_FREQUENCIA_MES, TEMPLATE_LANG, [
+      (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
+      rotuloMes(mes),
+      (grupo.nome || '').trim() || 'seu grupo',
+      link,
+    ]);
+    if (!r.sent) console.log('[GruposWPP] template frequência não enviado:', r.reason || r.status);
+    return r;
+  } catch (e) {
+    console.error('[GruposWPP] notificarLiderFrequencia:', e.message);
+    return { sent: false, reason: 'exception' };
+  }
+}
+
 module.exports = {
   assinarToken,
   verificarToken,
   formatarQuando,
   formatarOnde,
+  rotuloMes,
   notificarLiderNovoPedido,
   notificarPessoaAprovada,
   notificarPessoaSugestao,
+  notificarLiderFrequencia,
 };

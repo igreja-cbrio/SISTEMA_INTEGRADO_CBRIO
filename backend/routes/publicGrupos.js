@@ -11,7 +11,9 @@ const {
 } = require('../services/membroMatch');
 const {
   verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
+  notificarLiderFrequencia, rotuloMes,
 } = require('../services/gruposWhatsapp');
+const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
 // O formulário roda num navegador quiosque no lounge (1 IP) e, num domingo
@@ -842,6 +844,187 @@ router.post('/sugestao/aceitar', async (req, res) => {
   } catch (e) {
     console.error('[public grupos sugestao aceitar]', e.message);
     res.status(500).json({ error: 'Erro ao processar aceite.' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Frequência MENSAL pelo líder (/g/f/<token> · sem login).
+// 1×/mês o cron manda o template com o link; o líder marca quem participou
+// dos encontros do mês → vira mem_grupo_encontros + presenças (data = último
+// dia do mês), pelos MESMOS RPCs do fluxo autenticado (contadores ok).
+// Token 'freq' = { p: grupoId, m: 'YYYY-MM', l: liderId } · amarrado ao líder
+// (o assinarToken sempre grava o id do assunto em `p`).
+// ─────────────────────────────────────────────────────────────
+
+// Último dia do mês 'YYYY-MM' → 'YYYY-MM-DD'
+function ultimoDiaDoMes(m) {
+  const [ano, mes] = String(m || '').split('-').map(Number);
+  if (!ano || !mes || mes < 1 || mes > 12) return null;
+  const dia = new Date(ano, mes, 0).getDate();
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+}
+
+// Carrega e valida o contexto do token de frequência (grupo + líder atual).
+async function contextoFrequencia(token) {
+  const payload = verificarToken(token, 'freq');
+  if (!payload) return { erro: { status: 401, msg: 'Link inválido ou expirado.' } };
+  const dataEncontro = ultimoDiaDoMes(payload.m);
+  if (!dataEncontro) return { erro: { status: 400, msg: 'Mês inválido no link.' } };
+  const { data: grupo, error } = await supabase.from('mem_grupos')
+    .select('id, nome, lider_id, ativo').eq('id', payload.p).is('deleted_at', null).maybeSingle();
+  if (error) throw error;
+  if (!grupo || !grupo.ativo) return { erro: { status: 404, msg: 'Grupo não encontrado.' } };
+  if (!payload.l || grupo.lider_id !== payload.l) {
+    return { erro: { status: 403, msg: 'A liderança deste grupo mudou — este link não vale mais.' } };
+  }
+  return { payload, grupo, dataEncontro };
+}
+
+// GET /api/public/grupos/grupo/frequencia?token=...
+// Roster do grupo + o que já foi marcado neste mês (reedição).
+router.get('/grupo/frequencia', async (req, res) => {
+  try {
+    const ctx = await contextoFrequencia(req.query.token);
+    if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
+    const { payload, grupo, dataEncontro } = ctx;
+
+    const { data: vinculos } = await supabase.from('mem_grupo_membros')
+      .select('membro_id, mem_membros!inner(id, nome, foto_url)')
+      .eq('grupo_id', grupo.id).is('saiu_em', null).is('deleted_at', null)
+      .limit(1000);
+
+    // Já existe a chamada deste mês? (UNIQUE grupo+data)
+    const { data: encontro } = await supabase.from('mem_grupo_encontros')
+      .select('id').eq('grupo_id', grupo.id).eq('data', dataEncontro).maybeSingle();
+    let presentes = [];
+    if (encontro) {
+      const { data: pres } = await supabase.from('mem_grupo_encontro_presencas')
+        .select('membro_id').eq('encontro_id', encontro.id).eq('presente', true);
+      presentes = (pres || []).map(p => p.membro_id);
+    }
+
+    res.json({
+      grupo: { nome: grupo.nome },
+      mes: payload.m,
+      mes_rotulo: rotuloMes(payload.m),
+      ja_salvo: !!encontro,
+      membros: (vinculos || [])
+        .map(v => ({
+          id: v.mem_membros.id,
+          nome: v.mem_membros.nome,
+          foto_url: v.mem_membros.foto_url || null,
+          presente: presentes.includes(v.mem_membros.id),
+        }))
+        .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR')),
+    });
+  } catch (e) {
+    console.error('[public grupos frequencia get]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o grupo.' });
+  }
+});
+
+// POST /api/public/grupos/grupo/frequencia — body { token, presentes: [membro_ids] }
+router.post('/grupo/frequencia', async (req, res) => {
+  try {
+    const { token, presentes } = req.body || {};
+    if (!Array.isArray(presentes)) return res.status(400).json({ error: 'presentes deve ser uma lista.' });
+    const ctx = await contextoFrequencia(token);
+    if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
+    const { payload, grupo, dataEncontro } = ctx;
+
+    // Só membros do roster ativo podem ser marcados (token não dá poder além do grupo)
+    const { data: vinculos } = await supabase.from('mem_grupo_membros')
+      .select('membro_id').eq('grupo_id', grupo.id).is('saiu_em', null).is('deleted_at', null).limit(1000);
+    const roster = new Set((vinculos || []).map(v => v.membro_id));
+    const marcados = [...new Set(presentes.filter(id => roster.has(id)))];
+
+    let liderNome = 'Líder do grupo';
+    const { data: lider } = await supabase.from('mem_membros').select('nome').eq('id', grupo.lider_id).maybeSingle();
+    if (lider?.nome) liderNome = lider.nome;
+
+    const observacoes = `Frequência do mês (${rotuloMes(payload.m)}) registrada pelo líder via WhatsApp.`;
+    const { data: encontro } = await supabase.from('mem_grupo_encontros')
+      .select('id, tema, observacoes').eq('grupo_id', grupo.id).eq('data', dataEncontro).maybeSingle();
+
+    if (encontro) {
+      // Já existe encontro nesta data. Dois casos:
+      //  - É o NOSSO (marcador "Frequência do mês" nas observações): reedição
+      //    legítima → substitui as presenças pelo set novo.
+      //  - É um encontro MANUAL do líder que caiu no último dia do mês: NÃO
+      //    pode ser corrompido → preserva tema/observações (anexa o marcador)
+      //    e faz UNIÃO das presenças (frequência nunca REMOVE presença manual).
+      const nosso = (encontro.observacoes || '').includes('Frequência do mês');
+      let presencasFinais = marcados;
+      let temaFinal = encontro.tema || 'Frequência do mês';
+      let obsFinal = observacoes;
+      if (!nosso) {
+        const { data: presAtuais } = await supabase.from('mem_grupo_encontro_presencas')
+          .select('membro_id').eq('encontro_id', encontro.id).eq('presente', true);
+        presencasFinais = [...new Set([...(presAtuais || []).map(p => p.membro_id), ...marcados])];
+        temaFinal = encontro.tema || null;
+        obsFinal = [encontro.observacoes, observacoes].filter(Boolean).join(' · ');
+      }
+      // Mesmo RPC do PATCH autenticado (diff de presenças + contadores)
+      const { error } = await supabase.rpc('atualizar_encontro_grupo', {
+        p_encontro_id: encontro.id,
+        p_data: null, p_tema: temaFinal, p_observacoes: obsFinal,
+        p_membros_presentes: presencasFinais,
+      });
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.rpc('registrar_encontro_grupo', {
+        p_grupo_id: grupo.id,
+        p_data: dataEncontro,
+        p_tema: 'Frequência do mês',
+        p_observacoes: observacoes,
+        p_registrado_por: null,
+        p_registrado_por_nome: `${liderNome} (link WhatsApp)`,
+        p_membros_presentes: marcados,
+      });
+      if (error) throw error;
+    }
+
+    res.json({ ok: true, marcados: marcados.length, total: roster.size });
+  } catch (e) {
+    console.error('[public grupos frequencia post]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a frequência.' });
+  }
+});
+
+// GET /api/public/grupos/cron/frequencia-mensal — Vercel Cron (dia 28) manda
+// o template a cada líder de grupo ativo com roster. Gated por CRON_SECRET
+// (fail-closed) e pelo WHATSAPP_ENABLED (sem ele, nada é enviado).
+// ⚠️ Sem idempotência por mês DE PROPÓSITO: re-executar manualmente reenvia
+// o template a todos os líderes (~1 conversa paga por líder) — use com
+// intenção (ex.: reenvio deliberado no fim do mês pra quem não respondeu).
+router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
+  try {
+    const mes = new Date().toISOString().slice(0, 7); // mês corrente
+    const { data: grupos } = await supabase.from('mem_grupos')
+      .select('id, nome, lider_id')
+      .eq('ativo', true).not('lider_id', 'is', null).is('deleted_at', null)
+      .limit(1000);
+
+    let enviados = 0;
+    const pulados = [];
+    for (const g of (grupos || [])) {
+      // Sem gente no roster não há chamada a fazer
+      const { count } = await supabase.from('mem_grupo_membros')
+        .select('id', { count: 'exact', head: true })
+        .eq('grupo_id', g.id).is('saiu_em', null).is('deleted_at', null);
+      if (!count) { pulados.push({ grupo: g.nome, motivo: 'sem_roster' }); continue; }
+
+      const { data: lider } = await supabase.from('mem_membros')
+        .select('nome, telefone').eq('id', g.lider_id).maybeSingle();
+      const r = await notificarLiderFrequencia({ grupo: g, lider, mes });
+      if (r?.sent) enviados += 1;
+      else pulados.push({ grupo: g.nome, motivo: r?.reason || 'erro' });
+    }
+    console.log(`[grupos frequencia cron] mês ${mes}: ${enviados} enviados · ${pulados.length} pulados`);
+    res.json({ ok: true, mes, enviados, pulados: pulados.length });
+  } catch (e) {
+    console.error('[public grupos frequencia cron]', e.message);
+    res.status(500).json({ error: 'Erro no envio mensal.' });
   }
 });
 
