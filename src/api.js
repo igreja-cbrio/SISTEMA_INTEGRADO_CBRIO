@@ -1997,6 +1997,22 @@ export const gruposPublic = {
     if (!r.ok) throw new Error(j.error || 'Erro ao confirmar');
     return j; // { ok, grupo }
   },
+  // Frequência mensal · líder marca quem participou (token = credencial)
+  frequenciaPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/grupo/frequencia?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar a chamada');
+    return j; // { grupo, mes, mes_rotulo, ja_salvo, membros }
+  },
+  salvarFrequencia: async (token, presentes) => {
+    const r = await fetch(`${API}/public/grupos/grupo/frequencia`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, presentes }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao salvar a frequência');
+    return j; // { ok, marcados, total }
+  },
 };
 
 export const apresentacaoCriancasPublico = {
