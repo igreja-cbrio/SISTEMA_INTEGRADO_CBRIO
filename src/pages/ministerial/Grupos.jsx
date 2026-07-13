@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../componen
 import { toast } from 'sonner';
 import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import PedidosGrupo from './PedidosGrupo';
+import GruposEntrada from './GruposEntrada';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
 import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
@@ -21,7 +21,6 @@ import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
 import GruposOrganograma from './GruposOrganograma';
-import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
 // GruposMapView traz maplibre-gl (~290KB gzip). Carregado sob demanda (React.lazy)
 // só quando a aba Mapa abre — não pesa no carregamento inicial de /grupos.
 const GruposMapView = lazy(() => import('@/components/grupos/GruposMapView'));
@@ -52,7 +51,9 @@ const RECORRENCIAS = [
 
 const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais', 'Jovens', 'Mulheres', 'Homens', 'Misto'];
 
-const PAGE_TABS = ['grupos', 'pessoas', 'organograma', 'relatorios', 'mapa', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
+// Mapa virou visualização da aba Grupos e Organograma virou visualização da
+// aba Pessoas (Marcos · 2026-07-13): menos abas, mesma informação.
+const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
 
 // Tipo/papel do membro no grupo · vem da funcao (mem_grupo_membros). "Membro" é
 // o padrão (frequentador); "Visitante" só quem foi marcado como tal (regra:
@@ -67,7 +68,10 @@ const TIPO_PAPEL = {
   coordenador: { label: 'Coordenador', cor: '#8b5cf6', bg: '#8b5cf620' },
 };
 // Chaves antigas de aba (links/notificações) → aba nova
-const TAB_LEGADO = { pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas', geocode: 'config', temporadas: 'config' };
+const TAB_LEGADO = {
+  pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas', geocode: 'config', temporadas: 'config',
+  mapa: 'grupos', organograma: 'pessoas', // viraram visualizações internas (13/07)
+};
 
 function tabDaUrl() {
   try { return new URLSearchParams(window.location.search).get('tab'); } catch { return null; }
@@ -96,6 +100,27 @@ function camposFaltantes(g) {
   if (!g.categoria) faltas.push('Categoria');
   if (!g.rede_id) faltas.push('Rede');
   return faltas;
+}
+
+// Seletor de visualização dentro da aba (Lista|Mapa · Pessoas|Organograma):
+// mesma informação, projeções diferentes — uma ativa por vez (Marcos · 13/07).
+function ViewToggle({ value, onChange, opcoes }) {
+  return (
+    <div style={{ display: 'inline-flex', border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>
+      {opcoes.map(op => {
+        const ativo = value === op.key;
+        return (
+          <button key={op.key} onClick={() => onChange(op.key)} type="button" style={{
+            padding: '8px 18px', fontSize: 13, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
+            border: 'none', background: ativo ? C.primaryBg : 'transparent',
+            color: ativo ? C.primary : C.t3, display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+            {op.Icon && <op.Icon size={15} />} {op.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // v2 - tabs membros/arquivos
@@ -145,7 +170,10 @@ export default function Grupos() {
     if (PAGE_TABS.includes(t)) return t;
     return TAB_LEGADO[t] || 'grupos';
   });
-  const [entradaTab, setEntradaTab] = useState(() => (tabDaUrl() === 'encaminhados' ? 'encaminhados' : 'pedidos'));
+  // Visualizações internas (13/07): Grupos = Lista|Mapa · Pessoas = Pessoas|Organograma.
+  // Deep-links antigos (?tab=mapa / ?tab=organograma) abrem a aba nova já na visualização certa.
+  const [gruposView, setGruposView] = useState(() => (tabDaUrl() === 'mapa' ? 'mapa' : 'lista'));
+  const [pessoasView, setPessoasView] = useState(() => (tabDaUrl() === 'organograma' ? 'organograma' : 'censo'));
   const [configTab, setConfigTab] = useState(() => (tabDaUrl() === 'geocode' ? 'geocode' : 'temporadas'));
   const [visitaOpen, setVisitaOpen] = useState(false);
   // A aba Configurações (Temporadas + Endereços) só aparece pra quem edita o
@@ -1088,9 +1116,7 @@ export default function Grupos() {
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'pessoas', label: 'Pessoas', icon: UserCog },
-          { key: 'organograma', label: 'Organograma', icon: Compass },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
-          { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
@@ -1115,66 +1141,12 @@ export default function Grupos() {
         ))}
       </div>
 
-      {/* ═══ TAB CAIXA DE ENTRADA · pedidos (a pessoa pediu) × encaminhados (sugestão do cuidado) ═══ */}
+      {/* ═══ TAB CAIXA DE ENTRADA · lista única: pedidos de inscrição + direcionados do Next ═══ */}
       {tabAtiva === 'entrada' && (
-        <div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {[
-              { key: 'pedidos', label: 'Pedidos de inscrição', Icon: Inbox, badge: pedidosCount },
-              { key: 'encaminhados', label: 'Encaminhados do cuidado', Icon: HeartHandshake, badge: encPendentes },
-            ].map(st => {
-              const ativo = entradaTab === st.key;
-              return (
-                <button key={st.key} onClick={() => setEntradaTab(st.key)} style={{
-                  padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
-                  border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                  background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                }}>
-                  <st.Icon size={13} /> {st.label}
-                  {st.badge > 0 && (
-                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99, background: '#ef4444', color: '#fff', minWidth: 18, textAlign: 'center' }}>
-                      {st.badge > 99 ? '99+' : st.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <p style={{ fontSize: 12, color: C.t3, margin: '10px 0 0', maxWidth: 760 }}>
-            {entradaTab === 'pedidos'
-              ? 'A própria pessoa pediu pra entrar: viu o QR ou o link do grupo, escolheu e preencheu o formulário. Aqui o líder aprova (ou recusa) e ela entra no grupo.'
-              : 'A pessoa NÃO pediu — é sugestão de quem a atendeu no cuidado pastoral. Alguém precisa entrar em contato, explicar o que é um grupo de conexão, mostrar os disponíveis e registrar a devolutiva.'}
-          </p>
-          {entradaTab === 'pedidos' ? (
-            <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-              <PedidosGrupo embedded />
-            </div>
-          ) : (
-            <div style={{ marginTop: 14 }}>
-              <EncaminhamentosInbox destino="grupos" canWrite={podeEditarGrupos} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ═══ TAB MAPA ═══ */}
-      {tabAtiva === 'mapa' && (
-        <div style={{ height: 'calc(100vh - 220px)', minHeight: 500, borderRadius: 12, overflow: 'hidden', border: `1px solid ${C.border}` }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
-          ) : (
-            <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando mapa...</div>}>
-              <GruposMapView
-                grupos={gruposList.filter(g => g.ativo)}
-                variant="admin"
-                defaultTheme="dark"
-                temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
-                mostrarBotaoInscricao={true}
-              />
-            </Suspense>
-          )}
-        </div>
+        <GruposEntrada
+          podeEditar={podeEditarGrupos}
+          onMudou={() => { loadPedidosCount(); loadEncPendentes(); }}
+        />
       )}
 
       {/* ═══ TAB MATERIAIS ═══ */}
@@ -1336,17 +1308,28 @@ export default function Grupos() {
         </div>
       )}
 
-      {/* ═══ TAB PESSOAS ═══ */}
+      {/* ═══ TAB PESSOAS · visualização Pessoas | Organograma ═══ */}
       {tabAtiva === 'pessoas' && (
-        <GruposPessoas
-          onOpenGrupo={openGrupoById}
-          podeEditar={podeEditarGrupos}
-          gruposOptions={gruposList.filter(g => g.ativo)}
-        />
+        <div>
+          <ViewToggle
+            value={pessoasView}
+            onChange={setPessoasView}
+            opcoes={[
+              { key: 'censo', label: 'Pessoas', Icon: UserCog },
+              { key: 'organograma', label: 'Organograma', Icon: Compass },
+            ]}
+          />
+          {pessoasView === 'organograma' ? (
+            <GruposOrganograma onOpenGrupo={openGrupoById} />
+          ) : (
+            <GruposPessoas
+              onOpenGrupo={openGrupoById}
+              podeEditar={podeEditarGrupos}
+              gruposOptions={gruposList.filter(g => g.ativo)}
+            />
+          )}
+        </div>
       )}
-
-      {/* ═══ TAB ORGANOGRAMA ═══ */}
-      {tabAtiva === 'organograma' && <GruposOrganograma onOpenGrupo={openGrupoById} />}
 
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
@@ -1391,8 +1374,35 @@ export default function Grupos() {
         <RelatorioGrupos temporada={filterTemporada} />
       )}
 
-      {/* ═══ TAB GRUPOS ═══ */}
-      {tabAtiva === 'grupos' && <>
+      {/* ═══ TAB GRUPOS · visualização Lista | Mapa (mesma informação, projeções diferentes) ═══ */}
+      {tabAtiva === 'grupos' && (
+        <ViewToggle
+          value={gruposView}
+          onChange={setGruposView}
+          opcoes={[
+            { key: 'lista', label: 'Lista', Icon: Users },
+            { key: 'mapa', label: 'Mapa', Icon: MapIcon },
+          ]}
+        />
+      )}
+      {tabAtiva === 'grupos' && gruposView === 'mapa' && (
+        <div style={{ height: 'calc(100vh - 270px)', minHeight: 500, borderRadius: 12, overflow: 'hidden', border: `1px solid ${C.border}` }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
+          ) : (
+            <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando mapa...</div>}>
+              <GruposMapView
+                grupos={gruposList.filter(g => g.ativo)}
+                variant="admin"
+                defaultTheme="dark"
+                temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
+                mostrarBotaoInscricao={true}
+              />
+            </Suspense>
+          )}
+        </div>
+      )}
+      {tabAtiva === 'grupos' && gruposView === 'lista' && <>
       {/* Resumo de saúde */}
       {saudeAgregada && saudeAgregada.total > 0 && (
         <div style={{ background: C.card, borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
