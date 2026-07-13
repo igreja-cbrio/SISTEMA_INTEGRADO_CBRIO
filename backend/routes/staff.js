@@ -241,6 +241,92 @@ router.patch('/me', async (req, res) => {
   }
 });
 
+// ── GET /api/staff/dados-pessoais — dados pessoais do colaborador (self-service) ──
+// Lê do rh_funcionarios (match por e-mail). É o que o colaborador mantém sozinho;
+// o RH só cuida de salário/cargo. Cargo/área/admissão vêm read-only pra contexto.
+router.get('/dados-pessoais', async (req, res) => {
+  try {
+    const { data: profile } = await supabase
+      .from('profiles').select('id, name, email, telefone, membro_id').eq('id', req.user.userId).single();
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado' });
+    const { data: func } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, cargo, area, data_admissao, tipo_contrato, telefone, cpf, data_nascimento, endereco, filhos, status')
+      .ilike('email', profile.email).in('status', ['ativo', 'ferias', 'licenca']).is('deleted_at', null).limit(1).maybeSingle();
+    const membro = await resolverMembro(profile.membro_id);
+    res.json({
+      tem_ficha: !!func,
+      nome: func?.nome || profile.name,
+      cargo: func?.cargo || null,
+      area: func?.area || null,
+      data_admissao: func?.data_admissao || null,
+      tipo_contrato: func?.tipo_contrato || null,
+      telefone: profile.telefone || membro?.telefone || func?.telefone || null,
+      cpf: membro?.cpf || func?.cpf || null,
+      data_nascimento: func?.data_nascimento || null,
+      endereco: func?.endereco || null,
+      filhos: Array.isArray(func?.filhos) ? func.filhos : [],
+    });
+  } catch (e) {
+    console.error('[STAFF] dados-pessoais GET:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seus dados' });
+  }
+});
+
+// ── PUT /api/staff/dados-pessoais — o colaborador atualiza os PRÓPRIOS dados ──
+// Só campos pessoais (nunca salário/cargo). Grava direto no rh_funcionarios e
+// sincroniza telefone/cpf nas fontes canônicas. Auto-atualiza o sistema.
+router.put('/dados-pessoais', async (req, res) => {
+  try {
+    const { telefone, cpf, data_nascimento, endereco, filhos } = req.body || {};
+    const { data: profile } = await supabase
+      .from('profiles').select('id, email, membro_id').eq('id', req.user.userId).single();
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado' });
+    const func = await resolverFuncionario(profile.email);
+    if (!func) return res.status(404).json({ error: 'Não encontramos sua ficha de colaborador. Fale com o RH.' });
+
+    const patch = {};
+    if (telefone !== undefined) {
+      const dig = soDigitos(telefone);
+      if (dig && (dig.length < 10 || dig.length > 11)) return res.status(400).json({ error: 'Telefone inválido (DDD + número).' });
+      patch.telefone = dig ? mascaraTelefone(dig) : null;
+    }
+    if (cpf !== undefined) {
+      const dig = soDigitos(cpf);
+      if (dig && dig.length !== 11) return res.status(400).json({ error: 'CPF inválido (11 dígitos).' });
+      patch.cpf = dig || null;
+    }
+    if (data_nascimento !== undefined) patch.data_nascimento = data_nascimento || null;
+    if (endereco !== undefined) patch.endereco = endereco ? String(endereco).slice(0, 500) : null;
+    if (filhos !== undefined) {
+      const arr = Array.isArray(filhos) ? filhos : [];
+      patch.filhos = arr.slice(0, 20).map((f) => ({
+        nome: f?.nome ? String(f.nome).slice(0, 120) : null,
+        idade: (f?.idade === '' || f?.idade == null) ? null
+          : (Number.isFinite(Number(f.idade)) ? Math.max(0, Math.min(120, Math.trunc(Number(f.idade)))) : null),
+      })).filter((f) => f.nome || f.idade != null);
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar.' });
+
+    const { error } = await supabase.from('rh_funcionarios')
+      .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', func.id);
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Sincroniza telefone/cpf nas fontes canônicas (best-effort).
+    if (patch.telefone !== undefined) {
+      supabase.from('profiles').update({ telefone: patch.telefone }).eq('id', profile.id).then(() => {}).catch(() => {});
+      if (profile.membro_id) supabase.from('mem_membros').update({ telefone: patch.telefone }).eq('id', profile.membro_id).then(() => {}).catch(() => {});
+    }
+    if (patch.cpf !== undefined && profile.membro_id) {
+      supabase.from('mem_membros').update({ cpf: patch.cpf }).eq('id', profile.membro_id).then(() => {}).catch(() => {});
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[STAFF] dados-pessoais PUT:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar seus dados' });
+  }
+});
+
 // ── POST /api/staff/me/foto — foto de perfil (a MESMA do sistema) ──
 // Grava no MESMO lugar do POST /api/auth/profile/foto: bucket público
 // `avatars` + profiles.avatar_url. Mudar no app muda no sistema e vice-versa.
