@@ -475,20 +475,20 @@ router.get('/', async (req, res) => {
 
       // Marca em cada item QUAL(is) carimbo(s) o ator tem pendente(s) — o
       // front usa pra saber o que mostrar (botão de origem, gestão ou mérito).
+      // "Aprovar" = SÓ o que está pendente PRA VOCÊ. Portão já aprovado (ou que é
+      // de outra pessoa) não aparece — inclusive pro super-admin (2026-07-13):
+      // antes o super via TODAS as filas, poluindo com pedidos já aprovados na
+      // origem que só aguardavam a Gestão de outra pessoa.
       papeisPorId = {};
       for (const d of data) {
         const papeis = [];
-        const origemPend = ['pendente', 'triagem'].includes(d.aprovacao_origem_status);
-        if (origemPend && (isSuper || (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)))) {
-          papeis.push('origem');
-        }
-        if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && (isSuper || aprovaGestaoDe(d.categoria))) papeis.push('gestao');
-        if (d.status === 'aguardando_merito' && (isSuper || ehMerito)) papeis.push('merito');
+        if (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)) papeis.push('origem');
+        if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && aprovaGestaoDe(d.categoria)) papeis.push('gestao');
+        if (d.status === 'aguardando_merito' && ehMerito) papeis.push('merito');
         papeisPorId[d.id] = papeis;
       }
-      // A query de Gestão traz todas as categorias · o override por categoria
-      // filtra aqui: o ator só vê o que ele realmente pode decidir.
-      if (!isSuper) data = data.filter(d => (papeisPorId[d.id] || []).length);
+      // Só mostra o que o ator realmente pode decidir agora (vale pra todos).
+      data = data.filter(d => (papeisPorId[d.id] || []).length);
     } else {
       let q = supabase
         .from('solicitacoes')
