@@ -1251,6 +1251,7 @@ export const rh = {
     reativar: (id) => post(`/rh/funcionarios/${id}/reativar`),
     concluirAdmissao: (id) => post(`/rh/funcionarios/${id}/concluir-admissao`),
     setGestor: (id, gestorId) => put(`/rh/funcionarios/${id}/gestor`, { gestor_id: gestorId || null }),
+    onboardingLink: (id, regenerar = false) => post(`/rh/funcionarios/${id}/onboarding-link`, { regenerar }),
     uploadFoto: (id, file) => {
       const fd = new FormData();
       fd.append('foto', file);
@@ -3233,4 +3234,10 @@ export const apresentacoes = {
     return res.text();
   },
   resumoUso: () => get('/apresentacoes/uso/resumo'),
+};
+
+// Formulário público de onboarding do colaborador (sem login · token na URL).
+export const onboardingPublico = {
+  get: (token) => get(`/public/rh-onboarding/${encodeURIComponent(token)}`),
+  salvar: (token, dados) => post(`/public/rh-onboarding/${encodeURIComponent(token)}`, dados),
 };

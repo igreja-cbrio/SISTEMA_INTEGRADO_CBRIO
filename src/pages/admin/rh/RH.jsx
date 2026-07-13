@@ -2507,6 +2507,44 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
   );
 }
 
+// Gera/mostra o link do formulário público de dados pessoais pra mandar pro
+// colaborador (WhatsApp/copiar). O RH só cuida de salário/cargo.
+function OnboardingLinkButton({ funcId }) {
+  const [url, setUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+  async function gerar() {
+    setLoading(true);
+    try { const r = await rh.funcionarios.onboardingLink(funcId); setUrl(r.url); }
+    catch (e) { alert(e.message || 'Erro ao gerar o link'); }
+    finally { setLoading(false); }
+  }
+  function copiar() {
+    if (!url) return;
+    navigator.clipboard?.writeText(url)
+      .then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 1500); })
+      .catch(() => {});
+  }
+  const wa = url ? `https://wa.me/?text=${encodeURIComponent('Oi! Preenche teus dados pra completar o cadastro no RH da CBRio: ' + url)}` : null;
+  return (
+    <div style={{ marginTop: 12 }}>
+      {!url ? (
+        <Button variant="outline" size="sm" onClick={gerar} disabled={loading}>
+          {loading ? 'Gerando…' : '📋 Gerar link do formulário (enviar ao colaborador)'}
+        </Button>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 12, color: C.text2, wordBreak: 'break-all', background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px' }}>{url}</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button size="sm" variant="outline" onClick={copiar}>{copiado ? 'Copiado!' : 'Copiar link'}</Button>
+            {wa && <a href={wa} target="_blank" rel="noopener noreferrer"><Button size="sm">Enviar no WhatsApp</Button></a>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = true, onEdit, onDelete, onReativar, onEditAdmissao, onContratoAdmissao, onConcluirAdmissao, onNewDoc, onDeleteDoc, onSaveInline, onChanged, onPhotoUpdated }) {
   const [showPerms, setShowPerms] = useState(false);
   const [permData, setPermData] = useState(null);
@@ -2801,6 +2839,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         </div>
         <p style={{ fontSize: 11, color: C.text3, marginTop: 8 }}>O colaborador mantém estes dados pelo app (Meus dados) — atualiza aqui automaticamente.</p>
+        <OnboardingLinkButton funcId={data.id} />
       </div>
 
       {/* Hierarquia · gestor direto + subordinados */}
