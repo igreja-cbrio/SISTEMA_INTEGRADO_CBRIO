@@ -1074,27 +1074,79 @@ router.get('/profiles/:id/detalhe', async (req, res) => {
 
     const norm1 = (x) => (Array.isArray(x) ? x[0] : x) || null;
     const servArr = servicos || [];
+    const ciArr = (checkins || []).map((c) => ({ ...c, service: norm1(c.service) }));
+    const escArr = (escalas || []).map((e) => ({ ...e, service: norm1(e.service) }));
     const porCulto = {};
     for (const s of servArr) porCulto[s.culto_label] = (porCulto[s.culto_label] || 0) + 1;
     const d4 = new Date(); d4.setMonth(d4.getMonth() - 4);
     const desde4m = d4.toISOString().slice(0, 10);
+    const serv4m = servArr.filter((s) => s.data >= desde4m).length;
+
+    // Equipes/áreas onde serve (das escalas)
+    const equipes = [...new Set(escArr.map((e) => e.team_name).filter(Boolean))];
+
+    // Termômetro de atividade · pela recência da última atividade (serviço ou
+    // check-in) + volume nos últimos 4 meses. Régua alinhada à do sistema
+    // (voluntário inativo = 90+ dias sem servir).
+    const ultimoServico = servArr[0]?.data || null;
+    const ultimoCheckin = ciArr[0]?.checked_in_at || null;
+    const ultimaAtividade = [ultimoServico, ultimoCheckin].filter(Boolean).sort().pop() || null;
+    let diasDesde = Infinity;
+    if (ultimaAtividade) diasDesde = Math.floor((Date.now() - new Date(ultimaAtividade).getTime()) / 86400000);
+    let nivel, label;
+    if (diasDesde <= 30 && serv4m >= 4) { nivel = 'muito_ativo'; label = 'Muito ativo'; }
+    else if (diasDesde <= 45) { nivel = 'ativo'; label = 'Ativo'; }
+    else if (diasDesde <= 90) { nivel = 'pouco_ativo'; label = 'Pouco ativo'; }
+    else { nivel = 'inativo'; label = 'Inativo'; }
+    const termometro = {
+      nivel, label,
+      dias_desde_ultima_atividade: Number.isFinite(diasDesde) ? diasDesde : null,
+      ultima_atividade: ultimaAtividade,
+      servicos_4m: serv4m,
+    };
 
     res.json({
       profile,
       servicos: servArr,
-      checkins: (checkins || []).map((c) => ({ ...c, service: norm1(c.service) })),
-      escalas: (escalas || []).map((e) => ({ ...e, service: norm1(e.service) })),
+      checkins: ciArr,
+      escalas: escArr,
+      termometro,
+      equipes,
       totais: {
         total_servicos: servArr.length,
-        servicos_4m: servArr.filter((s) => s.data >= desde4m).length,
-        total_checkins: (checkins || []).length,
-        ultimo_servico: servArr[0]?.data || null,
+        servicos_4m: serv4m,
+        total_checkins: ciArr.length,
+        ultimo_servico: ultimoServico,
         por_culto: porCulto,
       },
     });
   } catch (e) {
     console.error('[vol] profile detalhe', e.message);
     res.status(500).json({ error: 'Erro ao carregar detalhe do voluntário' });
+  }
+});
+
+// GET /voluntariado/aniversariantes-semana → voluntários que fazem aniversário
+// nos próximos 7 dias (hoje..+6), pra a coordenação parabenizar. Data de
+// nascimento vem do membro (via membresia_id) ou da inscrição. RPC
+// fn_vol_aniversariantes_semana (SECURITY DEFINER).
+router.get('/aniversariantes-semana', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('fn_vol_aniversariantes_semana');
+    if (error) throw error;
+    const rows = (data || []).map((r) => ({
+      vol_profile_id: r.vol_profile_id,
+      nome: r.nome,
+      telefone: r.telefone || null,
+      data_nascimento: r.data_nascimento,
+      aniversario: r.aniversario, // a data do aniversário nesta semana
+      dow: r.dow,
+      hoje: r.aniversario === new Date().toISOString().slice(0, 10),
+    }));
+    res.json({ rows });
+  } catch (e) {
+    console.error('[vol] aniversariantes-semana', e.message);
+    res.status(500).json({ error: 'Erro ao carregar aniversariantes' });
   }
 });
 
