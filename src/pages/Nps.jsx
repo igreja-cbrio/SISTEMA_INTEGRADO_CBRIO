@@ -6,7 +6,7 @@ import { nps as api } from '../api';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
-  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil,
+  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2,
 } from 'lucide-react';
 
 const C = {
@@ -815,6 +815,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [tab, setTab] = useState('resumo');
   const [analisando, setAnalisando] = useState(false);
   const [notificando, setNotificando] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -890,6 +891,20 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
     }
   }
 
+  async function excluir() {
+    if (!confirm('Excluir esta pesquisa? Ela some da lista e sai dos KPIs. As respostas coletadas ficam preservadas na base (recuperável por um administrador).')) return;
+    setExcluindo(true);
+    try {
+      await api.remove(id);
+      toast.success('Pesquisa excluída');
+      onChanged?.();
+      onClose();
+    } catch (e) {
+      toast.error(e.message);
+    }
+    setExcluindo(false);
+  }
+
   if (loading || !pesquisa) {
     return (
       <Modal open onClose={onClose} title="Carregando..." width={760}>
@@ -959,6 +974,11 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
           {pesquisa.status === 'ativa' && (
             <Btn variant="danger" size="sm" onClick={encerrar}>Encerrar</Btn>
           )}
+          <Btn variant="ghost" size="sm" onClick={excluir} disabled={excluindo}
+            style={{ marginLeft: 'auto', color: C.red }}>
+            {excluindo ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            Excluir
+          </Btn>
         </div>
       )}
 
