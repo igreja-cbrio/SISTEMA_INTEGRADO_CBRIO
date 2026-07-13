@@ -394,6 +394,28 @@ string que seja comparada/persistida como identificador. Acentuar esses quebra
 matching, RLS, rotas e o banco. A regra de acentuar vale para o **conteúdo
 exibido**, não para os identificadores técnicos.
 
+## ⚠️ Avaliação externa de LLM (Google Stax) · regra de exportação (2026-07-13)
+
+Kit de avaliação em `backend/scripts/_stax_export.js` + guia/rubricas em
+`backend/scripts/stax-export/README.md` (piloto pedido pela gestão). Regras:
+
+- **NUNCA subir pra ferramenta externa** (Stax ou similar): pedidos de oração,
+  governança/atas de diretoria, relatos nominais de grupos, fila pastoral
+  (`cui_*_fila`/convertidos), documentos do Cérebro e QUALQUER dado de Kids.
+  Dado de igreja identifica convicção religiosa (categoria especial · LGPD
+  art. 11); o Stax é experimental, sem DPA. Exportador pra esses fluxos não
+  existe por decisão — não criar.
+- Exportáveis (anonimizados · linha de texto livre com telefone/CPF/e-mail é
+  DESCARTADA, não mascarada): números agregados de culto, categoria contábil de
+  NF (CNPJ/fornecedor = dado PJ, mantido), extração de compras, comentários de
+  NPS. CSVs `export_*.csv` são gitignored — nunca commitar dado real.
+- Constatação no banco vivo (2026-07-13): filas de revisão quase sem veredito
+  humano (0 coletas aplicadas/rejeitadas · 383 propostas do agente financeiro
+  `pending` · 0 NF com sugestão) — datasets reais só ganham corpo com uso.
+  A medição PERMANENTE de acurácia da IA deve sair de SQL interno sobre as
+  filas (follow-up: aba em `/assistente-ia`); Stax é pra iterar prompt/modelo
+  offline e conhecer a ferramenta (dataset demo sintético no repo).
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
