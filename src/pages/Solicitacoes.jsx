@@ -1928,7 +1928,14 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
       </div>
       <p className="text-sm font-medium text-foreground line-clamp-2 mb-1.5">{item.titulo}</p>
       <div className="flex items-center justify-between gap-1.5 flex-wrap">
-        <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solicitante}</span>
+        <span className="text-[11px] text-muted-foreground truncate max-w-[160px] inline-flex items-center gap-1">
+          {solicitante}
+          {item.compartilhar_area && (
+            <span className="inline-flex items-center gap-0.5 text-[9px] text-sky-600 dark:text-sky-400" title="Compartilhada com a área">
+              <Users className="h-2.5 w-2.5" /> área
+            </span>
+          )}
+        </span>
         <div className="flex items-center gap-1">
           {mostrarStatus && <Badge className={`text-[10px] px-1.5 py-0.5 ${st.color}`}>{st.label}</Badge>}
           {sla && (
@@ -2597,6 +2604,10 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             <div>
               <span className="block text-xs text-muted-foreground mb-0.5">Criada em</span>
               <p className="font-medium">{new Date(item.created_at).toLocaleDateString('pt-BR')}</p>
+            </div>
+            <div>
+              <span className="block text-xs text-muted-foreground mb-0.5">Visibilidade</span>
+              <p className="font-medium">{item.compartilhar_area ? 'Compartilhada com a área' : 'Só você e quem atende'}</p>
             </div>
             {item.valor_estimado != null && (
               <div>

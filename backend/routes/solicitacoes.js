@@ -508,7 +508,18 @@ router.get('/', async (req, res) => {
       if (dias > 0) q = q.gte('updated_at', new Date(Date.now() - dias * 86400000).toISOString());
 
       if (mine === 'true') {
-        q = q.eq('solicitante_id', userId);
+        // "Minhas" = as que EU criei + as COMPARTILHADAS com a minha área
+        // (compartilhar_area=true e area_cliente ∈ minhas áreas). area_cliente é
+        // slug minúsculo; usuario_areas.nome vem em CAIXA → normaliza p/ minúsculo.
+        const areasView = [...new Set([
+          ...((granular?.areas) || []).map(a => String(a).toLowerCase()),
+          ...((req.user.kpi_areas) || []).map(a => String(a).toLowerCase()),
+        ])].filter(a => /^[a-z0-9_]+$/.test(a));
+        if (areasView.length) {
+          q = q.or(`solicitante_id.eq.${userId},and(compartilhar_area.eq.true,area_cliente.in.(${areasView.join(',')}))`);
+        } else {
+          q = q.eq('solicitante_id', userId);
+        }
       } else if (['admin', 'diretor'].includes(role)) {
         // Admin/diretor sees all — no filter
       } else {
@@ -899,8 +910,13 @@ router.post('/', async (req, res) => {
             marketing_tipo_id, marketing_destino_id,
             mkt_publico_alvo, mkt_ideia_inicial,
             // Fluxo BPMN (2026-07-02) · checkbox "estava no planejamento"
-            eh_planejado } = req.body;
+            eh_planejado,
+            // Visibilidade (2026-07-13) · compartilhar com colegas da própria área
+            compartilhar_area } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
+    // Categorias pessoais (RH) nunca são compartilhadas com a área — assunto pessoal.
+    const CATEGORIAS_PRIVADAS = ['ferias', 'licenca', 'reembolso'];
+    const compartilharArea = !CATEGORIAS_PRIVADAS.includes(categoria) && !!compartilhar_area;
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
     }
@@ -1029,6 +1045,7 @@ router.post('/', async (req, res) => {
         urgencia: urgencia || 'normal',
         valor_estimado: valorEstimadoFinal,
         solicitante_id: userId,
+        compartilhar_area: compartilharArea,
         area_solicitante,
         cargo_solicitante: req.user.granular?.cargoNome || null,
         // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira.
