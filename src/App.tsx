@@ -277,7 +277,6 @@ const NpsPublica = lazyWithRetry(() => import('./pages/public/NpsPublica'));
 const KidsRetirada = lazyWithRetry(() => import('./pages/public/KidsRetirada'));
 const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const GruposSupervisao = lazyWithRetry(() => import('./pages/ministerial/GruposSupervisao'));
-const PedidosGrupo = lazyWithRetry(() => import('./pages/ministerial/PedidosGrupo'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 const InscricaoBatismo = lazyWithRetry(() => import('./pages/public/InscricaoBatismo'));
 const BatismoAcesso = lazyWithRetry(() => import('./pages/public/BatismoAcesso'));
@@ -622,7 +621,9 @@ function AppRoutes() {
         <Route path="/admin/totem-kids/sessoes" element={<Navigate to="/ministerial/totem-kids/configuracoes?aba=sessoes" replace />} />
         <Route path="/grupos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/grupos/supervisao" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><GruposSupervisao /></Suspense></ModuleGuard>} />
-        <Route path="/grupos/pedidos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><PedidosGrupo /></Suspense></ModuleGuard>} />
+        {/* Tela standalone de pedidos aposentada (13/07): a caixa de entrada
+            unificada em /grupos?tab=entrada é o único lugar de triagem. */}
+        <Route path="/grupos/pedidos" element={<Navigate to="/grupos?tab=entrada" replace />} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />

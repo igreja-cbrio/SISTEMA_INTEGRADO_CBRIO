@@ -873,20 +873,17 @@ router.post('/:id/pedidos', async (req, res) => {
   } catch (e) { console.error('[Pedidos create]', e.message); res.status(500).json({ error: 'Erro ao criar pedido' }); }
 });
 
-// GET /api/grupos/pedidos/list — lista pedidos (opcional: status, grupo_id, mine=true)
+// GET /api/grupos/pedidos/list — lista pedidos (opcional: status, grupo_id,
+// mine=true, desde=ISO). Pagina internamente além do cap de 1000 do PostgREST
+// (o volume de uma temporada passa de 1000 e cortaria linhas em silêncio) e
+// marca `veio_next` — a label de origem da caixa de entrada unificada.
 router.get('/pedidos/list', async (req, res) => {
   try {
-    const { status, grupo_id, mine } = req.query;
-    let query = supabase.from('mem_grupo_pedidos')
-      .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, capacidade, aceitando_inscricoes, mem_membros!lider_id(id, nome))')
-      .order('created_at', { ascending: false });
-
-    if (status) query = query.eq('status', status);
-    if (grupo_id) query = query.eq('grupo_id', grupo_id);
+    const { status, grupo_id, mine, desde } = req.query;
 
     // mine=true filtra por grupos onde o user logado e o líder
+    let grupoIdsMine = null;
     if (mine === 'true') {
-      // Resolve mem_membros.id do user via vol_profiles.membresia_id ou email match
       const { data: prof } = await supabase
         .from('vol_profiles')
         .select('membresia_id')
@@ -895,31 +892,65 @@ router.get('/pedidos/list', async (req, res) => {
       const minhaMembresiaId = prof?.membresia_id;
       if (!minhaMembresiaId) return res.json([]);
       const { data: meusGrupos } = await supabase.from('mem_grupos').select('id').eq('lider_id', minhaMembresiaId).eq('ativo', true).is('deleted_at', null);
-      const ids = (meusGrupos || []).map(g => g.id);
-      if (!ids.length) return res.json([]);
-      query = query.in('grupo_id', ids);
+      grupoIdsMine = (meusGrupos || []).map(g => g.id);
+      if (!grupoIdsMine.length) return res.json([]);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-    const rows = data || [];
+    const desdeISO = desde && !Number.isNaN(new Date(desde).getTime())
+      ? new Date(desde).toISOString() : null;
 
-    // Ocupação atual dos grupos — alimenta o aviso de capacidade no frontend
-    // (capacidade é conselho, não trava). Só na fila pendente: pedidos
-    // pendentes tocam poucos grupos, então count exato por grupo é barato.
-    if ((status || 'pendente') === 'pendente') {
-      const grupoIds = [...new Set(rows.map(p => p.grupo_id).filter(Boolean))].slice(0, 50);
-      const ocupacao = {};
-      await Promise.all(grupoIds.map(async (gid) => {
-        const { count } = await supabase.from('mem_grupo_membros')
-          .select('id', { count: 'exact', head: true })
-          .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null);
-        ocupacao[gid] = count || 0;
-      }));
+    // Query objects do supabase-js são de uso único — o builder recria por página.
+    const montar = () => {
+      let q = supabase.from('mem_grupo_pedidos')
+        .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, capacidade, aceitando_inscricoes, mem_membros!lider_id(id, nome))')
+        .order('created_at', { ascending: false });
+      if (status) q = q.eq('status', status);
+      if (grupo_id) q = q.eq('grupo_id', grupo_id);
+      if (grupoIdsMine) q = q.in('grupo_id', grupoIdsMine);
+      if (desdeISO) q = q.gte('created_at', desdeISO);
+      return q;
+    };
+
+    const PAGE = 1000;
+    const MAX = 5000; // teto de sanidade — bem acima de uma temporada inteira
+    let rows = [];
+    for (let offset = 0; offset < MAX; offset += PAGE) {
+      const { data, error } = await montar().range(offset, offset + PAGE - 1);
+      if (error) throw error;
+      rows = rows.concat(data || []);
+      if (!data || data.length < PAGE) break;
+    }
+
+    // Ocupação atual dos grupos com pedido em aberto — alimenta o aviso de
+    // capacidade no frontend (capacidade é conselho, não trava).
+    const abertos = rows.filter(p => ['pendente', 'devolvido'].includes(p.status));
+    const grupoIds = [...new Set(abertos.map(p => p.grupo_id).filter(Boolean))].slice(0, 50);
+    const ocupacao = {};
+    await Promise.all(grupoIds.map(async (gid) => {
+      const { count } = await supabase.from('mem_grupo_membros')
+        .select('id', { count: 'exact', head: true })
+        .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null);
+      ocupacao[gid] = count || 0;
+    }));
+    rows.forEach(p => {
+      if (p.mem_grupos && ocupacao[p.grupo_id] !== undefined) p.mem_grupos.membros_ativos = ocupacao[p.grupo_id];
+    });
+
+    // Track de origem (label "Next"): pessoa com encaminhamento do Next
+    // batendo por membro ou telefone — cobre também quem foi direcionada
+    // pelo Next e depois se inscreveu sozinha pelo form.
+    try {
+      const { data: encs } = await supabase.from('jornada_encaminhamentos')
+        .select('membro_id, telefone')
+        .eq('destino', 'grupos').eq('origem', 'next').is('deleted_at', null)
+        .limit(2000);
+      const membrosNext = new Set((encs || []).map(e => e.membro_id).filter(Boolean));
+      const telsNext = new Set((encs || []).map(e => String(e.telefone || '').replace(/\D+/g, '')).filter(t => t.length >= 10));
       rows.forEach(p => {
-        if (p.mem_grupos && ocupacao[p.grupo_id] !== undefined) p.mem_grupos.membros_ativos = ocupacao[p.grupo_id];
+        const tel = String(p.telefone || '').replace(/\D+/g, '');
+        p.veio_next = Boolean((p.membro_id && membrosNext.has(p.membro_id)) || (tel.length >= 10 && telsNext.has(tel)));
       });
-    }
+    } catch (e) { console.error('[Pedidos list veio_next]', e.message); }
 
     res.json(rows);
   } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
