@@ -82,6 +82,29 @@ function escolherCultoPorRelogio(cultos: any[]): { atual: any | null; visiveis: 
   return { atual, visiveis };
 }
 
+// Entre os cultos com sessão ABERTA, escolhe o de AGORA (relógio); se nenhum
+// está acontecendo, o 1º do período (mais cedo) — nunca a última aberta.
+function escolherAtualEntreAbertos(cultos: any[]): any | null {
+  const lista = (cultos || []).filter((c) => c.hora).sort((a, b) => _horaMin(a.hora) - _horaMin(b.hora));
+  if (!lista.length) return (cultos && cultos[0]) || null;
+  const comFim = lista.map((c, i) => ({ ...c, _fim: i < lista.length - 1 ? _horaMin(lista[i + 1].hora) : _horaMin(c.hora) + 180 }));
+  const agoraStr = new Date().toLocaleTimeString('en-GB', { timeZone: 'America/Sao_Paulo', hour12: false, hour: '2-digit', minute: '2-digit' });
+  const agora = _horaMin(agoraStr);
+  return comFim.find((c) => agora >= _horaMin(c.hora) && agora < c._fim) || lista[0];
+}
+// Período do dia (manhã/tarde/noite) a partir do horário (HH:MM).
+function _periodoDia(hora?: string): string {
+  const h = Number(String(hora || '').slice(0, 2)) || 0;
+  return h < 12 ? 'de manhã' : h < 18 ? 'à tarde' : 'à noite';
+}
+// "Domingo de manhã" a partir da data (dia da semana) + horário (período).
+function rotuloPeriodo(data?: string, hora?: string): string {
+  if (!data) return '';
+  const dt = new Date(String(data).slice(0, 10) + 'T00:00:00');
+  const dias = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  return `${dias[dt.getDay()] || ''} ${_periodoDia(hora)}`.trim();
+}
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -103,10 +126,12 @@ export default function TotemKidsCheckin() {
   const [imprimindo, setImprimindo] = useState(false);
   const [enviarWpp, setEnviarWpp] = useState(true); // enviar código+QR de retirada por WhatsApp
 
-  // Multi-culto: outros cultos do dia (com Kids) em que a criança também fica
-  const [cultosDia, setCultosDia] = useState<any[]>([]);
+  // Sessões ABERTAS (o período aberto) · a pessoa escolhe no check-in em qual
+  // culto a criança fica; o culto de agora (relógio) já vem pré-marcado.
+  const [sessoesAbertas, setSessoesAbertas] = useState<any[]>([]);
+  const [cultoAtualId, setCultoAtualId] = useState<string | null>(null);
+  const [cultosSel, setCultosSel] = useState<Set<string>>(new Set());
   const criancaAtivaRef = useRef(false);
-  const [cultosExtras, setCultosExtras] = useState<string[]>([]);
 
   // Irmãos (mesma família) + modal de check-in em lote da família (#11)
   const [irmaos, setIrmaos] = useState<Crianca[]>([]);
@@ -245,13 +270,15 @@ export default function TotemKidsCheckin() {
     resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string },
   ) {
     if (!sessao || !itens.length) return;
+    const { sessao_id: sessaoIdFam, cultos_extras: extrasFam } = resolverSessaoCultos();
+    if (!sessaoIdFam) { toast.error('Selecione em qual culto a criança fica'); return; }
     setImprimindo(true);
     let ok = 0, jaTinha = 0, falhou = 0;
     for (const it of itens) {
       try {
         const payload: Record<string, unknown> = {
-          sessao_id: sessao.id, crianca_id: it.crianca.id, sala_id: it.sala_id,
-          cultos_extras: cultosExtras, enviar_wpp: enviarWpp,
+          sessao_id: sessaoIdFam, crianca_id: it.crianca.id, sala_id: it.sala_id,
+          cultos_extras: extrasFam, enviar_wpp: enviarWpp,
         };
         if (resp.manual) {
           payload.responsavel_nome_manual = resp.nome;
@@ -284,7 +311,7 @@ export default function TotemKidsCheckin() {
       { duration: 5000 },
     );
     setCrianca(null); setBusca(''); setSalaSelecionada(''); setResponsavelSelecionado('');
-    setUsarRespManual(false); setRespManualNome(''); setRespManualTel(''); setCultosExtras([]);
+    setUsarRespManual(false); setRespManualNome(''); setRespManualTel(''); setCultosSel(new Set());
     setResultados([]); setIrmaos([]);
   }
 
@@ -339,26 +366,48 @@ export default function TotemKidsCheckin() {
   const PIN_KEY = 'cbrio-totem-kids-pin';
 
   function abrirAjustes(aba: string = 'sessoes') { setAjustesAba(aba); setAjustesOpen(true); }
-  // Descobre a sessão ATIVA do totem (após carregar / mexer na config):
-  //  1. Culto de Kids acontecendo agora (pelo relógio) → é a sessão ativa (garante aberto).
-  //  2. Senão, se o operador abriu uma sessão na config (mesmo FORA do dia/hora
-  //     do culto), essa sessão aberta é a principal · respeita a escolha manual.
-  //  3. Senão, não há culto agora.
+  // Carrega as sessões ABERTAS (o período aberto). O culto de agora (relógio) —
+  // ou o 1º do período, se nenhum está acontecendo — vira o pré-marcado; a pessoa
+  // confirma/troca no check-in. Se nada estiver aberto, abre o culto de agora de
+  // HOJE por conveniência (mesma lógica do #9).
   async function carregarCultosDoDia() {
     try {
+      const abertas: any[] = await totemKids.sessoes.list({ status: 'aberta', limit: 30 });
+      const cultos = (abertas || []).filter((s: any) => s.culto).map((s: any) => ({
+        culto_id: s.culto_id, sessao_id: s.id, nome: s.culto?.nome, data: s.culto?.data,
+        hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
+      })).sort((a: any, b: any) => String(a.hora).localeCompare(String(b.hora)));
+      if (cultos.length) {
+        const cur = escolherAtualEntreAbertos(cultos);
+        setSessoesAbertas(cultos);
+        setCultoAtualId(cur?.culto_id || null);
+        setSessao(cur?.sessao || null);
+        return;
+      }
       const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-      const cultos: any[] = await totemKids.cultosDoDia(hoje);
-      const { atual } = escolherCultoPorRelogio(cultos || []);
-      setCultosDia([]);
+      const doDia: any[] = await totemKids.cultosDoDia(hoje);
+      const { atual } = escolherCultoPorRelogio(doDia || []);
       if (atual) {
         const s: any = await totemKids.sessoes.garantir(atual.id);
         setSessao(s);
-        return;
+        setSessoesAbertas([{ culto_id: atual.id, sessao_id: s.id, nome: s.culto?.nome, data: s.culto?.data, hora: atual.hora, sessao: s }]);
+        setCultoAtualId(atual.id);
+      } else {
+        setSessao(null); setSessoesAbertas([]); setCultoAtualId(null);
       }
-      let aberta: any = null;
-      try { aberta = await totemKids.sessoes.atual(); } catch { aberta = null; }
-      setSessao(aberta?.culto ? aberta : null);
     } catch { /* mantém o estado atual */ }
+  }
+  // Da seleção (cultosSel) resolve o culto PRIMÁRIO (a sessão do check-in) + os
+  // extras. Primário = o culto de agora se marcado, senão o mais cedo marcado.
+  function resolverSessaoCultos(): { sessao_id: string | null; cultos_extras: string[] } {
+    const marcados = [...cultosSel];
+    if (!marcados.length) return { sessao_id: null, cultos_extras: [] };
+    const horaDe = (id: string) => String(sessoesAbertas.find((c: any) => c.culto_id === id)?.hora || '');
+    const primaryId = (cultoAtualId && cultosSel.has(cultoAtualId))
+      ? cultoAtualId
+      : [...marcados].sort((a, b) => horaDe(a).localeCompare(horaDe(b)))[0];
+    const sessao_id = sessoesAbertas.find((c: any) => c.culto_id === primaryId)?.sessao_id || sessao?.id || null;
+    return { sessao_id, cultos_extras: marcados.filter((id) => id !== primaryId) };
   }
   function recarregarSessao() {
     carregarCultosDoDia();
@@ -408,7 +457,12 @@ export default function TotemKidsCheckin() {
 
   // Re-escolhe o culto de agora quando o totem fica ocioso (sem criança na tela),
   // pra o culto avançar sozinho ao passar do horário — sem ninguém trocar nada.
-  useEffect(() => { criancaAtivaRef.current = !!crianca; }, [crianca]);
+  useEffect(() => {
+    criancaAtivaRef.current = !!crianca;
+    // Ao selecionar uma criança, o seletor de culto começa com o de agora marcado.
+    if (crianca) setCultosSel(new Set(cultoAtualId ? [cultoAtualId] : []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crianca, cultoAtualId]);
   useEffect(() => {
     const t = setInterval(() => { if (!criancaAtivaRef.current) carregarCultosDoDia(); }, 120000);
     return () => clearInterval(t);
@@ -538,11 +592,13 @@ export default function TotemKidsCheckin() {
 
     setImprimindo(true);
     try {
+      const { sessao_id, cultos_extras } = resolverSessaoCultos();
+      if (!sessao_id) { setImprimindo(false); toast.error('Selecione em qual culto a criança fica'); return; }
       const payload: Record<string, unknown> = {
-        sessao_id: sessao.id,
+        sessao_id,
         crianca_id: crianca.id,
         sala_id: salaSelecionada,
-        cultos_extras: cultosExtras,
+        cultos_extras,
       };
       if (usarRespManual) {
         payload.responsavel_nome_manual = respManualNome.trim();
@@ -584,7 +640,7 @@ export default function TotemKidsCheckin() {
       setUsarRespManual(false);
       setRespManualNome('');
       setRespManualTel('');
-      setCultosExtras([]);
+      setCultosSel(new Set());
       setResultados([]);
 
       // Em modo pré-check-in: avança a fila de filhos; ao acabar, marca usado.
@@ -655,9 +711,9 @@ export default function TotemKidsCheckin() {
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-2xl shadow-lg shadow-pink-500/30">🧸</div>
           <div>
             <p className="text-lg font-black leading-none">Totem Kids</p>
-            {/* Culto da sessão ativa · texto simples, sem dropdown de horários */}
+            {/* Período da sessão ativa (ex.: "Domingo de manhã") · sem horário */}
             {sessao?.culto ? (
-              <span className="text-xs font-medium text-slate-400">{sessao.culto.nome}</span>
+              <span className="text-xs font-medium text-slate-400">{rotuloPeriodo(sessao.culto.data, sessao.culto.service_type?.recurrence_time) || sessao.culto.nome}</span>
             ) : (
               <span className="text-xs font-medium text-slate-400">Sem culto de Kids agora</span>
             )}
@@ -877,10 +933,10 @@ export default function TotemKidsCheckin() {
           setSalaSelecionada={setSalaSelecionada}
           responsavelSelecionado={responsavelSelecionado}
           setResponsavelSelecionado={setResponsavelSelecionado}
-          cultoAtual={sessao?.culto}
-          cultosDia={cultosDia}
-          cultosExtras={cultosExtras}
-          setCultosExtras={setCultosExtras}
+          sessoesAbertas={sessoesAbertas}
+          cultoAtualId={cultoAtualId}
+          cultosSel={cultosSel}
+          setCultosSel={setCultosSel}
           irmaos={irmaos}
           onAbrirFamilia={() => setFamiliaOpen(true)}
           usarRespManual={usarRespManual}
@@ -1470,10 +1526,10 @@ function CheckinSelecao(props: {
   setSalaSelecionada: (s: string) => void;
   responsavelSelecionado: string;
   setResponsavelSelecionado: (s: string) => void;
-  cultoAtual?: any;
-  cultosDia: any[];
-  cultosExtras: string[];
-  setCultosExtras: (v: string[]) => void;
+  sessoesAbertas: any[];
+  cultoAtualId: string | null;
+  cultosSel: Set<string>;
+  setCultosSel: (v: Set<string>) => void;
   irmaos: Crianca[];
   onAbrirFamilia: () => void;
   usarRespManual: boolean;
@@ -1498,7 +1554,7 @@ function CheckinSelecao(props: {
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
-    cultoAtual, cultosDia, cultosExtras, setCultosExtras, irmaos, onAbrirFamilia,
+    sessoesAbertas, cultoAtualId, cultosSel, setCultosSel, irmaos, onAbrirFamilia,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     atualizarCrianca,
@@ -1646,8 +1702,36 @@ function CheckinSelecao(props: {
           </Select>
         </div>
 
-        {/* Check-in usa direto a sessão ativa do totem · sem seleção de horário
-            nem "fica em mais de um culto" (decisão do Marcos · 2026-07-13). */}
+        {/* Em quais cultos a criança vai ficar? (Marcos · 2026-07-13): o culto de
+            agora (relógio · ou o 1º do período) vem pré-marcado; a pessoa confirma
+            ou troca, e pode marcar mais de um (extras). A criança entra na sessão
+            de cada culto marcado · 1 etiqueta só. */}
+        {sessoesAbertas.length > 0 && (
+          <div>
+            <label className="text-sm font-medium block mb-1">Em quais cultos a criança vai ficar?</label>
+            <p className="text-xs text-muted-foreground mb-2">O culto de agora já vem marcado. Confirme ou troque; marque mais de um só se ela realmente ficar.</p>
+            <div className="space-y-2">
+              {sessoesAbertas.map((c: any) => {
+                const marcado = cultosSel.has(c.culto_id);
+                const ehAgora = c.culto_id === cultoAtualId;
+                return (
+                  <button
+                    key={c.culto_id}
+                    type="button"
+                    onClick={() => { const n = new Set(cultosSel); if (n.has(c.culto_id)) n.delete(c.culto_id); else n.add(c.culto_id); setCultosSel(n); }}
+                    className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${marcado ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/40'}`}
+                  >
+                    <span className={`h-5 w-5 rounded border flex items-center justify-center shrink-0 ${marcado ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
+                      {marcado && <Check className="h-3.5 w-3.5" />}
+                    </span>
+                    <span className="font-medium flex-1">{c.nome}</span>
+                    {ehAgora && <span className="text-[11px] font-semibold uppercase tracking-wide text-primary shrink-0">agora</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="text-sm font-semibold block">Quem está trazendo? <span className="text-pink-600">*</span></label>
