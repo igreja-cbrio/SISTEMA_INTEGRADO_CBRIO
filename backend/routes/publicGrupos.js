@@ -11,8 +11,9 @@ const {
 } = require('../services/membroMatch');
 const {
   verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
-  notificarLiderFrequencia, rotuloMes,
+  notificarLiderFrequencia, rotuloMes, enviarInscricaoConfirmada,
 } = require('../services/gruposWhatsapp');
+const { processarFila } = require('../services/whatsappFila');
 const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
@@ -641,6 +642,17 @@ router.post('/inscrever', async (req, res) => {
           pedidoId: pedido.id,
           pessoa: { nome: nome.trim(), telefone: telefone || null, email: emailLimpo },
         });
+
+        // Mensagem 1 pra PESSOA: «recebemos sua inscrição» (utility
+        // cbrio_inscricao_confirmada — a tela de sucesso do form já promete
+        // a confirmação no WhatsApp). Via fila: registra e reenvia sozinho
+        // se o envio bater no teto diário da Meta.
+        await enviarInscricaoConfirmada({
+          telefone,
+          nome: nome.trim(),
+          grupoNome: grupo.nome,
+          pedidoId: pedido.id,
+        });
       } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
     })();
 
@@ -1082,5 +1094,21 @@ router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
     res.status(500).json({ error: 'Erro no envio mensal.' });
   }
 });
+
+// GET|POST /api/public/grupos/cron/whatsapp-fila — reprocessa a fila de envios
+// de template (reenvio com backoff · absorve o teto diário da Meta). Vercel
+// Cron horário; gated por CRON_SECRET (fail-closed).
+async function cronWhatsappFila(req, res) {
+  try {
+    const r = await processarFila();
+    console.log('[whatsapp-fila cron]', JSON.stringify(r));
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[whatsapp-fila cron]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+}
+router.get('/cron/whatsapp-fila', requireCron, cronWhatsappFila);
+router.post('/cron/whatsapp-fila', requireCron, cronWhatsappFila);
 
 module.exports = router;
