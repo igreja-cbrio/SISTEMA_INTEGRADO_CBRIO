@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../compo
 import { toast } from 'sonner';
 import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw, Sparkles, Pencil } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
+import DataNascimentoPicker from './DataNascimentoPicker';
+import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
 
 const FAIXAS = [
   { key: 'todas', label: 'Todas as idades', min: 0, max: 9999 },
@@ -833,21 +835,26 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
     } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar'); } finally { setSalvando(false); }
   }
 
+  const temAlteracoes = (
+    !!nome.trim() || !!nascimento || !!sexo || !!serie.trim() || !!necessidade.trim() ||
+    consentMkt || !!fotoCrianca ||
+    resps.some(r => r.nome.trim() || r.telefone.trim() || (r.cpf || '').trim())
+  );
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Nova criança</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div><Label className="text-xs">Nome da criança *</Label><Input value={nome} onChange={e => setNome(e.target.value)} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label className="text-xs">Nascimento</Label><Input type="date" value={nascimento} onChange={e => setNascimento(e.target.value)} /></div>
-            <div>
-              <Label className="text-xs">Sexo</Label>
-              <Select value={sexo} onValueChange={setSexo}>
-                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                <SelectContent><SelectItem value="M">Menino</SelectItem><SelectItem value="F">Menina</SelectItem></SelectContent>
-              </Select>
-            </div>
+          <div><Label className="text-xs">Nascimento</Label><DataNascimentoPicker value={nascimento} onChange={setNascimento} /></div>
+          <div>
+            <Label className="text-xs">Sexo</Label>
+            <Select value={sexo} onValueChange={setSexo}>
+              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+              <SelectContent><SelectItem value="M">Menino</SelectItem><SelectItem value="F">Menina</SelectItem></SelectContent>
+            </Select>
           </div>
           <div><Label className="text-xs">Série (opcional)</Label><Input value={serie} onChange={e => setSerie(e.target.value)} placeholder="Ex.: Maternal II" /></div>
           <div><Label className="text-xs">Necessidade / alergia (opcional)</Label><Textarea rows={2} value={necessidade} onChange={e => setNecessidade(e.target.value)} /></div>
