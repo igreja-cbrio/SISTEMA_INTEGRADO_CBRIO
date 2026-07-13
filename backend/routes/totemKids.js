@@ -168,6 +168,41 @@ router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// POST /api/totem-kids/sessoes/garantir · acha-ou-cria a sessão de um culto.
+// É o pivô do check-in POR HORÁRIO: o operador não gerencia mais sessão — o
+// front escolhe o culto (pelo relógio) e chama isto. Reabre se estava encerrada
+// (não bloqueia a operação · a contagem consolida no encerrar/cron). Idempotente.
+router.post('/sessoes/garantir', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { culto_id } = req.body;
+    if (!culto_id) return res.status(400).json({ error: 'culto_id obrigatorio' });
+    const sel = `id, culto_id, status, abrir_em, fechar_em, encerrada_at,
+        culto:cultos(id, data, nome, service_type_id, presencial_kids, decisoes_kids,
+                     service_type:vol_service_types(id, name, color, has_kids))`;
+    let { data: s } = await supabase.from('kids_sessoes').select(sel).eq('culto_id', culto_id).maybeSingle();
+    if (!s) {
+      const ins = await supabase.from('kids_sessoes')
+        .insert({ culto_id, status: 'aberta', abrir_em: new Date().toISOString() })
+        .select(sel).single();
+      if (ins.error) {
+        // corrida entre 2 totens (UNIQUE culto_id) → re-seleciona a existente
+        if (ins.error.code === '23505') {
+          const re = await supabase.from('kids_sessoes').select(sel).eq('culto_id', culto_id).maybeSingle();
+          s = re.data;
+        } else throw ins.error;
+      } else s = ins.data;
+    } else if (s.status === 'encerrada') {
+      await supabase.from('kids_sessoes')
+        .update({ status: 'aberta', encerrada_at: null, encerrada_por: null }).eq('id', s.id);
+      s.status = 'aberta';
+    }
+    res.json(s || null);
+  } catch (e) {
+    console.error('[totemKids/sessoes/garantir]', e.message);
+    res.status(500).json({ error: 'Erro ao garantir sessão do culto' });
+  }
+});
+
 // GET /api/totem-kids/sessoes · lista sessões (admin)
 router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
   try {
