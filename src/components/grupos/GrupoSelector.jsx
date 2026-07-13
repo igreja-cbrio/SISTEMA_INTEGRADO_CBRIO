@@ -17,6 +17,7 @@
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { grupos as authApi, gruposPublic } from '../../api';
 import { Input } from '../ui/input';
 import { Search, MapPin, Clock, User as UserIcon, Users, List as ListIcon, Map as MapIcon } from 'lucide-react';
@@ -39,7 +40,9 @@ const recorrenciaLabel = (r) => RECORRENCIA_LABEL[r] || (r ? r.charAt(0).toUpper
 
 const selStyle = {
   padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
-  fontSize: 12, background: 'var(--cbrio-input-bg)', color: C.text, flex: 1, minWidth: 150,
+  // ≥16px: abaixo disso o iOS dá zoom automático ao focar o select/input
+  // (bagunçava o form público no iPhone · teste de 2026-07-13).
+  fontSize: 16, background: 'var(--cbrio-input-bg)', color: C.text, flex: 1, minWidth: 150,
 };
 
 function Pill({ ativo, onClick, children }) {
@@ -177,7 +180,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
             placeholder={searchMode === 'lider' ? 'Nome do líder...' : 'Nome do grupo, bairro ou código...'}
             value={busca}
             onChange={e => setBusca(e.target.value)}
-            style={{ paddingLeft: 32 }}
+            style={{ paddingLeft: 32, fontSize: 16 }}
           />
         </div>
       </div>
@@ -262,15 +265,21 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       {/* Botão FIXO de Inscrever — SÓ na visão LISTA (no mapa a ação vive no
           balão/cartão do pin, decisão do Marcos). Aparece no instante da
           seleção e não sai do lugar: trocar de grupo mantém o botão. */}
+      {/* Renderizado via PORTAL no <body>: ancestral com backdrop-filter (o
+          cartão do form público) vira containing block de position:fixed — sem
+          o portal o botão ancorava no FUNDO DO CARTÃO e caía fora da tela no
+          iPhone (bug do teste de 2026-07-13). O safe-area-inset escapa da
+          barra inferior do iOS. */}
       {full && view === 'lista' && onInscrever && selectedGrupoId && (() => {
         const grupoSel = grupos.find(g => g.id === selectedGrupoId);
         if (!grupoSel) return null;
-        return (
+        return createPortal(
           <button
             onClick={() => onInscrever(grupoSel)}
             type="button"
             style={{
-              position: 'fixed', bottom: 18, left: '50%', transform: 'translateX(-50%)',
+              position: 'fixed', bottom: 'calc(18px + env(safe-area-inset-bottom, 0px))',
+              left: '50%', transform: 'translateX(-50%)',
               zIndex: 1000, padding: '14px 46px', borderRadius: 999,
               background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer',
               fontWeight: 800, fontSize: 16, letterSpacing: 0.3, whiteSpace: 'nowrap',
@@ -278,7 +287,8 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
             }}
           >
             Inscrever
-          </button>
+          </button>,
+          document.body
         );
       })()}
     </div>
@@ -316,6 +326,15 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
               {g.recorrencia && g.recorrencia.toLowerCase().trim() !== 'semanal' && <span>· {recorrenciaLabel(g.recorrencia.toLowerCase().trim())}</span>}
               {g.dist_km != null && <span style={{ color: C.primary, fontWeight: 600 }}>{g.dist_km < 1 ? `${Math.round(g.dist_km * 1000)}m` : `${g.dist_km.toFixed(1)}km`}</span>}
               {g.categoria && <span>· {g.categoria}</span>}
+              {(() => {
+                // Faixa do grupo visível já no cartão — a pessoa sabe antes de
+                // preencher (a trava de idade/gênero confirma no envio).
+                if (g.idade_min != null && g.idade_max != null) return <span>· {g.idade_min}–{g.idade_max} anos</span>;
+                if (g.idade_max != null) return <span>· até {g.idade_max} anos</span>;
+                if (g.idade_min != null) return <span>· {g.idade_min}+ anos</span>;
+                if (g.faixa_etaria && g.faixa_etaria !== 'Todas as idades') return <span>· {g.faixa_etaria}</span>;
+                return null;
+              })()}
             </div>
           </button>
         );

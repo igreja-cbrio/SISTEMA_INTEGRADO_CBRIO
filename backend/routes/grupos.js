@@ -1347,20 +1347,23 @@ async function aprovarPedidoCore(pedidoId, user) {
     return { ok: true, grupo_id: pedido.grupo_id };
 }
 
-// POST /api/grupos/pedidos/:pedidoId/sugerir — body { grupo_sugerido_id }
+// POST /api/grupos/pedidos/:pedidoId/sugerir — body { grupo_sugerido_id, motivo? }
 // Realocação: em vez de aprovar/rejeitar, quem triageia sugere OUTRO grupo
 // pra pessoa (WhatsApp com link de aceite /g/s/<token> + notificação in-app).
-// O pedido continua pendente no grupo original até a pessoa aceitar.
+// O pedido continua valendo no grupo original até a pessoa aceitar. O `motivo`
+// (opcional · escolhido pela triagem) VAI pra pessoa no WhatsApp — é o único
+// motivo que ela recebe (o do líder na recusa é interno).
 router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (req, res) => {
   try {
-    const { grupo_sugerido_id } = req.body || {};
+    const { grupo_sugerido_id, motivo } = req.body || {};
     if (!grupo_sugerido_id) return res.status(400).json({ error: 'Informe grupo_sugerido_id' });
 
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, nome, telefone, membro_id')
       .eq('id', req.params.pedidoId).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (pedido.status !== 'pendente') return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    // 'devolvido' também aceita sugestão — é exatamente a fila da triagem.
+    if (!['pendente', 'devolvido'].includes(pedido.status)) return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     if (grupo_sugerido_id === pedido.grupo_id) {
       return res.status(400).json({ error: 'Sugira um grupo diferente do pedido original' });
     }
@@ -1389,6 +1392,7 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       grupoOriginalNome: grupoOriginal?.nome || null,
       grupoSugerido,
       pedidoId: pedido.id,
+      motivo, // sanitizado no service (vira o {{3}} do template de utilidade)
     });
 
     // In-app, se a pessoa tem login
@@ -1456,30 +1460,67 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
 });
 
 // POST /api/grupos/pedidos/:pedidoId/rejeitar — body: { motivo? }
+// Duas etapas (Marcos · 2026-07-13):
+//  · pedido PENDENTE  → recusa do líder DEVOLVE pra triagem (status 'devolvido').
+//    O motivo é INTERNO — a pessoa NÃO recebe nada aqui; ela é comunicada
+//    quando a triagem sugerir outro grupo (com o motivo externo da sugestão).
+//  · pedido DEVOLVIDO → rejeição FINAL pela triagem (status 'rejeitado').
 router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { motivo } = req.body || {};
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.pedidoId).single();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (pedido.status !== 'pendente') {
+    if (!['pendente', 'devolvido'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
-    // Guarda de corrida: só rejeita se AINDA está pendente (uma aprovação
-    // simultânea — logada ou via link — não pode ser sobrescrita).
+    if (pedido.status === 'pendente') {
+      // Guarda de corrida: só devolve se AINDA está pendente (uma aprovação
+      // simultânea — logada ou via link — não pode ser sobrescrita).
+      const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
+        status: 'devolvido',
+        motivo_rejeicao: motivo || null, // interno · visível só pra triagem
+        decidido_por: req.user.userId,
+        decidido_por_nome: req.user.name,
+        decidido_em: new Date().toISOString(),
+      }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+      if (!claimed || !claimed.length) {
+        return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
+      }
+
+      // Avisa a TRIAGEM (módulo grupos) — a pessoa não é notificada aqui.
+      (async () => {
+        try {
+          const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'pedido_devolvido',
+            titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
+            mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${motivo ? ` (motivo interno: ${motivo})` : ''}. Sugira outro grupo pra pessoa.`,
+            link: '/grupos?tab=entrada',
+            severidade: 'aviso',
+            chaveDedup: `pedido_devolvido_${pedido.id}`,
+          });
+        } catch (e) { console.error('[Pedido devolver notify]', e.message); }
+      })();
+
+      return res.json({ success: true, devolvido: true });
+    }
+
+    // status === 'devolvido' → rejeição FINAL pela triagem.
     const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
       status: 'rejeitado',
-      motivo_rejeicao: motivo || null,
+      motivo_rejeicao: motivo || pedido.motivo_rejeicao || null,
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+    }).eq('id', pedido.id).eq('status', 'devolvido').select('id');
     if (!claimed || !claimed.length) {
       return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
     }
 
-    // Notifica a pessoa
+    // Notifica a pessoa (in-app · só alcança quem tem login no sistema).
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
@@ -1491,9 +1532,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
               modulo: 'grupos',
               tipo: 'pedido_rejeitado',
               titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
-              mensagem: motivo
-                ? `Seu pedido foi recusado: ${motivo}. Você pode tentar outro grupo.`
-                : `Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.`,
+              mensagem: 'Seu pedido não pôde seguir. Você pode se inscrever em outro grupo.',
               link: '/grupos',
               severidade: 'info',
               chaveDedup: `pedido_rejeitado_${pedido.id}`,
@@ -1611,10 +1650,24 @@ router.get('/:id', async (req, res) => {
   } catch (e) { console.error('[Grupos get]', e.message); res.status(500).json({ error: 'Erro ao buscar grupo' }); }
 });
 
+// Normaliza idade_min/idade_max do form ('' → null · clamp defensivo 0-120).
+// NULL = sem restrição — a trava do form público só age quando há limite.
+function normIdade(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(120, Math.round(n)));
+}
+
 // POST /api/grupos
 router.post('/', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
+    const idadeMin = normIdade(d.idade_min);
+    const idadeMax = normIdade(d.idade_max);
+    if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
+      return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
+    }
     const { data, error } = await supabase.from('mem_grupos').insert({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
@@ -1626,6 +1679,8 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
       complemento: d.complemento || null,
       bairro: d.bairro || null,
       faixa_etaria: d.faixa_etaria || null,
+      idade_min: idadeMin,
+      idade_max: idadeMax,
       capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
       aceitando_inscricoes: d.aceitando_inscricoes !== false,
       rede_id: d.rede_id || null,
@@ -1644,6 +1699,11 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
 router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
+    const idadeMin = normIdade(d.idade_min);
+    const idadeMax = normIdade(d.idade_max);
+    if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
+      return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
+    }
     const { data, error } = await supabase.from('mem_grupos').update({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
@@ -1655,6 +1715,8 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       complemento: d.complemento || null,
       bairro: d.bairro || null,
       faixa_etaria: d.faixa_etaria || null,
+      idade_min: idadeMin,
+      idade_max: idadeMax,
       capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
       aceitando_inscricoes: d.aceitando_inscricoes !== false,
       rede_id: d.rede_id || null,

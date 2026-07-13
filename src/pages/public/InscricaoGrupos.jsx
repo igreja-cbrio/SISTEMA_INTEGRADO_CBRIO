@@ -4,8 +4,10 @@
 // Acessado via QR code distribuído nos cultos / redes sociais durante
 // período de inscrição, ou num TOTEM (navegador quiosque no lounge). Usa o
 // GrupoSelector em modo "full" (todos os filtros: líder, categoria, bairro,
-// CEP, lista, mapa) e um form mínimo de identificação (nome, telefone
-// obrigatórios · CPF, e-mail, nascimento e foto opcionais).
+// CEP, lista, mapa) e um form de identificação (nome, telefone, nascimento,
+// sexo e CPF obrigatórios · e-mail e foto opcionais). Erros de validação são
+// apontados campo a campo (borda vermelha + mensagem) e grupo incompatível
+// (gênero/idade) BLOQUEIA preservando os dados digitados (teste de 13/07).
 //
 // Submit: roteia pro membro existente OU cria mem_cadastros_pendentes +
 // mem_grupo_pedidos (origem='formulario_publico'). Se o backend detecta um
@@ -44,6 +46,21 @@ function idadeDe(dataNascimento) {
   const m = hoje.getMonth() - nasc.getMonth();
   if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--;
   return idade;
+}
+// Dígitos verificadores do CPF (mesma regra do backend — valida antes de enviar).
+function cpfValido(cpfMasked) {
+  const cpf = soDigitos(cpfMasked);
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  let s = 0;
+  for (let i = 0; i < 9; i++) s += parseInt(cpf[i]) * (10 - i);
+  let r = (s * 10) % 11;
+  if (r === 10) r = 0;
+  if (r !== parseInt(cpf[9])) return false;
+  s = 0;
+  for (let i = 0; i < 10; i++) s += parseInt(cpf[i]) * (11 - i);
+  r = (s * 10) % 11;
+  if (r === 10) r = 0;
+  return r === parseInt(cpf[10]);
 }
 function mascaraCpf(v) {
   const d = soDigitos(v).slice(0, 11);
@@ -93,6 +110,8 @@ export default function InscricaoGrupos() {
   const [resultado, setResultado] = useState(null); // { mensagem } quando já membro/já pedido
   const [fotoUploading, setFotoUploading] = useState(false);
   const [fotoErro, setFotoErro] = useState('');
+  const [errosCampos, setErrosCampos] = useState({}); // { campo: mensagem } — pinta o campo certo de vermelho
+  const [bloqueio, setBloqueio] = useState(null);     // { mensagem } — grupo incompatível (confirmado pelo servidor)
 
   // Quando vem com ?grupo=<id> (QR específico do grupo / clique no mapa),
   // pré-carrega o grupo e pula direto para o passo 1 (dados) — MAS avisa
@@ -128,6 +147,7 @@ export default function InscricaoGrupos() {
     setForm(FORM_VAZIO);
     setAceitaTermos(false);
     setError(''); setDup(null); setResultado(null); setFotoErro('');
+    setErrosCampos({}); setBloqueio(null);
     // Deep-link com inscrições fechadas NÃO volta pro passo 1 (o grupo do
     // QR nem foi selecionado — a pessoa fica na escolha dos grupos abertos).
     const deepLinkValido = grupoParam && !avisoDeepLink;
@@ -156,7 +176,10 @@ export default function InscricaoGrupos() {
     return () => { clearTimeout(t); evs.forEach(e => window.removeEventListener(e, bump)); };
   }, [resetForm, totemMode]);
 
-  const set = (k, masked) => (e) => setForm(f => ({ ...f, [k]: masked ? masked(e.target.value) : e.target.value }));
+  const set = (k, masked) => (e) => {
+    setForm(f => ({ ...f, [k]: masked ? masked(e.target.value) : e.target.value }));
+    setErrosCampos(p => (p[k] ? { ...p, [k]: '' } : p)); // corrigiu o campo? some o vermelho
+  };
 
   // "Tem certeza?" ao voltar/fechar/recarregar a página COM dados digitados
   // (regra de ouro do repo: sem digitar nada, não pergunta). Depois do envio
@@ -172,36 +195,76 @@ export default function InscricaoGrupos() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [temDadosDigitados, step]);
 
-  // Obrigatórios: nome, telefone, data de nascimento, sexo e aceite.
-  // CPF e e-mail seguem opcionais (ajudam no dedup).
-  const formValido = () => {
-    if (!form.nome || form.nome.trim().length < 3) return false;
-    if (soDigitos(form.telefone).length < 10) return false;
-    if (idadeDe(form.data_nascimento) == null) return false;
-    if (form.genero !== 'masculino' && form.genero !== 'feminino') return false;
-    if (!aceitaTermos) return false;
-    return true;
+  // Validação campo a campo — devolve { campo: mensagem }. Feedback do teste
+  // de 13/07: o erro genérico não dizia ONDE estava o problema. Obrigatórios:
+  // nome, telefone, nascimento, sexo, CPF (Marcos · 2026-07-13) e aceite.
+  const validarCampos = () => {
+    const erros = {};
+    if (!form.nome || form.nome.trim().length < 3) erros.nome = 'Digite o nome completo.';
+    const tel = soDigitos(form.telefone);
+    if (tel.length < 10 || tel.length > 11) erros.telefone = 'Digite um celular válido com DDD.';
+    if (!form.data_nascimento) {
+      erros.data_nascimento = 'Informe a data de nascimento.';
+    } else {
+      const nasc = new Date(form.data_nascimento + 'T12:00:00');
+      if (Number.isNaN(nasc.getTime())) erros.data_nascimento = 'Data de nascimento inválida.';
+      else if (nasc > new Date()) erros.data_nascimento = 'A data de nascimento não pode estar no futuro.';
+      else if (nasc.getFullYear() < 1900) erros.data_nascimento = 'Confira o ano de nascimento.';
+    }
+    if (form.genero !== 'masculino' && form.genero !== 'feminino') erros.genero = 'Marque masculino ou feminino.';
+    const cpfDig = soDigitos(form.cpf);
+    if (cpfDig.length !== 11) erros.cpf = 'Informe o CPF completo.';
+    else if (!cpfValido(form.cpf)) erros.cpf = 'Este CPF não é válido — confira os números.';
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = 'E-mail inválido.';
+    if (!aceitaTermos) erros.aceita_termos = 'É necessário aceitar os termos para enviar.';
+    return erros;
   };
 
-  // Avisos de compatibilidade — NÃO bloqueiam (decisão do Marcos): a pessoa
-  // pode se inscrever mesmo assim, mas já sabe que o grupo pode não ser pra ela.
-  const avisosCompatibilidade = useMemo(() => {
-    const avisos = [];
-    if (!grupoEscolhido) return avisos;
+  // ── Compatibilidade com o grupo (Marcos · 2026-07-13: era aviso, virou BLOQUEIO) ──
+  // Gênero (grupo de homens/mulheres) e idade (quando o grupo tem limite numérico
+  // definido) impedem o envio. Rótulo etário SEM limite numérico segue como aviso.
+  const bloqueioLocal = useMemo(() => {
+    if (!grupoEscolhido) return null;
     const cat = (grupoEscolhido.categoria || '').toLowerCase();
     if (form.genero === 'masculino' && cat === 'mulheres') {
-      avisos.push('Este é um grupo de mulheres e você marcou masculino.');
+      return 'Este é um grupo só de mulheres, então sua inscrição não pode seguir nele.';
     }
     if (form.genero === 'feminino' && cat === 'homens') {
-      avisos.push('Este é um grupo de homens e você marcou feminino.');
+      return 'Este é um grupo só de homens, então sua inscrição não pode seguir nele.';
     }
     const idade = idadeDe(form.data_nascimento);
-    const faixa = (grupoEscolhido.faixa_etaria || '').toLowerCase();
-    if (idade != null && idade >= 18 && faixa.includes('adolescent')) {
-      avisos.push(`Este grupo é para adolescentes e você tem ${idade} anos.`);
+    const min = grupoEscolhido.idade_min;
+    const max = grupoEscolhido.idade_max;
+    if (idade != null && (min != null || max != null)) {
+      if ((min != null && idade < min) || (max != null && idade > max)) {
+        const faixaTxt = min != null && max != null
+          ? `de ${min} a ${max} anos`
+          : (max != null ? `até ${max} anos` : `a partir de ${min} anos`);
+        return `Este grupo é para pessoas ${faixaTxt} e você tem ${idade} anos, então a inscrição não pode seguir nele.`;
+      }
     }
-    return avisos;
+    return null;
   }, [grupoEscolhido, form.genero, form.data_nascimento]);
+
+  const avisoFaixa = useMemo(() => {
+    if (!grupoEscolhido) return null;
+    if (grupoEscolhido.idade_min != null || grupoEscolhido.idade_max != null) return null; // com número é trava, não aviso
+    const faixa = grupoEscolhido.faixa_etaria;
+    if (faixa && faixa !== 'Todas as idades') return `Este grupo é voltado para ${String(faixa).toLowerCase()}.`;
+    return null;
+  }, [grupoEscolhido]);
+
+  // Trocou de grupo → o bloqueio confirmado pelo servidor não vale mais.
+  useEffect(() => { setBloqueio(null); }, [grupoEscolhido]);
+
+  // "Procurar outro grupo": volta pra escolha SEM apagar o que a pessoa digitou
+  // (pedido explícito do Marcos — ela não deve reescrever tudo).
+  const procurarOutroGrupo = () => {
+    setBloqueio(null); setError('');
+    setGrupoEscolhido(null);
+    setStep(0);
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+  };
 
   const onFoto = async (e) => {
     const file = e.target.files?.[0];
@@ -216,19 +279,30 @@ export default function InscricaoGrupos() {
     } finally { setFotoUploading(false); }
   };
 
+  const scrollAteCampo = (campo) => {
+    try { document.querySelector(`[data-campo="${campo}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+  };
+
   const doSubmit = async (extra = {}) => {
     if (!grupoEscolhido) { setError('Escolha um grupo primeiro.'); return; }
-    if (!formValido()) { setError('Preencha os campos obrigatórios.'); return; }
+    if (bloqueioLocal || bloqueio) return; // grupo incompatível — o painel já mostra o caminho
+    const erros = validarCampos();
+    if (Object.keys(erros).length > 0) {
+      setErrosCampos(erros);
+      setError('');
+      const primeiro = ['nome', 'telefone', 'data_nascimento', 'genero', 'cpf', 'email', 'aceita_termos'].find(k => erros[k]);
+      if (primeiro) scrollAteCampo(primeiro);
+      return;
+    }
+    setErrosCampos({});
     if (submittingRef.current) return; // trava re-entrada (duplo-toque antes do re-render)
     submittingRef.current = true;
     setLoading(true); setError('');
     try {
-      const cpfDigitos = soDigitos(form.cpf);
       const r = await gruposPublic.inscrever({
         grupo_id: grupoEscolhido.id,
         nome: form.nome.trim(),
-        // Envia o CPF só quando completo (11 dígitos) — parcial vira "sem CPF".
-        cpf: cpfDigitos.length === 11 ? cpfDigitos : null,
+        cpf: soDigitos(form.cpf), // obrigatório (Marcos · 2026-07-13) — validado acima
         email: form.email.trim() || null,
         telefone: form.telefone,
         data_nascimento: form.data_nascimento || null,
@@ -246,6 +320,15 @@ export default function InscricaoGrupos() {
     } catch (e) {
       if (e.status === 409 && e.codigo === 'possivel_duplicado') {
         setDup({ onde: e.onde || 'pedido_pendente' });
+      } else if (e.codigo === 'grupo_incompativel') {
+        // O servidor confirmou a trava de gênero/idade — painel com saída clara.
+        setDup(null);
+        setBloqueio({ mensagem: e.message });
+      } else if (e.campo) {
+        // Erro de validação do servidor aponta o campo — pinta e rola até ele.
+        setDup(null);
+        setErrosCampos(p => ({ ...p, [e.campo]: e.message }));
+        scrollAteCampo(e.campo);
       } else {
         setError(e.message || 'Não foi possível enviar. Tente novamente.');
       }
@@ -257,13 +340,23 @@ export default function InscricaoGrupos() {
   return (
     <PublicPaletteCtx.Provider value={C}>
     <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      position: 'relative', overflow: 'hidden', padding: 'clamp(20px, 5vw, 40px) clamp(10px, 3vw, 16px)', background: C.pageBg,
+      // 100dvh (viewport dinâmico do iOS) + rolagem livre + cartão centralizado
+      // via margin:auto. O antigo 100vh + overflow:hidden + alignItems:center
+      // cortava o rodapé do cartão no iPhone (bug do teste de 13/07).
+      minHeight: '100dvh', display: 'flex',
+      position: 'relative',
+      padding: 'clamp(20px, 5vw, 40px) clamp(10px, 3vw, 16px)',
+      paddingBottom: 'calc(clamp(20px, 5vw, 40px) + env(safe-area-inset-bottom, 0px))',
+      background: C.pageBg,
     }}>
-      <AnimatedBackground />
+      {/* Fundo decorativo num layer próprio: o clip saiu do container da página
+          pra não engolir conteúdo maior que a tela. */}
+      <div aria-hidden="true" style={{ position: 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+        <AnimatedBackground />
+      </div>
       <PublicThemeToggle />
 
-      <div style={{ position: 'relative', zIndex: 10, width: '100%', maxWidth: 720 }}>
+      <div style={{ position: 'relative', zIndex: 10, width: '100%', maxWidth: 720, margin: 'auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 'clamp(14px, 3vw, 24px)' }}>
           <h1 style={{
             fontSize: 'clamp(22px, 6vw, 28px)', fontWeight: 800, margin: 0, letterSpacing: -0.5,
@@ -343,21 +436,24 @@ export default function InscricaoGrupos() {
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
-                <Field label="Nome completo *" value={form.nome} onChange={set('nome')} />
-                <Field label="Celular / WhatsApp *" value={form.telefone} onChange={set('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
-                <Field label="Data de nascimento *" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} />
-                <div>
+                <Field campo="nome" error={errosCampos.nome} label="Nome completo *" value={form.nome} onChange={set('nome')} />
+                <Field campo="telefone" error={errosCampos.telefone} label="Celular / WhatsApp *" value={form.telefone} onChange={set('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
+                <Field campo="data_nascimento" error={errosCampos.data_nascimento} label="Data de nascimento *" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} />
+                <div data-campo="genero">
                   <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {[['masculino', 'Masculino'], ['feminino', 'Feminino']].map(([valor, rotulo]) => (
                       <button
                         key={valor}
                         type="button"
-                        onClick={() => setForm(f => ({ ...f, genero: valor }))}
+                        onClick={() => {
+                          setForm(f => ({ ...f, genero: valor }));
+                          setErrosCampos(p => (p.genero ? { ...p, genero: '' } : p));
+                        }}
                         style={{
                           flex: 1, padding: '9px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
                           fontWeight: form.genero === valor ? 700 : 500,
-                          border: `1px solid ${form.genero === valor ? '#00B39D' : C.inputBorder}`,
+                          border: `1px solid ${form.genero === valor ? '#00B39D' : (errosCampos.genero ? '#ef4444' : C.inputBorder)}`,
                           background: form.genero === valor ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
                           color: form.genero === valor ? '#00B39D' : C.text,
                         }}
@@ -366,24 +462,40 @@ export default function InscricaoGrupos() {
                       </button>
                     ))}
                   </div>
+                  {errosCampos.genero && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos.genero}</p>}
                 </div>
-                <Field label="CPF (opcional · evita duplicidade)" value={form.cpf} onChange={set('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
-                <Field label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} />
+                <Field campo="cpf" error={errosCampos.cpf} label="CPF *" value={form.cpf} onChange={set('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
+                <Field campo="email" error={errosCampos.email} label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} />
               </div>
 
-              {/* Avisos de compatibilidade — informam sem impedir */}
-              {avisosCompatibilidade.length > 0 && (
+              {/* Grupo incompatível (gênero/idade) — BLOQUEIA com saída clara,
+                  preservando tudo que a pessoa digitou (decisão de 13/07). */}
+              {(bloqueio?.mensagem || bloqueioLocal) ? (
+                <div style={{
+                  padding: '12px 14px', marginBottom: 12, borderRadius: 10,
+                  background: 'rgba(239, 68, 68, 0.10)', border: '1px solid rgba(239, 68, 68, 0.55)',
+                  fontSize: 13, color: C.isDark ? '#fca5a5' : '#991b1b', lineHeight: 1.55,
+                }}>
+                  <p style={{ margin: 0, fontWeight: 700 }}>{bloqueio?.mensagem || bloqueioLocal}</p>
+                  <p style={{ margin: '6px 0 10px', opacity: 0.9 }}>
+                    Procure um grupo que combine com você — seus dados ficam guardados, não precisa digitar de novo.
+                  </p>
+                  <button type="button" onClick={procurarOutroGrupo} style={{
+                    padding: '10px 18px', borderRadius: 8, background: '#00B39D', color: '#fff',
+                    border: 'none', fontWeight: 700, cursor: 'pointer', fontSize: 13,
+                  }}>
+                    Procurar outro grupo
+                  </button>
+                </div>
+              ) : avisoFaixa ? (
                 <div style={{
                   padding: '10px 12px', marginBottom: 12, borderRadius: 10,
                   background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.5)',
                   fontSize: 12.5, color: C.isDark ? '#fbbf24' : '#92400e', lineHeight: 1.55,
                 }}>
-                  {avisosCompatibilidade.map((a, i) => <p key={i} style={{ margin: 0 }}>⚠ {a}</p>)}
-                  <p style={{ margin: '6px 0 0', opacity: 0.85 }}>
-                    Isso não impede a sua inscrição — siga em frente se for isso mesmo, ou volte e escolha outro grupo.
-                  </p>
+                  <p style={{ margin: 0 }}>⚠ {avisoFaixa} Siga em frente se for pra você, ou volte e escolha outro grupo.</p>
                 </div>
-              )}
+              ) : null}
 
               {/* Foto opcional — reforço de identidade / anti-duplicata */}
               <FotoOpcional
@@ -402,7 +514,7 @@ export default function InscricaoGrupos() {
                   style={{
                     width: '100%', padding: '8px 10px', borderRadius: 8,
                     border: `1px solid ${C.inputBorder}`, background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
-                    color: C.text, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box',
+                    color: C.text, fontSize: 16, fontFamily: 'inherit', boxSizing: 'border-box',
                   }}
                 />
               </div>
@@ -410,12 +522,16 @@ export default function InscricaoGrupos() {
               {/* honeypot */}
               <input type="text" value={form.website} onChange={set('website')} style={{ position: 'absolute', left: -9999, opacity: 0 }} tabIndex={-1} autoComplete="off" />
 
-              <div style={{ background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px solid ${C.cardBorder}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <div data-campo="aceita_termos" style={{ background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px solid ${errosCampos.aceita_termos ? '#ef4444' : C.cardBorder}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
                 <p style={{ fontSize: 11, color: C.text3, lineHeight: 1.5, margin: 0, marginBottom: 8 }}>{TEXTO_CONSENTIMENTO}</p>
                 <label style={{ fontSize: 12, color: C.text, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={aceitaTermos} onChange={e => setAceitaTermos(e.target.checked)} style={{ accentColor: '#00B39D' }} />
+                  <input type="checkbox" checked={aceitaTermos} onChange={e => {
+                    setAceitaTermos(e.target.checked);
+                    setErrosCampos(p => (p.aceita_termos ? { ...p, aceita_termos: '' } : p));
+                  }} style={{ accentColor: '#00B39D' }} />
                   Li e aceito os termos *
                 </label>
+                {errosCampos.aceita_termos && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '6px 0 0' }}>{errosCampos.aceita_termos}</p>}
               </div>
 
               {error && (
@@ -424,14 +540,20 @@ export default function InscricaoGrupos() {
                 </div>
               )}
 
-              <button onClick={submit} disabled={loading || !formValido()} style={{
-                width: '100%', padding: '12px', borderRadius: 10,
-                background: loading || !formValido() ? 'rgba(0,179,157,0.3)' : '#00B39D',
-                color: '#fff', fontWeight: 700, border: 'none',
-                cursor: loading || !formValido() ? 'not-allowed' : 'pointer', fontSize: 14,
-              }}>
-                {loading ? 'Enviando...' : 'Enviar pedido'}
-              </button>
+              {/* Botão sempre clicável (só trava durante o envio): clicar com
+                  campo inválido PINTA o campo e explica o que falta — botão
+                  apagado sem motivo era parte da confusão do teste de 13/07.
+                  Some quando o grupo é incompatível (o painel acima dá o caminho). */}
+              {!(bloqueio?.mensagem || bloqueioLocal) && (
+                <button onClick={submit} disabled={loading} style={{
+                  width: '100%', padding: '12px', borderRadius: 10,
+                  background: loading ? 'rgba(0,179,157,0.3)' : '#00B39D',
+                  color: '#fff', fontWeight: 700, border: 'none',
+                  cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14,
+                }}>
+                  {loading ? 'Enviando...' : 'Enviar pedido'}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -474,8 +596,10 @@ function FotoOpcional({ C, fotoUrl, uploading, erro, onPick, onRemove }) {
           display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent',
         }}>
           <Camera size={15} />
-          {uploading ? 'Enviando...' : (fotoUrl ? 'Trocar foto' : 'Adicionar foto')}
-          <input type="file" accept="image/*" capture="environment" onChange={onPick} disabled={uploading} style={{ display: 'none' }} />
+          {uploading ? 'Enviando...' : (fotoUrl ? 'Trocar foto' : 'Tirar foto ou escolher da galeria')}
+          {/* SEM `capture`: com ele o celular forçava a câmera — sem, o seletor
+              nativo oferece câmera E galeria (pedido do teste de 13/07). */}
+          <input type="file" accept="image/*" onChange={onPick} disabled={uploading} style={{ display: 'none' }} />
         </label>
         {fotoUrl && !uploading && (
           <button type="button" onClick={onRemove} style={{
@@ -535,16 +659,19 @@ function DupModal({ C, onde, loading, erro, onSouEu, onOutraPessoa, onFechar }) 
   );
 }
 
-function Field({ label, ...rest }) {
+function Field({ label, error, campo, ...rest }) {
   const C = usePublicPalette();
   return (
-    <div>
+    <div data-campo={campo}>
       <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>{label}</label>
-      <input {...rest} style={{
+      <input {...rest} aria-invalid={!!error} style={{
         width: '100%', padding: '9px 12px', borderRadius: 8,
-        border: `1px solid ${C.inputBorder}`, background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
-        color: C.text, fontSize: 13, boxSizing: 'border-box',
+        border: `1px solid ${error ? '#ef4444' : C.inputBorder}`,
+        background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+        // ≥16px: abaixo disso o iOS dá zoom automático ao focar o campo.
+        color: C.text, fontSize: 16, boxSizing: 'border-box',
       }} />
+      {error && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{error}</p>}
     </div>
   );
 }

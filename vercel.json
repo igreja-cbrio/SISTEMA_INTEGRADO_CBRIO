@@ -106,6 +106,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/public/grupos/cron/whatsapp-fila",
+      "schedule": "0 * * * *"
+    },
+    {
       "path": "/api/devocional-planos/cron/lancar-semanal",
       "schedule": "0 8 * * 1"
     },

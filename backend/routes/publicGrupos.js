@@ -11,8 +11,9 @@ const {
 } = require('../services/membroMatch');
 const {
   verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
-  notificarLiderFrequencia, rotuloMes,
+  notificarLiderFrequencia, rotuloMes, enviarInscricaoConfirmada,
 } = require('../services/gruposWhatsapp');
+const { processarFila } = require('../services/whatsappFila');
 const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
@@ -73,7 +74,7 @@ router.get('/buscar', async (req, res) => {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, q } = req.query;
 
     let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url')
       .eq('ativo', true)
       .eq('aceitando_inscricoes', true); // líder pode ter parado de receber pedidos
     // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
@@ -177,7 +178,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { data: grupo, error } = await supabase
       .from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
@@ -201,7 +202,7 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
   try {
     const { temporada } = req.query;
     let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada')
       .eq('lider_id', req.params.liderId).eq('ativo', true)
       .in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
     if (temporada) query = query.eq('temporada', temporada);
@@ -230,6 +231,16 @@ function cpfValido(cpfMasked) {
   return r === parseInt(cpf[10]);
 }
 function ehEmailValido(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || ''); }
+// Idade em anos a partir de 'YYYY-MM-DD' (null se a data não parseia).
+function idadeAnos(dataNascimento) {
+  const nasc = new Date(String(dataNascimento) + 'T12:00:00');
+  if (Number.isNaN(nasc.getTime())) return null;
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const m = hoje.getMonth() - nasc.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade -= 1;
+  return idade;
+}
 
 // Só aceita foto_url que o NOSSO /upload-foto devolveu (bucket público
 // fotos-membros do próprio Supabase) — nunca uma URL externa arbitrária, que
@@ -384,25 +395,34 @@ router.post('/inscrever', async (req, res) => {
 
     if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
 
+    // Cada erro devolve `campo` pro form pintar o campo certo de vermelho
+    // (feedback do teste 2026-07-13: "todo erro deve dizer claramente onde está").
     if (!grupo_id) return res.status(400).json({ error: 'Grupo obrigatório.' });
-    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Nome obrigatório (min 3 caracteres).' });
-    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Celular obrigatório.' });
-    // CPF agora é OPCIONAL (ajuda no dedup) · valida o formato só se preenchido.
-    if (cpf && !cpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido.' });
-    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido.' });
-    if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.' });
-    // Nascimento e sexo OBRIGATÓRIOS (Marcos · 2026-07-10): filtram inscrição
-    // acidental e alimentam os avisos de compatibilidade (não-bloqueantes).
+    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Digite o nome completo.', campo: 'nome' });
+    if (!telefone || soDigitos(telefone).length < 10) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
+    // CPF OBRIGATÓRIO (Marcos · 2026-07-13, feedback do teste) — além de
+    // identificar a pessoa, é a chave forte do dedup/vínculo com o membro.
+    if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
+    if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
+    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido.', campo: 'email' });
+    if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.', campo: 'aceita_termos' });
+    // Nascimento e sexo OBRIGATÓRIOS (Marcos · 2026-07-10).
     if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
-      return res.status(400).json({ error: 'Data de nascimento obrigatória.' });
+      return res.status(400).json({ error: 'Informe a data de nascimento.', campo: 'data_nascimento' });
     }
     const nascDate = new Date(String(data_nascimento) + 'T12:00:00');
-    if (Number.isNaN(nascDate.getTime()) || nascDate.getFullYear() < 1900 || nascDate > new Date()) {
-      return res.status(400).json({ error: 'Data de nascimento inválida.' });
+    if (Number.isNaN(nascDate.getTime())) {
+      return res.status(400).json({ error: 'Data de nascimento inválida.', campo: 'data_nascimento' });
+    }
+    if (nascDate > new Date()) {
+      return res.status(400).json({ error: 'A data de nascimento não pode estar no futuro.', campo: 'data_nascimento' });
+    }
+    if (nascDate.getFullYear() < 1900) {
+      return res.status(400).json({ error: 'Confira o ano de nascimento.', campo: 'data_nascimento' });
     }
     const generoLimpo = ['masculino', 'feminino'].includes(String(genero || '').toLowerCase())
       ? String(genero).toLowerCase() : null;
-    if (!generoLimpo) return res.status(400).json({ error: 'Informe o sexo (masculino ou feminino).' });
+    if (!generoLimpo) return res.status(400).json({ error: 'Marque o sexo (masculino ou feminino).', campo: 'genero' });
 
     const cpfLimpo = cpf ? soDigitos(cpf) : null;
     const emailLimpo = email ? email.trim().toLowerCase() : null;
@@ -410,7 +430,7 @@ router.post('/inscrever', async (req, res) => {
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, aceitando_inscricoes, status_temporada, temporada, lider_id').eq('id', grupo_id).single();
+      .select('id, nome, ativo, aceitando_inscricoes, status_temporada, temporada, lider_id, categoria, idade_min, idade_max').eq('id', grupo_id).single();
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
     }
@@ -429,6 +449,35 @@ router.post('/inscrever', async (req, res) => {
         return res.status(403).json({
           error: 'As inscrições para esta temporada estão fechadas no momento. Aguarde a próxima abertura.',
           codigo: 'inscricoes_fechadas',
+        });
+      }
+    }
+
+    // ── Trava de compatibilidade (Marcos · 2026-07-13 · era aviso, virou bloqueio) ──
+    // Gênero: categoria Homens/Mulheres não aceita o sexo oposto. Idade: só trava
+    // quando o grupo tem limite definido (idade_min/idade_max · NULL = livre).
+    // O front recebe codigo='grupo_incompativel' e oferece "procurar outro grupo"
+    // preservando o que a pessoa já digitou.
+    const catLower = String(grupo.categoria || '').toLowerCase();
+    if ((catLower === 'mulheres' && generoLimpo === 'masculino') || (catLower === 'homens' && generoLimpo === 'feminino')) {
+      return res.status(422).json({
+        codigo: 'grupo_incompativel',
+        error: catLower === 'mulheres'
+          ? 'Este é um grupo só de mulheres, então sua inscrição não pode seguir nele.'
+          : 'Este é um grupo só de homens, então sua inscrição não pode seguir nele.',
+      });
+    }
+    const idade = idadeAnos(data_nascimento);
+    if (idade != null && (grupo.idade_min != null || grupo.idade_max != null)) {
+      const foraMin = grupo.idade_min != null && idade < grupo.idade_min;
+      const foraMax = grupo.idade_max != null && idade > grupo.idade_max;
+      if (foraMin || foraMax) {
+        const faixaTxt = grupo.idade_min != null && grupo.idade_max != null
+          ? `de ${grupo.idade_min} a ${grupo.idade_max} anos`
+          : (grupo.idade_max != null ? `até ${grupo.idade_max} anos` : `a partir de ${grupo.idade_min} anos`);
+        return res.status(422).json({
+          codigo: 'grupo_incompativel',
+          error: `Este grupo é para pessoas ${faixaTxt} e você tem ${idade} anos, então a inscrição não pode seguir nele.`,
         });
       }
     }
@@ -592,6 +641,17 @@ router.post('/inscrever', async (req, res) => {
           grupo,
           pedidoId: pedido.id,
           pessoa: { nome: nome.trim(), telefone: telefone || null, email: emailLimpo },
+        });
+
+        // Mensagem 1 pra PESSOA: «recebemos sua inscrição» (utility
+        // cbrio_inscricao_confirmada — a tela de sucesso do form já promete
+        // a confirmação no WhatsApp). Via fila: registra e reenvia sozinho
+        // se o envio bater no teto diário da Meta.
+        await enviarInscricaoConfirmada({
+          telefone,
+          nome: nome.trim(),
+          grupoNome: grupo.nome,
+          pedidoId: pedido.id,
         });
       } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
     })();
@@ -788,7 +848,9 @@ router.post('/sugestao/aceitar', async (req, res) => {
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, nome').eq('id', payload.p).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
-    if (pedido.status !== 'pendente') {
+    // 'devolvido' (recusado pelo líder e devolvido pra triagem) também aceita —
+    // o aceite reativa o pedido como pendente já no grupo sugerido.
+    if (!['pendente', 'devolvido'].includes(pedido.status)) {
       return res.status(409).json({ error: `Este pedido já foi ${pedido.status}.`, status: pedido.status });
     }
 
@@ -804,7 +866,8 @@ router.post('/sugestao/aceitar', async (req, res) => {
     // Se a pessoa já tiver pedido pendente no grupo sugerido, o índice único
     // barra o UPDATE (23505) → resposta amigável.
     const { error: eMove } = await supabase.from('mem_grupo_pedidos')
-      .update({ grupo_id: payload.g }).eq('id', pedido.id).eq('status', 'pendente');
+      .update({ grupo_id: payload.g, status: 'pendente' }) // devolvido reativa como pendente no grupo novo
+      .eq('id', pedido.id).in('status', ['pendente', 'devolvido']);
     if (eMove) {
       if (eMove.code === '23505') {
         return res.status(409).json({ error: 'Você já tem um pedido para esse grupo — o líder vai te responder por lá.' });
@@ -814,9 +877,10 @@ router.post('/sugestao/aceitar', async (req, res) => {
 
     // O revert do move precisa cobrir TAMBÉM exceção do core (erro de infra /
     // falha no vínculo — o core repõe status pendente e relança): sem isso o
-    // pedido ficaria pendente órfão no grupo errado.
+    // pedido ficaria pendente órfão no grupo errado. Restaura o status original
+    // (um devolvido volta a ser devolvido no grupo original).
     const reverterMove = () => supabase.from('mem_grupo_pedidos')
-      .update({ grupo_id: pedido.grupo_id }).eq('id', pedido.id).eq('status', 'pendente');
+      .update({ grupo_id: pedido.grupo_id, status: pedido.status }).eq('id', pedido.id).eq('status', 'pendente');
 
     const { aprovarPedidoCore } = require('./grupos');
     let r;
@@ -1030,5 +1094,21 @@ router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
     res.status(500).json({ error: 'Erro no envio mensal.' });
   }
 });
+
+// GET|POST /api/public/grupos/cron/whatsapp-fila — reprocessa a fila de envios
+// de template (reenvio com backoff · absorve o teto diário da Meta). Vercel
+// Cron horário; gated por CRON_SECRET (fail-closed).
+async function cronWhatsappFila(req, res) {
+  try {
+    const r = await processarFila();
+    console.log('[whatsapp-fila cron]', JSON.stringify(r));
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[whatsapp-fila cron]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+}
+router.get('/cron/whatsapp-fila', requireCron, cronWhatsappFila);
+router.post('/cron/whatsapp-fila', requireCron, cronWhatsappFila);
 
 module.exports = router;

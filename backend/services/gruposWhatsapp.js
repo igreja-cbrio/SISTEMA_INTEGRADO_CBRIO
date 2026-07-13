@@ -14,7 +14,10 @@
 // envia — o fluxo do sistema fica idêntico ao de hoje).
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
-const { sendTemplate, configurado } = require('./whatsappService');
+const { configurado } = require('./whatsappService');
+// Fila com reenvio automático: enfileirar() grava e tenta na hora; se o envio
+// bater no teto diário da Meta (janela móvel de 24h), o cron reprocessa.
+const { enfileirar } = require('./whatsappFila');
 
 // GRUPOS_TOKEN_SECRET (opcional) isola esta superfície dos demais usos do
 // CRON_SECRET (bearer de crons, clientState do Graph no Cérebro — que é
@@ -32,6 +35,9 @@ const TPL_PEDIDO_APROVADO = process.env.WHATSAPP_TEMPLATE_GRUPOS_APROVADO || 'gr
 // de navegação + tom promocional); a UTILITY é mais barata e não é pausável.
 const TPL_SUGESTAO_GRUPO = process.env.WHATSAPP_TEMPLATE_GRUPOS_SUGESTAO || 'grupos_sugestao_grupo';
 const TPL_FREQUENCIA_MES = process.env.WHATSAPP_TEMPLATE_GRUPOS_FREQUENCIA || 'grupos_frequencia_mes';
+// «Olá {{1}}! Recebemos sua inscrição em {{2}}. 💙 Em breve te damos os
+// próximos passos.» — mensagem 1 da inscrição (a 2 é o grupos_pedido_aprovado).
+const TPL_INSCRICAO_CONFIRMADA = process.env.WHATSAPP_TEMPLATE_INSCRICAO_CONFIRMADA || 'cbrio_inscricao_confirmada';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
@@ -116,13 +122,19 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
     const contato = [pessoa.telefone, pessoa.email].filter(Boolean).join(' · ') || 'sem contato';
     // trim + fallback DEPOIS do split: nome importado com espaço à esquerda
     // viraria param '' e a Meta rejeita o template inteiro
-    const r = await sendTemplate(lider.telefone, TPL_NOVO_PEDIDO_LIDER, TEMPLATE_LANG, [
-      (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
-      (grupo.nome || '').trim() || 'seu grupo',
-      (pessoa.nome || '').trim() || 'Alguém',
-      contato,
-      link,
-    ]);
+    const r = await enfileirar({
+      telefone: lider.telefone,
+      template: TPL_NOVO_PEDIDO_LIDER,
+      params: [
+        (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
+        (grupo.nome || '').trim() || 'seu grupo',
+        (pessoa.nome || '').trim() || 'Alguém',
+        contato,
+        link,
+      ],
+      contexto: 'grupos.pedido_novo_lider',
+      refId: pedidoId,
+    });
     if (!r.sent) console.log('[GruposWPP] template líder não enviado:', r.reason || r.status);
     return r;
   } catch (e) {
@@ -136,13 +148,18 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
 async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefone }) {
   try {
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
-    const r = await sendTemplate(telefone, TPL_PEDIDO_APROVADO, TEMPLATE_LANG, [
-      (grupo?.nome || '').trim() || 'seu grupo',
-      formatarQuando(grupo),
-      formatarOnde(grupo),
-      (liderNome || '').trim() || 'o líder do grupo',
-      (liderTelefone || '').trim() || 'em breve pelo WhatsApp',
-    ]);
+    const r = await enfileirar({
+      telefone,
+      template: TPL_PEDIDO_APROVADO,
+      params: [
+        (grupo?.nome || '').trim() || 'seu grupo',
+        formatarQuando(grupo),
+        formatarOnde(grupo),
+        (liderNome || '').trim() || 'o líder do grupo',
+        (liderTelefone || '').trim() || 'em breve pelo WhatsApp',
+      ],
+      contexto: 'grupos.pedido_aprovado',
+    });
     if (!r.sent) console.log('[GruposWPP] template aprovado não enviado:', r.reason || r.status);
     return r;
   } catch (e) {
@@ -159,7 +176,18 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
 // {{4}} grupo sugerido (nome — quando — onde) · {{5}} link de aceite /g/s/.
 // Sem 2º link de navegação nem tom promocional — é o que mantém a categoria
 // UTILITY na revisão da Meta (a versão com "veja outras opções" virou MARKETING).
-async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome, grupoSugerido, pedidoId }) {
+// Sanitiza o motivo digitado pela triagem pra virar parâmetro de template:
+// sem links, sem quebras de linha (a Meta rejeita \n/\t e sequências de
+// espaços em params) e curto — é UMA frase dentro da mensagem de utilidade.
+function sanitizarMotivo(motivo) {
+  return String(motivo || '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome, grupoSugerido, pedidoId, motivo }) {
   try {
     // Mesmo gate do template do líder: não assina token com o envio desligado
     // (o DRY-RUN logaria o link-capability).
@@ -177,13 +205,25 @@ async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome
       formatarQuando(grupoSugerido) !== 'a combinar' ? formatarQuando(grupoSugerido) : null,
       formatarOnde(grupoSugerido) !== 'a combinar' ? formatarOnde(grupoSugerido) : null,
     ].filter(Boolean).join(' — ');
-    const r = await sendTemplate(telefone, TPL_SUGESTAO_GRUPO, TEMPLATE_LANG, [
-      (pessoaNome || '').trim().split(/\s+/)[0] || 'Olá',
-      (grupoOriginalNome || '').trim() || 'grupo escolhido',
-      'a liderança indicou um grupo com vagas para você.',
-      sugeridoResumo,
-      link,
-    ]);
+    // {{3}} leva o motivo escolhido pela triagem (Marcos 13/07: a pessoa deve
+    // entender O QUE aconteceu) — com fallback na frase neutra de sempre.
+    const motivoTxt = sanitizarMotivo(motivo);
+    const mensagemSugestao = motivoTxt
+      ? `${motivoTxt} — a liderança indicou um grupo com vagas para você.`
+      : 'a liderança indicou um grupo com vagas para você.';
+    const r = await enfileirar({
+      telefone,
+      template: TPL_SUGESTAO_GRUPO,
+      params: [
+        (pessoaNome || '').trim().split(/\s+/)[0] || 'Olá',
+        (grupoOriginalNome || '').trim() || 'grupo escolhido',
+        mensagemSugestao,
+        sugeridoResumo,
+        link,
+      ],
+      contexto: 'grupos.sugestao_grupo',
+      refId: pedidoId,
+    });
     if (!r.sent) console.log('[GruposWPP] template sugestão não enviado:', r.reason || r.status);
     return r;
   } catch (e) {
@@ -207,16 +247,46 @@ async function notificarLiderFrequencia({ grupo, lider, mes }) {
       console.error('[GruposWPP] token não assinado:', e.message);
       return { sent: false, reason: 'sem_secret' };
     }
-    const r = await sendTemplate(lider.telefone, TPL_FREQUENCIA_MES, TEMPLATE_LANG, [
-      (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
-      rotuloMes(mes),
-      (grupo.nome || '').trim() || 'seu grupo',
-      link,
-    ]);
+    const r = await enfileirar({
+      telefone: lider.telefone,
+      template: TPL_FREQUENCIA_MES,
+      params: [
+        (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
+        rotuloMes(mes),
+        (grupo.nome || '').trim() || 'seu grupo',
+        link,
+      ],
+      contexto: 'grupos.frequencia_mes',
+      refId: grupo.id,
+    });
     if (!r.sent) console.log('[GruposWPP] template frequência não enviado:', r.reason || r.status);
     return r;
   } catch (e) {
     console.error('[GruposWPP] notificarLiderFrequencia:', e.message);
+    return { sent: false, reason: 'exception' };
+  }
+}
+
+// Template 5 · cbrio_inscricao_confirmada — mensagem 1 pra PESSOA no momento
+// da inscrição («recebemos, em breve os próximos passos» · a mensagem 2 é o
+// grupos_pedido_aprovado, na aprovação). {{1}} primeiro nome · {{2}} grupo.
+async function enviarInscricaoConfirmada({ telefone, nome, grupoNome, pedidoId }) {
+  try {
+    if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
+    const r = await enfileirar({
+      telefone,
+      template: TPL_INSCRICAO_CONFIRMADA,
+      params: [
+        (nome || '').trim().split(/\s+/)[0] || 'Olá',
+        (grupoNome || '').trim() || 'um grupo de conexão',
+      ],
+      contexto: 'grupos.inscricao_confirmada',
+      refId: pedidoId,
+    });
+    if (!r.sent) console.log('[GruposWPP] inscrição confirmada não enviada agora:', r.reason || '(na fila)');
+    return r;
+  } catch (e) {
+    console.error('[GruposWPP] enviarInscricaoConfirmada:', e.message);
     return { sent: false, reason: 'exception' };
   }
 }
@@ -231,4 +301,5 @@ module.exports = {
   notificarPessoaAprovada,
   notificarPessoaSugestao,
   notificarLiderFrequencia,
+  enviarInscricaoConfirmada,
 };
