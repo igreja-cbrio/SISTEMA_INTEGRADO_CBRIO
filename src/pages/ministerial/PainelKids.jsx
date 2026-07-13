@@ -13,7 +13,7 @@ import { Card } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import {
   Baby, ShieldCheck, BarChart3, UserCheck, Boxes, Droplets, Sparkles,
-  ArrowRight, Loader2,
+  ArrowRight, Loader2, UserPlus,
 } from 'lucide-react';
 import PainelArea from './PainelArea';
 
@@ -21,6 +21,7 @@ const GESTAO = [
   { titulo: 'Frequência (PCO)', desc: 'Validar check-ins das crianças por culto', icon: BarChart3, path: '/ministerial/totem-kids/frequencia', cor: '#0ea5e9' },
   { titulo: 'Vínculos', desc: 'Pedidos de vínculo criança ↔ responsável', icon: ShieldCheck, path: '/ministerial/totem-kids/vinculos', cor: '#3b82f6' },
   { titulo: 'Equipe do Kids', desc: 'Voluntários por posição (salas, recepção...) + ficha', icon: UserCheck, path: '/ministerial/totem-kids/voluntarios', cor: '#14b8a6' },
+  { titulo: 'Voluntariado (inscrições)', desc: 'Quem quer servir no Kids · contatar (WhatsApp) e encaminhar', icon: UserPlus, path: '/ministerial/totem-kids/voluntariado-inscricoes', cor: '#ec4899' },
   { titulo: 'Estoque por sala', desc: 'O que tem e o que deve ter em cada sala (Patrimônio)', icon: Boxes, path: '/ministerial/totem-kids/estoque', cor: '#f97316' },
   { titulo: 'Batismos (crianças)', desc: 'Crianças pra batizar · contatar a família', icon: Droplets, path: '/ministerial/totem-kids/batismos', cor: '#0ea5e9' },
   { titulo: 'Apresentação de crianças', desc: 'Inscrições do formulário · por turma (2º domingo)', icon: Baby, path: '/ministerial/totem-kids/apresentacao', cor: '#d946ef' },

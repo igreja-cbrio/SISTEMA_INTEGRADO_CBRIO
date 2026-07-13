@@ -3568,4 +3568,64 @@ router.post('/vinculo-solicitacoes/:id/rejeitar', authorizeModule('kids', 3), as
   }
 });
 
+// ── Voluntariado · inscrições de quem quer servir no KIDS ────────────────────
+// Pra a coordenação do Kids (Mariane Gaia / Milena) ver e gerenciar quem se
+// inscreveu no voluntariado indicando o Kids (vol_inscricoes.area='kids').
+// Só leitura + status leve + contato (WhatsApp na UI). Integrar (com verificação
+// de antecedentes · ECA/LGPD) continua no módulo Voluntariado — não bypassa aqui.
+router.get('/voluntariado-inscricoes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const status = req.query.status ? String(req.query.status) : null;
+    const search = req.query.search ? String(req.query.search).trim() : null;
+    let q = supabase.from('vol_inscricoes')
+      .select('id, nome_completo, nome, sobrenome, telefone, email, status, ministerios_interesse, dom_predominante, data_inscricao, feedback, integrado_em')
+      .eq('area', 'kids')
+      .order('data_inscricao', { ascending: false, nullsFirst: false })
+      .limit(1000);
+    if (status) q = q.eq('status', status);
+    if (search) q = q.ilike('nome_completo', `%${search}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ rows: data || [] });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] voluntariado-inscricoes:', e.message);
+    res.status(500).json({ error: 'Erro ao listar inscrições de voluntariado do Kids' });
+  }
+});
+
+// PATCH · status leve (encaminhar/voltar) + anotação. NÃO aceita 'integrado'
+// (a integração exige a triagem de antecedentes, feita no módulo Voluntariado).
+const KIDS_VOL_STATUS = ['inscrito', 'enviado_ministerio'];
+router.patch('/voluntariado-inscricoes/:id', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { status, feedback } = req.body || {};
+    // Só age em inscrição de área kids (trava de escopo).
+    const { data: insc } = await supabase.from('vol_inscricoes')
+      .select('area').eq('id', req.params.id).maybeSingle();
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada.' });
+    if (String(insc.area || '').toLowerCase() !== 'kids') {
+      return res.status(403).json({ error: 'Esta inscrição não é do Kids.' });
+    }
+    const patch = { updated_at: new Date().toISOString() };
+    if (status !== undefined) {
+      if (!KIDS_VOL_STATUS.includes(status)) {
+        return res.status(400).json({
+          error: 'Integrar exige a verificação de antecedentes — faça isso no módulo Voluntariado.',
+          code: 'integrar_no_voluntariado',
+        });
+      }
+      patch.status = status;
+      if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
+    }
+    if (feedback !== undefined) patch.feedback = feedback ? String(feedback).slice(0, 2000) : null;
+    const { data, error } = await supabase.from('vol_inscricoes')
+      .update(patch).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[TOTEM-KIDS] patch voluntariado-inscricoes:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar inscrição' });
+  }
+});
+
 module.exports = router;
