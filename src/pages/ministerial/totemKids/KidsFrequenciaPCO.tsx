@@ -112,8 +112,12 @@ export default function KidsFrequenciaPCO() {
         <div className="space-y-2">
           <h2 className="text-sm font-bold text-pink-600 dark:text-pink-400 uppercase tracking-wide">Sistema (totem)</h2>
           <Card className="glass-solid p-4 text-sm text-muted-foreground">
-            <b className="text-foreground text-base">{sistema.total_criancas || 0}</b> crianças ·{' '}
+            <b className="text-foreground text-base">{sistema.total_criancas || 0}</b> crianças distintas no dia ·{' '}
             {sistema.total_checkins || 0} check-ins pelo sistema em {fmtData(sistema.data || data)}
+            <div className="text-xs mt-1.5">
+              Abaixo é a <b>ocupação por culto</b> — uma criança que fica em mais de um culto aparece em cada um,
+              então a soma dos cultos pode ser maior que o total de crianças distintas.
+            </div>
           </Card>
           {(sistema.por_culto || []).length === 0 ? (
             <Card className="glass-solid p-6 text-center text-muted-foreground text-sm">Nenhum check-in pelo sistema nesse dia.</Card>

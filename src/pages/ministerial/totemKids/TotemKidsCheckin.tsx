@@ -1387,9 +1387,38 @@ function CheckinSelecao(props: {
           </Select>
         </div>
 
-        {/* Check-in é de 1 culto por vez (decisão 2026-07-12): o seletor de
-            "cultos extras" saiu — marcar a criança em vários cultos inflava a
-            frequência do Kids. A criança fica no culto do check-in atual. */}
+        {/* Multi-culto (decisão 2026-07-13): a criança PODE ficar em mais de um
+            culto e conta na ocupação de cada um. Marque SÓ os cultos em que ela
+            realmente fica — não marque o bloco inteiro por padrão. A frequência
+            do dia continua contando cada criança 1× (distintas). */}
+        {cultosDia.length > 0 && (
+          <div>
+            <label className="text-sm font-medium block mb-1">
+              Fica em mais de um culto?
+            </label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Marque só se a criança <b>realmente</b> ficar no outro culto (1 etiqueta só). Não marque o bloco inteiro por padrão.
+            </p>
+            <div className="space-y-2">
+              {cultosDia.map((c: any) => {
+                const marcado = cultosExtras.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setCultosExtras(marcado ? cultosExtras.filter(x => x !== c.id) : [...cultosExtras, c.id])}
+                    className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${marcado ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/40'}`}
+                  >
+                    <span className={`h-5 w-5 rounded border flex items-center justify-center shrink-0 ${marcado ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
+                      {marcado && <Check className="h-3.5 w-3.5" />}
+                    </span>
+                    <span className="font-medium">{c.nome}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="text-sm font-semibold block">Quem está trazendo? <span className="text-pink-600">*</span></label>
