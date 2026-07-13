@@ -26,9 +26,11 @@ async function telefoneDoAprovador(profileId) {
   if (!prof) return { telefone: null, nome: null, email: null };
   let telefone = null;
   if (prof.email) {
+    // rh_funcionarios só tem a coluna `telefone` (não `celular`) — pedir `celular`
+    // fazia a query falhar e o telefone do RH nunca vinha (o Arthur só tem no RH).
     const { data: rh } = await supabase.from('rh_funcionarios')
-      .select('telefone, celular').ilike('email', prof.email).maybeSingle();
-    telefone = rh?.celular || rh?.telefone || null;
+      .select('telefone').ilike('email', prof.email).maybeSingle();
+    telefone = rh?.telefone || null;
   }
   if (!telefone && prof.membro_id) {
     const { data: m } = await supabase.from('mem_membros')
