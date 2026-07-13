@@ -995,7 +995,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Todos os status" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 <SelectItem value="__all__">Todos os status</SelectItem>
                 {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
               </SelectContent>
@@ -1004,7 +1004,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Todas as áreas" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 <SelectItem value="__all__">Todas as áreas</SelectItem>
                 {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
               </SelectContent>
@@ -1246,7 +1246,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Selecionar colaborador" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[1100]">
                           {funcs.filter(f => f.status === 'ativo').map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
                         </SelectContent>
                       </ShadSelect>
@@ -2464,7 +2464,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Gestor direto (a quem reporta)</label>
         <ShadSelect value={data.gestor_id || '__none__'} onValueChange={v => mudarGestor(v === '__none__' ? null : v)} disabled={saving}>
           <SelectTrigger className="w-full"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-          <SelectContent>
+          <SelectContent className="z-[1100]">
             <SelectItem value="__none__">— Sem gestor (topo)</SelectItem>
             {opcoesGestor.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}{f.cargo ? ` · ${f.cargo}` : ''}</SelectItem>)}
           </SelectContent>
@@ -2492,7 +2492,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
         </div>
         <ShadSelect value={addSel} onValueChange={(v) => addSubordinado(v)} disabled={saving}>
           <SelectTrigger className="w-full"><SelectValue placeholder="+ Adicionar subordinado..." /></SelectTrigger>
-          <SelectContent>
+          <SelectContent className="z-[1100]">
             {opcoesAdd.length === 0 && <div style={{ padding: '8px 12px', fontSize: 12, color: C.text3 }}>Ninguém disponível</div>}
             {opcoesAdd.map(f => (
               <SelectItem key={f.id} value={f.id}>
@@ -2750,7 +2750,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 {OPCOES_CONTRATO.map(k => <SelectItem key={k} value={k}>{TIPO_CONTRATO[k] || k}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
@@ -2761,7 +2761,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
@@ -2917,7 +2917,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
                               <SelectTrigger className="w-full" size="sm">
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="z-[1100]">
                                 {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
                               </SelectContent>
                             </ShadSelect>
@@ -2927,7 +2927,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
                               <SelectTrigger className="w-full" size="sm">
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="z-[1100]">
                                 {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
                               </SelectContent>
                             </ShadSelect>

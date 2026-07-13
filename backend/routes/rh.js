@@ -945,17 +945,23 @@ router.patch('/treinamentos-funcionarios/:id', async (req, res) => {
 // GET /api/rh/ferias
 router.get('/ferias', async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, incluir_desligados } = req.query;
     let query = supabase
       .from('rh_ferias_licencas')
-      .select('*, rh_funcionarios!funcionario_id(nome, cargo, area), substituto:rh_funcionarios!substituto_id(nome)')
+      .select('*, rh_funcionarios!funcionario_id(nome, cargo, area, status, data_demissao), substituto:rh_funcionarios!substituto_id(nome)')
       .order('data_inicio', { ascending: false });
 
     if (status) query = query.eq('status', status);
 
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    // Não mostrar férias de quem já foi desligado/inativado (some do calendário).
+    // ?incluir_desligados=1 mantém tudo (para relatórios históricos).
+    const DESLIGADO = new Set(['inativo', 'desligado']);
+    const rows = incluir_desligados
+      ? (data || [])
+      : (data || []).filter((f) => !DESLIGADO.has(f.rh_funcionarios?.status || 'ativo'));
+    res.json(rows);
   } catch (e) {
     console.error('[RH] Listar férias:', e.message);
     res.status(500).json({ error: 'Erro ao listar férias' });
