@@ -1902,16 +1902,33 @@ router.get('/meu-grupo', authApp, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req);
     if (!membro) return res.json({ grupos: [] });
+    const GSEL = 'id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id';
     const { data: vinculos } = await supabase
       .from('mem_grupo_membros')
-      .select('grupo_id, funcao, mem_grupos(id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id)')
+      .select(`grupo_id, funcao, mem_grupos(${GSEL})`)
       .eq('membro_id', membro.id)
       .is('saiu_em', null)
       .is('deleted_at', null);
 
-    const grupos = [];
+    // Junta grupos onde é MEMBRO (vínculo) + grupos que LIDERA (lider_id) — o
+    // líder pode não ter linha em mem_grupo_membros, mas precisa ver o próprio
+    // grupo em "Meu grupo". Dedup por id; ser líder prevalece sobre o papel.
+    const porId = new Map();
     for (const v of vinculos || []) {
       const g = Array.isArray(v.mem_grupos) ? v.mem_grupos[0] : v.mem_grupos;
+      if (g) porId.set(g.id, { g, funcao: v.funcao });
+    }
+    const { data: liderados } = await supabase
+      .from('mem_grupos').select(GSEL)
+      .eq('lider_id', membro.id).is('deleted_at', null);
+    for (const g of liderados || []) {
+      const atual = porId.get(g.id);
+      if (atual) atual.funcao = 'lider';
+      else porId.set(g.id, { g, funcao: 'lider' });
+    }
+
+    const grupos = [];
+    for (const { g, funcao } of porId.values()) {
       if (!g) continue;
       let lider = null;
       if (g.lider_id) {
@@ -1934,7 +1951,7 @@ router.get('/meu-grupo', authApp, async (req, res) => {
         id: g.id, nome: g.nome, dia_semana: g.dia_semana, horario: g.horario,
         local: g.local, endereco: g.endereco, bairro: g.bairro, complemento: g.complemento,
         lat: g.lat, lng: g.lng,
-        foto_url: g.foto_url, funcao: v.funcao, lider,
+        foto_url: g.foto_url, funcao, lider,
         proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario),
         materiais,
       });
