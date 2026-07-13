@@ -2781,6 +2781,28 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
         </div>
       )}
 
+      {/* Dados pessoais · preenchidos pelo próprio colaborador (app Staff / self-service) */}
+      <div style={{ marginBottom: 20, background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Dados pessoais</span>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginTop: 10 }}>
+          <div><span style={{ fontSize: 11, color: C.text2 }}>Nascimento:</span><div style={{ fontSize: 14 }}>{data.data_nascimento ? fmtDate(data.data_nascimento) : '—'}</div></div>
+          <div style={{ gridColumn: '1 / -1' }}><span style={{ fontSize: 11, color: C.text2 }}>Endereço:</span><div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{data.endereco || '—'}</div></div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <span style={{ fontSize: 11, color: C.text2 }}>Filhos:</span>
+            {Array.isArray(data.filhos) && data.filhos.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {data.filhos.map((f, i) => (
+                  <span key={i} style={{ fontSize: 12, background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 999, padding: '2px 10px' }}>
+                    {f.nome || 'Filho(a)'}{f.idade != null ? ` · ${f.idade} ano${f.idade === 1 ? '' : 's'}` : ''}
+                  </span>
+                ))}
+              </div>
+            ) : <div style={{ fontSize: 14 }}>—</div>}
+          </div>
+        </div>
+        <p style={{ fontSize: 11, color: C.text3, marginTop: 8 }}>O colaborador mantém estes dados pelo app (Meus dados) — atualiza aqui automaticamente.</p>
+      </div>
+
       {/* Hierarquia · gestor direto + subordinados */}
       <HierarquiaSection data={data} funcs={funcs} onChanged={onChanged} />
 
