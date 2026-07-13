@@ -2359,4 +2359,84 @@ router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, 
   }
 });
 
+// GET /api/app/grupos/meus — os grupos que o usuário LIDERA, com contagens
+// (membros ativos + inscrições pendentes) e info básica. É o que faz o app
+// "ver o meu grupo" mesmo quando não há nenhuma inscrição pendente.
+router.get('/grupos/meus', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const ids = gruposLiderados.map(g => g.id);
+    if (!ids.length) return res.json({ admin: adminGrupos, grupos: [] });
+
+    const [infoRes, membrosRes, pendRes] = await Promise.all([
+      supabase.from('mem_grupos')
+        .select('id, nome, dia_semana, horario, local, bairro, categoria, aceitando_inscricoes')
+        .in('id', ids).is('deleted_at', null),
+      supabase.from('mem_grupo_membros')
+        .select('grupo_id').in('grupo_id', ids).is('saiu_em', null).is('deleted_at', null),
+      supabase.from('mem_grupo_pedidos')
+        .select('grupo_id').in('grupo_id', ids).eq('status', 'pendente'),
+    ]);
+    const countBy = (arr) => {
+      const m = {};
+      (arr || []).forEach(r => { m[r.grupo_id] = (m[r.grupo_id] || 0) + 1; });
+      return m;
+    };
+    const mc = countBy(membrosRes.data);
+    const pc = countBy(pendRes.data);
+    const grupos = (infoRes.data || []).map(g => ({
+      ...g,
+      membros_ativos: mc[g.id] || 0,
+      pendentes: pc[g.id] || 0,
+    })).sort((a, b) => (b.pendentes - a.pendentes) || String(a.nome).localeCompare(String(b.nome)));
+    res.json({ admin: adminGrupos, grupos });
+  } catch (e) {
+    console.error('[APP] grupos/meus:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seus grupos' });
+  }
+});
+
+// GET /api/app/grupos/:grupoId/membros — detalhe do grupo + roster ativo +
+// inscrições pendentes daquele grupo. Gate: líder do grupo OU admin de grupos.
+router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const gid = req.params.grupoId;
+    const ehLider = gruposLiderados.some(g => g.id === gid);
+    if (!adminGrupos && !ehLider) {
+      return res.status(403).json({ error: 'Você não gerencia este grupo' });
+    }
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes')
+      .eq('id', gid).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const [rosterRes, pendRes] = await Promise.all([
+      supabase.from('mem_grupo_membros')
+        .select('id, funcao, entrou_em, presencas, membro:mem_membros(id, nome, telefone)')
+        .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null)
+        .order('created_at', { ascending: true }),
+      supabase.from('mem_grupo_pedidos')
+        .select('id, grupo_id, nome, telefone, email, origem, created_at')
+        .eq('grupo_id', gid).eq('status', 'pendente')
+        .order('created_at', { ascending: true }),
+    ]);
+    const membros = (rosterRes.data || []).map(r => {
+      const m = Array.isArray(r.membro) ? r.membro[0] : r.membro;
+      return {
+        id: r.id, funcao: r.funcao, entrou_em: r.entrou_em, presencas: r.presencas,
+        nome: m?.nome || '—', telefone: m?.telefone || null,
+      };
+    });
+    const pendentes = (pendRes.data || []).map(p => ({
+      id: p.id, grupo_id: p.grupo_id, grupo_nome: grupo.nome,
+      nome: p.nome, telefone: p.telefone, email: p.email, origem: p.origem, created_at: p.created_at,
+    }));
+    res.json({ grupo, membros, pendentes });
+  } catch (e) {
+    console.error('[APP] grupos/membros:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o grupo' });
+  }
+});
+
 module.exports = router;
