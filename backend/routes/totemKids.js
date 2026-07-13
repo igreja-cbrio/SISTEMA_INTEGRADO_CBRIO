@@ -2670,6 +2670,29 @@ router.get('/painel/dia', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// POST /api/totem-kids/painel/checkout-todos · baixa (check-out) em massa de
+// TODAS as crianças que ainda constam presentes (checkout_at IS NULL). Uso: fim
+// do culto ou segunda de manhã pra limpar quem ficou sem baixa. Não bloqueia nada.
+router.post('/painel/checkout-todos', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: baixados, error } = await supabase
+      .from('kids_checkins')
+      .update({
+        checkout_at: new Date().toISOString(),
+        checkout_metodo: 'checkout_forcado',
+        checkout_por: req.user.userId,
+        responsavel_checkout_nome: 'Baixa em massa (painel)',
+      })
+      .is('checkout_at', null)
+      .select('id');
+    if (error) throw error;
+    res.json({ baixados: (baixados || []).length });
+  } catch (e) {
+    console.error('[totemKids/painel/checkout-todos]', e.message);
+    res.status(500).json({ error: 'Erro ao dar baixa em todos' });
+  }
+});
+
 // GET /api/totem-kids/painel/ao-vivo?sessao_id=... · agregado por sala
 router.get('/painel/ao-vivo', authorizeModule('kids', 1), async (req, res) => {
   try {

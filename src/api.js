@@ -1539,6 +1539,7 @@ export const totemKids = {
     aoVivo: (sessaoId) => get(`/totem-kids/painel/ao-vivo${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
     sala: (salaId, sessaoId) => get(`/totem-kids/painel/sala/${salaId}${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
     dia: (data) => get(`/totem-kids/painel/dia${data ? `?data=${encodeURIComponent(data)}` : ''}`),
+    checkoutTodos: () => post('/totem-kids/painel/checkout-todos', {}),
   },
   decisoes: {
     // Lista crianças com check-in numa sessão (pra UI de decisões selecionar)
