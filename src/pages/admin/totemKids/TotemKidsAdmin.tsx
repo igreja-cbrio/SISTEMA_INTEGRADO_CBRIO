@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ColorPicker } from '@/components/ui/ColorPicker';
-import { Loader2, Plus, Pencil, Trash2, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw, Users, Eye } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Baby, Calendar, ChevronDown, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw, Users, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
 import { EtiquetaTesteForm, LogosEtiquetaManager } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
@@ -90,13 +90,25 @@ export function TotemKidsConfigTabs({ aba: abaProp, onAba, abas }: { aba?: strin
   );
 }
 
-// ─── Aba Sessões ─────────────────────────────────────────────────────────────
+// ─── Aba Sessões · seleção simples por PERÍODO ───────────────────────────────
+// Refino 2026-07-13 (Marcos): em vez de abrir/gerir sessão por horário solto, o
+// operador vê os cultos de Kids agrupados por período (ex.: "Domingo de manhã")
+// e abre/encerra o grupo inteiro num clique. Por baixo continua 1 sessão por
+// culto/horário (lastro do painel/frequência) · dá pra expandir e agir por
+// horário individual.
+function periodoDoHorario(hora?: string): { key: string; rotulo: string; ordem: number } {
+  const h = Number(String(hora || '').slice(0, 2)) || 0;
+  if (h < 12) return { key: 'manha', rotulo: 'de manhã', ordem: 0 };
+  if (h < 18) return { key: 'tarde', rotulo: 'à tarde', ordem: 1 };
+  return { key: 'noite', rotulo: 'à noite', ordem: 2 };
+}
+
 function AbaSessoes() {
   const [sessoes, setSessoes] = useState<any[]>([]);
   const [cultos, setCultos] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
-  const [modalAberto, setModalAberto] = useState(false);
-  const [cultoSelecionado, setCultoSelecionado] = useState('');
+  const [processando, setProcessando] = useState<string | null>(null); // key do grupo em ação
+  const [expandido, setExpandido] = useState<string | null>(null);
 
   async function carregar() {
     setCarregando(true);
@@ -108,7 +120,7 @@ function AbaSessoes() {
       const inicio = new Date(hoje); inicio.setDate(hoje.getDate() - 7);
       const fim = new Date(hoje); fim.setDate(hoje.getDate() + 14);
       const [s, c] = await Promise.all([
-        totemKids.sessoes.list({ limit: 30 }),
+        totemKids.sessoes.list({ limit: 60 }),
         kpis.cultos.list({
           limit: 100,
           data_inicio: inicio.toISOString().slice(0, 10),
@@ -116,7 +128,6 @@ function AbaSessoes() {
         }).catch(() => []),
       ]);
       setSessoes(s);
-      // Filtra so cultos com service_type_has_kids=true
       setCultos((c || []).filter((culto: any) => culto.service_type_has_kids === true));
     } finally {
       setCarregando(false);
@@ -125,120 +136,146 @@ function AbaSessoes() {
 
   useEffect(() => { carregar(); }, []);
 
-  async function criarSessao() {
-    if (!cultoSelecionado) return toast.error('Selecione um culto');
-    try {
-      await totemKids.sessoes.create({ culto_id: cultoSelecionado });
-      toast.success('Sessão criada e aberta');
-      setModalAberto(false);
-      setCultoSelecionado('');
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro');
+  // Sessão (se houver) de cada culto, indexada por culto_id.
+  const sessaoPorCulto: Record<string, any> = {};
+  for (const s of sessoes) if (s.culto_id) sessaoPorCulto[s.culto_id] = s;
+
+  // Agrupa os cultos da janela por (data + período do dia).
+  const grupos = (() => {
+    const mapa = new Map<string, { key: string; data: string; periodo: ReturnType<typeof periodoDoHorario>; cultos: any[] }>();
+    for (const c of cultos) {
+      if (!c.data) continue;
+      const p = periodoDoHorario(c.hora);
+      const key = `${c.data}__${p.key}`;
+      if (!mapa.has(key)) mapa.set(key, { key, data: c.data, periodo: p, cultos: [] });
+      mapa.get(key)!.cultos.push(c);
     }
+    return Array.from(mapa.values())
+      .map(g => ({ ...g, cultos: g.cultos.sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))) }))
+      .sort((a, b) => b.data.localeCompare(a.data) || a.periodo.ordem - b.periodo.ordem);
+  })();
+
+  function rotuloGrupo(g: { data: string; periodo: { rotulo: string } }): string {
+    const dia = format(new Date(g.data + 'T00:00:00'), 'EEEE', { locale: ptBR });
+    return `${dia.charAt(0).toUpperCase()}${dia.slice(1)} ${g.periodo.rotulo}`;
   }
 
-  async function encerrarSessao(id: string) {
+  async function abrirGrupo(g: any) {
+    setProcessando(g.key);
+    try {
+      for (const c of g.cultos) await totemKids.sessoes.garantir(c.id);
+      toast.success(`${rotuloGrupo(g)} · sessões abertas`);
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao abrir as sessões');
+    } finally { setProcessando(null); }
+  }
+
+  async function encerrarGrupo(g: any) {
+    const abertas = g.cultos.map((c: any) => sessaoPorCulto[c.id]).filter((s: any) => s && s.status === 'aberta');
+    if (!abertas.length) return;
+    if (!confirm(`Encerrar ${rotuloGrupo(g)}? Os KPIs de Kids serão consolidados.`)) return;
+    setProcessando(g.key);
+    try {
+      for (const s of abertas) await totemKids.sessoes.encerrar(s.id);
+      toast.success('Encerrado · KPIs consolidados');
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao encerrar');
+    } finally { setProcessando(null); }
+  }
+
+  async function encerrarUma(id: string) {
     if (!confirm('Encerrar essa sessão? KPIs serão consolidados.')) return;
-    try {
-      await totemKids.sessoes.encerrar(id);
-      toast.success('Encerrada');
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro');
-    }
+    try { await totemKids.sessoes.encerrar(id); toast.success('Encerrada'); await carregar(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
   }
-
-  async function abrirSessao(id: string) {
-    try {
-      await totemKids.sessoes.abrir(id);
-      toast.success('Sessão aberta');
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro');
-    }
+  async function abrirUma(cultoId: string) {
+    try { await totemKids.sessoes.garantir(cultoId); toast.success('Sessão aberta'); await carregar(); }
+    catch (e: any) { toast.error(e?.message || 'Erro'); }
   }
 
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
-        <div className="flex justify-between items-center">
-          <div className="text-sm text-muted-foreground">Sessões mais recentes</div>
-          <Button onClick={() => setModalAberto(true)} size="sm" className="bg-pink-600 hover:bg-pink-700">
-            <Plus className="h-4 w-4 mr-1" /> Nova sessão
-          </Button>
+        <div className="flex justify-between items-center gap-2">
+          <div className="text-sm text-muted-foreground">Cultos de Kids · escolha o período pra abrir ou encerrar a sessão</div>
+          <Button onClick={carregar} size="sm" variant="outline"><RefreshCw className="h-4 w-4 mr-1" /> Atualizar</Button>
         </div>
+
         {carregando ? (
           <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" />
-        ) : sessoes.length === 0 ? (
-          <p className="text-muted-foreground text-center py-6">Sem sessões ainda · crie uma pro próximo culto.</p>
+        ) : grupos.length === 0 ? (
+          <div className="text-muted-foreground text-center py-6 text-sm">
+            Nenhum culto de Kids nesta janela (últimos 7 · próximos 14 dias).
+            <br />
+            <Button variant="link" className="text-pink-600" onClick={() => window.open('/integracao?aba=cultos', '_blank')}>
+              Abrir /integração para cadastrar cultos
+            </Button>
+          </div>
         ) : (
           <div className="space-y-2">
-            {sessoes.map(s => (
-              <div key={s.id} className="flex items-center justify-between p-3 border rounded-lg">
-                <div>
-                  <div className="font-medium">{s.culto?.nome || '(culto removido)'}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {s.culto?.data && format(new Date(s.culto.data + 'T00:00:00'), "EEE, dd/MM/yyyy", { locale: ptBR })}
-                    {s.culto?.presencial_kids != null && ` · ${s.culto.presencial_kids} criança(s) consolidadas`}
+            {grupos.map(g => {
+              const itens = g.cultos.map((c: any) => ({ culto: c, sessao: sessaoPorCulto[c.id] }));
+              const total = itens.length;
+              const abertas = itens.filter((x: any) => x.sessao?.status === 'aberta').length;
+              const statusRotulo = abertas === 0 ? 'nenhuma aberta' : abertas === total ? 'aberta' : `${abertas}/${total} abertas`;
+              const aberto = expandido === g.key;
+              const emProc = processando === g.key;
+              return (
+                <div key={g.key} className="border rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between p-3 gap-2">
+                    <button type="button" className="flex items-center gap-2 text-left min-w-0" onClick={() => setExpandido(aberto ? null : g.key)}>
+                      <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ${aberto ? '' : '-rotate-90'}`} />
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{rotuloGrupo(g)}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {format(new Date(g.data + 'T00:00:00'), 'dd/MM/yyyy', { locale: ptBR })}
+                          {` · ${g.cultos.map((c: any) => c.hora).filter(Boolean).join(' · ')}`}
+                        </div>
+                      </div>
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={abertas === 0 ? 'outline' : abertas === total ? 'default' : 'secondary'}>{statusRotulo}</Badge>
+                      {abertas < total && (
+                        <Button size="sm" className="bg-pink-600 hover:bg-pink-700" disabled={emProc} onClick={() => abrirGrupo(g)}>
+                          {emProc ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Abrir'}
+                        </Button>
+                      )}
+                      {abertas > 0 && (
+                        <Button size="sm" variant="outline" disabled={emProc} onClick={() => encerrarGrupo(g)}>Encerrar</Button>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant={s.status === 'aberta' ? 'default' : s.status === 'encerrada' ? 'secondary' : 'outline'}>
-                    {s.status}
-                  </Badge>
-                  {s.status === 'aberta' && (
-                    <Button size="sm" variant="outline" onClick={() => encerrarSessao(s.id)}>Encerrar</Button>
+                  {aberto && (
+                    <div className="border-t bg-muted/30 divide-y">
+                      {itens.map(({ culto, sessao }: any) => (
+                        <div key={culto.id} className="flex items-center justify-between px-3 py-2 pl-9 gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm truncate">{culto.nome}</div>
+                            {sessao?.culto?.presencial_kids != null && (
+                              <div className="text-[11px] text-muted-foreground">{sessao.culto.presencial_kids} criança(s) consolidadas</div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant={sessao?.status === 'aberta' ? 'default' : sessao?.status === 'encerrada' ? 'secondary' : 'outline'}>
+                              {sessao?.status || 'sem sessão'}
+                            </Badge>
+                            {sessao?.status === 'aberta' ? (
+                              <Button size="sm" variant="ghost" onClick={() => encerrarUma(sessao.id)}>Encerrar</Button>
+                            ) : (
+                              <Button size="sm" variant="ghost" onClick={() => abrirUma(culto.id)}>Abrir</Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  {s.status === 'agendada' && (
-                    <Button size="sm" onClick={() => abrirSessao(s.id)}>Abrir</Button>
-                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
-
-        <Dialog open={modalAberto} onOpenChange={(o) => !o && setModalAberto(false)}>
-          <DialogContent className="z-[1100]">
-            <DialogHeader>
-              <DialogTitle>Nova sessão Kids</DialogTitle>
-              <DialogDescription>
-                Cultos dos últimos 7 dias até próximos 14. Selecione o culto
-                que vai ter Kids · sessão sai já <b>aberta</b>.
-              </DialogDescription>
-            </DialogHeader>
-            {cultos.length === 0 ? (
-              <div className="text-sm text-muted-foreground py-4 text-center">
-                Nenhum culto cadastrado nessa janela.
-                <br />
-                <Button variant="link" className="text-pink-600" onClick={() => window.open('/integracao?aba=cultos', '_blank')}>
-                  Abrir /integração para cadastrar cultos
-                </Button>
-              </div>
-            ) : (
-              <Select value={cultoSelecionado} onValueChange={setCultoSelecionado}>
-                <SelectTrigger><SelectValue placeholder="Selecione o culto" /></SelectTrigger>
-                <SelectContent className="max-h-[300px] z-[1200]">
-                  {cultos.map((c: any) => {
-                    const dt = c.data && new Date(c.data + 'T00:00:00');
-                    const jaTemSessao = sessoes.some(s => s.culto_id === c.id);
-                    return (
-                      <SelectItem key={c.id} value={c.id} disabled={jaTemSessao}>
-                        {dt && format(dt, "EEE dd/MM", { locale: ptBR })} · {c.nome}
-                        {jaTemSessao && ' (já tem sessão)'}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setModalAberto(false)}>Cancelar</Button>
-              <Button onClick={criarSessao} disabled={!cultoSelecionado} className="bg-pink-600 hover:bg-pink-700">Criar</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
       </CardContent>
     </Card>
   );

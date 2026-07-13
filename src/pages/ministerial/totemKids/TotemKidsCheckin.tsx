@@ -898,6 +898,7 @@ export default function TotemKidsCheckin() {
           setSalaSelecionada={setSalaSelecionada}
           responsavelSelecionado={responsavelSelecionado}
           setResponsavelSelecionado={setResponsavelSelecionado}
+          cultoAtual={sessao?.culto}
           cultosDia={cultosDia}
           cultosExtras={cultosExtras}
           setCultosExtras={setCultosExtras}
@@ -1490,6 +1491,7 @@ function CheckinSelecao(props: {
   setSalaSelecionada: (s: string) => void;
   responsavelSelecionado: string;
   setResponsavelSelecionado: (s: string) => void;
+  cultoAtual?: any;
   cultosDia: any[];
   cultosExtras: string[];
   setCultosExtras: (v: string[]) => void;
@@ -1517,7 +1519,7 @@ function CheckinSelecao(props: {
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
-    cultosDia, cultosExtras, setCultosExtras, irmaos, onAbrirFamilia,
+    cultoAtual, cultosDia, cultosExtras, setCultosExtras, irmaos, onAbrirFamilia,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     atualizarCrianca,
@@ -1665,19 +1667,29 @@ function CheckinSelecao(props: {
           </Select>
         </div>
 
-        {/* Multi-culto (decisão 2026-07-13): a criança PODE ficar em mais de um
-            culto e conta na ocupação de cada um. Marque SÓ os cultos em que ela
-            realmente fica — não marque o bloco inteiro por padrão. A frequência
-            do dia continua contando cada criança 1× (distintas). */}
-        {cultosDia.length > 0 && (
+        {/* Cultos em que a criança fica (decisão 2026-07-13 · refino do #9):
+            o culto de AGORA (escolhido pelo relógio) já vem marcado e travado —
+            é onde a criança está. Os outros horários do dia ficam como opção;
+            marque SÓ se ela realmente ficar (1 etiqueta só). A frequência do dia
+            continua contando cada criança 1× (distintas). */}
+        {cultoAtual && (
           <div>
             <label className="text-sm font-medium block mb-1">
-              Fica em mais de um culto?
+              Em quais cultos a criança vai ficar?
             </label>
             <p className="text-xs text-muted-foreground mb-2">
-              Marque só se a criança <b>realmente</b> ficar no outro culto (1 etiqueta só). Não marque o bloco inteiro por padrão.
+              O culto de agora já vem marcado. Marque outro horário só se ela <b>realmente</b> ficar (1 etiqueta só).
             </p>
             <div className="space-y-2">
+              {/* Culto de agora · sempre incluído (é a sessão ativa · pelo relógio) */}
+              <div className="w-full flex items-center gap-3 rounded-lg border border-primary bg-primary/10 p-3 text-left">
+                <span className="h-5 w-5 rounded border bg-primary border-primary text-primary-foreground flex items-center justify-center shrink-0">
+                  <Check className="h-3.5 w-3.5" />
+                </span>
+                <span className="font-medium flex-1">{cultoAtual.nome}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-primary shrink-0">agora</span>
+              </div>
+              {/* Outros horários do dia · opcionais */}
               {cultosDia.map((c: any) => {
                 const marcado = cultosExtras.includes(c.id);
                 return (
