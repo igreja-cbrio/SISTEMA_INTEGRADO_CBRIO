@@ -69,6 +69,8 @@ export const FORM_INITIAL = {
   eh_urgente: false, justificativa_urgencia: '',
   // Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação
   eh_planejado: false,
+  // Visibilidade · deixar visível pros colegas da própria área (default privada)
+  compartilhar_area: false,
   data_necessaria: '',
   espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
   motivo_reembolso: '', data_compra: '',
@@ -866,6 +868,25 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
           do diretor da sua área</b> antes de ir pro atendimento. Fica registrado quem marcou.
         </p>
       </div>
+
+      {/* Visibilidade · compartilhar com a própria área (assuntos pessoais/RH ficam privados) */}
+      {!['ferias', 'licenca', 'reembolso'].includes(form.categoria) && (
+        <div className="space-y-1 rounded-lg border border-border bg-muted/20 p-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.compartilhar_area}
+              onChange={e => setForm(f => ({ ...f, compartilhar_area: e.target.checked }))}
+              className="h-4 w-4 cursor-pointer"
+            />
+            <span className="text-sm font-medium">Compartilhar com a minha área</span>
+          </label>
+          <p className="text-xs text-muted-foreground ml-6">
+            Se marcar, os colegas da sua área também veem esta solicitação (útil pra acompanhar
+            demandas do time). Deixe desmarcado se for um assunto pessoal.
+          </p>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="outline" onClick={() => onCancel?.()}>Cancelar</Button>
