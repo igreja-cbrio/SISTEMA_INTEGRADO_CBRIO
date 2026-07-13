@@ -90,6 +90,14 @@ export default function InscricaoGrupos() {
       return new URLSearchParams(window.location.search).get('grupo') || '';
     } catch { return ''; }
   }, []);
+  // ?pref=<token da sugestão>: pessoa recusada/encaminhada veio do link do
+  // WhatsApp escolher OUTRO grupo — o form nasce preenchido (menos o CPF),
+  // então nada é redigitado e o dedup casa com o cadastro certo.
+  const prefParam = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('pref') || '';
+    } catch { return ''; }
+  }, []);
   // Modo totem (quiosque no lounge · URL com ?totem=1): só nele ligamos o
   // auto-reset por ociosidade — num celular via QR isso apagaria os dados de
   // quem pausa pra pensar / procurar o CPF.
@@ -110,6 +118,30 @@ export default function InscricaoGrupos() {
   const [resultado, setResultado] = useState(null); // { mensagem } quando já membro/já pedido
   const [fotoUploading, setFotoUploading] = useState(false);
   const [fotoErro, setFotoErro] = useState('');
+  const [preenchidoViaLink, setPreenchidoViaLink] = useState(false);
+
+  // Pré-preenche com os dados da pessoa do token da sugestão (só campos vazios).
+  useEffect(() => {
+    if (!prefParam) return;
+    let cancelado = false;
+    (async () => {
+      try {
+        const d = await gruposPublic.sugestaoPorToken(prefParam);
+        const p = d?.pessoa;
+        if (cancelado || !p) return;
+        setForm(f => ({
+          ...f,
+          nome: f.nome || p.nome || '',
+          telefone: f.telefone || (p.telefone ? mascaraTelefone(p.telefone) : ''),
+          email: f.email || p.email || '',
+          data_nascimento: f.data_nascimento || p.data_nascimento || '',
+          genero: f.genero || p.genero || '',
+        }));
+        setPreenchidoViaLink(true);
+      } catch {}
+    })();
+    return () => { cancelado = true; };
+  }, [prefParam]);
   const [errosCampos, setErrosCampos] = useState({}); // { campo: mensagem } — pinta o campo certo de vermelho
   const [bloqueio, setBloqueio] = useState(null);     // { mensagem } — grupo incompatível (confirmado pelo servidor)
 
@@ -431,9 +463,18 @@ export default function InscricaoGrupos() {
                 <ArrowLeft size={16} /> Voltar à escolha do grupo
               </button>
               <h2 style={{ color: C.text, fontSize: 16, fontWeight: 700, marginBottom: 4 }}>2. Seus dados</h2>
-              <p style={{ color: C.text3, fontSize: 12, marginBottom: 16 }}>
+              <p style={{ color: C.text3, fontSize: 12, marginBottom: preenchidoViaLink ? 8 : 16 }}>
                 Para o grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong>
               </p>
+              {preenchidoViaLink && (
+                <div style={{
+                  padding: '8px 12px', marginBottom: 14, borderRadius: 10,
+                  background: 'rgba(0,179,157,0.10)', border: '1px solid rgba(0,179,157,0.45)',
+                  fontSize: 12.5, color: C.isDark ? '#5eead4' : '#0f766e', lineHeight: 1.5,
+                }}>
+                  Seus dados já vieram preenchidos — confira, complete o CPF e envie.
+                </div>
+              )}
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
                 <Field campo="nome" error={errosCampos.nome} label="Nome completo *" value={form.nome} onChange={set('nome')} />

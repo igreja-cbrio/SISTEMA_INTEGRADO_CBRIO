@@ -15,15 +15,28 @@ import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRigh
 import { QRCodeSVG } from 'qrcode.react';
 import GruposEntrada from './GruposEntrada';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
-import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
 import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
 import GruposOrganograma from './GruposOrganograma';
 // GruposMapView traz maplibre-gl (~290KB gzip). Carregado sob demanda (React.lazy)
-// só quando a aba Mapa abre — não pesa no carregamento inicial de /grupos.
-const GruposMapView = lazy(() => import('@/components/grupos/GruposMapView'));
+// só quando a visualização Mapa abre — não pesa no carregamento inicial de /grupos.
+// Retry-com-reload: depois de um deploy o chunk antigo some (404) — 1 recarregada
+// resolve, e a visualização sobrevive porque vai na URL (?view=mapa).
+const GruposMapView = lazy(() =>
+  import('@/components/grupos/GruposMapView').catch((err) => {
+    const KEY = 'grupos_mapa_retry_ts';
+    let ultimo = 0;
+    try { ultimo = Number(sessionStorage.getItem(KEY) || 0); } catch {}
+    if (Date.now() - ultimo > 30000) {
+      try { sessionStorage.setItem(KEY, String(Date.now())); } catch {}
+      window.location.reload();
+      return new Promise(() => {}); // nunca resolve — a página vai recarregar
+    }
+    throw err;
+  })
+);
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -78,6 +91,9 @@ const TAB_LEGADO = {
 
 function tabDaUrl() {
   try { return new URLSearchParams(window.location.search).get('tab'); } catch { return null; }
+}
+function viewDaUrl() {
+  try { return new URLSearchParams(window.location.search).get('view'); } catch { return null; }
 }
 
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
@@ -174,10 +190,24 @@ export default function Grupos() {
     return TAB_LEGADO[t] || 'grupos';
   });
   // Visualizações internas (13/07): Grupos = Lista|Mapa · Pessoas = Pessoas|Organograma.
-  // Deep-links antigos (?tab=mapa / ?tab=organograma) abrem a aba nova já na visualização certa.
-  const [gruposView, setGruposView] = useState(() => (tabDaUrl() === 'mapa' ? 'mapa' : 'lista'));
-  const [pessoasView, setPessoasView] = useState(() => (tabDaUrl() === 'organograma' ? 'organograma' : 'censo'));
-  const [configTab, setConfigTab] = useState(() => (tabDaUrl() === 'geocode' ? 'geocode' : 'temporadas'));
+  // A visualização vai na URL (?view=mapa/…): um reload — inclusive o reload
+  // automático de chunk velho pós-deploy — volta exatamente onde a pessoa estava.
+  // Deep-links antigos (?tab=mapa / ?tab=organograma) abrem a aba nova já na view certa.
+  const [gruposView, setGruposView] = useState(() => (tabDaUrl() === 'mapa' || viewDaUrl() === 'mapa' ? 'mapa' : 'lista'));
+  const [pessoasView, setPessoasView] = useState(() => (tabDaUrl() === 'organograma' || viewDaUrl() === 'organograma' ? 'organograma' : 'censo'));
+  // Sub-visualização da aba Inscrições: QR codes (default) | gestão de temporadas
+  const [configTab, setConfigTab] = useState(() => (['temporadas', 'geocode', 'config'].includes(tabDaUrl()) ? 'temporadas' : 'qr'));
+
+  const atualizarUrlView = (tab, view) => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      if (view) url.searchParams.set('view', view); else url.searchParams.delete('view');
+      window.history.replaceState({}, '', url);
+    } catch {}
+  };
+  const trocarGruposView = (v) => { setGruposView(v); atualizarUrlView('grupos', v === 'mapa' ? 'mapa' : null); };
+  const trocarPessoasView = (v) => { setPessoasView(v); atualizarUrlView('pessoas', v === 'organograma' ? 'organograma' : null); };
   const [visitaOpen, setVisitaOpen] = useState(false);
   // A aba Inscrições é visível a todos (mandar QR / ver a temporada no ar);
   // a seção de administração dentro dela só renderiza pra quem edita.
@@ -1124,12 +1154,13 @@ export default function Grupos() {
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
           { key: 'qrcode', label: 'Inscrições', icon: QrCode },
         ].filter(tab => !tab.soEditor || podeEditarGrupos).map(tab => (
-          <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
-            padding: '10px 13px', background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 13.5, fontWeight: tabAtiva === tab.key ? 700 : 400,
+          <button key={tab.key} onClick={() => { setPageTab(tab.key); atualizarUrlView(tab.key, null); }} style={{
+            // Com menos abas (13/07), cada uma respira mais — padding e fonte maiores.
+            padding: '12px 22px', background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 14.5, fontWeight: tabAtiva === tab.key ? 700 : 400,
             color: tabAtiva === tab.key ? C.primary : C.t3,
             borderBottom: tabAtiva === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
-            display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.15s', whiteSpace: 'nowrap',
+            display: 'flex', alignItems: 'center', gap: 7, transition: 'all 0.15s', whiteSpace: 'nowrap',
           }}>
             <tab.icon size={16} /> {tab.label}
             {tab.badge > 0 && (
@@ -1314,7 +1345,7 @@ export default function Grupos() {
         <div>
           <ViewToggle
             value={pessoasView}
-            onChange={setPessoasView}
+            onChange={trocarPessoasView}
             opcoes={[
               { key: 'censo', label: 'Pessoas', Icon: UserCog },
               { key: 'organograma', label: 'Organograma', Icon: Compass },
@@ -1335,43 +1366,25 @@ export default function Grupos() {
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
 
-      {/* ═══ TAB INSCRIÇÕES · temporada no ar → QR codes → administração ═══ */}
+      {/* ═══ TAB INSCRIÇÕES · card da temporada no topo + botões QR codes | Temporadas ═══ */}
       {tabAtiva === 'qrcode' && (
         <div>
           {/* O interruptor: qual temporada está valendo e se as inscrições estão abertas */}
           <TemporadaInscricoesCard podeEditar={podeEditarGrupos} />
+          <ViewToggle
+            value={configTab}
+            onChange={setConfigTab}
+            opcoes={[
+              { key: 'qr', label: 'QR codes', Icon: QrCode },
+              // Gestão completa (criar/virar temporada) só pra quem edita.
+              // O botão de Endereços/geocode saiu daqui (13/07) — a ferramenta
+              // técnica segue viva em /admin/grupos/geocode, sem poluir a aba.
+              ...(podeEditarGrupos ? [{ key: 'temporadas', label: 'Gestão de temporadas', Icon: Calendar }] : []),
+            ]}
+          />
           <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-            <InscricaoGruposQRCode />
+            {configTab === 'temporadas' && podeEditarGrupos ? <TemporadasGrupos /> : <InscricaoGruposQRCode />}
           </div>
-          {/* Administração (só quem edita): gestão completa de temporadas + endereços do mapa */}
-          {podeEditarGrupos && (
-            <div style={{ marginTop: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 }}>
-                Administração
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                {[
-                  { key: 'temporadas', label: 'Temporadas', Icon: Calendar },
-                  { key: 'geocode', label: 'Endereços (validação no mapa)', Icon: Compass },
-                ].map(st => {
-                  const ativo = configTab === st.key;
-                  return (
-                    <button key={st.key} onClick={() => setConfigTab(st.key)} style={{
-                      padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
-                      border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                      background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                    }}>
-                      <st.Icon size={13} /> {st.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-                {configTab === 'temporadas' ? <TemporadasGrupos /> : <GruposGeocode />}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -1384,7 +1397,7 @@ export default function Grupos() {
       {tabAtiva === 'grupos' && (
         <ViewToggle
           value={gruposView}
-          onChange={setGruposView}
+          onChange={trocarGruposView}
           opcoes={[
             { key: 'lista', label: 'Lista', Icon: Users },
             { key: 'mapa', label: 'Mapa', Icon: MapIcon },

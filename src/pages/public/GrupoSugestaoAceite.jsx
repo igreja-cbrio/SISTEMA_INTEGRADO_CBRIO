@@ -35,11 +35,13 @@ export default function GrupoSugestaoAceite() {
       .then((d) => {
         if (!vivo) return;
         setDados(d);
-        // Link revisitado depois de decidido: aprovado não é "erro" — mostra
-        // a tela positiva (sem cravar o nome do grupo, que pode ter sido outro).
-        if (d.pedido.status === 'aprovado') {
+        // Link revisitado depois de decidido: aprovado (neste ou em OUTRO
+        // pedido da pessoa) não é "erro" — mostra a tela positiva.
+        // 'devolvido' (recusado pelo líder) e 'encaminhado' (sugestão ativa)
+        // são estados VÁLIDOS pra aceitar — é exatamente este link.
+        if (d.pedido.status === 'aprovado' || d.pedido.resolvido_em_outro) {
           setEstado('ja-aprovado');
-        } else if (d.pedido.status !== 'pendente') {
+        } else if (!['pendente', 'devolvido', 'encaminhado'].includes(d.pedido.status)) {
           setEstado('erro');
           setErroMsg(`Este pedido já foi ${d.pedido.status === 'rejeitado' ? 'encerrado' : d.pedido.status}.`);
         } else {
@@ -163,6 +165,16 @@ export default function GrupoSugestaoAceite() {
                 <Check size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />
                 {estado === 'enviando' ? 'Confirmando...' : 'Aceitar e entrar neste grupo'}
               </button>
+              <a
+                href={`/inscricao-grupos?pref=${encodeURIComponent(token)}`}
+                style={{
+                  padding: '12px 10px', borderRadius: 12, fontSize: 14, fontWeight: 600, textAlign: 'center',
+                  border: `1px solid ${C.inputBorder}`, background: 'transparent', color: C.text2,
+                  textDecoration: 'none', display: 'block',
+                }}
+              >
+                Quero escolher outro grupo (seus dados já vão preenchidos)
+              </a>
               <button
                 onClick={() => setEstado('mantido')}
                 disabled={estado === 'enviando'}

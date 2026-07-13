@@ -14,6 +14,7 @@ const {
   notificarLiderFrequencia, rotuloMes, enviarInscricaoConfirmada,
 } = require('../services/gruposWhatsapp');
 const { processarFila } = require('../services/whatsappFila');
+const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { requireCron } = require('../utils/cronAuth');
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
@@ -615,6 +616,9 @@ router.post('/inscrever', async (req, res) => {
       return res.status(500).json({ error: 'Erro ao registrar pedido.' });
     }
 
+    // Linha do tempo do pedido (histórico da caixa de entrada)
+    registrarEventoPedido(pedido.id, 'criado', { grupo: grupo.nome, origem: 'formulario_publico' });
+
     // Notifica líder do grupo (se tiver login) + admins via fallback
     (async () => {
       try {
@@ -815,7 +819,7 @@ router.get('/pedido/sugestao', async (req, res) => {
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado.' });
 
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-      .select('id, nome, status, grupo_id, mem_grupos(nome)')
+      .select('*, mem_grupos(nome)')
       .eq('id', payload.p).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
 
@@ -826,8 +830,31 @@ router.get('/pedido/sugestao', async (req, res) => {
       return res.status(410).json({ error: 'O grupo sugerido não está mais disponível. Seu pedido original continua valendo.' });
     }
 
+    // Dados pra pré-preencher o form público ("Quero escolher outro grupo"
+    // sem redigitar — e sem duplicata: mesmos dados = mesmo match no dedup).
+    // CPF fica de fora de propósito (a pessoa completa na hora).
+    let pessoa = { nome: pedido.nome || null, telefone: pedido.telefone || null, email: pedido.email || null, data_nascimento: null, genero: null };
+    try {
+      if (pedido.membro_id) {
+        const { data: m } = await supabase.from('mem_membros')
+          .select('nome, telefone, email, data_nascimento, genero').eq('id', pedido.membro_id).maybeSingle();
+        if (m) pessoa = { nome: m.nome || pessoa.nome, telefone: m.telefone || pessoa.telefone, email: m.email || pessoa.email, data_nascimento: m.data_nascimento || null, genero: m.genero || null };
+      } else if (pedido.cadastro_pendente_id) {
+        const { data: cadp } = await supabase.from('mem_cadastros_pendentes')
+          .select('nome, telefone, email, data_nascimento, genero').eq('id', pedido.cadastro_pendente_id).maybeSingle();
+        if (cadp) pessoa = { nome: cadp.nome || pessoa.nome, telefone: cadp.telefone || pessoa.telefone, email: cadp.email || pessoa.email, data_nascimento: cadp.data_nascimento || null, genero: cadp.genero || null };
+      }
+    } catch (e) { console.error('[public grupos sugestao pessoa]', e.message); }
+
     res.json({
-      pedido: { nome: pedido.nome, status: pedido.status, grupo_original: pedido.mem_grupos?.nome || null },
+      pedido: {
+        nome: pedido.nome,
+        status: pedido.status,
+        grupo_original: pedido.mem_grupos?.nome || null,
+        // Fechado porque a pessoa foi aprovada em OUTRO pedido dela
+        resolvido_em_outro: Boolean(pedido.resolvido_grupo_id),
+      },
+      pessoa,
       grupo: {
         nome: sugerido.nome, codigo: sugerido.codigo, bairro: sugerido.bairro,
         quando: formatarQuando(sugerido), onde: formatarOnde(sugerido),
@@ -848,9 +875,9 @@ router.post('/sugestao/aceitar', async (req, res) => {
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, nome').eq('id', payload.p).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
-    // 'devolvido' (recusado pelo líder e devolvido pra triagem) também aceita —
-    // o aceite reativa o pedido como pendente já no grupo sugerido.
-    if (!['pendente', 'devolvido'].includes(pedido.status)) {
+    // 'devolvido' (recusado pelo líder) e 'encaminhado' (sugestão enviada)
+    // também aceitam — o aceite reativa o pedido como pendente no grupo sugerido.
+    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) {
       return res.status(409).json({ error: `Este pedido já foi ${pedido.status}.`, status: pedido.status });
     }
 
@@ -866,8 +893,8 @@ router.post('/sugestao/aceitar', async (req, res) => {
     // Se a pessoa já tiver pedido pendente no grupo sugerido, o índice único
     // barra o UPDATE (23505) → resposta amigável.
     const { error: eMove } = await supabase.from('mem_grupo_pedidos')
-      .update({ grupo_id: payload.g, status: 'pendente' }) // devolvido reativa como pendente no grupo novo
-      .eq('id', pedido.id).in('status', ['pendente', 'devolvido']);
+      .update({ grupo_id: payload.g, status: 'pendente' }) // devolvido/encaminhado reativa como pendente no grupo novo
+      .eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']);
     if (eMove) {
       if (eMove.code === '23505') {
         return res.status(409).json({ error: 'Você já tem um pedido para esse grupo — o líder vai te responder por lá.' });
