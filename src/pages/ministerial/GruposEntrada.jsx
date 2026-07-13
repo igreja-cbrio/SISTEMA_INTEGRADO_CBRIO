@@ -30,13 +30,17 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f620',
 };
 
-// Status por linha — pedidos e direcionados do Next lado a lado na mesma coluna
+// Status por linha — pedidos e direcionados do Next lado a lado na mesma coluna.
+// Ciclo dinâmico (Marcos 13/07): Recusado → Encaminhado → Aprovado (aqui ou
+// em outro pedido da pessoa → "Aprovada em outro grupo").
 const STATUS_ROW = {
   pendente: { label: 'Pendente · líder', cor: C.amber, bg: C.amberBg },
-  devolvido: { label: 'Na triagem', cor: C.violet, bg: C.violetBg },
+  devolvido: { label: 'Recusado · na triagem', cor: C.violet, bg: C.violetBg },
+  encaminhado: { label: 'Encaminhado', cor: C.blue, bg: C.blueBg },
   aprovado: { label: 'Aprovado', cor: C.green, bg: C.greenBg },
   rejeitado: { label: 'Rejeitado', cor: C.red, bg: C.redBg },
   cancelado: { label: 'Cancelado', cor: C.t3, bg: C.bg },
+  resolvido: { label: 'Aprovada em outro grupo', cor: C.green, bg: C.greenBg },
   enc_pendente: { label: 'A contatar', cor: C.blue, bg: C.blueBg },
   enc_nao_respondeu: { label: 'Não respondeu', cor: C.amber, bg: C.amberBg },
   enc_em_duvida: { label: 'Em dúvida', cor: C.amber, bg: C.amberBg },
@@ -48,10 +52,11 @@ const STATUS_ROW = {
 const FILTRO_STATUS = [
   { key: 'todos', label: 'Todos os status', casa: null },
   { key: 'pendente', label: 'Pendentes (líder)', casa: ['pendente'] },
-  { key: 'devolvido', label: 'Na triagem', casa: ['devolvido'] },
+  { key: 'devolvido', label: 'Recusados (na triagem)', casa: ['devolvido'] },
+  { key: 'encaminhado', label: 'Encaminhados', casa: ['encaminhado'] },
   { key: 'a_contatar', label: 'Next · a contatar', casa: ['enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'] },
-  { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'enc_engajou'] },
-  { key: 'rejeitado', label: 'Recusados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse'] },
+  { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'resolvido', 'enc_engajou'] },
+  { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse'] },
 ];
 
 const FILTRO_PERIODO = [
@@ -118,6 +123,23 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
   const [selected, setSelected] = useState(() => new Set());
   const [batchLoading, setBatchLoading] = useState(false);
 
+  // Histórico do pedido (linha do tempo) — carregado ao expandir, cacheado
+  const [eventosCache, setEventosCache] = useState({}); // pedidoId → rows | 'loading'
+  const carregarEventos = async (pedidoId) => {
+    let jaTem = false;
+    setEventosCache(prev => {
+      jaTem = prev[pedidoId] && prev[pedidoId] !== 'loading';
+      return jaTem ? prev : { ...prev, [pedidoId]: 'loading' };
+    });
+    if (jaTem) return;
+    try {
+      const evs = await api.pedidoEventos(pedidoId);
+      setEventosCache(prev => ({ ...prev, [pedidoId]: Array.isArray(evs) ? evs : [] }));
+    } catch {
+      setEventosCache(prev => ({ ...prev, [pedidoId]: [] }));
+    }
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -140,7 +162,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const depois = () => { load(); onMudou?.(); };
+  const depois = () => { setEventosCache({}); load(); onMudou?.(); };
 
   // ── Normalização: pedido + direcionado do Next viram linhas da MESMA lista ──
   const rows = useMemo(() => {
@@ -150,7 +172,9 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
       lista.push({
         tipo: 'pedido', key: `p_${p.id}`, data: p.created_at,
         nome: p.nome, telefone: p.telefone, email: p.email,
-        statusKey: p.status, veioNext: p.veio_next === true,
+        // Cancelado porque a pessoa entrou em OUTRO grupo → "Aprovada em outro grupo"
+        statusKey: p.status === 'cancelado' && p.resolvido_grupo_id ? 'resolvido' : p.status,
+        veioNext: p.veio_next === true,
         grupoNome: p.mem_grupos?.nome || null, grupoCodigo: p.mem_grupos?.codigo || null,
         raw: p,
       });
@@ -331,7 +355,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     setExpandedId(abrir ? r.key : null);
     setRejectingId(null); setSugerindoId(null);
     if (abrir && r.tipo === 'enc') abrirDevolutiva(r);
-    if (abrir && r.tipo === 'pedido') carregarGrupos();
+    if (abrir && r.tipo === 'pedido') { carregarGrupos(); carregarEventos(r.raw.id); }
   };
 
   return (
@@ -499,6 +523,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
                             {r.tipo === 'pedido'
                               ? <PainelPedido
                                   p={p}
+                                  eventos={eventosCache[p.id]}
                                   podeEditar={podeEditar}
                                   capacidadeInfo={capacidadeInfo}
                                   rejectingId={rejectingId} setRejectingId={setRejectingId}
@@ -564,9 +589,9 @@ function ResumoCard({ titulo, valor, destaque, corDestaque }) {
   );
 }
 
-// ── Painel expandido de um PEDIDO (grupo alvo + ações por status) ──
+// ── Painel expandido de um PEDIDO (grupo alvo + ações por status + histórico) ──
 function PainelPedido({
-  p, podeEditar, capacidadeInfo,
+  p, eventos, podeEditar, capacidadeInfo,
   rejectingId, setRejectingId, motivoRej, setMotivoRej,
   sugerindoId, abrirSugestao, grupoSugestao, setGrupoSugestao,
   motivoSel, setMotivoSel, motivoLivre, setMotivoLivre, motivoSugestaoFinal,
@@ -601,6 +626,17 @@ function PainelPedido({
           ainda não foi comunicada: sugira outro grupo (o motivo que você escolher vai junto no WhatsApp) ou rejeite de vez.
         </div>
       )}
+      {p.status === 'encaminhado' && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.blueBg, borderRadius: 6, lineHeight: 1.5 }}>
+          Encaminhado{p.sugerido_em ? ` em ${new Date(p.sugerido_em).toLocaleDateString('pt-BR')}` : ''}{p.sugerido_por_nome ? ` por ${p.sugerido_por_nome}` : ''} —
+          aguardando a pessoa decidir pelo link do WhatsApp. Dá pra encaminhar de novo pra outro grupo, se precisar.
+        </div>
+      )}
+      {p.status === 'cancelado' && p.resolvido_grupo_id && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.greenBg, borderRadius: 6 }}>
+          A pessoa foi aprovada em outro grupo — este pedido fechou sozinho.
+        </div>
+      )}
       {p.status === 'rejeitado' && p.motivo_rejeicao && (
         <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.redBg, borderRadius: 6 }}>
           Motivo (interno): {p.motivo_rejeicao}
@@ -612,7 +648,7 @@ function PainelPedido({
         </div>
       )}
 
-      {podeEditar && ['pendente', 'devolvido'].includes(p.status) && !isRejecting && !isSugerindo && (
+      {podeEditar && ['pendente', 'devolvido', 'encaminhado'].includes(p.status) && !isRejecting && !isSugerindo && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
           {cap?.cheio && grupo?.aceitando_inscricoes !== false && (
             <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
@@ -714,6 +750,57 @@ function PainelPedido({
           </div>
         </div>
       )}
+
+      {/* Linha do tempo do pedido — o histórico completo da pessoa (13/07) */}
+      <Timeline eventos={eventos} />
+    </div>
+  );
+}
+
+const EVENTO_META = {
+  criado: { label: 'Pedido criado', cor: C.t3 },
+  recusado_lider: { label: 'Recusado pelo líder', cor: C.red },
+  encaminhado: { label: 'Encaminhado pra outro grupo', cor: C.blue },
+  aprovado: { label: 'Aprovado', cor: C.green },
+  rejeitado_final: { label: 'Rejeitado (final)', cor: C.red },
+  resolvido_outro_grupo: { label: 'Aprovada em outro grupo', cor: C.green },
+  cancelado: { label: 'Cancelado', cor: C.t3 },
+};
+
+function Timeline({ eventos }) {
+  if (eventos === 'loading') {
+    return <div style={{ fontSize: 11.5, color: C.t3, marginTop: 10 }}>Carregando histórico...</div>;
+  }
+  if (!Array.isArray(eventos) || eventos.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12, borderTop: `1px dashed ${C.border}`, paddingTop: 10 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+        Histórico do pedido
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {eventos.map(ev => {
+          const meta = EVENTO_META[ev.tipo] || { label: ev.tipo, cor: C.t3 };
+          const d = ev.detalhe || {};
+          const partes = [];
+          if (d.grupo) partes.push(`grupo ${d.grupo}`);
+          if (d.grupo_sugerido) partes.push(`sugerido: ${d.grupo_sugerido}`);
+          if (d.motivo) partes.push(`motivo enviado à pessoa: “${d.motivo}”`);
+          if (d.motivo_interno) partes.push(`motivo interno: “${d.motivo_interno}”`);
+          if (d.origem) partes.push(d.origem === 'formulario_publico' ? 'via QR/formulário' : d.origem === 'cadastro_interno' ? 'via cadastro' : d.origem);
+          const quando = new Date(ev.created_at);
+          return (
+            <div key={ev.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 11.5, color: C.t2 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.cor, marginTop: 4, flexShrink: 0 }} />
+              <div style={{ lineHeight: 1.5 }}>
+                <strong style={{ color: C.text }}>{meta.label}</strong>
+                <span style={{ color: C.t3 }}> · {quando.toLocaleDateString('pt-BR')} {quando.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                {ev.autor_nome && <span style={{ color: C.t3 }}> · por {ev.autor_nome}</span>}
+                {partes.length > 0 && <div style={{ color: C.t3 }}>{partes.join(' · ')}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

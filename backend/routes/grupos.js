@@ -10,6 +10,7 @@ const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storage
 const { notificar } = require('../services/notificar');
 const { importarParticipantes } = require('../services/gruposImporter');
 const { notificarPessoaAprovada, notificarPessoaSugestao } = require('../services/gruposWhatsapp');
+const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -869,6 +870,9 @@ router.post('/:id/pedidos', async (req, res) => {
       } catch (notifErr) { console.error('[Pedidos notify]', notifErr.message); }
     })();
 
+    // Linha do tempo do pedido (histórico da caixa de entrada)
+    registrarEventoPedido(data.id, 'criado', { origem: data.origem || 'cadastro_interno' }, req.user?.name || null);
+
     res.json(data);
   } catch (e) { console.error('[Pedidos create]', e.message); res.status(500).json({ error: 'Erro ao criar pedido' }); }
 });
@@ -1294,6 +1298,38 @@ async function aprovarPedidoCore(pedidoId, user) {
       throw e;
     }
 
+    // Linha do tempo + status dinâmico (Marcos · 13/07): registra o "aprovado"
+    // e fecha os OUTROS pedidos abertos da MESMA pessoa como "aprovada em outro
+    // grupo" (match só por membro/cadastro — nunca telefone, que família
+    // compartilha). Tolerante à migration pendente (falha silenciosa).
+    (async () => {
+      try {
+        const { data: gAlvo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).maybeSingle();
+        await registrarEventoPedido(pedido.id, 'aprovado', { grupo: gAlvo?.nome || null }, user?.name || null);
+
+        const ors = [];
+        if (membroId) ors.push(`membro_id.eq.${membroId}`);
+        if (pedido.cadastro_pendente_id) ors.push(`cadastro_pendente_id.eq.${pedido.cadastro_pendente_id}`);
+        if (!ors.length) return;
+        const { data: abertos } = await supabase.from('mem_grupo_pedidos')
+          .select('id')
+          .neq('id', pedido.id)
+          .in('status', ['pendente', 'devolvido', 'encaminhado'])
+          .or(ors.join(','));
+        for (const outro of (abertos || [])) {
+          const { data: fechado } = await supabase.from('mem_grupo_pedidos').update({
+            status: 'cancelado',
+            resolvido_grupo_id: pedido.grupo_id,
+            decidido_em: new Date().toISOString(),
+            decidido_por_nome: 'Sistema · aprovada em outro grupo',
+          }).eq('id', outro.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+          if (fechado && fechado.length) {
+            await registrarEventoPedido(outro.id, 'resolvido_outro_grupo', { grupo: gAlvo?.nome || null }, user?.name || null);
+          }
+        }
+      } catch (e) { console.error('[Pedido aprovado · eventos]', e.message); }
+    })();
+
     // Fluxo de boas-vindas: notifica a pessoa (rica) e o líder (novo membro)
     (async () => {
       try {
@@ -1393,8 +1429,9 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       .select('id, status, grupo_id, nome, telefone, membro_id')
       .eq('id', req.params.pedidoId).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    // 'devolvido' também aceita sugestão — é exatamente a fila da triagem.
-    if (!['pendente', 'devolvido'].includes(pedido.status)) return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    // 'devolvido' também aceita sugestão (é a fila da triagem) e 'encaminhado'
+    // aceita RE-encaminhar (mandar outra opção antes de a pessoa decidir).
+    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     if (grupo_sugerido_id === pedido.grupo_id) {
       return res.status(400).json({ error: 'Sugira um grupo diferente do pedido original' });
     }
@@ -1426,6 +1463,24 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       motivo, // sanitizado no service (vira o {{3}} do template de utilidade)
     });
 
+    // Status dinâmico (Marcos · 13/07): sugerir marca o pedido como
+    // 'encaminhado' — a caixa mostra "Encaminhado" até a pessoa decidir.
+    // Tolerante à migration pendente: sem as colunas, o update falha
+    // silencioso e o fluxo (WhatsApp/in-app) segue idêntico.
+    const { data: marcado } = await supabase.from('mem_grupo_pedidos').update({
+      status: 'encaminhado',
+      sugerido_grupo_id: grupoSugerido.id,
+      sugerido_em: new Date().toISOString(),
+      sugerido_por_nome: req.user.name || null,
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+    if (marcado && marcado.length) {
+      registrarEventoPedido(pedido.id, 'encaminhado', {
+        grupo_sugerido: grupoSugerido.nome,
+        motivo: String(motivo || '').trim() || null,
+        whatsapp_enviado: wpp?.sent === true,
+      }, req.user.name);
+    }
+
     // In-app, se a pessoa tem login
     (async () => {
       try {
@@ -1452,6 +1507,19 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
 
     res.json({ success: true, whatsapp_enviado: wpp?.sent === true, whatsapp_motivo: wpp?.sent ? null : (wpp?.reason || null) });
   } catch (e) { console.error('[Pedido sugerir]', e.message); res.status(500).json({ error: 'Erro ao sugerir grupo' }); }
+});
+
+// GET /api/grupos/pedidos/:pedidoId/eventos — linha do tempo do pedido
+// (criado → recusado_lider → encaminhado → aprovado/rejeitado_final/…)
+router.get('/pedidos/:pedidoId/eventos', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_pedido_eventos')
+      .select('id, tipo, detalhe, autor_nome, created_at')
+      .eq('pedido_id', req.params.pedidoId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { console.error('[Pedido eventos]', e.message); res.status(500).json({ error: 'Erro ao buscar o histórico do pedido' }); }
 });
 
 // POST /api/grupos/pedidos/aprovar-lote — body { pedido_ids: [] }
@@ -1500,9 +1568,9 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
   try {
     const { motivo } = req.body || {};
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-      .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.pedidoId).single();
+      .select('id, status, grupo_id, membro_id, nome, motivo_rejeicao').eq('id', req.params.pedidoId).single();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (!['pendente', 'devolvido'].includes(pedido.status)) {
+    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
@@ -1519,6 +1587,8 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
       if (!claimed || !claimed.length) {
         return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
       }
+
+      registrarEventoPedido(pedido.id, 'recusado_lider', { motivo_interno: motivo || null }, req.user.name);
 
       // Avisa a TRIAGEM (módulo grupos) — a pessoa não é notificada aqui.
       (async () => {
@@ -1539,17 +1609,19 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
       return res.json({ success: true, devolvido: true });
     }
 
-    // status === 'devolvido' → rejeição FINAL pela triagem.
+    // status devolvido/encaminhado → rejeição FINAL pela triagem.
     const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
       status: 'rejeitado',
       motivo_rejeicao: motivo || pedido.motivo_rejeicao || null,
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).eq('status', 'devolvido').select('id');
+    }).eq('id', pedido.id).in('status', ['devolvido', 'encaminhado']).select('id');
     if (!claimed || !claimed.length) {
       return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
     }
+
+    registrarEventoPedido(pedido.id, 'rejeitado_final', { motivo_interno: motivo || pedido.motivo_rejeicao || null }, req.user.name);
 
     // Notifica a pessoa (in-app · só alcança quem tem login no sistema).
     (async () => {
