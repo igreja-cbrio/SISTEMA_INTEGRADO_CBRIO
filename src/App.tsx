@@ -242,6 +242,7 @@ const GestaoCriancas = lazyWithRetry(() => import('./pages/ministerial/totemKids
 const KidsHub = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsHub'));
 const KidsFrequenciaPCO = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsFrequenciaPCO'));
 const VoluntariosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariosKids'));
+const VoluntariadoInscricoesKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariadoInscricoesKids'));
 const EstoqueKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/EstoqueKids'));
 const BatismosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/BatismosKids'));
 const ApresentacaoCriancasKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/ApresentacaoCriancas'));
@@ -605,6 +606,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/criancas" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><GestaoCriancas /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/frequencia" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsFrequenciaPCO /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/voluntarios" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariosKids /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/voluntariado-inscricoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariadoInscricoesKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/estoque" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><EstoqueKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/batismos" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><BatismosKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/apresentacao" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><ApresentacaoCriancasKids /></Suspense></ModuleGuard>} />

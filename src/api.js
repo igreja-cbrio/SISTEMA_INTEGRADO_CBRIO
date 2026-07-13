@@ -1411,6 +1411,9 @@ export const painelArea = {
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
 export const totemKids = {
   dashboard: () => get('/totem-kids/dashboard'),
+  // Inscrições de voluntariado que querem servir no Kids (coordenação Kids)
+  voluntariadoInscricoes: (params) => get('/totem-kids/voluntariado-inscricoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  voluntariadoInscricaoUpdate: (id, dados) => patch(`/totem-kids/voluntariado-inscricoes/${id}`, dados),
   batismos: () => get('/totem-kids/batismos'),
   apresentacoes: () => get('/totem-kids/apresentacoes'),
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
