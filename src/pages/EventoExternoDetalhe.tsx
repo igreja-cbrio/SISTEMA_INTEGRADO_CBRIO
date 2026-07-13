@@ -345,10 +345,13 @@ export default function EventoExternoDetalhe() {
                         return (
                           <div key={c.key} className="min-w-0">
                             <div className="text-[11px] text-muted-foreground truncate" title={c.label}>{c.label}</div>
-                            {c.tipo === 'imagem' ? (
+                            {c.tipo === 'imagem' && ehImagemUrl(v) ? (
                               <a href={v} target="_blank" rel="noreferrer" title="Abrir imagem" onClick={e => e.stopPropagation()}>
                                 <img src={v} alt={c.label} className="mt-0.5 h-10 w-auto max-w-[120px] object-contain rounded border border-border" />
                               </a>
+                            ) : c.tipo === 'imagem' && /^https?:\/\//i.test(String(v)) ? (
+                              <a href={v} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                                className="text-sm text-primary hover:underline break-all line-clamp-2">{v}</a>
                             ) : (
                               <div className="text-sm break-words line-clamp-2" title={Array.isArray(v) ? v.join(', ') : String(v)}>
                                 {Array.isArray(v) ? v.join(', ') : v}
@@ -376,6 +379,11 @@ export default function EventoExternoDetalhe() {
 // Pop-up com o detalhamento completo de UMA inscrição.
 // Editor de resposta de "rede social" ("Rede · @handle" numa string só)
 const REDES_SOCIAIS_ADM = ['Instagram', 'Facebook', 'X (Twitter)', 'TikTok', 'YouTube', 'LinkedIn', 'Kwai', 'Outra'];
+
+// Campo tipo "imagem" pode guardar uma URL de imagem (upload) OU um texto/@handle
+// (ex.: o campo "Instagram ou logo" — a pessoa às vezes cola o @/link em vez de subir imagem).
+const ehImagemUrl = (v: any) =>
+  typeof v === 'string' && /^https?:\/\//i.test(v) && /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(v);
 function RedeSocialEdit({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const i = String(value || '').indexOf(' · ');
   const rede = i >= 0 ? String(value).slice(0, i) : '';
@@ -407,7 +415,10 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved,
       nome: inscricao.nome || '',
       telefone: inscricao.telefone || '',
       email: inscricao.email || '',
-      dados: Object.fromEntries(campos.filter((c: any) => c.tipo !== 'imagem').map((c: any) => {
+      // Inclui TODOS os campos (inclusive imagem) já com o valor atual — assim o
+      // merge do backend preserva o que não foi tocado e o campo de imagem/rede
+      // social fica editável como texto/link.
+      dados: Object.fromEntries(campos.map((c: any) => {
         const v = inscricao.dados?.[c.key];
         return [c.key, Array.isArray(v) ? v.join(', ') : String(v ?? '')];
       })),
@@ -472,7 +483,16 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved,
                     <div key={c.key} className="rounded-lg border border-border p-2.5">
                       <div className="text-[11px] text-muted-foreground mb-1">{c.label}</div>
                       {c.tipo === 'imagem' ? (
-                        <span className="text-xs text-muted-foreground">Imagem não é editável aqui (mantida como está).</span>
+                        <div className="space-y-1.5">
+                          {ehImagemUrl(form.dados[c.key]) && (
+                            <a href={form.dados[c.key]} target="_blank" rel="noreferrer" title="Abrir imagem em tamanho real">
+                              <img src={form.dados[c.key]} alt={c.label} className="max-h-28 w-auto max-w-full object-contain rounded border border-border" />
+                            </a>
+                          )}
+                          <Input value={form.dados[c.key] || ''} onChange={e => setDado(c.key, e.target.value)} className="h-9"
+                            placeholder="@usuário ou link da rede social" />
+                          <p className="text-[11px] text-muted-foreground">Cole o @ ou o link da rede social. Para manter a imagem/logo enviada, deixe o link acima como está.</p>
+                        </div>
                       ) : c.tipo === 'rede_social' ? (
                         <RedeSocialEdit value={form.dados[c.key] || ''} onChange={v => setDado(c.key, v)} />
                       ) : (c.tipo === 'select' || c.tipo === 'escolha') ? (
@@ -543,11 +563,17 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, onSaved,
                       <div key={c.key} className="rounded-lg border border-border p-2.5">
                         <div className="text-[11px] text-muted-foreground mb-0.5">{c.label}</div>
                         {c.tipo === 'imagem' ? (
-                          v ? (
+                          !v ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : ehImagemUrl(v) ? (
                             <a href={v} target="_blank" rel="noreferrer" title="Abrir imagem em tamanho real">
                               <img src={v} alt={c.label} className="max-h-40 w-auto max-w-full object-contain rounded border border-border" />
                             </a>
-                          ) : <span className="text-muted-foreground">—</span>
+                          ) : /^https?:\/\//i.test(v) ? (
+                            <a href={v} target="_blank" rel="noreferrer" className="text-primary hover:underline break-all">{v}</a>
+                          ) : (
+                            <span className="break-words">{v}</span>
+                          )
                         ) : (
                           <div className="whitespace-pre-wrap break-words">{Array.isArray(v) ? v.join(', ') : (v || <span className="text-muted-foreground">—</span>)}</div>
                         )}
