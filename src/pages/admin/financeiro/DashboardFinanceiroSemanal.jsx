@@ -308,7 +308,7 @@ export default function DashboardSemanal() {
         </Card>
 
         {/* SlideNav · botões de navegação entre slides */}
-        <SlideNav current={slide} onChange={setSlide} />
+        <SlideNav slides={slides} current={slide} onChange={setSlide} />
         <FiltrosFinanceiroBar />
       </div>
 
@@ -543,7 +543,7 @@ const SLIDE_BLOCO = {
   metas: { id: 3, label: 'Despesa & Metas', color: '#f59e0b' },
 };
 
-function SlideNav({ current, onChange }) {
+function SlideNav({ slides, current, onChange }) {
   return (
     <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
       {slides.map((s, i) => {
