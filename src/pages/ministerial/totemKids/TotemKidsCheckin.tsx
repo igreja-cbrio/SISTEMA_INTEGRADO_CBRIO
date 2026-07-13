@@ -105,7 +105,6 @@ export default function TotemKidsCheckin() {
 
   // Multi-culto: outros cultos do dia (com Kids) em que a criança também fica
   const [cultosDia, setCultosDia] = useState<any[]>([]);
-  const [cultosHoje, setCultosHoje] = useState<any[]>([]);   // cultos de Kids de hoje ainda não encerrados (seletor do topo)
   const criancaAtivaRef = useRef(false);
   const [cultosExtras, setCultosExtras] = useState<string[]>([]);
 
@@ -340,32 +339,26 @@ export default function TotemKidsCheckin() {
   const PIN_KEY = 'cbrio-totem-kids-pin';
 
   function abrirAjustes(aba: string = 'sessoes') { setAjustesAba(aba); setAjustesOpen(true); }
-  // Recarrega a sessão atual (após mexer em sessões/config pela engrenagem).
-  // Carrega os cultos de Kids de HOJE, esconde os que já acabaram e garante a
-  // sessão do culto de AGORA (pelo relógio). O operador não gerencia sessão.
+  // Descobre a sessão ATIVA do totem (após carregar / mexer na config):
+  //  1. Culto de Kids acontecendo agora (pelo relógio) → é a sessão ativa (garante aberto).
+  //  2. Senão, se o operador abriu uma sessão na config (mesmo FORA do dia/hora
+  //     do culto), essa sessão aberta é a principal · respeita a escolha manual.
+  //  3. Senão, não há culto agora.
   async function carregarCultosDoDia() {
     try {
       const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       const cultos: any[] = await totemKids.cultosDoDia(hoje);
-      const { atual, visiveis } = escolherCultoPorRelogio(cultos || []);
-      setCultosHoje(visiveis);
+      const { atual } = escolherCultoPorRelogio(cultos || []);
+      setCultosDia([]);
       if (atual) {
         const s: any = await totemKids.sessoes.garantir(atual.id);
         setSessao(s);
-        setCultosDia(visiveis.filter((c: any) => c.id !== atual.id));
-      } else {
-        setSessao(null);
-        setCultosDia([]);
+        return;
       }
+      let aberta: any = null;
+      try { aberta = await totemKids.sessoes.atual(); } catch { aberta = null; }
+      setSessao(aberta?.culto ? aberta : null);
     } catch { /* mantém o estado atual */ }
-  }
-  // Troca manual de culto (raro · normalmente já vem certo pelo relógio).
-  async function selecionarCulto(cultoId: string) {
-    try {
-      const s: any = await totemKids.sessoes.garantir(cultoId);
-      setSessao(s);
-      setCultosDia(cultosHoje.filter((c: any) => c.id !== cultoId));
-    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao trocar de culto'); }
   }
   function recarregarSessao() {
     carregarCultosDoDia();
@@ -662,23 +655,9 @@ export default function TotemKidsCheckin() {
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-2xl shadow-lg shadow-pink-500/30">🧸</div>
           <div>
             <p className="text-lg font-black leading-none">Totem Kids</p>
-            {/* Sessão atual · clicável pra abrir/fechar/trocar sem sair do totem */}
-            {/* Culto de AGORA · vem pré-selecionado pelo relógio; troca se precisar (os que já passaram somem) */}
+            {/* Culto da sessão ativa · texto simples, sem dropdown de horários */}
             {sessao?.culto ? (
-              cultosHoje.length > 1 ? (
-                <Select value={sessao.culto.id} onValueChange={selecionarCulto}>
-                  <SelectTrigger className="h-7 w-auto gap-1 border-none px-1 text-xs font-medium text-slate-500 hover:text-pink-600 focus:ring-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {cultosHoje.map((c: any) => (
-                      <SelectItem key={c.id} value={c.id}>{c.nome}{c.hora ? ` · ${c.hora}` : ''}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <span className="text-xs font-medium text-slate-400">{sessao.culto.nome}</span>
-              )
+              <span className="text-xs font-medium text-slate-400">{sessao.culto.nome}</span>
             ) : (
               <span className="text-xs font-medium text-slate-400">Sem culto de Kids agora</span>
             )}
@@ -1667,48 +1646,8 @@ function CheckinSelecao(props: {
           </Select>
         </div>
 
-        {/* Cultos em que a criança fica (decisão 2026-07-13 · refino do #9):
-            o culto de AGORA (escolhido pelo relógio) já vem marcado e travado —
-            é onde a criança está. Os outros horários do dia ficam como opção;
-            marque SÓ se ela realmente ficar (1 etiqueta só). A frequência do dia
-            continua contando cada criança 1× (distintas). */}
-        {cultoAtual && (
-          <div>
-            <label className="text-sm font-medium block mb-1">
-              Em quais cultos a criança vai ficar?
-            </label>
-            <p className="text-xs text-muted-foreground mb-2">
-              O culto de agora já vem marcado. Marque outro horário só se ela <b>realmente</b> ficar (1 etiqueta só).
-            </p>
-            <div className="space-y-2">
-              {/* Culto de agora · sempre incluído (é a sessão ativa · pelo relógio) */}
-              <div className="w-full flex items-center gap-3 rounded-lg border border-primary bg-primary/10 p-3 text-left">
-                <span className="h-5 w-5 rounded border bg-primary border-primary text-primary-foreground flex items-center justify-center shrink-0">
-                  <Check className="h-3.5 w-3.5" />
-                </span>
-                <span className="font-medium flex-1">{cultoAtual.nome}</span>
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-primary shrink-0">agora</span>
-              </div>
-              {/* Outros horários do dia · opcionais */}
-              {cultosDia.map((c: any) => {
-                const marcado = cultosExtras.includes(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setCultosExtras(marcado ? cultosExtras.filter(x => x !== c.id) : [...cultosExtras, c.id])}
-                    className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${marcado ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/40'}`}
-                  >
-                    <span className={`h-5 w-5 rounded border flex items-center justify-center shrink-0 ${marcado ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
-                      {marcado && <Check className="h-3.5 w-3.5" />}
-                    </span>
-                    <span className="font-medium">{c.nome}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {/* Check-in usa direto a sessão ativa do totem · sem seleção de horário
+            nem "fica em mais de um culto" (decisão do Marcos · 2026-07-13). */}
 
         <div>
           <label className="text-sm font-semibold block">Quem está trazendo? <span className="text-pink-600">*</span></label>
