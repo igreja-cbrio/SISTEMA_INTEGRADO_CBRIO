@@ -88,6 +88,7 @@ router.get('/', async (req, res) => {
     let q = supabase
       .from('nps_pesquisas')
       .select('*')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (valor) q = q.eq('valor', valor);
@@ -128,6 +129,7 @@ router.get('/:id', async (req, res) => {
       .from('nps_pesquisas')
       .select('*')
       .eq('id', req.params.id)
+      .is('deleted_at', null)
       .single();
     if (error || !pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
 
@@ -264,26 +266,29 @@ router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
   }
 });
 
-// DELETE /api/nps/:id  → soft delete (arquivar)
+// DELETE /api/nps/:id  → EXCLUIR (soft-delete · some da lista de vez)
+// A pesquisa some de todas as listas/telas; as respostas ficam preservadas no
+// banco (deleted_at na pesquisa · reversível por super-admin), mas saem dos
+// KPIs. Diferente de "Encerrar" (status=encerrada · só trava novas respostas).
 router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
   try {
     if (!(await guardArea(req, req.params.id))) {
       return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
     }
-    const { error } = await supabase
-      .from('nps_pesquisas')
-      .update({ status: 'arquivada' })
-      .eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'nps_pesquisas',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.userId ?? null,
+    });
     if (error) throw error;
-    // Pesquisa arquivada sai do KPI (a linha agregada dela em dados_brutos é
-    // removida; reativar pela edição re-sincroniza e ela volta).
+    // Pesquisa excluída sai do KPI (a linha agregada dela em dados_brutos é removida).
     removerDadosBrutos(req.params.id).catch(err =>
       console.warn('[nps] removerDadosBrutos falhou:', err.message)
     );
     res.json({ success: true });
   } catch (e) {
     console.error('[nps] delete:', e.message);
-    res.status(500).json({ error: 'Erro ao arquivar pesquisa' });
+    res.status(500).json({ error: 'Erro ao excluir pesquisa' });
   }
 });
 
@@ -316,7 +321,7 @@ async function listarRespostasCompletas(pesquisaId, select) {
 router.get('/:id/respostas', async (req, res) => {
   try {
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('criado_por, area').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('criado_por, area').eq('id', req.params.id).is('deleted_at', null).single();
     const isPrivileged = ['admin', 'diretor'].includes(req.user.role);
     const isOwner = pesquisa?.criado_por === req.user.userId;
     const naArea = !!pesquisa && podeNaArea(req, pesquisa.area);
@@ -343,7 +348,7 @@ router.post('/:id/responder', async (req, res) => {
       return res.status(400).json({ error: 'score deve estar entre 0 e 10' });
     }
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('id, status').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('id, status').eq('id', req.params.id).is('deleted_at', null).single();
     if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (pesquisa.status !== 'ativa') {
       return res.status(400).json({ error: 'Pesquisa não está ativa' });
@@ -384,7 +389,7 @@ router.post('/:id/responder', async (req, res) => {
 router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, res) => {
   try {
     const { data: pesquisa, error: pErr } = await supabase
-      .from('nps_pesquisas').select('*').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('*').eq('id', req.params.id).is('deleted_at', null).single();
     if (pErr || !pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (!podeNaArea(req, pesquisa.area)) {
       return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
@@ -416,7 +421,7 @@ router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, r
 router.post('/:id/notificar', authorizeModule('nps', 3), async (req, res) => {
   try {
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('*').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('*').eq('id', req.params.id).is('deleted_at', null).single();
     if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (!podeNaArea(req, pesquisa.area)) {
       return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
