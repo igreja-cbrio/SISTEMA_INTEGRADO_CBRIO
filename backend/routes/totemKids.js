@@ -353,6 +353,50 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// GET /criancas/:id/irmaos · outras crianças ATIVAS da mesma família, pro
+// check-in em lote (uma família chega junta). Mesmo shape da busca, pra o front
+// reusar. Sem familia_id → []. (Path de 3 segmentos · não conflita com /:id.)
+router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: base } = await supabase
+      .from('kids_criancas')
+      .select('familia_id')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!base?.familia_id) return res.json([]);
+
+    const { data: irmaos } = await supabase
+      .from('kids_criancas')
+      .select(`
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+        tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
+        visitante, ativo, motivo_inativacao, familia_id,
+        familia:mem_familias(id, nome),
+        responsaveis:kids_responsaveis(
+          membro_id, parentesco, autorizado_buscar,
+          membro:mem_membros(id, nome, telefone, cpf, foto_url)
+        )
+      `)
+      .eq('familia_id', base.familia_id)
+      .neq('id', req.params.id)
+      .eq('ativo', true)
+      .is('deleted_at', null)
+      .order('nome');
+
+    const lista = await Promise.all((irmaos || []).map(async c => ({
+      ...c,
+      foto_url: await fotoVisivelCrianca(c),
+      idade_meses: calcIdadeMeses(c.data_nascimento),
+      idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
+    })));
+    res.json(lista);
+  } catch (e) {
+    console.error('[totemKids/criancas/irmaos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar irmãos' });
+  }
+});
+
 // GET /criancas/duplicados · grupos de crianças provavelmente duplicadas (mesmo
 // nome normalizado). Declarado ANTES de /criancas/:id (senão casaria como :id).
 router.get('/criancas/duplicados', authorizeModule('kids', 1), async (req, res) => {

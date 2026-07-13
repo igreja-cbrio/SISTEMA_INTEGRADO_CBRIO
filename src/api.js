@@ -1452,6 +1452,7 @@ export const totemKids = {
   criancas: {
     buscar: (q) => get(`/totem-kids/criancas/buscar?q=${encodeURIComponent(q)}`),
     get: (id) => get(`/totem-kids/criancas/${id}`),
+    irmaos: (id) => get(`/totem-kids/criancas/${id}/irmaos`),
     uploadFoto: (id, dataUrl) => post(`/totem-kids/criancas/${id}/foto`, { dataUrl }),
     removeFoto: (id) => del(`/totem-kids/criancas/${id}/foto`),
     uploadFotoResponsavel: (membroId, dataUrl) => post(`/totem-kids/responsaveis/${membroId}/foto`, { dataUrl }),
