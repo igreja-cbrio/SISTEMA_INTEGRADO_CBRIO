@@ -435,9 +435,11 @@ export default function AppShell() {
             </button>
           </div>
 
-          {/* Center: Navigation desktop · escondido no mobile (vai pro Sheet) */}
+          {/* Navigation desktop · ancorada à ESQUERDA junto do logo (13/07:
+              centralizada flutuava solta — agora o header alinha às margens:
+              logo+menu na esquerda, ações na direita) · escondida no mobile */}
           {!isVoluntario && !rotaTravada && (
-            <div className="flex-1 flex justify-center" data-tour="megamenu">
+            <div className="flex-1 flex justify-start min-w-0 md:pl-3" data-tour="megamenu">
               <MegaMenu items={filteredNavItems} role={role} />
             </div>
           )}
