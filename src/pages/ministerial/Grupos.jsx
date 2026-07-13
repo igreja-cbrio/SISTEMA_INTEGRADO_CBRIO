@@ -87,6 +87,12 @@ function camposFaltantes(g) {
   if (!g.endereco) faltas.push('Endereço');
   if (!g.bairro) faltas.push('Bairro');
   if (!g.faixa_etaria) faltas.push('Faixa etária');
+  // Grupo com cara de faixa etária (rótulo ou nome) sem limites numéricos vira
+  // pendência pra liderança resolver (Marcos · 2026-07-13) — é o limite que arma
+  // a trava de idade do form público. Grupos gerais não precisam.
+  const rotuloEtario = ['adolescentes', 'jovens', 'jovens adultos'].includes(String(g.faixa_etaria || '').toLowerCase());
+  const nomeEtario = /jovens|jovem|adolescente|teen/i.test(g.nome || '');
+  if ((rotuloEtario || nomeEtario) && g.idade_min == null && g.idade_max == null) faltas.push('Idades da faixa (mín/máx)');
   if (!g.categoria) faltas.push('Categoria');
   if (!g.rede_id) faltas.push('Rede');
   return faltas;
@@ -1849,7 +1855,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
       setForm(data ? { ...data } : {
         nome: '', categoria: '', area: 'sede', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
-        faixa_etaria: '', capacidade: '', aceitando_inscricoes: true, rede_id: '',
+        faixa_etaria: '', idade_min: '', idade_max: '', capacidade: '', aceitando_inscricoes: true, rede_id: '',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
       });
@@ -1866,6 +1872,9 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.nome?.trim()) { toast.error('Nome e obrigatório'); return; }
+    const iMin = form.idade_min === '' || form.idade_min == null ? null : Number(form.idade_min);
+    const iMax = form.idade_max === '' || form.idade_max == null ? null : Number(form.idade_max);
+    if (iMin != null && iMax != null && iMin > iMax) { toast.error('Idade mínima maior que a máxima'); return; }
     const { _geocoding, ...rest } = form;
     onSave({
       ...rest,
@@ -1939,6 +1948,22 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               <Label>Capacidade (limite de pessoas)</Label>
               <Input type="number" min={0} value={form.capacidade ?? ''} onChange={e => set('capacidade', e.target.value)} placeholder="Sem limite" />
             </div>
+          </div>
+
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <Label>Idade mínima (opcional)</Label>
+                <Input type="number" min={0} max={120} value={form.idade_min ?? ''} onChange={e => set('idade_min', e.target.value)} placeholder="Sem limite" />
+              </div>
+              <div>
+                <Label>Idade máxima (opcional)</Label>
+                <Input type="number" min={0} max={120} value={form.idade_max ?? ''} onChange={e => set('idade_max', e.target.value)} placeholder="Sem limite" />
+              </div>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--cbrio-text3)', margin: '4px 0 0' }}>
+              Com limite definido, o formulário público bloqueia inscrição fora da faixa (ex.: jovens até 25 anos).
+            </p>
           </div>
 
           <div>

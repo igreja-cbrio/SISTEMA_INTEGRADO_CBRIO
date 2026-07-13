@@ -1611,10 +1611,24 @@ router.get('/:id', async (req, res) => {
   } catch (e) { console.error('[Grupos get]', e.message); res.status(500).json({ error: 'Erro ao buscar grupo' }); }
 });
 
+// Normaliza idade_min/idade_max do form ('' → null · clamp defensivo 0-120).
+// NULL = sem restrição — a trava do form público só age quando há limite.
+function normIdade(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(120, Math.round(n)));
+}
+
 // POST /api/grupos
 router.post('/', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
+    const idadeMin = normIdade(d.idade_min);
+    const idadeMax = normIdade(d.idade_max);
+    if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
+      return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
+    }
     const { data, error } = await supabase.from('mem_grupos').insert({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
@@ -1626,6 +1640,8 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
       complemento: d.complemento || null,
       bairro: d.bairro || null,
       faixa_etaria: d.faixa_etaria || null,
+      idade_min: idadeMin,
+      idade_max: idadeMax,
       capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
       aceitando_inscricoes: d.aceitando_inscricoes !== false,
       rede_id: d.rede_id || null,
@@ -1644,6 +1660,11 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
 router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
+    const idadeMin = normIdade(d.idade_min);
+    const idadeMax = normIdade(d.idade_max);
+    if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
+      return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
+    }
     const { data, error } = await supabase.from('mem_grupos').update({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
@@ -1655,6 +1676,8 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       complemento: d.complemento || null,
       bairro: d.bairro || null,
       faixa_etaria: d.faixa_etaria || null,
+      idade_min: idadeMin,
+      idade_max: idadeMax,
       capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
       aceitando_inscricoes: d.aceitando_inscricoes !== false,
       rede_id: d.rede_id || null,
