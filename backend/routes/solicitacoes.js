@@ -1031,7 +1031,14 @@ router.post('/', async (req, res) => {
       } catch (e) { console.warn('[SOLICITAÇÕES] exceção compras/Criativo:', e.message); }
     }
 
-    if (!planejado) {
+    // Reserva de espaço vai DIRETO pro Amaury (coordenador de operações) — sem
+    // aprovação de origem nem de gestão (2026-07-13, pedido do Matheus).
+    if (categoria === 'reserva_espaco') {
+      rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+        motivo: 'Reserva de espaço vai direto para operações (Amaury)' };
+    }
+
+    if (!planejado && categoria !== 'reserva_espaco') {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
       const temOverride = !!(await overrideGestaoPorCategoria(categoria));
