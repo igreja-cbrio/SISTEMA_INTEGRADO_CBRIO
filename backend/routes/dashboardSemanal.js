@@ -186,13 +186,14 @@ router.get('/semanal', async (req, res) => {
     // Indicadores de Kids não se aplicam a cultos sem ministério infantil
     // (AMI, Bridge · has_kids=false). Remove pra não poluir o gráfico com zeros.
     let itemsVisiveis = items;
+    let excluirKids = new Set();
     if (indicadorKey.includes('kids')) {
       const { data: semKids } = await supabase
         .from('vol_service_types')
         .select('id')
         .eq('has_kids', false);
-      const excluir = new Set((semKids || []).map(s => s.id));
-      itemsVisiveis = items.filter(it => !excluir.has(it.service_type_id));
+      excluirKids = new Set((semKids || []).map(s => s.id));
+      itemsVisiveis = items.filter(it => !excluirKids.has(it.service_type_id));
     }
 
     // Ordem lógica dos cultos: Quarta -> Bridge/AMI (sab) -> Domingos.
@@ -206,8 +207,24 @@ router.get('/semanal', async (req, res) => {
     });
 
     const total = itemsVisiveis.reduce((s, i) => s + i.valor_absoluto, 0);
-    const sumMedias = itemsVisiveis.reduce((s, i) => s + i.media, 0);
-    const mediaGeral = itemsVisiveis.length ? Math.round(sumMedias / itemsVisiveis.length) : 0;
+
+    // Média Histórica = média (nas semanas do ano COM dado) do TOTAL semanal,
+    // isto é, a SOMA dos valores dos blocos/cultos visíveis em cada semana.
+    // É a MESMA base do "total" exibido. Antes era a média das médias por bloco
+    // dividida pelo nº de blocos → no modo "Todos" o resultado ficava MENOR que
+    // a média de um único turno (impossível: a média de um turno não pode ser
+    // maior que a de todos). Respeita o filtro de culto (histData já vem
+    // filtrado por service_type_id) e a exclusão de cultos sem Kids.
+    const totaisPorSemana = new Map();
+    for (const r of histData) {
+      if (excluirKids.has(r.service_type_id)) continue;
+      const v = somaColunas(r, colunasView(indicadorKey));
+      totaisPorSemana.set(r.semana_iso, (totaisPorSemana.get(r.semana_iso) || 0) + v);
+    }
+    const totaisSemana = [...totaisPorSemana.values()];
+    const mediaGeral = totaisSemana.length
+      ? Math.round(totaisSemana.reduce((s, v) => s + v, 0) / totaisSemana.length)
+      : 0;
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsVisiveis.reduce((s, i) => s + (i.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef.usa_ocupacao
