@@ -1016,6 +1016,21 @@ router.post('/', async (req, res) => {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
     }
 
+    // Compras NÃO passam pela aprovação de origem do diretor do Criativo (Pedro
+    // Menezes) — decisão do Matheus (2026-07-13). Se a origem cairia nele,
+    // dispensa (compras já têm cotação + aprovação financeira depois). Vale só
+    // pro Criativo; os outros setores seguem aprovando suas compras normalmente.
+    if (categoria === 'compras' && rota?.diretor_id) {
+      try {
+        const { data: criativo } = await supabase.from('setor_diretor')
+          .select('diretor_id').eq('setor', 'Criativo').maybeSingle();
+        if (criativo?.diretor_id && rota.diretor_id === criativo.diretor_id) {
+          rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+            motivo: 'Compras não passam pelo diretor do Criativo' };
+        }
+      } catch (e) { console.warn('[SOLICITAÇÕES] exceção compras/Criativo:', e.message); }
+    }
+
     if (!planejado) {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
