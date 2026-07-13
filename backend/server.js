@@ -161,6 +161,7 @@ app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
 app.use('/api/public', publicLimiter);
 
+app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
 app.use('/api/public/membresia', require('./routes/publicMembresia'));
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
