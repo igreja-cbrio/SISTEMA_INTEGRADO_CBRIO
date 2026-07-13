@@ -1443,6 +1443,7 @@ export const totemKids = {
   },
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),
+    garantir: (cultoId) => post('/totem-kids/sessoes/garantir', { culto_id: cultoId }),
     list: (params = {}) => {
       const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
       return get(`/totem-kids/sessoes${qs ? `?${qs}` : ''}`);
