@@ -220,57 +220,24 @@ function AbaSessoes() {
               const total = itens.length;
               const abertas = itens.filter((x: any) => x.sessao?.status === 'aberta').length;
               const statusRotulo = abertas === 0 ? 'nenhuma aberta' : abertas === total ? 'aberta' : `${abertas}/${total} abertas`;
-              const aberto = expandido === g.key;
               const emProc = processando === g.key;
               return (
-                <div key={g.key} className="border rounded-lg overflow-hidden">
-                  <div className="flex items-center justify-between p-3 gap-2">
-                    <button type="button" className="flex items-center gap-2 text-left min-w-0" onClick={() => setExpandido(aberto ? null : g.key)}>
-                      <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ${aberto ? '' : '-rotate-90'}`} />
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{rotuloGrupo(g)}</div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {format(new Date(g.data + 'T00:00:00'), 'dd/MM/yyyy', { locale: ptBR })}
-                          {` · ${g.cultos.map((c: any) => c.hora).filter(Boolean).join(' · ')}`}
-                        </div>
-                      </div>
-                    </button>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant={abertas === 0 ? 'outline' : abertas === total ? 'default' : 'secondary'}>{statusRotulo}</Badge>
-                      {abertas < total && (
-                        <Button size="sm" className="bg-pink-600 hover:bg-pink-700" disabled={emProc} onClick={() => abrirGrupo(g)}>
-                          {emProc ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Abrir'}
-                        </Button>
-                      )}
-                      {abertas > 0 && (
-                        <Button size="sm" variant="outline" disabled={emProc} onClick={() => encerrarGrupo(g)}>Encerrar</Button>
-                      )}
-                    </div>
+                <div key={g.key} className="flex items-center justify-between border rounded-lg p-3 gap-2">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{rotuloGrupo(g)}</div>
+                    <div className="text-xs text-muted-foreground truncate">{format(new Date(g.data + 'T00:00:00'), 'dd/MM/yyyy', { locale: ptBR })}</div>
                   </div>
-                  {aberto && (
-                    <div className="border-t bg-muted/30 divide-y">
-                      {itens.map(({ culto, sessao }: any) => (
-                        <div key={culto.id} className="flex items-center justify-between px-3 py-2 pl-9 gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm truncate">{culto.nome}</div>
-                            {sessao?.culto?.presencial_kids != null && (
-                              <div className="text-[11px] text-muted-foreground">{sessao.culto.presencial_kids} criança(s) consolidadas</div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Badge variant={sessao?.status === 'aberta' ? 'default' : sessao?.status === 'encerrada' ? 'secondary' : 'outline'}>
-                              {sessao?.status || 'sem sessão'}
-                            </Badge>
-                            {sessao?.status === 'aberta' ? (
-                              <Button size="sm" variant="ghost" onClick={() => encerrarUma(sessao.id)}>Encerrar</Button>
-                            ) : (
-                              <Button size="sm" variant="ghost" onClick={() => abrirUma(culto.id)}>Abrir</Button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant={abertas === 0 ? 'outline' : abertas === total ? 'default' : 'secondary'}>{statusRotulo}</Badge>
+                    {abertas < total && (
+                      <Button size="sm" className="bg-pink-600 hover:bg-pink-700" disabled={emProc} onClick={() => abrirGrupo(g)}>
+                        {emProc ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Abrir'}
+                      </Button>
+                    )}
+                    {abertas > 0 && (
+                      <Button size="sm" variant="outline" disabled={emProc} onClick={() => encerrarGrupo(g)}>Encerrar</Button>
+                    )}
+                  </div>
                 </div>
               );
             })}

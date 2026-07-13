@@ -154,7 +154,7 @@ router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         id, culto_id, status, abrir_em, fechar_em, encerrada_at,
         culto:cultos(id, data, nome, service_type_id, presencial_kids, decisoes_kids,
-                     service_type:vol_service_types(id, name, color, has_kids))
+                     service_type:vol_service_types(id, name, color, has_kids, recurrence_time))
       `)
       .eq('status', 'aberta')
       .order('abrir_em', { ascending: false })
@@ -178,7 +178,7 @@ router.post('/sessoes/garantir', authorizeModule('kids', 2), async (req, res) =>
     if (!culto_id) return res.status(400).json({ error: 'culto_id obrigatorio' });
     const sel = `id, culto_id, status, abrir_em, fechar_em, encerrada_at,
         culto:cultos(id, data, nome, service_type_id, presencial_kids, decisoes_kids,
-                     service_type:vol_service_types(id, name, color, has_kids))`;
+                     service_type:vol_service_types(id, name, color, has_kids, recurrence_time))`;
     let { data: s } = await supabase.from('kids_sessoes').select(sel).eq('culto_id', culto_id).maybeSingle();
     if (!s) {
       const ins = await supabase.from('kids_sessoes')
@@ -213,7 +213,7 @@ router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         id, culto_id, status, abrir_em, fechar_em, encerrada_at,
         culto:cultos(id, data, nome, presencial_kids, decisoes_kids,
-                     service_type:vol_service_types(id, name, color))
+                     service_type:vol_service_types(id, name, color, recurrence_time))
       `)
       .order('abrir_em', { ascending: false })
       .limit(limit);
@@ -287,6 +287,18 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
       .select('id, status, encerrada_at')
       .single();
     if (error) throw error;
+    // Sessão finalizada = todo mundo baixado: dá checkout automático em quem
+    // ficou com check-in aberto nessa sessão (evita "fantasma" no painel e na
+    // busca · era a causa dos 356 abertos do teste que nunca fecharam).
+    const { error: eCk } = await supabase.from('kids_checkins')
+      .update({
+        checkout_at: new Date().toISOString(),
+        checkout_metodo: 'checkout_forcado',
+        checkout_por: req.user.userId,
+        responsavel_checkout_nome: 'Baixa automática (sessão encerrada)',
+      })
+      .eq('sessao_id', req.params.id).is('checkout_at', null);
+    if (eCk) console.error('[totemKids/sessoes/encerrar] auto-checkout:', eCk.message);
     // O resumo do Kids pros líderes NÃO sai mais daqui: o cron /cron/resumo-pco
     // é o emissor ÚNICO (crianças únicas = PCO + totem, dedup por
     // planning_center_id, com kids_resumo_enviado_at + chaveDedup). Evita dois
