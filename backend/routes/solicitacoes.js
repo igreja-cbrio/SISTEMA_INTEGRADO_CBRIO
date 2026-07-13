@@ -2696,7 +2696,7 @@ router.post('/:id/reenviar', async (req, res) => {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
-    const { titulo, descricao, justificativa, data_necessaria, resposta } = req.body || {};
+    const { titulo, descricao, justificativa, data_necessaria, resposta, itens_lista, valor_estimado } = req.body || {};
     const { data: sol } = await supabase
       .from('solicitacoes')
       .select('id, solicitante_id, status, status_antes_ajuste, sla_pausado_em, sla_resposta_deadline, sla_resolucao_deadline, categoria, titulo, area_responsavel')
@@ -2724,6 +2724,41 @@ router.post('/:id/reenviar', async (req, res) => {
     if (justificativa !== undefined) update.justificativa = justificativa;
     if (data_necessaria !== undefined) update.data_necessaria = data_necessaria || null;
 
+    // Itens do pedido (compras/serviço) · o solicitante pode ajustar a lista na
+    // devolução. Mesma normalização do POST: 'unitario' vira TOTAL DA LINHA; a
+    // soma vira o valor_estimado; itens[] (texto) fica em backward-compat.
+    const editaItens = Array.isArray(itens_lista)
+      && ['compras', 'servico'].includes(sol.categoria);
+    let itensNorm = [];
+    if (editaItens) {
+      itensNorm = itens_lista
+        .filter(it => it && String(it.descricao || '').trim())
+        .map((it, i) => {
+          const qNum = Number(it.quantidade);
+          const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
+          const vNum = Number(it.valor_estimado);
+          const temValor = it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum);
+          const valorLinha = temValor
+            ? (it.valor_tipo === 'unitario' ? vNum * quantidade : vNum)
+            : null;
+          return {
+            descricao: String(it.descricao).trim().slice(0, 500),
+            quantidade,
+            unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
+            link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
+            valor_estimado: valorLinha,
+            imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
+            ordem: i,
+          };
+        });
+      update.itens = itensNorm.length
+        ? itensNorm.map(it => `${it.quantidade}x ${it.descricao}`).join('\n')
+        : null;
+      const soma = itensNorm.reduce((acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
+      if (soma > 0) update.valor_estimado = soma;
+      else if (valor_estimado != null && valor_estimado !== '') update.valor_estimado = Number(valor_estimado) || null;
+    }
+
     // Retoma o SLA · empurra os prazos pelo tempo pausado
     if (sol.sla_pausado_em) {
       const pausaMs = Date.now() - new Date(sol.sla_pausado_em).getTime();
@@ -2736,6 +2771,18 @@ router.post('/:id/reenviar', async (req, res) => {
     const { data, error } = await supabase.from('solicitacoes')
       .update(update).eq('id', sol.id).select('*').single();
     if (error) throw error;
+
+    // Substitui os itens estruturados quando a lista foi enviada (compras/serviço).
+    // Best-effort: o pedido já foi salvo; falha aqui só loga.
+    if (editaItens) {
+      const { error: delErr } = await supabase.from('solicitacao_itens').delete().eq('solicitacao_id', sol.id);
+      if (delErr) console.error('[SOLICITACOES] reenviar · limpar itens:', delErr.message);
+      if (itensNorm.length) {
+        const rows = itensNorm.map(it => ({ ...it, solicitacao_id: sol.id }));
+        const { error: insErr } = await supabase.from('solicitacao_itens').insert(rows);
+        if (insErr) console.error('[SOLICITACOES] reenviar · gravar itens:', insErr.message);
+      }
+    }
 
     // Registra a tréplica do solicitante na linha do tempo (resposta ao ajuste pedido).
     const respostaTxt = resposta.trim();
