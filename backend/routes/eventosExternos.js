@@ -145,6 +145,20 @@ router.patch('/:id/inscricoes/:inscricaoId', authorizeModule('eventos-externos',
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// DELETE /:id/inscricoes/:inscricaoId — remove uma inscrição (soft delete ·
+// ex.: apagar inscrições de teste). Some da lista e dos sorteios seguintes.
+router.delete('/:id/inscricoes/:inscricaoId', authorizeModule('eventos-externos', 3), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('ext_inscricoes')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.inscricaoId).eq('evento_id', req.params.id).is('deleted_at', null)
+      .select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // DELETE /:id — soft delete
 router.delete('/:id', authorizeModule('eventos-externos', 3), async (req, res) => {
   try {

@@ -107,6 +107,14 @@ export default function EventoExternoDetalhe() {
     try { await api.remover(id); toast.success('Evento excluído'); navigate('/eventos-externos'); }
     catch (e: any) { toast.error(e?.message || 'Erro ao excluir'); }
   }
+  async function excluirInscrito(i: any) {
+    if (!id || !window.confirm(`Excluir a inscrição de ${i.nome}? Ela não entra mais nos sorteios.`)) return;
+    try {
+      await api.excluirInscricao(id, i.id);
+      toast.success('Inscrição excluída');
+      setEv((prev: any) => (prev ? { ...prev, inscritos: (prev.inscritos || []).filter((x: any) => x.id !== i.id) } : prev));
+    } catch (e: any) { toast.error(e?.message || 'Erro ao excluir a inscrição'); }
+  }
 
   if (loading) return <div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
   if (!ev) return (
@@ -321,6 +329,12 @@ export default function EventoExternoDetalhe() {
                           {recolhido ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                         </button>
                       )}
+                      <button
+                        onClick={e => { e.stopPropagation(); excluirInscrito(i); }}
+                        title="Excluir inscrição"
+                        className="p-1 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
                   {/* Respostas do formulário: pergunta em cima, resposta embaixo */}

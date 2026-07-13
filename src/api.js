@@ -292,6 +292,7 @@ export const eventosExternos = {
   remover: (id) => del(`/eventos-externos/${id}`),
   sortear: (id, premio) => post(`/eventos-externos/${id}/sortear`, { premio }),
   atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/eventos-externos/${eventoId}/inscricoes/${inscricaoId}`, data),
+  excluirInscricao: (eventoId, inscricaoId) => del(`/eventos-externos/${eventoId}/inscricoes/${inscricaoId}`),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/eventos-externos/upload-capa', fd); },
 };
 
