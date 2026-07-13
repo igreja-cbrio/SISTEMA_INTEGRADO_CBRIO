@@ -53,7 +53,9 @@ const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais'
 
 // Mapa virou visualização da aba Grupos e Organograma virou visualização da
 // aba Pessoas (Marcos · 2026-07-13): menos abas, mesma informação.
-const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
+// A aba Configurações fundiu com a de QR (Marcos · 13/07): temporada, abrir/
+// fechar inscrições e QR codes são o mesmo assunto — viraram a aba "Inscrições".
+const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode'];
 
 // Tipo/papel do membro no grupo · vem da funcao (mem_grupo_membros). "Membro" é
 // o padrão (frequentador); "Visitante" só quem foi marcado como tal (regra:
@@ -69,7 +71,8 @@ const TIPO_PAPEL = {
 };
 // Chaves antigas de aba (links/notificações) → aba nova
 const TAB_LEGADO = {
-  pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas', geocode: 'config', temporadas: 'config',
+  pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas',
+  geocode: 'qrcode', temporadas: 'qrcode', config: 'qrcode', // Configurações fundiu com Inscrições (13/07)
   mapa: 'grupos', organograma: 'pessoas', // viraram visualizações internas (13/07)
 };
 
@@ -176,10 +179,9 @@ export default function Grupos() {
   const [pessoasView, setPessoasView] = useState(() => (tabDaUrl() === 'organograma' ? 'organograma' : 'censo'));
   const [configTab, setConfigTab] = useState(() => (tabDaUrl() === 'geocode' ? 'geocode' : 'temporadas'));
   const [visitaOpen, setVisitaOpen] = useState(false);
-  // A aba Configurações (Temporadas + Endereços) só aparece pra quem edita o
-  // módulo; QR Inscrição fica visível a todos (mandar o QR dos grupos).
-  // Deep-link (?tab=) de quem não edita cai na aba Grupos.
-  const tabAtiva = pageTab === 'config' && !podeEditarGrupos ? 'grupos' : pageTab;
+  // A aba Inscrições é visível a todos (mandar QR / ver a temporada no ar);
+  // a seção de administração dentro dela só renderiza pra quem edita.
+  const tabAtiva = pageTab;
   const [pedidosCount, setPedidosCount] = useState(0);
   const [encPendentes, setEncPendentes] = useState(0);
   const [historicoMembros, setHistoricoMembros] = useState([]);
@@ -1120,8 +1122,7 @@ export default function Grupos() {
           { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
-          { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
-          { key: 'config', label: 'Configurações', icon: Settings, soEditor: true },
+          { key: 'qrcode', label: 'Inscrições', icon: QrCode },
         ].filter(tab => !tab.soEditor || podeEditarGrupos).map(tab => (
           <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
             padding: '10px 13px', background: 'none', border: 'none', cursor: 'pointer',
@@ -1334,38 +1335,43 @@ export default function Grupos() {
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
 
-      {/* ═══ TAB QR INSCRIÇÃO ═══ */}
+      {/* ═══ TAB INSCRIÇÕES · temporada no ar → QR codes → administração ═══ */}
       {tabAtiva === 'qrcode' && (
-        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-          <InscricaoGruposQRCode />
-        </div>
-      )}
-
-      {/* ═══ TAB CONFIGURAÇÕES · Temporadas + Endereços (só quem edita) ═══ */}
-      {tabAtiva === 'config' && (
         <div>
+          {/* O interruptor: qual temporada está valendo e se as inscrições estão abertas */}
           <TemporadaInscricoesCard podeEditar={podeEditarGrupos} />
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {[
-              { key: 'temporadas', label: 'Temporadas', Icon: Calendar },
-              { key: 'geocode', label: 'Endereços (validação no mapa)', Icon: Compass },
-            ].map(st => {
-              const ativo = configTab === st.key;
-              return (
-                <button key={st.key} onClick={() => setConfigTab(st.key)} style={{
-                  padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
-                  border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                  background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                }}>
-                  <st.Icon size={13} /> {st.label}
-                </button>
-              );
-            })}
-          </div>
           <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-            {configTab === 'temporadas' ? <TemporadasGrupos /> : <GruposGeocode />}
+            <InscricaoGruposQRCode />
           </div>
+          {/* Administração (só quem edita): gestão completa de temporadas + endereços do mapa */}
+          {podeEditarGrupos && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 }}>
+                Administração
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {[
+                  { key: 'temporadas', label: 'Temporadas', Icon: Calendar },
+                  { key: 'geocode', label: 'Endereços (validação no mapa)', Icon: Compass },
+                ].map(st => {
+                  const ativo = configTab === st.key;
+                  return (
+                    <button key={st.key} onClick={() => setConfigTab(st.key)} style={{
+                      padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
+                      border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                      background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <st.Icon size={13} /> {st.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
+                {configTab === 'temporadas' ? <TemporadasGrupos /> : <GruposGeocode />}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
