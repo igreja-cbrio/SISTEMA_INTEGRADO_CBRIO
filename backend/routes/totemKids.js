@@ -2605,7 +2605,30 @@ router.get('/painel/dia', authorizeModule('kids', 1), async (req, res) => {
     }
     const lista = Array.from(porCulto.values())
       .sort((a, b) => String(a.abrir_em || '').localeCompare(String(b.abrir_em || '')));
-    res.json({ data, cultos: lista });
+
+    // Crianças ÚNICAS no dia (distinct crianca_id somando TODOS os cultos) —
+    // evita a dupla contagem de quem ficou em mais de um culto. presentes = sem
+    // checkout agora; total = todas que passaram hoje.
+    const sessaoIds = [...new Set(linhas.map(r => r.sessao_id).filter(Boolean))];
+    const vistosTotal = new Set(), vistosPresentes = new Set();
+    if (sessaoIds.length) {
+      let from = 0; const page = 1000;
+      for (;;) {
+        const { data: cks, error: eCk } = await supabase
+          .from('kids_checkins')
+          .select('crianca_id, checkout_at')
+          .in('sessao_id', sessaoIds)
+          .range(from, from + page - 1);
+        if (eCk) throw eCk;
+        for (const ck of (cks || [])) {
+          vistosTotal.add(ck.crianca_id);
+          if (!ck.checkout_at) vistosPresentes.add(ck.crianca_id);
+        }
+        if (!cks || cks.length < page) break;
+        from += page;
+      }
+    }
+    res.json({ data, cultos: lista, unicas: { presentes: vistosPresentes.size, total: vistosTotal.size } });
   } catch (e) {
     console.error('[totemKids/painel/dia]', e.message);
     res.status(500).json({ error: 'Erro ao resumir os cultos do dia' });

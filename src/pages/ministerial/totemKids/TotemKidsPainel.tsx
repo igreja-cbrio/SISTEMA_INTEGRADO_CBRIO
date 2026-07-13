@@ -106,6 +106,7 @@ export default function TotemKidsPainel() {
   const navigate = useNavigate();
   const [cultosDia, setCultosDia] = useState<CultoDia[]>([]);
   const [dataDia, setDataDia] = useState<string>('');
+  const [unicas, setUnicas] = useState<{ presentes: number; total: number } | null>(null);
   const [cultoSel, setCultoSel] = useState<CultoDia | null>(null);
   const cultoSelRef = useRef<string | null>(null);
   const [dados, setDados] = useState<PainelSala[]>([]);
@@ -181,6 +182,7 @@ export default function TotemKidsPainel() {
       const cultos: CultoDia[] = resp?.cultos || [];
       setCultosDia(cultos);
       setDataDia(resp?.data || '');
+      setUnicas(resp?.unicas || null);
       // Mantém a seleção; senão prioriza culto aberto; senão o 1º.
       const sel =
         cultos.find(c => c.culto_id === cultoSelRef.current) ||
@@ -369,6 +371,21 @@ export default function TotemKidsPainel() {
           )}
         </div>
       </div>
+
+      {/* Crianças ÚNICAS no dia · sem dupla contagem de quem ficou em 2+ cultos */}
+      {unicas && (unicas.total > 0 || unicas.presentes > 0) && (
+        <div className="rounded-xl border-2 border-pink-300 dark:border-pink-800 bg-pink-50 dark:bg-pink-950/30 p-3 flex items-center gap-3">
+          <Users className="h-7 w-7 text-pink-600 shrink-0" />
+          <div>
+            <div className="text-3xl font-bold text-pink-600 leading-none">{unicas.presentes}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">crianças únicas presentes agora</div>
+          </div>
+          <div className="ml-auto text-right">
+            <div className="text-xl font-semibold leading-none">{unicas.total}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">únicas no dia (total)</div>
+          </div>
+        </div>
+      )}
 
       {/* Cultos do dia · toque pra ver cada culto */}
       <div>
