@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
+import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -92,6 +92,10 @@ export default function TotemKidsCheckin() {
   // Multi-culto: outros cultos do dia (com Kids) em que a criança também fica
   const [cultosDia, setCultosDia] = useState<any[]>([]);
   const [cultosExtras, setCultosExtras] = useState<string[]>([]);
+
+  // Irmãos (mesma família) + modal de check-in em lote da família (#11)
+  const [irmaos, setIrmaos] = useState<Crianca[]>([]);
+  const [familiaOpen, setFamiliaOpen] = useState(false);
 
   // Modal de cadastro novo
   const [modalNovo, setModalNovo] = useState(false);
@@ -208,6 +212,66 @@ export default function TotemKidsCheckin() {
     consultarCheckinAberto(sessao.id, crianca.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id, sessao?.id]);
+
+  // Busca os irmãos (mesma família) da criança selecionada, pro check-in em lote.
+  useEffect(() => {
+    setIrmaos([]);
+    if (!crianca?.id) return;
+    totemKids.criancas.irmaos(crianca.id)
+      .then((l: Crianca[]) => setIrmaos(Array.isArray(l) ? l : []))
+      .catch(() => setIrmaos([]));
+  }, [crianca?.id]);
+
+  // Check-in em lote da família: mesmo responsável + sessão pra todos os irmãos
+  // marcados; cada um na sua sala. Reusa o POST /checkin por criança (mantém
+  // código, multi-culto, WhatsApp). Erro numa criança não derruba o lote.
+  async function confirmarCheckinFamilia(
+    itens: { crianca: Crianca; sala_id: string }[],
+    resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string },
+  ) {
+    if (!sessao || !itens.length) return;
+    setImprimindo(true);
+    let ok = 0, jaTinha = 0, falhou = 0;
+    for (const it of itens) {
+      try {
+        const payload: Record<string, unknown> = {
+          sessao_id: sessao.id, crianca_id: it.crianca.id, sala_id: it.sala_id,
+          cultos_extras: cultosExtras, enviar_wpp: enviarWpp,
+        };
+        if (resp.manual) {
+          payload.responsavel_nome_manual = resp.nome;
+          payload.responsavel_telefone_manual = resp.tel;
+          payload.responsavel_parentesco = 'outro';
+        } else {
+          payload.responsavel_id = resp.membroId;
+          payload.responsavel_parentesco = resp.parentesco || 'outro';
+        }
+        const r = await totemKids.checkin.criar(payload);
+        const dados = montarDadosEtiqueta(it.crianca, {
+          checkinId: r.checkin.id, salaNome: r.sala.nome, salaCor: r.sala.cor, salaLogoUrl: r.sala.logo_url,
+          respNome: r.responsavel.nome, codigo: r.codigo_seguranca, codigoBarras: r.codigo_barras,
+          cultoNome: r.sessao.culto?.nome || null, cultoData: r.sessao.culto?.data || null,
+        });
+        await imprimirEtiquetas(dados);
+        ok++;
+      } catch (e: unknown) {
+        const msg = String((e as { message?: string })?.message || '');
+        if (msg.includes('já está') || msg.includes('já tinha')) jaTinha++; else falhou++;
+      }
+    }
+    setImprimindo(false);
+    setFamiliaOpen(false);
+    if (ok > 0) dispararConfete();
+    toast.success(
+      `Check-in da família: ${ok} OK`
+      + (jaTinha ? ` · ${jaTinha} já estava(m)` : '')
+      + (falhou ? ` · ${falhou} não deu` : ''),
+      { duration: 5000 },
+    );
+    setCrianca(null); setBusca(''); setSalaSelecionada(''); setResponsavelSelecionado('');
+    setUsarRespManual(false); setRespManualNome(''); setRespManualTel(''); setCultosExtras([]);
+    setResultados([]); setIrmaos([]);
+  }
 
   // Reimprime SÓ a etiqueta da criança do check-in ABERTO (perdeu/borrou) ·
   // mesmo código · a do responsável não precisa (decisão do Matheus 2026-07-07).
@@ -795,6 +859,8 @@ export default function TotemKidsCheckin() {
           cultosDia={cultosDia}
           cultosExtras={cultosExtras}
           setCultosExtras={setCultosExtras}
+          irmaos={irmaos}
+          onAbrirFamilia={() => setFamiliaOpen(true)}
           usarRespManual={usarRespManual}
           setUsarRespManual={setUsarRespManual}
           respManualNome={respManualNome}
@@ -834,6 +900,17 @@ export default function TotemKidsCheckin() {
           setBusca('');
         }}
       />
+
+      {familiaOpen && crianca && (
+        <CheckinFamiliaModal
+          primaria={crianca}
+          irmaos={irmaos}
+          salas={salas}
+          imprimindo={imprimindo}
+          onClose={() => setFamiliaOpen(false)}
+          onConfirmar={confirmarCheckinFamilia}
+        />
+      )}
 
       {/* Modo totem · cria/pede PIN */}
       <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
@@ -876,6 +953,146 @@ export default function TotemKidsCheckin() {
       </Dialog>
     </KidsZoneShell>
     </div>
+  );
+}
+
+// ── Modal: check-in de FAMÍLIA em lote (irmãos juntos) · #11 ──
+// Marca quem está presente (todos por padrão), cada um vai pra sala da idade
+// (editável), e UM responsável (quem está trazendo) vale pra todos. O loop de
+// check-in acontece no pai (confirmarCheckinFamilia), reusando o POST /checkin.
+function CheckinFamiliaModal({ primaria, irmaos, salas, imprimindo, onClose, onConfirmar }: {
+  primaria: Crianca;
+  irmaos: Crianca[];
+  salas: Sala[];
+  imprimindo: boolean;
+  onClose: () => void;
+  onConfirmar: (
+    itens: { crianca: Crianca; sala_id: string }[],
+    resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string },
+  ) => void;
+}) {
+  const membros = [primaria, ...irmaos];
+  const salaPorIdade = (c: Crianca) =>
+    salas.find(s => c.idade_meses != null
+      && s.faixa_etaria_min_meses <= (c.idade_meses || 0)
+      && s.faixa_etaria_max_meses >= (c.idade_meses || 0))?.id || '';
+
+  const [sel, setSel] = useState<Set<string>>(() => new Set(membros.map(m => m.id)));
+  const [salaPor, setSalaPor] = useState<Record<string, string>>(
+    () => Object.fromEntries(membros.map(m => [m.id, salaPorIdade(m)])));
+
+  // Responsáveis autorizados da família inteira (dedup por membro_id)
+  const respOpcoes = (() => {
+    const map = new Map<string, { membro_id: string; nome: string; parentesco: string | null }>();
+    for (const m of membros) for (const r of (m.responsaveis || [])) {
+      if (r.autorizado_buscar && r.membro && !map.has(r.membro_id)) {
+        map.set(r.membro_id, { membro_id: r.membro_id, nome: r.membro.nome, parentesco: r.parentesco });
+      }
+    }
+    return [...map.values()];
+  })();
+
+  const [respId, setRespId] = useState<string>(respOpcoes.length === 1 ? respOpcoes[0].membro_id : '');
+  const [manual, setManual] = useState(false);
+  const [manualNome, setManualNome] = useState('');
+  const [manualTel, setManualTel] = useState('');
+
+  const selecionados = membros.filter(m => sel.has(m.id));
+  const semSala = selecionados.filter(m => !salaPor[m.id]);
+  const respOk = manual ? (!!manualNome.trim() && !!manualTel.trim()) : !!respId;
+  const podeConfirmar = selecionados.length > 0 && semSala.length === 0 && respOk && !imprimindo;
+
+  function toggle(id: string) {
+    setSel(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+
+  function confirmar() {
+    if (!podeConfirmar) return;
+    const itens = selecionados.map(m => ({ crianca: m, sala_id: salaPor[m.id] }));
+    const respSel = respOpcoes.find(r => r.membro_id === respId);
+    onConfirmar(itens, {
+      membroId: manual ? null : respId,
+      parentesco: manual ? 'outro' : (respSel?.parentesco || 'outro'),
+      manual, nome: manualNome.trim(), tel: manualTel.trim(),
+    });
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[92vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-pink-600" /> Check-in da família</DialogTitle>
+          <DialogDescription>Marque quem está presente. Cada criança vai pra sala da idade (dá pra trocar). O responsável vale pra todos.</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-2">
+          {membros.map(m => {
+            const on = sel.has(m.id);
+            return (
+              <div key={m.id} className={`rounded-lg border p-3 ${on ? 'border-pink-400 bg-pink-50/50 dark:bg-pink-950/20' : 'border-border opacity-60'}`}>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => toggle(m.id)}
+                    className={`h-6 w-6 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-pink-600 border-pink-600 text-white' : 'border-muted-foreground/40'}`}>
+                    {on && <Check className="h-4 w-4" />}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{m.nome}</div>
+                    <div className="text-xs text-muted-foreground">{formatIdade(m.idade_meses) || 'idade não informada'}</div>
+                  </div>
+                </div>
+                {on && (
+                  <div className="mt-2 pl-9">
+                    <Select value={salaPor[m.id] || ''} onValueChange={(v) => setSalaPor(s => ({ ...s, [m.id]: v }))}>
+                      <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a sala" /></SelectTrigger>
+                      <SelectContent>
+                        {salas.map(s => (
+                          <SelectItem key={s.id} value={s.id}>
+                            <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ background: s.cor }} />{s.nome}</span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Quem está trazendo? <span className="text-pink-600">*</span></div>
+            {!manual ? (
+              <>
+                {respOpcoes.length === 0 && <p className="text-xs text-muted-foreground">Nenhum responsável autorizado cadastrado — use "Outro responsável".</p>}
+                <div className="space-y-1.5">
+                  {respOpcoes.map(r => (
+                    <button key={r.membro_id} type="button" onClick={() => setRespId(r.membro_id)}
+                      className={`w-full text-left flex items-center justify-between gap-2 rounded-lg border-2 p-2.5 ${respId === r.membro_id ? 'border-pink-500 bg-pink-50 dark:bg-pink-950/30' : 'border-border hover:border-pink-300'}`}>
+                      <span className="text-sm min-w-0 truncate">{r.nome}{r.parentesco ? <span className="text-muted-foreground"> · {r.parentesco}</span> : null}</span>
+                      {respId === r.membro_id && <CheckCircle2 className="h-5 w-5 text-pink-600 shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+                <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setManual(true)}>Outro responsável (manual)</button>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <Input placeholder="Nome do responsável" value={manualNome} onChange={e => setManualNome(e.target.value)} />
+                <Input placeholder="Telefone" value={manualTel} onChange={e => setManualTel(e.target.value)} />
+                <button type="button" className="text-xs text-muted-foreground underline" onClick={() => { setManual(false); setManualNome(''); setManualTel(''); }}>Voltar à lista</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-3 border-t">
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button className="bg-pink-600 hover:bg-pink-700 text-white" onClick={confirmar} disabled={!podeConfirmar}
+            title={semSala.length ? 'Selecione a sala de cada criança marcada.' : !respOk ? 'Escolha quem está trazendo.' : undefined}>
+            {imprimindo ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Fazendo...</> : <><Printer className="h-4 w-4 mr-2" /> Check-in da família ({selecionados.length})</>}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1234,6 +1451,8 @@ function CheckinSelecao(props: {
   cultosDia: any[];
   cultosExtras: string[];
   setCultosExtras: (v: string[]) => void;
+  irmaos: Crianca[];
+  onAbrirFamilia: () => void;
   usarRespManual: boolean;
   setUsarRespManual: (b: boolean) => void;
   respManualNome: string;
@@ -1256,7 +1475,7 @@ function CheckinSelecao(props: {
 }) {
   const { crianca, salas, salaSelecionada, setSalaSelecionada,
     responsavelSelecionado, setResponsavelSelecionado,
-    cultosDia, cultosExtras, setCultosExtras,
+    cultosDia, cultosExtras, setCultosExtras, irmaos, onAbrirFamilia,
     usarRespManual, setUsarRespManual,
     respManualNome, setRespManualNome, respManualTel, setRespManualTel,
     atualizarCrianca,
@@ -1344,6 +1563,21 @@ function CheckinSelecao(props: {
             atualizarCrianca={atualizarCrianca}
             onClose={() => setDetalhesOpen(false)}
           />
+        )}
+
+        {/* Check-in de família: a criança tem irmãos → oferece fazer todos de uma vez (#11) */}
+        {irmaos.length > 0 && (
+          <button type="button" onClick={onAbrirFamilia}
+            className="w-full flex items-center gap-3 rounded-xl border-2 border-pink-300 bg-pink-50 dark:bg-pink-950/30 px-4 py-3 text-left hover:border-pink-400 transition">
+            <Users className="h-6 w-6 text-pink-600 shrink-0" />
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-semibold text-pink-700 dark:text-pink-300">Fazer check-in da família</span>
+              <span className="block text-xs text-muted-foreground">
+                {crianca.nome.split(' ')[0]} + {irmaos.length} irmão{irmaos.length > 1 ? 's' : ''} de uma vez
+              </span>
+            </span>
+            <span className="text-xs font-medium text-pink-600 shrink-0">Abrir</span>
+          </button>
         )}
 
         {(crianca.tem_alergia || crianca.tem_espectro || crianca.tem_limitacao_fisica) && (
