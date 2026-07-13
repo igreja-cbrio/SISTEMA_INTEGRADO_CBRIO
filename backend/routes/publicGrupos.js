@@ -492,14 +492,17 @@ router.post('/inscrever', async (req, res) => {
       });
     }
 
-    // Já é membro: aproveita a foto e o sexo declarados quando o cadastro
-    // ainda não os tem (enriquecimento só-onde-vazio).
-    if (membroId && (fotoUrl || generoLimpo)) {
-      const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero').eq('id', membroId).maybeSingle();
+    // Já é membro: aproveita foto, sexo e data de nascimento declarados quando
+    // o cadastro ainda não os tem (enriquecimento só-onde-vazio — nunca
+    // sobrescreve o que existe). O nascimento agora é obrigatório no form
+    // justamente pra povoar a base.
+    if (membroId && (fotoUrl || generoLimpo || data_nascimento)) {
+      const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
       if (mem) {
         const upd = {};
         if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
         if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
+        if (data_nascimento && !mem.data_nascimento) upd.data_nascimento = data_nascimento;
         if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
       }
     }

@@ -1196,14 +1196,15 @@ async function aprovarPedidoCore(pedidoId, user) {
           }, { soChaveForte: cad.nao_vincular_fraco === true });
           membroId = r.membro_id;
         }
-        // Carrega foto e sexo do cadastro público pro membro quando ele ainda
-        // não os tem — vale tanto pro recém-criado quanto pro ligado por dedup.
-        if ((cad.foto_url || cad.genero) && membroId) {
-          const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero').eq('id', membroId).maybeSingle();
+        // Carrega foto, sexo e nascimento do cadastro público pro membro quando
+        // ele ainda não os tem — vale pro recém-criado e pro ligado por dedup.
+        if ((cad.foto_url || cad.genero || cad.data_nascimento) && membroId) {
+          const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
           if (mem) {
             const upd = {};
             if (cad.foto_url && !mem.foto_url) upd.foto_url = cad.foto_url;
             if (cad.genero && !mem.genero) upd.genero = cad.genero;
+            if (cad.data_nascimento && !mem.data_nascimento) upd.data_nascimento = cad.data_nascimento;
             if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
           }
         }
