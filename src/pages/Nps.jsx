@@ -162,6 +162,8 @@ export default function Nps() {
   const { isAdmin, isDiretor, getAccessLevel } = useAuth();
   // Líder de área com nível 3 no módulo NPS edita (o backend restringe à área dele).
   const canWrite = isAdmin || isDiretor || getAccessLevel(['nps']) >= 3;
+  // Criar NPS é liberado pra TODOS (2026-07-13); editar/analisar seguem no canWrite.
+  const canCreate = true;
   const navigate = useNavigate();
 
   const [lista, setLista] = useState([]);
@@ -203,7 +205,7 @@ export default function Nps() {
         title="NPS — Pesquisas com IA"
         accent={C.cyan}
         subtitle="Crie pesquisas para os 5 valores · IA gera as perguntas a partir do que você quer medir · respostas analisadas automaticamente e ligadas aos KPIs."
-        actions={canWrite ? <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn> : undefined}
+        actions={canCreate ? <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn> : undefined}
       />
 
       {/* Tabs + busca */}
@@ -241,7 +243,7 @@ export default function Nps() {
         <div style={{ textAlign: 'center', padding: 60, color: C.t3, background: C.card, borderRadius: 12, border: `1px dashed ${C.border}` }}>
           <MessageSquare size={36} style={{ opacity: 0.4, marginBottom: 12 }} />
           <p style={{ margin: 0, fontSize: 14 }}>Nenhuma pesquisa encontrada</p>
-          {canWrite && tab !== 'encerradas' && (
+          {canCreate && tab !== 'encerradas' && (
             <Btn variant="ghost" onClick={() => setShowCreate(true)} style={{ marginTop: 12 }}><Plus size={14} />Criar primeira NPS</Btn>
           )}
         </div>

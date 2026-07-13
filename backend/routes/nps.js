@@ -54,7 +54,9 @@ async function guardArea(req, id) {
 // Geração de perguntas (preview antes de criar)
 // POST /api/nps/gerar-perguntas
 // ────────────────────────────────────────────────────────────────────
-router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req, res) => {
+// Gerar perguntas (preview) é parte do fluxo de criar — liberado pra qualquer
+// colaborador logado (iaLimiter segura abuso de custo de IA).
+router.post('/gerar-perguntas', iaLimiter, async (req, res) => {
   try {
     const { valor, objetivo, contexto_kpi, area } = req.body || {};
     if (!objetivo) {
@@ -63,10 +65,6 @@ router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req
     const areaInformada = area && String(area).toLowerCase() !== 'geral' ? area : null;
     if (!valor && !areaInformada) {
       return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
-    }
-    // Líder de área só gera perguntas para a própria área (admin/diretor: qualquer).
-    if (!ehAdminDiretor(req) && !podeNaArea(req, area)) {
-      return res.status(403).json({ error: 'Você só pode gerar perguntas para a sua área.' });
     }
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(contexto_kpi) ? contexto_kpi : 'nps_geral';
     const result = await npsService.gerarPerguntas({ valor: valor || null, objetivo, contextoKpi, area });
@@ -82,7 +80,9 @@ router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req
 // ────────────────────────────────────────────────────────────────────
 
 // GET /api/nps  → lista pesquisas (escopadas por área p/ não-admin)
-router.get('/', authorizeModule('nps', 1), async (req, res) => {
+// Aberto a qualquer logado (criar NPS é pra todos): o filtro por área abaixo já
+// devolve [] pra quem não tem área/gestão — sem vazar pesquisas de outras áreas.
+router.get('/', async (req, res) => {
   try {
     const { status, valor } = req.query;
     let q = supabase
@@ -145,7 +145,9 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/nps  → cria pesquisa (com perguntas já geradas) e notifica
-router.post('/', authorizeModule('nps', 3), async (req, res) => {
+// Criar pesquisa NPS é liberado pra QUALQUER colaborador logado (2026-07-13,
+// pedido do Matheus). O que é sensível (respostas/edição/análise) segue gateado.
+router.post('/', async (req, res) => {
   try {
     const d = req.body || {};
     if (!d.titulo || !d.objetivo || !d.perguntas) {
@@ -155,10 +157,6 @@ router.post('/', authorizeModule('nps', 3), async (req, res) => {
     const valorNormalizado = d.valor || null;
     if (!valorNormalizado && areaNormalizada === 'geral') {
       return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
-    }
-    // Líder de área só cria pesquisa da própria área (admin/diretor: qualquer, incl. 'geral').
-    if (!podeNaArea(req, areaNormalizada)) {
-      return res.status(403).json({ error: 'Você só pode criar pesquisas para a sua área.' });
     }
 
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(d.contexto_kpi) ? d.contexto_kpi : 'nps_geral';
