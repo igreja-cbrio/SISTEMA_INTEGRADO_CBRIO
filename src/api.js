@@ -2309,6 +2309,8 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Aniversariantes da semana (pra parabenizar) · próximos 7 dias
+  aniversariantesSemana: () => get('/voluntariado/aniversariantes-semana'),
   // Controle de acesso de voluntários (quem tem login + cargo + cruzamento com membresia)
   acessos: {
     list: (params) => get('/voluntariado/acessos' + (params ? '?' + new URLSearchParams(params) : '')),

@@ -7,7 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X } from 'lucide-react';
+import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X, Cake, Pencil, MessageCircle } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import Paginacao, { usePaginacaoLocal } from '@/components/Paginacao';
@@ -46,6 +48,98 @@ export default function VolLista() {
 
       {tab === 'todos' ? <TodosList /> : <FilaAlocacao />}
     </div>
+  );
+}
+
+// ── Aniversariantes da semana (parabenizar por WhatsApp) ─────────────────────
+const DOW_LBL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const BDAY_MSG_KEY = 'cbrio_vol_bday_msg';
+const BDAY_MSG_DEFAULT = 'Feliz aniversário, {nome}! 🎉 Que Deus te encha de alegria e bênçãos neste novo ano de vida. Obrigado por servir com a gente no CBRio! 💚';
+
+function waBday(tel?: string | null, msg?: string) {
+  if (!tel) return null;
+  let d = String(tel).replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length <= 11) d = '55' + d;
+  return `https://wa.me/${d}${msg ? `?text=${encodeURIComponent(msg)}` : ''}`;
+}
+
+function AniversariantesSemana() {
+  const { data } = useQuery({ queryKey: ['vol', 'aniversariantes'], queryFn: () => voluntariado.aniversariantesSemana() });
+  const rows: any[] = Array.isArray((data as any)?.rows) ? (data as any).rows : [];
+  const [msg, setMsg] = useState<string>(() => {
+    try { return localStorage.getItem(BDAY_MSG_KEY) || BDAY_MSG_DEFAULT; } catch { return BDAY_MSG_DEFAULT; }
+  });
+  const [editOpen, setEditOpen] = useState(false);
+  const [draft, setDraft] = useState(msg);
+
+  const mensagemPara = (nome: string) => {
+    const primeiro = (nome || '').trim().split(/\s+/)[0] || nome;
+    return msg.replace(/\{nome\}/g, primeiro);
+  };
+
+  return (
+    <Card className="border-[#00B39D]/30">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Cake className="h-4 w-4 text-[#00B39D]" />
+            <h3 className="font-semibold text-sm">Aniversariantes da semana</h3>
+            <Badge variant="secondary">{rows.length}</Badge>
+          </div>
+          <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setDraft(msg); setEditOpen(true); }}>
+            <Pencil className="h-3.5 w-3.5" /> Editar mensagem
+          </Button>
+        </div>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhum aniversariante nos próximos 7 dias.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map((r) => {
+              const wa = waBday(r.telefone, mensagemPara(r.nome));
+              const dataFmt = r.aniversario ? new Date(r.aniversario + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '';
+              return (
+                <div key={r.vol_profile_id} className="flex items-center gap-3 rounded-lg border px-3 py-2">
+                  <div className="h-9 w-9 rounded-full bg-[#00B39D]/10 flex items-center justify-center shrink-0">
+                    <Cake className="h-4 w-4 text-[#00B39D]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{r.nome}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {r.hoje ? <span className="text-[#00B39D] font-semibold">Hoje 🎉</span> : `${DOW_LBL[r.dow] ?? ''} · ${dataFmt}`}
+                    </p>
+                  </div>
+                  {wa ? (
+                    <a href={wa} target="_blank" rel="noopener noreferrer">
+                      <Button size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
+                        <MessageCircle className="h-3.5 w-3.5" /> Parabenizar
+                      </Button>
+                    </a>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">sem telefone</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Mensagem de aniversário</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">Use <code className="bg-muted px-1 rounded">{'{nome}'}</code> pra inserir o primeiro nome da pessoa.</p>
+            <Textarea rows={4} value={draft} onChange={e => setDraft(e.target.value)} />
+            <p className="text-[11px] text-muted-foreground">Prévia: {draft.replace(/\{nome\}/g, 'Maria')}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancelar</Button>
+            <Button onClick={() => { setMsg(draft); try { localStorage.setItem(BDAY_MSG_KEY, draft); } catch { /* ignore */ } setEditOpen(false); toast.success('Mensagem salva.'); }}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
   );
 }
 
@@ -162,6 +256,8 @@ function TodosList() {
           </Button>
         </div>
       </div>
+
+      <AniversariantesSemana />
 
       <div className="flex flex-col sm:flex-row gap-2">
         <div className="relative flex-1">

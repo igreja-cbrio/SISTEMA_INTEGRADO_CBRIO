@@ -3,8 +3,23 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Loader2, Mail, Phone, CalendarCheck, ScanLine, ListChecks } from 'lucide-react';
+import { Loader2, Mail, Phone, CalendarCheck, ScanLine, ListChecks, Activity, MessageCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { voluntariado } from '@/api';
+
+const TERMOMETRO: Record<string, { color: string; hint: string }> = {
+  muito_ativo: { color: '#0f9d6b', hint: 'serve com frequência' },
+  ativo:       { color: '#00B39D', hint: 'ativo nas escalas' },
+  pouco_ativo: { color: '#e08a00', hint: 'caiu a frequência' },
+  inativo:     { color: '#e0524d', hint: '90+ dias sem servir' },
+};
+function waContato(tel?: string | null) {
+  if (!tel) return null;
+  let d = String(tel).replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length <= 11) d = '55' + d;
+  return `https://wa.me/${d}`;
+}
 
 function fmt(d?: string | null) {
   if (!d) return '—';
@@ -50,6 +65,46 @@ export default function VolDetalheDialog({ id, onClose }: { id: string | null; o
             <div className="py-12 text-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin inline" /> carregando…</div>
           ) : (
             <>
+              {/* Termômetro de atividade + contato */}
+              {(() => {
+                const term = d.termometro;
+                const meta = term ? (TERMOMETRO[term.nivel] || TERMOMETRO.ativo) : null;
+                const wa = waContato(p.phone);
+                if (!term && !wa) return null;
+                return (
+                  <div className="flex items-center justify-between gap-2 flex-wrap rounded-lg border p-3"
+                    style={meta ? { borderColor: meta.color + '55', background: meta.color + '12' } : undefined}>
+                    {term ? (
+                      <div className="min-w-0">
+                        <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: meta!.color }}>
+                          <Activity className="w-4 h-4" /> {term.label}
+                        </span>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          {term.dias_desde_ultima_atividade != null ? `serviu há ${term.dias_desde_ultima_atividade} dia(s)` : 'sem atividade registrada'}
+                          {' · '}{term.servicos_4m} serviço(s) em 4 meses · {meta!.hint}
+                        </p>
+                      </div>
+                    ) : <span className="text-sm text-muted-foreground">Contato</span>}
+                    {wa && (
+                      <a href={wa} target="_blank" rel="noopener noreferrer">
+                        <Button size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
+                          <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
+                        </Button>
+                      </a>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {Array.isArray(d.equipes) && d.equipes.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground">Serve em:</span>
+                  {d.equipes.map((eq: string) => (
+                    <span key={eq} className="text-xs bg-[#00B39D]/10 text-[#046b60] px-2 py-1 rounded-full font-medium">{eq}</span>
+                  ))}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold">{t.total_servicos ?? 0}</p><p className="text-[11px] text-muted-foreground">Serviços (total)</p></CardContent></Card>
                 <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-emerald-600">{t.servicos_4m ?? 0}</p><p className="text-[11px] text-muted-foreground">Serviços (4 meses)</p></CardContent></Card>
