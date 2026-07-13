@@ -21,14 +21,25 @@ const C = {
   green: '#10b981', greenBg: '#10b98120',
   red: '#ef4444', redBg: '#ef444420',
   amber: '#f59e0b', amberBg: '#f59e0b20',
+  violet: '#8b5cf6', violetBg: '#8b5cf620',
 };
 
 const STATUS_LABEL = {
   pendente: { label: 'Pendente', cor: C.amber, bg: C.amberBg },
+  // Recusado pelo líder → fila da triagem (a pessoa ainda não foi comunicada)
+  devolvido: { label: 'Na triagem', cor: C.violet, bg: C.violetBg },
   aprovado: { label: 'Aprovado', cor: C.green, bg: C.greenBg },
   rejeitado: { label: 'Rejeitado', cor: C.red, bg: C.redBg },
   cancelado: { label: 'Cancelado', cor: C.t3, bg: C.bg },
 };
+
+// Motivos prontos pra sugestão de outro grupo — é a frase que a PESSOA recebe
+// no WhatsApp (o motivo interno do líder nunca sai do sistema).
+const MOTIVOS_SUGESTAO = [
+  'O grupo que você escolheu está com as vagas preenchidas',
+  'O grupo que você escolheu não vai abrir nesta temporada',
+  'O grupo que você escolheu mudou de dia e horário',
+];
 
 // embedded: renderizado dentro da Caixa de entrada do /grupos (a aba já tem
 // título/explicação — esconde o cabeçalho próprio, mantém a linha de escopo).
@@ -50,6 +61,8 @@ export default function PedidosGrupo({ embedded = false }) {
   const [grupoSugestao, setGrupoSugestao] = useState('');
   const [gruposAtivos, setGruposAtivos] = useState(null); // lazy: carrega no 1º uso
   const [enviandoSugestao, setEnviandoSugestao] = useState(false);
+  const [motivoSel, setMotivoSel] = useState('');     // motivo pronto ('' = mensagem padrão · '__custom__' = escrever)
+  const [motivoLivre, setMotivoLivre] = useState('');
   const [resumo, setResumo] = useState(null); // cockpit (gestão)
 
   const load = async () => {
@@ -161,6 +174,8 @@ export default function PedidosGrupo({ embedded = false }) {
   const abrirSugestao = async (p) => {
     setSugerindoId(p.id);
     setGrupoSugestao('');
+    setMotivoSel('');
+    setMotivoLivre('');
     if (gruposAtivos === null) {
       try {
         const data = await api.list();
@@ -172,11 +187,13 @@ export default function PedidosGrupo({ embedded = false }) {
     }
   };
 
+  const motivoSugestaoFinal = () => (motivoSel === '__custom__' ? motivoLivre.trim() : motivoSel);
+
   const sugerir = async (p) => {
     if (!grupoSugestao) return;
     setEnviandoSugestao(true);
     try {
-      const r = await api.sugerirPedido(p.id, grupoSugestao);
+      const r = await api.sugerirPedido(p.id, grupoSugestao, motivoSugestaoFinal() || null);
       if (r.whatsapp_enviado) {
         toast.success('Sugestão enviada por WhatsApp — a pessoa decide pelo link');
       } else {
@@ -199,8 +216,10 @@ export default function PedidosGrupo({ embedded = false }) {
 
   const rejeitar = async (p) => {
     try {
-      await api.rejeitarPedido(p.id, motivoRej.trim() || null);
-      toast.success('Pedido rejeitado');
+      const r = await api.rejeitarPedido(p.id, motivoRej.trim() || null);
+      toast.success(r?.devolvido
+        ? 'Devolvido pra triagem — a pessoa não recebe nada por enquanto'
+        : 'Pedido rejeitado');
       setRejectingId(null);
       setMotivoRej('');
       load();
@@ -248,7 +267,7 @@ export default function PedidosGrupo({ embedded = false }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-        {['pendente', 'aprovado', 'rejeitado'].map(s => (
+        {['pendente', 'devolvido', 'aprovado', 'rejeitado'].map(s => (
           <button key={s} onClick={() => setFilterStatus(s)} style={{
             padding: '6px 14px', borderRadius: 99, fontSize: 12, cursor: 'pointer',
             border: filterStatus === s ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
@@ -369,7 +388,7 @@ export default function PedidosGrupo({ embedded = false }) {
                   </div>
                 </div>
 
-                {p.status === 'pendente' && !isRejecting && !isSugerindo && (
+                {['pendente', 'devolvido'].includes(p.status) && !isRejecting && !isSugerindo && (
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
                     {capacidadeInfo(grupo)?.cheio && grupo?.aceitando_inscricoes !== false && (
                       <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
@@ -380,18 +399,20 @@ export default function PedidosGrupo({ embedded = false }) {
                       Sugerir outro grupo
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
-                      <X size={14} style={{ marginRight: 4 }} /> Rejeitar
+                      <X size={14} style={{ marginRight: 4 }} /> {p.status === 'pendente' ? 'Recusar' : 'Rejeitar de vez'}
                     </Button>
-                    <Button size="sm" onClick={() => aprovar(p)}>
-                      <Check size={14} style={{ marginRight: 4 }} /> Aprovar
-                    </Button>
+                    {p.status === 'pendente' && (
+                      <Button size="sm" onClick={() => aprovar(p)}>
+                        <Check size={14} style={{ marginRight: 4 }} /> Aprovar
+                      </Button>
+                    )}
                   </div>
                 )}
 
                 {isSugerindo && (
                   <div style={{ background: C.bg, borderRadius: 8, padding: 10, marginTop: 8 }}>
                     <div style={{ fontSize: 12, color: C.t2, marginBottom: 8 }}>
-                      Sugerir outro grupo para <strong>{p.nome}</strong> — a pessoa recebe a sugestão no WhatsApp e decide pelo link. O pedido atual continua pendente até ela aceitar.
+                      Sugerir outro grupo para <strong>{p.nome}</strong> — a pessoa recebe a sugestão no WhatsApp e decide pelo link. O pedido atual continua valendo até ela aceitar.
                     </div>
                     {gruposAtivos === null ? (
                       <div style={{ fontSize: 12, color: C.t3, padding: '6px 0' }}>Carregando grupos...</div>
@@ -412,8 +433,39 @@ export default function PedidosGrupo({ embedded = false }) {
                         ))}
                       </select>
                     )}
+                    {/* Motivo que VAI pra pessoa (o do líder na recusa é interno e não sai) */}
+                    <div style={{ marginTop: 8 }}>
+                      <label style={{ fontSize: 11, color: C.t3, display: 'block', marginBottom: 4 }}>
+                        Motivo enviado pra pessoa (opcional · explica o que aconteceu)
+                      </label>
+                      <select
+                        value={motivoSel}
+                        onChange={e => setMotivoSel(e.target.value)}
+                        style={{
+                          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13,
+                          border: `1px solid ${C.border}`, background: C.card, color: C.text,
+                        }}
+                      >
+                        <option value="">Sem motivo (mensagem padrão)</option>
+                        {MOTIVOS_SUGESTAO.map(m => <option key={m} value={m}>{m}</option>)}
+                        <option value="__custom__">Escrever outro motivo...</option>
+                      </select>
+                      {motivoSel === '__custom__' && (
+                        <Input
+                          placeholder="Escreva o motivo (curto, sem links — vai no WhatsApp da pessoa)..."
+                          value={motivoLivre}
+                          onChange={e => setMotivoLivre(e.target.value)}
+                          maxLength={160}
+                          style={{ marginTop: 6 }}
+                          autoFocus
+                        />
+                      )}
+                      <p style={{ fontSize: 11, color: C.t3, margin: '6px 0 0', fontStyle: 'italic' }}>
+                        A pessoa vai ler: «{motivoSugestaoFinal() ? `${motivoSugestaoFinal()} — ` : ''}a liderança indicou um grupo com vagas para você.»
+                      </p>
+                    </div>
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-                      <Button size="sm" variant="outline" onClick={() => { setSugerindoId(null); setGrupoSugestao(''); }}>Cancelar</Button>
+                      <Button size="sm" variant="outline" onClick={() => { setSugerindoId(null); setGrupoSugestao(''); setMotivoSel(''); setMotivoLivre(''); }}>Cancelar</Button>
                       <Button size="sm" disabled={!grupoSugestao || enviandoSugestao} onClick={() => sugerir(p)}>
                         {enviandoSugestao ? 'Enviando...' : 'Enviar sugestão'}
                       </Button>
@@ -423,22 +475,40 @@ export default function PedidosGrupo({ embedded = false }) {
 
                 {isRejecting && (
                   <div style={{ background: C.bg, borderRadius: 8, padding: 10, marginTop: 8 }}>
+                    {p.status === 'pendente' ? (
+                      <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.5 }}>
+                        Escreva o que você achou — <strong>a pessoa NÃO recebe esta mensagem</strong>. Ela fica
+                        guardada internamente pra liderança de grupos sugerir outro grupo pra pessoa.
+                      </p>
+                    ) : (
+                      <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.5 }}>
+                        Rejeição final: o pedido encerra sem sugerir outro grupo. Sempre que houver opção, prefira «Sugerir outro grupo».
+                      </p>
+                    )}
                     <Input
-                      placeholder="Motivo (opcional, será mostrado para a pessoa)..."
+                      placeholder={p.status === 'pendente' ? 'Motivo interno (opcional · só a liderança vê)...' : 'Motivo (registro interno · opcional)...'}
                       value={motivoRej}
                       onChange={e => setMotivoRej(e.target.value)}
                       autoFocus
                     />
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
                       <Button size="sm" variant="outline" onClick={() => { setRejectingId(null); setMotivoRej(''); }}>Cancelar</Button>
-                      <Button size="sm" variant="destructive" onClick={() => rejeitar(p)}>Confirmar rejeição</Button>
+                      <Button size="sm" variant="destructive" onClick={() => rejeitar(p)}>
+                        {p.status === 'pendente' ? 'Recusar e devolver pra triagem' : 'Rejeitar de vez'}
+                      </Button>
                     </div>
                   </div>
                 )}
 
+                {p.status === 'devolvido' && (
+                  <div style={{ fontSize: 11, color: C.t2, marginTop: 6, padding: '6px 10px', background: C.violetBg, borderRadius: 6, lineHeight: 1.5 }}>
+                    Recusado pelo líder{p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. A pessoa
+                    ainda não foi comunicada: sugira outro grupo (o motivo que você escolher vai junto no WhatsApp) ou rejeite de vez.
+                  </div>
+                )}
                 {p.status === 'rejeitado' && p.motivo_rejeicao && (
                   <div style={{ fontSize: 11, color: C.t2, marginTop: 6, padding: '6px 10px', background: C.redBg, borderRadius: 6 }}>
-                    Motivo: {p.motivo_rejeicao}
+                    Motivo (interno): {p.motivo_rejeicao}
                   </div>
                 )}
                 {p.decidido_por_nome && p.decidido_em && (

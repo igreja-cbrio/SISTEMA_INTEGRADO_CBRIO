@@ -159,7 +159,18 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
 // {{4}} grupo sugerido (nome — quando — onde) · {{5}} link de aceite /g/s/.
 // Sem 2º link de navegação nem tom promocional — é o que mantém a categoria
 // UTILITY na revisão da Meta (a versão com "veja outras opções" virou MARKETING).
-async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome, grupoSugerido, pedidoId }) {
+// Sanitiza o motivo digitado pela triagem pra virar parâmetro de template:
+// sem links, sem quebras de linha (a Meta rejeita \n/\t e sequências de
+// espaços em params) e curto — é UMA frase dentro da mensagem de utilidade.
+function sanitizarMotivo(motivo) {
+  return String(motivo || '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome, grupoSugerido, pedidoId, motivo }) {
   try {
     // Mesmo gate do template do líder: não assina token com o envio desligado
     // (o DRY-RUN logaria o link-capability).
@@ -177,10 +188,16 @@ async function notificarPessoaSugestao({ telefone, pessoaNome, grupoOriginalNome
       formatarQuando(grupoSugerido) !== 'a combinar' ? formatarQuando(grupoSugerido) : null,
       formatarOnde(grupoSugerido) !== 'a combinar' ? formatarOnde(grupoSugerido) : null,
     ].filter(Boolean).join(' — ');
+    // {{3}} leva o motivo escolhido pela triagem (Marcos 13/07: a pessoa deve
+    // entender O QUE aconteceu) — com fallback na frase neutra de sempre.
+    const motivoTxt = sanitizarMotivo(motivo);
+    const mensagemSugestao = motivoTxt
+      ? `${motivoTxt} — a liderança indicou um grupo com vagas para você.`
+      : 'a liderança indicou um grupo com vagas para você.';
     const r = await sendTemplate(telefone, TPL_SUGESTAO_GRUPO, TEMPLATE_LANG, [
       (pessoaNome || '').trim().split(/\s+/)[0] || 'Olá',
       (grupoOriginalNome || '').trim() || 'grupo escolhido',
-      'a liderança indicou um grupo com vagas para você.',
+      mensagemSugestao,
       sugeridoResumo,
       link,
     ]);

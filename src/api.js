@@ -525,7 +525,7 @@ export const grupos = {
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
   aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
-  sugerirPedido: (pedidoId, grupoSugeridoId) => post(`/grupos/pedidos/${pedidoId}/sugerir`, { grupo_sugerido_id: grupoSugeridoId }),
+  sugerirPedido: (pedidoId, grupoSugeridoId, motivo) => post(`/grupos/pedidos/${pedidoId}/sugerir`, { grupo_sugerido_id: grupoSugeridoId, motivo: motivo || null }),
   setAceitandoInscricoes: (grupoId, aceitando) => patch(`/grupos/${grupoId}/aceitando`, { aceitando }),
   geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
   // Supervisao

@@ -836,7 +836,9 @@ router.post('/sugestao/aceitar', async (req, res) => {
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, nome').eq('id', payload.p).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
-    if (pedido.status !== 'pendente') {
+    // 'devolvido' (recusado pelo líder e devolvido pra triagem) também aceita —
+    // o aceite reativa o pedido como pendente já no grupo sugerido.
+    if (!['pendente', 'devolvido'].includes(pedido.status)) {
       return res.status(409).json({ error: `Este pedido já foi ${pedido.status}.`, status: pedido.status });
     }
 
@@ -852,7 +854,8 @@ router.post('/sugestao/aceitar', async (req, res) => {
     // Se a pessoa já tiver pedido pendente no grupo sugerido, o índice único
     // barra o UPDATE (23505) → resposta amigável.
     const { error: eMove } = await supabase.from('mem_grupo_pedidos')
-      .update({ grupo_id: payload.g }).eq('id', pedido.id).eq('status', 'pendente');
+      .update({ grupo_id: payload.g, status: 'pendente' }) // devolvido reativa como pendente no grupo novo
+      .eq('id', pedido.id).in('status', ['pendente', 'devolvido']);
     if (eMove) {
       if (eMove.code === '23505') {
         return res.status(409).json({ error: 'Você já tem um pedido para esse grupo — o líder vai te responder por lá.' });
@@ -862,9 +865,10 @@ router.post('/sugestao/aceitar', async (req, res) => {
 
     // O revert do move precisa cobrir TAMBÉM exceção do core (erro de infra /
     // falha no vínculo — o core repõe status pendente e relança): sem isso o
-    // pedido ficaria pendente órfão no grupo errado.
+    // pedido ficaria pendente órfão no grupo errado. Restaura o status original
+    // (um devolvido volta a ser devolvido no grupo original).
     const reverterMove = () => supabase.from('mem_grupo_pedidos')
-      .update({ grupo_id: pedido.grupo_id }).eq('id', pedido.id).eq('status', 'pendente');
+      .update({ grupo_id: pedido.grupo_id, status: pedido.status }).eq('id', pedido.id).eq('status', 'pendente');
 
     const { aprovarPedidoCore } = require('./grupos');
     let r;
