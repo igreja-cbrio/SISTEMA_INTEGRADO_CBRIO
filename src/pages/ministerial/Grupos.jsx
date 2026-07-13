@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -20,23 +20,12 @@ import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
 import GruposOrganograma from './GruposOrganograma';
-// GruposMapView traz maplibre-gl (~290KB gzip). Carregado sob demanda (React.lazy)
-// só quando a visualização Mapa abre — não pesa no carregamento inicial de /grupos.
-// Retry-com-reload: depois de um deploy o chunk antigo some (404) — 1 recarregada
-// resolve, e a visualização sobrevive porque vai na URL (?view=mapa).
-const GruposMapView = lazy(() =>
-  import('@/components/grupos/GruposMapView').catch((err) => {
-    const KEY = 'grupos_mapa_retry_ts';
-    let ultimo = 0;
-    try { ultimo = Number(sessionStorage.getItem(KEY) || 0); } catch {}
-    if (Date.now() - ultimo > 30000) {
-      try { sessionStorage.setItem(KEY, String(Date.now())); } catch {}
-      window.location.reload();
-      return new Promise(() => {}); // nunca resolve — a página vai recarregar
-    }
-    throw err;
-  })
-);
+// Import ESTÁTICO de propósito (13/07): o chunk dinâmico do mapa quebrava em
+// produção e derrubava a página em loop de reload. O GrupoSelector do form
+// público já embute o GruposMapView estaticamente — o peso do maplibre já é
+// pago onde mais importa; aqui é página de staff. Estático elimina a classe
+// inteira de erro de chunk (não regredir pra lazy sem revalidar em prod).
+import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -1409,15 +1398,13 @@ export default function Grupos() {
           {loading ? (
             <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
           ) : (
-            <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando mapa...</div>}>
-              <GruposMapView
-                grupos={gruposList.filter(g => g.ativo)}
-                variant="admin"
-                defaultTheme="dark"
-                temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
-                mostrarBotaoInscricao={true}
-              />
-            </Suspense>
+            <GruposMapView
+              grupos={gruposList.filter(g => g.ativo)}
+              variant="admin"
+              defaultTheme="dark"
+              temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
+              mostrarBotaoInscricao={true}
+            />
           )}
         </div>
       )}
