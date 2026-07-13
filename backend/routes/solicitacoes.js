@@ -911,12 +911,13 @@ router.post('/', async (req, res) => {
             mkt_publico_alvo, mkt_ideia_inicial,
             // Fluxo BPMN (2026-07-02) · checkbox "estava no planejamento"
             eh_planejado,
-            // Visibilidade (2026-07-13) · compartilhar com colegas da própria área
-            compartilhar_area } = req.body;
+            // Visibilidade (2026-07-13) · a ÁREA vê por padrão; opt-out "manter_privada".
+            manter_privada } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
-    // Categorias pessoais (RH) nunca são compartilhadas com a área — assunto pessoal.
+    // Regra: colegas da própria área veem a solicitação POR PADRÃO. Exceções:
+    // categorias pessoais/RH (nunca compartilham) e o opt-out "manter privada".
     const CATEGORIAS_PRIVADAS = ['ferias', 'licenca', 'reembolso'];
-    const compartilharArea = !CATEGORIAS_PRIVADAS.includes(categoria) && !!compartilhar_area;
+    const compartilharArea = !CATEGORIAS_PRIVADAS.includes(categoria) && !manter_privada;
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
     }

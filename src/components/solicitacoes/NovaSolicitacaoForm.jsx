@@ -69,8 +69,8 @@ export const FORM_INITIAL = {
   eh_urgente: false, justificativa_urgencia: '',
   // Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação
   eh_planejado: false,
-  // Visibilidade · deixar visível pros colegas da própria área (default privada)
-  compartilhar_area: false,
+  // Visibilidade · a ÁREA vê por padrão; opt-out "manter privada" (RH é sempre privado)
+  manter_privada: false,
   data_necessaria: '',
   espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
   motivo_reembolso: '', data_compra: '',
@@ -869,21 +869,22 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         </p>
       </div>
 
-      {/* Visibilidade · compartilhar com a própria área (assuntos pessoais/RH ficam privados) */}
+      {/* Visibilidade · a área vê por padrão · opt-out pra assuntos pontuais (RH é sempre privado) */}
       {!['ferias', 'licenca', 'reembolso'].includes(form.categoria) && (
         <div className="space-y-1 rounded-lg border border-border bg-muted/20 p-3">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
-              checked={form.compartilhar_area}
-              onChange={e => setForm(f => ({ ...f, compartilhar_area: e.target.checked }))}
+              checked={form.manter_privada}
+              onChange={e => setForm(f => ({ ...f, manter_privada: e.target.checked }))}
               className="h-4 w-4 cursor-pointer"
             />
-            <span className="text-sm font-medium">Compartilhar com a minha área</span>
+            <span className="text-sm font-medium">Manter privada (só eu e quem atende)</span>
           </label>
           <p className="text-xs text-muted-foreground ml-6">
-            Se marcar, os colegas da sua área também veem esta solicitação (útil pra acompanhar
-            demandas do time). Deixe desmarcado se for um assunto pessoal.
+            Por padrão, os colegas da sua área veem esta solicitação (pra acompanhar as demandas do
+            time). Marque aqui se for um assunto que só você deve ver. Pedidos de RH (férias, licença,
+            reembolso) são sempre privados.
           </p>
         </div>
       )}

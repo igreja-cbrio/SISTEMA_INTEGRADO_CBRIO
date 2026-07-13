@@ -14,7 +14,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -1930,9 +1930,9 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
       <div className="flex items-center justify-between gap-1.5 flex-wrap">
         <span className="text-[11px] text-muted-foreground truncate max-w-[160px] inline-flex items-center gap-1">
           {solicitante}
-          {item.compartilhar_area && (
-            <span className="inline-flex items-center gap-0.5 text-[9px] text-sky-600 dark:text-sky-400" title="Compartilhada com a área">
-              <Users className="h-2.5 w-2.5" /> área
+          {item.compartilhar_area === false && (
+            <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground" title="Privada · só você e quem atende">
+              <Lock className="h-2.5 w-2.5" /> privada
             </span>
           )}
         </span>
