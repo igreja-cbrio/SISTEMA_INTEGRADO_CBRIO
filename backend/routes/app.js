@@ -493,6 +493,27 @@ async function resolveMembroApp(req) {
       .order('created_at', { ascending: true }).limit(1);
     if (ms && ms[0]) return ms[0];
   }
+  // Fallback por CPF (metadados do cadastro do app) — cobre a conta cujo e-mail
+  // difere do cadastro do membro (mesmo CPF). Vincula o profile p/ as próximas
+  // chamadas serem diretas (best-effort, só quando membro_id está vazio).
+  const cpfRaw = req.user?.user_metadata?.cpf || req.user?.user_metadata?.CPF || null;
+  const cpf = cpfRaw ? String(cpfRaw).replace(/\D/g, '') : '';
+  if (cpf.length === 11) {
+    const fmt = `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
+    const { data: mc } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, email, telefone')
+      .or(`cpf.eq.${cpf},cpf.eq.${fmt}`).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(1);
+    if (mc && mc[0]) {
+      if (authId) {
+        try {
+          await supabase.from('profiles').update({ membro_id: mc[0].id })
+            .eq('id', authId).is('membro_id', null);
+        } catch { /* vínculo é best-effort */ }
+      }
+      return mc[0];
+    }
+  }
   return null;
 }
 
