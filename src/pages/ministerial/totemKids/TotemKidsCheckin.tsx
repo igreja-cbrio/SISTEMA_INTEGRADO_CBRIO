@@ -21,6 +21,8 @@ import TotemKidsCheckout from './TotemKidsCheckout';
 import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
 import { formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas, reimprimirEtiqueta } from './lib/imprimir';
+import DataNascimentoPicker from './DataNascimentoPicker';
+import useConfirmarSaida from '@/hooks/useConfirmarSaida';
 import confetti from 'canvas-confetti';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -1056,7 +1058,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Nascimento</label>
-                <Input type="date" value={form.data_nascimento} onChange={e => setF('data_nascimento', e.target.value)} />
+                <DataNascimentoPicker value={form.data_nascimento} onChange={(v) => setF('data_nascimento', v)} />
               </div>
               <label className="flex items-center gap-2 mt-6 text-sm cursor-pointer">
                 <input type="checkbox" checked={form.visitante} onChange={e => setF('visitante', e.target.checked)} /> Visitante
@@ -1734,8 +1736,17 @@ function ModalNovaCrianca(props: {
     }
   }
 
+  const temAlteracoes = (
+    criancaNome.trim() !== (props.nomeInicial || '').trim() ||
+    !!criancaNasc || !!criancaSexo || temAlergia || temEspectro || temLimitacao ||
+    !!obsMed.trim() || !!fotoCrianca || consentMkt ||
+    resps.some(r => r.nome.trim() || r.telefone.trim() || (r.cpf || '').trim()) ||
+    !!amigoSel || !!amigoBusca.trim()
+  );
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, props.onClose);
+
   return (
-    <Dialog open={props.open} onOpenChange={(o) => !o && props.onClose()}>
+    <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Cadastrar criança · visitante</DialogTitle>
@@ -1753,17 +1764,14 @@ function ModalNovaCrianca(props: {
           <div className="border-b pb-3 space-y-2">
             <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Criança</div>
             <Input placeholder="Nome da criança *" value={criancaNome} onChange={e => setCriancaNome(e.target.value)} />
-            <div className="grid grid-cols-2 gap-2">
-              <Input type="date" value={criancaNasc} onChange={e => setCriancaNasc(e.target.value)} />
-              <Select value={criancaSexo} onValueChange={setCriancaSexo}>
-                <SelectTrigger><SelectValue placeholder="Sexo (opcional)" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="M">Menino</SelectItem>
-                  <SelectItem value="F">Menina</SelectItem>
-                  <SelectItem value="outro">Outro</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <DataNascimentoPicker value={criancaNasc} onChange={setCriancaNasc} />
+            <Select value={criancaSexo} onValueChange={setCriancaSexo}>
+              <SelectTrigger><SelectValue placeholder="Sexo (opcional)" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="M">Menino</SelectItem>
+                <SelectItem value="F">Menina</SelectItem>
+              </SelectContent>
+            </Select>
             <div className="flex items-center gap-3 pt-1">
               <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center overflow-hidden shrink-0">
                 {fotoCrianca ? <img src={fotoCrianca} alt="" className="h-full w-full object-cover" /> : <Baby className="h-6 w-6 text-muted-foreground" />}
