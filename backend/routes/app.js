@@ -9,6 +9,12 @@ const { notificar } = require('../services/notificar');
 const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
+// Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
+// notificação) já validado no módulo web de grupos.
+const { aprovarPedidoCore } = require('./grupos');
+// Reuso dos helpers de permissão granular pra resolver o nível do módulo
+// "grupos" do usuário do app (authApp é leve e não computa permissões).
+const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -2123,6 +2129,233 @@ router.post('/telemetria', tryAuth, async (req, res) => {
   } catch (e) {
     console.warn('[APP] telemetria:', e.message);
     res.json({ ok: false }); // nunca 500 pro app
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Aprovação de pedidos de inscrição em grupo (líder + admin de grupos)
+// Superfície pro app: o LÍDER de um grupo (mem_grupos.lider_id) e os
+// RESPONSÁVEIS/admins de grupos aprovam/recusam pedidos que hoje vivem no
+// módulo web /grupos. Reusa aprovarPedidoCore (grupos.js) e replica o
+// essencial do rejeitar. NÃO mexe nos endpoints web.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Resolve o papel do usuário do app no domínio de grupos:
+//  - membro (mem_membros do logado, pra checar liderança e montar o nome)
+//  - grupos_liderados: grupos onde ele é lider_id
+//  - admin_grupos: role admin/diretor OU área "grupos" (boost) OU nível do
+//    módulo grupos >= 3 (via permissões granulares resolvidas por e-mail).
+async function gruposPapelApp(req) {
+  const membro = await resolveMembroApp(req).catch(() => null);
+
+  // Grupos liderados pelo membro (só se resolvemos o membro).
+  let gruposLiderados = [];
+  if (membro?.id) {
+    const { data: gl } = await supabase.from('mem_grupos')
+      .select('id, nome').eq('lider_id', membro.id).is('deleted_at', null)
+      .order('nome', { ascending: true });
+    gruposLiderados = gl || [];
+  }
+
+  // Admin de grupos · (a) role legado admin/diretor no profiles do auth user.
+  let adminGrupos = false;
+  const email = req.user?.email || null;
+  if (req.user?.id) {
+    const { data: prof } = await supabase.from('profiles')
+      .select('role').eq('id', req.user.id).maybeSingle();
+    if (prof && ['admin', 'diretor'].includes(prof.role)) adminGrupos = true;
+  }
+
+  // (b)/(c) permissões granulares · resolve o nível do módulo "grupos" pelo
+  // e-mail (mesma fonte do middleware web) sem depender de auth.uid()/RLS.
+  if (!adminGrupos && email) {
+    try {
+      const { data: permUser } = await supabase.from('usuarios')
+        .select('id, cargo_id').eq('email', email).eq('ativo', true).maybeSingle();
+      if (permUser) {
+        const [overridesRes, modulos, cargoMatrix, userAreasRes] = await Promise.all([
+          supabase.from('permissoes_modulo')
+            .select('modulo_id, nivel_leitura, nivel_escrita, pode_exportar, pode_aprovar, escopo_proprio, expira_em')
+            .eq('usuario_id', permUser.id),
+          getModulos(),
+          getCargoMatrix(permUser.cargo_id),
+          supabase.from('usuario_areas')
+            .select('areas(nome)').eq('usuario_id', permUser.id),
+        ]);
+        const now = Date.now();
+        const overrides = (overridesRes.data || [])
+          .filter(o => !o.expira_em || new Date(o.expira_em).getTime() > now);
+        const areas = (userAreasRes.data || []).map(ua => ua.areas?.nome).filter(Boolean);
+        const modulePerms = resolveEffectivePerms({
+          overrides, cargoMatrix, cargoId: permUser.cargo_id, modulos, areas,
+        });
+        const g = modulePerms['grupos'];
+        if (g && (Math.max(g.leitura || 0, g.escrita || 0) >= 3)) adminGrupos = true;
+      }
+    } catch (e) {
+      console.warn('[APP] gruposPapelApp · permissões:', e.message);
+    }
+  }
+
+  return { membro, adminGrupos, gruposLiderados };
+}
+
+// GET /api/app/grupos/papel — o app decide se mostra a funcionalidade.
+router.get('/grupos/papel', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    res.json({
+      lider: gruposLiderados.length > 0,
+      admin_grupos: adminGrupos,
+      grupos_liderados: gruposLiderados,
+    });
+  } catch (e) {
+    console.error('[APP] grupos/papel:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seu papel em grupos' });
+  }
+});
+
+// Monta a query de pedidos pendentes conforme o escopo do usuário. Retorna
+// null quando o usuário não é nem líder nem admin (o chamador responde vazio).
+function pedidosPendentesQuery({ adminGrupos, gruposLiderados }) {
+  if (!adminGrupos && !gruposLiderados.length) return null;
+  let q = supabase.from('mem_grupo_pedidos')
+    .select('id, grupo_id, nome, telefone, email, origem, created_at, mem_grupos(nome)')
+    .eq('status', 'pendente');
+  if (!adminGrupos) {
+    q = q.in('grupo_id', gruposLiderados.map(g => g.id));
+  }
+  return q;
+}
+
+// GET /api/app/grupos/pedidos — pendentes no escopo do usuário (mais antigos 1º).
+router.get('/grupos/pedidos', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const q = pedidosPendentesQuery({ adminGrupos, gruposLiderados });
+    if (!q) return res.json({ admin: false, pedidos: [] });
+    const { data, error } = await q.order('created_at', { ascending: true });
+    if (error) throw error;
+    const pedidos = (data || []).map(p => ({
+      id: p.id,
+      grupo_id: p.grupo_id,
+      grupo_nome: (Array.isArray(p.mem_grupos) ? p.mem_grupos[0] : p.mem_grupos)?.nome || null,
+      nome: p.nome,
+      telefone: p.telefone,
+      email: p.email,
+      origem: p.origem,
+      created_at: p.created_at,
+    }));
+    res.json({ admin: adminGrupos, pedidos });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar pedidos' });
+  }
+});
+
+// GET /api/app/grupos/pedidos/count — badge (mesmo escopo).
+router.get('/grupos/pedidos/count', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    if (!adminGrupos && !gruposLiderados.length) return res.json({ count: 0 });
+    let q = supabase.from('mem_grupo_pedidos')
+      .select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+    if (!adminGrupos) q = q.in('grupo_id', gruposLiderados.map(g => g.id));
+    const { count, error } = await q;
+    if (error) throw error;
+    res.json({ count: count || 0 });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos/count:', e.message);
+    res.status(500).json({ error: 'Erro ao contar pedidos' });
+  }
+});
+
+// Autoriza a decisão sobre um pedido: precisa ser líder do grupo do pedido OU
+// admin de grupos. Devolve { pedido, membro } ou responde o erro e retorna null.
+async function autorizarDecisaoPedido(req, res) {
+  const { membro, adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+  const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+    .select('id, grupo_id, status').eq('id', req.params.id).maybeSingle();
+  if (!pedido) { res.status(404).json({ error: 'Pedido não encontrado' }); return null; }
+  const ehLider = gruposLiderados.some(g => g.id === pedido.grupo_id);
+  if (!adminGrupos && !ehLider) {
+    res.status(403).json({ error: 'Você não tem permissão para decidir este pedido' });
+    return null;
+  }
+  return { pedido, membro };
+}
+
+// POST /api/app/grupos/pedidos/:id/aprovar
+router.post('/grupos/pedidos/:id/aprovar', authApp, limiterNormal, async (req, res) => {
+  try {
+    const ctx = await autorizarDecisaoPedido(req, res);
+    if (!ctx) return;
+    // aprovarPedidoCore espera { userId, name } (usa como decidido_por/_nome).
+    const user = { userId: req.user.id, name: ctx.membro?.nome || req.user.email || 'Líder' };
+    const r = await aprovarPedidoCore(req.params.id, user);
+    if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos aprovar:', e.message);
+    res.status(500).json({ error: 'Erro ao aprovar pedido' });
+  }
+});
+
+// POST /api/app/grupos/pedidos/:id/rejeitar — body: { motivo? }
+// Replica o essencial de POST /pedidos/:id/rejeitar do módulo web (claim
+// atômico + motivo + decisor + notifica a pessoa).
+router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, res) => {
+  try {
+    const ctx = await autorizarDecisaoPedido(req, res);
+    if (!ctx) return;
+    const motivo = (req.body && req.body.motivo) || null;
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.id).single();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
+    if (pedido.status !== 'pendente') {
+      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    }
+    // Guarda de corrida: só rejeita se AINDA está pendente.
+    const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
+      status: 'rejeitado',
+      motivo_rejeicao: motivo,
+      decidido_por: req.user.id,
+      decidido_por_nome: ctx.membro?.nome || req.user.email || 'Líder',
+      decidido_em: new Date().toISOString(),
+    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+    if (!claimed || !claimed.length) {
+      return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
+    }
+
+    // Notifica a pessoa (só se tiver login vinculado).
+    (async () => {
+      try {
+        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+        if (pedido.membro_id) {
+          const { data: prof } = await supabase.from('vol_profiles')
+            .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
+          if (prof?.auth_user_id) {
+            await notificar({
+              modulo: 'grupos',
+              tipo: 'pedido_rejeitado',
+              titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
+              mensagem: motivo
+                ? `Seu pedido foi recusado: ${motivo}. Você pode tentar outro grupo.`
+                : `Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.`,
+              link: '/grupos',
+              severidade: 'info',
+              chaveDedup: `pedido_rejeitado_${pedido.id}`,
+              targetIds: [prof.auth_user_id],
+            });
+          }
+        }
+      } catch (e) { console.error('[APP grupos/pedidos rejeitar notify]', e.message); }
+    })();
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos rejeitar:', e.message);
+    res.status(500).json({ error: 'Erro ao rejeitar pedido' });
   }
 });
 
