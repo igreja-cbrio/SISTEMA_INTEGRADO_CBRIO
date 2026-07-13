@@ -24,6 +24,24 @@ export const dateOfSP = (iso?: string | null): string | null => {
   }
 };
 
+// Turno (bloco) canônico de um serviço — espelha EXATAMENTE a lógica do
+// Dashboard Semanal (fn_dashboard_voluntariado_composicao / vw_dashboard_
+// voluntariado). Consolida os serviços duplicados do mesmo turno: a escala vem
+// do serviço de turno do Planning Center ("Domingo - Manhã"/"Domingo - Noite")
+// e os check-ins caem nos cultos "Domingo 08:30/10:00/11:30" — todos são o
+// MESMO turno. Serviços que não casam nenhum bloco (ex.: "GC 12 HORAS")
+// retornam null e ficam como linha própria no relatório.
+export function blocoDoServico(nome?: string | null): string | null {
+  const n = (nome || '').toLowerCase().trim();
+  const m = (re: RegExp) => re.test(n);
+  if (m(/^domingo - manh/) || m(/^cbkids - manh/) || m(/^domingo 08/) || m(/^domingo 10/) || m(/^domingo 11/)) return 'Domingo Manhã';
+  if (m(/^domingo - noite/) || m(/^cbkids - noite/) || m(/^domingo 18/) || m(/^domingo 19/) || m(/^domingo 20/)) return 'Domingo Noite';
+  if (m(/^quarta/) || m(/^cbkids - quarta/)) return 'Quarta';
+  if (m(/^ami/) || m(/^culto ami/)) return 'AMI';
+  if (m(/bridge/)) return 'Bridge';
+  return null;
+}
+
 // É a mesma pessoa entre um check-in e uma escala?
 export function ciMatchesSched(ci: VolCheckIn, sch: VolSchedule): boolean {
   if (ci.schedule_id && sch.id && ci.schedule_id === sch.id) return true;
