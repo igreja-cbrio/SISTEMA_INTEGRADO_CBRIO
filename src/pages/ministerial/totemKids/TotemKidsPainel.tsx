@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react';
-import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight } from 'lucide-react';
+import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -113,6 +113,7 @@ export default function TotemKidsPainel() {
   const [carregando, setCarregando] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [encerrando, setEncerrando] = useState(false);
+  const [baixandoTodos, setBaixandoTodos] = useState(false);
 
   // Modal de detalhe da sala + drilldown na criança
   const [salaDetalhe, setSalaDetalhe] = useState<PainelSala | null>(null);
@@ -173,6 +174,19 @@ export default function TotemKidsPainel() {
     } finally {
       setRefreshing(false);
     }
+  }
+
+  // Baixa (check-out) em massa de todos que ainda constam presentes (fim do culto / segunda).
+  async function checkoutTodos() {
+    if (!window.confirm('Dar baixa (check-out) em TODAS as crianças que ainda constam presentes? Use ao fim do culto — quem já saiu não é afetado.')) return;
+    setBaixandoTodos(true);
+    try {
+      const r: any = await totemKids.painel.checkoutTodos();
+      toast.success(`Baixa em ${r?.baixados ?? 0} criança(s).`);
+      carregar(true);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao dar baixa em todos');
+    } finally { setBaixandoTodos(false); }
   }
 
   async function carregar(silent = false) {
@@ -363,6 +377,13 @@ export default function TotemKidsPainel() {
           <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => carregar()} title="Atualizar">
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
+          {podeEncerrar && (unicas?.presentes ?? 0) > 0 && (
+            <Button variant="outline" size="sm" onClick={checkoutTodos} disabled={baixandoTodos}
+              title="Dar baixa (check-out) em todas as crianças que ainda constam presentes">
+              {baixandoTodos ? <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" /> : <LogOut className="h-4 w-4 sm:mr-1" />}
+              <span className="hidden sm:inline">Check-out de todos</span>
+            </Button>
+          )}
           {podeEncerrar && cultoSel?.status === 'aberta' && (
             <Button variant="destructive" size="sm" onClick={encerrarSessao} disabled={encerrando}>
               {encerrando ? <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" /> : <PowerOff className="h-4 w-4 sm:mr-1" />}
