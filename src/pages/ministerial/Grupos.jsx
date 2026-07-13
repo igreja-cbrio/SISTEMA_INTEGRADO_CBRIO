@@ -1132,8 +1132,10 @@ export default function Grupos() {
         ) : undefined}
       />
 
-      {/* Tabs principais · centralizadas; quebram em 2 linhas se faltar espaço */}
-      <div className="cbrio-grupos-tabs" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+      {/* Tabs principais · alinhadas à ESQUERDA, na margem do conteúdo (Marcos
+          13/07: centralizadas flutuavam desalinhadas da página); quebram em 2
+          linhas se faltar espaço */}
+      <div className="cbrio-grupos-tabs" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-start', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'pessoas', label: 'Pessoas', icon: UserCog },
