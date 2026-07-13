@@ -2561,6 +2561,21 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           </TitleW>
         </HeaderW>
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
+          {/* Devolvida pra ajuste · atalho pro solicitante editar e reenviar */}
+          {item.status === 'aguardando_ajuste' && item.solicitante_id === currentUserId && (
+            <div className="flex flex-wrap items-center gap-2 justify-between p-3 rounded-lg border border-amber-500/40 bg-amber-500/10">
+              <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+                <Pencil className="h-4 w-4 shrink-0" />
+                <span className="font-medium">Esta solicitação foi devolvida pra você ajustar.</span>
+              </div>
+              <Button size="sm" onClick={() => {
+                document.getElementById('editar-devolvida')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }}>
+                Editar e reenviar
+              </Button>
+            </div>
+          )}
+
           {/* Rastreio do pedido · etapas macro + com quem está (versão completa) */}
           <TrackerSolicitacao item={item} />
 
@@ -3363,6 +3378,26 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
     titulo: item.titulo || '', descricao: item.descricao || '',
     justificativa: item.justificativa || '', data_necessaria: item.data_necessaria || '',
   });
+  // Itens do pedido (compras/serviço) · editáveis na devolução.
+  const ehCompras = ['compras', 'servico'].includes(item.categoria);
+  const [itens, setItens] = useState(() =>
+    (Array.isArray(item.solicitacao_itens) ? [...item.solicitacao_itens] : [])
+      .sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0))
+      .map(it => ({
+        descricao: it.descricao || '',
+        quantidade: String(it.quantidade ?? 1),
+        valor_estimado: it.valor_estimado != null ? String(it.valor_estimado) : '',
+        valor_tipo: 'total', // o gravado já é o total da linha
+        link_referencia: it.link_referencia || '',
+      })));
+  const setItemLinha = (i, patch) => setItens(arr => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
+  const addItemLinha = () => setItens(arr => [...arr, { descricao: '', quantidade: '1', valor_estimado: '', valor_tipo: 'total', link_referencia: '' }]);
+  const delItemLinha = (i) => setItens(arr => arr.filter((_, j) => j !== i));
+  const totalItens = itens.reduce((acc, it) => {
+    const v = Number(it.valor_estimado); const q = Number(it.quantidade) || 1;
+    if (!isFinite(v) || !it.valor_estimado) return acc;
+    return acc + (it.valor_tipo === 'unitario' ? v * q : v);
+  }, 0);
 
   const isSolicitante = item.solicitante_id === currentUserId;
   const emAjuste = item.status === 'aguardando_ajuste';
@@ -3401,6 +3436,15 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
         titulo: edit.titulo.trim(), descricao: edit.descricao,
         justificativa: edit.justificativa, data_necessaria: edit.data_necessaria || null,
         resposta: resposta.trim(),
+        ...(ehCompras ? {
+          itens_lista: itens
+            .filter(it => String(it.descricao || '').trim())
+            .map(it => ({
+              descricao: it.descricao, quantidade: Number(it.quantidade) || 1,
+              valor_estimado: it.valor_estimado, valor_tipo: it.valor_tipo,
+              link_referencia: it.link_referencia || null,
+            })),
+        } : {}),
       });
       toast.success('Reenviada · voltou para a fila.');
       setResposta('');
@@ -3421,7 +3465,7 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
         </p>
       )}
       {emAjuste && isSolicitante && (
-        <div className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+        <div id="editar-devolvida" className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Ajuste solicitado · corrija e reenvie</p>
           {ultimoAjuste && (
             <p className="text-xs text-muted-foreground">
@@ -3446,6 +3490,45 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
             <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
               onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
           </div>
+
+          {ehCompras && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Itens do pedido</Label>
+                {totalItens > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    Total: {totalItens.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                {itens.map((it, i) => (
+                  <div key={i} className="rounded-md border border-border bg-background p-2 space-y-1.5">
+                    <div className="flex gap-1.5">
+                      <Input className="flex-1" placeholder="Descrição do item" value={it.descricao}
+                        onChange={e => setItemLinha(i, { descricao: e.target.value })} />
+                      <button type="button" className="text-red-600 text-xs px-1 shrink-0" onClick={() => delItemLinha(i)} title="Remover item">✕</button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <Input type="number" min="1" step="1" className="w-16" placeholder="Qtd" value={it.quantidade}
+                        onChange={e => setItemLinha(i, { quantidade: e.target.value })} />
+                      <Input type="number" min="0" step="any" className="w-28" placeholder="Valor (R$)" value={it.valor_estimado}
+                        onChange={e => setItemLinha(i, { valor_estimado: e.target.value })} />
+                      <select className="h-9 rounded-md border border-input bg-background px-2 text-xs" value={it.valor_tipo}
+                        onChange={e => setItemLinha(i, { valor_tipo: e.target.value })}>
+                        <option value="total">R$ total</option>
+                        <option value="unitario">R$ por unid.</option>
+                      </select>
+                    </div>
+                    <Input className="text-xs" placeholder="Link de referência (opcional)" value={it.link_referencia}
+                      onChange={e => setItemLinha(i, { link_referencia: e.target.value })} />
+                  </div>
+                ))}
+                <Button type="button" size="sm" variant="outline" onClick={addItemLinha} className="w-full">+ Adicionar item</Button>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label className="text-xs">Sua resposta <span className="text-red-500">*</span></Label>
             <Textarea rows={2} value={resposta} onChange={e => setResposta(e.target.value)}
