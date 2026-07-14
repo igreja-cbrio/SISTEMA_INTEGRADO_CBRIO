@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1860,14 +1860,22 @@ function GrupoQRModal({ open, onClose, grupo, temporada, copied, setCopied }) {
   );
 }
 
-function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, loadMembros, temporadas, bairrosUnicos }) {
+function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, temporadas, bairrosUnicos }) {
   const [form, setForm] = useState({});
   const [liderSearch, setLiderSearch] = useState('');
   const [redesList, setRedesList] = useState([]);
+  // Autocomplete de líder — busca SERVER-SIDE no universo de grupos (quem
+  // lidera/participa · Marcos 14/07: a membresia inteira tem 3,5k registros
+  // com stubs e homônimos). "Buscar na membresia toda" é o fallback opcional
+  // pra um líder novo que ainda não passou por grupo.
+  const [liderOpcoes, setLiderOpcoes] = useState(null); // null = dropdown fechado
+  const [liderBuscando, setLiderBuscando] = useState(false);
+  const [liderFonteAmpla, setLiderFonteAmpla] = useState(false);
+  const [liderNomeSel, setLiderNomeSel] = useState('');
+  const liderEscolhaRef = useRef('');
 
   useEffect(() => {
     if (open) {
-      loadMembros();
       api.redes.list().then(setRedesList).catch(() => setRedesList([]));
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
       setForm(data ? { ...data } : {
@@ -1878,10 +1886,45 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
       });
       setLiderSearch(data?.lider?.nome || '');
+      liderEscolhaRef.current = data?.lider?.nome || '';
+      setLiderNomeSel(data?.lider?.nome || '');
+      setLiderOpcoes(null); setLiderFonteAmpla(false);
     }
   }, [open, data, temporadas]);
 
-  const liderNome = form.lider?.nome
+  // Debounce da busca de líder. Não rebusca quando o texto é o nome recém-
+  // escolhido (senão o dropdown reabria logo após a seleção).
+  useEffect(() => {
+    const q = liderSearch.trim();
+    if (q.length < 2 || q === liderEscolhaRef.current) { setLiderOpcoes(null); setLiderBuscando(false); return; }
+    let vivo = true;
+    setLiderBuscando(true);
+    const t = setTimeout(async () => {
+      try {
+        let ops;
+        if (liderFonteAmpla) {
+          const ms = await membresia.membros.list({ busca: q });
+          ops = (ms || []).slice(0, 20).map(m => ({ id: m.id, nome: m.nome, telefone: m.telefone || null, contexto: 'Membresia' }));
+        } else {
+          ops = await api.buscarPessoas(q);
+        }
+        if (vivo) setLiderOpcoes(Array.isArray(ops) ? ops : []);
+      } catch { if (vivo) setLiderOpcoes([]); }
+      finally { if (vivo) setLiderBuscando(false); }
+    }, 300);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [liderSearch, liderFonteAmpla]);
+
+  const escolherLider = (m) => {
+    liderEscolhaRef.current = m.nome;
+    setForm(f => ({ ...f, lider_id: m.id }));
+    setLiderNomeSel(m.nome);
+    setLiderSearch(m.nome);
+    setLiderOpcoes(null);
+  };
+
+  const liderNome = liderNomeSel
+    || form.lider?.nome
     || allMembros.find(m => m.id === form.lider_id)?.nome
     || null;
 
@@ -2072,22 +2115,43 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
           <div>
             <Label>Líder</Label>
-            <Input placeholder="Buscar lider..." value={liderSearch} onChange={e => setLiderSearch(e.target.value)} />
-            {liderSearch.length >= 2 && (
-              <div style={{ maxHeight: 150, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, background: C.card }}>
-                {allMembros.filter(m => m.nome?.toLowerCase().includes(liderSearch.toLowerCase())).slice(0, 10).map(m => (
-                  <div key={m.id} onClick={() => { set('lider_id', m.id); setLiderSearch(m.nome); }} style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: `1px solid ${C.border}` }}
+            <Input placeholder="Buscar líder..." value={liderSearch} onChange={e => setLiderSearch(e.target.value)} />
+            {(liderBuscando || liderOpcoes !== null) && (
+              <div style={{ maxHeight: 190, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, background: C.card }}>
+                {liderBuscando && (
+                  <div style={{ padding: '8px 12px', fontSize: 12, color: C.t3 }}>Buscando...</div>
+                )}
+                {!liderBuscando && (liderOpcoes || []).map(m => (
+                  <div key={m.id} onClick={() => escolherLider(m)} style={{ padding: '7px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}
                     onMouseEnter={e => e.currentTarget.style.background = C.bg}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                    {m.nome}
+                    <div style={{ fontSize: 13, color: C.text }}>{m.nome}</div>
+                    {/* Contexto (grupo que lidera/participa) + telefone — pra
+                        distinguir homônimos e duplicatas na hora de escolher */}
+                    <div style={{ fontSize: 11, color: C.t3 }}>
+                      {[m.contexto, m.telefone].filter(Boolean).join(' · ') || '—'}
+                    </div>
                   </div>
                 ))}
+                {!liderBuscando && (liderOpcoes || []).length === 0 && (
+                  <div style={{ padding: '8px 12px', fontSize: 12, color: C.t3 }}>
+                    {liderFonteAmpla ? 'Ninguém na membresia com esse nome.' : 'Ninguém do universo de grupos com esse nome.'}
+                  </div>
+                )}
+                {!liderBuscando && !liderFonteAmpla && (
+                  <button type="button" onClick={() => setLiderFonteAmpla(true)} style={{
+                    width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: 12, color: C.primary,
+                    background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600,
+                  }}>
+                    Não achou? Buscar na membresia toda
+                  </button>
+                )}
               </div>
             )}
             {form.lider_id && !liderSearch && (
               <div style={{ fontSize: 12, color: C.t3, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                Lider selecionado: <strong style={{ color: C.text }}>{liderNome || '...'}</strong>
-                <button type="button" onClick={() => set('lider_id', '')} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11, padding: 0 }}>remover</button>
+                Líder selecionado: <strong style={{ color: C.text }}>{liderNome || '...'}</strong>
+                <button type="button" onClick={() => { set('lider_id', ''); setLiderNomeSel(''); }} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 11, padding: 0 }}>remover</button>
               </div>
             )}
           </div>
