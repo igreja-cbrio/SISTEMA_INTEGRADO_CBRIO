@@ -517,6 +517,8 @@ export const grupos = {
   // Busca / pedidos de inscrição
   buscar: (params) => get('/grupos/buscar' + (params ? '?' + new URLSearchParams(params) : '')),
   buscarLideres: (params) => get('/grupos/lideres/buscar' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Autocomplete de líder do cadastro de grupo (universo de grupos, server-side)
+  buscarPessoas: (q) => get('/grupos/pessoas/buscar?q=' + encodeURIComponent(q)),
   gruposDoLider: (liderId, params) => get(`/grupos/lideres/${liderId}/grupos` + (params ? '?' + new URLSearchParams(params) : '')),
   criarPedido: (grupoId, data) => post(`/grupos/${grupoId}/pedidos`, data),
   listarPedidos: (params) => get('/grupos/pedidos/list' + (params ? '?' + new URLSearchParams(params) : '')),

@@ -1602,6 +1602,73 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
   } catch (e) { console.error('[Pedido rejeitar]', e.message); res.status(500).json({ error: 'Erro ao rejeitar pedido' }); }
 });
 
+// GET /api/grupos/pessoas/buscar?q= — autocomplete de LÍDER do cadastro de
+// grupo. Busca no UNIVERSO DE GRUPOS (quem lidera ou participa de algum
+// grupo), não na membresia inteira (Marcos · 14/07: a base tem 3,5k+
+// registros cheios de stubs de visitantes/decisões e homônimos — poluía o
+// seletor). Server-side (ilike no banco · imune ao cap de 1000) e devolve
+// contexto (grupo que lidera/participa + telefone) pra distinguir homônimos.
+router.get('/pessoas/buscar', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json([]);
+
+    // 1) Candidatos por nome (tokens AND — "renata bispo" casa "Renata
+    //    Cristina Martins Bispo"), limitados a 200 pro passo 2 caber no .in()
+    const tokens = q.split(/\s+/).filter(Boolean).slice(0, 6);
+    let query = supabase.from('mem_membros')
+      .select('id, nome, telefone, foto_url')
+      .eq('active', true)
+      .is('deleted_at', null)
+      .order('nome')
+      .limit(200);
+    for (const t of tokens) query = query.ilike('nome', `%${t}%`);
+    const { data: candidatos, error } = await query;
+    if (error) throw error;
+    if (!candidatos || !candidatos.length) return res.json([]);
+
+    const ids = candidatos.map(c => c.id);
+
+    // 2) Quem do conjunto lidera algum grupo (qualquer temporada — líder da
+    //    T1 conta como gente do universo de grupos)
+    const { data: liderancas } = await supabase.from('mem_grupos')
+      .select('nome, lider_id')
+      .in('lider_id', ids)
+      .is('deleted_at', null);
+    const lideraMap = {};
+    (liderancas || []).forEach(g => {
+      (lideraMap[g.lider_id] = lideraMap[g.lider_id] || []).push(g.nome);
+    });
+
+    // 3) Quem participa de grupo (vínculo ativo)
+    const { data: vinculos } = await supabase.from('mem_grupo_membros')
+      .select('membro_id, mem_grupos!inner(nome)')
+      .in('membro_id', ids)
+      .is('saiu_em', null)
+      .is('deleted_at', null)
+      .is('mem_grupos.deleted_at', null)
+      .limit(1000);
+    const participaMap = {};
+    (vinculos || []).forEach(v => {
+      if (v.mem_grupos?.nome) (participaMap[v.membro_id] = participaMap[v.membro_id] || []).push(v.mem_grupos.nome);
+    });
+
+    const resultado = candidatos
+      .filter(c => lideraMap[c.id] || participaMap[c.id])
+      .map(c => {
+        const lidera = lideraMap[c.id] || [];
+        const participa = participaMap[c.id] || [];
+        const contexto = lidera.length
+          ? `Líder · ${lidera[0]}${lidera.length > 1 ? ` +${lidera.length - 1}` : ''}`
+          : `Participa · ${participa[0]}${participa.length > 1 ? ` +${participa.length - 1}` : ''}`;
+        return { id: c.id, nome: c.nome, telefone: c.telefone || null, foto_url: c.foto_url || null, contexto };
+      })
+      .slice(0, 20);
+
+    res.json(resultado);
+  } catch (e) { console.error('[Grupos pessoas buscar]', e.message); res.status(500).json({ error: 'Erro ao buscar pessoas' }); }
+});
+
 // ══════════════════════════════════════════════
 // Redes (rede → supervisor → grupos) · ANTES das rotas /:id (Express casaria)
 // ══════════════════════════════════════════════
