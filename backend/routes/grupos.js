@@ -1412,9 +1412,12 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       .select('id, status, grupo_id, nome, telefone, membro_id')
       .eq('id', req.params.pedidoId).maybeSingle();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    // 'devolvido' também aceita sugestão (é a fila da triagem) e 'encaminhado'
-    // aceita RE-encaminhar (mandar outra opção antes de a pessoa decidir).
-    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    // 'devolvido' também aceita sugestão (é a fila da triagem), 'encaminhado'
+    // aceita RE-encaminhar (outra opção antes de a pessoa decidir) e
+    // 'rejeitado' aceita REABRIR encaminhando (Marcos · 14/07: a opção de
+    // encaminhar fica disponível independente de quem recusou — a sugestão
+    // reabre o pedido como 'encaminhado').
+    if (!['pendente', 'devolvido', 'encaminhado', 'rejeitado'].includes(pedido.status)) return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     if (grupo_sugerido_id === pedido.grupo_id) {
       return res.status(400).json({ error: 'Sugira um grupo diferente do pedido original' });
     }
@@ -1455,7 +1458,7 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       sugerido_grupo_id: grupoSugerido.id,
       sugerido_em: new Date().toISOString(),
       sugerido_por_nome: req.user.name || null,
-    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado', 'rejeitado']).select('id');
     if (marcado && marcado.length) {
       registrarEventoPedido(pedido.id, 'encaminhado', {
         grupo_sugerido: grupoSugerido.nome,
