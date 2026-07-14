@@ -643,9 +643,10 @@ function PainelPedido({
           A pessoa foi aprovada em outro grupo — este pedido fechou sozinho.
         </div>
       )}
-      {p.status === 'rejeitado' && p.motivo_rejeicao && (
-        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.redBg, borderRadius: 6 }}>
-          Motivo (interno): {p.motivo_rejeicao}
+      {p.status === 'rejeitado' && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.redBg, borderRadius: 6, lineHeight: 1.5 }}>
+          Rejeitado{p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. Se ainda houver
+          caminho pra pessoa, «Sugerir outro grupo» reabre o pedido como encaminhado.
         </div>
       )}
       {p.decidido_por_nome && p.decidido_em && (
@@ -654,7 +655,9 @@ function PainelPedido({
         </div>
       )}
 
-      {podeEditar && ['pendente', 'devolvido', 'encaminhado'].includes(p.status) && !isRejecting && !isSugerindo && (
+      {/* 'rejeitado' também mostra ação (Marcos · 14/07): encaminhar pra outro
+          grupo fica sempre disponível, independente de quem recusou. */}
+      {podeEditar && ['pendente', 'devolvido', 'encaminhado', 'rejeitado'].includes(p.status) && !isRejecting && !isSugerindo && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
           {cap?.cheio && grupo?.aceitando_inscricoes !== false && (
             <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
@@ -664,9 +667,11 @@ function PainelPedido({
           <Button size="sm" variant="ghost" onClick={() => abrirSugestao(p)} style={{ color: C.t2 }}>
             Sugerir outro grupo
           </Button>
-          <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
-            <X size={14} style={{ marginRight: 4 }} /> Rejeitar de vez
-          </Button>
+          {p.status !== 'rejeitado' && (
+            <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
+              <X size={14} style={{ marginRight: 4 }} /> Rejeitar de vez
+            </Button>
+          )}
           {p.status === 'pendente' && (
             <Button size="sm" onClick={() => aprovar(p)}>
               <Check size={14} style={{ marginRight: 4 }} /> Aprovar
@@ -678,7 +683,10 @@ function PainelPedido({
       {isSugerindo && (
         <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
           <div style={{ fontSize: 12, color: C.t2, marginBottom: 8 }}>
-            Sugerir outro grupo para <strong>{p.nome}</strong> — a pessoa recebe a sugestão no WhatsApp e decide pelo link. O pedido atual continua valendo até ela aceitar.
+            Sugerir outro grupo para <strong>{p.nome}</strong> — a pessoa recebe a sugestão no WhatsApp e decide pelo link.
+            {p.status === 'rejeitado'
+              ? ' O pedido estava rejeitado: enviar a sugestão o reabre como encaminhado.'
+              : ' O pedido atual continua valendo até ela aceitar.'}
           </div>
           {gruposAtivos === null ? (
             <div style={{ fontSize: 12, color: C.t3, padding: '6px 0' }}>Carregando grupos...</div>
