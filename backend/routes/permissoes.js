@@ -11,11 +11,19 @@ router.use(authenticate, authorize('admin', 'diretor'));
 // Criar LOGIN é restrito a "devs" (você + Marcos Paulo) · mesmo critério do
 // requireDev de agents.js (sobrescrevível por env DEV_EMAILS). Não confundir
 // com o authorize('admin','diretor') do router — isto restringe ainda mais.
-const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br')
+const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org')
   .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-function ehDev(req) {
+// Dev = lista fixa (env) OU super-admin (app_super_admins) — robusto a qual
+// e-mail o Matheus usa pra logar. Async por causa da consulta ao super-admin.
+async function ehDev(req) {
   const email = (req.user?.email || '').toLowerCase();
-  return !!email && DEV_EMAILS.includes(email);
+  if (!email) return false;
+  if (DEV_EMAILS.includes(email)) return true;
+  try {
+    const { data } = await supabase.from('app_super_admins')
+      .select('email').ilike('email', email).eq('ativo', true).maybeSingle();
+    return !!data;
+  } catch { return false; }
 }
 
 // Anti-escalacao de privilegio: ninguem altera o PROPRIO cargo/areas/overrides.
@@ -556,7 +564,7 @@ router.post('/usuario', async (req, res) => {
 // Diferente do POST /usuario (que só mexe na tabela usuarios da matriz e NÃO
 // cria login). O usuário criado já entra confirmado (pode logar na hora).
 router.post('/criar-login', async (req, res) => {
-  if (!ehDev(req)) return res.status(403).json({ error: 'Acesso restrito.' });
+  if (!(await ehDev(req))) return res.status(403).json({ error: 'Acesso restrito.' });
   try {
     const { email, nome, senha, cargo_id, role, areas } = req.body || {};
     const em = String(email || '').trim().toLowerCase();

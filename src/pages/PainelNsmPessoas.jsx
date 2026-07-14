@@ -32,7 +32,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { painel as painelApi, nsm as nsmApi } from '../api';
-import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X, Sparkles, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X, Sparkles, ChevronRight, MessageCircle } from 'lucide-react';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -686,6 +686,17 @@ function PessoaCard({ pessoa }) {
     ? new Date(pessoa.data_decisao + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })
     : '—';
 
+  // Link do WhatsApp · normaliza o telefone (55 + DDD + número) e prefixa uma
+  // saudação editável (a pessoa revisa no WhatsApp antes de enviar).
+  const telDigits = String(pessoa.telefone || '').replace(/\D/g, '');
+  const waNum = telDigits.length >= 10
+    ? (telDigits.startsWith('55') && telDigits.length >= 12 ? telDigits : '55' + telDigits)
+    : '';
+  const primeiroNome = (pessoa.nome || '').trim().split(/\s+/)[0] || '';
+  const waUrl = waNum
+    ? `https://wa.me/${waNum}?text=${encodeURIComponent(`Olá ${primeiroNome}! Aqui é da CBRio. Que alegria ter você com a gente. 💚`)}`
+    : '';
+
   return (
     <div style={{
       background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${cor}`,
@@ -730,7 +741,13 @@ function PessoaCard({ pessoa }) {
         </div>
       </div>
 
-      <div style={{ minWidth: 180, maxWidth: 360, textAlign: 'right' }}>
+      <div style={{ minWidth: 180, maxWidth: 360, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        {waUrl && (
+          <a href={waUrl} target="_blank" rel="noreferrer" title={`Enviar WhatsApp para ${primeiroNome || 'a pessoa'}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: '#fff', background: '#25D366', padding: '5px 10px', borderRadius: 8, textDecoration: 'none' }}>
+            <MessageCircle size={13} /> WhatsApp
+          </a>
+        )}
         {eng ? (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {VALOR_ORDER.filter(v => porValor[v]).map(v => (
