@@ -386,10 +386,11 @@ export default function TotemKidsCheckin() {
   const PIN_KEY = 'cbrio-totem-kids-pin';
 
   function abrirAjustes(aba: string = 'sessoes') { setAjustesAba(aba); setAjustesOpen(true); }
-  // Carrega as sessões ABERTAS (o período aberto). O culto de agora (relógio) —
-  // ou o 1º do período, se nenhum está acontecendo — vira o pré-marcado; a pessoa
-  // confirma/troca no check-in. Se nada estiver aberto, abre o culto de agora de
-  // HOJE por conveniência (mesma lógica do #9).
+  // Carrega as sessões ABERTAS de HOJE (o período aberto). NADA é pré-selecionado:
+  // o voluntário escolhe o culto no check-in (Marcos 2026-07-14 · senão, se ninguém
+  // trocar ao fim de um culto, tudo cairia no culto errado). O culto de agora
+  // (relógio) vira só a DICA "agora" na lista. Se nada estiver aberto, garante o
+  // culto de agora de HOJE por conveniência (mas sem marcar).
   async function carregarCultosDoDia() {
     try {
       // Fecha (lazy · SEM cron) sessões de dias anteriores deixadas abertas —
@@ -405,14 +406,12 @@ export default function TotemKidsCheckin() {
         hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
       })).sort((a: any, b: any) => String(a.hora).localeCompare(String(b.hora)));
       if (cultos.length) {
-        // Sessão atual fixada na config (por totem · localStorage) vence o relógio;
-        // se a fixada não está mais aberta, volta pro automático.
-        let fixada = '';
-        try { fixada = localStorage.getItem('kids-culto-ativo') || ''; } catch { fixada = ''; }
-        const cur = cultos.find((c: any) => c.culto_id === fixada) || escolherAtualEntreAbertos(cultos);
+        // cultoAtualId = só a DICA "agora" (relógio) na lista · não pré-marca.
+        // sessao = fallback pra consultas (ex.: checar check-in aberto).
+        const agora = escolherAtualEntreAbertos(cultos);
         setSessoesAbertas(cultos);
-        setCultoAtualId(cur?.culto_id || null);
-        setSessao(cur?.sessao || null);
+        setCultoAtualId(agora?.culto_id || null);
+        setSessao(agora?.sessao || null);
         return;
       }
       const doDia: any[] = await totemKids.cultosDoDia(hoje);
@@ -489,10 +488,11 @@ export default function TotemKidsCheckin() {
   // pra o culto avançar sozinho ao passar do horário — sem ninguém trocar nada.
   useEffect(() => {
     criancaAtivaRef.current = !!crianca;
-    // Ao selecionar uma criança, o seletor de culto começa com o de agora marcado.
-    if (crianca) setCultosSel(new Set(cultoAtualId ? [cultoAtualId] : []));
+    // Ao selecionar uma criança, o seletor de culto começa VAZIO — o voluntário
+    // escolhe (nada pré-preenchido pelo relógio · Marcos 2026-07-14).
+    if (crianca) setCultosSel(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [crianca, cultoAtualId]);
+  }, [crianca?.id]);
   useEffect(() => {
     const t = setInterval(() => { if (!criancaAtivaRef.current) carregarCultosDoDia(); }, 120000);
     return () => clearInterval(t);
@@ -1203,7 +1203,7 @@ function PainelFamilia(props: {
         {sessoesAbertas.length > 0 && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a família vai ficar?</label>
-            <p className="text-xs text-muted-foreground mb-2">O culto de agora já vem marcado. Vale pra todos os irmãos marcados.</p>
+            <p className="text-xs text-muted-foreground mb-2">Escolha o culto — vale pra todos os irmãos marcados. (a etiqueta "agora" é só uma dica do horário atual)</p>
             <div className="space-y-2">
               {sessoesAbertas.map((c: any) => {
                 const marcado = cultosSel.has(c.culto_id);
@@ -1874,7 +1874,7 @@ function CheckinSelecao(props: {
         {sessoesAbertas.length > 0 && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a criança vai ficar?</label>
-            <p className="text-xs text-muted-foreground mb-2">O culto de agora já vem marcado. Confirme ou troque; marque mais de um só se ela realmente ficar.</p>
+            <p className="text-xs text-muted-foreground mb-2">Escolha o culto. Marque mais de um só se a criança realmente ficar em mais de um. (a etiqueta "agora" é só uma dica do horário atual)</p>
             <div className="space-y-2">
               {sessoesAbertas.map((c: any) => {
                 const marcado = cultosSel.has(c.culto_id);
@@ -2058,14 +2058,17 @@ function CheckinSelecao(props: {
 
         <div className="flex justify-end items-center gap-3 pt-2">
           {(() => {
-            // Trava a impressão: precisa de sala + responsável (da lista OU manual completo).
+            // Trava a impressão: precisa de culto + sala + responsável (da lista OU manual completo).
             const faltaResp = !usarRespManual ? !responsavelSelecionado : (!respManualNome.trim() || !respManualTel.trim());
-            const bloqueado = !checkinAberto && (!salaSelecionada || faltaResp);
+            const faltaCulto = sessoesAbertas.length > 0 && cultosSel.size === 0;
+            const bloqueado = !checkinAberto && (!salaSelecionada || faltaResp || faltaCulto);
             return (
           <>
-          {!checkinAberto && faltaResp && (
+          {!checkinAberto && (faltaCulto || faltaResp) && (
             <span className="text-xs text-pink-600 font-medium">
-              {usarRespManual ? '↑ Preencha o responsável pra imprimir' : '↑ Toque em quem está trazendo pra imprimir'}
+              {faltaCulto ? '↑ Escolha o culto pra imprimir'
+                : usarRespManual ? '↑ Preencha o responsável pra imprimir'
+                : '↑ Toque em quem está trazendo pra imprimir'}
             </span>
           )}
           <Button
@@ -2074,7 +2077,7 @@ function CheckinSelecao(props: {
             disabled={imprimindo || !!checkinAberto || bloqueado}
             title={
               checkinAberto ? 'Já existe check-in aberto — reimprima a etiqueta ou faça o check-out antes.'
-              : bloqueado ? 'Selecione a sala e o responsável que está trazendo pra liberar a impressão.'
+              : bloqueado ? 'Escolha o culto, a sala e o responsável pra liberar a impressão.'
               : undefined
             }
             className="bg-pink-600 hover:bg-pink-700 text-white"
