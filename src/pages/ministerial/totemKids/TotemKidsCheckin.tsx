@@ -133,12 +133,17 @@ export default function TotemKidsCheckin() {
   const [cultosSel, setCultosSel] = useState<Set<string>>(new Set());
   const criancaAtivaRef = useRef(false);
 
-  // Irmãos (mesma família) + modal de check-in em lote da família (#11)
+  // Irmãos (mesma família) · quando a criança tem irmãos, o check-in vira o
+  // PAINEL DA FAMÍLIA (família como centro · Marcos 2026-07-14). O gate de load
+  // evita piscar o card individual antes de resolver se tem irmãos.
   const [irmaos, setIrmaos] = useState<Crianca[]>([]);
-  const [familiaOpen, setFamiliaOpen] = useState(false);
+  const [irmaosLoading, setIrmaosLoading] = useState(false);
 
-  // Modal de cadastro novo
+  // Modal de cadastro novo · quando aberto pra "adicionar filho" a uma família,
+  // novoContexto guarda a criança de referência (o novo herda família +
+  // responsáveis via backend · modo "amigo_de_crianca_id").
   const [modalNovo, setModalNovo] = useState(false);
+  const [novoContexto, setNovoContexto] = useState<Crianca | null>(null);
 
   // Pré-check-in pelo app · o responsável preparou no celular e gerou um código
   const [preCodigo, setPreCodigo] = useState('');
@@ -253,14 +258,30 @@ export default function TotemKidsCheckin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id, sessao?.id]);
 
-  // Busca os irmãos (mesma família) da criança selecionada, pro check-in em lote.
+  // Carrega os irmãos (mesma família) da criança selecionada. Reutilizável pra
+  // reatualizar o painel depois de "adicionar filho".
+  // silencioso=true → não mexe no gate de loading (usado no refetch pós "adicionar
+  // filho", pra NÃO desmontar o painel e perder as marcações do operador).
+  function carregarIrmaos(criancaId: string, silencioso = false) {
+    if (!silencioso) setIrmaosLoading(true);
+    return totemKids.criancas.irmaos(criancaId)
+      .then((l: Crianca[]) => setIrmaos(Array.isArray(l) ? l : []))
+      .catch(() => setIrmaos([]))
+      .finally(() => { if (!silencioso) setIrmaosLoading(false); });
+  }
   useEffect(() => {
     setIrmaos([]);
-    if (!crianca?.id) return;
-    totemKids.criancas.irmaos(crianca.id)
-      .then((l: Crianca[]) => setIrmaos(Array.isArray(l) ? l : []))
-      .catch(() => setIrmaos([]));
-  }, [crianca?.id]);
+    // Sem família cadastrada → não há irmãos: cai direto no card individual.
+    if (!crianca?.id || !crianca?.familia?.id) { setIrmaosLoading(false); return; }
+    carregarIrmaos(crianca.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crianca?.id, crianca?.familia?.id]);
+
+  // Patch local de um membro da família (o painel usa ao editar a ficha de um filho).
+  const atualizarMembro = (id: string, patch: Partial<Crianca>) => {
+    setCrianca(c => (c && c.id === id ? { ...c, ...patch } : c));
+    setIrmaos(list => list.map(x => (x.id === id ? { ...x, ...patch } : x)));
+  };
 
   // Check-in em lote da família: mesmo responsável + sessão pra todos os irmãos
   // marcados; cada um na sua sala. Reusa o POST /checkin por criança (mantém
@@ -302,7 +323,6 @@ export default function TotemKidsCheckin() {
       }
     }
     setImprimindo(false);
-    setFamiliaOpen(false);
     if (ok > 0) dispararConfete();
     toast.success(
       `Check-in da família: ${ok} OK`
@@ -936,69 +956,95 @@ export default function TotemKidsCheckin() {
             </Button>
           </div>
         )}
-        <CheckinSelecao
-          crianca={crianca}
-          salas={salas}
-          salaSelecionada={salaSelecionada}
-          setSalaSelecionada={setSalaSelecionada}
-          responsavelSelecionado={responsavelSelecionado}
-          setResponsavelSelecionado={setResponsavelSelecionado}
-          sessoesAbertas={sessoesAbertas}
-          cultoAtualId={cultoAtualId}
-          cultosSel={cultosSel}
-          setCultosSel={setCultosSel}
-          irmaos={irmaos}
-          onAbrirFamilia={() => setFamiliaOpen(true)}
-          usarRespManual={usarRespManual}
-          setUsarRespManual={setUsarRespManual}
-          respManualNome={respManualNome}
-          setRespManualNome={setRespManualNome}
-          respManualTel={respManualTel}
-          setRespManualTel={setRespManualTel}
-          onCancelar={() => { setCrianca(null); if (preCheckin) encerrarPreCheckin(); }}
-          onConfirmar={confirmarCheckin}
-          imprimindo={imprimindo}
-          checkinAberto={checkinAberto}
-          onReimprimirEtiqueta={reimprimirCheckinAberto}
-          reimprimindoEtiqueta={reimprimindoAberto}
-          abertosAnteriores={abertosAnteriores}
-          onCheckoutAnterior={checkoutCultoAnterior}
-          checkoutAnteriorId={checkoutAnteriorId}
-          atualizarCrianca={(patch: Partial<Crianca>) => setCrianca(c => (c ? { ...c, ...patch } : c))}
-          enviarWpp={enviarWpp}
-          setEnviarWpp={setEnviarWpp}
-          onResponsavelCadastrado={async () => {
-            // Recarrega dados da criança (com os responsáveis novos)
-            try {
-              const fresh = await totemKids.criancas.get(crianca.id);
-              setCrianca({ ...crianca, responsaveis: fresh.responsaveis || [] });
-            } catch { /* mantem state atual */ }
-          }}
-        />
+        {(!preCheckin && irmaosLoading) ? (
+          <Card>
+            <CardContent className="p-10 flex flex-col items-center justify-center gap-3 text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-pink-500" />
+              <span className="text-sm text-muted-foreground">Carregando a família de {crianca.nome.split(' ')[0]}…</span>
+            </CardContent>
+          </Card>
+        ) : (!preCheckin && irmaos.length > 0) ? (
+          // Criança COM irmãos → painel da família (família como centro · #14).
+          // Durante pré-check-in do app, mantém o fluxo individual (fila 1 a 1).
+          <PainelFamilia
+            primaria={crianca}
+            irmaos={irmaos}
+            salas={salas}
+            sessoesAbertas={sessoesAbertas}
+            cultoAtualId={cultoAtualId}
+            cultosSel={cultosSel}
+            setCultosSel={setCultosSel}
+            enviarWpp={enviarWpp}
+            setEnviarWpp={setEnviarWpp}
+            imprimindo={imprimindo}
+            onCancelar={() => { setCrianca(null); if (preCheckin) encerrarPreCheckin(); }}
+            onConfirmar={confirmarCheckinFamilia}
+            onAdicionarFilho={() => { setNovoContexto(crianca); setModalNovo(true); }}
+            onAtualizarMembro={atualizarMembro}
+          />
+        ) : (
+          // Criança sem irmãos (ou sem família) → card individual (igual antes).
+          <CheckinSelecao
+            crianca={crianca}
+            salas={salas}
+            salaSelecionada={salaSelecionada}
+            setSalaSelecionada={setSalaSelecionada}
+            responsavelSelecionado={responsavelSelecionado}
+            setResponsavelSelecionado={setResponsavelSelecionado}
+            sessoesAbertas={sessoesAbertas}
+            cultoAtualId={cultoAtualId}
+            cultosSel={cultosSel}
+            setCultosSel={setCultosSel}
+            irmaos={irmaos}
+            onAbrirFamilia={() => {}}
+            usarRespManual={usarRespManual}
+            setUsarRespManual={setUsarRespManual}
+            respManualNome={respManualNome}
+            setRespManualNome={setRespManualNome}
+            respManualTel={respManualTel}
+            setRespManualTel={setRespManualTel}
+            onCancelar={() => { setCrianca(null); if (preCheckin) encerrarPreCheckin(); }}
+            onConfirmar={confirmarCheckin}
+            imprimindo={imprimindo}
+            checkinAberto={checkinAberto}
+            onReimprimirEtiqueta={reimprimirCheckinAberto}
+            reimprimindoEtiqueta={reimprimindoAberto}
+            abertosAnteriores={abertosAnteriores}
+            onCheckoutAnterior={checkoutCultoAnterior}
+            checkoutAnteriorId={checkoutAnteriorId}
+            atualizarCrianca={(patch: Partial<Crianca>) => setCrianca(c => (c ? { ...c, ...patch } : c))}
+            enviarWpp={enviarWpp}
+            setEnviarWpp={setEnviarWpp}
+            onResponsavelCadastrado={async () => {
+              // Recarrega dados da criança (com os responsáveis novos)
+              try {
+                const fresh = await totemKids.criancas.get(crianca.id);
+                setCrianca({ ...crianca, responsaveis: fresh.responsaveis || [] });
+              } catch { /* mantem state atual */ }
+            }}
+          />
+        )}
         </>
       )}
 
       <ModalNovaCrianca
         open={modalNovo}
-        onClose={() => setModalNovo(false)}
-        nomeInicial={busca}
+        onClose={() => { setModalNovo(false); setNovoContexto(null); }}
+        nomeInicial={novoContexto ? '' : busca}
+        referencia={novoContexto ? { id: novoContexto.id, nome: novoContexto.nome, familiaNome: novoContexto.familia?.nome || null } : null}
         onCadastrado={(criancaCriada) => {
           setModalNovo(false);
-          setCrianca(criancaCriada as Crianca);
-          setBusca('');
+          if (novoContexto) {
+            // "Adicionar filho": o novo herdou a família; recarrega os irmãos
+            // SILENCIOSAMENTE (sem desmontar o painel) e fica na família.
+            if (crianca?.id) carregarIrmaos(crianca.id, true);
+            setNovoContexto(null);
+          } else {
+            setCrianca(criancaCriada as Crianca);
+            setBusca('');
+          }
         }}
       />
-
-      {familiaOpen && crianca && (
-        <CheckinFamiliaModal
-          primaria={crianca}
-          irmaos={irmaos}
-          salas={salas}
-          imprimindo={imprimindo}
-          onClose={() => setFamiliaOpen(false)}
-          onConfirmar={confirmarCheckinFamilia}
-        />
-      )}
 
       {/* Modo totem · cria/pede PIN */}
       <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
@@ -1044,21 +1090,33 @@ export default function TotemKidsCheckin() {
   );
 }
 
-// ── Modal: check-in de FAMÍLIA em lote (irmãos juntos) · #11 ──
-// Marca quem está presente (todos por padrão), cada um vai pra sala da idade
-// (editável), e UM responsável (quem está trazendo) vale pra todos. O loop de
-// check-in acontece no pai (confirmarCheckinFamilia), reusando o POST /checkin.
-function CheckinFamiliaModal({ primaria, irmaos, salas, imprimindo, onClose, onConfirmar }: {
+// ── Painel da FAMÍLIA (família como centro · Marcos 2026-07-14) ──
+// Ao selecionar uma criança COM irmãos, o check-in abre este painel com a
+// família toda em linha (substitui o antigo modal). Marca quem veio (todos por
+// padrão), cada um vai pra sala da idade (editável), UM responsável vale pra
+// todos, e dá pra adicionar um filho novo na hora. O loop de check-in acontece
+// no pai (confirmarCheckinFamilia), reusando o POST /checkin.
+function PainelFamilia(props: {
   primaria: Crianca;
   irmaos: Crianca[];
   salas: Sala[];
+  sessoesAbertas: any[];
+  cultoAtualId: string | null;
+  cultosSel: Set<string>;
+  setCultosSel: (v: Set<string>) => void;
+  enviarWpp: boolean;
+  setEnviarWpp: (b: boolean) => void;
   imprimindo: boolean;
-  onClose: () => void;
+  onCancelar: () => void;
   onConfirmar: (
     itens: { crianca: Crianca; sala_id: string }[],
     resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string },
   ) => void;
+  onAdicionarFilho: () => void;
+  onAtualizarMembro: (id: string, patch: Partial<Crianca>) => void;
 }) {
+  const { primaria, irmaos, salas, sessoesAbertas, cultoAtualId, cultosSel, setCultosSel,
+    enviarWpp, setEnviarWpp, imprimindo, onCancelar, onConfirmar, onAdicionarFilho, onAtualizarMembro } = props;
   const membros = [primaria, ...irmaos];
   const salaPorIdade = (c: Crianca) =>
     salas.find(s => c.idade_meses != null
@@ -1068,13 +1126,25 @@ function CheckinFamiliaModal({ primaria, irmaos, salas, imprimindo, onClose, onC
   const [sel, setSel] = useState<Set<string>>(() => new Set(membros.map(m => m.id)));
   const [salaPor, setSalaPor] = useState<Record<string, string>>(
     () => Object.fromEntries(membros.map(m => [m.id, salaPorIdade(m)])));
+  const [detalheId, setDetalheId] = useState<string | null>(null);
+  // Ao adicionar um filho novo, ele entra em `membros`: marca-o presente + põe a
+  // sala da idade, SEM re-marcar quem o operador desmarcou (guarda os já vistos).
+  const seenRef = useRef<Set<string>>(new Set(membros.map(m => m.id)));
+  useEffect(() => {
+    const novos = membros.filter(m => !seenRef.current.has(m.id));
+    if (!novos.length) return;
+    setSel(prev => { const n = new Set(prev); novos.forEach(m => n.add(m.id)); return n; });
+    setSalaPor(prev => { const n = { ...prev }; novos.forEach(m => { if (!(m.id in n)) n[m.id] = salaPorIdade(m); }); return n; });
+    novos.forEach(m => seenRef.current.add(m.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [membros.map(m => m.id).join(',')]);
 
   // Responsáveis autorizados da família inteira (dedup por membro_id)
   const respOpcoes = (() => {
-    const map = new Map<string, { membro_id: string; nome: string; parentesco: string | null }>();
+    const map = new Map<string, { membro_id: string; nome: string; parentesco: string | null; telefone: string | null }>();
     for (const m of membros) for (const r of (m.responsaveis || [])) {
       if (r.autorizado_buscar && r.membro && !map.has(r.membro_id)) {
-        map.set(r.membro_id, { membro_id: r.membro_id, nome: r.membro.nome, parentesco: r.parentesco });
+        map.set(r.membro_id, { membro_id: r.membro_id, nome: r.membro.nome, parentesco: r.parentesco, telefone: r.membro.telefone });
       }
     }
     return [...map.values()];
@@ -1088,7 +1158,12 @@ function CheckinFamiliaModal({ primaria, irmaos, salas, imprimindo, onClose, onC
   const selecionados = membros.filter(m => sel.has(m.id));
   const semSala = selecionados.filter(m => !salaPor[m.id]);
   const respOk = manual ? (!!manualNome.trim() && !!manualTel.trim()) : !!respId;
-  const podeConfirmar = selecionados.length > 0 && semSala.length === 0 && respOk && !imprimindo;
+  const semCulto = sessoesAbertas.length > 0 && cultosSel.size === 0;
+  const podeConfirmar = selecionados.length > 0 && semSala.length === 0 && respOk && !semCulto && !imprimindo;
+  // Tem telefone pra oferecer o WhatsApp de retirada? (manual ≥10 díg · ou o selecionado tem tel)
+  const temTelefoneResp = manual
+    ? manualTel.replace(/\D/g, '').length >= 10
+    : !!respOpcoes.find(r => r.membro_id === respId)?.telefone;
 
   function toggle(id: string) {
     setSel(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -1105,29 +1180,88 @@ function CheckinFamiliaModal({ primaria, irmaos, salas, imprimindo, onClose, onC
     });
   }
 
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[92vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-pink-600" /> Check-in da família</DialogTitle>
-          <DialogDescription>Marque quem está presente. Cada criança vai pra sala da idade (dá pra trocar). O responsável vale pra todos.</DialogDescription>
-        </DialogHeader>
+  const detalhe = detalheId ? (membros.find(m => m.id === detalheId) || null) : null;
 
-        <div className="flex-1 overflow-y-auto min-h-0 space-y-2">
+  return (
+    <Card>
+      <CardContent className="p-6 space-y-5">
+        {/* Cabeçalho da família */}
+        <div className="flex items-start gap-3">
+          <div className="h-12 w-12 rounded-full bg-pink-100 dark:bg-pink-900/40 flex items-center justify-center shrink-0">
+            <Users className="h-6 w-6 text-pink-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-2xl font-bold truncate">{primaria.familia?.nome || 'Família'}</h2>
+            <p className="text-muted-foreground text-sm">{membros.length} criança{membros.length > 1 ? 's' : ''} · marque quem veio hoje</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onCancelar}>
+            <ArrowLeft className="h-4 w-4 mr-1" /> Outra criança
+          </Button>
+        </div>
+
+        {/* Em quais cultos a família vai ficar? (mesmo padrão do card individual) */}
+        {sessoesAbertas.length > 0 && (
+          <div>
+            <label className="text-sm font-medium block mb-1">Em quais cultos a família vai ficar?</label>
+            <p className="text-xs text-muted-foreground mb-2">O culto de agora já vem marcado. Vale pra todos os irmãos marcados.</p>
+            <div className="space-y-2">
+              {sessoesAbertas.map((c: any) => {
+                const marcado = cultosSel.has(c.culto_id);
+                const ehAgora = c.culto_id === cultoAtualId;
+                return (
+                  <button key={c.culto_id} type="button"
+                    onClick={() => { const n = new Set(cultosSel); if (n.has(c.culto_id)) n.delete(c.culto_id); else n.add(c.culto_id); setCultosSel(n); }}
+                    className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${marcado ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/40'}`}>
+                    <span className={`h-5 w-5 rounded border flex items-center justify-center shrink-0 ${marcado ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
+                      {marcado && <Check className="h-3.5 w-3.5" />}
+                    </span>
+                    <span className="font-medium flex-1">{c.nome}</span>
+                    {ehAgora && <span className="text-[11px] font-semibold uppercase tracking-wide text-primary shrink-0">agora</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Filhos da família */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium block">Quem veio hoje?</label>
           {membros.map(m => {
             const on = sel.has(m.id);
+            const temSaude = m.tem_alergia || m.tem_espectro || m.tem_limitacao_fisica || m.observacoes_medicas;
             return (
-              <div key={m.id} className={`rounded-lg border p-3 ${on ? 'border-pink-400 bg-pink-50/50 dark:bg-pink-950/20' : 'border-border opacity-60'}`}>
+              <div key={m.id} className={`rounded-lg border p-3 ${on ? 'border-pink-400 bg-pink-50/50 dark:bg-pink-950/20' : 'border-border opacity-70'}`}>
                 <div className="flex items-center gap-3">
                   <button type="button" onClick={() => toggle(m.id)}
                     className={`h-6 w-6 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-pink-600 border-pink-600 text-white' : 'border-muted-foreground/40'}`}>
                     {on && <Check className="h-4 w-4" />}
                   </button>
+                  {m.foto_url ? (
+                    <img src={m.foto_url} alt="" className="h-10 w-10 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="h-10 w-10 rounded-full bg-pink-100 dark:bg-pink-900/40 flex items-center justify-center shrink-0">
+                      <Baby className="h-5 w-5 text-pink-500" />
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{m.nome}</div>
+                    <div className="font-medium truncate flex items-center gap-1.5">
+                      <span className="truncate">{m.nome}</span>
+                      {temSaude ? <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" aria-label="Atenção · saúde" /> : null}
+                    </div>
                     <div className="text-xs text-muted-foreground">{formatIdade(m.idade_meses) || 'idade não informada'}</div>
                   </div>
+                  <button type="button" onClick={() => setDetalheId(m.id)} title="Ver/editar a ficha (exige senha do Kids)"
+                    className="text-muted-foreground hover:text-pink-600 shrink-0 p-1"><Pencil className="h-4 w-4" /></button>
                 </div>
+                {temSaude ? (
+                  <div className="mt-2 pl-9 text-xs space-y-0.5">
+                    {m.tem_alergia && <div className="text-red-600 dark:text-red-400"><b>Alergia:</b> {m.alergia_qual || 'sim'}</div>}
+                    {m.tem_espectro && <div className="text-red-600 dark:text-red-400"><b>Espectro:</b> {m.espectro_qual || 'sim'}</div>}
+                    {m.tem_limitacao_fisica && <div className="text-red-600 dark:text-red-400"><b>Limitação:</b> {m.limitacao_fisica_qual || 'sim'}</div>}
+                    {m.observacoes_medicas && <div className="text-amber-600 dark:text-amber-400"><b>Obs.:</b> {m.observacoes_medicas}</div>}
+                  </div>
+                ) : null}
                 {on && (
                   <div className="mt-2 pl-9">
                     <Select value={salaPor[m.id] || ''} onValueChange={(v) => setSalaPor(s => ({ ...s, [m.id]: v }))}>
@@ -1145,42 +1279,63 @@ function CheckinFamiliaModal({ primaria, irmaos, salas, imprimindo, onClose, onC
               </div>
             );
           })}
-
-          <div className="rounded-lg border border-border p-3 space-y-2">
-            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Quem está trazendo? <span className="text-pink-600">*</span></div>
-            {!manual ? (
-              <>
-                {respOpcoes.length === 0 && <p className="text-xs text-muted-foreground">Nenhum responsável autorizado cadastrado — use "Outro responsável".</p>}
-                <div className="space-y-1.5">
-                  {respOpcoes.map(r => (
-                    <button key={r.membro_id} type="button" onClick={() => setRespId(r.membro_id)}
-                      className={`w-full text-left flex items-center justify-between gap-2 rounded-lg border-2 p-2.5 ${respId === r.membro_id ? 'border-pink-500 bg-pink-50 dark:bg-pink-950/30' : 'border-border hover:border-pink-300'}`}>
-                      <span className="text-sm min-w-0 truncate">{r.nome}{r.parentesco ? <span className="text-muted-foreground"> · {r.parentesco}</span> : null}</span>
-                      {respId === r.membro_id && <CheckCircle2 className="h-5 w-5 text-pink-600 shrink-0" />}
-                    </button>
-                  ))}
-                </div>
-                <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setManual(true)}>Outro responsável (manual)</button>
-              </>
-            ) : (
-              <div className="space-y-2">
-                <Input placeholder="Nome do responsável" value={manualNome} onChange={e => setManualNome(e.target.value)} />
-                <Input placeholder="Telefone" value={manualTel} onChange={e => setManualTel(e.target.value)} />
-                <button type="button" className="text-xs text-muted-foreground underline" onClick={() => { setManual(false); setManualNome(''); setManualTel(''); }}>Voltar à lista</button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between gap-2 pt-3 border-t">
-          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button className="bg-pink-600 hover:bg-pink-700 text-white" onClick={confirmar} disabled={!podeConfirmar}
-            title={semSala.length ? 'Selecione a sala de cada criança marcada.' : !respOk ? 'Escolha quem está trazendo.' : undefined}>
-            {imprimindo ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Fazendo...</> : <><Printer className="h-4 w-4 mr-2" /> Check-in da família ({selecionados.length})</>}
+          <Button type="button" variant="outline" className="w-full border-dashed" onClick={onAdicionarFilho}>
+            <Plus className="h-4 w-4 mr-1" /> Adicionar filho a esta família
           </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+
+        {/* Quem está trazendo (vale pra todos) */}
+        <div className="rounded-lg border border-border p-3 space-y-2">
+          <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Quem está trazendo? <span className="text-pink-600">*</span></div>
+          {!manual ? (
+            <>
+              {respOpcoes.length === 0 && <p className="text-xs text-muted-foreground">Nenhum responsável autorizado cadastrado — use "Outro responsável".</p>}
+              <div className="space-y-1.5">
+                {respOpcoes.map(r => (
+                  <button key={r.membro_id} type="button" onClick={() => setRespId(r.membro_id)}
+                    className={`w-full text-left flex items-center justify-between gap-2 rounded-lg border-2 p-2.5 ${respId === r.membro_id ? 'border-pink-500 bg-pink-50 dark:bg-pink-950/30' : 'border-border hover:border-pink-300'}`}>
+                    <span className="text-sm min-w-0 truncate">{r.nome}{r.parentesco ? <span className="text-muted-foreground"> · {r.parentesco}</span> : null}</span>
+                    {respId === r.membro_id && <CheckCircle2 className="h-5 w-5 text-pink-600 shrink-0" />}
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setManual(true)}>Outro responsável (manual)</button>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <Input placeholder="Nome do responsável" value={manualNome} onChange={e => setManualNome(e.target.value)} />
+              <Input placeholder="Telefone" value={manualTel} onChange={e => setManualTel(e.target.value)} />
+              <button type="button" className="text-xs text-muted-foreground underline" onClick={() => { setManual(false); setManualNome(''); setManualTel(''); }}>Voltar à lista</button>
+            </div>
+          )}
+        </div>
+
+        {temTelefoneResp && (
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <input type="checkbox" className="h-4 w-4 accent-pink-600" checked={enviarWpp} onChange={e => setEnviarWpp(e.target.checked)} />
+            <span>Enviar código + QR de retirada por WhatsApp <span className="text-muted-foreground">(a etiqueta imprime de qualquer jeito)</span></span>
+          </label>
+        )}
+
+        <div className="flex items-center justify-between gap-3 pt-2 border-t">
+          <span className="text-xs text-pink-600 font-medium">
+            {semCulto ? '↑ Escolha o culto pra liberar' : semSala.length ? '↑ Escolha a sala de cada criança' : !respOk ? '↑ Escolha quem está trazendo' : ''}
+          </span>
+          <Button className="bg-pink-600 hover:bg-pink-700 text-white" size="lg" onClick={confirmar} disabled={!podeConfirmar}
+            title={semCulto ? 'Escolha em qual culto a família fica.' : semSala.length ? 'Selecione a sala de cada criança marcada.' : !respOk ? 'Escolha quem está trazendo.' : undefined}>
+            {imprimindo ? <><Loader2 className="h-5 w-5 mr-2 animate-spin" /> Fazendo...</> : <><Printer className="h-5 w-5 mr-2" /> Check-in + imprimir ({selecionados.length})</>}
+          </Button>
+        </div>
+      </CardContent>
+
+      {detalhe && (
+        <ModalDetalhesCrianca
+          crianca={detalhe}
+          atualizarCrianca={(patch: Partial<Crianca>) => onAtualizarMembro(detalhe.id, patch)}
+          onClose={() => setDetalheId(null)}
+        />
+      )}
+    </Card>
   );
 }
 
@@ -1955,6 +2110,9 @@ function ModalNovaCrianca(props: {
   open: boolean;
   onClose: () => void;
   nomeInicial: string;
+  // Quando aberto por "adicionar filho" a uma família: trava no modo "mesma
+  // família" com a criança de referência fixa (o novo herda família + responsáveis).
+  referencia?: { id: string; nome: string; familiaNome: string | null } | null;
   onCadastrado: (c: Crianca) => void;
 }) {
   const [modo, setModo] = useState<'novo' | 'amigo'>('novo');
@@ -1987,14 +2145,16 @@ function ModalNovaCrianca(props: {
 
   useEffect(() => {
     if (props.open) {
-      setModo('novo'); setCriancaNome(props.nomeInicial); setCriancaNasc(''); setCriancaSexo('');
+      const ref = props.referencia;
+      setModo(ref ? 'amigo' : 'novo'); setCriancaNome(props.nomeInicial); setCriancaNasc(''); setCriancaSexo('');
       setTemAlergia(false); setAlergiaQual(''); setTemEspectro(false); setEspectroQual('');
       setTemLimitacao(false); setLimitacaoQual(''); setObsMed('');
       setResps([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
       setFotoCrianca(null); setConsentMkt(false); setCaptura(null);
-      setAmigoBusca(''); setAmigoResultados([]); setAmigoSel(null);
+      setAmigoBusca(''); setAmigoResultados([]); setAmigoSel(ref ? { id: ref.id, nome: ref.nome } : null);
     }
-  }, [props.open, props.nomeInicial]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.open, props.nomeInicial, props.referencia?.id]);
 
   useEffect(() => {
     if (modo !== 'amigo' || amigoBusca.trim().length < 2) { setAmigoResultados([]); return; }
@@ -2062,7 +2222,7 @@ function ModalNovaCrianca(props: {
     !!criancaNasc || !!criancaSexo || temAlergia || temEspectro || temLimitacao ||
     !!obsMed.trim() || !!fotoCrianca || consentMkt ||
     resps.some(r => r.nome.trim() || r.telefone.trim() || (r.cpf || '').trim()) ||
-    !!amigoSel || !!amigoBusca.trim()
+    (!props.referencia && !!amigoSel) || !!amigoBusca.trim()
   );
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, props.onClose);
 
@@ -2070,16 +2230,18 @@ function ModalNovaCrianca(props: {
     <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>Cadastrar criança · visitante</DialogTitle>
+          <DialogTitle>{props.referencia ? `Adicionar filho · ${props.referencia.familiaNome || 'família'}` : 'Cadastrar criança · visitante'}</DialogTitle>
           <DialogDescription>Dados mínimos · LGPD com menores. Sem CPF da criança.</DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Modo */}
+        {/* Modo · escondido quando já é "adicionar filho" (família travada) */}
+        {!props.referencia && (
         <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 text-xs">
           <button type="button" onClick={() => setModo('novo')} className={`px-3 py-1.5 rounded-md ${modo === 'novo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Novo cadastro</button>
-          <button type="button" onClick={() => setModo('amigo')} className={`px-3 py-1.5 rounded-md ${modo === 'amigo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Amigo de uma criança</button>
+          <button type="button" onClick={() => setModo('amigo')} className={`px-3 py-1.5 rounded-md ${modo === 'amigo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Irmão / mesma família</button>
         </div>
+        )}
 
         <div className="space-y-4">
           <div className="border-b pb-3 space-y-2">
@@ -2170,9 +2332,17 @@ function ModalNovaCrianca(props: {
             </div>
           ) : (
             <div className="space-y-2">
-              <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Amigo de quem?</div>
-              <p className="text-xs text-muted-foreground">O visitante será liberado pelos mesmos responsáveis da criança escolhida (quem traz, retira os dois).</p>
-              {amigoSel ? (
+              <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">{props.referencia ? 'Mesma família' : 'De qual família? (irmão / parente de...)'}</div>
+              <p className="text-xs text-muted-foreground">Entra na mesma família — liberado pelos mesmos responsáveis (quem traz, retira todos).</p>
+              {props.referencia ? (
+                <div className="flex items-center gap-2 rounded-lg border border-pink-400/40 bg-pink-50/50 dark:bg-pink-950/20 p-2">
+                  <Users className="h-4 w-4 text-pink-600" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm truncate">{props.referencia.familiaNome || `Família de ${props.referencia.nome.split(' ')[0]}`}</div>
+                    <div className="text-xs text-muted-foreground">Herda os responsáveis da família</div>
+                  </div>
+                </div>
+              ) : amigoSel ? (
                 <div className="flex items-center gap-2 rounded-lg border border-pink-400/40 p-2">
                   <Baby className="h-4 w-4 text-pink-600" />
                   <div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{amigoSel.nome}</div>{amigoSel.idade_label && <div className="text-xs text-muted-foreground">{amigoSel.idade_label}</div>}</div>
