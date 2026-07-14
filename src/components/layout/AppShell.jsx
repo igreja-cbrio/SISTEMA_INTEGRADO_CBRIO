@@ -146,6 +146,7 @@ const NAV_ITEMS = [
         title: 'Áreas ministeriais',
         items: [
           { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao', perm: 'canMembresia' },
+          { label: 'Next', description: 'Turmas, matrículas e presenças do Next', icon: GraduationCap, path: '/ministerial/next', module: 'next' },
           { label: 'Batismo', description: 'Inscrições, horários, agendamento e check-in de batismo', icon: Droplets, path: '/batismo', module: 'batismo' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
