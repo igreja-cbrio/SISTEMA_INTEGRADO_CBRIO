@@ -96,7 +96,6 @@ const fmtData = (d) => { try { return new Date(d).toLocaleDateString('pt-BR'); }
 export default function GruposEntrada({ podeEditar = false, onMudou }) {
   const [pedidos, setPedidos] = useState([]);
   const [encs, setEncs] = useState([]);
-  const [resumo, setResumo] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const [busca, setBusca] = useState('');
@@ -145,14 +144,12 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     setLoading(true);
     try {
       const desde = new Date(Date.now() - fPeriodo * 86400000).toISOString();
-      const [peds, encRows, res] = await Promise.all([
+      const [peds, encRows] = await Promise.all([
         api.listarPedidos({ desde }),
         encApi.list({ destino: 'grupos' }).catch(() => []),
-        api.resumoPedidos().catch(() => null),
       ]);
       setPedidos(Array.isArray(peds) ? peds : []);
       setEncs(Array.isArray(encRows) ? encRows : []);
-      setResumo(res);
       setSelected(new Set());
     } catch {
       toast.error('Erro ao carregar a caixa de entrada');
@@ -166,7 +163,10 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
   const depois = () => { setEventosCache({}); load(); onMudou?.(); };
 
   // ── Normalização: pedido + direcionado do Next viram linhas da MESMA lista ──
-  const rows = useMemo(() => {
+  // rowsBase respeita origem + período + busca, mas NÃO o filtro de status:
+  // os cards do resumo leem daqui (retrato por status do conjunto filtrado ·
+  // Marcos 14/07) — assim, filtrar um status não zera os outros cards.
+  const rowsBase = useMemo(() => {
     const desdeMs = Date.now() - fPeriodo * 86400000;
     const lista = [];
     for (const p of pedidos) {
@@ -195,12 +195,10 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     }
 
     const s = busca.trim().toLowerCase();
-    const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
     return lista
       .filter(r => {
         if (fOrigem === 'next' && !r.veioNext) return false;
         if (fOrigem === 'inscricao' && (r.tipo !== 'pedido' || r.veioNext)) return false;
-        if (bucket && !bucket.includes(r.statusKey)) return false;
         if (s) {
           const alvo = [r.nome, r.telefone, r.email, r.grupoNome, r.grupoCodigo].filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(s)) return false;
@@ -208,7 +206,46 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         return true;
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
-  }, [pedidos, encs, busca, fOrigem, fStatus, fPeriodo]);
+  }, [pedidos, encs, busca, fOrigem, fPeriodo]);
+
+  const rows = useMemo(() => {
+    const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
+    return bucket ? rowsBase.filter(r => bucket.includes(r.statusKey)) : rowsBase;
+  }, [rowsBase, fStatus]);
+
+  // ── Cards do resumo — derivados das linhas filtradas (substitui o
+  // GET /pedidos/resumo global, que ignorava os filtros e contava "Recusados
+  // na triagem" só pelo status novo 'devolvido' — recusas antigas ficaram
+  // 'rejeitado' e o card mostrava 0 mesmo com recusados na lista). ──
+  const estat = useMemo(() => {
+    const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
+    const agora = Date.now();
+    let hoje = 0, pendentes = 0, pend24 = 0, pend72 = 0;
+    let devolvidos = 0, rejeitados = 0, aprovados = 0;
+    let somaDecisaoMs = 0, nDecididos = 0;
+    for (const r of rowsBase) {
+      if (new Date(r.data) >= hoje0) hoje += 1;
+      if (r.tipo !== 'pedido') continue;
+      if (r.statusKey === 'pendente') {
+        pendentes += 1;
+        const h = (agora - new Date(r.data)) / 36e5;
+        if (h >= 24) pend24 += 1;
+        if (h >= 72) pend72 += 1;
+      } else if (r.statusKey === 'devolvido') devolvidos += 1;
+      else if (r.statusKey === 'rejeitado') rejeitados += 1;
+      else if (r.statusKey === 'aprovado' || r.statusKey === 'resolvido') aprovados += 1;
+      if (['aprovado', 'rejeitado'].includes(r.raw?.status) && r.raw?.decidido_em) {
+        somaDecisaoMs += new Date(r.raw.decidido_em) - new Date(r.data);
+        nDecididos += 1;
+      }
+    }
+    return {
+      hoje, pendentes, pend24, pend72,
+      recusados: devolvidos + rejeitados, devolvidos,
+      aprovados,
+      tempoMedioHoras: nDecididos ? Math.round((somaDecisaoMs / nDecididos / 36e5) * 10) / 10 : null,
+    };
+  }, [rowsBase]);
 
   const { pageItems, paginacaoProps } = usePaginacaoLocal(rows, 50);
 
@@ -359,30 +396,31 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
 
   return (
     <div style={{ paddingTop: 14 }}>
-      {/* Pulso da fila — leitura, sem botões */}
-      {resumo && (
+      {/* Pulso da fila — leitura, sem botões. Reflete os filtros de origem,
+          período e busca (não o de status — é o retrato por status). */}
+      {!loading && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 14 }}>
-          <ResumoCard titulo="Pedidos hoje" valor={resumo.hoje} />
+          <ResumoCard titulo="Entradas hoje" valor={estat.hoje} />
           <ResumoCard
-            titulo="Pendentes"
-            valor={resumo.pendentes}
-            destaque={resumo.pendentes_72h > 0
-              ? `${resumo.pendentes_72h} há 3+ dias`
-              : (resumo.pendentes_24h > 0 ? `${resumo.pendentes_24h} há 1+ dia` : null)}
-            corDestaque={resumo.pendentes_72h > 0 ? C.red : C.amber}
+            titulo="Pendentes · líder"
+            valor={estat.pendentes}
+            destaque={estat.pend72 > 0
+              ? `${estat.pend72} há 3+ dias`
+              : (estat.pend24 > 0 ? `${estat.pend24} há 1+ dia` : null)}
+            corDestaque={estat.pend72 > 0 ? C.red : C.amber}
           />
           <ResumoCard
-            titulo="Recusados na triagem"
-            valor={resumo.devolvidos}
-            destaque={resumo.devolvidos > 0 ? 'aguardando você decidir' : null}
+            titulo="Recusados"
+            valor={estat.recusados}
+            destaque={estat.devolvidos > 0 ? `${estat.devolvidos} na triagem — aguardando você` : null}
             corDestaque={C.violet}
           />
-          <ResumoCard titulo="Aprovados · 30 dias" valor={resumo.aprovados_30d} />
+          <ResumoCard titulo="Aprovados" valor={estat.aprovados} />
           <ResumoCard
             titulo="Tempo médio de resposta"
-            valor={resumo.tempo_medio_horas == null ? '—'
-              : resumo.tempo_medio_horas < 48 ? `${resumo.tempo_medio_horas}h`
-              : `${Math.round(resumo.tempo_medio_horas / 24)} dias`}
+            valor={estat.tempoMedioHoras == null ? '—'
+              : estat.tempoMedioHoras < 48 ? `${estat.tempoMedioHoras}h`
+              : `${Math.round(estat.tempoMedioHoras / 24)} dias`}
           />
         </div>
       )}
