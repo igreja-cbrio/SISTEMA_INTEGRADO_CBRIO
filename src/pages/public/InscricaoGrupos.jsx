@@ -6,8 +6,9 @@
 // GrupoSelector em modo "full" (todos os filtros: líder, categoria, bairro,
 // CEP, lista, mapa) e um form de identificação (nome, telefone, nascimento,
 // sexo e CPF obrigatórios · e-mail e foto opcionais). Erros de validação são
-// apontados campo a campo (borda vermelha + mensagem) e grupo incompatível
-// (gênero/idade) BLOQUEIA preservando os dados digitados (teste de 13/07).
+// apontados campo a campo (borda vermelha + mensagem). ÚNICA trava (Marcos ·
+// 14/07): gênero oposto em grupo de homens/mulheres. Idade fora da faixa,
+// vários grupos e grupos no mesmo horário são permitidos (idade vira aviso).
 //
 // Submit: roteia pro membro existente OU cria mem_cadastros_pendentes +
 // mem_grupo_pedidos (origem='formulario_publico'). Se o backend detecta um
@@ -76,6 +77,27 @@ function mascaraTelefone(v) {
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
+// Nascimento digitado como texto DD/MM/AAAA (Marcos · 14/07): o date picker
+// nativo era ruim de usar — escolher o ano exigia rolar décadas.
+function mascaraDataBr(v) {
+  const d = soDigitos(v).slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+}
+// 'DD/MM/AAAA' → 'YYYY-MM-DD' · null se incompleta ou impossível (31/02 etc.)
+function brParaIso(v) {
+  const d = soDigitos(v);
+  if (d.length !== 8) return null;
+  const dia = +d.slice(0, 2), mes = +d.slice(2, 4), ano = +d.slice(4);
+  const data = new Date(ano, mes - 1, dia, 12);
+  if (data.getFullYear() !== ano || data.getMonth() !== mes - 1 || data.getDate() !== dia) return null;
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+}
+function isoParaBr(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
 
 export default function InscricaoGrupos() {
   const { C } = usePublicTheme();
@@ -134,7 +156,8 @@ export default function InscricaoGrupos() {
           nome: f.nome || p.nome || '',
           telefone: f.telefone || (p.telefone ? mascaraTelefone(p.telefone) : ''),
           email: f.email || p.email || '',
-          data_nascimento: f.data_nascimento || p.data_nascimento || '',
+          // O backend manda ISO; o campo agora é texto DD/MM/AAAA
+          data_nascimento: f.data_nascimento || isoParaBr(p.data_nascimento),
           genero: f.genero || p.genero || '',
         }));
         setPreenchidoViaLink(true);
@@ -238,10 +261,13 @@ export default function InscricaoGrupos() {
     if (!form.data_nascimento) {
       erros.data_nascimento = 'Informe a data de nascimento.';
     } else {
-      const nasc = new Date(form.data_nascimento + 'T12:00:00');
-      if (Number.isNaN(nasc.getTime())) erros.data_nascimento = 'Data de nascimento inválida.';
-      else if (nasc > new Date()) erros.data_nascimento = 'A data de nascimento não pode estar no futuro.';
-      else if (nasc.getFullYear() < 1900) erros.data_nascimento = 'Confira o ano de nascimento.';
+      const iso = brParaIso(form.data_nascimento);
+      if (!iso) erros.data_nascimento = 'Data inválida — digite dia, mês e ano completos.';
+      else {
+        const nasc = new Date(iso + 'T12:00:00');
+        if (nasc > new Date()) erros.data_nascimento = 'A data de nascimento não pode estar no futuro.';
+        else if (nasc.getFullYear() < 1900) erros.data_nascimento = 'Confira o ano de nascimento.';
+      }
     }
     if (form.genero !== 'masculino' && form.genero !== 'feminino') erros.genero = 'Marque masculino ou feminino.';
     const cpfDig = soDigitos(form.cpf);
@@ -252,9 +278,8 @@ export default function InscricaoGrupos() {
     return erros;
   };
 
-  // ── Compatibilidade com o grupo (Marcos · 2026-07-13: era aviso, virou BLOQUEIO) ──
-  // Gênero (grupo de homens/mulheres) e idade (quando o grupo tem limite numérico
-  // definido) impedem o envio. Rótulo etário SEM limite numérico segue como aviso.
+  // ── Compatibilidade com o grupo (Marcos · 2026-07-14: SÓ GÊNERO bloqueia) ──
+  // Grupo de homens/mulheres não aceita o sexo oposto — única trava do form.
   const bloqueioLocal = useMemo(() => {
     if (!grupoEscolhido) return null;
     const cat = (grupoEscolhido.categoria || '').toLowerCase();
@@ -264,7 +289,14 @@ export default function InscricaoGrupos() {
     if (form.genero === 'feminino' && cat === 'homens') {
       return 'Este é um grupo só de homens, então sua inscrição não pode seguir nele.';
     }
-    const idade = idadeDe(form.data_nascimento);
+    return null;
+  }, [grupoEscolhido, form.genero]);
+
+  // Idade NÃO bloqueia (Marcos · 14/07): fora da faixa do grupo vira só um
+  // aviso — a pessoa segue se quiser e o líder decide na aprovação.
+  const avisoFaixa = useMemo(() => {
+    if (!grupoEscolhido) return null;
+    const idade = idadeDe(brParaIso(form.data_nascimento));
     const min = grupoEscolhido.idade_min;
     const max = grupoEscolhido.idade_max;
     if (idade != null && (min != null || max != null)) {
@@ -272,19 +304,14 @@ export default function InscricaoGrupos() {
         const faixaTxt = min != null && max != null
           ? `de ${min} a ${max} anos`
           : (max != null ? `até ${max} anos` : `a partir de ${min} anos`);
-        return `Este grupo é para pessoas ${faixaTxt} e você tem ${idade} anos, então a inscrição não pode seguir nele.`;
+        return `Este grupo é voltado para pessoas ${faixaTxt}.`;
       }
+      return null; // dentro da faixa — nada a avisar
     }
-    return null;
-  }, [grupoEscolhido, form.genero, form.data_nascimento]);
-
-  const avisoFaixa = useMemo(() => {
-    if (!grupoEscolhido) return null;
-    if (grupoEscolhido.idade_min != null || grupoEscolhido.idade_max != null) return null; // com número é trava, não aviso
     const faixa = grupoEscolhido.faixa_etaria;
     if (faixa && faixa !== 'Todas as idades') return `Este grupo é voltado para ${String(faixa).toLowerCase()}.`;
     return null;
-  }, [grupoEscolhido]);
+  }, [grupoEscolhido, form.data_nascimento]);
 
   // Trocou de grupo → o bloqueio confirmado pelo servidor não vale mais.
   useEffect(() => { setBloqueio(null); }, [grupoEscolhido]);
@@ -337,7 +364,7 @@ export default function InscricaoGrupos() {
         cpf: soDigitos(form.cpf), // obrigatório (Marcos · 2026-07-13) — validado acima
         email: form.email.trim() || null,
         telefone: form.telefone,
-        data_nascimento: form.data_nascimento || null,
+        data_nascimento: brParaIso(form.data_nascimento), // DD/MM/AAAA → ISO (validado acima)
         genero: form.genero || null,
         observacao: form.observacao || null,
         foto_url: form.foto_url || null,
@@ -479,7 +506,7 @@ export default function InscricaoGrupos() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
                 <Field campo="nome" error={errosCampos.nome} label="Nome completo *" value={form.nome} onChange={set('nome')} />
                 <Field campo="telefone" error={errosCampos.telefone} label="Celular / WhatsApp *" value={form.telefone} onChange={set('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
-                <Field campo="data_nascimento" error={errosCampos.data_nascimento} label="Data de nascimento *" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} />
+                <Field campo="data_nascimento" error={errosCampos.data_nascimento} label="Data de nascimento *" value={form.data_nascimento} onChange={set('data_nascimento', mascaraDataBr)} placeholder="dia/mês/ano" maxLength={10} inputMode="numeric" />
                 <div data-campo="genero">
                   <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -509,8 +536,8 @@ export default function InscricaoGrupos() {
                 <Field campo="email" error={errosCampos.email} label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} />
               </div>
 
-              {/* Grupo incompatível (gênero/idade) — BLOQUEIA com saída clara,
-                  preservando tudo que a pessoa digitou (decisão de 13/07). */}
+              {/* Grupo de outro gênero (única trava · 14/07) — BLOQUEIA com
+                  saída clara, preservando tudo que a pessoa digitou. */}
               {(bloqueio?.mensagem || bloqueioLocal) ? (
                 <div style={{
                   padding: '12px 14px', marginBottom: 12, borderRadius: 10,

@@ -978,13 +978,15 @@ router.get('/pedidos/resumo', async (req, res) => {
       return count || 0;
     };
 
-    const [hoje, pendentes, pend24, pend72, aprov30, rejei30] = await Promise.all([
+    const [hoje, pendentes, pend24, pend72, aprov30, rejei30, devolvidos] = await Promise.all([
       contar(q => q.gte('created_at', hoje0.toISOString())),
       contar(q => q.eq('status', 'pendente')),
       contar(q => q.eq('status', 'pendente').lt('created_at', h24)),
       contar(q => q.eq('status', 'pendente').lt('created_at', h72)),
       contar(q => q.eq('status', 'aprovado').gte('decidido_em', d30)),
       contar(q => q.eq('status', 'rejeitado').gte('decidido_em', d30)),
+      // Recusados pelo líder aguardando a triagem decidir (sem janela — é fila)
+      contar(q => q.eq('status', 'devolvido')),
     ]);
 
     // Pendente mais antigo + tempo médio de decisão (últimos 30d)
@@ -1007,6 +1009,7 @@ router.get('/pedidos/resumo', async (req, res) => {
       pendentes_72h: pend72,
       aprovados_30d: aprov30,
       rejeitados_30d: rejei30,
+      devolvidos,
       mais_antigo_dias: maisAntigo
         ? Math.floor((agora - new Date(maisAntigo.created_at)) / 864e5)
         : null,
@@ -1298,35 +1301,15 @@ async function aprovarPedidoCore(pedidoId, user) {
       throw e;
     }
 
-    // Linha do tempo + status dinâmico (Marcos · 13/07): registra o "aprovado"
-    // e fecha os OUTROS pedidos abertos da MESMA pessoa como "aprovada em outro
-    // grupo" (match só por membro/cadastro — nunca telefone, que família
-    // compartilha). Tolerante à migration pendente (falha silenciosa).
+    // Linha do tempo (Marcos · 14/07): registra só o "aprovado". Os OUTROS
+    // pedidos abertos da mesma pessoa NÃO fecham mais automaticamente —
+    // multi-grupo pleno: ela pode se inscrever em vários grupos e cada líder
+    // decide o seu pedido. (Pedidos antigos fechados como "aprovada em outro
+    // grupo" seguem exibidos como histórico.)
     (async () => {
       try {
         const { data: gAlvo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).maybeSingle();
         await registrarEventoPedido(pedido.id, 'aprovado', { grupo: gAlvo?.nome || null }, user?.name || null);
-
-        const ors = [];
-        if (membroId) ors.push(`membro_id.eq.${membroId}`);
-        if (pedido.cadastro_pendente_id) ors.push(`cadastro_pendente_id.eq.${pedido.cadastro_pendente_id}`);
-        if (!ors.length) return;
-        const { data: abertos } = await supabase.from('mem_grupo_pedidos')
-          .select('id')
-          .neq('id', pedido.id)
-          .in('status', ['pendente', 'devolvido', 'encaminhado'])
-          .or(ors.join(','));
-        for (const outro of (abertos || [])) {
-          const { data: fechado } = await supabase.from('mem_grupo_pedidos').update({
-            status: 'cancelado',
-            resolvido_grupo_id: pedido.grupo_id,
-            decidido_em: new Date().toISOString(),
-            decidido_por_nome: 'Sistema · aprovada em outro grupo',
-          }).eq('id', outro.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
-          if (fechado && fechado.length) {
-            await registrarEventoPedido(outro.id, 'resolvido_outro_grupo', { grupo: gAlvo?.nome || null }, user?.name || null);
-          }
-        }
       } catch (e) { console.error('[Pedido aprovado · eventos]', e.message); }
     })();
 
@@ -1559,11 +1542,10 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
 });
 
 // POST /api/grupos/pedidos/:pedidoId/rejeitar — body: { motivo? }
-// Duas etapas (Marcos · 2026-07-13):
-//  · pedido PENDENTE  → recusa do líder DEVOLVE pra triagem (status 'devolvido').
-//    O motivo é INTERNO — a pessoa NÃO recebe nada aqui; ela é comunicada
-//    quando a triagem sugerir outro grupo (com o motivo externo da sugestão).
-//  · pedido DEVOLVIDO → rejeição FINAL pela triagem (status 'rejeitado').
+// Quem recusa AQUI é a EQUIPE da triagem (Naná/Nélio — o líder não usa a
+// plataforma: ele decide pelo link do WhatsApp, e a recusa dele DEVOLVE o
+// pedido pra triagem). Recusa da equipe é FINAL (Marcos · 2026-07-14): vale
+// pra pendente, devolvido ou encaminhado. O motivo segue interno.
 router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { motivo } = req.body || {};
@@ -1574,49 +1556,16 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
-    if (pedido.status === 'pendente') {
-      // Guarda de corrida: só devolve se AINDA está pendente (uma aprovação
-      // simultânea — logada ou via link — não pode ser sobrescrita).
-      const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
-        status: 'devolvido',
-        motivo_rejeicao: motivo || null, // interno · visível só pra triagem
-        decidido_por: req.user.userId,
-        decidido_por_nome: req.user.name,
-        decidido_em: new Date().toISOString(),
-      }).eq('id', pedido.id).eq('status', 'pendente').select('id');
-      if (!claimed || !claimed.length) {
-        return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
-      }
-
-      registrarEventoPedido(pedido.id, 'recusado_lider', { motivo_interno: motivo || null }, req.user.name);
-
-      // Avisa a TRIAGEM (módulo grupos) — a pessoa não é notificada aqui.
-      (async () => {
-        try {
-          const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
-          await notificar({
-            modulo: 'grupos',
-            tipo: 'pedido_devolvido',
-            titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
-            mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${motivo ? ` (motivo interno: ${motivo})` : ''}. Sugira outro grupo pra pessoa.`,
-            link: '/grupos?tab=entrada',
-            severidade: 'aviso',
-            chaveDedup: `pedido_devolvido_${pedido.id}`,
-          });
-        } catch (e) { console.error('[Pedido devolver notify]', e.message); }
-      })();
-
-      return res.json({ success: true, devolvido: true });
-    }
-
-    // status devolvido/encaminhado → rejeição FINAL pela triagem.
+    // Guarda de corrida: uma aprovação simultânea (logada ou via link do
+    // líder) não pode ser sobrescrita.
     const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
       status: 'rejeitado',
+      // Preserva o motivo interno do líder quando a equipe não escreve um novo
       motivo_rejeicao: motivo || pedido.motivo_rejeicao || null,
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).in('status', ['devolvido', 'encaminhado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
     if (!claimed || !claimed.length) {
       return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
     }

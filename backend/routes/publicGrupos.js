@@ -232,16 +232,6 @@ function cpfValido(cpfMasked) {
   return r === parseInt(cpf[10]);
 }
 function ehEmailValido(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || ''); }
-// Idade em anos a partir de 'YYYY-MM-DD' (null se a data não parseia).
-function idadeAnos(dataNascimento) {
-  const nasc = new Date(String(dataNascimento) + 'T12:00:00');
-  if (Number.isNaN(nasc.getTime())) return null;
-  const hoje = new Date();
-  let idade = hoje.getFullYear() - nasc.getFullYear();
-  const m = hoje.getMonth() - nasc.getMonth();
-  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade -= 1;
-  return idade;
-}
 
 // Só aceita foto_url que o NOSSO /upload-foto devolveu (bucket público
 // fotos-membros do próprio Supabase) — nunca uma URL externa arbitrária, que
@@ -454,10 +444,11 @@ router.post('/inscrever', async (req, res) => {
       }
     }
 
-    // ── Trava de compatibilidade (Marcos · 2026-07-13 · era aviso, virou bloqueio) ──
-    // Gênero: categoria Homens/Mulheres não aceita o sexo oposto. Idade: só trava
-    // quando o grupo tem limite definido (idade_min/idade_max · NULL = livre).
-    // O front recebe codigo='grupo_incompativel' e oferece "procurar outro grupo"
+    // ── Trava de compatibilidade (Marcos · 2026-07-14: SÓ GÊNERO bloqueia) ──
+    // Gênero: categoria Homens/Mulheres não aceita o sexo oposto — única trava.
+    // Idade fora da faixa, vários grupos ao mesmo tempo e grupos no mesmo
+    // horário NÃO impedem a inscrição (o líder decide na aprovação). O front
+    // recebe codigo='grupo_incompativel' e oferece "procurar outro grupo"
     // preservando o que a pessoa já digitou.
     const catLower = String(grupo.categoria || '').toLowerCase();
     if ((catLower === 'mulheres' && generoLimpo === 'masculino') || (catLower === 'homens' && generoLimpo === 'feminino')) {
@@ -467,20 +458,6 @@ router.post('/inscrever', async (req, res) => {
           ? 'Este é um grupo só de mulheres, então sua inscrição não pode seguir nele.'
           : 'Este é um grupo só de homens, então sua inscrição não pode seguir nele.',
       });
-    }
-    const idade = idadeAnos(data_nascimento);
-    if (idade != null && (grupo.idade_min != null || grupo.idade_max != null)) {
-      const foraMin = grupo.idade_min != null && idade < grupo.idade_min;
-      const foraMax = grupo.idade_max != null && idade > grupo.idade_max;
-      if (foraMin || foraMax) {
-        const faixaTxt = grupo.idade_min != null && grupo.idade_max != null
-          ? `de ${grupo.idade_min} a ${grupo.idade_max} anos`
-          : (grupo.idade_max != null ? `até ${grupo.idade_max} anos` : `a partir de ${grupo.idade_min} anos`);
-        return res.status(422).json({
-          codigo: 'grupo_incompativel',
-          error: `Este grupo é para pessoas ${faixaTxt} e você tem ${idade} anos, então a inscrição não pode seguir nele.`,
-        });
-      }
     }
 
     const incoming = { nome: nome.trim(), cpf: cpfLimpo, telefone, email: emailLimpo };
@@ -734,7 +711,15 @@ router.post('/aprovar', async (req, res) => {
     if (ePed) throw ePed; // falha de infra é 500, não "não encontrado" terminal
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado.' });
     if (pedido.status !== 'pendente') {
-      return res.status(409).json({ error: `Este pedido já foi ${pedido.status}.`, status: pedido.status });
+      // Rótulo amigável — 'devolvido'/'encaminhado' são jargão interno.
+      const STATUS_TXT = {
+        aprovado: 'aprovado',
+        rejeitado: 'recusado',
+        devolvido: 'recusado — a equipe de grupos está cuidando do próximo passo',
+        encaminhado: 'levado pela equipe de grupos, que sugeriu outro grupo à pessoa',
+        cancelado: 'encerrado',
+      };
+      return res.status(409).json({ error: `Este pedido já foi ${STATUS_TXT[pedido.status] || pedido.status}.`, status: pedido.status });
     }
 
     // Quem decide por este link é o líder do grupo (foi ele quem o recebeu).
@@ -762,10 +747,15 @@ router.post('/aprovar', async (req, res) => {
       return res.json({ ok: true, acao: 'aprovado' });
     }
 
-    // Guarda de corrida: só rejeita se AINDA está pendente.
+    // Recusa do LÍDER não é terminal (Marcos · 14/07): o pedido volta pra
+    // TRIAGEM (Naná/Nélio · status 'devolvido') — a equipe, que está acima do
+    // líder, sugere outro grupo pra pessoa ou rejeita de vez. A pessoa NÃO é
+    // comunicada aqui e o motivo do líder fica interno.
+    // Guarda de corrida: só devolve se AINDA está pendente.
+    const motivoInterno = motivo ? String(motivo).trim().slice(0, 500) : null;
     const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
-      status: 'rejeitado',
-      motivo_rejeicao: motivo ? String(motivo).trim().slice(0, 500) : null,
+      status: 'devolvido',
+      motivo_rejeicao: motivoInterno,
       decidido_por: null,
       decidido_por_nome: decididoPorNome,
       decidido_em: new Date().toISOString(),
@@ -774,26 +764,21 @@ router.post('/aprovar', async (req, res) => {
       return res.status(409).json({ error: 'Este pedido já foi decidido.', status: 'decidido' });
     }
 
-    // Notifica a pessoa in-app (se tiver login) — espelho do rejeitar autenticado.
+    registrarEventoPedido(pedido.id, 'recusado_lider', { motivo_interno: motivoInterno }, decididoPorNome);
+
+    // Avisa a TRIAGEM (módulo grupos) — mesma notificação da recusa autenticada.
     (async () => {
       try {
-        if (!pedido.membro_id) return;
-        const { data: prof } = await supabase.from('vol_profiles')
-          .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
-        if (!prof?.auth_user_id) return;
         await notificar({
           modulo: 'grupos',
-          tipo: 'pedido_rejeitado',
-          titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
-          mensagem: motivo
-            ? `Seu pedido foi recusado: ${String(motivo).trim().slice(0, 500)}. Você pode tentar outro grupo.`
-            : 'Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.',
-          link: '/grupos',
-          severidade: 'info',
-          chaveDedup: `pedido_rejeitado_${pedido.id}`,
-          targetIds: [prof.auth_user_id],
+          tipo: 'pedido_devolvido',
+          titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
+          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra pessoa ou rejeite de vez.`,
+          link: '/grupos?tab=entrada',
+          severidade: 'aviso',
+          chaveDedup: `pedido_devolvido_${pedido.id}`,
         });
-      } catch (err) { console.error('[public grupos aprovar notify]', err.message); }
+      } catch (err) { console.error('[public grupos recusar notify]', err.message); }
     })();
 
     res.json({ ok: true, acao: 'rejeitado' });
