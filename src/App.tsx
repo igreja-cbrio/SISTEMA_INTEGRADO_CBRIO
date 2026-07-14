@@ -371,7 +371,7 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
  *   - moduleSlug: novo · checa modulePerms[slug].leitura >= nivelMinimo (default 1)
  *     Permite liberar acesso de visualizacao (nível 1) sem cair no fallback canX.
  */
-function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; nivelMinimo?: number; children: ReactNode }) {
+function ModuleGuard({ permKey, moduleSlug, anyOf, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; anyOf?: string[]; nivelMinimo?: number; children: ReactNode }) {
   const auth = useAuth();
   const a = auth as Record<string, unknown>;
 
@@ -401,6 +401,14 @@ function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permK
   if (slugAlvo && bloqueados.includes(slugAlvo)) return <Navigate to="/dashboard" replace />;
 
   if (auth.isAdmin) return <>{children}</>;
+
+  // anyOf: passa se tiver o nível mínimo em QUALQUER um dos módulos (ex.: a
+  // página da Integração abre pra quem tem `integracao` OU `next`).
+  if (anyOf && anyOf.length) {
+    const ok = anyOf.some(s => ((auth.modulePerms?.[s] as { leitura?: number } | undefined)?.leitura ?? 0) >= nivelMinimo);
+    if (!ok) return <Navigate to="/dashboard" replace />;
+    return <>{children}</>;
+  }
 
   if (moduleSlug) {
     const perm = auth.modulePerms?.[moduleSlug];
@@ -630,7 +638,7 @@ function AppRoutes() {
         <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
-        <Route path="/ministerial/integracao" element={<ModuleGuard moduleSlug="integracao"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/batismo" element={<ModuleGuard moduleSlug="batismo"><Suspense fallback={<Loading />}><Batismo /></Suspense></ModuleGuard>} />
         {/* Relatórios virou aba dentro do Dashboard Semanal · mantém link antigo */}
         <Route path="/ministerial/relatorios" element={<Navigate to="/dashboard-semanal" replace />} />
