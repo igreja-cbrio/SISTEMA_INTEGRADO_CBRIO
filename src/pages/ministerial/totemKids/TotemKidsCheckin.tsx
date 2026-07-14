@@ -378,7 +378,11 @@ export default function TotemKidsCheckin() {
         hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
       })).sort((a: any, b: any) => String(a.hora).localeCompare(String(b.hora)));
       if (cultos.length) {
-        const cur = escolherAtualEntreAbertos(cultos);
+        // Sessão atual fixada na config (por totem · localStorage) vence o relógio;
+        // se a fixada não está mais aberta, volta pro automático.
+        let fixada = '';
+        try { fixada = localStorage.getItem('kids-culto-ativo') || ''; } catch { fixada = ''; }
+        const cur = cultos.find((c: any) => c.culto_id === fixada) || escolherAtualEntreAbertos(cultos);
         setSessoesAbertas(cultos);
         setCultoAtualId(cur?.culto_id || null);
         setSessao(cur?.sessao || null);

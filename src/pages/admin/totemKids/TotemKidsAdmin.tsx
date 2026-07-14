@@ -109,6 +109,7 @@ function AbaSessoes() {
   const [carregando, setCarregando] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null); // key do grupo em ação
   const [expandido, setExpandido] = useState<string | null>(null);
+  const [cultoAtivo, setCultoAtivo] = useState<string>(() => { try { return localStorage.getItem('kids-culto-ativo') || ''; } catch { return ''; } });
 
   async function carregar() {
     setCarregando(true);
@@ -160,6 +161,19 @@ function AbaSessoes() {
     return `${dia.charAt(0).toUpperCase()}${dia.slice(1)} ${g.periodo.rotulo}`;
   }
 
+  // Cultos com sessão ABERTA · opções pra escolher a "sessão atual" do totem.
+  const cultosAbertos = grupos.flatMap((g) =>
+    g.cultos.filter((c: any) => sessaoPorCulto[c.id]?.status === 'aberta')
+      .map((c: any) => ({ id: c.id, nome: c.nome, hora: c.hora, rotulo: rotuloGrupo(g) })));
+
+  // Fixa (ou solta) a sessão que o totem usa por padrão. Guardado por totem
+  // (localStorage) · o check-in lê isso e sobrepõe o culto de agora (relógio).
+  function definirAtual(cultoId: string) {
+    try { if (cultoId) localStorage.setItem('kids-culto-ativo', cultoId); else localStorage.removeItem('kids-culto-ativo'); } catch { /* storage indisponível */ }
+    setCultoAtivo(cultoId);
+    toast.success(cultoId ? 'Sessão atual definida · vale neste totem' : 'Voltou pro automático (pelo relógio)');
+  }
+
   async function abrirGrupo(g: any) {
     setProcessando(g.key);
     try {
@@ -202,6 +216,23 @@ function AbaSessoes() {
           <div className="text-sm text-muted-foreground">Cultos de Kids · escolha o período pra abrir ou encerrar a sessão</div>
           <Button onClick={carregar} size="sm" variant="outline"><RefreshCw className="h-4 w-4 mr-1" /> Atualizar</Button>
         </div>
+
+        {/* Sessão atual do totem · fixa qual sessão aberta o check-in usa por padrão
+            (sobrepõe o culto de agora pelo relógio). Vale neste totem. */}
+        {cultosAbertos.length > 0 && (
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+            <div className="text-sm font-medium">Sessão atual do totem</div>
+            <p className="text-xs text-muted-foreground">Qual sessão o totem usa por padrão no check-in. Deixe no automático (pelo relógio) ou fixe uma.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant={cultoAtivo === '' ? 'default' : 'outline'} className={cultoAtivo === '' ? 'bg-pink-600 hover:bg-pink-700' : ''} onClick={() => definirAtual('')}>Automático</Button>
+              {cultosAbertos.map((c) => (
+                <Button key={c.id} size="sm" variant={cultoAtivo === c.id ? 'default' : 'outline'} className={cultoAtivo === c.id ? 'bg-pink-600 hover:bg-pink-700' : ''} onClick={() => definirAtual(c.id)}>
+                  {c.rotulo}{c.hora ? ` · ${c.hora}` : ''}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {carregando ? (
           <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" />
