@@ -92,9 +92,21 @@ function gruposDetalhados(p) {
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
+  // cluster da análise de duplicatas. Falha silenciosa (nível <3 recebe 403).
+  const [dupIds, setDupIds] = useState(() => new Set());
+  useEffect(() => {
+    api.duplicatas.list()
+      .then(r => {
+        const s = new Set();
+        (r?.clusters || []).forEach(c => c.pessoas.forEach(p => s.add(p.id)));
+        setDupIds(s);
+      })
+      .catch(() => {});
+  }, []);
   const [selected, setSelected] = useState(null); // pessoa aberta no modal de grupos
   const [filtro, setFiltro] = useState('todos');     // função: todos | <papel> | lideres
   const [filtroGrupo, setFiltroGrupo] = useState('todos');
@@ -259,6 +271,25 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
         </div>
       )}
 
+      {/* Aviso de duplicatas — leva pra visualização de resolução */}
+      {dupIds.size > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          padding: '9px 14px', marginBottom: 12, borderRadius: 10,
+          background: `${C.amber}14`, border: `1px solid ${C.amber}55`, fontSize: 12.5, color: C.text,
+        }}>
+          <span>
+            <strong>{dupIds.size}</strong> pessoa{dupIds.size === 1 ? '' : 's'} com possível cadastro duplicado
+            — as linhas marcadas abaixo precisam de revisão.
+          </span>
+          {onVerDuplicatas && (
+            <button onClick={onVerDuplicatas} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, padding: 0 }}>
+              Resolver duplicatas →
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Cards-filtro por função */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 10, marginBottom: 12 }}>
         {CARDS.map(k => {
@@ -338,6 +369,11 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [] }) {
                             {!p.foto_url && (p.nome?.charAt(0) || '?')}
                           </div>
                           <span style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{p.nome}</span>
+                          {dupIds.has(p.membro_id) && (
+                            <span style={{ fontSize: 9.5, padding: '2px 8px', borderRadius: 99, background: `${C.amber}20`, color: C.amber, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                              Possível duplicata
+                            </span>
+                          )}
                         </button>
                       </td>
                       <td style={{ padding: '10px 16px' }}>
