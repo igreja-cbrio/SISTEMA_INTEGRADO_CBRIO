@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { solicitacoes as api, marketing as marketingApi } from '../api';
-import NovaSolicitacaoForm, { CATEGORIAS } from '../components/solicitacoes/NovaSolicitacaoForm';
+import NovaSolicitacaoForm, { CATEGORIAS, DocDropzone } from '../components/solicitacoes/NovaSolicitacaoForm';
 import useConfirmarSaida from '../hooks/useConfirmarSaida';
 import { playSuccessSound } from '../lib/sounds';
 import { Badge } from '../components/ui/badge';
@@ -2583,6 +2583,21 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
+          {/* Ainda no portão de aprovação · atalho pro solicitante corrigir/anexar */}
+          {item.status === 'aguardando_aprovacao_origem' && item.solicitante_id === currentUserId && (
+            <div className="flex flex-wrap items-center gap-2 justify-between p-3 rounded-lg border border-violet-500/40 bg-violet-500/10">
+              <div className="flex items-center gap-2 text-sm text-violet-800 dark:text-violet-300">
+                <Pencil className="h-4 w-4 shrink-0" />
+                <span className="font-medium">Ainda não foi aprovada · esqueceu algo? Dá pra editar e anexar documento.</span>
+              </div>
+              <Button size="sm" onClick={() => {
+                document.getElementById('editar-antes-aprovacao')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }}>
+                Editar solicitação
+              </Button>
+            </div>
+          )}
+
           {/* Rastreio do pedido · etapas macro + com quem está (versão completa) */}
           <TrackerSolicitacao item={item} />
 
@@ -2689,6 +2704,18 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                   <FileText className="h-4 w-4" /> Ver comprovante
                 </a>
               )}
+            </div>
+          )}
+
+          {/* Documento anexado (genérico) · reembolso/pagamento já mostram nos
+              próprios blocos; as demais categorias podem ganhar anexo na edição
+              pré-aprovação e ele aparece aqui */}
+          {item.documento_url && !['reembolso', 'pagamento'].includes(item.categoria) && (
+            <div className="pt-3 border-t border-border">
+              <a href={item.documento_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+                <FileText className="h-4 w-4" /> Ver documento anexado
+              </a>
             </div>
           )}
 
@@ -3270,7 +3297,7 @@ const MOTIVOS_PROBLEMA = [
   { value: 'data', label: 'Data' },
   { value: 'cancelamento', label: 'Cancelamento' },
 ];
-const MOTIVO_LABEL = { descricao: 'Descrição', escopo: 'Escopo', data: 'Data', cancelamento: 'Cancelamento', resposta: 'Resposta' };
+const MOTIVO_LABEL = { descricao: 'Descrição', escopo: 'Escopo', data: 'Data', cancelamento: 'Cancelamento', resposta: 'Resposta', edicao: 'Edição' };
 
 // Termômetro "pedimos bem?" · % das solicitações que precisaram de ajuste (90d).
 // Diagnóstico NÃO punitivo (decisão do Marcos) · só na aba "Para Atender" (gestão/responsável).
@@ -3385,9 +3412,13 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
   const [comentario, setComentario] = useState('');
   const [resposta, setResposta] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Edição direta ANTES da aprovação de origem (corrigir dados / anexar o que faltou)
+  const [editarAberto, setEditarAberto] = useState(false);
+  const [docFile, setDocFile] = useState(null);
   const [edit, setEdit] = useState({
     titulo: item.titulo || '', descricao: item.descricao || '',
     justificativa: item.justificativa || '', data_necessaria: item.data_necessaria || '',
+    valor_estimado: item.valor_estimado != null ? String(item.valor_estimado) : '',
   });
   // Itens do pedido (compras/serviço) · editáveis na devolução.
   const ehCompras = ['compras', 'servico'].includes(item.categoria);
@@ -3416,6 +3447,10 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
   // Ainda aguardando o diretor de origem · o ciclo de ajuste/devolução só vale depois.
   const aguardaOrigem = item.status === 'aguardando_aprovacao_origem' || ['pendente', 'triagem'].includes(item.aprovacao_origem_status);
   const podeRelatar = (isSolicitante || isAdmin) && !encerrada && !emAjuste && !aguardaOrigem;
+  // Ainda no portão de origem · o solicitante pode EDITAR direto (corrigir dados,
+  // anexar o documento que faltou) enquanto ninguém aprovou (2026-07-14).
+  const emAprovacao = item.status === 'aguardando_aprovacao_origem';
+  const podeEditarAntes = (isSolicitante || isAdmin) && emAprovacao;
 
   useEffect(() => {
     let alive = true;
@@ -3464,9 +3499,108 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
     finally { setSubmitting(false); }
   }
 
+  // Edição antes da aprovação · sobe o anexo (se houver) e salva os campos.
+  async function salvarEdicao() {
+    if (!edit.titulo.trim()) { toast.error('O título não pode ficar vazio.'); return; }
+    setSubmitting(true);
+    try {
+      let documento_url;
+      if (docFile) {
+        const ext = (docFile.name.split('.').pop() || 'pdf').toLowerCase();
+        const path = `comprovantes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from('solicitacoes')
+          .upload(path, docFile, { upsert: false });
+        if (upErr) throw new Error('Erro ao enviar o documento: ' + upErr.message);
+        documento_url = supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl;
+      }
+      await api.editar(item.id, {
+        titulo: edit.titulo.trim(), descricao: edit.descricao,
+        justificativa: edit.justificativa, data_necessaria: edit.data_necessaria || null,
+        ...(!ehCompras && edit.valor_estimado !== '' ? { valor_estimado: edit.valor_estimado } : {}),
+        ...(documento_url ? { documento_url } : {}),
+        ...(ehCompras ? {
+          itens_lista: itens
+            .filter(it => String(it.descricao || '').trim())
+            .map(it => ({
+              descricao: it.descricao, quantidade: Number(it.quantidade) || 1,
+              valor_estimado: it.valor_estimado, valor_tipo: it.valor_tipo,
+              link_referencia: it.link_referencia || null,
+            })),
+        } : {}),
+      });
+      toast.success('Solicitação atualizada · o aprovador foi avisado.');
+      setDocFile(null); setEditarAberto(false);
+      api.timeline(item.id).then(d => setLinha(Array.isArray(d) ? d : [])).catch(() => {});
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao salvar edição'); }
+    finally { setSubmitting(false); }
+  }
+
   // Último problema relatado (devolução da área ou alteração pedida) · ignora a
-  // tréplica do solicitante ('resposta') e os cancelamentos.
-  const ultimoAjuste = [...linha].reverse().find(l => l.tipo === 'ajuste' && !['cancelamento', 'resposta'].includes(l.motivo));
+  // tréplica do solicitante ('resposta'), a edição pré-aprovação e os cancelamentos.
+  const ultimoAjuste = [...linha].reverse().find(l => l.tipo === 'ajuste' && !['cancelamento', 'resposta', 'edicao'].includes(l.motivo));
+
+  // Campos comuns aos dois modos de edição do solicitante (devolvida pra ajuste
+  // × antes da aprovação) · mesmo estado `edit`/`itens` nos dois blocos.
+  const camposBasicos = (
+    <>
+      <div className="space-y-2">
+        <Label className="text-xs">Título</Label>
+        <Input value={edit.titulo} onChange={e => setEdit(s => ({ ...s, titulo: e.target.value }))} />
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs">Descrição</Label>
+        <Textarea rows={2} value={edit.descricao} onChange={e => setEdit(s => ({ ...s, descricao: e.target.value }))} />
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs">Justificativa</Label>
+        <Textarea rows={2} value={edit.justificativa} onChange={e => setEdit(s => ({ ...s, justificativa: e.target.value }))} />
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs">Data necessária</Label>
+        <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
+          onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
+      </div>
+    </>
+  );
+  const itensEditor = ehCompras && (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">Itens do pedido</Label>
+        {totalItens > 0 && (
+          <span className="text-[11px] text-muted-foreground">
+            Total: {totalItens.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          </span>
+        )}
+      </div>
+      <div className="space-y-2">
+        {itens.map((it, i) => (
+          <div key={i} className="rounded-md border border-border bg-background p-2 space-y-1.5">
+            <div className="flex gap-1.5">
+              <Input className="flex-1" placeholder="Descrição do item" value={it.descricao}
+                onChange={e => setItemLinha(i, { descricao: e.target.value })} />
+              <button type="button" className="text-red-600 text-xs px-1 shrink-0" onClick={() => delItemLinha(i)} title="Remover item">✕</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <Input type="number" min="1" step="1" className="w-16" placeholder="Qtd" value={it.quantidade}
+                onChange={e => setItemLinha(i, { quantidade: e.target.value })} />
+              <Input type="number" min="0" step="any" className="w-28" placeholder="Valor (R$)" value={it.valor_estimado}
+                onChange={e => setItemLinha(i, { valor_estimado: e.target.value })} />
+              <select className="h-9 rounded-md border border-input bg-background px-2 text-xs" value={it.valor_tipo}
+                onChange={e => setItemLinha(i, { valor_tipo: e.target.value })}>
+                <option value="total">R$ total</option>
+                <option value="unitario">R$ por unid.</option>
+              </select>
+            </div>
+            <Input className="text-xs" placeholder="Link de referência (opcional)" value={it.link_referencia}
+              onChange={e => setItemLinha(i, { link_referencia: e.target.value })} />
+          </div>
+        ))}
+        <Button type="button" size="sm" variant="outline" onClick={addItemLinha} className="w-full">+ Adicionar item</Button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-3 pt-3 border-t border-border">
@@ -3475,6 +3609,53 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
           Esta solicitação foi ajustada {item.vezes_refeita}× durante o processo.
         </p>
       )}
+      {/* Ainda aguardando o diretor aprovar · o solicitante edita direto
+          (corrigir dados / anexar o documento que faltou · 2026-07-14) */}
+      {podeEditarAntes && (
+        editarAberto ? (
+          <div id="editar-antes-aprovacao" className="space-y-3 p-3 rounded-lg border border-violet-500/30 bg-violet-500/5">
+            <p className="text-sm font-semibold text-violet-700 dark:text-violet-400">Editar solicitação · ainda aguardando aprovação</p>
+            <p className="text-xs text-muted-foreground">
+              Corrija os dados ou anexe o documento que faltou enquanto o diretor não aprova.
+              A edição fica registrada na linha do tempo e o aprovador é avisado.
+            </p>
+            {camposBasicos}
+            {!ehCompras && (
+              <div className="space-y-2">
+                <Label className="text-xs">{item.categoria === 'reembolso' ? 'Valor (exato da nota)' : 'Valor estimado (R$)'}</Label>
+                <Input type="number" min="0" step="0.01" value={edit.valor_estimado}
+                  onChange={e => setEdit(s => ({ ...s, valor_estimado: e.target.value }))} />
+              </div>
+            )}
+            {itensEditor}
+            <div className="space-y-2">
+              <Label className="text-xs">Documento / comprovante {item.documento_url ? '· substituir o atual' : '· anexar'}</Label>
+              {item.documento_url && !docFile && (
+                <a href={item.documento_url} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-xs text-primary hover:underline">
+                  <FileText className="h-3.5 w-3.5" /> Ver documento atual
+                </a>
+              )}
+              <DocDropzone file={docFile} onFile={setDocFile} onClear={() => setDocFile(null)} />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="outline" onClick={() => { setEditarAberto(false); setDocFile(null); }}>Cancelar</Button>
+              <Button size="sm" onClick={salvarEdicao} disabled={submitting}>
+                {submitting ? 'Salvando...' : 'Salvar alterações'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div id="editar-antes-aprovacao" className="flex flex-wrap items-center gap-2 justify-between p-3 rounded-lg border border-violet-500/40 bg-violet-500/10">
+            <div className="flex items-center gap-2 text-sm text-violet-800 dark:text-violet-300">
+              <Pencil className="h-4 w-4 shrink-0" />
+              <span className="font-medium">Aguardando aprovação · você ainda pode editar este pedido.</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setEditarAberto(true)}>Editar solicitação</Button>
+          </div>
+        )
+      )}
+
       {emAjuste && isSolicitante && (
         <div id="editar-devolvida" className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Ajuste solicitado · corrija e reenvie</p>
@@ -3484,61 +3665,9 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
               {ultimoAjuste.comentario ? `: ${ultimoAjuste.comentario}` : ''}
             </p>
           )}
-          <div className="space-y-2">
-            <Label className="text-xs">Título</Label>
-            <Input value={edit.titulo} onChange={e => setEdit(s => ({ ...s, titulo: e.target.value }))} />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Descrição</Label>
-            <Textarea rows={2} value={edit.descricao} onChange={e => setEdit(s => ({ ...s, descricao: e.target.value }))} />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Justificativa</Label>
-            <Textarea rows={2} value={edit.justificativa} onChange={e => setEdit(s => ({ ...s, justificativa: e.target.value }))} />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Data necessária</Label>
-            <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
-              onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
-          </div>
+          {camposBasicos}
 
-          {ehCompras && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Itens do pedido</Label>
-                {totalItens > 0 && (
-                  <span className="text-[11px] text-muted-foreground">
-                    Total: {totalItens.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                  </span>
-                )}
-              </div>
-              <div className="space-y-2">
-                {itens.map((it, i) => (
-                  <div key={i} className="rounded-md border border-border bg-background p-2 space-y-1.5">
-                    <div className="flex gap-1.5">
-                      <Input className="flex-1" placeholder="Descrição do item" value={it.descricao}
-                        onChange={e => setItemLinha(i, { descricao: e.target.value })} />
-                      <button type="button" className="text-red-600 text-xs px-1 shrink-0" onClick={() => delItemLinha(i)} title="Remover item">✕</button>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      <Input type="number" min="1" step="1" className="w-16" placeholder="Qtd" value={it.quantidade}
-                        onChange={e => setItemLinha(i, { quantidade: e.target.value })} />
-                      <Input type="number" min="0" step="any" className="w-28" placeholder="Valor (R$)" value={it.valor_estimado}
-                        onChange={e => setItemLinha(i, { valor_estimado: e.target.value })} />
-                      <select className="h-9 rounded-md border border-input bg-background px-2 text-xs" value={it.valor_tipo}
-                        onChange={e => setItemLinha(i, { valor_tipo: e.target.value })}>
-                        <option value="total">R$ total</option>
-                        <option value="unitario">R$ por unid.</option>
-                      </select>
-                    </div>
-                    <Input className="text-xs" placeholder="Link de referência (opcional)" value={it.link_referencia}
-                      onChange={e => setItemLinha(i, { link_referencia: e.target.value })} />
-                  </div>
-                ))}
-                <Button type="button" size="sm" variant="outline" onClick={addItemLinha} className="w-full">+ Adicionar item</Button>
-              </div>
-            </div>
-          )}
+          {itensEditor}
 
           <div className="space-y-2">
             <Label className="text-xs">Sua resposta <span className="text-red-500">*</span></Label>
@@ -3596,7 +3725,9 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
                       {l.tipo === 'ajuste'
                         ? (l.motivo === 'resposta'
                             ? 'Resposta do solicitante'
-                            : `${l.lado === 'responsavel' ? 'Devolução' : 'Ajuste pedido'} · ${MOTIVO_LABEL[l.motivo] || l.motivo}`)
+                            : l.motivo === 'edicao'
+                              ? 'Editada pelo solicitante (antes da aprovação)'
+                              : `${l.lado === 'responsavel' ? 'Devolução' : 'Ajuste pedido'} · ${MOTIVO_LABEL[l.motivo] || l.motivo}`)
                         : getStatusMeta(l.status_novo).label}
                     </span>
                     <span className="text-muted-foreground text-[10px] whitespace-nowrap">

@@ -1755,6 +1755,8 @@ export const solicitacoes = {
   minhasAprovacoes: (params) => get('/solicitacoes/minhas-aprovacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   relatarProblema: (id, motivo, comentario) => post(`/solicitacoes/${id}/relatar-problema`, { motivo, comentario }),
   reenviar:        (id, campos) => post(`/solicitacoes/${id}/reenviar`, campos || {}),
+  // Edição pelo solicitante ANTES da aprovação de origem (ex.: esqueceu o anexo)
+  editar:          (id, campos) => patch(`/solicitacoes/${id}/editar`, campos || {}),
   diagnosticoRefeitas: (dias = 90) => get(`/solicitacoes/dashboard/refeitas?dias=${dias}`),
   // Ponte estoque (Fase 3a-2) · atender pela estoque dá baixa + resolve
   estoqueProdutos: (busca) => get('/solicitacoes/estoque/produtos' + (busca ? '?busca=' + encodeURIComponent(busca) : '')),
