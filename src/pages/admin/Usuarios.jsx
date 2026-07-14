@@ -440,6 +440,7 @@ function NovoUsuarioDialog({ estrutura, onClose, onCreated }) {
 }
 
 function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, onSaved, onColaboradorChange }) {
+  const { isDev } = useAuth(); // editar e-mail de login = só devs (você + Marcos)
   const carregando = !dadosUsuario;
   const usuario = dadosUsuario?.usuario;
   const areasUsuario = dadosUsuario?.areas || [];
@@ -450,6 +451,25 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
   const [areasSelecionadas, setAreasSelecionadas] = useState(new Set());
   const [salvando, setSalvando] = useState(false);
   const [mostrarNovoOverride, setMostrarNovoOverride] = useState(false);
+  const [editandoEmail, setEditandoEmail] = useState(false);
+  const [novoEmail, setNovoEmail] = useState(colaborador.email || '');
+  const [salvandoEmail, setSalvandoEmail] = useState(false);
+
+  async function salvarEmail() {
+    const em = novoEmail.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { toast.error('E-mail inválido'); return; }
+    setSalvandoEmail(true);
+    try {
+      await api.setEmail(colaborador.id, em);
+      onColaboradorChange?.(colaborador.id, { email: em });
+      setEditandoEmail(false);
+      toast.success('E-mail atualizado · a pessoa loga com o novo e-mail');
+    } catch (e) {
+      toast.error(e.message || 'Erro ao editar o e-mail');
+    } finally {
+      setSalvandoEmail(false);
+    }
+  }
 
   // Sincroniza estado quando dados carregam
   useEffect(() => {
@@ -534,6 +554,30 @@ function EditarUsuarioDialog({ colaborador, dadosUsuario, estrutura, onClose, on
           </div>
         ) : (
           <div className="space-y-6 mt-4">
+            {/* E-mail de acesso · editar (só devs) */}
+            {isDev && (
+              <section>
+                <h3 className="text-sm font-semibold text-foreground mb-2">E-mail de acesso</h3>
+                {editandoEmail ? (
+                  <div className="flex gap-2">
+                    <Input value={novoEmail} type="email" onChange={e => setNovoEmail(e.target.value)} className="h-9" placeholder="novo@cbrio.org" />
+                    <Button size="sm" onClick={salvarEmail} disabled={salvandoEmail}>
+                      {salvandoEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setEditandoEmail(false); setNovoEmail(colaborador.email || ''); }} disabled={salvandoEmail}>Cancelar</Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground">{colaborador.email || '—'}</span>
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setEditandoEmail(true)}>
+                      <Pencil className="h-3.5 w-3.5" /> Editar e-mail
+                    </Button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-1.5">Muda o e-mail de <strong>login</strong> (a pessoa passa a entrar com o novo). Só funciona pra quem tem login de sistema.</p>
+              </section>
+            )}
+
             {/* Cargo */}
             <section>
               <h3 className="text-sm font-semibold text-foreground mb-2">Cargo</h3>
