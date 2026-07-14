@@ -8,6 +8,16 @@ const { supabase } = require('../utils/supabase');
 
 router.use(authenticate, authorize('admin', 'diretor'));
 
+// Criar LOGIN é restrito a "devs" (você + Marcos Paulo) · mesmo critério do
+// requireDev de agents.js (sobrescrevível por env DEV_EMAILS). Não confundir
+// com o authorize('admin','diretor') do router — isto restringe ainda mais.
+const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br')
+  .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+function ehDev(req) {
+  const email = (req.user?.email || '').toLowerCase();
+  return !!email && DEV_EMAILS.includes(email);
+}
+
 // Anti-escalacao de privilegio: ninguem altera o PROPRIO cargo/areas/overrides.
 // Mudar o proprio cargo pra `dev` (nivel 5 em tudo), se auto-conceder areas (boost
 // pra nivel 5) ou criar override pra si mesmo seria auto-promocao. Mudancas na
@@ -539,6 +549,84 @@ router.post('/usuario', async (req, res) => {
 
     res.json({ id: userId });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/permissoes/criar-login — cria um LOGIN de verdade (Supabase Auth) +
+// perfil de colaborador + cargo + áreas. RESTRITO a devs (você + Marcos Paulo).
+// Diferente do POST /usuario (que só mexe na tabela usuarios da matriz e NÃO
+// cria login). O usuário criado já entra confirmado (pode logar na hora).
+router.post('/criar-login', async (req, res) => {
+  if (!ehDev(req)) return res.status(403).json({ error: 'Acesso restrito.' });
+  try {
+    const { email, nome, senha, cargo_id, role, areas } = req.body || {};
+    const em = String(email || '').trim().toLowerCase();
+    if (!em || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) {
+      return res.status(400).json({ error: 'E-mail inválido' });
+    }
+    if (!nome || String(nome).trim().length < 2) {
+      return res.status(400).json({ error: 'Nome é obrigatório' });
+    }
+    if (!senha || String(senha).length < 6) {
+      return res.status(400).json({ error: 'A senha deve ter ao menos 6 caracteres' });
+    }
+    const roleFinal = ['assistente', 'diretor', 'admin'].includes(role) ? role : 'assistente';
+
+    // 1) cria no Auth (email_confirm: já pode logar sem confirmar e-mail)
+    const { data: created, error: authErr } = await supabase.auth.admin.createUser({
+      email: em,
+      password: String(senha),
+      email_confirm: true,
+      user_metadata: { nome: String(nome).trim(), origem: 'admin' },
+    });
+    if (authErr) {
+      const dup = /already|exists|registered|duplicate/i.test(authErr.message || '');
+      return res.status(400).json({ error: dup ? 'Já existe um usuário com esse e-mail.' : authErr.message });
+    }
+    const uid = created?.user?.id;
+    if (!uid) return res.status(500).json({ error: 'Falha ao criar o usuário no Auth.' });
+
+    // 2) perfil como COLABORADOR do sistema (o trigger handle_new_user já cria o
+    // profile; aqui garantimos role + is_membro_only=false + nome)
+    await supabase.from('profiles')
+      .update({ name: String(nome).trim(), role: roleFinal, is_membro_only: false })
+      .eq('id', uid);
+
+    // 2b) o trigger cria um membro "visitante" pra e-mail fora do RH — como este é
+    // um LOGIN de colaborador, remove esse membro-fantasma (só o criado por 'admin',
+    // nunca um membro real) e desvincula do perfil pra não poluir a Membresia.
+    try {
+      const { data: prof } = await supabase.from('profiles').select('membro_id').eq('id', uid).maybeSingle();
+      if (prof?.membro_id) {
+        const { data: mem } = await supabase.from('mem_membros')
+          .select('id, origem_cadastro, status').eq('id', prof.membro_id).maybeSingle();
+        if (mem && mem.origem_cadastro === 'admin' && mem.status === 'visitante') {
+          await supabase.rpc('app_soft_delete', { p_table_name: 'mem_membros', p_row_id: mem.id, p_deleted_by: req.user?.userId ?? null });
+          await supabase.from('profiles').update({ membro_id: null }).eq('id', uid);
+        }
+      }
+    } catch (limpErr) { console.warn('[permissoes] criar-login limpeza membro:', limpErr.message); }
+
+    // 3) linha em usuarios (matriz) + cargo, e 4) áreas (boost de módulo)
+    const resolved = await resolverUsuarioId(uid);
+    if (resolved?.id != null) {
+      const patch = { nome: String(nome).trim() };
+      if (cargo_id) patch.cargo_id = cargo_id;
+      await supabase.from('usuarios').update(patch).eq('id', resolved.id);
+
+      if (Array.isArray(areas) && areas.length) {
+        await supabase.from('usuario_areas').delete().eq('usuario_id', resolved.id);
+        const rows = areas.map((aid, i) => ({ usuario_id: resolved.id, area_id: aid, is_principal: i === 0 }));
+        const { error: aerr } = await supabase.from('usuario_areas').insert(rows);
+        if (aerr) console.warn('[permissoes] criar-login áreas:', aerr.message);
+      }
+    }
+
+    bustPermissionCaches();
+    res.status(201).json({ id: uid, email: em });
+  } catch (e) {
+    console.error('[permissoes] criar-login:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao criar o usuário' });
+  }
 });
 
 // PUT /api/permissoes/usuario/:id/cargo — update user cargo

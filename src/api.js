@@ -1590,6 +1590,8 @@ export const permissoes = {
   usuario: (id) => get(`/permissoes/usuario/${id}`),
   usuarioPorEmail: (email) => get(`/permissoes/usuario-por-email/${encodeURIComponent(email)}`),
   criarUsuario: (data) => post('/permissoes/usuario', data),
+  // Cria um LOGIN de verdade (auth + perfil + cargo/áreas) · restrito a devs
+  criarLogin: (data) => post('/permissoes/criar-login', data),
   setCargo: (id, cargo_id) => put(`/permissoes/usuario/${id}/cargo`, { cargo_id }),
   setRole: (id, role) => put(`/permissoes/usuario/${id}/role`, { role }),
   setAreas: (id, area_ids) => put(`/permissoes/usuario/${id}/areas`, { area_ids }),
