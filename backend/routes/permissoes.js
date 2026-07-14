@@ -637,6 +637,46 @@ router.post('/criar-login', async (req, res) => {
   }
 });
 
+// PUT /api/permissoes/usuario/:id/email — troca o e-mail de LOGIN (Auth) e espelha
+// em profiles/usuarios. RESTRITO a devs (mexe na identidade de login). :id = UUID
+// do profile (== auth.users.id).
+router.put('/usuario/:id/email', async (req, res) => {
+  if (!(await ehDev(req))) return res.status(403).json({ error: 'Acesso restrito.' });
+  try {
+    const uid = req.params.id;
+    const novo = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(novo)) return res.status(400).json({ error: 'E-mail inválido' });
+
+    // precisa ser um login de verdade (profile.id == auth.users.id)
+    const { data: got, error: getErr } = await supabase.auth.admin.getUserById(uid);
+    if (getErr || !got?.user) {
+      return res.status(404).json({ error: 'Essa pessoa não tem login de sistema (só ficha) — não dá pra editar o e-mail.' });
+    }
+    const antigo = (got.user.email || '').toLowerCase();
+    if (novo === antigo) return res.json({ success: true, email: novo });
+
+    // e-mail já usado por outra conta?
+    const { data: dupe } = await supabase.from('profiles').select('id').ilike('email', novo).neq('id', uid).maybeSingle();
+    if (dupe) return res.status(400).json({ error: 'Já existe outra conta com esse e-mail.' });
+
+    // 1) Auth (fonte de verdade do login)
+    const { error: upErr } = await supabase.auth.admin.updateUserById(uid, { email: novo, email_confirm: true });
+    if (upErr) {
+      const dup = /already|exists|registered|duplicate/i.test(upErr.message || '');
+      return res.status(400).json({ error: dup ? 'Já existe outra conta com esse e-mail.' : upErr.message });
+    }
+    // 2) espelha em profiles + usuarios (usuarios liga por email)
+    await supabase.from('profiles').update({ email: novo }).eq('id', uid);
+    if (antigo) await supabase.from('usuarios').update({ email: novo }).eq('email', antigo);
+
+    bustPermissionCaches();
+    res.json({ success: true, email: novo });
+  } catch (e) {
+    console.error('[permissoes] editar-email:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao editar o e-mail' });
+  }
+});
+
 // PUT /api/permissoes/usuario/:id/cargo — update user cargo
 router.put('/usuario/:id/cargo', async (req, res) => {
   try {
@@ -766,6 +806,11 @@ router.put('/usuario/:id/modulo', async (req, res) => {
       await supabase.from('permissoes_modulo')
         .delete().eq('usuario_id', userId).eq('modulo_id', modulo_id);
     } else {
+      // criado_por é INTEGER (id legado de usuarios) — usar o usuarioId granular
+      // do ator, NUNCA req.user.userId (que é o UUID do profile → "invalid input
+      // syntax for type integer"). Fallback null quando não houver id numérico.
+      const criadoPor = /^\d+$/.test(String(req.user?.granular?.usuarioId ?? ''))
+        ? Number(req.user.granular.usuarioId) : null;
       const { error } = await supabase.from('permissoes_modulo').upsert({
         usuario_id: userId,
         modulo_id,
@@ -776,7 +821,7 @@ router.put('/usuario/:id/modulo', async (req, res) => {
         escopo_proprio: !!escopo_proprio,
         motivo,
         expira_em,
-        criado_por: req.user?.userId || null,
+        criado_por: criadoPor,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'usuario_id,modulo_id' });
       if (error) return res.status(400).json({ error: error.message });
