@@ -4,7 +4,7 @@ const router = require('express').Router();
 // 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { acharOuCriarGuardado, normalizarNome, normalizarCpf, normalizarTelefone, normalizarEmail } = require('../services/membroMatch');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
@@ -1667,6 +1667,297 @@ router.get('/pessoas/buscar', authorizeModule('grupos', 1), async (req, res) => 
 
     res.json(resultado);
   } catch (e) { console.error('[Grupos pessoas buscar]', e.message); res.status(500).json({ error: 'Erro ao buscar pessoas' }); }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Duplicatas do universo de grupos (Marcos · 2026-07-14)
+// A base acumulou registros repetidos da mesma pessoa: cada porta de entrada
+// (imports, sync RH, decisão de culto, inscrição) cria um stub quando não há
+// chave forte pra ligar. O CPF obrigatório na inscrição estanca o problema
+// daqui pra frente; o LEGADO é resolvido aqui — a triagem (Naná) vê os
+// cadastros de grupos com possível duplicata e funde (merge_membros, com
+// log/snapshot) ou marca "não é duplicata" (mem_duplicados_ignorados).
+// ─────────────────────────────────────────────────────────────
+
+function _bigramas(s) {
+  const m = new Map();
+  for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m.set(g, (m.get(g) || 0) + 1); }
+  return m;
+}
+function _dice(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const ba = _bigramas(a), bb = _bigramas(b);
+  let inter = 0, ta = 0, tb = 0;
+  for (const v of ba.values()) ta += v;
+  for (const v of bb.values()) tb += v;
+  for (const [g, v] of ba) inter += Math.min(v, bb.get(g) || 0);
+  return ta + tb ? (2 * inter) / (ta + tb) : 0;
+}
+// Prenomes compostos comuns: "Carlos Alberto" como prefixo de "Carlos
+// Alberto Silva Gago" NÃO sugere a mesma pessoa (o 2º nome é prenome, não
+// sobrenome) — sem esta lista, stubs de 2 tokens viravam bola de neve
+// juntando 5 Carlos Albertos diferentes (medido em prod · 14/07).
+const PRENOMES_MEIO = new Set([
+  'alberto', 'fernando', 'henrique', 'eduardo', 'augusto', 'cesar', 'luiz', 'luis',
+  'carlos', 'antonio', 'paulo', 'pedro', 'miguel', 'gabriel', 'felipe', 'filipe',
+  'andre', 'jose', 'joao', 'maria', 'helena', 'luiza', 'vitoria', 'eduarda',
+  'cristina', 'aparecida', 'fatima', 'lucia', 'beatriz', 'gabriela', 'fernanda',
+  'paula', 'clara', 'alice', 'victor', 'vitor',
+]);
+
+// "Quase o mesmo nome": dice alto (pega typo — Litwiczuk/Litwinczuk — e nome
+// truncado de import) OU os tokens de um contidos no outro (pega nome de
+// casada/completo — "Renata Martins Bispo" ⊆ "Renata Cristina Martins
+// Bispo"). Só sugestão: quem decide é a triagem (nunca fusão automática).
+function _nomesParecidos(na, nb) {
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (_dice(na, nb) >= 0.88) return true;
+  const ta = na.split(' ').filter(t => t.length >= 2);
+  const tb = nb.split(' ').filter(t => t.length >= 2);
+  if (ta.length < 2 || tb.length < 2) return false;
+  const [menor, maior] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  const setMaior = new Set(maior);
+  if (!menor.every(t => setMaior.has(t))) return false;
+  // "Prenome composto" puro como prefixo (carlos alberto ⊆ carlos alberto
+  // silva gago) é fraco demais — só quando o 2º token é sobrenome de fato
+  // (elias magon ⊆ elias magon filho segue valendo).
+  if (menor.length === 2 && maior.length > 2
+    && maior[0] === menor[0] && maior[1] === menor[1]
+    && PRENOMES_MEIO.has(menor[1])) return false;
+  return true;
+}
+
+// Universo de grupos: quem lidera OU tem vínculo (qualquer época) em grupo
+// não-deletado. Map<membro_id, rótulos de contexto>.
+async function universoGrupos() {
+  const gruposDe = new Map();
+  const anota = (id, rotulo) => {
+    if (!id) return;
+    if (!gruposDe.has(id)) gruposDe.set(id, []);
+    const arr = gruposDe.get(id);
+    if (!arr.includes(rotulo)) arr.push(rotulo);
+  };
+
+  const { data: gs, error: eG } = await supabase.from('mem_grupos')
+    .select('id, nome, lider_id').is('deleted_at', null).limit(2000);
+  if (eG) throw eG;
+  const nomeGrupo = new Map((gs || []).map(g => [g.id, g.nome]));
+  (gs || []).forEach(g => anota(g.lider_id, `Líder · ${g.nome}`));
+
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('membro_id, grupo_id, saiu_em')
+      .is('deleted_at', null)
+      .range(offset, offset + PAGE - 1);
+    if (error) throw error;
+    (data || []).forEach(v => {
+      const nome = nomeGrupo.get(v.grupo_id);
+      if (nome) anota(v.membro_id, `${v.saiu_em ? 'Participou' : 'Participa'} · ${nome}`);
+    });
+    if (!data || data.length < PAGE) break;
+  }
+  return gruposDe;
+}
+
+// Cache do scan (o cálculo varre o universo inteiro) — bust ao fundir/ignorar.
+let _dupCache = { ts: 0, payload: null };
+const DUP_CACHE_MS = 5 * 60 * 1000;
+
+// GET /api/grupos/duplicatas — clusters de possíveis duplicatas no universo
+// de grupos. Critérios: mesmo CPF / telefone / e-mail / nome+nascimento
+// (chaves exatas) + nome muito parecido (sugestão pra revisão humana).
+router.get('/duplicatas', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    if (_dupCache.payload && Date.now() - _dupCache.ts < DUP_CACHE_MS && req.query.fresh !== '1') {
+      return res.json(_dupCache.payload);
+    }
+
+    const gruposDe = await universoGrupos();
+    const ids = [...gruposDe.keys()];
+    if (!ids.length) return res.json({ clusters: [], total_pessoas_universo: 0 });
+
+    // Dados das pessoas do universo. Lotes de 200 em PARALELO: .in() com
+    // ~400+ uuids estoura a linha de request e o fetch falha (medido em
+    // prod: 300 ok, 400 falha).
+    const lotes = [];
+    for (let i = 0; i < ids.length; i += 200) lotes.push(ids.slice(i, i + 200));
+    const respostas = await Promise.all(lotes.map(lote => supabase.from('mem_membros')
+      .select('id, nome, cpf, telefone, email, data_nascimento, status, foto_url, created_at')
+      .in('id', lote)
+      .eq('active', true).is('deleted_at', null)));
+    const pessoas = [];
+    for (const { data, error } of respostas) {
+      if (error) throw error;
+      pessoas.push(...(data || []));
+    }
+
+    // Pares já revisados ("não é duplicata") ficam fora
+    const ignorados = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase.from('mem_duplicados_ignorados')
+        .select('membro_a_id, membro_b_id').range(offset, offset + 999);
+      if (error) throw error;
+      (data || []).forEach(p => ignorados.add(`${p.membro_a_id}|${p.membro_b_id}`));
+      if (!data || data.length < 1000) break;
+    }
+    const parIgnorado = (a, b) => { const [x, y] = [a, b].sort(); return ignorados.has(`${x}|${y}`); };
+
+    const norm = pessoas.map(p => ({
+      ...p,
+      _nome: normalizarNome(p.nome),
+      _cpf: normalizarCpf(p.cpf),
+      _tel: normalizarTelefone(p.telefone),
+      _email: normalizarEmail(p.email),
+    }));
+
+    // Union-find: pares por chave exata + nome parecido → clusters
+    const paiDe = new Map();
+    const find = (x) => { let r = x; while (paiDe.get(r) && paiDe.get(r) !== r) r = paiDe.get(r); paiDe.set(x, r); return r; };
+    const motivosPar = new Map(); // 'a|b' (ordenado) → Set<motivo>
+    const unir = (a, b, motivo) => {
+      // CPFs preenchidos e DIFERENTES = pessoas distintas por definição:
+      // nome parecido / telefone de família não passam por cima.
+      if (motivo !== 'mesmo CPF' && a._cpf && b._cpf && a._cpf !== b._cpf) return;
+      if (parIgnorado(a.id, b.id)) return;
+      const [x, y] = [a.id, b.id].sort();
+      const k = `${x}|${y}`;
+      if (!motivosPar.has(k)) motivosPar.set(k, new Set());
+      motivosPar.get(k).add(motivo);
+      if (!paiDe.has(a.id)) paiDe.set(a.id, a.id);
+      if (!paiDe.has(b.id)) paiDe.set(b.id, b.id);
+      const ra = find(a.id), rb = find(b.id);
+      if (ra !== rb) paiDe.set(ra, rb);
+    };
+
+    // exigeNome: telefone e e-mail são COMPARTILHADOS em família — sozinhos
+    // não indicam duplicata (juntariam mãe e filha). Só unem quando o nome
+    // também é parecido. CPF e nome+nascimento são individuais: unem direto.
+    const porChave = (getter, motivo, minLen = 1, exigeNome = false) => {
+      const mapa = new Map();
+      for (const p of norm) {
+        const v = getter(p);
+        if (!v || String(v).length < minLen) continue;
+        if (!mapa.has(v)) mapa.set(v, []);
+        mapa.get(v).push(p);
+      }
+      for (const lista of mapa.values()) {
+        for (let i = 0; i < lista.length; i++) {
+          for (let j = i + 1; j < lista.length; j++) {
+            if (exigeNome && !_nomesParecidos(lista[i]._nome, lista[j]._nome)) continue;
+            unir(lista[i], lista[j], motivo);
+          }
+        }
+      }
+    };
+    porChave(p => p._cpf, 'mesmo CPF', 11);
+    porChave(p => p._tel, 'mesmo telefone', 10, true);
+    porChave(p => p._email, 'mesmo e-mail', 5, true);
+    porChave(p => (p._nome && p.data_nascimento ? `${p._nome}|${p.data_nascimento}` : null), 'mesmo nome e nascimento');
+
+    // Nome parecido — compara só dentro do bucket do 1º token do nome
+    const buckets = new Map();
+    for (const p of norm) {
+      const t0 = (p._nome || '').split(' ')[0];
+      if (!t0 || t0.length < 3) continue;
+      if (!buckets.has(t0)) buckets.set(t0, []);
+      buckets.get(t0).push(p);
+    }
+    for (const lista of buckets.values()) {
+      if (lista.length < 2 || lista.length > 200) continue;
+      for (let i = 0; i < lista.length; i++) {
+        for (let j = i + 1; j < lista.length; j++) {
+          if (_nomesParecidos(lista[i]._nome, lista[j]._nome)) unir(lista[i], lista[j], 'nome muito parecido');
+        }
+      }
+    }
+
+    const porRaiz = new Map();
+    for (const p of norm) {
+      if (!paiDe.has(p.id)) continue;
+      const r = find(p.id);
+      if (!porRaiz.has(r)) porRaiz.set(r, []);
+      porRaiz.get(r).push(p);
+    }
+
+    const clusters = [];
+    for (const lista of porRaiz.values()) {
+      if (lista.length < 2) continue;
+      const idsC = new Set(lista.map(p => p.id));
+      const motivos = new Set();
+      for (const [k, ms] of motivosPar) {
+        const [x, y] = k.split('|');
+        if (idsC.has(x) && idsC.has(y)) ms.forEach(m => motivos.add(m));
+      }
+      clusters.push({
+        pessoas: lista.map(p => ({
+          id: p.id, nome: p.nome, cpf: p.cpf || null, telefone: p.telefone || null,
+          email: p.email || null, data_nascimento: p.data_nascimento || null,
+          status: p.status || null, foto_url: p.foto_url || null, criado_em: p.created_at,
+          grupos: gruposDe.get(p.id) || [],
+        })).sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em)),
+        motivos: [...motivos],
+      });
+    }
+    // Confiança maior primeiro (chave forte > nome parecido)
+    const peso = (ms) => ms.includes('mesmo CPF') ? 5 : ms.includes('mesmo telefone') ? 4
+      : ms.includes('mesmo e-mail') ? 3 : ms.includes('mesmo nome e nascimento') ? 2 : 1;
+    clusters.sort((a, b) => peso(b.motivos) - peso(a.motivos) || b.pessoas.length - a.pessoas.length);
+
+    const payload = { clusters, total_pessoas_universo: ids.length };
+    _dupCache = { ts: Date.now(), payload };
+    res.json(payload);
+  } catch (e) { console.error('[Grupos duplicatas]', e.message); res.status(500).json({ error: 'Erro ao analisar duplicatas' }); }
+});
+
+// POST /api/grupos/duplicatas/fundir — body { keep_id, merge_ids: [] }
+// Funde os cadastros no escolhido via merge_membros (move FKs, enriquece o
+// mantido com o que faltava, loga snapshot em mem_merge_log). Restrito ao
+// universo de grupos — é o escopo da triagem.
+router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const { keep_id, merge_ids } = req.body || {};
+    const merges = Array.isArray(merge_ids) ? [...new Set(merge_ids.filter(v => typeof v === 'string' && v && v !== keep_id))] : [];
+    if (!keep_id || !merges.length) return res.status(400).json({ error: 'Informe keep_id e merge_ids' });
+    if (merges.length > 10) return res.status(400).json({ error: 'Máximo de 10 cadastros por fusão' });
+
+    const gruposDe = await universoGrupos();
+    const fora = [keep_id, ...merges].filter(id => !gruposDe.has(id));
+    if (fora.length) return res.status(403).json({ error: 'Só cadastros do universo de grupos podem ser fundidos por aqui.' });
+
+    const { data, error } = await supabase.rpc('merge_membros', {
+      p_keep_id: keep_id,
+      p_merge_ids: merges,
+      p_feito_por: req.user?.id || req.user?.userId || null,
+      p_observacao: 'Fusão pela triagem de grupos (aba Duplicatas)',
+    });
+    if (error) throw error;
+    _dupCache = { ts: 0, payload: null };
+    res.json(data ?? { ok: true });
+  } catch (e) { console.error('[Grupos duplicatas fundir]', e.message); res.status(500).json({ error: e.message || 'Erro ao fundir cadastros' }); }
+});
+
+// POST /api/grupos/duplicatas/ignorar — body { ids: [] } · marca "não é
+// duplicata" (todos os pares do cluster saem das próximas análises).
+router.post('/duplicatas/ignorar', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.filter(v => typeof v === 'string' && v))] : [];
+    if (ids.length < 2 || ids.length > 12) return res.status(400).json({ error: 'Informe de 2 a 12 ids' });
+    const rows = [];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const [a, b] = [ids[i], ids[j]].sort();
+        rows.push({ membro_a_id: a, membro_b_id: b, ignorado_por: req.user?.id || req.user?.userId || null, motivo: 'Triagem de grupos: não é duplicata' });
+      }
+    }
+    const { error } = await supabase.from('mem_duplicados_ignorados')
+      .upsert(rows, { onConflict: 'membro_a_id,membro_b_id' });
+    if (error) throw error;
+    _dupCache = { ts: 0, payload: null };
+    res.json({ ok: true, pares: rows.length });
+  } catch (e) { console.error('[Grupos duplicatas ignorar]', e.message); res.status(500).json({ error: 'Erro ao registrar a decisão' }); }
 });
 
 // ══════════════════════════════════════════════

@@ -377,16 +377,21 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
     }
     if (membros.length === 0) return res.json([]);
 
-    // Anotar papéis (vw_pessoas_papeis), batch — evita N+1. Em lotes de 500:
-    // um .in() com milhares de ids estoura o tamanho da URL do PostgREST e a
-    // RESPOSTA também é capada em 1000 (papéis sumiriam em silêncio).
+    // Anotar papéis (vw_pessoas_papeis), batch — evita N+1. Em lotes de 200:
+    // um .in() com ~400+ uuids estoura o tamanho da linha de request (o
+    // fetch falha SILENCIOSO — medido em prod: 300 ok, 400 falha) e a
+    // resposta também é capada em 1000. Lotes em paralelo pra não somar
+    // latência; erro de lote é real (throw), não silêncio.
     const ids = membros.map(m => m.id);
     const papeisMap = {};
-    for (let i = 0; i < ids.length; i += 500) {
-      const { data: papeis } = await supabase
-        .from('vw_pessoas_papeis')
-        .select('membresia_id, is_voluntario, is_visitante, is_inscrito_next, in_grupo_ativo, is_contribuinte, total_inscricoes_next')
-        .in('membresia_id', ids.slice(i, i + 500));
+    const lotes = [];
+    for (let i = 0; i < ids.length; i += 200) lotes.push(ids.slice(i, i + 200));
+    const resultados = await Promise.all(lotes.map(lote => supabase
+      .from('vw_pessoas_papeis')
+      .select('membresia_id, is_voluntario, is_visitante, is_inscrito_next, in_grupo_ativo, is_contribuinte, total_inscricoes_next')
+      .in('membresia_id', lote)));
+    for (const { data: papeis, error: ePap } of resultados) {
+      if (ePap) throw ePap;
       (papeis || []).forEach(p => { papeisMap[p.membresia_id] = p; });
     }
 

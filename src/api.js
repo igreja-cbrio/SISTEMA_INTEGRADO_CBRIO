@@ -519,6 +519,12 @@ export const grupos = {
   buscarLideres: (params) => get('/grupos/lideres/buscar' + (params ? '?' + new URLSearchParams(params) : '')),
   // Autocomplete de líder do cadastro de grupo (universo de grupos, server-side)
   buscarPessoas: (q) => get('/grupos/pessoas/buscar?q=' + encodeURIComponent(q)),
+  // Possíveis duplicatas do universo de grupos (triagem da Naná)
+  duplicatas: {
+    list: (fresh) => get('/grupos/duplicatas' + (fresh ? '?fresh=1' : '')),
+    fundir: (keepId, mergeIds) => post('/grupos/duplicatas/fundir', { keep_id: keepId, merge_ids: mergeIds }),
+    ignorar: (ids) => post('/grupos/duplicatas/ignorar', { ids }),
+  },
   gruposDoLider: (liderId, params) => get(`/grupos/lideres/${liderId}/grupos` + (params ? '?' + new URLSearchParams(params) : '')),
   criarPedido: (grupoId, data) => post(`/grupos/${grupoId}/pedidos`, data),
   listarPedidos: (params) => get('/grupos/pedidos/list' + (params ? '?' + new URLSearchParams(params) : '')),

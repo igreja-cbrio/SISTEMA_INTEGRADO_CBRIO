@@ -20,6 +20,7 @@ import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
 import GruposOrganograma from './GruposOrganograma';
+import GruposDuplicatas from './GruposDuplicatas';
 // Import ESTÁTICO de propósito (13/07): o chunk dinâmico do mapa quebrava em
 // produção e derrubava a página em loop de reload. O GrupoSelector do form
 // público já embute o GruposMapView estaticamente — o peso do maplibre já é
@@ -183,7 +184,11 @@ export default function Grupos() {
   // automático de chunk velho pós-deploy — volta exatamente onde a pessoa estava.
   // Deep-links antigos (?tab=mapa / ?tab=organograma) abrem a aba nova já na view certa.
   const [gruposView, setGruposView] = useState(() => (tabDaUrl() === 'mapa' || viewDaUrl() === 'mapa' ? 'mapa' : 'lista'));
-  const [pessoasView, setPessoasView] = useState(() => (tabDaUrl() === 'organograma' || viewDaUrl() === 'organograma' ? 'organograma' : 'censo'));
+  const [pessoasView, setPessoasView] = useState(() => {
+    if (tabDaUrl() === 'organograma' || viewDaUrl() === 'organograma') return 'organograma';
+    if (viewDaUrl() === 'duplicatas') return 'duplicatas';
+    return 'censo';
+  });
   // Sub-visualização da aba Inscrições: QR codes (default) | gestão de temporadas
   const [configTab, setConfigTab] = useState(() => (['temporadas', 'geocode', 'config'].includes(tabDaUrl()) ? 'temporadas' : 'qr'));
 
@@ -196,7 +201,7 @@ export default function Grupos() {
     } catch {}
   };
   const trocarGruposView = (v) => { setGruposView(v); atualizarUrlView('grupos', v === 'mapa' ? 'mapa' : null); };
-  const trocarPessoasView = (v) => { setPessoasView(v); atualizarUrlView('pessoas', v === 'organograma' ? 'organograma' : null); };
+  const trocarPessoasView = (v) => { setPessoasView(v); atualizarUrlView('pessoas', v === 'censo' ? null : v); };
   const [visitaOpen, setVisitaOpen] = useState(false);
   // A aba Inscrições é visível a todos (mandar QR / ver a temporada no ar);
   // a seção de administração dentro dela só renderiza pra quem edita.
@@ -1340,15 +1345,19 @@ export default function Grupos() {
             opcoes={[
               { key: 'censo', label: 'Pessoas', Icon: UserCog },
               { key: 'organograma', label: 'Organograma', Icon: Compass },
+              { key: 'duplicatas', label: 'Duplicatas', Icon: Copy },
             ]}
           />
           {pessoasView === 'organograma' ? (
             <GruposOrganograma onOpenGrupo={openGrupoById} />
+          ) : pessoasView === 'duplicatas' ? (
+            <GruposDuplicatas podeResolver={podeGerenciarSupervisor} />
           ) : (
             <GruposPessoas
               onOpenGrupo={openGrupoById}
               podeEditar={podeEditarGrupos}
               gruposOptions={gruposList.filter(g => g.ativo)}
+              onVerDuplicatas={() => trocarPessoasView('duplicatas')}
             />
           )}
         </div>
