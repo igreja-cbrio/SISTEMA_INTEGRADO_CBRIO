@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { permissoes as api } from '../../api';
+import { useAuth } from '../../contexts/AuthContext';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
@@ -13,7 +14,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
 import { Checkbox } from '../../components/ui/checkbox';
-import { Search, X, Plus, Pencil, RotateCcw } from 'lucide-react';
+import { Search, X, Plus, Pencil, RotateCcw, Copy, Check, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const NIVEIS = [0, 1, 2, 3, 4, 5];
@@ -61,6 +62,7 @@ function formatDataExpiracao(iso) {
 }
 
 export default function Usuarios() {
+  const { isDev } = useAuth(); // só você + Marcos Paulo veem "Criar usuário"
   const [loading, setLoading] = useState(true);
   const [colaboradores, setColaboradores] = useState([]);
   const [estrutura, setEstrutura] = useState({ setores: [], areas: [], modulos: [], cargos: [] });
@@ -68,6 +70,7 @@ export default function Usuarios() {
   const [filtroCargo, setFiltroCargo] = useState('todos');
   const [editando, setEditando] = useState(null); // colaborador
   const [usuarioCarregado, setUsuarioCarregado] = useState(null); // dados do GET /usuario/:id
+  const [criando, setCriando] = useState(false); // dialog de novo login
 
   async function loadColaboradores() {
     setLoading(true);
@@ -153,6 +156,19 @@ export default function Usuarios() {
 
   return (
     <div className="space-y-6">
+      {/* Criar usuário · só devs (você + Marcos Paulo) */}
+      {isDev && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">Criar usuário</p>
+            <p className="text-xs text-muted-foreground">Cria um login novo (e-mail + senha) direto no sistema, com cargo e áreas. Visível só pra você e o Marcos.</p>
+          </div>
+          <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setCriando(true)}>
+            <Plus className="h-4 w-4" /> Criar usuário
+          </Button>
+        </div>
+      )}
+
       {/* Filtros */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
@@ -242,6 +258,15 @@ export default function Usuarios() {
         </p>
       )}
 
+      {/* Dialog de criar login · só devs */}
+      {criando && isDev && (
+        <NovoUsuarioDialog
+          estrutura={estrutura}
+          onClose={() => setCriando(false)}
+          onCreated={async () => { setCriando(false); await loadColaboradores(); }}
+        />
+      )}
+
       {/* Dialog de edição */}
       {editando && (
         <EditarUsuarioDialog
@@ -260,6 +285,157 @@ export default function Usuarios() {
         />
       )}
     </div>
+  );
+}
+
+// Gera uma senha inicial forte e legível (o dev repassa pra pessoa; ela troca depois).
+function gerarSenha() {
+  const abc = 'abcdefghijkmnpqrstuvwxyz';
+  const ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const num = '23456789';
+  const pick = (s, n) => Array.from({ length: n }, (_, i) => s[(Date.now() + i * 7 + s.length) % s.length]).join('');
+  // mistura simples e determinística-o-suficiente (sem Math.random pra evitar libs)
+  const base = (pick(ABC, 2) + pick(abc, 4) + pick(num, 3)).split('');
+  for (let i = base.length - 1; i > 0; i--) { const j = (Date.now() + i * 13) % (i + 1); [base[i], base[j]] = [base[j], base[i]]; }
+  return 'Cbrio' + base.join('') + '!';
+}
+
+// Dialog de CRIAR LOGIN (só devs) · cria email+senha + cargo + áreas.
+function NovoUsuarioDialog({ estrutura, onClose, onCreated }) {
+  const [nome, setNome] = useState('');
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState(gerarSenha());
+  const [cargoId, setCargoId] = useState('');
+  const [role, setRole] = useState('assistente');
+  const [areasSel, setAreasSel] = useState(new Set());
+  const [salvando, setSalvando] = useState(false);
+  const [criado, setCriado] = useState(null); // { email, senha } após sucesso
+  const [copiado, setCopiado] = useState(false);
+
+  function toggleArea(id) {
+    setAreasSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+
+  async function criar() {
+    if (!nome.trim() || nome.trim().length < 2) { toast.error('Informe o nome'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) { toast.error('E-mail inválido'); return; }
+    if (senha.length < 6) { toast.error('A senha precisa ter ao menos 6 caracteres'); return; }
+    setSalvando(true);
+    try {
+      await api.criarLogin({
+        email: email.trim(), nome: nome.trim(), senha, cargo_id: cargoId || null,
+        role, areas: Array.from(areasSel),
+      });
+      toast.success('Usuário criado');
+      setCriado({ email: email.trim(), senha });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao criar o usuário');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  function copiar() {
+    navigator.clipboard?.writeText(`Login: ${criado.email}\nSenha: ${criado.senha}`);
+    setCopiado(true); setTimeout(() => setCopiado(false), 2000);
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) (criado ? onCreated() : onClose()); }}>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Criar usuário</DialogTitle>
+        </DialogHeader>
+
+        {criado ? (
+          <div className="space-y-4 mt-2">
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 space-y-2">
+              <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Usuário criado com sucesso ✅</p>
+              <p className="text-xs text-muted-foreground">Anote e repasse estes dados pra pessoa. Ela pode trocar a senha depois no próprio perfil.</p>
+              <div className="text-sm font-mono bg-background rounded-md border border-border p-3">
+                <div><span className="text-muted-foreground">Login:</span> {criado.email}</div>
+                <div><span className="text-muted-foreground">Senha:</span> {criado.senha}</div>
+              </div>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={copiar}>
+                {copiado ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {copiado ? 'Copiado!' : 'Copiar login e senha'}
+              </Button>
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={onCreated}>Concluir</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex-1 overflow-y-auto min-h-0 space-y-4 mt-2">
+              <div>
+                <label className="text-sm font-medium block mb-1">Nome *</label>
+                <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Nome completo" />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">E-mail *</label>
+                <Input value={email} type="email" onChange={e => setEmail(e.target.value)} placeholder="pessoa@cbrio.org" />
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Senha inicial *</label>
+                <div className="flex gap-2">
+                  <Input value={senha} onChange={e => setSenha(e.target.value)} className="font-mono" />
+                  <Button type="button" variant="outline" size="icon" title="Gerar nova senha" onClick={() => setSenha(gerarSenha())}>
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">A pessoa pode trocar depois no perfil.</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Cargo</label>
+                <Select value={cargoId} onValueChange={setCargoId}>
+                  <SelectTrigger><SelectValue placeholder="Escolher cargo (opcional)..." /></SelectTrigger>
+                  <SelectContent>
+                    {(estrutura.cargos || []).map(c => (
+                      <SelectItem key={c.id} value={c.id}>{c.nome_completo || c.nome || c.slug}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Tipo de conta</label>
+                <Select value={role} onValueChange={setRole}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="assistente">Assistente · segue cargo + áreas</SelectItem>
+                    <SelectItem value="diretor">Diretor · vê o sistema inteiro</SelectItem>
+                    <SelectItem value="admin">Admin · vê o sistema inteiro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {(estrutura.areas || []).length > 0 && (
+                <div>
+                  <label className="text-sm font-medium block mb-1">Áreas (opcional)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {(estrutura.areas || []).map(a => {
+                      const ativo = areasSel.has(a.id);
+                      return (
+                        <button key={a.id} type="button" onClick={() => toggleArea(a.id)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${ativo ? 'bg-primary text-primary-foreground border-primary' : 'bg-background border-border hover:border-primary text-foreground'}`}>
+                          {a.nome}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-4 mt-2 border-t border-border">
+              <Button variant="outline" onClick={onClose} disabled={salvando}>Cancelar</Button>
+              <Button onClick={criar} disabled={salvando} className="gap-1.5">
+                {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Criar usuário
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
