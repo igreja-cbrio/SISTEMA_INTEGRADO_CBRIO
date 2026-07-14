@@ -333,43 +333,62 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
 router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
   try {
     const { status, busca, papel, faixa } = req.query;
-    let query = supabase
-      .from('mem_membros')
-      .select('*, familia:mem_familias(id, nome)')
-      .eq('active', true)
-      .order('nome');
 
-    if (status) query = query.eq('status', status);
-    // Filtro por faixa etária (janela de data de nascimento ·
-    // criança <13, adolescente 13-17, jovem 18-30, adulto 31+).
-    if (faixa) {
-      const h = new Date();
-      const f = (anos) => `${h.getFullYear() - anos}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;
-      if (faixa === 'crianca') query = query.gt('data_nascimento', f(13));
-      else if (faixa === 'adolescente') query = query.gt('data_nascimento', f(18)).lte('data_nascimento', f(13));
-      else if (faixa === 'jovem') query = query.gt('data_nascimento', f(31)).lte('data_nascimento', f(18));
-      else if (faixa === 'adulto') query = query.lte('data_nascimento', f(31));
+    // Builders do supabase-js são de uso único — recria por página.
+    const montar = () => {
+      let query = supabase
+        .from('mem_membros')
+        .select('*, familia:mem_familias(id, nome)')
+        .eq('active', true)
+        .order('nome');
+
+      if (status) query = query.eq('status', status);
+      // Filtro por faixa etária (janela de data de nascimento ·
+      // criança <13, adolescente 13-17, jovem 18-30, adulto 31+).
+      if (faixa) {
+        const h = new Date();
+        const f = (anos) => `${h.getFullYear() - anos}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;
+        if (faixa === 'crianca') query = query.gt('data_nascimento', f(13));
+        else if (faixa === 'adolescente') query = query.gt('data_nascimento', f(18)).lte('data_nascimento', f(13));
+        else if (faixa === 'jovem') query = query.gt('data_nascimento', f(31)).lte('data_nascimento', f(18));
+        else if (faixa === 'adulto') query = query.lte('data_nascimento', f(31));
+      }
+      // Busca por tokens: "matheus toscano" casa "Matheus Ribeiro Toscano".
+      // Cada palavra vira um ILIKE (AND), case-insensitive, em qualquer ordem.
+      if (busca) {
+        const tokens = String(busca).trim().split(/\s+/).filter(Boolean).slice(0, 6);
+        for (const t of tokens) query = query.ilike('nome', `%${t}%`);
+      }
+      return query;
+    };
+
+    // Pagina além do cap server-side de 1000 do PostgREST: a base já passa
+    // de 1000 membros ativos e o corte (silencioso, ordenado por nome)
+    // escondia o fim do alfabeto — a busca de líder/supervisor do /grupos
+    // não achava Natasha/Renata (Naná · 2026-07-14).
+    const PAGE = 1000;
+    const MAX = 20000; // teto de sanidade, bem acima da base atual
+    let membros = [];
+    for (let offset = 0; offset < MAX; offset += PAGE) {
+      const { data, error } = await montar().range(offset, offset + PAGE - 1);
+      if (error) throw error;
+      membros = membros.concat(data || []);
+      if (!data || data.length < PAGE) break;
     }
-    // Busca por tokens: "matheus toscano" casa "Matheus Ribeiro Toscano".
-    // Cada palavra vira um ILIKE (AND), case-insensitive, em qualquer ordem.
-    if (busca) {
-      const tokens = String(busca).trim().split(/\s+/).filter(Boolean).slice(0, 6);
-      for (const t of tokens) query = query.ilike('nome', `%${t}%`);
-    }
+    if (membros.length === 0) return res.json([]);
 
-    const { data: membros, error } = await query;
-    if (error) throw error;
-    if (!membros || membros.length === 0) return res.json([]);
-
-    // Anotar papéis (vw_pessoas_papeis), batch — evita N+1.
-    // A view já faz JOIN com vol_profiles, int_visitantes, etc.
+    // Anotar papéis (vw_pessoas_papeis), batch — evita N+1. Em lotes de 500:
+    // um .in() com milhares de ids estoura o tamanho da URL do PostgREST e a
+    // RESPOSTA também é capada em 1000 (papéis sumiriam em silêncio).
     const ids = membros.map(m => m.id);
-    const { data: papeis } = await supabase
-      .from('vw_pessoas_papeis')
-      .select('membresia_id, is_voluntario, is_visitante, is_inscrito_next, in_grupo_ativo, is_contribuinte, total_inscricoes_next')
-      .in('membresia_id', ids);
     const papeisMap = {};
-    (papeis || []).forEach(p => { papeisMap[p.membresia_id] = p; });
+    for (let i = 0; i < ids.length; i += 500) {
+      const { data: papeis } = await supabase
+        .from('vw_pessoas_papeis')
+        .select('membresia_id, is_voluntario, is_visitante, is_inscrito_next, in_grupo_ativo, is_contribuinte, total_inscricoes_next')
+        .in('membresia_id', ids.slice(i, i + 500));
+      (papeis || []).forEach(p => { papeisMap[p.membresia_id] = p; });
+    }
 
     const enriched = membros.map(m => ({
       ...m,
