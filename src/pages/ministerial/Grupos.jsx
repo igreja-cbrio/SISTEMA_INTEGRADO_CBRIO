@@ -1488,7 +1488,7 @@ export default function Grupos() {
 
         {temporadas.length > 0 && (
           <ShadSelect value={filterTemporada || 'all'} onValueChange={v => setFilterTemporada(v === 'all' ? '' : v)}>
-            <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Temporada" /></SelectTrigger>
+            <SelectTrigger className="w-[200px] h-8 text-xs overflow-hidden [&>span]:truncate [&>span]:min-w-0"><SelectValue placeholder="Temporada" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todas as temporadas</SelectItem>
               {temporadas.map(t => (
