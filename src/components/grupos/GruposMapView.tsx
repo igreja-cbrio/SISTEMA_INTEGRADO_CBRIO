@@ -581,18 +581,25 @@ function GrupoInfo({
   comAcao?: boolean;
 }) {
   return (
-    <div className="min-w-[220px] space-y-1.5">
-      <div className="flex items-center gap-2 flex-wrap">
-        <p className="text-sm font-bold">{g.nome}</p>
-        {g.codigo && <code className="text-[10px] text-muted-foreground font-mono">{g.codigo}</code>}
+    <div className="min-w-[240px] max-w-[300px] space-y-2">
+      {/* pr-5: reserva espaço pro X de fechar (canto sup. direito do popup) */}
+      <div className="pr-5">
+        <p className="text-[13px] font-bold leading-snug text-foreground">{g.nome}</p>
+        {(g.categoria || g.codigo) && (
+          <div className="flex items-center gap-2 mt-1">
+            {g.categoria && (
+              <span className="inline-block text-[10px] font-semibold uppercase tracking-wide text-[#00B39D] bg-[#00B39D]/10 rounded px-1.5 py-0.5">
+                {g.categoria}
+              </span>
+            )}
+            {g.codigo && <code className="text-[10px] text-muted-foreground font-mono">#{g.codigo}</code>}
+          </div>
+        )}
       </div>
       {(g.lider?.nome || g.lider_nome) && (
         <p className="text-xs text-muted-foreground">
-          Líder: <span className="text-foreground">{g.lider?.nome || g.lider_nome}</span>
+          Líder: <span className="text-foreground font-medium">{g.lider?.nome || g.lider_nome}</span>
         </p>
-      )}
-      {g.categoria && (
-        <p className="text-xs text-muted-foreground">{g.categoria}</p>
       )}
       <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
         {g.dia_semana != null && (
