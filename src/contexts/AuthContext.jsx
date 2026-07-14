@@ -354,7 +354,7 @@ export function AuthProvider({ children }) {
 
   // Devs (auditoria/agentes só pra eles · você + Marcos Paulo). Espelha o
   // requireDev do backend (agents.js). Adicionar mais alguém: aqui + lá.
-  const DEV_EMAILS = ['gestao@cbrio.com.br', 'infra@cbrio.com.br'];
+  const DEV_EMAILS = ['gestao@cbrio.com.br', 'infra@cbrio.com.br', 'matheus.toscano@cbrio.org'];
   const isDev = DEV_EMAILS.includes(String(profile?.email || user?.email || '').toLowerCase());
 
   const isVoluntario = profile?.role === 'voluntario';
