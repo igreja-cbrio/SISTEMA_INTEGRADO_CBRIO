@@ -199,27 +199,29 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       {/* Filtros (data-driven · só os que têm valores aparecem) */}
       {temFiltros && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {/* Rótulo curto na opção-tudo (Marcos · 14/07): "Idades" em vez de
+              "Todas as idades" — o select fechado vira o nome do filtro. */}
           {categorias.length >= 1 && (
             <select value={fCategoria} onChange={e => setFCategoria(e.target.value)} style={selStyle}>
-              <option value="">Todas as categorias</option>
+              <option value="">Categorias</option>
               {categorias.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           )}
           {faixas.length >= 1 && (
             <select value={fFaixa} onChange={e => setFFaixa(e.target.value)} style={selStyle}>
-              <option value="">Todas as idades</option>
+              <option value="">Idades</option>
               {faixas.map(f => <option key={f} value={f}>{f}</option>)}
             </select>
           )}
           {dias.length >= 1 && (
             <select value={fDia} onChange={e => setFDia(e.target.value)} style={selStyle}>
-              <option value="">Todos os dias</option>
+              <option value="">Dias</option>
               {dias.map(d => <option key={d} value={String(d)}>{DIAS[d]}</option>)}
             </select>
           )}
           {recorrencias.length >= 1 && (
             <select value={fRecorrencia} onChange={e => setFRecorrencia(e.target.value)} style={selStyle}>
-              <option value="">Toda frequência</option>
+              <option value="">Frequência</option>
               {recorrencias.map(r => <option key={r} value={r}>{recorrenciaLabel(r)}</option>)}
             </select>
           )}
@@ -228,7 +230,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
               escolhe; a busca por texto continua cobrindo bairro. */}
           {!isMobile && bairros.length >= 1 && (
             <select value={fBairro} onChange={e => setFBairro(e.target.value)} style={selStyle}>
-              <option value="">Todos os bairros</option>
+              <option value="">Bairros</option>
               {bairros.map(b => <option key={b} value={b}>{b}</option>)}
             </select>
           )}
@@ -327,8 +329,8 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
               {g.dist_km != null && <span style={{ color: C.primary, fontWeight: 600 }}>{g.dist_km < 1 ? `${Math.round(g.dist_km * 1000)}m` : `${g.dist_km.toFixed(1)}km`}</span>}
               {g.categoria && <span>· {g.categoria}</span>}
               {(() => {
-                // Faixa do grupo visível já no cartão — a pessoa sabe antes de
-                // preencher (a trava de idade/gênero confirma no envio).
+                // Faixa do grupo visível já no cartão — informativa (idade não
+                // trava a inscrição; só gênero bloqueia · Marcos 14/07).
                 if (g.idade_min != null && g.idade_max != null) return <span>· {g.idade_min}–{g.idade_max} anos</span>;
                 if (g.idade_max != null) return <span>· até {g.idade_max} anos</span>;
                 if (g.idade_min != null) return <span>· {g.idade_min}+ anos</span>;

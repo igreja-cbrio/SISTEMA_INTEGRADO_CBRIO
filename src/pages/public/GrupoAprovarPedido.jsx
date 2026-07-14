@@ -100,13 +100,22 @@ export default function GrupoAprovarPedido() {
           <div style={{ textAlign: 'center', padding: '18px 0' }}>
             <CheckCircle2 size={44} color={decisao === 'aprovado' ? VERDE : C.text3} style={{ marginBottom: 12 }} />
             <h1 style={{ fontSize: 19, fontWeight: 700, color: C.text, margin: '0 0 8px' }}>
-              {decisao === 'aprovado' ? 'Pedido aprovado!' : decisao === 'rejeitado' ? 'Pedido recusado' : `Pedido ${decisao}`}
+              {decisao === 'aprovado' ? 'Pedido aprovado!'
+                : decisao === 'encaminhado' ? 'Pedido com a equipe de grupos'
+                : decisao === 'cancelado' ? 'Pedido encerrado'
+                : 'Pedido recusado'}
             </h1>
             {pedido && (
               <p style={{ fontSize: 14, color: C.text3, margin: 0, lineHeight: 1.5 }}>
                 {decisao === 'aprovado'
                   ? <><strong>{pedido.nome}</strong> agora faz parte do grupo {grupo?.nome}. A pessoa foi avisada — vale mandar um "bem-vindo(a)" pessoal também.</>
-                  : <>O pedido de <strong>{pedido.nome}</strong> para o grupo {grupo?.nome} não foi aceito.</>}
+                  : decisao === 'encaminhado'
+                  ? <>A equipe de grupos sugeriu outro grupo para <strong>{pedido.nome}</strong> — não precisa fazer mais nada.</>
+                  : decisao === 'cancelado'
+                  ? <>O pedido de <strong>{pedido.nome}</strong> foi encerrado.</>
+                  // rejeitado (agora) ou devolvido (recusa sua aguardando a triagem)
+                  : <>O pedido de <strong>{pedido.nome}</strong> para o grupo {grupo?.nome} não segue.
+                      A equipe de grupos foi avisada e cuida do próximo passo com a pessoa — não precisa fazer mais nada.</>}
               </p>
             )}
           </div>
@@ -182,7 +191,7 @@ export default function GrupoAprovarPedido() {
                 <input
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value)}
-                  placeholder="Motivo (opcional — a pessoa pode ver)"
+                  placeholder="Motivo (opcional — fica só com a equipe de grupos)"
                   autoFocus
                   style={{
                     width: '100%', boxSizing: 'border-box', padding: '12px 14px', borderRadius: 12,

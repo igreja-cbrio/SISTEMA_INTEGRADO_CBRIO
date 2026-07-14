@@ -48,9 +48,10 @@ const STATUS_ROW = {
   enc_sem_interesse: { label: 'Sem interesse', cor: C.t3, bg: C.bg },
 };
 
-// Filtro de status agrupa os dois ciclos num vocabulário só
+// Filtro de status agrupa os dois ciclos num vocabulário só. Rótulo curto na
+// opção-tudo (Marcos · 14/07): o select fechado vira o nome do filtro.
 const FILTRO_STATUS = [
-  { key: 'todos', label: 'Todos os status', casa: null },
+  { key: 'todos', label: 'Status', casa: null },
   { key: 'pendente', label: 'Pendentes (líder)', casa: ['pendente'] },
   { key: 'devolvido', label: 'Recusados (na triagem)', casa: ['devolvido'] },
   { key: 'encaminhado', label: 'Encaminhados', casa: ['encaminhado'] },
@@ -244,10 +245,8 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
 
   const rejeitar = async (p) => {
     try {
-      const r = await api.rejeitarPedido(p.id, motivoRej.trim() || null);
-      toast.success(r?.devolvido
-        ? 'Devolvido pra triagem — a pessoa não recebe nada por enquanto'
-        : 'Pedido rejeitado');
+      await api.rejeitarPedido(p.id, motivoRej.trim() || null);
+      toast.success('Pedido rejeitado — encerrado');
       setRejectingId(null); setMotivoRej('');
       depois();
     } catch (e) { toast.error(e.message || 'Erro ao rejeitar'); }
@@ -372,6 +371,12 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
               : (resumo.pendentes_24h > 0 ? `${resumo.pendentes_24h} há 1+ dia` : null)}
             corDestaque={resumo.pendentes_72h > 0 ? C.red : C.amber}
           />
+          <ResumoCard
+            titulo="Recusados na triagem"
+            valor={resumo.devolvidos}
+            destaque={resumo.devolvidos > 0 ? 'aguardando você decidir' : null}
+            corDestaque={C.violet}
+          />
           <ResumoCard titulo="Aprovados · 30 dias" valor={resumo.aprovados_30d} />
           <ResumoCard
             titulo="Tempo médio de resposta"
@@ -389,7 +394,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
           <Input placeholder="Nome, telefone ou grupo..." value={busca} onChange={e => setBusca(e.target.value)} style={{ paddingLeft: 32 }} />
         </div>
         <select value={fOrigem} onChange={e => setFOrigem(e.target.value)} style={selStyle}>
-          <option value="todas">Todas as origens</option>
+          <option value="todas">Origem</option>
           <option value="inscricao">Inscrição</option>
           <option value="next">Next</option>
         </select>
@@ -622,7 +627,8 @@ function PainelPedido({
 
       {p.status === 'devolvido' && (
         <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.violetBg, borderRadius: 6, lineHeight: 1.5 }}>
-          Recusado pelo líder{p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. A pessoa
+          Recusado pelo líder{p.decidido_por_nome ? <> <strong>{String(p.decidido_por_nome).replace(' (link WhatsApp)', '')}</strong></> : ''}
+          {p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. A pessoa
           ainda não foi comunicada: sugira outro grupo (o motivo que você escolher vai junto no WhatsApp) ou rejeite de vez.
         </div>
       )}
@@ -659,7 +665,7 @@ function PainelPedido({
             Sugerir outro grupo
           </Button>
           <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
-            <X size={14} style={{ marginRight: 4 }} /> {p.status === 'pendente' ? 'Recusar' : 'Rejeitar de vez'}
+            <X size={14} style={{ marginRight: 4 }} /> Rejeitar de vez
           </Button>
           {p.status === 'pendente' && (
             <Button size="sm" onClick={() => aprovar(p)}>
@@ -726,27 +732,19 @@ function PainelPedido({
 
       {isRejecting && (
         <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
-          {p.status === 'pendente' ? (
-            <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.5 }}>
-              Escreva o que você achou — <strong>a pessoa NÃO recebe esta mensagem</strong>. Ela fica
-              guardada internamente pra liderança de grupos sugerir outro grupo pra pessoa.
-            </p>
-          ) : (
-            <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.5 }}>
-              Rejeição final: o pedido encerra sem sugerir outro grupo. Sempre que houver opção, prefira «Sugerir outro grupo».
-            </p>
-          )}
+          <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.5 }}>
+            <strong>Rejeição definitiva</strong> — sua recusa encerra o pedido (diferente da recusa do
+            líder, que cai aqui na triagem). Sempre que houver opção, prefira «Sugerir outro grupo».
+          </p>
           <Input
-            placeholder={p.status === 'pendente' ? 'Motivo interno (opcional · só a liderança vê)...' : 'Motivo (registro interno · opcional)...'}
+            placeholder="Motivo (registro interno · opcional)..."
             value={motivoRej}
             onChange={e => setMotivoRej(e.target.value)}
             autoFocus
           />
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
             <Button size="sm" variant="outline" onClick={() => { setRejectingId(null); setMotivoRej(''); }}>Cancelar</Button>
-            <Button size="sm" variant="destructive" onClick={() => rejeitar(p)}>
-              {p.status === 'pendente' ? 'Recusar e devolver pra triagem' : 'Rejeitar de vez'}
-            </Button>
+            <Button size="sm" variant="destructive" onClick={() => rejeitar(p)}>Rejeitar de vez</Button>
           </div>
         </div>
       )}
