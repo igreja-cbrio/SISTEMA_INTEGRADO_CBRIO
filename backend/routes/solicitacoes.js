@@ -2851,6 +2851,154 @@ router.post('/:id/reenviar', async (req, res) => {
   }
 });
 
+// PATCH /:id/editar · o SOLICITANTE corrige a própria solicitação enquanto ela
+// ainda está no portão de aprovação de origem (ninguém aprovou nada) — caso
+// clássico: enviou e esqueceu o anexo (2026-07-14 · pedido do Pedro Paiva).
+// Depois que o diretor aprova, vale o ciclo relatar-problema → aguardando_ajuste
+// → reenviar (este endpoint recusa). A edição fica na linha do tempo e o diretor
+// pendente é avisado de que o pedido mudou.
+router.patch('/:id/editar', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userName = req.user.name;
+    const { data: sol } = await supabase
+      .from('solicitacoes')
+      .select('id, solicitante_id, status, categoria, titulo, aprovacao_origem_status, aprovacao_origem_diretor_id')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    if (sol.solicitante_id !== userId && !isAdmin) {
+      return res.status(403).json({ error: 'Só o solicitante pode editar a própria solicitação.' });
+    }
+    if (sol.status !== 'aguardando_aprovacao_origem') {
+      return res.status(400).json({ error: 'A edição direta só vale enquanto a solicitação aguarda a aprovação do diretor. Depois da aprovação, use "Relatar problema" para pedir ajuste.' });
+    }
+
+    const b = req.body || {};
+    const update = {};
+    if (b.titulo !== undefined) {
+      const t = String(b.titulo).trim();
+      if (!t) return res.status(400).json({ error: 'O título não pode ficar vazio.' });
+      update.titulo = t.slice(0, 300);
+    }
+    if (b.descricao !== undefined) update.descricao = b.descricao || null;
+    if (b.justificativa !== undefined) update.justificativa = b.justificativa || null;
+    if (b.data_necessaria !== undefined) update.data_necessaria = b.data_necessaria || null;
+    if (b.valor_estimado !== undefined) {
+      const v = Number(b.valor_estimado);
+      update.valor_estimado = (b.valor_estimado === '' || b.valor_estimado == null || !isFinite(v)) ? null : v;
+    }
+    // Anexo (o motivo nº 1 desta edição) · URL do bucket 'solicitacoes'
+    if (b.documento_url !== undefined) {
+      update.documento_url = b.documento_url ? String(b.documento_url).slice(0, 2000) : null;
+    }
+    if (b.link_referencia !== undefined) {
+      update.link_referencia = b.link_referencia ? String(b.link_referencia).trim().slice(0, 1000) : null;
+    }
+    // Campos por fluxo (pagamento/reembolso/reserva) · whitelist textual
+    for (const campo of ['favorecido_nome', 'favorecido_documento', 'forma_pagamento', 'chave_pix',
+                         'banco', 'agencia', 'conta', 'motivo_reembolso', 'espaco_solicitado',
+                         'horario_inicio', 'horario_fim']) {
+      if (b[campo] !== undefined) update[campo] = b[campo] ? String(b[campo]).slice(0, 500) : null;
+    }
+    if (b.data_compra !== undefined) update.data_compra = b.data_compra || null;
+    if (b.data_uso !== undefined) update.data_uso = b.data_uso || null;
+    if (b.qtde_pessoas !== undefined) {
+      const q = parseInt(b.qtde_pessoas, 10);
+      update.qtde_pessoas = isFinite(q) && q > 0 ? q : null;
+    }
+
+    // Itens do pedido (compras/serviço) · mesma normalização do POST/reenviar:
+    // 'unitario' vira TOTAL DA LINHA; a soma vira o valor_estimado.
+    const editaItens = Array.isArray(b.itens_lista) && ['compras', 'servico'].includes(sol.categoria);
+    let itensNorm = [];
+    if (editaItens) {
+      itensNorm = b.itens_lista
+        .filter(it => it && String(it.descricao || '').trim())
+        .map((it, i) => {
+          const qNum = Number(it.quantidade);
+          const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
+          const vNum = Number(it.valor_estimado);
+          const temValor = it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum);
+          const valorLinha = temValor
+            ? (it.valor_tipo === 'unitario' ? vNum * quantidade : vNum)
+            : null;
+          return {
+            descricao: String(it.descricao).trim().slice(0, 500),
+            quantidade,
+            unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
+            link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
+            valor_estimado: valorLinha,
+            imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
+            ordem: i,
+          };
+        });
+      update.itens = itensNorm.length
+        ? itensNorm.map(it => `${it.quantidade}x ${it.descricao}`).join('\n')
+        : null;
+      const soma = itensNorm.reduce((acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
+      if (soma > 0) update.valor_estimado = soma;
+    }
+
+    if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada para atualizar.' });
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .update(update)
+      .eq('id', sol.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    // Substitui os itens estruturados quando a lista foi enviada. Best-effort:
+    // o pedido já foi salvo; falha aqui só loga (mesmo padrão do reenviar).
+    if (editaItens) {
+      const { error: delErr } = await supabase.from('solicitacao_itens').delete().eq('solicitacao_id', sol.id);
+      if (delErr) console.error('[SOLICITACOES] editar · limpar itens:', delErr.message);
+      if (itensNorm.length) {
+        const rows = itensNorm.map(it => ({ ...it, solicitacao_id: sol.id }));
+        const { error: insErr } = await supabase.from('solicitacao_itens').insert(rows);
+        if (insErr) console.error('[SOLICITACOES] editar · gravar itens:', insErr.message);
+      }
+    }
+
+    // Linha do tempo · registra a edição. Motivo 'edicao' (migration
+    // 20260714150000); enquanto o CHECK antigo estiver em prod, cai no
+    // fallback 'descricao' pra não perder o rastro.
+    const camposEditados = Object.keys(update).join(', ');
+    const ajusteBase = {
+      solicitacao_id: sol.id, autor_id: userId, lado: 'solicitante',
+      comentario: `Editou a solicitação antes da aprovação (${camposEditados}).`,
+    };
+    const { error: ajErr } = await supabase.from('solicitacao_ajustes')
+      .insert({ ...ajusteBase, motivo: 'edicao' });
+    if (ajErr) {
+      const { error: fbErr } = await supabase.from('solicitacao_ajustes')
+        .insert({ ...ajusteBase, motivo: 'descricao' });
+      if (fbErr) console.error('[SOLICITACOES] editar · log ajuste:', fbErr.message);
+    }
+
+    // Avisa o diretor que vai aprovar · o pedido mudou embaixo dele
+    if (sol.aprovacao_origem_diretor_id && sol.aprovacao_origem_diretor_id !== userId) {
+      const modulo = CATEGORIA_MODULO[sol.categoria] || 'administrativo';
+      notificar({
+        modulo, tipo: 'solicitacao_status',
+        titulo: `Solicitação editada antes da aprovação: ${data.titulo}`,
+        mensagem: `${userName || 'O solicitante'} atualizou o pedido que aguarda sua aprovação (${camposEditados}).`,
+        link: '/solicitacoes', severidade: 'info',
+        chaveDedup: `solicitacao_editada_${sol.id}_${Date.now()}`,
+        targetIds: [sol.aprovacao_origem_diretor_id],
+      }).catch(err => console.error('[SOLICITACOES] notify editar:', err.message));
+    }
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] editar:', e.message);
+    res.status(500).json({ error: 'Erro ao editar solicitação' });
+  }
+});
+
 // ── SLA definitions (catalogo de prazos) ───────────────────────
 router.get('/sla-defs', async (req, res) => {
   try {
