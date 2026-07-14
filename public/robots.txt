@@ -1,19 +1,2 @@
-User-agent: Googlebot
-Allow: /
-Disallow: /novosite
-
-User-agent: Bingbot
-Allow: /
-Disallow: /novosite
-
-User-agent: Twitterbot
-Allow: /
-Disallow: /novosite
-
-User-agent: facebookexternalhit
-Allow: /
-Disallow: /novosite
-
 User-agent: *
 Allow: /
-Disallow: /novosite

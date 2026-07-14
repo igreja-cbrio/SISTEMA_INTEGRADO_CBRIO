@@ -8,12 +8,13 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -109,8 +110,8 @@ export default function Solicitacoes() {
   const [busca, setBusca] = useState('');
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
-  const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'kanban' | 'lista'
-  const [aprovarLayout, setAprovarLayout] = useState('lista'); // aba Aprovar · 'lista' | 'kanban' (por categoria)
+  const [atenderLayout, setAtenderLayout] = useState('foco'); // 'foco' | 'kanban' | 'lista' | 'solicitante'
+  const [aprovarLayout, setAprovarLayout] = useState('foco'); // aba Aprovar · 'foco' | 'kanban' | 'historico'
   const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
   // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
@@ -560,18 +561,14 @@ export default function Solicitacoes() {
           )}
           {view === 'atender' && (
             <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
+              <button type="button" onClick={() => setAtenderLayout('foco')}
+                className={`px-3 h-9 text-sm ${atenderLayout === 'foco' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Foco</button>
               <button type="button" onClick={() => setAtenderLayout('kanban')}
-                className={`px-3 h-9 text-sm ${atenderLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+                className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
               <button type="button" onClick={() => setAtenderLayout('lista')}
                 className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
-            </div>
-          )}
-          {view === 'aprovar' && (
-            <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
-              <button type="button" onClick={() => setAprovarLayout('lista')}
-                className={`px-3 h-9 text-sm ${aprovarLayout === 'lista' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Lista</button>
-              <button type="button" onClick={() => setAprovarLayout('kanban')}
-                className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+              <button type="button" onClick={() => setAtenderLayout('solicitante')}
+                className={`px-3 h-9 text-sm border-l border-border ${atenderLayout === 'solicitante' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Por solicitante</button>
             </div>
           )}
           {view === 'minhas' && (
@@ -585,11 +582,33 @@ export default function Solicitacoes() {
         </div>
       )}
 
+      {/* Barra da aba Aprovar · resumo + alternador (Foco | Kanban | Histórico) */}
+      {view === 'aprovar' && !loading && (
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="text-xs text-muted-foreground">
+            {aprovarLayout === 'historico'
+              ? 'Histórico das suas decisões (origem · gestão · mérito).'
+              : `${filtered.length} ${filtered.length === 1 ? 'solicitação aguardando' : 'solicitações aguardando'} sua aprovação.`}
+          </p>
+          <div className="ml-auto inline-flex rounded-md border border-border overflow-hidden">
+            <button type="button" onClick={() => setAprovarLayout('foco')}
+              className={`px-3 h-9 text-sm ${aprovarLayout === 'foco' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Foco</button>
+            <button type="button" onClick={() => setAprovarLayout('kanban')}
+              className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'kanban' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Kanban</button>
+            <button type="button" onClick={() => setAprovarLayout('historico')}
+              className={`px-3 h-9 text-sm border-l border-border ${aprovarLayout === 'historico' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>Histórico</button>
+          </div>
+        </div>
+      )}
+
       {/* Content: Kanban so na view 'atender' · Lista de aprovação em 'aprovar' · Lista simples nas demais. */}
       {(loading || !itemsFresh) ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
         </div>
+      ) : view === 'aprovar' && aprovarLayout === 'historico' ? (
+        /* ── Aba Aprovar · Histórico das minhas decisões ── */
+        <HistoricoAprovacoes isAdmin={isAdmin} />
       ) : view === 'aprovar' ? (
         /* ── Aba Aprovar · diretor de origem/Gestão/mérito ── */
         (() => {
@@ -611,7 +630,44 @@ export default function Solicitacoes() {
               </Card>
             );
           }
-          if (aprovarLayout !== 'kanban') return <div className="space-y-3">{filtered.map(renderCard)}</div>;
+          if (aprovarLayout !== 'kanban') {
+            // FOCO (padrão) · cards de resumo no topo + agrupado por urgência.
+            const ehUrg = (i) => i.eh_urgente || i.urgencia === 'urgente';
+            const urgentes = filtered.filter(ehUrg);
+            const demais = filtered.filter(i => !ehUrg(i));
+            const valor = filtered.reduce((s, i) => s + (Number(i.valor_estimado) || 0), 0);
+            const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg border bg-card">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock className="h-3.5 w-3.5" style={{ color: '#00B39D' }} /> Aguardando</div>
+                    <p className="text-2xl font-bold mt-1 tabular-nums" style={{ color: '#00B39D' }}>{filtered.length}</p>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-card">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock className="h-3.5 w-3.5 text-red-500" /> Urgentes</div>
+                    <p className="text-2xl font-bold mt-1 tabular-nums text-red-600">{urgentes.length}</p>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-card">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><FileText className="h-3.5 w-3.5 text-indigo-500" /> Valor em análise</div>
+                    <p className="text-2xl font-bold mt-1 tabular-nums text-indigo-600">{money(valor)}</p>
+                  </div>
+                </div>
+                {urgentes.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400 mb-2">Urgentes · {urgentes.length}</p>
+                    <div className="space-y-3">{urgentes.map(renderCard)}</div>
+                  </div>
+                )}
+                {demais.length > 0 && (
+                  <div>
+                    {urgentes.length > 0 && <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Demais · {demais.length}</p>}
+                    <div className="space-y-3">{demais.map(renderCard)}</div>
+                  </div>
+                )}
+              </div>
+            );
+          }
           // Kanban por categoria · só colunas com itens, na ordem de CATEGORIAS.
           const porCat = new Map();
           for (const it of filtered) {
@@ -640,9 +696,13 @@ export default function Solicitacoes() {
         /* ── Kanban Board (managers/admins) ── */
         <>
         <TermometroRefeitas />
-        {atenderLayout === 'lista' ? (
+        {atenderLayout === 'foco' ? (
+          <AtenderFoco items={filtered} onOpen={setDetailItem} selectedId={detailItem?.id} />
+        ) : atenderLayout === 'lista' ? (
           <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
+        ) : atenderLayout === 'solicitante' ? (
+          <PainelPorSolicitante items={filtered} onOpen={setDetailItem} />
         ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4">
           {columns.map(col => (
@@ -732,9 +792,10 @@ export default function Solicitacoes() {
         />
       )}
 
-      {/* Detail dialog */}
+      {/* Detail dialog · vira painel lateral (Sheet) no layout Foco da aba Atender */}
       <DetailDialog
         item={detailItem}
+        asSheet={(view === 'atender' && atenderLayout === 'foco') || (view === 'aprovar' && aprovarLayout === 'foco')}
         onClose={() => setDetailItem(null)}
         isAdmin={isResponsavel}
         currentUserId={profile?.id}
@@ -861,8 +922,14 @@ function comQuemEsta(item) {
   switch (item.status) {
     case 'aguardando_aprovacao_origem': {
       if (item.aprovacao_origem_status === 'triagem') return `Em triagem · definindo o aprovador${suf}`;
-      const aprovadores = Array.isArray(item.aprovacao_origem_aprovadores)
-        ? item.aprovacao_origem_aprovadores.filter(Boolean) : [];
+      // Quem está pendente AGORA (origem → 2º carimbo). O backend já resolve
+      // isso em aprovacao_pendente_de; se a origem já foi aprovada, mostra o 2º
+      // aprovador (Gestão ou, no caso de TI, Diego/Matheus) — não o diretor que
+      // já carimbou.
+      const pendentes = Array.isArray(item.aprovacao_pendente_de)
+        ? item.aprovacao_pendente_de.filter(Boolean) : [];
+      const aprovadores = pendentes.length ? pendentes : (Array.isArray(item.aprovacao_origem_aprovadores)
+        ? item.aprovacao_origem_aprovadores.filter(Boolean) : []);
       const quem = aprovadores.length
         ? aprovadores.join(' ou ')
         : (item.aprovacao_origem_diretor?.name || 'diretor de origem');
@@ -1023,6 +1090,101 @@ function isSlaEstourando(item) {
 // "Para Atender" (a "Caixa da Área": filtre por área e veja a fila daquela área).
 // comTracker (aba Minhas): adiciona o stepper compacto + "está com quem" em cada
 // card — e o tracker passa a cobrir as linhas antigas de aprovação/rejeição.
+// ── Layout "Foco" da aba Para Atender (2026-07-08) ──────────────────────
+// Cards no topo + lista priorizada (Urgentes → Demais); clicar abre o detalhe
+// no painel lateral direito (DetailDialog asSheet). Estilo adaptado do design
+// do Matheus (Claude Design) pras cores/tipografia do sistema.
+function AtenderFoco({ items, onOpen, selectedId }) {
+  const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const ehUrgente = (i) => i.eh_urgente || i.urgencia === 'urgente';
+  const urgentes = items.filter(ehUrgente);
+  const demais = items.filter(i => !ehUrgente(i));
+  const atrasadas = items.filter(isSlaEstourando);
+  const valorAnalise = items.reduce((s, i) => s + (Number(i.valor_estimado) || 0), 0);
+
+  const cards = [
+    { label: 'Na fila', valor: items.length, cor: '#00B39D', icon: ClipboardList },
+    { label: 'Urgentes', valor: urgentes.length, cor: '#ef4444', icon: Clock },
+    { label: 'SLA estourando', valor: atrasadas.length, cor: '#f59e0b', icon: Clock },
+    { label: 'Valor em análise', valor: money(valorAnalise), cor: '#6366f1', icon: FileText },
+  ];
+
+  const Row = (item) => {
+    const cat = getCatMeta(item.categoria);
+    const sla = getSlaBadge(item);
+    const ini = (item.solicitante?.name || item.titulo || '?').trim().charAt(0).toUpperCase();
+    const sub = comQuemEsta(item) || (item.solicitante?.name ? `por ${item.solicitante.name}` : '');
+    return (
+      <button
+        key={item.id}
+        onClick={() => onOpen(item)}
+        className={`w-full text-left flex items-center gap-3 px-3 py-3 rounded-lg border transition-colors hover:bg-muted/40 ${
+          selectedId === item.id ? 'border-primary ring-1 ring-primary/30 bg-primary/5' : 'border-border bg-card'
+        }`}
+      >
+        <span className="h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold text-white" style={{ backgroundColor: '#00B39D' }}>
+          {ini}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-sm truncate">{item.titulo}</span>
+            <Badge className={`text-[10px] ${cat.color}`}>{cat.label}</Badge>
+            {ehUrgente(item) && <Badge className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400">Urgente</Badge>}
+          </div>
+          {sub && <p className="text-xs text-muted-foreground truncate mt-0.5">{sub}</p>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {Number(item.valor_estimado) > 0 && (
+            <span className="text-xs font-medium tabular-nums hidden sm:inline">{money(item.valor_estimado)}</span>
+          )}
+          {sla && <Badge className={`text-[10px] ${sla.color}`}>{sla.label}</Badge>}
+          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </button>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {cards.map(c => (
+          <div key={c.label} className="p-3 rounded-lg border bg-card">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <c.icon className="h-3.5 w-3.5" style={{ color: c.cor }} /> {c.label}
+            </div>
+            <p className="text-2xl font-bold mt-1 tabular-nums" style={{ color: c.cor }}>{c.valor}</p>
+          </div>
+        ))}
+      </div>
+
+      {items.length === 0 ? (
+        <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação na fila para os filtros atuais.</Card>
+      ) : (
+        <div className="space-y-5">
+          {urgentes.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400 mb-2">
+                Urgentes <span className="text-muted-foreground">· {urgentes.length}</span>
+              </p>
+              <div className="space-y-2">{urgentes.map(Row)}</div>
+            </div>
+          )}
+          {demais.length > 0 && (
+            <div>
+              {urgentes.length > 0 && (
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                  Demais <span>· {demais.length}</span>
+                </p>
+              )}
+              <div className="space-y-2">{demais.map(Row)}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = false }) {
   if (!items || items.length === 0) {
     return (
@@ -1220,6 +1382,77 @@ function CarimboLinha({ rotulo, status, nomes }) {
       <span className={`font-medium shrink-0 ${aprovada ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
         {aprovada ? 'aprovada' : 'pendente'}
       </span>
+    </div>
+  );
+}
+
+// Histórico das decisões de quem aprova (aba Aprovar → Histórico). Mostra o que
+// o ator já aprovou/rejeitou (origem/2º carimbo/mérito). Admin pode ver de todos.
+function HistoricoAprovacoes({ isAdmin }) {
+  const [rows, setRows] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [todos, setTodos] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    setRows(null); setErro(null);
+    api.minhasAprovacoes({ dias: 180, ...(isAdmin && todos ? { todos: 1 } : {}) })
+      .then(d => { if (vivo) setRows(Array.isArray(d) ? d : []); })
+      .catch(() => { if (vivo) setErro('Não foi possível carregar o histórico.'); });
+    return () => { vivo = false; };
+  }, [isAdmin, todos]);
+
+  const etapaLabel = { origem: 'Origem (área)', gestao: '2º carimbo', merito: 'Mérito' };
+  const catLabel = (c) => (CATEGORIAS.find(x => x.value === c)?.label) || c || '—';
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  };
+
+  if (erro) return <Card className="p-8 text-center text-muted-foreground">{erro}</Card>;
+  if (rows === null) return <div className="flex items-center justify-center min-h-[30vh]"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" /></div>;
+
+  return (
+    <div className="space-y-3">
+      {isAdmin && (
+        <label className="flex items-center justify-end gap-2 text-xs text-muted-foreground cursor-pointer">
+          <input type="checkbox" checked={todos} onChange={e => setTodos(e.target.checked)} className="accent-primary" />
+          Ver decisões de todos os aprovadores
+        </label>
+      )}
+      {rows.length === 0 ? (
+        <Card className="p-8 text-center">
+          <ClipboardList className="h-10 w-10 text-muted-foreground/50 mx-auto mb-3" />
+          <p className="text-muted-foreground">Nenhuma decisão registrada nos últimos 180 dias.</p>
+        </Card>
+      ) : (
+        <Card className="divide-y divide-border">
+          {rows.map(r => (
+            <div key={r.evento_id} className="flex items-start gap-3 p-3">
+              <div className="mt-0.5 shrink-0">
+                {r.decisao === 'rejeitada'
+                  ? <XCircle className="h-5 w-5 text-red-500" />
+                  : <CheckCircle2 className="h-5 w-5 text-emerald-500" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-sm truncate">{r.titulo || 'Solicitação'}</span>
+                  <Badge className="text-[10px] bg-muted text-muted-foreground">{catLabel(r.categoria)}</Badge>
+                  <Badge className={`text-[10px] ${r.decisao === 'rejeitada' ? 'bg-red-500/10 text-red-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                    {r.decisao === 'rejeitada' ? 'Rejeitada' : 'Aprovada'} · {etapaLabel[r.etapa] || r.etapa}
+                  </Badge>
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {r.solicitante ? `Pedido de ${r.solicitante}` : ''}
+                  {isAdmin && todos && r.ator ? ` · por ${r.ator}` : ''}
+                  {r.status_atual ? ` · agora: ${STATUS_LABELS[r.status_atual]?.label || r.status_atual}` : ''}
+                </div>
+              </div>
+              <div className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums shrink-0">{fmt(r.em)}</div>
+            </div>
+          ))}
+        </Card>
+      )}
     </div>
   );
 }
@@ -1493,6 +1726,182 @@ function AprovacaoMeritoCard({ item, onApprove, onReject, onClick }) {
   );
 }
 
+// ── Painel "Por solicitante" (aba Atender · 2026-07-07) ──────────────────────
+// Agrupa as demandas por SOLICITANTE (uma pessoa pode pedir várias vezes) num
+// card por pessoa, mantendo o destaque dos urgentes. Toggle Kanban/Lista/Por
+// solicitante no cabeçalho. Estilo do sistema (glass, primária #00B39D) —
+// inspirado no rascunho "Painel por Responsável".
+
+function tempoAtras(iso) {
+  if (!iso) return '';
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 60) return `${min}m`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+function ehUrgente(item) {
+  return item.eh_urgente === true || item.urgencia === 'critica' || item.urgencia === 'alta';
+}
+function dotUrg(item) {
+  if (item.urgencia === 'critica' || item.eh_urgente) return 'bg-rose-500';
+  if (item.urgencia === 'alta') return 'bg-amber-500';
+  if (item.urgencia === 'baixa') return 'bg-slate-400';
+  return 'bg-blue-500';
+}
+function iniciais(nome) {
+  const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  return (((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase()) || '?';
+}
+
+function StatMini({ label, valor, tom }) {
+  const cor = tom === 'rose' ? 'text-rose-600 dark:text-rose-400'
+    : tom === 'amber' ? 'text-amber-600 dark:text-amber-400' : 'text-foreground';
+  return (
+    <Card className="p-4">
+      <p className="text-xs text-muted-foreground font-medium mb-1">{label}</p>
+      <p className={`text-2xl font-extrabold ${cor}`}>{valor}</p>
+    </Card>
+  );
+}
+
+function SolicitanteCard({ grupo, maxCarga, onOpen }) {
+  const [aberto, setAberto] = useState(false);
+  const carga = Math.round((grupo.demandas.length / maxCarga) * 100);
+  const barCor = carga >= 85 ? 'bg-rose-500' : carga >= 60 ? 'bg-amber-500' : 'bg-primary';
+  const mostra = aberto ? grupo.demandas : grupo.demandas.slice(0, 3);
+  return (
+    <Card className="p-5">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="h-11 w-11 rounded-full bg-primary/15 text-primary flex items-center justify-center text-sm font-bold shrink-0">
+          {iniciais(grupo.nome)}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-bold truncate">{grupo.nome}</p>
+          {grupo.email && <p className="text-[12px] text-muted-foreground truncate">{grupo.email}</p>}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between text-[12px] text-muted-foreground mb-1.5">
+        <span>Solicitações</span>
+        <span className="font-semibold text-foreground">{grupo.demandas.length}</span>
+      </div>
+      <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mb-4">
+        <div className={`h-full rounded-full transition-all ${barCor}`} style={{ width: `${carga}%` }} />
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        {grupo.urgentes > 0 && (
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />{grupo.urgentes} urgente{grupo.urgentes !== 1 ? 's' : ''}
+          </span>
+        )}
+        {grupo.normais > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">{grupo.normais} normal{grupo.normais !== 1 ? 'is' : ''}</span>}
+        {grupo.baixas > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{grupo.baixas} baixa{grupo.baixas !== 1 ? 's' : ''}</span>}
+      </div>
+
+      <div className="space-y-1">
+        {mostra.map(it => {
+          const st = getStatusMeta(it.status);
+          return (
+            <button key={it.id} onClick={() => onOpen(it)}
+              className="w-full text-left flex items-center gap-2.5 p-2 rounded-lg hover:bg-muted/60 transition-colors">
+              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dotUrg(it)}`} />
+              <p className="text-[13px] truncate flex-1">{it.titulo}</p>
+              <Badge className={`text-[9px] px-1.5 py-0 ${st.color}`}>{st.label}</Badge>
+              <span className="text-[11px] text-muted-foreground shrink-0 w-8 text-right">{tempoAtras(it.created_at)}</span>
+            </button>
+          );
+        })}
+      </div>
+      {grupo.demandas.length > 3 && (
+        <button onClick={() => setAberto(a => !a)} className="w-full mt-2 text-[12px] font-semibold text-primary hover:opacity-80 py-1.5">
+          {aberto ? 'Ver menos' : `Ver todas (${grupo.demandas.length}) →`}
+        </button>
+      )}
+    </Card>
+  );
+}
+
+function PainelPorSolicitante({ items, onOpen }) {
+  const grupos = useMemo(() => {
+    const map = new Map();
+    for (const it of items) {
+      const key = it.solicitante_id || it.solicitante?.id || `nome:${(it.solicitante_nome || it.solicitante?.name || 'desconhecido').toLowerCase()}`;
+      if (!map.has(key)) {
+        map.set(key, { key, nome: it.solicitante?.name || it.solicitante_nome || 'Desconhecido', email: it.solicitante?.email || '', demandas: [] });
+      }
+      map.get(key).demandas.push(it);
+    }
+    const arr = [...map.values()];
+    arr.forEach(g => {
+      g.urgentes = g.demandas.filter(ehUrgente).length;
+      g.normais = g.demandas.filter(d => !ehUrgente(d) && d.urgencia !== 'baixa').length;
+      g.baixas = g.demandas.filter(d => d.urgencia === 'baixa').length;
+      g.demandas.sort((a, b) => (Number(ehUrgente(b)) - Number(ehUrgente(a))) || (new Date(b.created_at) - new Date(a.created_at)));
+    });
+    arr.sort((a, b) => (b.urgentes - a.urgentes) || (b.demandas.length - a.demandas.length) || a.nome.localeCompare(b.nome));
+    return arr;
+  }, [items]);
+
+  const maxCarga = Math.max(1, ...grupos.map(g => g.demandas.length));
+  const urgentesGlobais = useMemo(
+    () => items.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+    [items]
+  );
+  const totalSla = items.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
+
+  if (items.length === 0) {
+    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação na fila para os filtros atuais.</Card>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatMini label="Solicitações ativas" valor={items.length} />
+        <StatMini label="Solicitantes" valor={grupos.length} />
+        <StatMini label="Urgentes" valor={urgentesGlobais.length} tom="rose" />
+        <StatMini label="SLA atrasado" valor={totalSla} tom="amber" />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {grupos.map(g => <SolicitanteCard key={g.key} grupo={g} maxCarga={maxCarga} onOpen={onOpen} />)}
+        </div>
+
+        <div>
+          <Card className="p-5 xl:sticky xl:top-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> Urgentes agora
+              </h3>
+              <Badge className="bg-rose-500/15 text-rose-700 dark:text-rose-400">{urgentesGlobais.length}</Badge>
+            </div>
+            {urgentesGlobais.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma urgente. 🎉</p>
+            ) : (
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                {urgentesGlobais.map(it => (
+                  <button key={it.id} onClick={() => onOpen(it)}
+                    className="w-full text-left flex items-start gap-2.5 p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 transition-colors">
+                    <span className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${dotUrg(it)}`} />
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-snug line-clamp-2">{it.titulo}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                        {it.solicitante?.name || it.solicitante_nome || 'Desconhecido'} · há {tempoAtras(it.created_at)}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) {
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
@@ -1519,7 +1928,14 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
       </div>
       <p className="text-sm font-medium text-foreground line-clamp-2 mb-1.5">{item.titulo}</p>
       <div className="flex items-center justify-between gap-1.5 flex-wrap">
-        <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solicitante}</span>
+        <span className="text-[11px] text-muted-foreground truncate max-w-[160px] inline-flex items-center gap-1">
+          {solicitante}
+          {item.compartilhar_area === false && (
+            <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground" title="Privada · só você e quem atende">
+              <Lock className="h-2.5 w-2.5" /> privada
+            </span>
+          )}
+        </span>
         <div className="flex items-center gap-1">
           {mostrarStatus && <Badge className={`text-[10px] px-1.5 py-0.5 ${st.color}`}>{st.label}</Badge>}
           {sla && (
@@ -1537,12 +1953,17 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
           <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
         </div>
       )}
-      {item.status === 'aguardando_aprovacao_origem' && (
-        <div className="mt-2 flex items-center gap-1 text-[10px] text-violet-700 dark:text-violet-400 bg-violet-500/10 border border-violet-500/30 rounded px-2 py-1">
-          <Clock className="h-3 w-3 shrink-0" />
-          <span>Aguardando aprovação{Array.isArray(item.aprovacao_origem_aprovadores) && item.aprovacao_origem_aprovadores.length ? ` de ${item.aprovacao_origem_aprovadores.join(' ou ')}` : ' de origem'}</span>
-        </div>
-      )}
+      {item.status === 'aguardando_aprovacao_origem' && (() => {
+        const pend = (Array.isArray(item.aprovacao_pendente_de) && item.aprovacao_pendente_de.length
+          ? item.aprovacao_pendente_de
+          : (Array.isArray(item.aprovacao_origem_aprovadores) ? item.aprovacao_origem_aprovadores : [])).filter(Boolean);
+        return (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-violet-700 dark:text-violet-400 bg-violet-500/10 border border-violet-500/30 rounded px-2 py-1">
+            <Clock className="h-3 w-3 shrink-0" />
+            <span>Aguardando aprovação{pend.length ? ` de ${pend.join(' ou ')}` : ''}</span>
+          </div>
+        );
+      })()}
       {isAdmin && item.status === 'pendente' && (
         <div className="flex gap-1.5 mt-2 pt-2 border-t border-border">
           <Button size="sm" variant="outline" className="h-6 text-[10px] flex-1" onClick={e => { e.stopPropagation(); onStatusChange(item.id, 'em_analise'); }}>
@@ -1816,68 +2237,192 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   );
 }
 
-// Cotação (compras/serviço) · a logística registra valor+fornecedor ANTES do financeiro.
-// Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação do financeiro" · o Yago
-// decide sobre o valor real. jaCotado mostra read-only (todos veem · inclusive o Yago) ·
-// em_cotacao + canCotar mostra o formulário pra logística registrar.
+// Cotação (compras/serviço) · o Amaury (logística) registra VÁRIAS cotações de
+// fornecedores e, com um botão dedicado reenviável, dispara um e-mail rico ao
+// financeiro (Yago) com todas as cotações + a sugerida + total, pra aprovar o
+// pagamento. Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação
+// do financeiro". Compatível com a cotação inline antiga (valor_cotado) quando
+// ainda não há linhas na tabela nova.
 function CotacaoBlock({ item, canCotar, onChanged }) {
-  const emCotacao = item.status === 'em_cotacao';
-  const jaCotado = item.valor_cotado != null;
-  const [valor, setValor] = useState('');
-  const [fornecedor, setFornecedor] = useState('');
-  const [obs, setObs] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const fmtBRL = (n) => `R$ ${Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro (Yago) ainda
+  // não aprovou e a solicitação não é terminal — não só durante em_cotacao.
+  const podeEditar = canCotar
+    && !item.aprovado_financeiro_em
+    && !['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(item.status);
+  const fmtBRL = (n) => `R$ ${Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  async function registrar() {
-    const v = Number(valor);
-    if (valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor cotado.'); return; }
-    setSubmitting(true);
+  const [cotacoes, setCotacoes] = useState([]);
+  const [carregando, setCarregando] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' });
+
+  async function recarregar() {
     try {
-      await api.registrarCotacao(item.id, {
-        valor_cotado: v,
-        fornecedor: fornecedor.trim() || undefined,
-        observacao: obs.trim() || undefined,
-      });
-      toast.success('Cotação registrada · enviada pro financeiro.');
-      onChanged?.();
-    } catch (e) { toast.error(e.message || 'Erro ao registrar cotação'); }
-    finally { setSubmitting(false); }
+      const rows = await api.listarCotacoes(item.id);
+      setCotacoes(Array.isArray(rows) ? rows : []);
+    } catch (e) { /* silencioso · mostra inline antiga se houver */ }
+    finally { setCarregando(false); }
+  }
+  useEffect(() => { recarregar(); /* eslint-disable-next-line */ }, [item.id]);
+
+  function resetForm() { setForm({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' }); setEditId(null); }
+
+  async function salvar() {
+    const nome = form.fornecedor.trim();
+    const v = Number(form.valor);
+    if (!nome) { toast.error('Informe o fornecedor.'); return; }
+    if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor da cotação.'); return; }
+    setSalvando(true);
+    try {
+      const payload = {
+        fornecedor: nome, valor: v,
+        prazo: form.prazo.trim() || undefined,
+        link: form.link.trim() || undefined,
+        observacao: form.observacao.trim() || undefined,
+      };
+      if (editId) { await api.editarCotacao(editId, payload); toast.success('Cotação atualizada.'); }
+      else { await api.adicionarCotacao(item.id, payload); toast.success('Cotação adicionada.'); }
+      resetForm();
+      await recarregar();
+    } catch (e) { toast.error(e.message || 'Erro ao salvar cotação'); }
+    finally { setSalvando(false); }
   }
 
+  function iniciarEdicao(c) {
+    setEditId(c.id);
+    setForm({ fornecedor: c.fornecedor || '', valor: c.valor ?? '', prazo: c.prazo || '', link: c.link || '', observacao: c.observacao || '' });
+  }
+
+  async function remover(c) {
+    if (!window.confirm(`Remover a cotação de ${c.fornecedor}?`)) return;
+    try { await api.removerCotacao(c.id); toast.success('Cotação removida.'); if (editId === c.id) resetForm(); await recarregar(); }
+    catch (e) { toast.error(e.message || 'Erro ao remover'); }
+  }
+
+  async function marcarSugerida(c) {
+    try { await api.sugerirCotacao(item.id, c.id); await recarregar(); }
+    catch (e) { toast.error(e.message || 'Erro ao marcar sugerida'); }
+  }
+
+  async function enviarFinanceiro() {
+    setEnviando(true);
+    try {
+      const r = await api.enviarCotacoesFinanceiro(item.id);
+      if (r?.email_ok) toast.success('Cotações enviadas ao financeiro por e-mail.');
+      else toast.warning(r?.motivo ? `Enviado ao financeiro no sistema, mas o e-mail não saiu — ${r.motivo}` : 'Enviado ao financeiro no sistema, mas o e-mail não saiu — verifique.');
+      onChanged?.();
+      await recarregar();
+    } catch (e) { toast.error(e.message || 'Erro ao enviar cotações'); }
+    finally { setEnviando(false); }
+  }
+
+  // Compat · sem linhas novas mas com cotação inline antiga → mostra read-only.
+  const inlineLegado = !cotacoes.length && item.valor_cotado != null;
+  const jaEnviado = !!item.cotacoes_email_em;
+
   return (
-    <div className="space-y-2 pt-3 border-t border-border">
-      <p className="text-sm font-semibold text-foreground">Cotação</p>
-      {jaCotado ? (
-        <div className="grid grid-cols-2 gap-4 text-sm">
+    <div className="space-y-3 pt-3 border-t border-border">
+      <p className="text-sm font-semibold text-foreground">Cotações</p>
+
+      {carregando ? (
+        <p className="text-xs text-muted-foreground">Carregando cotações...</p>
+      ) : inlineLegado ? (
+        <div className="grid grid-cols-2 gap-4 text-sm rounded-md border border-border p-3">
           <div><span className="text-muted-foreground">Valor cotado</span><p className="font-medium">{fmtBRL(item.valor_cotado)}</p></div>
           {item.cotacao_fornecedor && <div><span className="text-muted-foreground">Fornecedor</span><p className="font-medium">{item.cotacao_fornecedor}</p></div>}
           {item.cotacao_observacao && <div className="col-span-2"><span className="text-muted-foreground">Observação</span><p className="text-sm whitespace-pre-wrap">{item.cotacao_observacao}</p></div>}
         </div>
-      ) : emCotacao && canCotar ? (
+      ) : cotacoes.length ? (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">Levante o valor com o fornecedor. Ao registrar, segue pro financeiro aprovar.</p>
+          {cotacoes.map(c => (
+            <div key={c.id} className={`rounded-md border p-2.5 text-sm ${c.sugerida ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      title={c.sugerida ? 'Sugerida' : 'Marcar como sugerida'}
+                      disabled={!podeEditar}
+                      onClick={() => podeEditar && marcarSugerida(c)}
+                      className={`inline-flex ${podeEditar ? 'cursor-pointer' : 'cursor-default'}`}
+                    >
+                      <Star className={`h-4 w-4 ${c.sugerida ? 'text-primary fill-primary' : 'text-muted-foreground'}`} />
+                    </button>
+                    <span className="font-medium truncate">{c.fornecedor}</span>
+                    <span className="font-semibold">· {fmtBRL(c.valor)}</span>
+                    {c.prazo && <span className="text-xs text-muted-foreground">· {c.prazo}</span>}
+                  </div>
+                  {c.link && (
+                    <a href={c.link} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline break-all">{c.link}</a>
+                  )}
+                  {c.observacao && <p className="text-xs text-muted-foreground whitespace-pre-wrap mt-0.5">{c.observacao}</p>}
+                </div>
+                {podeEditar && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => iniciarEdicao(c)}><Pencil className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => remover(c)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Nenhuma cotação registrada ainda.</p>
+      )}
+
+      {podeEditar && (
+        <div className="space-y-2 rounded-md border border-dashed border-border p-3">
+          <p className="text-xs font-medium text-foreground">{editId ? 'Editar cotação' : 'Adicionar cotação'}</p>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <Label className="text-xs">Valor cotado (R$) *</Label>
-              <Input type="number" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+              <Label className="text-xs">Fornecedor *</Label>
+              <Input value={form.fornecedor} onChange={e => setForm(f => ({ ...f, fornecedor: e.target.value }))} placeholder="Nome do fornecedor" />
             </div>
             <div>
-              <Label className="text-xs">Fornecedor</Label>
-              <Input value={fornecedor} onChange={e => setFornecedor(e.target.value)} placeholder="Nome do fornecedor" />
+              <Label className="text-xs">Valor (R$) *</Label>
+              <Input type="number" step="0.01" min="0" value={form.valor} onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} placeholder="0,00" />
+            </div>
+            <div>
+              <Label className="text-xs">Prazo</Label>
+              <Input value={form.prazo} onChange={e => setForm(f => ({ ...f, prazo: e.target.value }))} placeholder="ex.: 5 dias úteis" />
+            </div>
+            <div>
+              <Label className="text-xs">Link</Label>
+              <Input value={form.link} onChange={e => setForm(f => ({ ...f, link: e.target.value }))} placeholder="https://..." />
             </div>
           </div>
           <div>
-            <Label className="text-xs">Observação (opcional)</Label>
-            <Textarea rows={2} value={obs} onChange={e => setObs(e.target.value)} placeholder="Condições, prazo de entrega, link da cotação..." />
+            <Label className="text-xs">Observação</Label>
+            <Textarea rows={2} value={form.observacao} onChange={e => setForm(f => ({ ...f, observacao: e.target.value }))} placeholder="Condições, forma de pagamento, garantia..." />
           </div>
-          <div className="flex justify-end">
-            <Button size="sm" onClick={registrar} disabled={submitting}>{submitting ? 'Registrando...' : 'Registrar cotação → financeiro'}</Button>
+          <div className="flex justify-end gap-2">
+            {editId && <Button size="sm" variant="outline" onClick={resetForm} disabled={salvando}>Cancelar</Button>}
+            <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : editId ? 'Salvar' : 'Adicionar'}</Button>
           </div>
         </div>
-      ) : emCotacao ? (
-        <p className="text-xs text-muted-foreground">Aguardando a logística registrar a cotação (valor + fornecedor).</p>
-      ) : null}
+      )}
+
+      {podeEditar && (
+        <div className="space-y-1.5">
+          <Button
+            onClick={enviarFinanceiro}
+            disabled={enviando || !cotacoes.length}
+            className="w-full bg-teal-600 hover:bg-teal-700 text-white"
+          >
+            <Mail className="h-4 w-4 mr-2" />
+            {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar cotações ao financeiro' : 'Enviar cotações por e-mail ao financeiro'}
+          </Button>
+          {jaEnviado && (
+            <p className="text-[11px] text-muted-foreground text-center">
+              Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
+            </p>
+          )}
+          {!cotacoes.length && <p className="text-[11px] text-muted-foreground text-center">Adicione ao menos uma cotação para habilitar o envio.</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1975,12 +2520,20 @@ function SobrestarBlock({ item, onChanged }) {
   );
 }
 
-function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh }) {
+function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh, asSheet = false }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
   const [atenderEstoque, setAtenderEstoque] = useState(false); // ponte estoque (Fase 3a-2)
 
   if (!item) return null;
+  // Mesmo corpo, dois invólucros: Dialog (modal) ou Sheet (painel lateral direito).
+  const Root = asSheet ? Sheet : Dialog;
+  const Content = asSheet ? SheetContent : DialogContent;
+  const HeaderW = asSheet ? SheetHeader : DialogHeader;
+  const TitleW = asSheet ? SheetTitle : DialogTitle;
+  const contentProps = asSheet
+    ? { side: 'right', className: 'w-full sm:max-w-xl flex flex-col p-4 sm:p-6' }
+    : { className: 'sm:max-w-lg max-h-[90vh] flex flex-col' };
   const cat = getCatMeta(item.categoria);
   const urg = getUrgMeta(item.urgencia);
   const st = getStatusMeta(item.status);
@@ -2006,15 +2559,30 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
   }
 
   return (
-    <Dialog open={!!item} onOpenChange={v => { if (!v) { cancelAction(); onClose(); } }}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <Root open={!!item} onOpenChange={v => { if (!v) { cancelAction(); onClose(); } }}>
+      <Content {...contentProps}>
+        <HeaderW>
+          <TitleW className="flex items-center gap-2">
             <Badge className={cat.color}>{cat.label}</Badge>
             {item.titulo}
-          </DialogTitle>
-        </DialogHeader>
+          </TitleW>
+        </HeaderW>
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
+          {/* Devolvida pra ajuste · atalho pro solicitante editar e reenviar */}
+          {item.status === 'aguardando_ajuste' && item.solicitante_id === currentUserId && (
+            <div className="flex flex-wrap items-center gap-2 justify-between p-3 rounded-lg border border-amber-500/40 bg-amber-500/10">
+              <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+                <Pencil className="h-4 w-4 shrink-0" />
+                <span className="font-medium">Esta solicitação foi devolvida pra você ajustar.</span>
+              </div>
+              <Button size="sm" onClick={() => {
+                document.getElementById('editar-devolvida')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }}>
+                Editar e reenviar
+              </Button>
+            </div>
+          )}
+
           {/* Rastreio do pedido · etapas macro + com quem está (versão completa) */}
           <TrackerSolicitacao item={item} />
 
@@ -2036,6 +2604,10 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             <div>
               <span className="block text-xs text-muted-foreground mb-0.5">Criada em</span>
               <p className="font-medium">{new Date(item.created_at).toLocaleDateString('pt-BR')}</p>
+            </div>
+            <div>
+              <span className="block text-xs text-muted-foreground mb-0.5">Visibilidade</span>
+              <p className="font-medium">{item.compartilhar_area ? 'Compartilhada com a área' : 'Só você e quem atende'}</p>
             </div>
             {item.valor_estimado != null && (
               <div>
@@ -2117,6 +2689,21 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                   <FileText className="h-4 w-4" /> Ver comprovante
                 </a>
               )}
+            </div>
+          )}
+
+          {/* Fotos anexadas no intake (Serviços/Serviço externo) · quem
+              atende/cota avalia pela imagem · clicar abre em tamanho real */}
+          {Array.isArray(item.imagens_url) && item.imagens_url.length > 0 && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <p className="text-sm font-semibold text-foreground">Fotos anexadas</p>
+              <div className="flex flex-wrap gap-2">
+                {item.imagens_url.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" title="Abrir foto em tamanho real">
+                    <img src={url} alt={`Foto ${i + 1}`} className="h-24 w-24 rounded-md object-cover border border-border hover:opacity-80 transition-opacity" />
+                  </a>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2311,8 +2898,8 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+      </Content>
+    </Root>
   );
 }
 
@@ -2802,6 +3389,26 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
     titulo: item.titulo || '', descricao: item.descricao || '',
     justificativa: item.justificativa || '', data_necessaria: item.data_necessaria || '',
   });
+  // Itens do pedido (compras/serviço) · editáveis na devolução.
+  const ehCompras = ['compras', 'servico'].includes(item.categoria);
+  const [itens, setItens] = useState(() =>
+    (Array.isArray(item.solicitacao_itens) ? [...item.solicitacao_itens] : [])
+      .sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0))
+      .map(it => ({
+        descricao: it.descricao || '',
+        quantidade: String(it.quantidade ?? 1),
+        valor_estimado: it.valor_estimado != null ? String(it.valor_estimado) : '',
+        valor_tipo: 'total', // o gravado já é o total da linha
+        link_referencia: it.link_referencia || '',
+      })));
+  const setItemLinha = (i, patch) => setItens(arr => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
+  const addItemLinha = () => setItens(arr => [...arr, { descricao: '', quantidade: '1', valor_estimado: '', valor_tipo: 'total', link_referencia: '' }]);
+  const delItemLinha = (i) => setItens(arr => arr.filter((_, j) => j !== i));
+  const totalItens = itens.reduce((acc, it) => {
+    const v = Number(it.valor_estimado); const q = Number(it.quantidade) || 1;
+    if (!isFinite(v) || !it.valor_estimado) return acc;
+    return acc + (it.valor_tipo === 'unitario' ? v * q : v);
+  }, 0);
 
   const isSolicitante = item.solicitante_id === currentUserId;
   const emAjuste = item.status === 'aguardando_ajuste';
@@ -2840,6 +3447,15 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
         titulo: edit.titulo.trim(), descricao: edit.descricao,
         justificativa: edit.justificativa, data_necessaria: edit.data_necessaria || null,
         resposta: resposta.trim(),
+        ...(ehCompras ? {
+          itens_lista: itens
+            .filter(it => String(it.descricao || '').trim())
+            .map(it => ({
+              descricao: it.descricao, quantidade: Number(it.quantidade) || 1,
+              valor_estimado: it.valor_estimado, valor_tipo: it.valor_tipo,
+              link_referencia: it.link_referencia || null,
+            })),
+        } : {}),
       });
       toast.success('Reenviada · voltou para a fila.');
       setResposta('');
@@ -2860,7 +3476,7 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
         </p>
       )}
       {emAjuste && isSolicitante && (
-        <div className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+        <div id="editar-devolvida" className="space-y-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Ajuste solicitado · corrija e reenvie</p>
           {ultimoAjuste && (
             <p className="text-xs text-muted-foreground">
@@ -2885,6 +3501,45 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
             <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
               onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
           </div>
+
+          {ehCompras && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Itens do pedido</Label>
+                {totalItens > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    Total: {totalItens.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                {itens.map((it, i) => (
+                  <div key={i} className="rounded-md border border-border bg-background p-2 space-y-1.5">
+                    <div className="flex gap-1.5">
+                      <Input className="flex-1" placeholder="Descrição do item" value={it.descricao}
+                        onChange={e => setItemLinha(i, { descricao: e.target.value })} />
+                      <button type="button" className="text-red-600 text-xs px-1 shrink-0" onClick={() => delItemLinha(i)} title="Remover item">✕</button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <Input type="number" min="1" step="1" className="w-16" placeholder="Qtd" value={it.quantidade}
+                        onChange={e => setItemLinha(i, { quantidade: e.target.value })} />
+                      <Input type="number" min="0" step="any" className="w-28" placeholder="Valor (R$)" value={it.valor_estimado}
+                        onChange={e => setItemLinha(i, { valor_estimado: e.target.value })} />
+                      <select className="h-9 rounded-md border border-input bg-background px-2 text-xs" value={it.valor_tipo}
+                        onChange={e => setItemLinha(i, { valor_tipo: e.target.value })}>
+                        <option value="total">R$ total</option>
+                        <option value="unitario">R$ por unid.</option>
+                      </select>
+                    </div>
+                    <Input className="text-xs" placeholder="Link de referência (opcional)" value={it.link_referencia}
+                      onChange={e => setItemLinha(i, { link_referencia: e.target.value })} />
+                  </div>
+                ))}
+                <Button type="button" size="sm" variant="outline" onClick={addItemLinha} className="w-full">+ Adicionar item</Button>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label className="text-xs">Sua resposta <span className="text-red-500">*</span></Label>
             <Textarea rows={2} value={resposta} onChange={e => setResposta(e.target.value)}

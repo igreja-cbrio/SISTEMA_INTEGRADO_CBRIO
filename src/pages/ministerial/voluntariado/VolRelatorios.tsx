@@ -12,7 +12,7 @@ import { useVolTeams } from './hooks';
 import { UserX, Flame, BarChart3, Calendar, CheckCircle2, TrendingUp, Users, Printer, AlertTriangle, Filter, Clock, ChevronRight, XCircle, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ciMatchesSched, dateOfSP, normName } from './volMatch';
+import { ciMatchesSched, dateOfSP, normName, blocoDoServico } from './volMatch';
 
 // Escala do PCO tem 1 linha por horário/função (ex.: Bazar 8:30/10:00/11:30) —
 // a MESMA pessoa aparece várias vezes. Presença é por PESSOA: dedup das linhas
@@ -49,7 +49,7 @@ export default function VolRelatorios() {
   const [period, setPeriod] = useState('week');
   const [teamFilter, setTeamFilter] = useState('__all__');
   const [inactiveMode, setInactiveMode] = useState<'checkin' | 'schedule'>('checkin');
-  const [openServiceId, setOpenServiceId] = useState<string | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const teamFilterValue = teamFilter === '__all__' ? undefined : teamFilter;
   const { data: reportData } = useVolReportData(period as any);
@@ -116,72 +116,93 @@ export default function VolRelatorios() {
     return { scheduled, checkedIn, rate, uniqueVol };
   }, [reportData]);
 
-  // Per-service breakdown · esconde serviços VAZIOS (0 escala e 0 check-in) —
-  // são os duplicados internos ("Domingo 08:30/10:00/11:30", "AMI", "Bridge")
-  // que nunca recebem escala (as escalas reais vão pros serviços do Planning
-  // Center: "Domingo - Manhã", "Culto AMI", etc.).
-  const serviceBreakdown = useMemo(() => {
+  // Identidade de um check-in pra contar PESSOAS distintas — mesma régua do
+  // Dashboard Semanal (PCID do perfil > volunteer_id > nome normalizado).
+  const ciIdentity = (c: any) =>
+    c.volunteer?.planning_center_id || c.volunteer_id ||
+    normName(c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name);
+
+  // Breakdown por TURNO (consolidado igual ao Dashboard Semanal). O sync do PCO
+  // gera serviços DUPLICADOS pro mesmo turno: a ESCALA fica no serviço de turno
+  // ("Domingo - Manhã") e os CHECK-INS caem nos cultos ("Domingo 08:30/10:00/
+  // 11:30"). Antes o relatório contava serviço a serviço → o turno aparecia
+  // fragmentado (escala num serviço, check-ins noutros, "serviram" errado).
+  // Agora agrupamos por bloco+data: "serviram" = pessoas distintas que fizeram
+  // check-in no turno (idêntico à barra do Dashboard) e a composição por culto
+  // real (08:30/10:00/11:30) vai no detalhe. Serviços fora de bloco viram linha
+  // própria.
+  const turnoBreakdown = useMemo(() => {
     if (!reportData) return [];
-    return reportData.services
-      .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime())
-      .map(svc => {
-        const svcSchedules = dedupePorPessoa(reportData.schedules.filter(s => s.service_id === svc.id));
-        const svcCheckIns = reportData.checkIns.filter(c => c.service_id === svc.id);
-        // Por PESSOA: total = escalados distintos; present = escalados com check-in
-        const total = svcSchedules.length;
-        const present = svcSchedules.filter(sch => svcCheckIns.some(c => ciMatchesSched(c, sch))).length;
-        const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-        // "Quantas pessoas serviram" = escalados presentes + sem-escala identificados
-        // (anônimos ficam numa contagem à parte · não dá pra saber quem foram)
-        const extrasTodos = svcCheckIns.filter(c => !svcSchedules.some(sch => ciMatchesSched(c, sch)) && isRealmenteSemEscala(c));
-        const serviram = present + new Set(
-          extrasTodos.filter(ciTemIdentidade).map(c =>
-            c.volunteer?.planning_center_id || c.volunteer_id ||
-            normName(c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name)
-          )
-        ).size;
-        const anonimos = extrasTodos.filter(c => !ciTemIdentidade(c)).length;
-        return { ...svc, total, present, rate, serviram, anonimos };
-      })
-      .filter(s => s.total > 0 || s.present > 0 || s.serviram > 0);
-  }, [reportData, isRealmenteSemEscala]);
-
-  // Detalhe de UM culto: quem dos escalados fez check-in (presente), quem não
-  // fez (faltou) e quem fez check-in sem estar escalado (sem escala). Tudo
-  // derivado do que o relatório já carregou — sem ida ao servidor.
-  const serviceDetail = useMemo(() => {
-    if (!openServiceId || !reportData) return null;
-    const svc = reportData.services.find(s => s.id === openServiceId) || null;
-    // Dedup por PESSOA: a escala do PCO tem 1 linha por horário/função e a
-    // mesma pessoa aparecia 3x como "presente" (1 check-in × 3 linhas).
-    const scheds = dedupePorPessoa(reportData.schedules.filter(s => s.service_id === openServiceId));
-    const checks = reportData.checkIns.filter(c => c.service_id === openServiceId);
-
-    // Presente = escalado que tem check-in casado (por id/volunteer_id/PCID/nome);
-    // faltou = escalado sem check-in casado.
-    const present: typeof scheds = [];
-    const absent: typeof scheds = [];
-    for (const s of scheds) {
-      const did = checks.some(c => ciMatchesSched(c, s));
-      (did ? present : absent).push(s);
+    const grupos = new Map<string, any>();
+    for (const svc of reportData.services) {
+      const bloco = blocoDoServico(svc.name);
+      const dia = dateOfSP(svc.scheduled_at);
+      const key = bloco ? `${bloco}|${dia}` : `svc:${svc.id}`;
+      let g = grupos.get(key);
+      if (!g) { g = { key, name: bloco || svc.name, bloco, scheduled_at: svc.scheduled_at, services: [] as any[] }; grupos.set(key, g); }
+      g.services.push(svc);
+      // Horário mais cedo do turno como referência de exibição.
+      if (new Date(svc.scheduled_at).getTime() < new Date(g.scheduled_at).getTime()) g.scheduled_at = svc.scheduled_at;
     }
 
-    // "Sem escala" = check-in que não casa com nenhuma escala DESTE culto E que
-    // também não tem escala da mesma pessoa na mesma data (evita falso positivo
-    // quando o serviço duplicou no sync). Anônimos (check-in antigo sem nome)
-    // são agrupados numa contagem só — não dá pra saber quem foram.
-    const extrasTodos = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
+    return [...grupos.values()]
+      .map(g => {
+        const svcIds = new Set(g.services.map((s: any) => s.id));
+        // Escala do turno · dedup por pessoa (a escala vive no serviço de turno).
+        const scheds = dedupePorPessoa(reportData.schedules.filter(s => svcIds.has(s.service_id)));
+        const checks = reportData.checkIns.filter(c => c.service_id && svcIds.has(c.service_id));
+        const total = scheds.length;
+        const present = scheds.filter(sch => checks.some(c => ciMatchesSched(c, sch))).length;
+        const rate = total > 0 ? Math.round((present / total) * 100) : 0;
+        // "Serviram" = pessoas DISTINTAS com check-in no turno (barra do Dashboard).
+        const serviram = new Set(checks.filter(ciTemIdentidade).map(ciIdentity)).size;
+        const anonimos = checks.filter(c => !ciTemIdentidade(c) && isRealmenteSemEscala(c)).length;
+        // Composição por culto real (drill-down do Dashboard: 08:30=60, etc.).
+        const porCulto = g.services
+          .map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            scheduled_at: s.scheduled_at,
+            serviram: new Set(checks.filter(c => c.service_id === s.id && ciTemIdentidade(c)).map(ciIdentity)).size,
+          }))
+          .filter((c: any) => c.serviram > 0)
+          .sort((a: any, b: any) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
+        return { ...g, scheds, checks, total, present, rate, serviram, anonimos, porCulto };
+      })
+      .filter(r => r.total > 0 || r.serviram > 0 || r.anonimos > 0)
+      .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime());
+  }, [reportData, isRealmenteSemEscala]);
+
+  // Detalhe de UM turno: composição por culto (quantos serviram em cada culto),
+  // mais quem dos escalados fez check-in (presente), quem faltou e os check-ins
+  // sem escala. Tudo derivado do que o relatório já carregou.
+  const turnoDetail = useMemo(() => {
+    if (!openKey || !reportData) return null;
+    const row = turnoBreakdown.find(r => r.key === openKey);
+    if (!row) return null;
+    const scheds = row.scheds;
+    const checks = row.checks;
+
+    const present: any[] = [];
+    const absent: any[] = [];
+    for (const s of scheds) {
+      (checks.some((c: any) => ciMatchesSched(c, s)) ? present : absent).push(s);
+    }
+
+    // "Sem escala" = check-in que não casa com nenhuma escala do turno E que
+    // também não tem escala da mesma pessoa na mesma data. Anônimos agrupados.
+    const extrasTodos = checks.filter((c: any) => !scheds.some((s: any) => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
     const extras = extrasTodos.filter(ciTemIdentidade);
     const extrasAnonimos = extrasTodos.length - extras.length;
 
-    return { svc, present, absent, extras, extrasAnonimos };
-  }, [openServiceId, reportData, isRealmenteSemEscala]);
+    return { row, present, absent, extras, extrasAnonimos };
+  }, [openKey, reportData, turnoBreakdown, isRealmenteSemEscala]);
 
-  // Imprime a chamada (presença) de UM culto numa janela própria.
-  const imprimirCulto = (svc: any) => {
+  // Imprime a chamada (presença) de UM turno numa janela própria.
+  const imprimirCulto = (row: any) => {
     if (!reportData) return;
-    const scheds = dedupePorPessoa(reportData.schedules.filter(s => s.service_id === svc.id));
-    const checks = reportData.checkIns.filter(c => c.service_id === svc.id);
+    const scheds = row.scheds as any[];
+    const checks = row.checks as any[];
     const present = scheds.filter(s => checks.some(c => ciMatchesSched(c, s)));
     const absent = scheds.filter(s => !checks.some(c => ciMatchesSched(c, s)));
     const extrasTodos = checks.filter(c => !scheds.some(s => ciMatchesSched(c, s)) && isRealmenteSemEscala(c));
@@ -191,19 +212,23 @@ export default function VolRelatorios() {
     const nomeSched = (s: any) => esc(s.volunteer_name || s.volunteer?.full_name || 'Voluntário');
     const nomeCi = (c: any) => esc(c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || 'Voluntário');
     const equipe = (s: any) => s.team_name ? ` <span style="color:#888">· ${esc(s.team_name)}${s.position_name ? ' / ' + esc(s.position_name) : ''}</span>` : '';
-    const dt = (() => { try { return new Date(svc.scheduled_at).toLocaleString('pt-BR', { dateStyle: 'full', timeStyle: 'short' }); } catch { return ''; } })();
+    const dt = (() => { try { return new Date(row.scheduled_at).toLocaleString('pt-BR', { dateStyle: 'full', timeStyle: 'short' }); } catch { return ''; } })();
     const liS = (arr: any[]) => arr.length ? arr.map(s => `<li>${nomeSched(s)}${equipe(s)}</li>`).join('') : '<li style="color:#999">—</li>';
     const liC = (arr: any[]) => arr.length ? arr.map(c => `<li>${nomeCi(c)}</li>`).join('') : '<li style="color:#999">—</li>';
-    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Chamada · ${esc(svc.name)}</title>
+    const porCulto = (row.porCulto as any[]).length > 1
+      ? `<h2>Por culto</h2><ul>${(row.porCulto as any[]).map(c => `<li>${esc(c.name)}: <b>${c.serviram}</b> serviram</li>`).join('')}</ul>`
+      : '';
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Chamada · ${esc(row.name)}</title>
 <style>body{font-family:system-ui,-apple-system,Arial,sans-serif;padding:28px;color:#111;max-width:760px;margin:0 auto}
 h1{font-size:20px;margin:0 0 2px} .meta{color:#555;font-size:13px;margin-bottom:14px}
 h2{font-size:14px;margin:20px 0 6px;border-bottom:1px solid #ddd;padding-bottom:4px}
 ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
 .stats{font-size:13px;color:#333;background:#f4f4f5;padding:8px 12px;border-radius:8px;display:inline-block}
 @media print{button{display:none}}</style></head><body>
-<h1>${esc(svc.name)}</h1>
+<h1>${esc(row.name)}</h1>
 <div class="meta">${dt}</div>
-<div class="stats">Escalados: <b>${scheds.length}</b> · Presentes: <b>${present.length}</b> · Faltaram: <b>${absent.length}</b> · Sem escala: <b>${extras.length}</b></div>
+<div class="stats">Serviram: <b>${row.serviram}</b> · Escalados: <b>${scheds.length}</b> · Presentes: <b>${present.length}</b> · Faltaram: <b>${absent.length}</b> · Sem escala: <b>${extras.length}</b></div>
+${porCulto}
 <h2>✓ Presentes (${present.length})</h2><ul>${liS(present)}</ul>
 <h2>✗ Faltaram (${absent.length})</h2><ul>${liS(absent)}</ul>
 <h2>Check-in sem escala (${extras.length}${extrasAnon ? ` + ${extrasAnon} sem identificação` : ''})</h2><ul>${liC(extras)}${extrasAnon ? `<li style="color:#999">${extrasAnon} check-in(s) sem identificação</li>` : ''}</ul>
@@ -221,23 +246,23 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Imprimir chamada de qual culto?</DialogTitle></DialogHeader>
           <div className="space-y-1.5 max-h-[60vh] overflow-y-auto -mx-1 px-1">
-            {serviceBreakdown.length === 0 && (
+            {turnoBreakdown.length === 0 && (
               <p className="text-sm text-muted-foreground py-4 text-center">Nenhum culto com escala/check-in no período.</p>
             )}
-            {serviceBreakdown.map(svc => (
+            {turnoBreakdown.map(row => (
               <button
-                key={svc.id}
-                onClick={() => { imprimirCulto(svc); setPrintOpen(false); }}
+                key={row.key}
+                onClick={() => { imprimirCulto(row); setPrintOpen(false); }}
                 className="w-full flex items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2 text-left hover:bg-accent transition"
               >
                 <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{svc.name}</p>
+                  <p className="text-sm font-medium truncate">{row.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {(() => { try { return new Date(svc.scheduled_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); } catch { return ''; } })()}
+                    {(() => { try { return new Date(row.scheduled_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); } catch { return ''; } })()}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs text-muted-foreground">{svc.present}/{svc.total}</span>
+                  <span className="text-xs text-muted-foreground">{row.serviram} serviram</span>
                   <Printer className="h-4 w-4 text-muted-foreground" />
                 </div>
               </button>
@@ -313,41 +338,47 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
 
           <Card>
             <CardContent className="p-4">
-              <h3 className="font-semibold mb-4">Por Culto</h3>
-              {serviceBreakdown.length === 0 ? (
+              <h3 className="font-semibold mb-1">Por Turno</h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Turnos consolidados (mesmos números do Dashboard). "Serviram" = pessoas distintas com check-in no turno; clique pra ver a divisão por culto e a escala.
+              </p>
+              {turnoBreakdown.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">Nenhum culto no período</p>
               ) : (
                 <div className="space-y-1">
-                  {serviceBreakdown.map(svc => (
+                  {turnoBreakdown.map(row => (
                     <button
-                      key={svc.id}
+                      key={row.key}
                       type="button"
-                      onClick={() => setOpenServiceId(svc.id)}
+                      onClick={() => setOpenKey(row.key)}
                       className="w-full flex items-center gap-4 text-left rounded-lg px-2 py-2 -mx-2 hover:bg-accent transition-colors"
-                      title="Ver quem fez e quem faltou"
+                      title="Ver a divisão por culto, quem fez e quem faltou"
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm">{svc.name}</p>
+                        <p className="font-medium text-sm">{row.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {format(new Date(svc.scheduled_at), "EEEE, dd/MM 'as' HH:mm", { locale: ptBR })}
+                          {format(new Date(row.scheduled_at), "EEEE, dd/MM", { locale: ptBR })}
+                          {row.porCulto.length > 1 && (
+                            <span> · {row.porCulto.map((c: any) => c.serviram).join(' + ')} por culto</span>
+                          )}
                         </p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
                         <div className="text-right">
                           <p className="text-sm font-semibold">
-                            {svc.serviram} serviram
-                            {svc.anonimos > 0 && <span className="text-amber-600 dark:text-amber-400 font-normal"> +{svc.anonimos}?</span>}
+                            {row.serviram} serviram
+                            {row.anonimos > 0 && <span className="text-amber-600 dark:text-amber-400 font-normal"> +{row.anonimos}?</span>}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">escala {svc.present}/{svc.total}</p>
+                          <p className="text-[11px] text-muted-foreground">escala {row.present}/{row.total}</p>
                         </div>
                         <div className="w-32 h-2 bg-muted rounded-full overflow-hidden hidden sm:block">
                           <div
-                            className={`h-full rounded-full cbrio-bar ${svc.rate >= 80 ? 'bg-green-500' : svc.rate >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                            style={{ width: `${Math.min(svc.rate, 100)}%` }}
+                            className={`h-full rounded-full cbrio-bar ${row.rate >= 80 ? 'bg-green-500' : row.rate >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                            style={{ width: `${Math.min(row.rate, 100)}%` }}
                           />
                         </div>
-                        <Badge variant={svc.rate >= 80 ? 'default' : 'outline'} className={svc.rate >= 80 ? 'bg-green-600 text-white' : ''}>
-                          {svc.rate}%
+                        <Badge variant={row.rate >= 80 ? 'default' : 'outline'} className={row.rate >= 80 ? 'bg-green-600 text-white' : ''}>
+                          {row.rate}%
                         </Badge>
                         <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                       </div>
@@ -497,30 +528,52 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
         </TabsContent>
       </Tabs>
 
-      {/* Detalhe do culto · quem fez check-in e quem faltou */}
-      <Dialog open={!!openServiceId} onOpenChange={(o) => !o && setOpenServiceId(null)}>
+      {/* Detalhe do turno · divisão por culto + quem fez check-in e quem faltou */}
+      <Dialog open={!!openKey} onOpenChange={(o) => !o && setOpenKey(null)}>
         <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>{serviceDetail?.svc?.name || 'Culto'}</DialogTitle>
-            {serviceDetail?.svc && (
+            <DialogTitle>{turnoDetail?.row?.name || 'Turno'}</DialogTitle>
+            {turnoDetail?.row && (
               <p className="text-sm text-muted-foreground">
-                {format(new Date(serviceDetail.svc.scheduled_at), "EEEE, dd/MM 'as' HH:mm", { locale: ptBR })}
+                {format(new Date(turnoDetail.row.scheduled_at), "EEEE, dd/MM", { locale: ptBR })}
               </p>
             )}
           </DialogHeader>
 
-          {serviceDetail && (
+          {turnoDetail && (
             <div className="space-y-5 flex-1 overflow-y-auto min-h-0">
               {/* Resumo */}
-              <div className="flex gap-2 text-xs">
-                <Badge className="bg-green-600 text-white hover:bg-green-600">{serviceDetail.present.length} presente(s)</Badge>
-                <Badge variant="outline" className="border-red-300 text-red-600">{serviceDetail.absent.length} faltou(aram)</Badge>
-                {(serviceDetail.extras.length > 0 || serviceDetail.extrasAnonimos > 0) && (
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge className="text-white hover:opacity-90" style={{ backgroundColor: '#00B39D' }}>{turnoDetail.row.serviram} serviram</Badge>
+                <Badge className="bg-green-600 text-white hover:bg-green-600">{turnoDetail.present.length} presente(s)</Badge>
+                <Badge variant="outline" className="border-red-300 text-red-600">{turnoDetail.absent.length} faltou(aram)</Badge>
+                {(turnoDetail.extras.length > 0 || turnoDetail.extrasAnonimos > 0) && (
                   <Badge variant="outline" className="border-yellow-300 text-yellow-700">
-                    {serviceDetail.extras.length + serviceDetail.extrasAnonimos} sem escala
+                    {turnoDetail.extras.length + turnoDetail.extrasAnonimos} sem escala
                   </Badge>
                 )}
               </div>
+
+              {/* Composição por culto (drill-down do Dashboard) */}
+              {turnoDetail.row.porCulto.length > 1 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                    <h4 className="text-sm font-semibold">Serviram por culto</h4>
+                  </div>
+                  <div className="space-y-1.5">
+                    {turnoDetail.row.porCulto.map((c: any) => (
+                      <div key={c.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
+                        <p className="text-sm truncate">{c.name}</p>
+                        <span className="text-sm font-semibold shrink-0">{c.serviram}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    A soma por culto pode passar de {turnoDetail.row.serviram} (o total distinto do turno) porque quem serve em mais de um culto conta em cada um.
+                  </p>
+                </div>
+              )}
 
               {/* Presentes */}
               <div>
@@ -528,11 +581,11 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
                   <h4 className="text-sm font-semibold">Fizeram check-in</h4>
                 </div>
-                {serviceDetail.present.length === 0 ? (
+                {turnoDetail.present.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Ninguém escalado fez check-in.</p>
                 ) : (
                   <div className="space-y-1.5">
-                    {serviceDetail.present.map(s => (
+                    {turnoDetail.present.map(s => (
                       <div key={s.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{s.volunteer_name}</p>
@@ -555,11 +608,11 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
                   <XCircle className="h-4 w-4 text-red-500" />
                   <h4 className="text-sm font-semibold">Não fizeram check-in</h4>
                 </div>
-                {serviceDetail.absent.length === 0 ? (
+                {turnoDetail.absent.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Todos os escalados fizeram check-in. 🎉</p>
                 ) : (
                   <div className="space-y-1.5">
-                    {serviceDetail.absent.map(s => (
+                    {turnoDetail.absent.map(s => (
                       <div key={s.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{s.volunteer_name}</p>
@@ -577,23 +630,23 @@ ul{margin:0;padding-left:20px} li{margin:3px 0;font-size:14px}
               </div>
 
               {/* Sem escala */}
-              {(serviceDetail.extras.length > 0 || serviceDetail.extrasAnonimos > 0) && (
+              {(turnoDetail.extras.length > 0 || turnoDetail.extrasAnonimos > 0) && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <UserPlus className="h-4 w-4 text-yellow-600" />
                     <h4 className="text-sm font-semibold">Fizeram check-in sem escala</h4>
                   </div>
                   <div className="space-y-1.5">
-                    {serviceDetail.extras.map(c => (
+                    {turnoDetail.extras.map(c => (
                       <div key={c.id} className="flex items-center justify-between gap-3 p-2 rounded-lg border bg-card">
                         <p className="text-sm font-medium truncate">{c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || 'Voluntário'}</p>
                         <Badge variant="outline" className="border-yellow-300 text-yellow-700 text-xs shrink-0">sem escala</Badge>
                       </div>
                     ))}
-                    {serviceDetail.extrasAnonimos > 0 && (
+                    {turnoDetail.extrasAnonimos > 0 && (
                       <div className="flex items-center justify-between gap-3 p-2 rounded-lg border border-dashed bg-muted/40">
                         <p className="text-sm text-muted-foreground">
-                          {serviceDetail.extrasAnonimos} check-in{serviceDetail.extrasAnonimos === 1 ? '' : 's'} sem identificação
+                          {turnoDetail.extrasAnonimos} check-in{turnoDetail.extrasAnonimos === 1 ? '' : 's'} sem identificação
                           <span className="block text-xs">registrados antes do sistema guardar o nome (05/07) — sem como saber quem foram</span>
                         </p>
                         <Badge variant="outline" className="text-xs shrink-0">anônimos</Badge>

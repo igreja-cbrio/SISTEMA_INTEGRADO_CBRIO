@@ -65,10 +65,12 @@ export const CATEGORIA_HINT = {
 
 export const FORM_INITIAL = {
   titulo: '', descricao: '', justificativa: '',
-  categoria: '', urgencia: 'normal', valor_estimado: '',
+  categoria: '', valor_estimado: '',
   eh_urgente: false, justificativa_urgencia: '',
   // Planejado · pedido já aprovado no planejamento da área pula a dupla aprovação
   eh_planejado: false,
+  // Visibilidade · a ÁREA vê por padrão; opt-out "manter privada" (RH é sempre privado)
+  manter_privada: false,
   data_necessaria: '',
   espaco_solicitado: '', data_uso: '', horario_inicio: '', horario_fim: '', qtde_pessoas: '',
   motivo_reembolso: '', data_compra: '',
@@ -79,8 +81,13 @@ export const FORM_INITIAL = {
   // Pedido em massa (compras) · lista de itens · cada um: descrição + qtd +
   // link + valor estimado + foto (imagem_file no client → imagem_url no envio)
   itens_lista: [],
+  // Fotos gerais da solicitação (Serviços/Serviço externo) · Files locais →
+  // sobem pro bucket 'solicitacoes' no envio e viram imagens_url (jsonb)
+  imagens: [],
   // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
 };
+
+const MAX_FOTOS = 3;
 
 // Dropzone reutilizavel · comprovante de reembolso, boleto/NF de pagamento,
 // proposta de serviço. Estado de drag interno (self-contained).
@@ -156,6 +163,42 @@ function ItemFotoMini({ file, url, onFile, onClear }) {
   );
 }
 
+// Fotos gerais da solicitação · até MAX_FOTOS thumbnails + botão adicionar.
+// Usado em Serviços (manutenção) e Serviço externo — quem atende/cota avalia
+// pela imagem (goteira, equipamento, referência do serviço).
+function FotosAnexos({ fotos, onAdd, onRemove }) {
+  const inputRef = useRef(null);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {fotos.map((file, idx) => (
+        <div key={idx} className="relative h-16 w-16">
+          <img src={URL.createObjectURL(file)} alt="" className="h-16 w-16 rounded-md object-cover border border-border" />
+          <button type="button"
+            className="absolute -right-1.5 -top-1.5 rounded-full bg-background border border-border p-0.5 text-muted-foreground hover:text-red-500"
+            onClick={() => onRemove(idx)}
+            title="Remover foto">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
+      {fotos.length < MAX_FOTOS && (
+        <button type="button" onClick={() => inputRef.current?.click()}
+          className="h-16 w-16 rounded-md border-2 border-dashed border-border hover:border-primary/40 flex flex-col items-center justify-center text-muted-foreground"
+          title="Adicionar foto">
+          <ImageIcon className="h-5 w-5" />
+          <span className="text-[9px] leading-none mt-1">foto</span>
+        </button>
+      )}
+      <input ref={inputRef} type="file" className="hidden" accept=".jpg,.jpeg,.png,.webp"
+        onChange={e => {
+          const f = e.target.files[0];
+          if (f) onAdd(f);
+          e.target.value = '';
+        }} />
+    </div>
+  );
+}
+
 // Toggle "é recorrente" + frequência · pagamento e serviço (aluguel, mensalidade)
 function RecorrenteToggle({ form, setForm }) {
   return (
@@ -202,7 +245,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
   // Pedido em massa · helpers da lista de itens (compras)
   const addItem = () => setForm(f => ({
     ...f,
-    itens_lista: [...f.itens_lista, { descricao: '', quantidade: '1', link_referencia: '', valor_estimado: '', imagem_file: null, imagem_url: '' }],
+    itens_lista: [...f.itens_lista, { descricao: '', quantidade: '1', link_referencia: '', valor_estimado: '', valor_tipo: 'total', imagem_file: null, imagem_url: '' }],
   }));
   const updateItem = (idx, patch) => setForm(f => ({
     ...f,
@@ -222,6 +265,16 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
       setSubmitting(true);
       const payload = { ...form };
       delete payload.documento_file;
+      delete payload.imagens;
+
+      // Urgência única (2026-07-07): manual OU automática (data necessária mais
+      // curta que o prazo padrão). A "Justificativa do pedido" cobre o porquê —
+      // copia pro campo de urgência pro mapa de urgência frequente continuar vivo.
+      payload.eh_urgente = ehUrgente;
+      if (ehUrgente && !payload.justificativa_urgencia) {
+        payload.justificativa_urgencia = (form.justificativa || '').trim()
+          || (urgenteAuto ? `Data necessária (${form.data_necessaria}) abaixo do prazo padrão da categoria` : '');
+      }
 
       if (payload.valor_estimado) payload.valor_estimado = parseFloat(payload.valor_estimado);
       else delete payload.valor_estimado;
@@ -256,6 +309,22 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         payload.documento_url = publicUrl;
       }
 
+      // Fotos gerais (Serviços/Serviço externo) · sobe cada uma pro bucket e
+      // manda só as URLs públicas (backend grava em solicitacoes.imagens_url)
+      if (Array.isArray(form.imagens) && form.imagens.length && supabase) {
+        const urls = [];
+        for (const file of form.imagens) {
+          const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+          const path = `fotos/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from('solicitacoes')
+            .upload(path, file, { upsert: false });
+          if (upErr) throw new Error('Erro ao enviar foto: ' + upErr.message);
+          urls.push(supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl);
+        }
+        payload.imagens_url = urls;
+      }
+
       // Pedido em massa (compras) · sobe as fotos de cada item e monta a lista
       // estruturada (sem o File local) que o backend grava em solicitacao_itens.
       if (isCompras && Array.isArray(form.itens_lista) && form.itens_lista.length) {
@@ -279,6 +348,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
             quantidade: qtd > 0 ? qtd : 1,
             link_referencia: (it.link_referencia || '').trim() || null,
             valor_estimado: isFinite(valor) ? valor : null,
+            valor_tipo: it.valor_tipo === 'unitario' ? 'unitario' : 'total',
             imagem_url: imagem_url || null,
           });
         }
@@ -301,7 +371,8 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
     }
   }
 
-  const showValueField = ['compras', 'reembolso', 'pagamento'].includes(form.categoria);
+  // Compras saiu daqui (2026-07-07 · dualidade #1): o total é CALCULADO dos itens
+  const showValueField = ['reembolso', 'pagamento'].includes(form.categoria);
   const isReembolso = form.categoria === 'reembolso';
   const isReservaEspaco = form.categoria === 'reserva_espaco';
   const isCompras = form.categoria === 'compras';
@@ -330,7 +401,32 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
     form.forma_pagamento &&
     (form.forma_pagamento === 'boleto' || dadosBancariosValid(form.forma_pagamento))
   );
-  const urgenciaValid = !form.eh_urgente || form.justificativa_urgencia.trim().length >= 5;
+  // SLA padrão (não-urgente) da categoria · base do urgente-automático
+  const slaPadrao = (() => {
+    const cat = CATEGORIAS.find(c => c.value === form.categoria);
+    if (!cat?.areaResp || form.categoria === 'marketing') return null;
+    const sub = cat.sub || 'default';
+    return slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === false)
+      || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === 'default' && s.eh_urgente === false)
+      || slaDefs.find(s => s.area_responsavel === cat.areaResp && s.eh_urgente === false)
+      || null;
+  })();
+  // Data necessária mais curta que o prazo padrão de conclusão → urgente automático
+  const urgenteAuto = !!(
+    form.data_necessaria && slaPadrao &&
+    (new Date(form.data_necessaria + 'T23:59:59') - Date.now()) < slaPadrao.sla_resolucao_horas * 3600e3
+  );
+  const ehUrgente = form.eh_urgente || urgenteAuto;
+  // Justificativa única (dualidade #3): urgência manual exige o porquê na
+  // "Justificativa do pedido" (não há mais 2ª caixa) · automática não trava.
+  const urgenciaValid = !form.eh_urgente || form.justificativa.trim().length >= 5;
+  // Compras · total estimado calculado dos itens (respeita R$ total/por unid.)
+  const totalCompras = !isCompras ? 0 : form.itens_lista.reduce((acc, it) => {
+    const v = parseFloat(it.valor_estimado);
+    if (!(v > 0)) return acc;
+    const q = parseFloat(it.quantidade) > 0 ? parseFloat(it.quantidade) : 1;
+    return acc + (it.valor_tipo === 'unitario' ? v * q : v);
+  }, 0);
 
   return (
     <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
@@ -367,10 +463,27 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         />
       </div>
       <div className="space-y-2">
-        <Label>Justificativa do pedido</Label>
+        <Label>Justificativa do pedido{form.eh_urgente ? ' (inclua o porquê da urgência) *' : ''}</Label>
         <Textarea value={form.justificativa} onChange={e => setForm(f => ({ ...f, justificativa: e.target.value }))} rows={2}
           placeholder="Por que este pedido é importante agora?" />
       </div>
+
+      {/* Serviços (manutenção) / Serviço externo · fotos pra quem atende/cota
+          avaliar (goteira, equipamento, referência do serviço) */}
+      {['infraestrutura', 'servico'].includes(form.categoria) && (
+        <div className="space-y-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
+          <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">Fotos (opcional)</p>
+          <p className="text-xs text-muted-foreground">
+            Anexe até {MAX_FOTOS} fotos do problema ou do que precisa ser feito — ajuda quem vai
+            {form.categoria === 'servico' ? ' cotar o serviço' : ' atender'} a avaliar sem precisar ir até o local.
+          </p>
+          <FotosAnexos
+            fotos={form.imagens}
+            onAdd={f => setForm(prev => ({ ...prev, imagens: [...prev.imagens, f].slice(0, MAX_FOTOS) }))}
+            onRemove={idx => setForm(prev => ({ ...prev, imagens: prev.imagens.filter((_, i) => i !== idx) }))}
+          />
+        </div>
+      )}
 
       {/* Reserva de Espaco · campos especificos */}
       {form.categoria === 'reserva_espaco' && (
@@ -425,7 +538,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Adicione tudo que precisa num só pedido — uma linha por item. Anexe uma foto pra facilitar a identificação.
+            Adicione tudo que precisa num só pedido — uma linha por item. Anexe uma foto pra facilitar a identificação. No valor, escolha se está informando o <strong>total da linha</strong> ou o <strong>preço por unidade</strong>.
           </p>
 
           {form.itens_lista.length === 0 && (
@@ -465,19 +578,36 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
                   </div>
                   <div className="flex gap-2">
                     <Input
-                      className="flex-1"
+                      className="flex-1 min-w-0"
                       placeholder="Link de referência (opcional)"
                       value={it.link_referencia}
                       onChange={e => updateItem(idx, { link_referencia: e.target.value })}
                     />
+                    {/* Valor · a pessoa ESCOLHE a semântica (total da linha ou por
+                        unidade) · evita o caso "30 coletes × R$ 1.000 = R$ 30.000" */}
+                    <Select value={it.valor_tipo === 'unitario' ? 'unitario' : 'total'}
+                      onValueChange={v => updateItem(idx, { valor_tipo: v })}>
+                      <SelectTrigger className="w-[104px] shrink-0 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="z-[1200]">
+                        <SelectItem value="total">R$ total</SelectItem>
+                        <SelectItem value="unitario">R$ por unid.</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Input
-                      className="w-28 shrink-0"
+                      className="w-24 shrink-0"
                       type="number" min="0" step="0.01"
-                      placeholder="R$ estim."
+                      placeholder="R$"
                       value={it.valor_estimado}
                       onChange={e => updateItem(idx, { valor_estimado: e.target.value })}
                     />
                   </div>
+                  {it.valor_tipo === 'unitario' && parseFloat(it.valor_estimado) > 0 && (
+                    <p className="text-[11px] text-muted-foreground text-right">
+                      = R$ {((parseFloat(it.quantidade) > 0 ? parseFloat(it.quantidade) : 1) * parseFloat(it.valor_estimado)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no total da linha
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -486,6 +616,13 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
           <Button type="button" variant="outline" size="sm" className="w-full" onClick={addItem}>
             <Plus className="h-4 w-4 mr-1" /> Adicionar item
           </Button>
+
+          {/* Total do pedido = soma dos itens (era campo digitável · dualidade #1) */}
+          {totalCompras > 0 && (
+            <p className="text-sm font-medium text-right text-orange-700 dark:text-orange-400">
+              Total estimado do pedido: R$ {totalCompras.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </p>
+          )}
 
           <div className="space-y-2">
             <Label className="text-xs">Fornecedor sugerido (opcional)</Label>
@@ -663,14 +800,17 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         </div>
       )}
 
-      {/* Urgente checkbox · reduz SLA · pra compras significa "sai pra rua mesmo dia" */}
+      {/* Urgente checkbox · reduz SLA · pra compras significa "sai pra rua mesmo dia".
+          Data necessária mais curta que o prazo padrão → urgente AUTOMÁTICO (aviso).
+          O porquê da urgência vai na "Justificativa do pedido" (uma caixa só). */}
       <div className="space-y-2 rounded-lg border border-border p-3 bg-muted/30">
-        <label className="flex items-center gap-2 cursor-pointer">
+        <label className={`flex items-center gap-2 ${urgenteAuto ? 'cursor-default' : 'cursor-pointer'}`}>
           <input
             type="checkbox"
-            checked={form.eh_urgente}
+            checked={ehUrgente}
+            disabled={urgenteAuto}
             onChange={e => setForm(f => ({ ...f, eh_urgente: e.target.checked }))}
-            className="h-4 w-4 cursor-pointer"
+            className="h-4 w-4 cursor-pointer disabled:cursor-default"
           />
           <span className="text-sm font-medium">Esta solicitação é urgente</span>
         </label>
@@ -678,17 +818,17 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
           Reduz o prazo. Compras urgentes não passam por cotação · alguém sai pra comprar no mesmo dia.
           Use só quando necessário · o sistema mapeia quem solicita urgência frequente.
         </p>
+        {urgenteAuto && slaPadrao && (
+          <p className="ml-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            A data necessária é menor que o prazo padrão da categoria
+            (~{Math.round(slaPadrao.sla_resolucao_horas / 24 * 10) / 10} dias) — a solicitação
+            será tratada como <strong>urgente</strong> automaticamente.
+          </p>
+        )}
         {form.eh_urgente && (
-          <div className="ml-6 mt-2">
-            <Label className="text-xs">Justificativa da urgência *</Label>
-            <Textarea
-              value={form.justificativa_urgencia}
-              onChange={e => setForm(f => ({ ...f, justificativa_urgencia: e.target.value }))}
-              rows={2}
-              placeholder="Por que precisa ser urgente?"
-              className="mt-1"
-            />
-          </div>
+          <p className="ml-6 text-xs text-muted-foreground">
+            Explique o porquê da urgência na <strong>Justificativa do pedido</strong> acima *
+          </p>
         )}
       </div>
 
@@ -696,7 +836,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
       {(() => {
         const cat = CATEGORIAS.find(c => c.value === form.categoria);
         if (!cat?.areaResp || form.categoria === 'marketing') return null;
-        const urg = !!form.eh_urgente;
+        const urg = ehUrgente;
         const sub = cat.sub || 'default';
         // Prefere a subcategoria exata · cai pra 'default' · cai pra área
         const sla = slaDefs.find(s => s.area_responsavel === cat.areaResp && s.subcategoria === sub && s.eh_urgente === urg)
@@ -706,7 +846,7 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         return (
           <div className="rounded-md bg-blue-500/5 border border-blue-500/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
             <strong>Prazo esperado:</strong> resposta em ~{Math.round(sla.sla_resposta_horas/24*10)/10} dias · conclusão em ~{Math.round(sla.sla_resolucao_horas/24*10)/10} dias
-            {form.eh_urgente && ' · modo urgente'}
+            {ehUrgente && ' · modo urgente'}
           </div>
         );
       })()}
@@ -728,6 +868,26 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
           do diretor da sua área</b> antes de ir pro atendimento. Fica registrado quem marcou.
         </p>
       </div>
+
+      {/* Visibilidade · a área vê por padrão · opt-out pra assuntos pontuais (RH é sempre privado) */}
+      {!['ferias', 'licenca', 'reembolso'].includes(form.categoria) && (
+        <div className="space-y-1 rounded-lg border border-border bg-muted/20 p-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.manter_privada}
+              onChange={e => setForm(f => ({ ...f, manter_privada: e.target.checked }))}
+              className="h-4 w-4 cursor-pointer"
+            />
+            <span className="text-sm font-medium">Manter privada (só eu e quem atende)</span>
+          </label>
+          <p className="text-xs text-muted-foreground ml-6">
+            Por padrão, os colegas da sua área veem esta solicitação (pra acompanhar as demandas do
+            time). Marque aqui se for um assunto que só você deve ver. Pedidos de RH (férias, licença,
+            reembolso) são sempre privados.
+          </p>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="outline" onClick={() => onCancel?.()}>Cancelar</Button>

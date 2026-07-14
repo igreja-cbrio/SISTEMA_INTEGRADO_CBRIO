@@ -9,6 +9,12 @@ const { notificar } = require('../services/notificar');
 const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
+// Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
+// notificação) já validado no módulo web de grupos.
+const { aprovarPedidoCore } = require('./grupos');
+// Reuso dos helpers de permissão granular pra resolver o nível do módulo
+// "grupos" do usuário do app (authApp é leve e não computa permissões).
+const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
 
 // ── Auth middleware leve ───────────────────────────────────────────────────
 async function authApp(req, res, next) {
@@ -82,11 +88,8 @@ router.post('/checkin', authApp, limiterNormal, async (req, res) => {
     if (!service_type_id || !dataCheckin) {
       return res.status(400).json({ error: 'service_type_id e data são obrigatórios' });
     }
-    const { data: membro } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
+    // Vínculo do app é via profiles.membro_id (mem_membros não tem auth_user_id)
+    const membro = await resolveMembroApp(req);
 
     const { data, error } = await supabase
       .from('mem_checkins')
@@ -125,11 +128,7 @@ router.get('/grupos', limiterNormal, async (_req, res) => {
 // ── Meus grupos (autenticado) ─────────────────────────────────────────────
 router.get('/membro/grupos', authApp, async (req, res) => {
   try {
-    const { data: membro } = await supabase
-      .from('mem_membros')
-      .select('id')
-      .eq('auth_user_id', req.user.id)
-      .maybeSingle();
+    const membro = await resolveMembroApp(req);
     if (!membro) return res.json([]);
 
     const { data: participacoes } = await supabase
@@ -147,10 +146,17 @@ router.get('/membro/grupos', authApp, async (req, res) => {
 // ── Perfil do membro (autenticado) ────────────────────────────────────────
 router.get('/membro/perfil', authApp, async (req, res) => {
   try {
+    // ⚠️ mem_membros NÃO tem coluna auth_user_id — o vínculo do app é via
+    // profiles.membro_id (fallback e-mail). Usar resolveMembroApp (padrão da
+    // casa) senão a query quebra na coluna inexistente e o perfil some / não
+    // salva ("Não foi possível salvar" no app).
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.json(null);
+
     const { data } = await supabase
       .from('mem_membros')
       .select('id, nome, telefone, email, data_nascimento, endereco, situacao, foto_url, membro_desde')
-      .eq('auth_user_id', req.user.id)
+      .eq('id', membro.id)
       .maybeSingle();
 
     if (!data) return res.json(null);
@@ -179,11 +185,14 @@ router.put('/membro/perfil', authApp, async (req, res) => {
     const update  = Object.fromEntries(
       Object.entries(req.body).filter(([k]) => allowed.includes(k))
     );
+    // Campo de data vazio vira NULL (coluna date estoura com string '')
+    if ('data_nascimento' in update && !update.data_nascimento) update.data_nascimento = null;
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: 'Nenhum campo válido para atualizar' });
     }
-    const { data: membro } = await supabase
-      .from('mem_membros').select('id').eq('auth_user_id', req.user.id).maybeSingle();
+    // Vínculo via profiles.membro_id (fallback e-mail) — mem_membros não tem
+    // auth_user_id. Sem isto o save 404 sempre ("Não foi possível salvar").
+    const membro = await resolveMembroApp(req);
     if (!membro) return res.status(404).json({ error: 'Membro não encontrado' });
 
     const { data, error } = await supabase
@@ -204,10 +213,15 @@ router.post('/membro/vincular', limiterStrict, authApp, async (req, res) => {
     }
     const cpfDigitos = cpf.replace(/\D/g, '');
 
+    // ⚠️ O vínculo do app é profiles.membro_id → mem_membros.id (mem_membros
+    // NÃO tem auth_user_id). A versão antiga lia/escrevia mem_membros.auth_user_id
+    // (coluna inexistente): a trava de segurança nunca disparava e o vínculo era
+    // um no-op silencioso (update numa coluna que não existe).
     const { data: membro } = await supabase
       .from('mem_membros')
-      .select('id, nome, cpf, data_nascimento, auth_user_id')
+      .select('id, nome, cpf, data_nascimento')
       .eq('cpf', cpfDigitos)
+      .is('deleted_at', null)
       .maybeSingle();
 
     if (!membro) {
@@ -226,19 +240,30 @@ router.post('/membro/vincular', limiterStrict, authApp, async (req, res) => {
       return res.status(400).json({ error: 'Data de nascimento não confere' });
     }
 
-    // SEGURANCA: nao permitir re-vincular um cadastro ja reivindicado por OUTRA
-    // conta. CPF+nascimento sao de baixa entropia (frequentemente vazados no BR);
-    // sem essa trava, quem adivinhasse esses dados sequestraria o cadastro de um
-    // membro ja vinculado. Idempotente se ja for o proprio usuario.
-    if (membro.auth_user_id && membro.auth_user_id !== req.user.id) {
+    // SEGURANÇA: não permitir reivindicar um cadastro já vinculado a OUTRA conta.
+    // CPF+nascimento são de baixa entropia (frequentemente vazados no BR); sem
+    // essa trava, quem adivinhasse esses dados sequestraria o cadastro de um
+    // membro já vinculado. Idempotente se já for o próprio usuário.
+    const { data: jaVinculado } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('membro_id', membro.id)
+      .neq('id', req.user.id)
+      .limit(1);
+    if (jaVinculado && jaVinculado.length > 0) {
       return res.status(409).json({ error: 'Este cadastro já está vinculado a outra conta. Fale com a secretaria.' });
     }
 
-    // Vincula
-    await supabase
-      .from('mem_membros')
-      .update({ auth_user_id: req.user.id })
-      .eq('id', membro.id);
+    // Vincula: grava profiles.membro_id do usuário logado. O profile já existe
+    // (handle_new_user cria no cadastro) → UPDATE direto, sem risco de NOT NULL.
+    const { data: linked, error: linkErr } = await supabase
+      .from('profiles')
+      .update({ membro_id: membro.id })
+      .eq('id', req.user.id)
+      .select('id')
+      .maybeSingle();
+    if (linkErr) throw linkErr;
+    if (!linked) return res.status(404).json({ error: 'Conta não encontrada. Saia e entre de novo.' });
 
     res.json({ ok: true, nome: membro.nome });
   } catch (e) {
@@ -468,6 +493,27 @@ async function resolveMembroApp(req) {
       .order('created_at', { ascending: true }).limit(1);
     if (ms && ms[0]) return ms[0];
   }
+  // Fallback por CPF (metadados do cadastro do app) — cobre a conta cujo e-mail
+  // difere do cadastro do membro (mesmo CPF). Vincula o profile p/ as próximas
+  // chamadas serem diretas (best-effort, só quando membro_id está vazio).
+  const cpfRaw = req.user?.user_metadata?.cpf || req.user?.user_metadata?.CPF || null;
+  const cpf = cpfRaw ? String(cpfRaw).replace(/\D/g, '') : '';
+  if (cpf.length === 11) {
+    const fmt = `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`;
+    const { data: mc } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, email, telefone')
+      .or(`cpf.eq.${cpf},cpf.eq.${fmt}`).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(1);
+    if (mc && mc[0]) {
+      if (authId) {
+        try {
+          await supabase.from('profiles').update({ membro_id: mc[0].id })
+            .eq('id', authId).is('membro_id', null);
+        } catch { /* vínculo é best-effort */ }
+      }
+      return mc[0];
+    }
+  }
   return null;
 }
 
@@ -653,6 +699,65 @@ router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, 
   }
 });
 
+// POST /api/app/voluntariado/vincular-cpf — quem JÁ serve informa o CPF na
+// primeira vez que abre a aba, e o sistema cruza com o cadastro de voluntário
+// (vol_profiles). Se achar, vincula (auth_user_id + membresia) e grava o CPF no
+// membro pra a resolução automática funcionar nas próximas vezes.
+router.post('/voluntariado/vincular-cpf', authApp, limiterStrict, async (req, res) => {
+  try {
+    const cpfDigitos = String(req.body?.cpf || '').replace(/\D/g, '');
+    if (cpfDigitos.length !== 11) {
+      return res.status(400).json({ error: 'Informe um CPF válido (11 dígitos)' });
+    }
+    const membro = await resolveMembroApp(req);
+
+    // Procura o perfil de voluntário por CPF (com e sem máscara)
+    const fmt = `${cpfDigitos.slice(0, 3)}.${cpfDigitos.slice(3, 6)}.${cpfDigitos.slice(6, 9)}-${cpfDigitos.slice(9)}`;
+    const { data: achados } = await supabase
+      .from('vol_profiles')
+      .select('id, full_name, auth_user_id, membresia_id, allocation_status, status')
+      .or(`cpf.eq.${cpfDigitos},cpf.eq.${fmt}`)
+      .limit(1);
+    const vp = (achados && achados[0]) || null;
+
+    if (!vp) {
+      // Não achou como voluntário — mas guarda o CPF no membro (se vazio) pra
+      // ajudar futuras buscas e o fluxo de inscrição normal.
+      if (membro?.id) {
+        await supabase.from('mem_membros').update({ cpf: cpfDigitos })
+          .eq('id', membro.id).or('cpf.is.null,cpf.eq.').then(() => {}, () => {});
+      }
+      return res.json({ found: false });
+    }
+
+    // Segurança: não sequestrar um vol_profile já ligado a OUTRA conta
+    if (vp.auth_user_id && vp.auth_user_id !== req.user.id) {
+      return res.status(409).json({ error: 'Este cadastro de voluntário já está vinculado a outra conta. Fale com a coordenação.' });
+    }
+
+    // Vincula o perfil de voluntário à conta (e ao membro, se conhecido)
+    const patch = { auth_user_id: req.user.id };
+    if (membro?.id && !vp.membresia_id) patch.membresia_id = membro.id;
+    const { error: upErr } = await supabase.from('vol_profiles').update(patch).eq('id', vp.id);
+    if (upErr) throw upErr;
+
+    // Guarda o CPF no membro se estiver vazio (resolução automática futura)
+    if (membro?.id) {
+      await supabase.from('mem_membros').update({ cpf: cpfDigitos })
+        .eq('id', membro.id).or('cpf.is.null,cpf.eq.').then(() => {}, () => {});
+    }
+
+    res.json({
+      found: true,
+      nome: vp.full_name || null,
+      integrado: vp.status === 'ativo' || vp.allocation_status === 'integrado',
+    });
+  } catch (e) {
+    console.error('[APP vol/vincular-cpf]', e.message);
+    res.status(500).json({ error: 'Erro ao cruzar o CPF' });
+  }
+});
+
 // GET /api/app/voluntariado/escalas — próximas escalas + histórico de check-in.
 // Resolve o voluntário por auth_user_id/CPF/membresia/e-mail (service_role,
 // sem as travas de RLS do client).
@@ -674,16 +779,27 @@ router.get('/voluntariado/escalas', authApp, limiterNormal, async (req, res) => 
 // POST /api/app/voluntariado/escalas/:id/responder — { status: 'confirmed'|'declined' }
 router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async (req, res) => {
   try {
-    const { status } = req.body || {};
+    const { status, motivo } = req.body || {};
     if (!['confirmed', 'declined'].includes(status)) {
       return res.status(400).json({ error: "status deve ser 'confirmed' ou 'declined'" });
     }
     const membro = await resolveMembroApp(req);
     const vp = await resolverVolProfile(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    // Não dá pra RECUSAR culto que já passou (aceitar/registrar segue liberado).
+    if (status === 'declined') {
+      const { data: sched } = await supabase.from('vol_schedules')
+        .select('service:vol_services(scheduled_at)').eq('id', req.params.id).maybeSingle();
+      const quando = sched?.service?.scheduled_at ? new Date(sched.service.scheduled_at) : null;
+      if (quando && quando.getTime() < Date.now()) {
+        return res.status(400).json({ error: 'Esse culto já passou — não dá mais pra recusar.' });
+      }
+    }
+    // motivo opcional só na recusa; confirmar limpa o motivo anterior.
+    const recusa_motivo = status === 'declined' ? (String(motivo || '').trim().slice(0, 200) || null) : null;
     // só responde escala própria
     const { data, error } = await supabase.from('vol_schedules')
-      .update({ confirmation_status: status })
+      .update({ confirmation_status: status, recusa_motivo })
       .eq('id', req.params.id).eq('volunteer_id', vp.id).select().maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Escala não encontrada' });
@@ -779,7 +895,14 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
       .order('scheduled_at', { ascending: true })
       .limit(60);
     if (error) throw error;
-    res.json({ areas, servicos: data || [] });
+    // Contagem de escalados por culto (pro chip mostrar "N escalados").
+    const ids = (data || []).map(s => s.id);
+    const cnt = {};
+    if (ids.length) {
+      const { data: scs } = await supabase.from('vol_schedules').select('service_id').in('service_id', ids);
+      for (const r of scs || []) cnt[r.service_id] = (cnt[r.service_id] || 0) + 1;
+    }
+    res.json({ areas, servicos: (data || []).map(s => ({ ...s, escalados: cnt[s.id] || 0 })) });
   } catch (e) {
     console.error('[APP vol/escala servicos]', e.message);
     res.status(500).json({ error: 'Erro ao listar cultos' });
@@ -793,7 +916,7 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { data, error } = await supabase
       .from('vol_schedules')
-      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status')
+      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
       .order('volunteer_name', { ascending: true });
@@ -824,6 +947,56 @@ router.get('/voluntariado/escala-pool', authApp, limiterNormal, async (req, res)
   }
 });
 
+// GET /app/voluntariado/voluntario/:id/detalhe — ficha do voluntário pro supervisor:
+// nome, telefone (membro→vol_profiles→PCO), equipes que serve, histórico de
+// check-ins e de escalas.
+router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, planning_center_id, membresia_id, phone, avatar_url').eq('id', req.params.id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+
+    // Telefone: cadastro de membro (app) → vol_profiles.phone → PCO ao vivo.
+    let telefone = null;
+    if (vp.membresia_id) {
+      const { data: m } = await supabase.from('mem_membros').select('telefone').eq('id', vp.membresia_id).maybeSingle();
+      telefone = m?.telefone || null;
+    }
+    if (!telefone) telefone = vp.phone || null;
+    if (!telefone && vp.planning_center_id) {
+      try { const { fetchPcoPhone } = require('../services/planningCenter'); telefone = await fetchPcoPhone(vp.planning_center_id); } catch { /* best-effort */ }
+    }
+
+    const { data: schedsRaw } = await supabase.from('vol_schedules')
+      .select('id, team_name, position_name, confirmation_status, service:vol_services(service_type_name, scheduled_at)')
+      .eq('volunteer_id', vp.id).limit(100);
+    const escalas = (schedsRaw || [])
+      .map((s) => ({ culto: s.service?.service_type_name || null, data: s.service?.scheduled_at || null, equipe: s.team_name, posicao: s.position_name, status: s.confirmation_status }))
+      .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+      .slice(0, 40);
+
+    const { data: cisRaw } = await supabase.from('vol_check_ins')
+      .select('id, created_at, service:vol_services(service_type_name, scheduled_at)')
+      .eq('volunteer_id', vp.id).limit(100);
+    const checkins = (cisRaw || [])
+      .map((c) => ({ culto: c.service?.service_type_name || null, data: c.service?.scheduled_at || c.created_at || null }))
+      .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+      .slice(0, 40);
+
+    const equipes = [...new Set((schedsRaw || []).map((s) => s.team_name).filter(Boolean))];
+
+    res.json({
+      id: vp.id, full_name: vp.full_name, avatar_url: vp.avatar_url || null,
+      telefone, equipes, total_checkins: checkins.length, total_escalas: escalas.length, checkins, escalas,
+    });
+  } catch (e) {
+    console.error('[APP vol/voluntario detalhe]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o voluntário' });
+  }
+});
+
 // POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
 router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
   try {
@@ -832,8 +1005,15 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
     const { service_id, volunteer_id, team_name, position_name } = req.body || {};
     if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
     const { data: vp } = await supabase.from('vol_profiles')
-      .select('id, full_name, planning_center_id').eq('id', volunteer_id).maybeSingle();
+      .select('id, full_name, planning_center_id, auth_user_id, membresia_id').eq('id', volunteer_id).maybeSingle();
     if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+    // Dedup: mesma pessoa já nesta equipe deste culto? (NULLs no unique não
+    // deduplicam, então checamos aqui). Permite a mesma pessoa em OUTRA equipe.
+    let dupQ = supabase.from('vol_schedules').select('id')
+      .eq('service_id', service_id).eq('volunteer_id', vp.id);
+    dupQ = (team_name ? dupQ.eq('team_name', team_name) : dupQ.is('team_name', null));
+    const { data: dup } = await dupQ.maybeSingle();
+    if (dup) return res.status(409).json({ error: 'Essa pessoa já está nesta equipe do culto' });
     const { data, error } = await supabase.from('vol_schedules').insert({
       service_id,
       volunteer_id: vp.id,
@@ -846,9 +1026,70 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
     }).select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status').single();
     if (error) throw error;
     res.status(201).json(data);
+
+    // Push pro voluntário escalado (na hora). Fire-and-forget · não bloqueia.
+    (async () => {
+      try {
+        const { notificarApp, membrosParaUsuarios } = require('../services/appPush');
+        let userIds = vp.auth_user_id ? [vp.auth_user_id] : [];
+        if (!userIds.length && vp.membresia_id) userIds = await membrosParaUsuarios([vp.membresia_id]);
+        if (!userIds.length) return;
+        const { data: svc } = await supabase.from('vol_services')
+          .select('service_type_name, scheduled_at').eq('id', service_id).maybeSingle();
+        let quando = '';
+        if (svc?.scheduled_at) {
+          const b = new Date(new Date(svc.scheduled_at).getTime() - 3 * 3600 * 1000); // BRT
+          const dd = String(b.getUTCDate()).padStart(2, '0');
+          const mm = String(b.getUTCMonth() + 1).padStart(2, '0');
+          const aa = String(b.getUTCFullYear()).slice(2);
+          const hh = String(b.getUTCHours()).padStart(2, '0');
+          const mi = String(b.getUTCMinutes()).padStart(2, '0');
+          quando = `${dd}/${mm}/${aa} ${hh}:${mi}`;
+        }
+        const culto = svc?.service_type_name || 'um culto';
+        const teamTxt = team_name ? ` · ${team_name}` : '';
+        await notificarApp(userIds, {
+          tipo: 'escala',
+          titulo: 'Você foi escalado(a) 🙌',
+          body: `${culto}${quando ? ` · ${quando}` : ''}${teamTxt}. Confirme sua presença no app.`,
+          data: { service_id },
+        });
+      } catch (e) { console.error('[APP vol/escala push]', e.message); }
+    })();
   } catch (e) {
     console.error('[APP vol/escala post]', e.message);
     res.status(500).json({ error: 'Erro ao escalar' });
+  }
+});
+
+// PATCH /app/voluntariado/escala/:id — move de equipe (drag & drop) / muda função
+router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { team_name, position_name } = req.body || {};
+    const { data: atual } = await supabase.from('vol_schedules')
+      .select('id, service_id, volunteer_id, team_name').eq('id', req.params.id).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Escala não encontrada' });
+    const novoTeam = team_name === undefined ? atual.team_name : (team_name || null);
+    // Dedup: a pessoa já está na equipe destino deste culto?
+    if (atual.volunteer_id && novoTeam !== atual.team_name) {
+      let dupQ = supabase.from('vol_schedules').select('id')
+        .eq('service_id', atual.service_id).eq('volunteer_id', atual.volunteer_id).neq('id', atual.id);
+      dupQ = (novoTeam ? dupQ.eq('team_name', novoTeam) : dupQ.is('team_name', null));
+      const { data: dup } = await dupQ.maybeSingle();
+      if (dup) return res.status(409).json({ error: 'Essa pessoa já está nessa equipe' });
+    }
+    const patch = { team_name: novoTeam };
+    if (position_name !== undefined) patch.position_name = position_name || null;
+    const { data, error } = await supabase.from('vol_schedules').update(patch)
+      .eq('id', req.params.id)
+      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[APP vol/escala patch]', e.message);
+    res.status(500).json({ error: 'Erro ao mover' });
   }
 });
 
@@ -857,12 +1098,153 @@ router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, re
   try {
     const { areas } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    // Só remove quem foi escalado pelo app (source='manual'). Escala do Planning
+    // Center é gerida lá — se apagar aqui, o próximo sync recria (remoção fantasma).
+    const { data: sc } = await supabase.from('vol_schedules').select('source').eq('id', req.params.id).maybeSingle();
+    if (sc && sc.source && sc.source !== 'manual') {
+      return res.status(400).json({ error: 'Essa pessoa veio do Planning Center — remova por lá. Pelo app só dá pra tirar quem foi escalado aqui.' });
+    }
     const { error } = await supabase.from('vol_schedules').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
     console.error('[APP vol/escala delete]', e.message);
     res.status(500).json({ error: 'Erro ao remover da escala' });
+  }
+});
+
+// GET /app/voluntariado/escala/:serviceId/checkins — quem já tem presença
+// (pra UI de gestão de check-in do supervisor saber quem bateu ponto no culto).
+router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { data, error } = await supabase.from('vol_check_ins')
+      .select('id, schedule_id, volunteer_id, checked_in_at, method, volunteer_name, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+      .eq('service_id', req.params.serviceId)
+      .order('checked_in_at', { ascending: false });
+    if (error) throw error;
+    res.json((data || []).map((c) => ({
+      id: c.id,
+      schedule_id: c.schedule_id,
+      volunteer_id: c.volunteer_id,
+      volunteer_name: c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || null,
+      checked_in_at: c.checked_in_at,
+      method: c.method,
+    })));
+  } catch (e) {
+    console.error('[APP vol/escala checkins]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os check-ins' });
+  }
+});
+
+// POST /app/voluntariado/checkin — supervisor registra presença pelo app.
+// Reusa a lógica de check-in de voluntariado.js POST /check-ins: resolve a
+// escala do dia (prioriza o bloco manhã/noite) e faz DEDUP por BLOCO de culto
+// (a manhã 08:30/10:00/11:30 cobre com 1 check-in) → duplicado devolve 409.
+// checked_in_by = o membro logado do app (req.user = auth.users). method
+// default 'manual'. NÃO mexe em cultos/Integração — só controle do voluntariado.
+router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const { service_id, schedule_id, volunteer_id, method } = req.body || {};
+    if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
+    const metodo = ['qr_code', 'manual', 'facial', 'self_service'].includes(method) ? method : 'manual';
+
+    const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
+    const periodoSP = (iso) => { try { const h = Number(new Date(iso).toLocaleString('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2)); return h < 14 ? 'manha' : 'noite'; } catch { return 'noite'; } };
+
+    let resolvedScheduleId = schedule_id || null;
+    let resolvedVolunteerId = volunteer_id || null;
+    let resolvedUnscheduled;
+
+    const { data: ciSvc } = await supabase.from('vol_services').select('scheduled_at').eq('id', service_id).maybeSingle();
+    const ciDate = ciSvc?.scheduled_at ? dateSP(ciSvc.scheduled_at) : null;
+    const ciPer = ciSvc?.scheduled_at ? periodoSP(ciSvc.scheduled_at) : null;
+
+    if (ciDate) {
+      const { data: svcsDia } = await supabase.from('vol_services')
+        .select('id, scheduled_at')
+        .gte('scheduled_at', `${ciDate}T00:00:00-03:00`).lt('scheduled_at', `${ciDate}T23:59:59-03:00`);
+      const idsDia = (svcsDia || []).map((s) => s.id);
+      const idsBloco = (svcsDia || []).filter((s) => periodoSP(s.scheduled_at) === ciPer).map((s) => s.id);
+
+      // Se veio só a escala, resolve o volunteer_id por ela (pra deduplicar).
+      if (!resolvedVolunteerId && resolvedScheduleId) {
+        const { data: sch } = await supabase.from('vol_schedules').select('volunteer_id').eq('id', resolvedScheduleId).maybeSingle();
+        if (sch?.volunteer_id) resolvedVolunteerId = sch.volunteer_id;
+      }
+
+      // DEDUP por bloco: 1 check-in cobre a manhã (ou a noite) inteira → 409.
+      if (resolvedVolunteerId && idsBloco.length) {
+        const { data: jaTem } = await supabase.from('vol_check_ins')
+          .select('id, checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+          .eq('volunteer_id', resolvedVolunteerId).in('service_id', idsBloco)
+          .order('checked_in_at', { ascending: true }).limit(1);
+        if (jaTem && jaTem[0]) {
+          const ex = jaTem[0];
+          return res.status(409).json({
+            error: 'Check-in já foi realizado', alreadyCheckedIn: true,
+            volunteerName: ex.volunteer?.full_name || ex.schedule?.volunteer_name || null,
+            checkedInAt: ex.checked_in_at, method: ex.method,
+          });
+        }
+      }
+
+      // MATCH da escala no dia inteiro (prioriza o mesmo bloco) quando não veio.
+      if (!resolvedScheduleId && idsDia.length) {
+        let vp = null;
+        if (resolvedVolunteerId) ({ data: vp } = await supabase.from('vol_profiles').select('planning_center_id, full_name').eq('id', resolvedVolunteerId).maybeSingle());
+        const vpName = norm(vp?.full_name);
+        const { data: scheds } = await supabase.from('vol_schedules')
+          .select('id, volunteer_id, planning_center_person_id, volunteer_name, service_id').in('service_id', idsDia);
+        const casa = (s) => (
+          (resolvedVolunteerId && s.volunteer_id && s.volunteer_id === resolvedVolunteerId) ||
+          (vp?.planning_center_id && s.planning_center_person_id && s.planning_center_person_id === vp.planning_center_id) ||
+          (vpName && norm(s.volunteer_name) === vpName)
+        );
+        const match = (scheds || []).filter((s) => idsBloco.includes(s.service_id)).find(casa) || (scheds || []).find(casa);
+        if (match) {
+          resolvedScheduleId = match.id;
+          resolvedUnscheduled = false;
+          if (!resolvedVolunteerId && match.volunteer_id) resolvedVolunteerId = match.volunteer_id;
+        } else {
+          resolvedUnscheduled = true;
+        }
+      }
+    }
+
+    if (!resolvedVolunteerId && !resolvedScheduleId) {
+      return res.status(400).json({ error: 'Informe o voluntário (volunteer_id) ou a escala (schedule_id) pra registrar o check-in.' });
+    }
+
+    const { data, error } = await supabase.from('vol_check_ins').insert({
+      schedule_id: resolvedScheduleId,
+      volunteer_id: resolvedVolunteerId,
+      service_id,
+      checked_in_by: req.user.id,
+      method: metodo,
+      is_unscheduled: resolvedUnscheduled || false,
+    }).select('id, schedule_id, volunteer_id, service_id, checked_in_at, method, is_unscheduled').single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Check-in já foi realizado', alreadyCheckedIn: true });
+      }
+      throw error;
+    }
+
+    // Confirma a escala se ainda pendente (mesmo comportamento do totem).
+    if (resolvedScheduleId) {
+      await supabase.from('vol_schedules')
+        .update({ confirmation_status: 'confirmed' }).eq('id', resolvedScheduleId).eq('confirmation_status', 'pending');
+    }
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[APP vol/checkin post]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar check-in' });
   }
 });
 
@@ -1520,16 +1902,33 @@ router.get('/meu-grupo', authApp, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req);
     if (!membro) return res.json({ grupos: [] });
+    const GSEL = 'id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id';
     const { data: vinculos } = await supabase
       .from('mem_grupo_membros')
-      .select('grupo_id, funcao, mem_grupos(id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id)')
+      .select(`grupo_id, funcao, mem_grupos(${GSEL})`)
       .eq('membro_id', membro.id)
       .is('saiu_em', null)
       .is('deleted_at', null);
 
-    const grupos = [];
+    // Junta grupos onde é MEMBRO (vínculo) + grupos que LIDERA (lider_id) — o
+    // líder pode não ter linha em mem_grupo_membros, mas precisa ver o próprio
+    // grupo em "Meu grupo". Dedup por id; ser líder prevalece sobre o papel.
+    const porId = new Map();
     for (const v of vinculos || []) {
       const g = Array.isArray(v.mem_grupos) ? v.mem_grupos[0] : v.mem_grupos;
+      if (g) porId.set(g.id, { g, funcao: v.funcao });
+    }
+    const { data: liderados } = await supabase
+      .from('mem_grupos').select(GSEL)
+      .eq('lider_id', membro.id).is('deleted_at', null);
+    for (const g of liderados || []) {
+      const atual = porId.get(g.id);
+      if (atual) atual.funcao = 'lider';
+      else porId.set(g.id, { g, funcao: 'lider' });
+    }
+
+    const grupos = [];
+    for (const { g, funcao } of porId.values()) {
       if (!g) continue;
       let lider = null;
       if (g.lider_id) {
@@ -1552,7 +1951,7 @@ router.get('/meu-grupo', authApp, async (req, res) => {
         id: g.id, nome: g.nome, dia_semana: g.dia_semana, horario: g.horario,
         local: g.local, endereco: g.endereco, bairro: g.bairro, complemento: g.complemento,
         lat: g.lat, lng: g.lng,
-        foto_url: g.foto_url, funcao: v.funcao, lider,
+        foto_url: g.foto_url, funcao, lider,
         proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario),
         materiais,
       });
@@ -1768,6 +2167,313 @@ router.post('/telemetria', tryAuth, async (req, res) => {
   } catch (e) {
     console.warn('[APP] telemetria:', e.message);
     res.json({ ok: false }); // nunca 500 pro app
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Aprovação de pedidos de inscrição em grupo (líder + admin de grupos)
+// Superfície pro app: o LÍDER de um grupo (mem_grupos.lider_id) e os
+// RESPONSÁVEIS/admins de grupos aprovam/recusam pedidos que hoje vivem no
+// módulo web /grupos. Reusa aprovarPedidoCore (grupos.js) e replica o
+// essencial do rejeitar. NÃO mexe nos endpoints web.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Resolve o papel do usuário do app no domínio de grupos:
+//  - membro (mem_membros do logado, pra checar liderança e montar o nome)
+//  - grupos_liderados: grupos onde ele é lider_id
+//  - admin_grupos: role admin/diretor OU área "grupos" (boost) OU nível do
+//    módulo grupos >= 3 (via permissões granulares resolvidas por e-mail).
+async function gruposPapelApp(req) {
+  const membro = await resolveMembroApp(req).catch(() => null);
+
+  // Grupos liderados pelo membro (só se resolvemos o membro).
+  let gruposLiderados = [];
+  if (membro?.id) {
+    const { data: gl } = await supabase.from('mem_grupos')
+      .select('id, nome').eq('lider_id', membro.id).is('deleted_at', null)
+      .order('nome', { ascending: true });
+    gruposLiderados = gl || [];
+  }
+
+  // Admin de grupos · (a) role legado admin/diretor no profiles do auth user.
+  let adminGrupos = false;
+  const email = req.user?.email || null;
+  if (req.user?.id) {
+    const { data: prof } = await supabase.from('profiles')
+      .select('role').eq('id', req.user.id).maybeSingle();
+    if (prof && ['admin', 'diretor'].includes(prof.role)) adminGrupos = true;
+  }
+
+  // (b)/(c) permissões granulares · resolve o nível do módulo "grupos" pelo
+  // e-mail (mesma fonte do middleware web) sem depender de auth.uid()/RLS.
+  if (!adminGrupos && email) {
+    try {
+      const { data: permUser } = await supabase.from('usuarios')
+        .select('id, cargo_id').eq('email', email).eq('ativo', true).maybeSingle();
+      if (permUser) {
+        const [overridesRes, modulos, cargoMatrix, userAreasRes] = await Promise.all([
+          supabase.from('permissoes_modulo')
+            .select('modulo_id, nivel_leitura, nivel_escrita, pode_exportar, pode_aprovar, escopo_proprio, expira_em')
+            .eq('usuario_id', permUser.id),
+          getModulos(),
+          getCargoMatrix(permUser.cargo_id),
+          supabase.from('usuario_areas')
+            .select('areas(nome)').eq('usuario_id', permUser.id),
+        ]);
+        const now = Date.now();
+        const overrides = (overridesRes.data || [])
+          .filter(o => !o.expira_em || new Date(o.expira_em).getTime() > now);
+        const areas = (userAreasRes.data || []).map(ua => ua.areas?.nome).filter(Boolean);
+        const modulePerms = resolveEffectivePerms({
+          overrides, cargoMatrix, cargoId: permUser.cargo_id, modulos, areas,
+        });
+        const g = modulePerms['grupos'];
+        if (g && (Math.max(g.leitura || 0, g.escrita || 0) >= 3)) adminGrupos = true;
+      }
+    } catch (e) {
+      console.warn('[APP] gruposPapelApp · permissões:', e.message);
+    }
+  }
+
+  return { membro, adminGrupos, gruposLiderados };
+}
+
+// GET /api/app/grupos/papel — o app decide se mostra a funcionalidade.
+router.get('/grupos/papel', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    res.json({
+      lider: gruposLiderados.length > 0,
+      admin_grupos: adminGrupos,
+      grupos_liderados: gruposLiderados,
+    });
+  } catch (e) {
+    console.error('[APP] grupos/papel:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seu papel em grupos' });
+  }
+});
+
+// Monta a query de pedidos pendentes conforme o escopo do usuário. Retorna
+// null quando o usuário não é nem líder nem admin (o chamador responde vazio).
+function pedidosPendentesQuery({ adminGrupos, gruposLiderados }) {
+  if (!adminGrupos && !gruposLiderados.length) return null;
+  let q = supabase.from('mem_grupo_pedidos')
+    .select('id, grupo_id, nome, telefone, email, origem, created_at, mem_grupos(nome)')
+    .eq('status', 'pendente');
+  if (!adminGrupos) {
+    q = q.in('grupo_id', gruposLiderados.map(g => g.id));
+  }
+  return q;
+}
+
+// GET /api/app/grupos/pedidos — pendentes no escopo do usuário (mais antigos 1º).
+router.get('/grupos/pedidos', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const q = pedidosPendentesQuery({ adminGrupos, gruposLiderados });
+    if (!q) return res.json({ admin: false, pedidos: [] });
+    const { data, error } = await q.order('created_at', { ascending: true });
+    if (error) throw error;
+    const pedidos = (data || []).map(p => ({
+      id: p.id,
+      grupo_id: p.grupo_id,
+      grupo_nome: (Array.isArray(p.mem_grupos) ? p.mem_grupos[0] : p.mem_grupos)?.nome || null,
+      nome: p.nome,
+      telefone: p.telefone,
+      email: p.email,
+      origem: p.origem,
+      created_at: p.created_at,
+    }));
+    res.json({ admin: adminGrupos, pedidos });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar pedidos' });
+  }
+});
+
+// GET /api/app/grupos/pedidos/count — badge (mesmo escopo).
+router.get('/grupos/pedidos/count', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    if (!adminGrupos && !gruposLiderados.length) return res.json({ count: 0 });
+    let q = supabase.from('mem_grupo_pedidos')
+      .select('id', { count: 'exact', head: true }).eq('status', 'pendente');
+    if (!adminGrupos) q = q.in('grupo_id', gruposLiderados.map(g => g.id));
+    const { count, error } = await q;
+    if (error) throw error;
+    res.json({ count: count || 0 });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos/count:', e.message);
+    res.status(500).json({ error: 'Erro ao contar pedidos' });
+  }
+});
+
+// Autoriza a decisão sobre um pedido: precisa ser líder do grupo do pedido OU
+// admin de grupos. Devolve { pedido, membro } ou responde o erro e retorna null.
+async function autorizarDecisaoPedido(req, res) {
+  const { membro, adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+  const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+    .select('id, grupo_id, status').eq('id', req.params.id).maybeSingle();
+  if (!pedido) { res.status(404).json({ error: 'Pedido não encontrado' }); return null; }
+  const ehLider = gruposLiderados.some(g => g.id === pedido.grupo_id);
+  if (!adminGrupos && !ehLider) {
+    res.status(403).json({ error: 'Você não tem permissão para decidir este pedido' });
+    return null;
+  }
+  return { pedido, membro };
+}
+
+// POST /api/app/grupos/pedidos/:id/aprovar
+router.post('/grupos/pedidos/:id/aprovar', authApp, limiterNormal, async (req, res) => {
+  try {
+    const ctx = await autorizarDecisaoPedido(req, res);
+    if (!ctx) return;
+    // aprovarPedidoCore espera { userId, name } (usa como decidido_por/_nome).
+    const user = { userId: req.user.id, name: ctx.membro?.nome || req.user.email || 'Líder' };
+    const r = await aprovarPedidoCore(req.params.id, user);
+    if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos aprovar:', e.message);
+    res.status(500).json({ error: 'Erro ao aprovar pedido' });
+  }
+});
+
+// POST /api/app/grupos/pedidos/:id/rejeitar — body: { motivo? }
+// Replica o essencial de POST /pedidos/:id/rejeitar do módulo web (claim
+// atômico + motivo + decisor + notifica a pessoa).
+router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, res) => {
+  try {
+    const ctx = await autorizarDecisaoPedido(req, res);
+    if (!ctx) return;
+    const motivo = (req.body && req.body.motivo) || null;
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.id).single();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
+    if (pedido.status !== 'pendente') {
+      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    }
+    // Guarda de corrida: só rejeita se AINDA está pendente.
+    const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
+      status: 'rejeitado',
+      motivo_rejeicao: motivo,
+      decidido_por: req.user.id,
+      decidido_por_nome: ctx.membro?.nome || req.user.email || 'Líder',
+      decidido_em: new Date().toISOString(),
+    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+    if (!claimed || !claimed.length) {
+      return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
+    }
+
+    // Notifica a pessoa (só se tiver login vinculado).
+    (async () => {
+      try {
+        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+        if (pedido.membro_id) {
+          const { data: prof } = await supabase.from('vol_profiles')
+            .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
+          if (prof?.auth_user_id) {
+            await notificar({
+              modulo: 'grupos',
+              tipo: 'pedido_rejeitado',
+              titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
+              mensagem: motivo
+                ? `Seu pedido foi recusado: ${motivo}. Você pode tentar outro grupo.`
+                : `Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.`,
+              link: '/grupos',
+              severidade: 'info',
+              chaveDedup: `pedido_rejeitado_${pedido.id}`,
+              targetIds: [prof.auth_user_id],
+            });
+          }
+        }
+      } catch (e) { console.error('[APP grupos/pedidos rejeitar notify]', e.message); }
+    })();
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[APP] grupos/pedidos rejeitar:', e.message);
+    res.status(500).json({ error: 'Erro ao rejeitar pedido' });
+  }
+});
+
+// GET /api/app/grupos/meus — os grupos que o usuário LIDERA, com contagens
+// (membros ativos + inscrições pendentes) e info básica. É o que faz o app
+// "ver o meu grupo" mesmo quando não há nenhuma inscrição pendente.
+router.get('/grupos/meus', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const ids = gruposLiderados.map(g => g.id);
+    if (!ids.length) return res.json({ admin: adminGrupos, grupos: [] });
+
+    const [infoRes, membrosRes, pendRes] = await Promise.all([
+      supabase.from('mem_grupos')
+        .select('id, nome, dia_semana, horario, local, bairro, categoria, aceitando_inscricoes')
+        .in('id', ids).is('deleted_at', null),
+      supabase.from('mem_grupo_membros')
+        .select('grupo_id').in('grupo_id', ids).is('saiu_em', null).is('deleted_at', null),
+      supabase.from('mem_grupo_pedidos')
+        .select('grupo_id').in('grupo_id', ids).eq('status', 'pendente'),
+    ]);
+    const countBy = (arr) => {
+      const m = {};
+      (arr || []).forEach(r => { m[r.grupo_id] = (m[r.grupo_id] || 0) + 1; });
+      return m;
+    };
+    const mc = countBy(membrosRes.data);
+    const pc = countBy(pendRes.data);
+    const grupos = (infoRes.data || []).map(g => ({
+      ...g,
+      membros_ativos: mc[g.id] || 0,
+      pendentes: pc[g.id] || 0,
+    })).sort((a, b) => (b.pendentes - a.pendentes) || String(a.nome).localeCompare(String(b.nome)));
+    res.json({ admin: adminGrupos, grupos });
+  } catch (e) {
+    console.error('[APP] grupos/meus:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seus grupos' });
+  }
+});
+
+// GET /api/app/grupos/:grupoId/membros — detalhe do grupo + roster ativo +
+// inscrições pendentes daquele grupo. Gate: líder do grupo OU admin de grupos.
+router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { adminGrupos, gruposLiderados } = await gruposPapelApp(req);
+    const gid = req.params.grupoId;
+    const ehLider = gruposLiderados.some(g => g.id === gid);
+    if (!adminGrupos && !ehLider) {
+      return res.status(403).json({ error: 'Você não gerencia este grupo' });
+    }
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome, dia_semana, horario, local, endereco, bairro, descricao, categoria, aceitando_inscricoes')
+      .eq('id', gid).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const [rosterRes, pendRes] = await Promise.all([
+      supabase.from('mem_grupo_membros')
+        .select('id, funcao, entrou_em, presencas, membro:mem_membros(id, nome, telefone)')
+        .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null)
+        .order('created_at', { ascending: true }),
+      supabase.from('mem_grupo_pedidos')
+        .select('id, grupo_id, nome, telefone, email, origem, created_at')
+        .eq('grupo_id', gid).eq('status', 'pendente')
+        .order('created_at', { ascending: true }),
+    ]);
+    const membros = (rosterRes.data || []).map(r => {
+      const m = Array.isArray(r.membro) ? r.membro[0] : r.membro;
+      return {
+        id: r.id, funcao: r.funcao, entrou_em: r.entrou_em, presencas: r.presencas,
+        nome: m?.nome || '—', telefone: m?.telefone || null,
+      };
+    });
+    const pendentes = (pendRes.data || []).map(p => ({
+      id: p.id, grupo_id: p.grupo_id, grupo_nome: grupo.nome,
+      nome: p.nome, telefone: p.telefone, email: p.email, origem: p.origem, created_at: p.created_at,
+    }));
+    res.json({ grupo, membros, pendentes });
+  } catch (e) {
+    console.error('[APP] grupos/membros:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o grupo' });
   }
 });
 

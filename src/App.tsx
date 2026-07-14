@@ -243,6 +243,7 @@ const GestaoCriancas = lazyWithRetry(() => import('./pages/ministerial/totemKids
 const KidsHub = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsHub'));
 const KidsFrequenciaPCO = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsFrequenciaPCO'));
 const VoluntariosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariosKids'));
+const VoluntariadoInscricoesKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariadoInscricoesKids'));
 const EstoqueKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/EstoqueKids'));
 const BatismosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/BatismosKids'));
 const ApresentacaoCriancasKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/ApresentacaoCriancas'));
@@ -251,9 +252,7 @@ const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKid
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
 const TotemKidsDecisoes = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDecisoes'));
 const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsVinculos'));
-const TotemKidsParear = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsParear'));
-const TotemKidsDisplaySala = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplaySala'));
-const TotemKidsDisplayFoyer = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDisplayFoyer'));
+const TotemKidsPortao = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPortao'));
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
@@ -276,14 +275,18 @@ const Processos = lazyWithRetry(() => import('./pages/Processos'));
 const Nps = lazyWithRetry(() => import('./pages/Nps'));
 const NpsResponder = lazyWithRetry(() => import('./pages/nps/NpsResponder'));
 const NpsPublica = lazyWithRetry(() => import('./pages/public/NpsPublica'));
+const KidsRetirada = lazyWithRetry(() => import('./pages/public/KidsRetirada'));
 const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const GruposSupervisao = lazyWithRetry(() => import('./pages/ministerial/GruposSupervisao'));
-const PedidosGrupo = lazyWithRetry(() => import('./pages/ministerial/PedidosGrupo'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
+const OnboardingColaborador = lazyWithRetry(() => import('./pages/public/OnboardingColaborador'));
 const InscricaoBatismo = lazyWithRetry(() => import('./pages/public/InscricaoBatismo'));
 const BatismoAcesso = lazyWithRetry(() => import('./pages/public/BatismoAcesso'));
 const ApresentacaoCriancasPublica = lazyWithRetry(() => import('./pages/public/ApresentacaoCriancas'));
 const InscricaoGrupos = lazyWithRetry(() => import('./pages/public/InscricaoGrupos'));
+const GrupoAprovarPedido = lazyWithRetry(() => import('./pages/public/GrupoAprovarPedido'));
+const GrupoSugestaoAceite = lazyWithRetry(() => import('./pages/public/GrupoSugestaoAceite'));
+const GrupoFrequenciaMes = lazyWithRetry(() => import('./pages/public/GrupoFrequenciaMes'));
 const InscricaoGruposQRCode = lazyWithRetry(() => import('./pages/admin/InscricaoGruposQRCode'));
 const GruposGeocode = lazyWithRetry(() => import('./pages/admin/GruposGeocode'));
 const TemporadasGrupos = lazyWithRetry(() => import('./pages/admin/TemporadasGrupos'));
@@ -315,6 +318,7 @@ const GovernancaRitual = lazyWithRetry(() => import('./pages/governanca/RitualPa
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
 const EventosExternos = lazyWithRetry(() => import('./pages/EventosExternos'));
+const EventoExternoDetalhe = lazyWithRetry(() => import('./pages/EventoExternoDetalhe'));
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
@@ -368,7 +372,7 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
  *   - moduleSlug: novo · checa modulePerms[slug].leitura >= nivelMinimo (default 1)
  *     Permite liberar acesso de visualizacao (nível 1) sem cair no fallback canX.
  */
-function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; nivelMinimo?: number; children: ReactNode }) {
+function ModuleGuard({ permKey, moduleSlug, anyOf, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; anyOf?: string[]; nivelMinimo?: number; children: ReactNode }) {
   const auth = useAuth();
   const a = auth as Record<string, unknown>;
 
@@ -399,6 +403,14 @@ function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permK
 
   if (auth.isAdmin) return <>{children}</>;
 
+  // anyOf: passa se tiver o nível mínimo em QUALQUER um dos módulos (ex.: a
+  // página da Integração abre pra quem tem `integracao` OU `next`).
+  if (anyOf && anyOf.length) {
+    const ok = anyOf.some(s => ((auth.modulePerms?.[s] as { leitura?: number } | undefined)?.leitura ?? 0) >= nivelMinimo);
+    if (!ok) return <Navigate to="/dashboard" replace />;
+    return <>{children}</>;
+  }
+
   if (moduleSlug) {
     const perm = auth.modulePerms?.[moduleSlug];
     const leitura = perm?.leitura ?? 0;
@@ -411,6 +423,15 @@ function ModuleGuard({ permKey, moduleSlug, nivelMinimo = 1, children }: { permK
   if (hasAccess === false) {
     return <Navigate to="/dashboard" replace />;
   }
+  return <>{children}</>;
+}
+
+// Guard só-devs (você + Marcos Paulo) · usado na tela de agentes/auditoria.
+// O Pedrinho (assistente) NÃO usa isto — ele é o pop lateral, aberto a todos.
+function DevGuard({ children }: { children: ReactNode }) {
+  const auth = useAuth();
+  if (auth.loading) return <Loading />;
+  if (!(auth as Record<string, unknown>).isDev) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -454,16 +475,22 @@ function VolunteerShell() {
 
 // Home pós-login. Quem tem acesso a um ÚNICO módulo abre direto nele
 // (ex.: colaborador só de Produção → /producao) em vez do dashboard.
+// `moduloUnico` vem do AuthContext (canônico do backend · slugs deduplicados);
+// contar por referência em modulePerms quebrava: o JSON da resposta duplica o
+// objeto das chaves nome+slug e o Set vê 2 módulos pra quem tem só 1.
+const HOME_MODULO_UNICO: Record<string, string> = {
+  producao: '/producao',
+  batismo: '/batismo',
+  kids: '/ministerial/kids',
+  grupos: '/grupos',
+};
 function homeRoute(auth: Record<string, unknown>): string {
   if (auth.rotaTravada) return auth.rotaTravada as string; // login travado num módulo (quiosque)
   if (auth.isMembroOnly) return '/devocional';
   if (auth.isVoluntario) return '/voluntariado/checkin';
-  const modulePerms = auth.modulePerms as Record<string, { leitura?: number }> | null | undefined;
-  if (!auth.isAdmin && modulePerms) {
-    const distintos = new Set<object>();
-    for (const v of Object.values(modulePerms)) if (v && (v.leitura || 0) > 0) distintos.add(v);
-    if (distintos.size === 1 && (modulePerms.producao?.leitura || 0) > 0) return '/producao';
-    if (distintos.size === 1 && (modulePerms.batismo?.leitura || 0) > 0) return '/batismo';
+  const moduloUnico = auth.moduloUnico as string | null | undefined;
+  if (!auth.isAdmin && moduloUnico && HOME_MODULO_UNICO[moduloUnico]) {
+    return HOME_MODULO_UNICO[moduloUnico];
   }
   return '/dashboard';
 }
@@ -492,12 +519,19 @@ function AppRoutes() {
 
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
+      <Route path="/onboarding/:token" element={<Suspense fallback={<Loading />}><OnboardingColaborador /></Suspense>} />
       <Route path="/inscricao-batismo" element={<Suspense fallback={<Loading />}><InscricaoBatismo /></Suspense>} />
       {/* Acesso às fotos do batismo pelo QR da etiqueta do quiosque · token = credencial · sem login */}
       <Route path="/batismo/acesso" element={<Suspense fallback={<Loading />}><BatismoAcesso /></Suspense>} />
       <Route path="/apresentacao-criancas" element={<Suspense fallback={<Loading />}><ApresentacaoCriancasPublica /></Suspense>} />
       <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
       <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
+      {/* Líder aprova pedido de grupo pelo link do WhatsApp · token = credencial · sem login */}
+      <Route path="/g/a/:token" element={<Suspense fallback={<Loading />}><GrupoAprovarPedido /></Suspense>} />
+      {/* Pessoa aceita a sugestão de outro grupo pelo link do WhatsApp · sem login */}
+      <Route path="/g/s/:token" element={<Suspense fallback={<Loading />}><GrupoSugestaoAceite /></Suspense>} />
+      {/* Líder registra a frequência do mês do grupo pelo link do WhatsApp · sem login */}
+      <Route path="/g/f/:token" element={<Suspense fallback={<Loading />}><GrupoFrequenciaMes /></Suspense>} />
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
@@ -509,6 +543,8 @@ function AppRoutes() {
       <Route path="/novosite" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/novosite/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
+      {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
+      <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
 
       {/* Devocional · migrou pro app de membros. As telas web saíram; estas rotas
@@ -528,12 +564,6 @@ function AppRoutes() {
       {/* Totem — fullscreen, sem shell nenhum */}
       <Route path="/voluntariado/totem" element={<ProtectedRoute><Suspense fallback={<Loading />}><VolTotem /></Suspense></ProtectedRoute>} />
       <Route path="/totem" element={<ProtectedRoute><ModuleGuard moduleSlug="totem-membro"><Suspense fallback={<Loading />}><TotemMembro /></Suspense></ModuleGuard></ProtectedRoute>} />
-
-      {/* Display Totem Kids · TV/Fire TV · publica (autentica via token de estação) */}
-      <Route path="/ministerial/totem-kids/display-sala" element={<Suspense fallback={<Loading />}><TotemKidsDisplaySala /></Suspense>} />
-      <Route path="/ministerial/totem-kids/display-foyer" element={<Suspense fallback={<Loading />}><TotemKidsDisplayFoyer /></Suspense>} />
-      {/* Pareamento público · token na URL já autoriza */}
-      <Route path="/ministerial/totem-kids/parear" element={<Suspense fallback={<Loading />}><TotemKidsParear /></Suspense>} />
 
       {/* Self check-in — voluntário escaneia QR do totem com celular.
           Rota PUBLICA: se não estiver autenticado, a própria página oferece
@@ -586,10 +616,12 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/criancas" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><GestaoCriancas /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/frequencia" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsFrequenciaPCO /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/voluntarios" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariosKids /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/voluntariado-inscricoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariadoInscricoesKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/estoque" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><EstoqueKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/batismos" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><BatismosKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/apresentacao" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><ApresentacaoCriancasKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/checkout" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckout /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/portao" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPortao /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/decisoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsDecisoes /></Suspense></ModuleGuard>} />
@@ -600,12 +632,14 @@ function AppRoutes() {
         <Route path="/admin/totem-kids/sessoes" element={<Navigate to="/ministerial/totem-kids/configuracoes?aba=sessoes" replace />} />
         <Route path="/grupos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><Grupos /></Suspense></ModuleGuard>} />
         <Route path="/grupos/supervisao" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><GruposSupervisao /></Suspense></ModuleGuard>} />
-        <Route path="/grupos/pedidos" element={<ModuleGuard moduleSlug="grupos"><Suspense fallback={<Loading />}><PedidosGrupo /></Suspense></ModuleGuard>} />
+        {/* Tela standalone de pedidos aposentada (13/07): a caixa de entrada
+            unificada em /grupos?tab=entrada é o único lugar de triagem. */}
+        <Route path="/grupos/pedidos" element={<Navigate to="/grupos?tab=entrada" replace />} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
         <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
-        <Route path="/ministerial/integracao" element={<ModuleGuard moduleSlug="integracao"><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/batismo" element={<ModuleGuard moduleSlug="batismo"><Suspense fallback={<Loading />}><Batismo /></Suspense></ModuleGuard>} />
         {/* Relatórios virou aba dentro do Dashboard Semanal · mantém link antigo */}
         <Route path="/ministerial/relatorios" element={<Navigate to="/dashboard-semanal" replace />} />
@@ -614,6 +648,7 @@ function AppRoutes() {
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
         <Route path="/next-batismo" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
         <Route path="/eventos-externos" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventosExternos /></Suspense></ModuleGuard>} />
+        <Route path="/eventos-externos/:id" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventoExternoDetalhe /></Suspense></ModuleGuard>} />
         <Route path="/governanca" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><Governanca /></Suspense></ModuleGuard>} />
         <Route path="/governanca/:sigla" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><GovernancaRitual /></Suspense></ModuleGuard>} />
         <Route path="/entradas" element={<Navigate to="/next-batismo" replace />} />
@@ -638,8 +673,8 @@ function AppRoutes() {
         <Route path="/ministerial/bridge" element={<Navigate to="/bridge" replace />} />
         <Route path="/ministerial/next" element={<Navigate to="/ministerial/integracao?tab=next" replace />} />
         <Route path="/ministerial/batismos" element={<Navigate to="/ministerial/integracao?tab=batismos" replace />} />
-        <Route path="/assistente-ia" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></ModuleGuard>} />
-        <Route path="/admin/agentes" element={<ModuleGuard permKey="canIA"><Suspense fallback={<Loading />}><Agentes /></Suspense></ModuleGuard>} />
+        <Route path="/assistente-ia" element={<DevGuard><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></DevGuard>} />
+        <Route path="/admin/agentes" element={<DevGuard><Suspense fallback={<Loading />}><Agentes /></Suspense></DevGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         {/* Telas substituidas pelo /painel (Sistema OKR/NSM 2026 — Fase 2) */}
         <Route path="/kpis" element={<Navigate to="/painel" replace />} />
@@ -688,6 +723,26 @@ function AppRoutes() {
   );
 }
 
+// Domínio público oficial da igreja. Nesses hosts o app carrega SÓ o site
+// institucional (isolado do ERP), com a home na raiz. O ERP segue em cbrio.org.
+const SITE_PUBLICO_HOSTS = ['cbrio.com.br', 'www.cbrio.com.br'];
+function isSitePublicoHost() {
+  return typeof window !== 'undefined' && SITE_PUBLICO_HOSTS.includes(window.location.hostname);
+}
+
+function SitePublicoRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
+      <Route path="/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      {/* caminhos antigos da prévia continuam funcionando */}
+      <Route path="/novosite" element={<Navigate to="/" replace />} />
+      <Route path="/novosite/quem-somos" element={<Navigate to="/quem-somos" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 export default function App() {
   // Se o app rodar estável por 5s, a navegação deu certo → tira _chunk_retry/_cb
   // da URL pra ZERAR o contador de retries (senão um retry grudado come as
@@ -707,6 +762,15 @@ export default function App() {
     }, 5000);
     return () => clearTimeout(t);
   }, []);
+  if (isSitePublicoHost()) {
+    return (
+      <ErrorBoundary>
+        <BrowserRouter>
+          <SitePublicoRoutes />
+        </BrowserRouter>
+      </ErrorBoundary>
+    );
+  }
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

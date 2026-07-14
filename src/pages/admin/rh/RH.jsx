@@ -995,7 +995,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Todos os status" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 <SelectItem value="__all__">Todos os status</SelectItem>
                 {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
               </SelectContent>
@@ -1004,7 +1004,7 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Todas as áreas" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 <SelectItem value="__all__">Todas as áreas</SelectItem>
                 {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
               </SelectContent>
@@ -1246,7 +1246,7 @@ function TreinamentosTab({ treinos, funcs, onNew, onEdit, onDelete, onInscrever,
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Selecionar colaborador" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="z-[1100]">
                           {funcs.filter(f => f.status === 'ativo').map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
                         </SelectContent>
                       </ShadSelect>
@@ -2464,7 +2464,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Gestor direto (a quem reporta)</label>
         <ShadSelect value={data.gestor_id || '__none__'} onValueChange={v => mudarGestor(v === '__none__' ? null : v)} disabled={saving}>
           <SelectTrigger className="w-full"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-          <SelectContent>
+          <SelectContent className="z-[1100]">
             <SelectItem value="__none__">— Sem gestor (topo)</SelectItem>
             {opcoesGestor.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}{f.cargo ? ` · ${f.cargo}` : ''}</SelectItem>)}
           </SelectContent>
@@ -2492,7 +2492,7 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
         </div>
         <ShadSelect value={addSel} onValueChange={(v) => addSubordinado(v)} disabled={saving}>
           <SelectTrigger className="w-full"><SelectValue placeholder="+ Adicionar subordinado..." /></SelectTrigger>
-          <SelectContent>
+          <SelectContent className="z-[1100]">
             {opcoesAdd.length === 0 && <div style={{ padding: '8px 12px', fontSize: 12, color: C.text3 }}>Ninguém disponível</div>}
             {opcoesAdd.map(f => (
               <SelectItem key={f.id} value={f.id}>
@@ -2503,6 +2503,44 @@ function HierarquiaSection({ data, funcs = [], onChanged }) {
         </ShadSelect>
         <div style={{ fontSize: 11, color: C.text3, marginTop: 4 }}>Adicionar move a pessoa pra reportar a {data.nome?.split(' ')[0] || 'este colaborador'} (troca o gestor anterior, se houver).</div>
       </div>
+    </div>
+  );
+}
+
+// Gera/mostra o link do formulário público de dados pessoais pra mandar pro
+// colaborador (WhatsApp/copiar). O RH só cuida de salário/cargo.
+function OnboardingLinkButton({ funcId }) {
+  const [url, setUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+  async function gerar() {
+    setLoading(true);
+    try { const r = await rh.funcionarios.onboardingLink(funcId); setUrl(r.url); }
+    catch (e) { alert(e.message || 'Erro ao gerar o link'); }
+    finally { setLoading(false); }
+  }
+  function copiar() {
+    if (!url) return;
+    navigator.clipboard?.writeText(url)
+      .then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 1500); })
+      .catch(() => {});
+  }
+  const wa = url ? `https://wa.me/?text=${encodeURIComponent('Oi! Preenche teus dados pra completar o cadastro no RH da CBRio: ' + url)}` : null;
+  return (
+    <div style={{ marginTop: 12 }}>
+      {!url ? (
+        <Button variant="outline" size="sm" onClick={gerar} disabled={loading}>
+          {loading ? 'Gerando…' : '📋 Gerar link do formulário (enviar ao colaborador)'}
+        </Button>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 12, color: C.text2, wordBreak: 'break-all', background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px' }}>{url}</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button size="sm" variant="outline" onClick={copiar}>{copiado ? 'Copiado!' : 'Copiar link'}</Button>
+            {wa && <a href={wa} target="_blank" rel="noopener noreferrer"><Button size="sm">Enviar no WhatsApp</Button></a>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2750,7 +2788,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 {OPCOES_CONTRATO.map(k => <SelectItem key={k} value={k}>{TIPO_CONTRATO[k] || k}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
@@ -2761,7 +2799,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[1100]">
                 {Object.entries(STATUS_COLORS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
               </SelectContent>
             </ShadSelect>
@@ -2780,6 +2818,29 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_COLORS} /></div></div>
         </div>
       )}
+
+      {/* Dados pessoais · preenchidos pelo próprio colaborador (app Staff / self-service) */}
+      <div style={{ marginBottom: 20, background: 'var(--cbrio-input-bg)', borderRadius: 10, padding: 16 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Dados pessoais</span>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginTop: 10 }}>
+          <div><span style={{ fontSize: 11, color: C.text2 }}>Nascimento:</span><div style={{ fontSize: 14 }}>{data.data_nascimento ? fmtDate(data.data_nascimento) : '—'}</div></div>
+          <div style={{ gridColumn: '1 / -1' }}><span style={{ fontSize: 11, color: C.text2 }}>Endereço:</span><div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{data.endereco || '—'}</div></div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <span style={{ fontSize: 11, color: C.text2 }}>Filhos:</span>
+            {Array.isArray(data.filhos) && data.filhos.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {data.filhos.map((f, i) => (
+                  <span key={i} style={{ fontSize: 12, background: 'var(--cbrio-card)', border: `1px solid ${C.border}`, borderRadius: 999, padding: '2px 10px' }}>
+                    {f.nome || 'Filho(a)'}{f.idade != null ? ` · ${f.idade} ano${f.idade === 1 ? '' : 's'}` : ''}
+                  </span>
+                ))}
+              </div>
+            ) : <div style={{ fontSize: 14 }}>—</div>}
+          </div>
+        </div>
+        <p style={{ fontSize: 11, color: C.text3, marginTop: 8 }}>O colaborador mantém estes dados pelo app (Meus dados) — atualiza aqui automaticamente.</p>
+        <OnboardingLinkButton funcId={data.id} />
+      </div>
 
       {/* Hierarquia · gestor direto + subordinados */}
       <HierarquiaSection data={data} funcs={funcs} onChanged={onChanged} />
@@ -2917,7 +2978,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
                               <SelectTrigger className="w-full" size="sm">
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="z-[1100]">
                                 {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
                               </SelectContent>
                             </ShadSelect>
@@ -2927,7 +2988,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
                               <SelectTrigger className="w-full" size="sm">
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="z-[1100]">
                                 {[1, 2, 3, 4, 5].map(n => <SelectItem key={n} value={String(n)}>{n} — {NIVEL_LABELS[n]}</SelectItem>)}
                               </SelectContent>
                             </ShadSelect>

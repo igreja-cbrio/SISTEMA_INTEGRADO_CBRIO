@@ -2,25 +2,24 @@
 // Governança — Rituais Mensais de Gestão Estratégica
 // ============================================================================
 // Home do módulo: os 4 rituais do ciclo executivo do mês (OKR → DRE → KPI →
-// Conselho) como quadrados clicáveis (reproduzindo o material institucional),
-// cada um levando à página do ritual (/governanca/:sigla) com instruções,
-// próxima reunião, atas anteriores, deliberações e relatório do período.
-// A aba Agenda gerencia as datas/prazos (ciclo do mês · gerar ano · avulsas);
-// a aba Tipos edita o catálogo de reuniões.
+// Conselho) como quadrados clicáveis, com o PRÓXIMO da agenda em evidência.
+// Toda a gestão de cada reunião acontece DENTRO da página do ritual
+// (/governanca/:sigla) — a antiga aba Agenda foi aposentada (decisão do
+// Marcos 2026-07-08). Aqui ficam só: gerar a agenda do ano (idempotente),
+// criar reunião avulsa e editar o catálogo de tipos.
 // ============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ChevronLeft, ChevronRight, Plus, Loader2, CalendarDays, Settings2, Landmark,
+  ChevronRight, Plus, Loader2, CalendarDays, Settings2, Landmark,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { governanca as gov } from '../../api';
 import { formatErro } from '../../lib/formatErro';
 import { useAuth } from '../../contexts/AuthContext';
 import {
-  C, MESES, STATUS_MEETING, pad, ymd, fmtData, diaSemana, inputStyle,
-  DetalheReuniao, NovaReuniaoModal,
+  C, MESES, ymd, fmtData, diaSemana, inputStyle, NovaReuniaoModal,
 } from './compartilhado';
 import { RITUAIS, ORDEM_RITUAIS, SEQUENCIA_LOGICA, REGRA_DE_OURO, COMO_CONDUZIMOS } from './rituais';
 
@@ -34,80 +33,64 @@ export default function Governanca() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [ref, setRef] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
-  const [meetings, setMeetings] = useState([]);
-  const [proximas, setProximas] = useState([]); // próximas reuniões (todas as siglas · pros quadrados)
   const [types, setTypes] = useState([]);
+  const [proximas, setProximas] = useState([]); // reuniões futuras (todas as siglas)
   const [loading, setLoading] = useState(true);
-  const [criando, setCriando] = useState(false);
-  const [gerandoAno, setGerandoAno] = useState(false);
-  const view = searchParams.get('view') || 'rituais'; // 'rituais' | 'agenda' | 'tipos'
-  const setView = (v) => setSearchParams(v === 'rituais' ? {} : { view: v }, { replace: true });
-  const [openId, setOpenId] = useState(null);
+  const [gerando, setGerando] = useState(false);
   const [novaOpen, setNovaOpen] = useState(false);
-
-  const ano = ref.getFullYear(), mes = ref.getMonth() + 1;
-  const from = `${ano}-${pad(mes)}-01`;
-  const to = ymd(new Date(ano, mes, 0));
+  const view = searchParams.get('view') === 'tipos' ? 'tipos' : 'rituais';
+  const setView = (v) => setSearchParams(v === 'rituais' ? {} : { view: v }, { replace: true });
 
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
       const hoje = ymd(new Date());
-      const [mtgs, tps, prox] = await Promise.all([
-        gov.meetings.list({ from, to }),
+      const [tps, prox] = await Promise.all([
         gov.types.list(),
         gov.meetings.list({ from: hoje }),
       ]);
-      setMeetings(Array.isArray(mtgs) ? mtgs : []);
       setTypes(Array.isArray(tps) ? tps : []);
       setProximas(Array.isArray(prox) ? prox : []);
     } catch (e) { toast.error(formatErro(e)); }
     finally { setLoading(false); }
-  }, [from, to]);
+  }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  async function criarCiclo() {
-    if (criando) return;
-    setCriando(true);
+  // Gera a agenda das reuniões mensais do mês atual até dezembro (idempotente ·
+  // meses/ciclos já gerados são pulados).
+  async function gerarAgenda() {
+    if (gerando) return;
+    const agora = new Date();
+    const anoA = agora.getFullYear(), mesA = agora.getMonth() + 1;
+    if (!window.confirm(`Gerar a agenda das reuniões mensais de ${MESES[mesA - 1]} a Dezembro de ${anoA}? Meses já gerados são pulados.`)) return;
+    setGerando(true);
     try {
-      const r = await gov.cycles.create(ano, mes);
-      toast.success(r?.reunioes_criadas ? `Ciclo criado · ${r.reunioes_criadas} reuniões geradas` : 'Ciclo do mês pronto');
+      const r = await gov.cycles.generateYear(anoA, mesA);
+      toast.success(`${r?.reunioes_criadas || 0} reunião(ões) gerada(s) em ${r?.ciclos_criados || 0} mês(es)`);
       await carregar();
     } catch (e) { toast.error(formatErro(e)); }
-    finally { setCriando(false); }
+    finally { setGerando(false); }
   }
 
-  // Gera as reuniões mensais do ano (do próximo mês até dezembro, no ano atual).
-  async function gerarAno() {
-    if (gerandoAno) return;
-    const thisYear = new Date().getFullYear();
-    const fromMonth = ano === thisYear ? new Date().getMonth() + 2 : 1; // ano atual: próximo mês; senão janeiro
-    if (fromMonth > 12) { toast.info('O ano já está no fim — use "Criar ciclo do mês".'); return; }
-    if (!window.confirm(`Gerar as 4 reuniões mensais de ${MESES[fromMonth - 1]} a Dezembro de ${ano}?`)) return;
-    setGerandoAno(true);
-    try {
-      const r = await gov.cycles.generateYear(ano, fromMonth);
-      toast.success(`${r?.reunioes_criadas || 0} reuniões geradas em ${r?.ciclos_criados || 0} mês(es)`);
-      await carregar();
-    } catch (e) { toast.error(formatErro(e)); }
-    finally { setGerandoAno(false); }
-  }
-
-  const irMes = (delta) => setRef(new Date(ano, mes - 1 + delta, 1));
-  const irHoje = () => { const n = new Date(); setRef(new Date(n.getFullYear(), n.getMonth(), 1)); };
+  const naoCanceladas = useMemo(() => proximas.filter(m => m.status !== 'cancelada' && m.date), [proximas]);
 
   // Próxima reunião (não cancelada) por sigla · alimenta os quadrados.
   const proximaPorSigla = useMemo(() => {
     const map = {};
-    for (const m of proximas) {
+    for (const m of naoCanceladas) {
       const s = m.governance_meeting_types?.sigla;
-      if (!s || m.status === 'cancelada') continue;
+      if (!s) continue;
       if (!map[s]) map[s] = m;
     }
     return map;
-  }, [proximas]);
+  }, [naoCanceladas]);
+
+  // A PRÓXIMA da agenda (entre todos os rituais) · ganha evidência na home.
+  const proximaGlobal = useMemo(() => {
+    const m = naoCanceladas[0]; // lista já vem ordenada por data
+    return m ? { sigla: m.governance_meeting_types?.sigla, date: m.date } : null;
+  }, [naoCanceladas]);
 
   const tipoPorSigla = useMemo(() => {
     const map = {};
@@ -117,6 +100,7 @@ export default function Governanca() {
 
   return (
     <div style={{ background: C.bg, minHeight: '100%', color: C.text }} className="p-4 md:p-6">
+      <div className="max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
@@ -126,85 +110,54 @@ export default function Governanca() {
           </h1>
           <p style={{ color: C.t2 }} className="text-sm">Rituais mensais de gestão estratégica · reuniões, atas e deliberações</p>
         </div>
-        <div className="flex items-center gap-2">
-          {[['rituais', 'Rituais', Landmark], ['agenda', 'Agenda', CalendarDays], ['tipos', 'Tipos', Settings2]].map(([v, label, Icon]) => (
+        <div className="flex flex-wrap items-center gap-2">
+          {[['rituais', 'Rituais', Landmark], ['tipos', 'Tipos', Settings2]].map(([v, label, Icon]) => (
             <button key={v} onClick={() => setView(v)}
               className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg"
               style={{ border: `1px solid ${C.border}`, color: view === v ? C.primary : C.t2, background: view === v ? C.primaryBg : 'transparent' }}>
               <Icon size={15} /> {label}
             </button>
           ))}
-          {canEdit && view === 'agenda' && (
-            <button onClick={() => setNovaOpen(true)} className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg text-white"
-              style={{ background: C.primary }}><Plus size={15} /> Reunião</button>
+          {canEdit && (
+            <>
+              <button onClick={gerarAgenda} disabled={gerando} title="Cria as 4 reuniões mensais deste mês até dezembro (pula o que já existe)"
+                className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg"
+                style={{ border: `1px solid ${C.border}`, color: C.primary, opacity: gerando ? 0.6 : 1 }}>
+                {gerando ? <Loader2 className="animate-spin" size={15} /> : <CalendarDays size={15} />} Gerar agenda
+              </button>
+              <button onClick={() => setNovaOpen(true)} className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg text-white"
+                style={{ background: C.primary }}><Plus size={15} /> Reunião avulsa</button>
+            </>
           )}
         </div>
       </div>
 
       {view === 'tipos' ? (
         <TiposPanel types={types} canEdit={canEdit} onChange={carregar} />
-      ) : view === 'agenda' ? (
-        <>
-          {/* Navegação de mês */}
-          <div className="flex items-center justify-between gap-2 mb-4">
-            <div className="flex items-center gap-2">
-              <button onClick={() => irMes(-1)} className="p-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}><ChevronLeft size={16} /></button>
-              <div className="text-lg font-semibold min-w-[170px] text-center">{MESES[mes - 1]} {ano}</div>
-              <button onClick={() => irMes(1)} className="p-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}><ChevronRight size={16} /></button>
-              <button onClick={irHoje} className="text-sm px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.t2 }}>Hoje</button>
-              {canEdit && (
-                <button onClick={gerarAno} disabled={gerandoAno} title="Cria as 4 reuniões mensais até dezembro"
-                  className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.primary, opacity: gerandoAno ? 0.6 : 1 }}>
-                  {gerandoAno ? <Loader2 className="animate-spin" size={15} /> : <CalendarDays size={15} />} Gerar ano
-                </button>
-              )}
-            </div>
-          </div>
-
-          {loading ? (
-            <div className="flex items-center gap-2 py-10 justify-center" style={{ color: C.t3 }}><Loader2 className="animate-spin" size={18} /> Carregando…</div>
-          ) : meetings.length === 0 ? (
-            <div className="text-center py-12 rounded-xl" style={{ border: `1px dashed ${C.border}`, color: C.t2 }}>
-              <CalendarDays size={28} className="mx-auto mb-2" style={{ color: C.t3 }} />
-              <p className="mb-1">Nenhuma reunião em {MESES[mes - 1]} {ano}.</p>
-              <p className="text-sm mb-4" style={{ color: C.t3 }}>Crie o ciclo do mês pra gerar as reuniões padrão, ou adicione uma reunião avulsa.</p>
-              {canEdit && (
-                <button onClick={criarCiclo} disabled={criando}
-                  className="inline-flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg text-white" style={{ background: C.primary, opacity: criando ? 0.6 : 1 }}>
-                  {criando ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />} Criar ciclo do mês
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="grid gap-2">
-              {meetings.map(m => (
-                <CardReuniao key={m.id} m={m} onClick={() => setOpenId(m.id)} />
-              ))}
-            </div>
-          )}
-        </>
       ) : (
         <RituaisHome
           loading={loading}
           tipoPorSigla={tipoPorSigla}
           proximaPorSigla={proximaPorSigla}
+          proximaGlobal={proximaGlobal}
           onAbrir={(sigla) => navigate(`/governanca/${sigla.toLowerCase()}`)}
         />
       )}
 
-      {openId && <DetalheReuniao id={openId} canEdit={canEdit} onClose={() => setOpenId(null)} onChange={carregar} />}
-      {novaOpen && <NovaReuniaoModal types={types} dataPadrao={`${ano}-${pad(mes)}-01`} onClose={() => setNovaOpen(false)} onSaved={() => { setNovaOpen(false); carregar(); }} />}
+      {novaOpen && <NovaReuniaoModal types={types} dataPadrao={ymd(new Date())} onClose={() => setNovaOpen(false)} onSaved={() => { setNovaOpen(false); carregar(); }} />}
+      </div>
     </div>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Home dos rituais: o ciclo executivo do mês em 4 quadrados + as reuniões
-// não-mensais (Diretoria Estatutária · Assembleia) como cards menores.
-function RituaisHome({ loading, tipoPorSigla, proximaPorSigla, onAbrir }) {
+// Home dos rituais: o ciclo executivo do mês em 4 quadrados (o próximo da
+// agenda em evidência) + as reuniões não-mensais como cards menores.
+function RituaisHome({ loading, tipoPorSigla, proximaPorSigla, proximaGlobal, onAbrir }) {
   const extras = ['DE', 'AG'].filter(s => tipoPorSigla[s] && tipoPorSigla[s].ativo !== false);
+  const temAgenda = Object.keys(proximaPorSigla).length > 0;
   return (
-    <div className="max-w-5xl">
+    <div>
       {/* Faixa do ciclo */}
       <div className="rounded-xl p-4 mb-4" style={{ background: `linear-gradient(135deg, ${C.primary}14, ${C.card})`, border: `1px solid ${C.border}` }}>
         <div className="text-xs font-bold uppercase tracking-wide" style={{ color: C.primary }}>Ciclo executivo do mês</div>
@@ -214,27 +167,48 @@ function RituaisHome({ loading, tipoPorSigla, proximaPorSigla, onAbrir }) {
         </div>
       </div>
 
+      {!loading && !temAgenda && (
+        <div className="rounded-xl p-3 mb-4 text-sm" style={{ border: `1px dashed ${C.border}`, color: C.t2 }}>
+          Nenhuma reunião agendada daqui pra frente — use o botão <b style={{ color: C.text }}>Gerar agenda</b> acima pra criar o calendário do ano.
+        </div>
+      )}
+
       {/* 4 quadrados */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {ORDEM_RITUAIS.map((sigla, i) => {
           const r = RITUAIS[sigla];
           const cor = tipoPorSigla[sigla]?.cor || COR_RITUAL[sigla];
           const prox = proximaPorSigla[sigla];
+          const emEvidencia = proximaGlobal?.sigla === sigla;
           return (
             <button key={sigla} onClick={() => onAbrir(sigla)}
-              className="text-left rounded-2xl p-4 transition hover:opacity-95"
-              style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `4px solid ${cor}`, boxShadow: 'var(--shadow, 0 1px 3px rgba(0,0,0,0.06))' }}>
+              className="text-left rounded-2xl p-4 transition hover:opacity-95 relative"
+              style={{
+                background: emEvidencia ? `linear-gradient(160deg, ${cor}10, ${C.card})` : C.card,
+                border: `1px solid ${emEvidencia ? cor : C.border}`,
+                borderTop: `4px solid ${cor}`,
+                boxShadow: emEvidencia ? `0 0 0 2px ${cor}55, var(--shadow, 0 1px 3px rgba(0,0,0,0.06))` : 'var(--shadow, 0 1px 3px rgba(0,0,0,0.06))',
+              }}>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-1 rounded-full" style={{ background: `${cor}1c`, color: cor }}>
-                  {r.semanaLabel} · quarta
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-1 rounded-full" style={{ background: `${cor}1c`, color: cor }}>
+                    {r.semanaLabel} · quarta
+                  </span>
+                  {emEvidencia && (
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-1 rounded-full text-white" style={{ background: cor }}>
+                      Próxima do ciclo
+                    </span>
+                  )}
+                </div>
                 <span className="text-xs font-bold" style={{ color: C.t3 }}>{i + 1}/4</span>
               </div>
               <div className="text-lg font-bold mt-2" style={{ color: C.text }}>{r.titulo}</div>
               <p className="text-sm mt-1 leading-relaxed" style={{ color: C.t2 }}>{r.objetivo}</p>
               <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
                 <span className="text-xs" style={{ color: C.t3 }}>
-                  {loading ? '…' : prox ? <>Próxima: <b style={{ color: C.t2 }}>{diaSemana(prox.date)} {fmtData(prox.date)}</b></> : 'Sem reunião agendada'}
+                  {loading ? '…' : prox
+                    ? <>Próxima: <b style={{ color: emEvidencia ? cor : C.t2 }}>{diaSemana(prox.date)} {fmtData(prox.date)}</b></>
+                    : 'Sem reunião agendada'}
                 </span>
                 <span className="text-xs font-semibold inline-flex items-center gap-1" style={{ color: cor }}>Abrir <ChevronRight size={13} /></span>
               </div>
@@ -250,13 +224,17 @@ function RituaisHome({ loading, tipoPorSigla, proximaPorSigla, onAbrir }) {
             const t = tipoPorSigla[sigla];
             const cor = t?.cor || COR_RITUAL[sigla];
             const prox = proximaPorSigla[sigla];
+            const emEvidencia = proximaGlobal?.sigla === sigla;
             return (
               <button key={sigla} onClick={() => onAbrir(sigla)}
                 className="text-left rounded-xl p-3 flex items-center gap-3 transition hover:opacity-95"
-                style={{ background: C.card, border: `1px solid ${C.border}` }}>
+                style={{ background: C.card, border: `1px solid ${emEvidencia ? cor : C.border}`, boxShadow: emEvidencia ? `0 0 0 2px ${cor}55` : 'none' }}>
                 <span style={{ width: 10, height: 10, borderRadius: 99, background: cor, flexShrink: 0 }} />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold truncate" style={{ color: C.text }}>{t.nome}</div>
+                  <div className="text-sm font-semibold truncate" style={{ color: C.text }}>
+                    {t.nome}
+                    {emEvidencia && <span className="text-[10px] font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded-full text-white ml-2" style={{ background: cor }}>Próxima</span>}
+                  </div>
                   <div className="text-xs" style={{ color: C.t3 }}>
                     {t.recorrencia}{prox ? ` · próxima ${fmtData(prox.date)}` : ' · sem reunião agendada'}
                   </div>
@@ -272,26 +250,6 @@ function RituaisHome({ loading, tipoPorSigla, proximaPorSigla, onAbrir }) {
         <b style={{ color: C.t2 }}>Como conduzimos estas reuniões:</b> {COMO_CONDUZIMOS}
       </p>
     </div>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────
-function CardReuniao({ m, onClick }) {
-  const tipo = m.governance_meeting_types || {};
-  const st = STATUS_MEETING[m.status] || STATUS_MEETING.agendada;
-  const cor = tipo.cor || C.primary;
-  return (
-    <button onClick={onClick} className="w-full text-left rounded-xl flex items-stretch overflow-hidden transition hover:opacity-90"
-      style={{ background: C.card, border: `1px solid ${C.border}` }}>
-      <div style={{ width: 5, background: cor, flexShrink: 0 }} />
-      <div className="flex-1 p-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <div className="flex-1 min-w-[160px]">
-          <div className="font-semibold">{tipo.nome || 'Reunião'} {tipo.sigla ? <span style={{ color: C.t3 }}>· {tipo.sigla}</span> : null}</div>
-          <div className="text-sm" style={{ color: C.t2 }}>{diaSemana(m.date)} {fmtData(m.date)}{m.local ? ` · ${m.local}` : ''}</div>
-        </div>
-        <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: `${st.cor}22`, color: st.cor }}>{st.label}</span>
-      </div>
-    </button>
   );
 }
 
@@ -312,8 +270,8 @@ function TiposPanel({ types, canEdit, onChange }) {
   }
 
   return (
-    <div className="max-w-3xl">
-      <p className="text-sm mb-3" style={{ color: C.t2 }}>Tipos de reunião do ciclo. Os marcados como <b>mensal</b> são criados automaticamente ao gerar o ciclo do mês (na semana indicada).</p>
+    <div className="max-w-3xl mx-auto">
+      <p className="text-sm mb-3" style={{ color: C.t2 }}>Tipos de reunião do ciclo. Os marcados como <b>mensal</b> são criados automaticamente ao gerar a agenda (na semana indicada).</p>
       <div className="grid gap-2 mb-5">
         {(types || []).map(t => (
           <div key={t.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: C.card, border: `1px solid ${C.border}`, opacity: t.ativo === false ? 0.55 : 1 }}>

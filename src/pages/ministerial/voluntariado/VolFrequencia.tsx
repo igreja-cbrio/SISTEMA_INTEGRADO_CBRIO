@@ -24,7 +24,7 @@ type Sugestao = {
 
 type Row = {
   chave: string; vol_profile_id: string | null; nome_norm: string; nome: string;
-  total_servicos: number; servicos_4m: number; ultimo_servico: string | null; ativo: boolean;
+  total_servicos: number; servicos_3m: number; ultimo_servico: string | null; ativo: boolean;
   telefone: string | null; membro_id: string | null;
 };
 
@@ -92,7 +92,7 @@ export default function VolFrequencia() {
           <Activity className="h-5 w-5 text-primary" />
           <div>
             <h2 className="text-lg font-semibold text-foreground">Controle de frequência</h2>
-            <p className="text-xs text-muted-foreground">Inclui quem serviu <b>0 vezes</b> · inativo = <b>4 meses sem servir</b> (candidato a contato)</p>
+            <p className="text-xs text-muted-foreground">Voluntários únicos (por CPF) · inativo = <b>3 meses sem servir</b> (desaparecido · candidato a contato)</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -115,8 +115,8 @@ export default function VolFrequencia() {
       {resumo && (
         <div className="grid grid-cols-3 gap-3">
           <Card className="p-3"><div className="text-xs text-muted-foreground">Inscritos</div><div className="text-xl font-bold text-foreground">{resumo.total}</div></Card>
-          <Card className="p-3"><div className="text-xs text-muted-foreground">Ativos (4 meses)</div><div className="text-xl font-bold text-emerald-600">{resumo.ativos}</div></Card>
-          <Card className="p-3"><div className="text-xs text-muted-foreground">Inativos (0 em 4 meses)</div><div className="text-xl font-bold text-amber-600">{resumo.inativos}</div></Card>
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Ativos (serviram em 3 meses)</div><div className="text-xl font-bold text-emerald-600">{resumo.ativos}</div></Card>
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Inativos (0 em 3 meses)</div><div className="text-xl font-bold text-amber-600">{resumo.inativos}</div></Card>
         </div>
       )}
 
@@ -146,7 +146,7 @@ export default function VolFrequencia() {
             <thead className="sticky top-0 bg-muted/80 backdrop-blur">
               <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2 font-semibold">Nome</th>
-                <th className="px-4 py-2 font-semibold">Serviços (4 meses)</th>
+                <th className="px-4 py-2 font-semibold">Serviços (3 meses)</th>
                 <th className="px-4 py-2 font-semibold">Último</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
                 <th className="px-4 py-2 font-semibold">Contato</th>
@@ -161,7 +161,7 @@ export default function VolFrequencia() {
               ) : itens.map(r => (
                 <tr key={r.chave} className="border-t border-border/60 hover:bg-accent/40 cursor-pointer" onClick={() => setDetalhe(r)}>
                   <td className="px-4 py-2 font-medium text-foreground">{r.nome}</td>
-                  <td className="px-4 py-2"><span className={r.servicos_4m === 0 ? 'text-amber-600 font-semibold' : ''}>{r.servicos_4m}</span><span className="text-xs text-muted-foreground"> / {r.total_servicos} total</span></td>
+                  <td className="px-4 py-2"><span className={r.servicos_3m === 0 ? 'text-amber-600 font-semibold' : ''}>{r.servicos_3m}</span><span className="text-xs text-muted-foreground"> / {r.total_servicos} total</span></td>
                   <td className="px-4 py-2 text-muted-foreground">{fmt(r.ultimo_servico)}</td>
                   <td className="px-4 py-2">
                     {r.ativo
@@ -174,9 +174,9 @@ export default function VolFrequencia() {
                       : <span className="text-xs text-muted-foreground">—</span>}
                   </td>
                   <td className="px-4 py-2">
-                    {r.vol_profile_id
-                      ? <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> vinculado</span>
-                      : <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={(e) => { e.stopPropagation(); setVincular(r); }}><Link2 className="h-3 w-3" /> vincular</Button>}
+                    {r.membro_id
+                      ? <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> membro (CPF)</span>
+                      : <span className="text-xs text-muted-foreground">sem CPF</span>}
                   </td>
                 </tr>
               ))}
@@ -327,7 +327,7 @@ function DetalheModal({ row, onClose }: { row: Row; onClose: () => void }) {
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{row.nome}</DialogTitle>
-          <DialogDescription>{row.servicos_4m} em 4 meses · {row.total_servicos} no total · {row.ativo ? 'Ativo' : 'Inativo'} · último em {fmt(row.ultimo_servico)}</DialogDescription>
+          <DialogDescription>{row.servicos_3m} em 3 meses · {row.total_servicos} no total · {row.ativo ? 'Ativo' : 'Inativo'} · último em {fmt(row.ultimo_servico)}</DialogDescription>
         </DialogHeader>
         {Object.keys(porCulto).length > 0 && (
           <div className="flex flex-wrap gap-2">

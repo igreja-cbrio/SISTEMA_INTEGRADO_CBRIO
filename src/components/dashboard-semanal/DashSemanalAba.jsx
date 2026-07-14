@@ -141,8 +141,15 @@ export default function DashSemanalAba() {
       : (r.data.items || []).filter(it => it.service_type_id === culto);
 
     const total = itemsFiltrados.reduce((s, it) => s + (it.valor_absoluto || 0), 0);
-    const sumMedias = itemsFiltrados.reduce((s, it) => s + (it.media || 0), 0);
-    const mediaGeral = itemsFiltrados.length ? Math.round(sumMedias / itemsFiltrados.length) : 0;
+    // Média Histórica na MESMA base do Total Absoluto:
+    // - "Todos": média do TOTAL semanal (soma dos blocos por semana) — já vem
+    //   pronta e correta do backend em resumo.media_geral.
+    // - 1 culto/turno filtrado: a média semanal do próprio bloco (item.media).
+    // (Antes somava as médias e dividia pelo nº de blocos → média de "Todos"
+    // ficava menor que a de um único turno.)
+    const mediaGeral = culto === 'todos'
+      ? (r.data.resumo?.media_geral ?? 0)
+      : itemsFiltrados.reduce((s, it) => s + (it.media || 0), 0);
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsFiltrados.reduce((s, it) => s + (it.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef?.usa_ocupacao
@@ -352,7 +359,7 @@ export default function DashSemanalAba() {
               type="button"
               onClick={() => setVolPessoasOpen(true)}
               className="rounded-xl border bg-card p-4 text-center cursor-pointer transition-colors hover:border-primary/60 hover:bg-accent/40"
-              title="Ver quem foram as pessoas da semana"
+              title="Pessoas diferentes que serviram na semana, contando cada uma UMA vez mesmo que tenha servido em vários cultos/turnos. Clique pra ver quem foram."
             >
               <p className="text-2xl font-bold" style={{ color: C.primary }}>
                 {primario.data.resumo.pessoas_unicas ?? '—'}
@@ -361,20 +368,23 @@ export default function DashSemanalAba() {
                 Pessoas únicas
               </p>
               <p className="text-[10px] text-muted-foreground">
-                na semana (sem repetir) · clique pra ver
+                pessoas diferentes na semana · clique pra ver
                 {primario.data.resumo.sem_identificacao > 0 && (
                   <span className="block text-amber-600 dark:text-amber-400">+{primario.data.resumo.sem_identificacao} check-ins sem identificação</span>
                 )}
               </p>
             </button>
-            <div className="rounded-xl border bg-card p-4 text-center">
+            <div
+              className="rounded-xl border bg-card p-4 text-center cursor-help"
+              title="Cada check-in registrado na semana, com repetição: quem serviu em 2 cultos/turnos conta 2 vezes."
+            >
               <p className="text-2xl font-bold" style={{ color: C.media }}>
                 {primario.data.resumo.checkins_total ?? '—'}
               </p>
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">
                 Total de check-ins
               </p>
-              <p className="text-[10px] text-muted-foreground">eventos na semana</p>
+              <p className="text-[10px] text-muted-foreground">cada check-in, com repetição</p>
             </div>
           </div>
         )}
@@ -561,13 +571,26 @@ export default function DashSemanalAba() {
                 loading={isLoading}
                 icon={Users}
                 cor={C.primary}
+                subtitulo={primario?.indicador === 'voluntariado'
+                  ? 'Soma por turno · pessoas distintas em cada turno'
+                  : undefined}
+                title={primario?.indicador === 'voluntariado'
+                  ? 'Total Absoluto = soma das pessoas distintas de cada turno (quem serve em mais de um turno conta em cada um). Por isso costuma ser maior que "Pessoas únicas".'
+                  : 'Soma dos valores de todos os cultos da semana.'}
               />
               <KpiCard
                 titulo="Média Histórica"
                 valor={primario?.data?.resumo.media_geral ?? 0}
                 loading={isLoading}
                 cor={C.media}
-                subtitulo="Média semanal das últimas 52 semanas"
+                title='Média semanal do indicador nas semanas do ano com dado — na mesma base do "Total Absoluto".'
+                subtitulo={(() => {
+                  const n = primario?.data?.resumo?.media_semanas_base;
+                  const anoRef = primario?.data?.ano;
+                  return anoRef
+                    ? `Média semanal de ${anoRef}${n ? ` · ${n} ${n === 1 ? 'semana' : 'semanas'}` : ''}`
+                    : 'Média semanal do ano';
+                })()}
               />
               <KpiCard
                 titulo="Variação %"
@@ -576,6 +599,7 @@ export default function DashSemanalAba() {
                 sufixo="%"
                 icon={(primario?.data?.resumo.variacao_pct ?? 0) >= 0 ? TrendingUp : TrendingDown}
                 cor={(primario?.data?.resumo.variacao_pct ?? 0) >= 0 ? '#10b981' : '#ef4444'}
+                title='Variação do "Total Absoluto" desta semana em relação à "Média Histórica".'
                 destaque
               />
             </motion.div>

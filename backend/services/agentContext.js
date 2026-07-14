@@ -1,6 +1,7 @@
 const { supabase } = require('../utils/supabase');
 const { getEffectiveLevel } = require('../middleware/auth');
 const { searchVault } = require('./cerebroSearch');
+const { searchConhecimento } = require('./conhecimentoBase');
 
 /**
  * Mapeia cada módulo de agente para a routeKey usada no sistema de permissões
@@ -76,6 +77,10 @@ async function buildContext(targetModules = ['all'], req = null, options = {}) {
 
   const ctx = {
     sistema: getSystemDoc(),
+    // Posicionado no topo de propósito: numa pergunta de conhecimento é a fonte
+    // mais confiável e precisa sobreviver ao corte de tamanho do serializeContext
+    // (que trunca por ordem de inserção). Preenchido abaixo; removido se vazio.
+    conhecimento_sistema: null,
     usuario: req?.user ? {
       nome: req.user.name,
       email: req.user.email,
@@ -94,7 +99,8 @@ async function buildContext(targetModules = ['all'], req = null, options = {}) {
     }
   }));
 
-  // Busca no Cérebro em paralelo com as consultas de módulos.
+  // Busca no Cérebro (vault SharePoint) + na base de conhecimento do sistema,
+  // ambas em paralelo com as consultas de módulos. As duas filtram por permissão.
   const vaultPromise = options.query
     ? searchVault(options.query, req, options.vaultLimit || 5).catch((e) => {
         console.warn('[AGENT CONTEXT] vault search failed:', e.message);
@@ -102,10 +108,32 @@ async function buildContext(targetModules = ['all'], req = null, options = {}) {
       })
     : Promise.resolve([]);
 
-  const [moduleResults, vaultResults] = await Promise.all([modulesPromise, vaultPromise]);
+  const conhecimentoPromise = options.query
+    ? searchConhecimento(options.query, req, options.conhecimentoLimit || 6).catch((e) => {
+        console.warn('[AGENT CONTEXT] conhecimento search failed:', e.message);
+        return [];
+      })
+    : Promise.resolve([]);
+
+  const [moduleResults, vaultResults, conhecimentoResults] = await Promise.all([
+    modulesPromise, vaultPromise, conhecimentoPromise,
+  ]);
 
   for (const [mod, data] of moduleResults) {
     ctx.modulos[mod] = data;
+  }
+
+  // Base de conhecimento primeiro: é a fonte curada de "como o sistema funciona
+  // / o que significa esse indicador". O agente deve preferir isto para
+  // perguntas conceituais/operacionais. Se vazia, remove a chave (não polui).
+  if (conhecimentoResults.length) {
+    ctx.conhecimento_sistema = {
+      descricao: 'Base de conhecimento curada do sistema CBRio (como funciona, o que cada módulo faz, glossário de indicadores). Use como fonte principal para perguntas sobre o sistema; é conteúdo confiável e verificado.',
+      total: conhecimentoResults.length,
+      itens: conhecimentoResults,
+    };
+  } else {
+    delete ctx.conhecimento_sistema;
   }
 
   if (vaultResults.length) {
@@ -583,6 +611,30 @@ async function fetchIntegracaoContext() {
     .order('data_batismo', { ascending: false })
     .limit(15);
 
+  // Decisões de fé POR MÊS (fonte real = cultos: presenciais + online + kids,
+  // agregadas por cultos.data — mesma soma do Dashboard Semanal). Sem isto o
+  // Pedrinho não respondia "quantas decisões tivemos no mês passado".
+  const inicioSerie = new Date();
+  inicioSerie.setMonth(inicioSerie.getMonth() - 6, 1);
+  const { data: cultosDec } = await supabase
+    .from('cultos')
+    .select('data, decisoes_presenciais, decisoes_online, decisoes_kids')
+    .gte('data', inicioSerie.toISOString().slice(0, 10))
+    .order('data', { ascending: true });
+
+  const decPorMes = {};
+  for (const c of cultosDec || []) {
+    const ym = String(c.data || '').slice(0, 7); // AAAA-MM
+    if (!ym) continue;
+    const soma = (c.decisoes_presenciais || 0) + (c.decisoes_online || 0) + (c.decisoes_kids || 0);
+    decPorMes[ym] = (decPorMes[ym] || 0) + soma;
+  }
+  const agora = new Date();
+  const chaveMes = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+  const mesAtualKey = chaveMes(agora);
+  const mesPassadoKey = chaveMes(new Date(agora.getFullYear(), agora.getMonth() - 1, 1));
+  const decisoesPorMes = Object.keys(decPorMes).sort().map((ym) => ({ mes: ym, decisoes: decPorMes[ym] }));
+
   return {
     resumo: {
       total_visitantes: totalVisitantes,
@@ -591,6 +643,12 @@ async function fetchIntegracaoContext() {
       decisoes_ultimos_30d: decisoes30d,
       sem_followup_apos_30d: semFollowup,
       virou_membro_ultimos_90d: virouMembro,
+    },
+    decisoes_de_fe: {
+      obs: 'Decisões = presenciais + online + kids, somadas dos cultos por mês (mesma conta do Dashboard Semanal).',
+      mes_atual: decPorMes[mesAtualKey] || 0,
+      mes_passado: decPorMes[mesPassadoKey] || 0,
+      por_mes_ultimos_6: decisoesPorMes,
     },
     visitantes_novos_sem_responsavel: novosSemResp || [],
     batismos: {

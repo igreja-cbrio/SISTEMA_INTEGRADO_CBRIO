@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Baby, ShieldAlert, ArrowLeft, Loader2, CheckCircle2, AlertTriangle, Bell, Tablet } from 'lucide-react';
+import { Search, Baby, ShieldAlert, ArrowLeft, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,7 +19,6 @@ import { totemKids } from '@/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
-import { getEstacaoPareada } from './lib/estacaoPareada';
 import { KidsZoneShell, KidsZoneRelogio, KidsZoneToggle } from './KidsZoneShell';
 
 type CheckinData = {
@@ -41,7 +40,7 @@ type CheckinData = {
   }>;
 };
 
-export default function TotemKidsCheckout() {
+export default function TotemKidsCheckout({ embutido = false }: { embutido?: boolean } = {}) {
   const navigate = useNavigate();
   const { profile, isAdmin } = useAuth();
   const [codigoInput, setCodigoInput] = useState('');
@@ -51,27 +50,11 @@ export default function TotemKidsCheckout() {
   const [confirmandoCheckout, setConfirmandoCheckout] = useState(false);
   const [modalOverride, setModalOverride] = useState(false);
   const [overrideMotivo, setOverrideMotivo] = useState('');
-  const [chamouTV, setChamouTV] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const estacao = getEstacaoPareada();
-  const modoSelf = estacao?.tipo === 'self';
 
   useEffect(() => {
     inputRef.current?.focus();
   }, [checkin]);
-
-  async function dispararChamadaTV(codigo: string) {
-    try {
-      await totemKids.chamadas.chamar({ codigo });
-      setChamouTV(true);
-      toast.success('Professora avisada · aguarde a criança', { duration: 4000 });
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      console.warn('[checkout] chamar TV falhou:', err?.message);
-      // Não bloqueia o fluxo · checkout segue normal
-    }
-  }
 
   async function buscarCodigo() {
     const c = codigoInput.toUpperCase().trim();
@@ -80,12 +63,9 @@ export default function TotemKidsCheckout() {
       return;
     }
     setCarregando(true);
-    setChamouTV(false);
     try {
       const data = await totemKids.checkin.porCodigo(c);
       setCheckin(data);
-      // Dispara chamada na TV automaticamente (Marcos: "assim que digita")
-      dispararChamadaTV(c);
     } catch (e: unknown) {
       const err = e as { status?: number; message?: string };
       if (err?.status === 404) {
@@ -161,20 +141,18 @@ export default function TotemKidsCheckout() {
     }
   }
 
+  // Embutido no totem de check-in: sem moldura/barra próprios (o pai já provê o
+  // KidsZoneShell + a barra com o toggle) → alterna check-in/out sem recarregar.
+  const Wrapper: any = embutido ? 'div' : KidsZoneShell;
   return (
-    <KidsZoneShell>
-      {/* Barra do topo · logo, estação, relógio e alternância check-in/check-out */}
+    <Wrapper>
+      {!embutido && (
       <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-dashed border-slate-200">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-400 to-pink-500 flex items-center justify-center text-2xl shadow-lg shadow-pink-500/30">🧸</div>
           <div>
             <p className="text-lg font-black leading-none">Totem Kids</p>
             <p className="text-xs font-medium text-slate-400 tracking-wide">Check-out · entrega das crianças</p>
-            {estacao && (
-              <Badge variant={modoSelf ? 'default' : 'secondary'} className="mt-1 text-[10px]">
-                <Tablet className="h-3 w-3 mr-1" /> {estacao.nome}{modoSelf && ' · self-service'}
-              </Badge>
-            )}
           </div>
         </div>
         <div className="flex items-center gap-4 flex-wrap">
@@ -182,6 +160,7 @@ export default function TotemKidsCheckout() {
           <KidsZoneToggle ativo="checkout" onCheckin={() => navigate('/ministerial/totem-kids')} />
         </div>
       </div>
+      )}
 
       {!checkin ? (
         <div className="space-y-6">
@@ -248,27 +227,6 @@ export default function TotemKidsCheckout() {
               </div>
             )}
 
-            {/* Status da chamada na TV */}
-            {chamouTV && (
-              <div className="bg-emerald-100 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 rounded-lg p-3 flex items-center justify-between gap-2">
-                <div className="flex gap-2 items-center">
-                  <Bell className="h-5 w-5 text-emerald-700 dark:text-emerald-300" />
-                  <div>
-                    <div className="font-semibold text-emerald-900 dark:text-emerald-100">Professora avisada</div>
-                    <div className="text-sm text-emerald-700 dark:text-emerald-300">Apareceu na TV da sala. Aguarde.</div>
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => dispararChamadaTV(checkin.codigo_seguranca)}
-                  title="Demorando? Chamar de novo · toca sino + TTS na TV"
-                >
-                  <Bell className="h-4 w-4 mr-1" /> Chamar de novo
-                </Button>
-              </div>
-            )}
-
             <div className="bg-muted/50 rounded-lg p-3">
               <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Entregue por</div>
               <div className="font-medium">{checkin.responsavel_checkin_nome}</div>
@@ -278,7 +236,13 @@ export default function TotemKidsCheckout() {
             </div>
 
             <div>
-              <div className="text-sm font-medium mb-2">Quem está buscando?</div>
+              <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 p-3 mb-3">
+                <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">Último passo pra liberar a saída</div>
+                <div className="text-sm text-blue-800 dark:text-blue-200 mt-0.5">
+                  Confira a criança acima e <b>toque em quem veio buscar</b> — isso confirma o check-out e libera a saída.
+                </div>
+              </div>
+              <div className="text-sm font-medium mb-2">Quem veio buscar a criança?</div>
               <div className="space-y-2">
                 {/* Atalho: mesma pessoa que entregou */}
                 <Button
@@ -360,6 +324,6 @@ export default function TotemKidsCheckout() {
           </div>
         </DialogContent>
       </Dialog>
-    </KidsZoneShell>
+    </Wrapper>
   );
 }

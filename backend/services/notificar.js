@@ -1,5 +1,6 @@
 const { supabase } = require('../utils/supabase');
 const { enviarPushParaUsers } = require('./webpush');
+const { pushExpoParaUsers } = require('./appPush');
 const { enviarEmail, isConfigured: emailConfigurado } = require('./email');
 
 function escapeHtmlNotif(s) {
@@ -144,6 +145,14 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       url: link || '/',
       tag: chaveDedup || `${modulo}-${Date.now()}`,
     }).catch(e => console.warn('[notificar push]', e.message));
+
+    // Push Expo pro app (CBRio Staff/membros) · best-effort, nunca quebra o
+    // fluxo — no-op gracioso pra quem não tem token em app_push_tokens.
+    pushExpoParaUsers(usersInseridos, {
+      title: titulo,
+      body: mensagem,
+      data: { tipo: tipo || modulo, modulo, link: link || null },
+    }).catch(e => console.warn('[notificar push expo]', e.message));
   }
 
   // Dispara e-mail em background (no-op se Resend não configurado · só quando

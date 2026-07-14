@@ -2,12 +2,13 @@ import { motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-export default function KpiCard({ titulo, valor, loading, icon: Icon, cor = '#00B39D', sufixo, subtitulo, destaque }) {
+export default function KpiCard({ titulo, valor, loading, icon: Icon, cor = '#00B39D', sufixo, subtitulo, destaque, title }) {
   return (
     <div
+      title={title}
       className={`rounded-xl border bg-card p-5 relative overflow-hidden transition-shadow hover:shadow-md ${
         destaque ? 'ring-1 ring-offset-1' : ''
-      }`}
+      } ${title ? 'cursor-help' : ''}`}
       style={destaque ? { borderColor: cor } : undefined}
     >
       <div

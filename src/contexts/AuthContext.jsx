@@ -19,6 +19,15 @@ const MODULO_ROTA_TRAVA = {
   'totem-membro': '/totem',
 };
 
+// Prefixos de rota PERMITIDOS dentro da trava, quando o módulo opera em mais de
+// um prefixo (a landing continua sendo MODULO_ROTA_TRAVA). Kids: o quiosque usa
+// o hub (/ministerial/kids) + as telas do totem (/ministerial/totem-kids/...).
+// O painel do culto kids (/kids · aba Cultos) fica FORA de propósito — conta
+// travada não vê o gerencial. Módulo sem entrada aqui → só a rota de landing.
+const MODULO_TRAVA_PREFIXOS = {
+  kids: ['/ministerial/kids', '/ministerial/totem-kids'],
+};
+
 // Set to true to bypass login and simulate an admin user
 const DEV_BYPASS_AUTH = false;
 
@@ -343,6 +352,11 @@ export function AuthProvider({ children }) {
   const cargoNome = permData?.cargoNome || null;
   const cargoSlug = permData?.cargoSlug || null;
 
+  // Devs (auditoria/agentes só pra eles · você + Marcos Paulo). Espelha o
+  // requireDev do backend (agents.js). Adicionar mais alguém: aqui + lá.
+  const DEV_EMAILS = ['gestao@cbrio.com.br', 'infra@cbrio.com.br', 'matheus.toscano@cbrio.org'];
+  const isDev = DEV_EMAILS.includes(String(profile?.email || user?.email || '').toLowerCase());
+
   const isVoluntario = profile?.role === 'voluntario';
   const isAdmin = ['admin', 'diretor'].includes(profile?.role);
 
@@ -387,18 +401,32 @@ export function AuthProvider({ children }) {
   // EXATAMENTE 1 módulo — ex.: voluntário responsável só pelo Batismo — abre
   // direto naquele módulo, sem menu e sem poder navegar pra mais nada. Não afeta
   // staff (is_membro_only=false), admin, diretor nem voluntário (kiosk próprio).
-  // ⚠️ modulePerms é indexado por NOME *e* por SLUG (2 chaves apontando pro MESMO
-  // objeto), então conta módulos DISTINTOS por referência — não por nº de chaves.
-  const entriesComAcesso = modulePerms
-    ? [...new Set(Object.values(modulePerms).filter((p) => p && (p.leitura || 0) >= 1))]
-    : [];
-  const slugTravavel = entriesComAcesso.length === 1
-    ? Object.keys(MODULO_ROTA_TRAVA).find((s) => modulePerms?.[s] === entriesComAcesso[0])
-    : null;
+  // A contagem de módulos DISTINTOS vem do backend (granular.slugsComAcesso ·
+  // slugs deduplicados no catálogo). ⚠️ NÃO dá pra contar por referência em
+  // modulePerms: o backend indexa nome e slug no MESMO objeto, mas o JSON da
+  // resposta duplica os objetos — o new Set vê 2 pra um módulo só e a trava
+  // nunca dispara. Fallback por referência só pra resposta de backend antigo.
+  const slugsComAcesso = Array.isArray(permData?.slugsComAcesso) ? permData.slugsComAcesso : null;
+  let slugTravavel = null;
+  if (slugsComAcesso) {
+    slugTravavel = (slugsComAcesso.length === 1 && MODULO_ROTA_TRAVA[slugsComAcesso[0]])
+      ? slugsComAcesso[0]
+      : null;
+  } else if (modulePerms) {
+    const entriesComAcesso = [...new Set(Object.values(modulePerms).filter((p) => p && (p.leitura || 0) >= 1))];
+    slugTravavel = entriesComAcesso.length === 1
+      ? (Object.keys(MODULO_ROTA_TRAVA).find((s) => modulePerms?.[s] === entriesComAcesso[0]) || null)
+      : null;
+  }
+  // Módulo único da conta (slug) — usado também pelo landing pós-login (homeRoute).
+  const moduloUnico = slugsComAcesso && slugsComAcesso.length === 1 ? slugsComAcesso[0] : null;
   const moduloTravado = (
     !!profile?.is_membro_only && !isAdmin && profile?.role !== 'diretor' && !isVoluntario && slugTravavel
   ) ? slugTravavel : null;
   const rotaTravada = moduloTravado ? MODULO_ROTA_TRAVA[moduloTravado] : null;
+  const travaPrefixos = moduloTravado
+    ? (MODULO_TRAVA_PREFIXOS[moduloTravado] || [MODULO_ROTA_TRAVA[moduloTravado]])
+    : null;
   // Assistente IA é liberado para qualquer colaborador; o backend filtra os
   // agentes e os dados conforme as permissões de cada usuário.
   const canIA = isColaborador;
@@ -414,6 +442,8 @@ export function AuthProvider({ children }) {
     isMembroOnly,
     moduloTravado,
     rotaTravada,
+    travaPrefixos,
+    moduloUnico,
     isColaborador,
     modulePerms,
     modulosBloqueados,
@@ -424,6 +454,7 @@ export function AuthProvider({ children }) {
     userSetores,
     cargoNome,
     cargoSlug,
+    isDev,
     signInWithMicrosoft,
     signInWithGoogle,
     signInWithEmail,
@@ -446,7 +477,7 @@ export function useAuth() {
     // During HMR, context can temporarily be null — return a safe fallback
     return {
       user: null, profile: null, loading: true, role: null,
-      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, moduloTravado: null, rotaTravada: null, isColaborador: false, modulePerms: null,
+      isAdmin: false, isDiretor: false, isVoluntario: false, isMembroOnly: false, moduloTravado: null, rotaTravada: null, travaPrefixos: null, moduloUnico: null, isColaborador: false, modulePerms: null,
       canAccessModule: () => false, getAccessLevel: () => 1,
       canRH: false, canFinanceiro: false, canLogistica: false,
       canPatrimonio: false, canMembresia: false, canProjetos: false,
@@ -454,7 +485,7 @@ export function useAuth() {
       canProcessos: false, canSolicitacoes: false, canNPS: false,
       canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
-      cargoNome: null, cargoSlug: null,
+      cargoNome: null, cargoSlug: null, isDev: false,
       recarregarAuth: async () => {},
       refreshProfile: async () => {},
       signInWithMicrosoft: async () => ({}),

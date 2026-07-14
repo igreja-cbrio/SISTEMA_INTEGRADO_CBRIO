@@ -30,7 +30,11 @@ export default function Integracao() {
   const navigate = useNavigate();
   const { getAccessLevel } = useAuth();
   const podeAprovar = getAccessLevel(['integracao']) >= 3;
-  const [tab, setTab] = useState('frequencia');
+  // Coordenador SÓ-Next: tem o módulo `next` (área Next) mas não `integracao`.
+  // A página abre direto na aba Next e esconde todo o resto da Integração —
+  // é como damos "administrar só o Next" sem liberar a Integração inteira.
+  const soNext = getAccessLevel(['integracao']) < 1;
+  const [tab, setTab] = useState(soNext ? 'next' : 'frequencia');
   const [dashboard, setDashboard] = useState<any>(null);
   const [loadingDash, setLoadingDash] = useState(true);
   const [pendentesCount, setPendentesCount] = useState<number>(0);
@@ -58,29 +62,32 @@ export default function Integracao() {
     } catch { /* noop */ }
   }, [podeAprovar]);
 
-  useEffect(() => { reloadDashboard(); }, [reloadDashboard]);
+  // Só-Next não tem acesso ao dashboard/pendências da Integração (evita 403).
+  useEffect(() => { if (!soNext) reloadDashboard(); }, [reloadDashboard, soNext]);
   useEffect(() => { reloadPendentes(); }, [reloadPendentes]);
 
   // Permitir abrir aba via querystring (?tab=batismos)
   useEffect(() => {
+    if (soNext) { setTab('next'); return; } // só-Next: sempre na aba Next
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
     if (t && ['batismos', 'next', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico', 'pendentes'].includes(t)) setTab(t);
-  }, []);
+  }, [soNext]);
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
       <ModuleHeader
         icon={Calendar}
         title="Integração"
-        subtitle="Acompanhamento de cultos, decisões e batismos"
-        actions={
+        subtitle={soNext ? 'Coordenação do Next · turmas, matrículas e presenças' : 'Acompanhamento de cultos, decisões e batismos'}
+        actions={soNext ? undefined : (
           <Button onClick={() => navigate('/integracao/coleta')} className="gap-2">
             <Smartphone className="h-4 w-4" /> Coleta mobile
           </Button>
-        }
+        )}
       />
 
+      {!soNext && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <button onClick={() => abrirPendencias('pendentes')} className="text-left hover:scale-[1.02] transition-transform">
           <StatisticsCard
@@ -115,16 +122,17 @@ export default function Integracao() {
           />
         </button>
       </div>
+      )}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap h-auto" data-tour="integracao-tabs">
-          <TabsTrigger value="frequencia">Cultos</TabsTrigger>
-          <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>
-          <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>
-          <TabsTrigger value="batismos">Batismos</TabsTrigger>
+          {!soNext && <TabsTrigger value="frequencia">Cultos</TabsTrigger>}
+          {!soNext && <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>}
+          {!soNext && <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>}
+          {!soNext && <TabsTrigger value="batismos">Batismos</TabsTrigger>}
           <TabsTrigger value="next">Next</TabsTrigger>
-          <TabsTrigger value="historico">Histórico</TabsTrigger>
-          {podeAprovar && (
+          {!soNext && <TabsTrigger value="historico">Histórico</TabsTrigger>}
+          {!soNext && podeAprovar && (
             <TabsTrigger value="pendentes" className="gap-1.5">
               <ClipboardCheck className="h-3.5 w-3.5" />
               Pendentes

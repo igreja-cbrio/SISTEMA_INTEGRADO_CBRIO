@@ -36,6 +36,7 @@ router.get('/:token', publicLimiter, async (req, res) => {
       .from('nps_pesquisas')
       .select('id, titulo, valor, objetivo, perguntas, status, permite_publico, data_fim')
       .eq('link_publico_token', req.params.token)
+      .is('deleted_at', null)
       .single();
     if (error || !data) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (!data.permite_publico) return res.status(403).json({ error: 'Link público desativado' });
@@ -75,6 +76,7 @@ router.post('/:token/responder', publicLimiter, async (req, res) => {
       .from('nps_pesquisas')
       .select('id, status, permite_publico, data_fim')
       .eq('link_publico_token', req.params.token)
+      .is('deleted_at', null)
       .single();
     if (pErr || !pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (!pesquisa.permite_publico) return res.status(403).json({ error: 'Link público desativado' });

@@ -291,6 +291,8 @@ export const eventosExternos = {
   atualizar: (id, data) => put(`/eventos-externos/${id}`, data),
   remover: (id) => del(`/eventos-externos/${id}`),
   sortear: (id, premio) => post(`/eventos-externos/${id}/sortear`, { premio }),
+  atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/eventos-externos/${eventoId}/inscricoes/${inscricaoId}`, data),
+  excluirInscricao: (eventoId, inscricaoId) => del(`/eventos-externos/${eventoId}/inscricoes/${inscricaoId}`),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/eventos-externos/upload-capa', fd); },
 };
 
@@ -341,6 +343,16 @@ export const next = {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),
   publicDirecionar: (token, data) => fetch(`${API}/public/next/direcionar/${token}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Check-in / lista de presença do totem do NEXT (mesmo token assinado da turma)
+  publicCheckinInfo: (token) => fetch(`${API}/public/next/checkin/${token}`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
+  publicCheckin: (token, data) => fetch(`${API}/public/next/checkin/${token}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  publicCheckinWalkin: (token, data) => fetch(`${API}/public/next/checkin/${token}/walkin`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
@@ -491,6 +503,11 @@ export const grupos = {
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
+  redes: {
+    list: () => get('/grupos/redes'),
+    create: (data) => post('/grupos/redes', data),
+    update: (id, data) => put(`/grupos/redes/${id}`, data),
+  },
   // Flag global de temporada de inscrições (app lê pra liberar auto-inscrição)
   temporadaInscricoes: {
     get: () => get('/grupos/temporada-inscricoes'),
@@ -504,9 +521,14 @@ export const grupos = {
   criarPedido: (grupoId, data) => post(`/grupos/${grupoId}/pedidos`, data),
   listarPedidos: (params) => get('/grupos/pedidos/list' + (params ? '?' + new URLSearchParams(params) : '')),
   contarPedidos: () => get('/grupos/pedidos/count'),
+  resumoPedidos: () => get('/grupos/pedidos/resumo'),
   historicoMembros: (grupoId) => get(`/grupos/${grupoId}/historico-membros`),
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
+  aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
+  sugerirPedido: (pedidoId, grupoSugeridoId, motivo) => post(`/grupos/pedidos/${pedidoId}/sugerir`, { grupo_sugerido_id: grupoSugeridoId, motivo: motivo || null }),
+  pedidoEventos: (pedidoId) => get(`/grupos/pedidos/${pedidoId}/eventos`),
+  setAceitandoInscricoes: (grupoId, aceitando) => patch(`/grupos/${grupoId}/aceitando`, { aceitando }),
   geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
   // Supervisao
   supervisaoMe: () => get('/grupos/supervisao/me'),
@@ -719,6 +741,10 @@ export const governanca = {
     gerar:  (sigla, ano) => post('/governanca/memoria/gerar', { sigla, ano }),
     update: (id, conteudo_md) => patch(`/governanca/memoria/${id}`, { conteudo_md }),
   },
+  // Reunião de KPI (objetivos gerais × áreas) · deliberações estruturadas (Plaud)
+  kpiObjetivos: (meses) => get('/governanca/kpi-objetivos' + (meses ? `?meses=${meses}` : '')),
+  deliberacoes: (params = {}) => get('/governanca/deliberacoes' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
+  extrairDeliberacoes: (meetingId) => post(`/governanca/meetings/${meetingId}/extrair-deliberacoes`, {}),
 };
 
 export const agents = {
@@ -761,6 +787,50 @@ export const agents = {
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     return res; // caller reads SSE stream
+  },
+  /**
+   * Ask SSE stream (Fase 2 · assistente com tools read-only + dados ao vivo).
+   * Mesmo contrato SSE do chat. Usado pelo Supervisor.
+   */
+  ask: async ({ message, sessionId }) => {
+    const token = await getToken();
+    const res = await fetch(`${API}/agents/ask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ message, sessionId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res;
+  },
+  /**
+   * Text-to-speech do Pedrinho. Retorna um Blob de áudio (audio/mpeg).
+   * Em erro, lança com `.code` (ex.: 'tts_unconfigured') pra UI cair no fallback
+   * de voz do navegador.
+   */
+  tts: async (text, opts = {}) => {
+    const token = await getToken();
+    const res = await fetch(`${API}/agents/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ text, ...opts }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const e = new Error(err.error || `HTTP ${res.status}`);
+      e.code = err.code;
+      e.status = res.status;
+      throw e;
+    }
+    return await res.blob();
   },
 };
 
@@ -947,6 +1017,8 @@ export const financeiroV2 = {
       if (semana) qs.set('semana', semana);
       return get(`/financeiro-v2/dashboard/assistente?${qs}`);
     },
+    // Análise aprofundada por IA (sob demanda · modelo maior · pode demorar)
+    analiseProfunda: (semana) => request('/financeiro-v2/dashboard/analise-profunda' + (semana ? `?semana=${semana}` : ''), { timeout: 120_000 }),
   },
   metas: {
     list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1182,6 +1254,7 @@ export const rh = {
     reativar: (id) => post(`/rh/funcionarios/${id}/reativar`),
     concluirAdmissao: (id) => post(`/rh/funcionarios/${id}/concluir-admissao`),
     setGestor: (id, gestorId) => put(`/rh/funcionarios/${id}/gestor`, { gestor_id: gestorId || null }),
+    onboardingLink: (id, regenerar = false) => post(`/rh/funcionarios/${id}/onboarding-link`, { regenerar }),
     uploadFoto: (id, file) => {
       const fd = new FormData();
       fd.append('foto', file);
@@ -1342,12 +1415,16 @@ export const painelArea = {
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
 export const totemKids = {
   dashboard: () => get('/totem-kids/dashboard'),
+  // Inscrições de voluntariado que querem servir no Kids (coordenação Kids)
+  voluntariadoInscricoes: (params) => get('/totem-kids/voluntariado-inscricoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  voluntariadoInscricaoUpdate: (id, dados) => patch(`/totem-kids/voluntariado-inscricoes/${id}`, dados),
   batismos: () => get('/totem-kids/batismos'),
   apresentacoes: () => get('/totem-kids/apresentacoes'),
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
   resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
   resumoPcoTestar: (data) => post('/totem-kids/resumo-pco/testar', data ? { data } : {}),
+  frequenciaSistema: (data) => get(`/totem-kids/frequencia-sistema?data=${encodeURIComponent(data)}`),
   pcoPessoa: (pcoId) => get(`/totem-kids/pco-pessoa/${encodeURIComponent(pcoId)}`),
   kidsEquipe: {
     list: () => get('/totem-kids/kids-equipe'),
@@ -1368,6 +1445,7 @@ export const totemKids = {
   },
   sessoes: {
     atual: () => get('/totem-kids/sessoes/atual'),
+    garantir: (cultoId) => post('/totem-kids/sessoes/garantir', { culto_id: cultoId }),
     list: (params = {}) => {
       const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
       return get(`/totem-kids/sessoes${qs ? `?${qs}` : ''}`);
@@ -1379,8 +1457,10 @@ export const totemKids = {
   criancas: {
     buscar: (q) => get(`/totem-kids/criancas/buscar?q=${encodeURIComponent(q)}`),
     get: (id) => get(`/totem-kids/criancas/${id}`),
+    irmaos: (id) => get(`/totem-kids/criancas/${id}/irmaos`),
     uploadFoto: (id, dataUrl) => post(`/totem-kids/criancas/${id}/foto`, { dataUrl }),
     removeFoto: (id) => del(`/totem-kids/criancas/${id}/foto`),
+    uploadFotoResponsavel: (membroId, dataUrl) => post(`/totem-kids/responsaveis/${membroId}/foto`, { dataUrl }),
     duplicados: () => get('/totem-kids/criancas/duplicados'),
     merge: (keep_id, merge_ids) => post('/totem-kids/criancas/merge', { keep_id, merge_ids }),
     list: (params = {}) => {
@@ -1389,6 +1469,10 @@ export const totemKids = {
     },
     create: (data) => post('/totem-kids/criancas', data),
     update: (id, data) => patch(`/totem-kids/criancas/${id}`, data),
+    // Corrige nome/telefone do responsável (mem_membros) direto do totem Kids.
+    updateResponsavelMembro: (membroId, data) => patch(`/totem-kids/membro/${membroId}`, data),
+    updateResponsavelVinculo: (criancaId, membroId, data) => patch(`/totem-kids/criancas/${criancaId}/responsaveis/${membroId}`, data),
+    removeResponsavelVinculo: (criancaId, membroId) => del(`/totem-kids/criancas/${criancaId}/responsaveis/${membroId}`),
     historico: (id) => get(`/totem-kids/historico/crianca/${id}`),
     addResponsavel: (id, data) => post(`/totem-kids/criancas/${id}/responsaveis`, data),
     addResponsavelRapido: (id, data) => post(`/totem-kids/criancas/${id}/responsavel-rapido`, data),
@@ -1409,11 +1493,20 @@ export const totemKids = {
     // URL pra abrir e baixar modelo (browser cuida da auth via cookie/header)
     modeloImportacaoUrl: () => `${API}/totem-kids/criancas/modelo-importacao`,
     // Sync com a API do Planning Center Check-Ins (upsert idempotente)
-    syncPco: (data = {}) => post('/totem-kids/sync-pco', data),
+    // Sync do Planning Center pagina por TODAS as pessoas do PCO → leva minutos.
+    // Timeout de 5 min (a função serverless tem maxDuration 300s) pra a UI não
+    // abortar em 30s achando que deu erro (a sync continua e conclui no servidor).
+    syncPco: (data = {}) => post('/totem-kids/sync-pco', data, { timeout: 300_000 }),
+    // Corrige responsáveis poluídos (household-dump) podando pelos guardiões
+    // reais (quem fez o check-in da criança no PCO OU no nosso totem).
+    // apply=false = prévia (dry-run · não altera nada). Longo → timeout de 5 min.
+    corrigirResponsaveisPco: (apply = false) => post('/totem-kids/responsaveis-pco', { apply }, { timeout: 300_000 }),
     depurarInativos: (meses = 6) => post('/totem-kids/criancas/depurar-inativos', { meses }),
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
+    // Check-in aberto da criança na sessão (pra reimprimir etiqueta perdida)
+    aberto: (sessaoId, criancaId) => get(`/totem-kids/checkin/aberto?sessao_id=${encodeURIComponent(sessaoId)}&crianca_id=${encodeURIComponent(criancaId)}`),
     porCodigo: (codigo) => get(`/totem-kids/checkin/codigo/${encodeURIComponent(codigo)}`),
     atualizar: (id, data) => patch(`/totem-kids/checkin/${id}`, data),
   },
@@ -1425,6 +1518,12 @@ export const totemKids = {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
     consumir: (id, data) => post(`/totem-kids/pre-checkin/${id}/consumir`, data),
   },
+  // Senha de edição da ficha da criança no totem (criada por líder do Kids)
+  editSenha: {
+    status: () => get('/totem-kids/edit-senha/status'),
+    definir: (senha) => post('/totem-kids/edit-senha', { senha }),
+    verificar: (senha) => post('/totem-kids/edit-senha/verificar', { senha }),
+  },
   // Solicitações de vínculo (criança↔responsável) feitas pelo app · equipe aprova
   vinculos: {
     list: (status = 'pendente') => get(`/totem-kids/vinculo-solicitacoes?status=${encodeURIComponent(status)}`),
@@ -1434,11 +1533,14 @@ export const totemKids = {
   },
   checkout: {
     realizar: (data) => post('/totem-kids/checkout', data),
+    // Desfaz um check-out feito sem querer (criança volta a constar presente)
+    desfazer: (checkinId) => post(`/totem-kids/checkin/${checkinId}/reabrir`, {}),
   },
   painel: {
     aoVivo: (sessaoId) => get(`/totem-kids/painel/ao-vivo${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
     sala: (salaId, sessaoId) => get(`/totem-kids/painel/sala/${salaId}${sessaoId ? `?sessao_id=${sessaoId}` : ''}`),
     dia: (data) => get(`/totem-kids/painel/dia${data ? `?data=${encodeURIComponent(data)}` : ''}`),
+    checkoutTodos: () => post('/totem-kids/painel/checkout-todos', {}),
   },
   decisoes: {
     // Lista crianças com check-in numa sessão (pra UI de decisões selecionar)
@@ -1453,27 +1555,14 @@ export const totemKids = {
     create: (data) => post('/totem-kids/salas', data),
     update: (id, data) => patch(`/totem-kids/salas/${id}`, data),
     remove: (id) => del(`/totem-kids/salas/${id}`),
+    uploadLogo: (id, dataUrl) => post(`/totem-kids/salas/${id}/logo`, { dataUrl }),
+    removerLogo: (id) => post(`/totem-kids/salas/${id}/logo/remover`, {}),
   },
-  estacoes: {
-    list: () => get('/totem-kids/estacoes'),
-    create: (data) => post('/totem-kids/estacoes', data),
-    update: (id, data) => patch(`/totem-kids/estacoes/${id}`, data),
-    // Pareamento de tablet · admin gera QR a partir disso
-    infoPareamento: (id) => get(`/totem-kids/estacoes/${id}/info-pareamento`),
-    regenerarToken: (id) => post(`/totem-kids/estacoes/${id}/regenerar-token`, {}),
-    // Tablet confirma pareamento · body: {estacao_id, token}
-    parear: (data) => post('/totem-kids/estacoes/parear', data),
-  },
-  // Chamadas (TV das salas) · pai digita código na recepcao
-  chamadas: {
-    // Body: { código, estacao_token? } · token presente = modo self-service (sem login)
-    chamar: (data) => post('/totem-kids/chamadas', data),
-  },
-  // Display da TV consome via polling 2s
-  display: {
-    info: (token) => get(`/totem-kids/display/info?token=${encodeURIComponent(token)}`),
-    chamadasAtivas: (token) => get(`/totem-kids/display/chamadas-ativas?token=${encodeURIComponent(token)}`),
-    foyerResumo: (token) => get(`/totem-kids/display/foyer-resumo?token=${encodeURIComponent(token)}`),
+  etiquetaConfig: {
+    get: () => get('/totem-kids/etiqueta-config'),
+    save: (data) => put('/totem-kids/etiqueta-config', data),
+    uploadLogoAniversario: (dataUrl) => post('/totem-kids/etiqueta-config/logo', { dataUrl }),
+    removerLogoAniversario: () => post('/totem-kids/etiqueta-config/logo/remover', {}),
   },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),
@@ -1481,18 +1570,14 @@ export const totemKids = {
   auditoria: {
     overrides: () => get('/totem-kids/auditoria/overrides'),
   },
-  // Pagers fisicos (pulseira/coaster da família) · integração com transmissor LRS
-  pagers: {
-    list: (params = {}) => {
+  // Portão de saída · leitor de código de barras na entrada do corredor.
+  // scan registra a saída (verde) ou loga anomalia sem bloquear (âmbar).
+  portao: {
+    scan: (codigo) => post('/totem-kids/portao/scan', { codigo }),
+    scans: (params = {}) => {
       const q = new URLSearchParams(params).toString();
-      return get(`/totem-kids/pager/pagers${q ? `?${q}` : ''}`);
+      return get(`/totem-kids/portao/scans${q ? `?${q}` : ''}`);
     },
-    create: (data) => post('/totem-kids/pager/pagers', data),
-    update: (id, data) => patch(`/totem-kids/pager/pagers/${id}`, data),
-    remove: (id) => del(`/totem-kids/pager/pagers/${id}`),
-    testar: (id) => post(`/totem-kids/pager/pagers/${id}/testar`, {}),
-    emUso: () => get('/totem-kids/pager/em-uso'),
-    envios: (limit = 50) => get(`/totem-kids/pager/envios?limit=${limit}`),
   },
 };
 
@@ -1506,6 +1591,9 @@ export const permissoes = {
   usuario: (id) => get(`/permissoes/usuario/${id}`),
   usuarioPorEmail: (email) => get(`/permissoes/usuario-por-email/${encodeURIComponent(email)}`),
   criarUsuario: (data) => post('/permissoes/usuario', data),
+  // Cria um LOGIN de verdade (auth + perfil + cargo/áreas) · restrito a devs
+  criarLogin: (data) => post('/permissoes/criar-login', data),
+  setEmail: (id, email) => put(`/permissoes/usuario/${id}/email`, { email }),
   setCargo: (id, cargo_id) => put(`/permissoes/usuario/${id}/cargo`, { cargo_id }),
   setRole: (id, role) => put(`/permissoes/usuario/${id}/role`, { role }),
   setAreas: (id, area_ids) => put(`/permissoes/usuario/${id}/areas`, { area_ids }),
@@ -1646,6 +1734,13 @@ export const solicitacoes = {
   retomar:        (id) => post(`/solicitacoes/${id}/retomar`, {}),
   // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
   registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
+  // Cotações múltiplas · lista de fornecedores + botão de envio ao financeiro
+  listarCotacoes:   (id) => get(`/solicitacoes/${id}/cotacoes`),
+  adicionarCotacao: (id, payload) => post(`/solicitacoes/${id}/cotacoes`, payload),
+  editarCotacao:    (cotacaoId, payload) => patch(`/solicitacoes/cotacoes/${cotacaoId}`, payload),
+  removerCotacao:   (cotacaoId) => del(`/solicitacoes/cotacoes/${cotacaoId}`),
+  sugerirCotacao:   (id, cotacaoId) => post(`/solicitacoes/${id}/cotacoes/${cotacaoId}/sugerir`, {}),
+  enviarCotacoesFinanceiro: (id) => post(`/solicitacoes/${id}/enviar-cotacoes-financeiro`, {}),
   areaResponsaveis: {
     list:    () => get('/solicitacoes/area-responsaveis'),
     save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
@@ -1657,6 +1752,7 @@ export const solicitacoes = {
   mlTimeline:   (id) => get(`/solicitacoes/${id}/ml-timeline`),
   // Fase 1 · linha do tempo + Relatar Problema (alteração/devolução) + reenvio
   timeline:        (id) => get(`/solicitacoes/${id}/timeline`),
+  minhasAprovacoes: (params) => get('/solicitacoes/minhas-aprovacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   relatarProblema: (id, motivo, comentario) => post(`/solicitacoes/${id}/relatar-problema`, { motivo, comentario }),
   reenviar:        (id, campos) => post(`/solicitacoes/${id}/reenviar`, campos || {}),
   diagnosticoRefeitas: (dias = 90) => get(`/solicitacoes/dashboard/refeitas?dias=${dias}`),
@@ -1865,8 +1961,71 @@ export const gruposPublic = {
       body: JSON.stringify(data),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    if (!r.ok) {
+      // Preserva os campos estruturados (codigo:'possivel_duplicado', onde, ...)
+      // pro form tratar o "é você?" sem perder o contexto.
+      const error = new Error(j.error || `HTTP ${r.status}`);
+      Object.assign(error, j);
+      error.status = r.status;
+      throw error;
+    }
     return j;
+  },
+  uploadFoto: async (file) => {
+    const fd = new FormData();
+    fd.append('foto', file);
+    const r = await fetch(`${API}/public/grupos/upload-foto`, { method: 'POST', body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao enviar foto');
+    return j; // { foto_url }
+  },
+  // F3 · aprovação pelo líder via link do WhatsApp (token = credencial)
+  pedidoPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/pedido/por-token?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar pedido');
+    return j; // { pedido, grupo }
+  },
+  aprovarPorToken: async (token, acao, motivo) => {
+    const r = await fetch(`${API}/public/grupos/aprovar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, acao, motivo }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao registrar decisão');
+    return j; // { ok, acao }
+  },
+  // Realocação · pessoa aceita a sugestão de outro grupo (token = credencial)
+  sugestaoPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/pedido/sugestao?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar sugestão');
+    return j; // { pedido, grupo }
+  },
+  aceitarSugestao: async (token) => {
+    const r = await fetch(`${API}/public/grupos/sugestao/aceitar`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao confirmar');
+    return j; // { ok, grupo }
+  },
+  // Frequência mensal · líder marca quem participou (token = credencial)
+  frequenciaPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/grupo/frequencia?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar a chamada');
+    return j; // { grupo, mes, mes_rotulo, ja_salvo, membros }
+  },
+  salvarFrequencia: async (token, presentes) => {
+    const r = await fetch(`${API}/public/grupos/grupo/frequencia`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, presentes }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao salvar a frequência');
+    return j; // { ok, marcados, total }
   },
 };
 
@@ -2160,6 +2319,8 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  // Aniversariantes da semana (pra parabenizar) · próximos 7 dias
+  aniversariantesSemana: () => get('/voluntariado/aniversariantes-semana'),
   // Controle de acesso de voluntários (quem tem login + cargo + cruzamento com membresia)
   acessos: {
     list: (params) => get('/voluntariado/acessos' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2310,6 +2471,11 @@ export const voluntariado = {
   // Services
   // Dados do relatório de presença por período (server-side · cap-proof)
   relatorioDados: (desde, ate) => get(`/voluntariado/relatorio-dados?desde=${desde}&ate=${ate}`),
+  // Config do módulo · régua do Termômetro (limiares de check-ins por categoria)
+  config: {
+    get: () => get('/voluntariado/config'),
+    update: (body) => put('/voluntariado/config', body),
+  },
   services: {
     list: () => get('/voluntariado/services'),
     upcoming: () => get('/voluntariado/services/upcoming'),
@@ -3076,4 +3242,10 @@ export const apresentacoes = {
     return res.text();
   },
   resumoUso: () => get('/apresentacoes/uso/resumo'),
+};
+
+// Formulário público de onboarding do colaborador (sem login · token na URL).
+export const onboardingPublico = {
+  get: (token) => get(`/public/rh-onboarding/${encodeURIComponent(token)}`),
+  salvar: (token, dados) => post(`/public/rh-onboarding/${encodeURIComponent(token)}`, dados),
 };

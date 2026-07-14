@@ -188,7 +188,7 @@ router.get('/:id/destinatarios', async (req, res) => {
     for (let from = 0; ; from += 1000) {
       const { data, error } = await supabase
         .from('vol_email_disparo_destinatarios')
-        .select('nome, email, status, erro_msg, enviado_em')
+        .select('nome, email, status, erro_msg, enviado_em, aberto_em, aberturas')
         .eq('disparo_id', req.params.id)
         .order('status', { ascending: false }) // pendente > erro > enviado (texto desc)
         .order('nome', { ascending: true })

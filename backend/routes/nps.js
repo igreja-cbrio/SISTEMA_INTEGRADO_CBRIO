@@ -54,7 +54,9 @@ async function guardArea(req, id) {
 // Geração de perguntas (preview antes de criar)
 // POST /api/nps/gerar-perguntas
 // ────────────────────────────────────────────────────────────────────
-router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req, res) => {
+// Gerar perguntas (preview) é parte do fluxo de criar — liberado pra qualquer
+// colaborador logado (iaLimiter segura abuso de custo de IA).
+router.post('/gerar-perguntas', iaLimiter, async (req, res) => {
   try {
     const { valor, objetivo, contexto_kpi, area } = req.body || {};
     if (!objetivo) {
@@ -63,10 +65,6 @@ router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req
     const areaInformada = area && String(area).toLowerCase() !== 'geral' ? area : null;
     if (!valor && !areaInformada) {
       return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
-    }
-    // Líder de área só gera perguntas para a própria área (admin/diretor: qualquer).
-    if (!ehAdminDiretor(req) && !podeNaArea(req, area)) {
-      return res.status(403).json({ error: 'Você só pode gerar perguntas para a sua área.' });
     }
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(contexto_kpi) ? contexto_kpi : 'nps_geral';
     const result = await npsService.gerarPerguntas({ valor: valor || null, objetivo, contextoKpi, area });
@@ -82,12 +80,15 @@ router.post('/gerar-perguntas', authorizeModule('nps', 3), iaLimiter, async (req
 // ────────────────────────────────────────────────────────────────────
 
 // GET /api/nps  → lista pesquisas (escopadas por área p/ não-admin)
-router.get('/', authorizeModule('nps', 1), async (req, res) => {
+// Aberto a qualquer logado (criar NPS é pra todos): o filtro por área abaixo já
+// devolve [] pra quem não tem área/gestão — sem vazar pesquisas de outras áreas.
+router.get('/', async (req, res) => {
   try {
     const { status, valor } = req.query;
     let q = supabase
       .from('nps_pesquisas')
       .select('*')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
     if (status) q = q.eq('status', status);
     if (valor) q = q.eq('valor', valor);
@@ -128,6 +129,7 @@ router.get('/:id', async (req, res) => {
       .from('nps_pesquisas')
       .select('*')
       .eq('id', req.params.id)
+      .is('deleted_at', null)
       .single();
     if (error || !pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
 
@@ -145,7 +147,9 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/nps  → cria pesquisa (com perguntas já geradas) e notifica
-router.post('/', authorizeModule('nps', 3), async (req, res) => {
+// Criar pesquisa NPS é liberado pra QUALQUER colaborador logado (2026-07-13,
+// pedido do Matheus). O que é sensível (respostas/edição/análise) segue gateado.
+router.post('/', async (req, res) => {
   try {
     const d = req.body || {};
     if (!d.titulo || !d.objetivo || !d.perguntas) {
@@ -155,10 +159,6 @@ router.post('/', authorizeModule('nps', 3), async (req, res) => {
     const valorNormalizado = d.valor || null;
     if (!valorNormalizado && areaNormalizada === 'geral') {
       return res.status(400).json({ error: 'Defina um escopo: um valor da CBRio ou uma área específica.' });
-    }
-    // Líder de área só cria pesquisa da própria área (admin/diretor: qualquer, incl. 'geral').
-    if (!podeNaArea(req, areaNormalizada)) {
-      return res.status(403).json({ error: 'Você só pode criar pesquisas para a sua área.' });
     }
 
     const contextoKpi = TIPOS_KPI_VALIDOS.includes(d.contexto_kpi) ? d.contexto_kpi : 'nps_geral';
@@ -266,26 +266,29 @@ router.put('/:id', authorizeModule('nps', 3), async (req, res) => {
   }
 });
 
-// DELETE /api/nps/:id  → soft delete (arquivar)
+// DELETE /api/nps/:id  → EXCLUIR (soft-delete · some da lista de vez)
+// A pesquisa some de todas as listas/telas; as respostas ficam preservadas no
+// banco (deleted_at na pesquisa · reversível por super-admin), mas saem dos
+// KPIs. Diferente de "Encerrar" (status=encerrada · só trava novas respostas).
 router.delete('/:id', authorizeModule('nps', 3), async (req, res) => {
   try {
     if (!(await guardArea(req, req.params.id))) {
       return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
     }
-    const { error } = await supabase
-      .from('nps_pesquisas')
-      .update({ status: 'arquivada' })
-      .eq('id', req.params.id);
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'nps_pesquisas',
+      p_row_id: req.params.id,
+      p_deleted_by: req.user?.userId ?? null,
+    });
     if (error) throw error;
-    // Pesquisa arquivada sai do KPI (a linha agregada dela em dados_brutos é
-    // removida; reativar pela edição re-sincroniza e ela volta).
+    // Pesquisa excluída sai do KPI (a linha agregada dela em dados_brutos é removida).
     removerDadosBrutos(req.params.id).catch(err =>
       console.warn('[nps] removerDadosBrutos falhou:', err.message)
     );
     res.json({ success: true });
   } catch (e) {
     console.error('[nps] delete:', e.message);
-    res.status(500).json({ error: 'Erro ao arquivar pesquisa' });
+    res.status(500).json({ error: 'Erro ao excluir pesquisa' });
   }
 });
 
@@ -318,7 +321,7 @@ async function listarRespostasCompletas(pesquisaId, select) {
 router.get('/:id/respostas', async (req, res) => {
   try {
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('criado_por, area').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('criado_por, area').eq('id', req.params.id).is('deleted_at', null).single();
     const isPrivileged = ['admin', 'diretor'].includes(req.user.role);
     const isOwner = pesquisa?.criado_por === req.user.userId;
     const naArea = !!pesquisa && podeNaArea(req, pesquisa.area);
@@ -345,7 +348,7 @@ router.post('/:id/responder', async (req, res) => {
       return res.status(400).json({ error: 'score deve estar entre 0 e 10' });
     }
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('id, status').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('id, status').eq('id', req.params.id).is('deleted_at', null).single();
     if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (pesquisa.status !== 'ativa') {
       return res.status(400).json({ error: 'Pesquisa não está ativa' });
@@ -386,7 +389,7 @@ router.post('/:id/responder', async (req, res) => {
 router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, res) => {
   try {
     const { data: pesquisa, error: pErr } = await supabase
-      .from('nps_pesquisas').select('*').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('*').eq('id', req.params.id).is('deleted_at', null).single();
     if (pErr || !pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (!podeNaArea(req, pesquisa.area)) {
       return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });
@@ -418,7 +421,7 @@ router.post('/:id/analisar', authorizeModule('nps', 3), iaLimiter, async (req, r
 router.post('/:id/notificar', authorizeModule('nps', 3), async (req, res) => {
   try {
     const { data: pesquisa } = await supabase
-      .from('nps_pesquisas').select('*').eq('id', req.params.id).single();
+      .from('nps_pesquisas').select('*').eq('id', req.params.id).is('deleted_at', null).single();
     if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
     if (!podeNaArea(req, pesquisa.area)) {
       return res.status(403).json({ error: 'Sem acesso à NPS desta área.' });

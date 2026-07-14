@@ -43,3 +43,6 @@ guia-implementacao-cerebro-cbrio.md
 .agents/
 skills-lock.json
 .vercel
+
+# Exports pro Google Stax (dado real · nunca commitar — só o exemplo sintético fica)
+backend/scripts/stax-export/export_*.csv

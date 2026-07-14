@@ -208,4 +208,64 @@ async function gerarPauta({ meetingId, userId, dadosVivos }) {
   return row;
 }
 
-module.exports = { gerarMemoria, gerarPauta };
+// ── Extrair deliberações da transcrição (Plaud) · review-before-apply ───
+// Lê as transcrições + ata/deliberações da reunião e propõe as decisões em
+// itens estruturados (decisão + responsável + prazo). NADA é gravado aqui:
+// o frontend mostra as propostas pra revisão humana e só então cria as
+// deliberações confirmadas (governance_tasks · origem='deliberacao').
+async function extrairDeliberacoes({ meetingId }) {
+  const { data: meeting } = await supabase.from('governance_meetings')
+    .select('id, date, ata, deliberacoes, governance_meeting_types(sigla, nome)')
+    .eq('id', meetingId).is('deleted_at', null).maybeSingle();
+  if (!meeting) throw new Error('Reunião não encontrada');
+
+  const { data: docs } = await supabase.from('governance_meeting_docs')
+    .select('*').eq('meeting_id', meetingId).eq('tipo', 'transcricao').is('deleted_at', null)
+    .order('created_at', { ascending: false });
+
+  const fontes = [];
+  for (const d of (docs || [])) {
+    const txt = await extrairTextoDoc(d);
+    if (txt) fontes.push(`Transcrição (Plaud) — ${d.nome_arquivo}:\n${txt}`);
+  }
+  if (meeting.ata) fontes.push(`Ata registrada:\n${meeting.ata}`);
+  if (meeting.deliberacoes) fontes.push(`Deliberações registradas (texto corrido):\n${meeting.deliberacoes}`);
+  if (!fontes.length) throw new Error('Esta reunião não tem transcrição (Plaud) nem ata — envie a transcrição antes de extrair as deliberações.');
+
+  const tipo = meeting.governance_meeting_types || {};
+  const system = [
+    'Você extrai DELIBERAÇÕES (decisões formais) de reuniões de diretoria de uma igreja (CBRio).',
+    'Regra da casa: toda decisão tem dono e prazo quando citados.',
+    'Responda APENAS com JSON válido: um array de objetos {"decisao": string, "responsavel": string|null, "prazo": "YYYY-MM-DD"|null}.',
+    'Cada item = UMA decisão tomada (não liste discussões, opiniões ou informes).',
+    'decisao: frase objetiva em português do Brasil, começando por verbo quando possível.',
+    'responsavel: só o primeiro nome citado como dono; null se não citado.',
+    'prazo: só se uma data/prazo foi citada; converta pra YYYY-MM-DD usando a data da reunião como referência; null se não citado.',
+    'Máximo de 20 itens. Se não houver decisões claras, responda [].',
+  ].join(' ');
+
+  const user = [
+    `Reunião: ${tipo.nome || ''} (${tipo.sigla || ''}) · data ${fmtData(meeting.date)}`,
+    ...fontes,
+    'Extraia as deliberações em JSON (array puro, sem markdown).',
+  ].join('\n\n');
+
+  const { texto, modelo } = await gerarTexto({ system, user, maxTokens: 4000 });
+  // Tolerante a cerca de código/markdown em volta do JSON.
+  const m = texto.match(/\[[\s\S]*\]/);
+  if (!m) throw new Error('A IA não retornou deliberações em formato reconhecível — tente novamente.');
+  let propostas;
+  try { propostas = JSON.parse(m[0]); } catch { throw new Error('Falha ao interpretar a resposta da IA — tente novamente.'); }
+  if (!Array.isArray(propostas)) propostas = [];
+  propostas = propostas
+    .filter(p => p && typeof p.decisao === 'string' && p.decisao.trim())
+    .slice(0, 20)
+    .map(p => ({
+      decisao: p.decisao.trim(),
+      responsavel: typeof p.responsavel === 'string' && p.responsavel.trim() ? p.responsavel.trim() : null,
+      prazo: typeof p.prazo === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.prazo) ? p.prazo : null,
+    }));
+  return { propostas, modelo, fontes: fontes.length };
+}
+
+module.exports = { gerarMemoria, gerarPauta, extrairDeliberacoes };

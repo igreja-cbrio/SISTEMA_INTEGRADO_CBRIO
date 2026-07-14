@@ -14,6 +14,7 @@ const MODULOS = [
   { id: 'patrimonio', label: 'Patrimônio', desc: 'Bens extraviados, inventários abertos', color: '#f59e0b' },
   { id: 'membresia', label: 'Membresia', desc: 'Novos cadastros, aprovações, batismos', color: '#00B39D' },
   { id: 'eventos', label: 'Eventos', desc: 'Novo evento criado, tarefas atrasadas', color: '#6366f1' },
+  { id: 'eventos-externos', label: 'Eventos Externos', desc: 'Novas inscrições no formulário público de eventos externos', color: '#6366f1' },
   { id: 'projetos', label: 'Projetos', desc: 'Marcos atrasados, tarefas pendentes', color: '#ec4899' },
   { id: 'kpis', label: 'KPIs e Indicadores', desc: 'Metas atingidas, registros de culto e batismo', color: '#f97316' },
   { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },

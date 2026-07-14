@@ -58,6 +58,35 @@ function horarioCultoBRT(dataStr, recurrenceTime) {
 }
 
 // ---------------------------------------------------------------------------
+// escolherVideoMaisProximo · dado um conjunto de vídeos candidatos (cada um
+// { video_id, actual_start_time, titulo }), escolhe o que MELHOR casa com um
+// culto de horário `horario` (Date):
+//   1. actual_start_time DENTRO da janela [horario-30min, horario+4h];
+//   2. entre os da janela, o de actual_start_time MAIS PRÓXIMO do horário do
+//      culto (não só "dentro da janela");
+//   3. ignorando os video_ids em `usados` (guarda 1:1 · nunca reusar um vídeo
+//      que já está em outro culto).
+// Resolve a sobreposição de transmissões: a live do 08:30 (que começou ~08:30)
+// fica fora da janela do culto das 10:00 (que começa em 09:30) e, mesmo se
+// estivesse, o vídeo que começou ~10:00 vence por proximidade. Compartilhado
+// entre o live-monitor (tempo real) e o backfillCultoVideoIds (passado).
+function escolherVideoMaisProximo(videos, horario, usados) {
+  const inicio = horario.getTime() - JANELA_LIVE_MIN_ANTES * 60_000;
+  const fim = horario.getTime() + JANELA_LIVE_MIN_DEPOIS * 60_000;
+  let melhor = null;
+  let melhorDist = Infinity;
+  for (const v of videos || []) {
+    if (!v?.video_id || !v.actual_start_time) continue;
+    if (usados && usados.has(v.video_id)) continue;
+    const t = new Date(v.actual_start_time).getTime();
+    if (isNaN(t) || t < inicio || t > fim) continue;
+    const dist = Math.abs(t - horario.getTime());
+    if (dist < melhorDist) { melhor = v; melhorDist = dist; }
+  }
+  return melhor;
+}
+
+// ---------------------------------------------------------------------------
 // findCultoAtual · descobre qual slot de culto deveria estar ativo agora
 // ---------------------------------------------------------------------------
 // opts.fallbackUltimoDoDia · quando true (usado pelo formulário de decisão),
@@ -124,6 +153,70 @@ async function registrarDiagToken(patch) {
 }
 
 // ---------------------------------------------------------------------------
+// escolherVideoDoCulto · descobre o youtube_video_id CERTO pra um culto ainda
+// sem vídeo linkado, aplicando as mesmas regras do backfill:
+//   a. guarda 1:1 · nunca escolhe um vídeo já linkado a OUTRO culto (mesma data);
+//   b. escolhe o vídeo de actual_start_time MAIS PRÓXIMO do horário do culto,
+//      dentro da janela — resolve a sobreposição (a transmissão do 08:30 ainda
+//      no ar quando a janela do 10:00 abre não casa com o culto das 10:00).
+// Candidatos = vídeos já sincronizados em online_videos na janela + a live que
+// está ATIVA agora (o started_at do broadcast entra como actual_start_time; a
+// live pode ainda não ter sido gravada em online_videos pelo syncCanal).
+// ---------------------------------------------------------------------------
+async function escolherVideoDoCulto(culto) {
+  const st = culto.vol_service_types;
+  const horario = horarioCultoBRT(culto.data, st?.recurrence_time);
+  if (!horario) return { error: 'sem_horario_culto' };
+
+  const inicio = new Date(horario.getTime() - JANELA_LIVE_MIN_ANTES * 60_000);
+  const fim = new Date(horario.getTime() + JANELA_LIVE_MIN_DEPOIS * 60_000);
+
+  // a. Guarda 1:1 · video_ids já usados por OUTROS cultos da MESMA data.
+  const { data: irmaos } = await supabase
+    .from('cultos')
+    .select('youtube_video_id')
+    .eq('data', culto.data)
+    .neq('id', culto.id)
+    .not('youtube_video_id', 'is', null);
+  const usados = new Set((irmaos || []).map((r) => r.youtube_video_id));
+
+  // Candidatos · vídeos com actual_start_time dentro da janela deste culto.
+  const candidatos = new Map();
+  const { data: vids } = await supabase
+    .from('online_videos')
+    .select('video_id, actual_start_time, titulo')
+    .not('actual_start_time', 'is', null)
+    .gte('actual_start_time', inicio.toISOString())
+    .lte('actual_start_time', fim.toISOString());
+  for (const v of (vids || [])) candidatos.set(v.video_id, v);
+
+  // + a live ATIVA agora (fonte primária em tempo real · o broadcast pode ainda
+  //   não estar em online_videos). started_at = actualStartTime da transmissão.
+  let broadcast = null;
+  try {
+    broadcast = await yt.findActiveBroadcast(); // throw em erro HTTP real
+  } catch (e) {
+    // Só falha de fato se não houver candidato já sincronizado pra cair de volta.
+    if (!candidatos.size) return { error: `broadcast: ${(e?.message || String(e)).slice(0, 120)}` };
+  }
+  if (broadcast?.video_id) {
+    const existente = candidatos.get(broadcast.video_id);
+    candidatos.set(broadcast.video_id, {
+      video_id: broadcast.video_id,
+      actual_start_time: broadcast.started_at || existente?.actual_start_time || null,
+      titulo: broadcast.title || existente?.titulo || null,
+    });
+  }
+
+  if (!candidatos.size) return { error: 'sem_live_ativa' };
+
+  // b. Mais próximo do horário, dentro da janela, não reusado.
+  const melhor = escolherVideoMaisProximo([...candidatos.values()], horario, usados);
+  if (!melhor) return { error: 'sem_video_compativel' };
+  return { video_id: melhor.video_id, titulo: melhor.titulo };
+}
+
+// ---------------------------------------------------------------------------
 // liveMonitor · ativado a cada 5 min · so age se ha culto na janela
 // ---------------------------------------------------------------------------
 async function liveMonitor() {
@@ -132,15 +225,17 @@ async function liveMonitor() {
 
   const agora = new Date().toISOString();
   try {
-    // Se ainda não tem video_id, descobre via live ativa
+    // Se ainda não tem video_id, descobre o vídeo CERTO (mais próximo do horário
+    // + guarda 1:1 · nunca reusa vídeo de outro culto). Se o culto já tem vídeo
+    // linkado, não sobrescreve (rule c). Mesma lógica do backfillCultoVideoIds.
     let videoId = culto.youtube_video_id;
     if (!videoId) {
-      const broadcast = await yt.findActiveBroadcast(); // throw em erro HTTP real
-      if (!broadcast) {
-        await registrarDiagToken({ last_check_at: agora, last_error: 'sem_live_ativa' });
-        return { skipped: true, reason: 'sem_live_ativa', culto_id: culto.id };
+      const escolha = await escolherVideoDoCulto(culto);
+      if (escolha.error) {
+        await registrarDiagToken({ last_check_at: agora, last_error: escolha.error });
+        return { skipped: true, reason: escolha.error, culto_id: culto.id };
       }
-      videoId = broadcast.video_id;
+      videoId = escolha.video_id;
       await supabase.from('cultos')
         .update({ youtube_video_id: videoId })
         .eq('id', culto.id);
@@ -618,8 +713,17 @@ async function backfillCultoVideoIds() {
   if (vErr) throw vErr;
   if (!videos?.length) return { ok: true, linkados: 0, motivo: 'sem_videos_com_actual_start' };
 
-  // 3. Match por janela temporal · mesma lógica do liveMonitor mas pra passado
-  const usados = new Set(); // evita linkar mesmo vídeo em 2 cultos
+  // 3. Match por proximidade temporal · mesma lógica do liveMonitor
+  //    (escolherVideoMaisProximo): vídeo mais próximo do horário dentro da
+  //    janela + guarda 1:1. Seed do `usados` com TODOS os vídeos já linkados a
+  //    algum culto no horizonte (não só nesta rodada) pra nunca reusar um vídeo
+  //    que o live-monitor ou uma rodada anterior já atribuiu.
+  const { data: jaLinkados } = await supabase
+    .from('cultos')
+    .select('youtube_video_id')
+    .not('youtube_video_id', 'is', null)
+    .gte('data', horizonte);
+  const usados = new Set((jaLinkados || []).map((r) => r.youtube_video_id));
   const resultados = [];
 
   for (const c of cultos) {
@@ -627,14 +731,8 @@ async function backfillCultoVideoIds() {
     if (!st?.has_online) continue;
     const horario = horarioCultoBRT(c.data, st.recurrence_time);
     if (!horario) continue;
-    const inicio = new Date(horario.getTime() - JANELA_LIVE_MIN_ANTES * 60_000);
-    const fim    = new Date(horario.getTime() + JANELA_LIVE_MIN_DEPOIS * 60_000);
 
-    const match = videos.find(v => {
-      if (usados.has(v.video_id)) return false;
-      const t = new Date(v.actual_start_time);
-      return t >= inicio && t <= fim;
-    });
+    const match = escolherVideoMaisProximo(videos, horario, usados);
 
     if (match) {
       usados.add(match.video_id);

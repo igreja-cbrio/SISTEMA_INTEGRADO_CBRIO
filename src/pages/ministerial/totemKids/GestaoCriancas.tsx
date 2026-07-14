@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../compo
 import { toast } from 'sonner';
 import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw, Sparkles, Pencil } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
+import DataNascimentoPicker from './DataNascimentoPicker';
+import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
 
 const FAIXAS = [
   { key: 'todas', label: 'Todas as idades', min: 0, max: 9999 },
@@ -89,6 +91,24 @@ export default function GestaoCriancas() {
     } finally { setSincronizando(false); }
   }
 
+  const [corrigindoResp, setCorrigindoResp] = useState(false);
+  async function corrigirRespPco() {
+    setCorrigindoResp(true);
+    try {
+      const prev: any = await api.criancas.corrigirResponsaveisPco(false); // prévia (dry-run)
+      if (!prev?.criancas_afetadas) {
+        toast.info(`Nenhuma correção proposta (varri ${prev?.checkins_varridos ?? 0} check-ins do PCO; nada casou com guardião confirmado).`);
+        return;
+      }
+      if (!window.confirm(`Encontrei ${prev.criancas_afetadas} criança(s) com responsáveis a mais. Vou MANTER só quem faz o check-in delas no Planning Center e REMOVER ${prev.vinculos_removidos} vínculo(s) errado(s). Ninguém fica sem responsável. Aplicar?`)) return;
+      const r: any = await api.criancas.corrigirResponsaveisPco(true);
+      toast.success(`Corrigido · ${r?.criancas_afetadas ?? 0} crianças · ${r?.vinculos_removidos ?? 0} vínculos removidos.`);
+      carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao corrigir responsáveis pelo PCO.');
+    } finally { setCorrigindoResp(false); }
+  }
+
   const [depurando, setDepurando] = useState(false);
   async function depurarInativos() {
     if (!window.confirm('Desativar (tirar da lista) as crianças sem check-in no Planning Center nos últimos 6 meses? É reversível — elas ficam como inativas, não são apagadas.')) return;
@@ -132,6 +152,9 @@ export default function GestaoCriancas() {
           </Button>
           <Button variant="outline" onClick={depurarInativos} disabled={depurando}>
             {depurando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserX className="h-4 w-4 mr-1" />} Depurar inativos (6m)
+          </Button>
+          <Button variant="outline" onClick={corrigirRespPco} disabled={corrigindoResp} title="Poda responsáveis errados usando quem faz o check-in no Planning Center">
+            {corrigindoResp ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserCheck className="h-4 w-4 mr-1" />} Corrigir responsáveis (PCO)
           </Button>
           <Button variant="outline" onClick={() => setDupOpen(true)}><Copy className="h-4 w-4 mr-1" /> Duplicados</Button>
           <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>
@@ -287,6 +310,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
       data_conversao: c.data_conversao || '',
       data_batismo: c.data_batismo || '',
       visitante: !!c.visitante,
+      consent_marketing: c.consent_marketing === true,
       tem_alergia: !!c.tem_alergia,
       alergia_qual: c.alergia_qual || '',
       tem_espectro: !!c.tem_espectro,
@@ -409,6 +433,10 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                 <Input type="date" className="mt-0.5 h-9" value={form.data_batismo || ''} onChange={e => setForm((f: any) => ({ ...f, data_batismo: e.target.value }))} />
               </label>
             </div>
+            <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={!!form.consent_marketing} onChange={e => setForm((f: any) => ({ ...f, consent_marketing: e.target.checked }))} />
+              <span>Autoriza o <b>uso da imagem da criança</b> para divulgação/marketing da igreja (fotos e vídeos em redes sociais, site, etc.)</span>
+            </label>
             <div className="rounded-md border border-border p-2 space-y-2">
               <div className="text-xs font-semibold text-muted-foreground">Saúde</div>
               {([
@@ -461,21 +489,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               <div className="text-xs"><span className="text-muted-foreground">Necessidades específicas: </span>{c.necessidades_especiais || <span className="italic text-muted-foreground">— a preencher</span>}</div>
               <div className="text-xs"><span className="text-muted-foreground">Mais informações: </span>{c.observacoes_medicas || <span className="italic text-muted-foreground">— a preencher</span>}</div>
             </div>
-                        <div>
-              <div className="text-xs text-muted-foreground mb-1">Responsáveis</div>
-              <div className="space-y-1.5">
-                {(c.responsaveis || []).length === 0 && <div className="text-xs text-muted-foreground">Nenhum responsável vinculado.</div>}
-                {(c.responsaveis || []).map((r: any) => (
-                  <div key={r.id} className="flex items-center gap-2 rounded-md border border-border p-2">
-                    <div className="flex-1 min-w-0">
-                      {r.membro?.id ? <button onClick={() => navigate(`/ministerial/membresia?membro=${r.membro.id}`)} className="font-medium truncate text-left text-primary hover:underline">{r.membro?.nome || '—'}</button> : <div className="font-medium truncate">{r.membro?.nome || '—'}</div>}
-                      <div className="text-xs text-muted-foreground">{r.parentesco}{r.autorizado_buscar ? ' · autorizado a buscar' : ''}</div>
-                    </div>
-                    {r.membro?.telefone && <a href={`https://wa.me/55${String(r.membro.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-4 w-4" /></a>}
-                  </div>
-                ))}
-              </div>
-            </div>
+                        <ResponsaveisManager crianca={c} onChanged={load} />
             <div className="pt-1">
               <Button variant={c.ativo ? 'outline' : 'default'} size="sm" onClick={toggleAtivo}>
                 {c.ativo ? <><UserX className="h-4 w-4 mr-1" /> Desativar cadastro</> : <><UserCheck className="h-4 w-4 mr-1" /> Reativar</>}
@@ -559,6 +573,134 @@ function FotoAvatar({ crianca, onChanged }: { crianca: any; onChanged: () => voi
     </div>
   );
 }
+// Foto do responsável (mem_membros · bucket público fotos-membros)
+function FotoMembroAvatar({ membro, onChanged }: { membro: any; onChanged: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  async function onFile(e: any) {
+    const file = e.target.files?.[0]; if (!file || !membro?.id) return;
+    if (file.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
+    setBusy(true);
+    try {
+      const dataUrl: string = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file); });
+      await api.criancas.uploadFotoResponsavel(membro.id, dataUrl);
+      toast.success('Foto do responsável atualizada'); onChanged();
+    } catch (err: any) { toast.error(err?.message || 'Erro ao enviar a foto'); }
+    finally { setBusy(false); if (inputRef.current) inputRef.current.value = ''; }
+  }
+  return (
+    <div className="relative h-10 w-10 shrink-0">
+      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : membro?.foto_url ? <img src={membro.foto_url} alt="" className="h-full w-full object-cover" /> : <span className="text-sm font-bold text-primary">{(membro?.nome || '?').charAt(0)}</span>}
+      </div>
+      <button type="button" onClick={() => inputRef.current?.click()} className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-primary text-white flex items-center justify-center shadow" title="Adicionar/trocar foto do responsável"><Camera className="h-3 w-3" /></button>
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+    </div>
+  );
+}
+
+const PARENTESCOS: [string, string][] = [['mae', 'Mãe'], ['pai', 'Pai'], ['padrasto', 'Padrasto'], ['madrasta', 'Madrasta'], ['avo_a', 'Avô/Avó'], ['tio_a', 'Tio/Tia'], ['irmao_a', 'Irmão/Irmã'], ['tutor', 'Tutor'], ['outro', 'Outro']];
+
+// Gerenciar responsáveis na ficha (gestão): ver + editar (nome/telefone/
+// parentesco/foto) + remover + adicionar. Ações imediatas (não batelam no salvar).
+function ResponsaveisManager({ crianca, onChanged }: { crianca: any; onChanged: () => void }) {
+  const criancaId = crianca.id;
+  const [addOpen, setAddOpen] = useState(false);
+  const [novo, setNovo] = useState({ nome: '', telefone: '', cpf: '', parentesco: 'mae' });
+  const [busy, setBusy] = useState(false);
+  const resps = crianca.responsaveis || [];
+
+  async function salvarRow(r: any, edit: any) {
+    setBusy(true);
+    try {
+      const nomeMud = edit.nome.trim() && edit.nome.trim() !== (r.membro?.nome || '');
+      const telMud = edit.telefone.trim() !== String(r.membro?.telefone || '');
+      if ((nomeMud || telMud) && r.membro?.id) {
+        const patch: any = {};
+        if (nomeMud) patch.nome = edit.nome.trim();
+        if (telMud) patch.telefone = edit.telefone.trim();
+        await api.criancas.updateResponsavelMembro(r.membro.id, patch);
+      }
+      if (edit.parentesco !== (r.parentesco || 'outro')) {
+        await api.criancas.updateResponsavelVinculo(criancaId, r.membro_id, { parentesco: edit.parentesco });
+      }
+      toast.success('Responsável atualizado'); onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); } finally { setBusy(false); }
+  }
+  async function remover(r: any) {
+    if (!window.confirm('Remover este responsável? (não apaga o cadastro da pessoa, só o vínculo)')) return;
+    try { await api.criancas.removeResponsavelVinculo(criancaId, r.membro_id); toast.success('Responsável removido'); onChanged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
+  }
+  async function adicionar() {
+    if (!novo.nome.trim() || !novo.telefone.trim()) { toast.error('Nome e telefone são obrigatórios'); return; }
+    setBusy(true);
+    try {
+      await api.criancas.addResponsavelRapido(criancaId, { nome: novo.nome.trim(), telefone: novo.telefone.trim(), cpf: novo.cpf.trim() || null, parentesco: novo.parentesco });
+      toast.success('Responsável adicionado');
+      setNovo({ nome: '', telefone: '', cpf: '', parentesco: 'mae' }); setAddOpen(false); onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao adicionar'); } finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-xs text-muted-foreground">Responsáveis</div>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setAddOpen(v => !v)}><Plus className="h-3.5 w-3.5" /> Adicionar</Button>
+      </div>
+      <div className="space-y-2">
+        {resps.length === 0 && !addOpen && <div className="text-xs text-muted-foreground">Nenhum responsável vinculado.</div>}
+        {resps.map((r: any) => (
+          <RowResp key={`${r.membro_id}-${r.membro?.nome}-${r.membro?.telefone}-${r.parentesco}`} r={r} busy={busy} onChanged={onChanged} onSave={salvarRow} onRemove={remover} />
+        ))}
+        {addOpen && (
+          <div className="rounded-md border border-primary/40 p-2 space-y-2">
+            <div className="text-[11px] font-medium text-muted-foreground">Novo responsável</div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input className="h-8" placeholder="Nome *" value={novo.nome} onChange={e => setNovo(n => ({ ...n, nome: e.target.value }))} />
+              <Input className="h-8" placeholder="Telefone *" value={novo.telefone} onChange={e => setNovo(n => ({ ...n, telefone: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input className="h-8" placeholder="CPF (opcional)" value={novo.cpf} onChange={e => setNovo(n => ({ ...n, cpf: e.target.value }))} />
+              <Select value={novo.parentesco} onValueChange={v => setNovo(n => ({ ...n, parentesco: v }))}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>{PARENTESCOS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setAddOpen(false)}>Cancelar</Button>
+              <Button size="sm" onClick={adicionar} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Adicionar'}</Button>
+            </div>
+          </div>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground mt-1.5">Editar nome/telefone atualiza o cadastro da pessoa no sistema inteiro.</p>
+    </div>
+  );
+}
+
+function RowResp({ r, busy, onChanged, onSave, onRemove }: { r: any; busy: boolean; onChanged: () => void; onSave: (r: any, e: any) => void; onRemove: (r: any) => void }) {
+  const [edit, setEdit] = useState({ nome: r.membro?.nome || '', telefone: String(r.membro?.telefone || ''), parentesco: r.parentesco || 'outro' });
+  const dirty = edit.nome.trim() !== (r.membro?.nome || '') || edit.telefone.trim() !== String(r.membro?.telefone || '') || edit.parentesco !== (r.parentesco || 'outro');
+  return (
+    <div className="rounded-md border border-border p-2 space-y-2">
+      <div className="flex items-center gap-2">
+        {r.membro?.id && <FotoMembroAvatar membro={r.membro} onChanged={onChanged} />}
+        <Input className="flex-1 h-8" value={edit.nome} placeholder="Nome" onChange={e => setEdit(x => ({ ...x, nome: e.target.value }))} />
+        <button type="button" onClick={() => onRemove(r)} className="text-muted-foreground hover:text-red-500 shrink-0" title="Remover responsável"><X className="h-4 w-4" /></button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Input className="h-8" placeholder="Telefone" inputMode="tel" value={edit.telefone} onChange={e => setEdit(x => ({ ...x, telefone: e.target.value }))} />
+        <Select value={edit.parentesco} onValueChange={v => setEdit(x => ({ ...x, parentesco: v }))}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>{PARENTESCOS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      {dirty && <div className="flex justify-end"><Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => onSave(r, edit)}>Salvar</Button></div>}
+    </div>
+  );
+}
+
 function DuplicadosModal({ onClose, onMerged }: { onClose: () => void; onMerged: () => void }) {
   const [grupos, setGrupos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -631,6 +773,24 @@ function Campo({ label, v }: { label: string; v?: string | null }) {
   return <div><span className="text-xs text-muted-foreground">{label}: </span><span>{v}</span></div>;
 }
 
+// Seletor de foto (preview local · usado no cadastro de nova criança)
+function FotoPicker({ dataUrl, onPick, onClear, label }: { dataUrl: string | null; onPick: (e: any) => void; onClear: () => void; label: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex items-center gap-2">
+      <div className="relative h-12 w-12 shrink-0">
+        <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+          {dataUrl ? <img src={dataUrl} alt="" className="h-full w-full object-cover" /> : <Camera className="h-5 w-5 text-primary" />}
+        </div>
+        <button type="button" onClick={() => ref.current?.click()} className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-primary text-white flex items-center justify-center shadow" title="Adicionar foto"><Camera className="h-3 w-3" /></button>
+        {dataUrl && <button type="button" onClick={onClear} className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white flex items-center justify-center shadow" title="Remover"><X className="h-2.5 w-2.5" /></button>}
+        <input ref={ref} type="file" accept="image/*" className="hidden" onChange={onPick} />
+      </div>
+      <span className="text-xs text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
 // ── Nova criança (cadastro manual) ───────────────────────────────────────────
 function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [nome, setNome] = useState('');
@@ -638,59 +798,108 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [sexo, setSexo] = useState('');
   const [serie, setSerie] = useState('');
   const [necessidade, setNecessidade] = useState('');
-  const [respNome, setRespNome] = useState('');
-  const [respTel, setRespTel] = useState('');
-  const [parentesco, setParentesco] = useState('mae');
+  const [consentMkt, setConsentMkt] = useState(false);
+  const [fotoCrianca, setFotoCrianca] = useState<string | null>(null);
+  const [resps, setResps] = useState<any[]>([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
   const [salvando, setSalvando] = useState(false);
+
+  const setResp = (i: number, patch: any) => setResps(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addResp = () => setResps(rs => [...rs, { nome: '', telefone: '', cpf: '', parentesco: 'outro', autorizado_buscar: true, foto: null }]);
+  const delResp = (i: number) => setResps(rs => rs.length > 1 ? rs.filter((_, idx) => idx !== i) : rs);
+  const lerFoto = (cb: (v: string) => void) => (e: any) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
+    const r = new FileReader(); r.onload = () => cb(r.result as string); r.readAsDataURL(f);
+  };
 
   async function salvar() {
     if (!nome.trim()) { toast.error('Informe o nome da criança'); return; }
-    if (!respNome.trim() || !respTel.trim()) { toast.error('Informe nome e telefone do responsável'); return; }
+    const validos = resps.filter(r => r.nome.trim() && r.telefone.trim());
+    if (!validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
     setSalvando(true);
     try {
-      await api.criancas.create({
-        crianca: { nome: nome.trim(), data_nascimento: nascimento || null, sexo: sexo || null, serie: serie.trim() || null, necessidades_especiais: necessidade.trim() || null },
-        responsavel: { nome: respNome.trim(), telefone: respTel.trim(), parentesco },
+      const r = await api.criancas.create({
+        crianca: { nome: nome.trim(), data_nascimento: nascimento || null, sexo: sexo || null, serie: serie.trim() || null, necessidades_especiais: necessidade.trim() || null, consent_marketing: consentMkt },
+        responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })),
       });
+      // Fotos (best-effort · não travam o cadastro se falharem). r.responsaveis
+      // volta na MESMA ordem dos validos → casa a foto pelo índice.
+      const cid = r?.crianca?.id;
+      if (cid && fotoCrianca) { try { await api.criancas.uploadFoto(cid, fotoCrianca); } catch { /* noop */ } }
+      const retResps = Array.isArray(r?.responsaveis) ? r.responsaveis : [];
+      for (let i = 0; i < retResps.length; i++) {
+        if (validos[i]?.foto && retResps[i]?.id) { try { await api.criancas.uploadFotoResponsavel(retResps[i].id, validos[i].foto); } catch { /* noop */ } }
+      }
       toast.success('Criança cadastrada');
       onCreated();
     } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar'); } finally { setSalvando(false); }
   }
 
+  const temAlteracoes = (
+    !!nome.trim() || !!nascimento || !!sexo || !!serie.trim() || !!necessidade.trim() ||
+    consentMkt || !!fotoCrianca ||
+    resps.some(r => r.nome.trim() || r.telefone.trim() || (r.cpf || '').trim())
+  );
+  const { tentarFechar } = useConfirmarSaida(temAlteracoes, onClose);
+
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Nova criança</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div><Label className="text-xs">Nome da criança *</Label><Input value={nome} onChange={e => setNome(e.target.value)} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label className="text-xs">Nascimento</Label><Input type="date" value={nascimento} onChange={e => setNascimento(e.target.value)} /></div>
-            <div>
-              <Label className="text-xs">Sexo</Label>
-              <Select value={sexo} onValueChange={setSexo}>
-                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                <SelectContent><SelectItem value="M">Menino</SelectItem><SelectItem value="F">Menina</SelectItem></SelectContent>
-              </Select>
-            </div>
+          <div><Label className="text-xs">Nascimento</Label><DataNascimentoPicker value={nascimento} onChange={setNascimento} /></div>
+          <div>
+            <Label className="text-xs">Sexo</Label>
+            <Select value={sexo} onValueChange={setSexo}>
+              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+              <SelectContent><SelectItem value="M">Menino</SelectItem><SelectItem value="F">Menina</SelectItem></SelectContent>
+            </Select>
           </div>
           <div><Label className="text-xs">Série (opcional)</Label><Input value={serie} onChange={e => setSerie(e.target.value)} placeholder="Ex.: Maternal II" /></div>
           <div><Label className="text-xs">Necessidade / alergia (opcional)</Label><Textarea rows={2} value={necessidade} onChange={e => setNecessidade(e.target.value)} /></div>
+          <FotoPicker dataUrl={fotoCrianca} onPick={lerFoto(setFotoCrianca)} onClear={() => setFotoCrianca(null)} label="Foto da criança (opcional)" />
+          <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={consentMkt} onChange={e => setConsentMkt(e.target.checked)} />
+            <span>Autoriza o <b>uso da imagem da criança</b> para divulgação/marketing da igreja (redes sociais, site, etc.)</span>
+          </label>
           <div className="border-t border-border pt-2 space-y-3">
-            <div className="text-xs font-semibold text-muted-foreground">Responsável</div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Nome *</Label><Input value={respNome} onChange={e => setRespNome(e.target.value)} /></div>
-              <div><Label className="text-xs">Telefone *</Label><Input value={respTel} onChange={e => setRespTel(e.target.value)} placeholder="(21) 99999-9999" /></div>
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold text-muted-foreground">Responsáveis</div>
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={addResp}><Plus className="h-3.5 w-3.5" /> Adicionar responsável</Button>
             </div>
-            <div>
-              <Label className="text-xs">Parentesco</Label>
-              <Select value={parentesco} onValueChange={setParentesco}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mae">Mãe</SelectItem><SelectItem value="pai">Pai</SelectItem>
-                  <SelectItem value="avo_a">Avó/Avô</SelectItem><SelectItem value="tutor">Tutor</SelectItem><SelectItem value="outro">Outro</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {resps.map((r, i) => (
+              <div key={i} className="rounded-md border border-border p-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Responsável {i + 1}</span>
+                  {resps.length > 1 && <button type="button" onClick={() => delResp(i)} className="text-muted-foreground hover:text-red-500"><X className="h-3.5 w-3.5" /></button>}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><Label className="text-xs">Nome *</Label><Input value={r.nome} onChange={e => setResp(i, { nome: e.target.value })} /></div>
+                  <div><Label className="text-xs">Telefone *</Label><Input value={r.telefone} onChange={e => setResp(i, { telefone: e.target.value })} placeholder="(21) 99999-9999" /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><Label className="text-xs">CPF (opcional)</Label><Input value={r.cpf} onChange={e => setResp(i, { cpf: e.target.value })} /></div>
+                  <div>
+                    <Label className="text-xs">Parentesco</Label>
+                    <Select value={r.parentesco} onValueChange={v => setResp(i, { parentesco: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mae">Mãe</SelectItem><SelectItem value="pai">Pai</SelectItem>
+                        <SelectItem value="avo_a">Avó/Avô</SelectItem><SelectItem value="tutor">Tutor</SelectItem><SelectItem value="outro">Outro</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <FotoPicker dataUrl={r.foto} onPick={lerFoto(v => setResp(i, { foto: v }))} onClear={() => setResp(i, { foto: null })} label="Foto (opcional)" />
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input type="checkbox" checked={r.autorizado_buscar} onChange={e => setResp(i, { autorizado_buscar: e.target.checked })} />
+                    Autorizado a buscar
+                  </label>
+                </div>
+              </div>
+            ))}
           </div>
           <Button onClick={salvar} disabled={salvando} className="w-full">{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Cadastrar criança'}</Button>
         </div>

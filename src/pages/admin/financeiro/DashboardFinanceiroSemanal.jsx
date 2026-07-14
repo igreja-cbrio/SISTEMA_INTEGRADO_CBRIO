@@ -10,6 +10,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
+import { useAuth } from '../../../contexts/AuthContext';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
 import {
@@ -79,16 +80,20 @@ function useFiltrosGlobais() {
 }
 
 // ============================================================
-// SEMANAS ISO seg-dom · UNIFICADAS com a aba de cultos (2026-06-01)
-// Antes era qua-ter (corte na terca pelo lag D+1 do extrato). Como a oferta
-// de culto já e lancada com a data do culto, mudamos pra segunda->domingo pra
-// "Semana 21" bater com os cultos. O backend (fin_semana_qua_ter, nome mantido)
-// também foi reescrito pra ISO seg-dom.
+// SEMANA FINANCEIRA · QUARTA→TERÇA (decisão do Matheus · 2026-07-08)
+// A gestão enxerga a semana da igreja de QUARTA (Quarta com Deus) até a TERÇA
+// seguinte — é assim que o sistema financeiro interno concilia. Entre 2026-06-01
+// e 2026-07-08 o dashboard usou ISO seg-dom (unificado com a aba de cultos), mas
+// isso divergia do fechamento contábil e dava números diferentes do interno
+// (ex.: 303k seg-dom × ~418k qua-ter na virada de junho/julho). Voltamos a
+// qua-ter APENAS no financeiro; a FREQUÊNCIA dos cultos (dashboardSemanal.js ·
+// isoWeekRange) segue seg-dom, intocada. O backend usa a MESMA função
+// fin_semana_qua_ter (reescrita pra qua-ter de novo) → views e endpoints herdam.
 // ============================================================
-function segundaDaSemana(date) {
+function quartaDaSemana(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  const offset = (d.getDay() + 6) % 7; // Seg=0 ... Dom=6
+  const offset = (d.getDay() + 4) % 7; // Qua=0 · Qui=1 ... Ter=6
   d.setDate(d.getDate() - offset);
   return d;
 }
@@ -105,13 +110,13 @@ function numeroSemanaIso(date) {
 }
 
 function gerarSemanasIso(qtd = 26) {
-  const segAtual = segundaDaSemana(new Date());
+  const quaAtual = quartaDaSemana(new Date());
 
   const out = [];
   for (let i = 0; i < qtd; i++) {
-    const inicio = new Date(segAtual);
-    inicio.setDate(segAtual.getDate() - i * 7);
-    const fim = new Date(inicio);
+    const inicio = new Date(quaAtual); // quarta
+    inicio.setDate(quaAtual.getDate() - i * 7);
+    const fim = new Date(inicio); // terça seguinte
     fim.setDate(inicio.getDate() + 6);
     const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
     const num = numeroSemanaIso(inicio);
@@ -175,7 +180,30 @@ const SLIDES = [
   { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Alvos financeiros com filtros' },
 ];
 
+// ⚠️ Aba "Saídas" (detalhamento de despesas · expõe folha por pessoa) é
+// RESTRITA à lista nominal abaixo (pedido do Matheus · 2026-07-10). O backend
+// devolve 403 em /dashboard/saidas-detalhadas pra quem está fora; aqui o slide
+// some da navegação. Alterar a lista = decisão de diretoria.
+const SAIDAS_ALLOWLIST = new Set([
+  'matheus.toscano@cbrio.org', 'matheus@cbrio.com.br',
+  'marcospaulo.almeida@cbrio.org', 'marcos@cbrio.com',
+  'yago.torres@cbrio.org',
+  'eduardo@cbrio.com.br',
+  'juliana.leao@cbrio.org',
+  'juninho.lit@cbrio.org', 'juninho@cbrio.com.br',
+  'pepe.menezes@cbrio.org',
+  'arthur.serpa@cbrio.org',
+]);
+
 export default function DashboardSemanal() {
+  const { user, profile } = useAuth();
+  const emailUser = String(profile?.email || user?.email || '').toLowerCase();
+  const podeVerSaidas = SAIDAS_ALLOWLIST.has(emailUser);
+  // Slides visíveis · esconde "Saídas" (controle) de quem não está na allowlist.
+  const slides = useMemo(
+    () => (podeVerSaidas ? SLIDES : SLIDES.filter(s => s.key !== 'controle')),
+    [podeVerSaidas],
+  );
   const [data, setData] = useState(null);
   const [completo, setCompleto] = useState(null);
   const [melhorSemana, setMelhorSemana] = useState(null);
@@ -191,12 +219,12 @@ export default function DashboardSemanal() {
     const handler = (e) => {
       // ignora se está digitando em input/textarea
       if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA' || e.target?.tagName === 'SELECT') return;
-      if (e.key === 'ArrowRight') setSlide(i => Math.min(i + 1, SLIDES.length - 1));
+      if (e.key === 'ArrowRight') setSlide(i => Math.min(i + 1, slides.length - 1));
       else if (e.key === 'ArrowLeft') setSlide(i => Math.max(i - 1, 0));
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, []);
+  }, [slides.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -252,7 +280,7 @@ export default function DashboardSemanal() {
 
             <div className="flex flex-col items-center flex-1 min-w-[240px]">
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-                Semana (seg–dom)
+                Semana (qua–ter)
                 {loading && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
               </div>
               <select
@@ -280,66 +308,66 @@ export default function DashboardSemanal() {
         </Card>
 
         {/* SlideNav · botões de navegação entre slides */}
-        <SlideNav current={slide} onChange={setSlide} />
+        <SlideNav slides={slides} current={slide} onChange={setSlide} />
         <FiltrosFinanceiroBar />
       </div>
 
       {/* Assistente financeiro · leitura automática por aba */}
       <AssistenteFinanceiroCard
-        aba={SLIDES[slide].key}
-        abaLabel={SLIDES[slide].label}
+        aba={slides[slide].key}
+        abaLabel={slides[slide].label}
         semana={refData}
         kpis={kpis}
         buckets={buckets}
-        onVerDetalhe={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'resumo')))}
-        onComparar={() => setSlide(Math.max(0, SLIDES.findIndex(s => s.key === 'performance')))}
+        onVerDetalhe={() => setSlide(Math.max(0, slides.findIndex(s => s.key === 'resumo')))}
+        onComparar={() => setSlide(Math.max(0, slides.findIndex(s => s.key === 'performance')))}
       />
 
       {/* CONTENT · slides animados com AnimatePresence */}
       <AnimatePresence mode="wait">
         <motion.div
-          key={SLIDES[slide].key}
+          key={slides[slide].key}
           initial={{ opacity: 0, x: 30 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: -30 }}
           transition={{ duration: 0.25, ease: 'easeOut' }}
           className="space-y-6"
         >
-          {SLIDES[slide].key === 'resumo' && (
+          {slides[slide].key === 'resumo' && (
             <Slide0Resumo
               kpis={kpis} cultos={cultos} top_contribuintes={top_contribuintes}
               historico={historico}
             />
           )}
-          {SLIDES[slide].key === 'saude' && <SlideSaudeFinanceira />}
-          {SLIDES[slide].key === 'por_culto' && (
+          {slides[slide].key === 'saude' && <SlideSaudeFinanceira />}
+          {slides[slide].key === 'por_culto' && (
             <Slide1PorCulto
               buckets={buckets}
               melhorSemana={melhorSemana}
               semana={semana}
             />
           )}
-          {SLIDES[slide].key === 'tendencias' && (
+          {slides[slide].key === 'tendencias' && (
             <Slide2Tendencias />
           )}
-          {SLIDES[slide].key === 'comparativos' && (
+          {slides[slide].key === 'comparativos' && (
             <Slide3Comparativos
               completo={completo}
             />
           )}
-          {SLIDES[slide].key === 'performance' && (
+          {slides[slide].key === 'performance' && (
             <Slide4Performance
               completo={completo}
               melhorSemana={melhorSemana}
             />
           )}
-          {SLIDES[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
-          {SLIDES[slide].key === 'controle' && (
+          {slides[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
+          {slides[slide].key === 'controle' && (
             <Slide5Controle
               saidas={saidas}
             />
           )}
-          {SLIDES[slide].key === 'metas' && (
+          {slides[slide].key === 'metas' && (
             <Slide6Metas
               metas={metas}
               onMetasChange={reloadMetas}
@@ -351,7 +379,7 @@ export default function DashboardSemanal() {
       {/* Footer · atalhos + bloco narrativo atual */}
       <div className="text-center text-[10px] text-muted-foreground flex items-center justify-center gap-2 flex-wrap">
         {(() => {
-          const bloco = SLIDE_BLOCO[SLIDES[slide].key] || {};
+          const bloco = SLIDE_BLOCO[slides[slide].key] || {};
           return bloco.label ? (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
               style={{ background: `${bloco.color}1f`, color: bloco.color }}>
@@ -359,7 +387,7 @@ export default function DashboardSemanal() {
             </span>
           ) : null;
         })()}
-        <span>Use ← → no teclado · {slide + 1} de {SLIDES.length}</span>
+        <span>Use ← → no teclado · {slide + 1} de {slides.length}</span>
       </div>
     </div>
   );
@@ -387,6 +415,27 @@ function leituraClienteFallback(aba, kpis, buckets) {
 function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerDetalhe, onComparar }) {
   const [texto, setTexto] = useState('');
   const [loading, setLoading] = useState(true);
+  // Análise aprofundada (sob demanda · IA maior · explica causas como mês com 5 semanas)
+  const [analise, setAnalise] = useState('');
+  const [analisando, setAnalisando] = useState(false);
+  const [analiseErro, setAnaliseErro] = useState('');
+
+  async function gerarAnalise() {
+    if (analisando) return;
+    setAnalisando(true);
+    setAnaliseErro('');
+    try {
+      const r = await financeiroV2.dashboard.analiseProfunda(semana);
+      setAnalise(r?.texto || '');
+      if (!r?.texto) setAnaliseErro('A IA não retornou análise. Tente de novo.');
+    } catch (e) {
+      setAnaliseErro(e?.message || 'Não foi possível gerar a análise agora.');
+    } finally {
+      setAnalisando(false);
+    }
+  }
+  // Semana mudou → a análise antiga não vale mais
+  useEffect(() => { setAnalise(''); setAnaliseErro(''); }, [semana]);
 
   useEffect(() => {
     let cancelled = false;
@@ -435,7 +484,28 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
           </p>
         )}
 
-        <div className="flex items-center gap-2 mt-4">
+        {/* Análise aprofundada (gerada sob demanda) */}
+        {(analise || analisando || analiseErro) && (
+          <div className="mt-4 rounded-xl border border-primary/25 bg-primary/5 p-3.5">
+            <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: C.primary }}>
+              Análise aprofundada
+            </div>
+            {analisando ? (
+              <div className="space-y-2">
+                <div className="h-3.5 rounded bg-muted animate-pulse w-[95%]" />
+                <div className="h-3.5 rounded bg-muted animate-pulse w-[88%]" />
+                <div className="h-3.5 rounded bg-muted animate-pulse w-[60%]" />
+                <p className="text-[11px] text-muted-foreground pt-1">Analisando a série mensal, semanas de contribuição e saúde financeira…</p>
+              </div>
+            ) : analiseErro ? (
+              <p className="text-sm text-red-600">{analiseErro}</p>
+            ) : (
+              <div className="text-sm text-foreground/90 leading-relaxed whitespace-pre-wrap">{analise}</div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mt-4 flex-wrap">
           <Button
             size="sm"
             onClick={onVerDetalhe}
@@ -446,6 +516,10 @@ function AssistenteFinanceiroCard({ aba, abaLabel, semana, kpis, buckets, onVerD
           </Button>
           <Button size="sm" variant="outline" onClick={onComparar}>
             Comparar semanas
+          </Button>
+          <Button size="sm" variant="outline" onClick={gerarAnalise} disabled={analisando} className="border-primary/40" style={{ color: C.primary }}>
+            {analisando ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1.5" />}
+            {analise ? 'Gerar de novo' : 'Análise aprofundada'}
           </Button>
         </div>
       </CardContent>
@@ -469,14 +543,14 @@ const SLIDE_BLOCO = {
   metas: { id: 3, label: 'Despesa & Metas', color: '#f59e0b' },
 };
 
-function SlideNav({ current, onChange }) {
+function SlideNav({ slides, current, onChange }) {
   return (
     <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
-      {SLIDES.map((s, i) => {
+      {slides.map((s, i) => {
         const active = i === current;
         const Icon = s.icon;
         const bloco = SLIDE_BLOCO[s.key] || { id: 0, label: '', color: '#888' };
-        const blocoAnterior = i > 0 ? SLIDE_BLOCO[SLIDES[i - 1].key]?.id : null;
+        const blocoAnterior = i > 0 ? SLIDE_BLOCO[slides[i - 1].key]?.id : null;
         const showSep = blocoAnterior != null && blocoAnterior !== bloco.id;
         return (
           <span key={s.key} className="contents">
@@ -1160,7 +1234,7 @@ function YoYSemanalChart({ dados, anoAtual, anoAnterior }) {
       <CardContent className="pt-6">
         <h3 className="text-base font-semibold mb-1">Comparativo Ano a Ano · Semanal</h3>
         <p className="text-xs text-muted-foreground mb-4">
-          Mesma semana (seg–dom) de {anoAtual} vs {anoAnterior}
+          Mesma semana (qua–ter) de {anoAtual} vs {anoAnterior}
         </p>
         <div style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
@@ -2149,7 +2223,7 @@ function FreqVsArrecadacaoSemanal() {
               </Badge>
             </h3>
             <p className="text-xs text-muted-foreground">
-              Semanas seg–dom · empréstimos excluídos · cards abaixo refletem a semana selecionada
+              Semanas qua–ter · empréstimos excluídos · cards abaixo refletem a semana selecionada
             </p>
           </div>
           <div className="flex gap-1">
@@ -2533,7 +2607,7 @@ function MetasFinanceirasComFiltros({ metas: metasIniciais, onMetasChange }) {
               </select>
             </div>
             <div className="md:col-span-2">
-              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (seg–dom)</label>
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium block mb-1">Semana (qua–ter)</label>
               <select
                 value={filtroSemana}
                 onChange={(e) => setFiltroSemana(e.target.value)}
@@ -2834,13 +2908,23 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, semanasOpcoes, anoA
 // ============================================================
 function ArrecadacaoAnualChart() {
   const anoAtual = new Date().getFullYear();
-  const [ano, setAno] = useState(anoAtual);
-  const [dados, setDados] = useState(null);
+  // Multi-seleção de anos: 1 ano = visão clássica (barras + acumulado);
+  // 2+ anos = comparativo, uma barra por ano em cada mês.
+  const [anosSel, setAnosSel] = useState([anoAtual]);
+  const [dadosPorAno, setDadosPorAno] = useState({});
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [filtrosVersion, setFiltrosVersion] = useState(0);
 
   const anos = [2022, 2023, 2024, 2025, 2026, 2027].filter(a => a <= anoAtual + 1);
+  const ano = anosSel[anosSel.length - 1]; // ano mais recente selecionado
+  const multi = anosSel.length > 1;
+  const CORES_ANO = [C.blue, C.amber, C.purple, C.green];
+  const corDoAno = (i) => (i === anosSel.length - 1 ? C.primary : CORES_ANO[i % CORES_ANO.length]);
+
+  const toggleAno = (a) => setAnosSel(prev => prev.includes(a)
+    ? (prev.length > 1 ? prev.filter(x => x !== a) : prev) // nunca zera
+    : [...prev, a].sort((x, y) => x - y));
 
   useEffect(() => {
     const h = () => setFiltrosVersion(v => v + 1);
@@ -2851,19 +2935,22 @@ function ArrecadacaoAnualChart() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    financeiroV2.arrecadacaoAnual(ano, lerFiltrosGlobais())
-      .then((r) => {
+    Promise.all(anosSel.map(a => financeiroV2.arrecadacaoAnual(a, lerFiltrosGlobais()).then(r => [a, r])))
+      .then((entries) => {
         if (cancelled) return;
-        setDados(r);
-        const meses = r?.meses || [];
-        const ultimo = meses.reduceRight((acc, m, i) => acc !== null ? acc : (m.receita > 0 ? i : null), null);
+        const map = Object.fromEntries(entries);
+        setDadosPorAno(map);
+        const mesesBase = map[anosSel[anosSel.length - 1]]?.meses || [];
+        const ultimo = mesesBase.reduceRight((acc, m, i) => acc !== null ? acc : (m.receita > 0 ? i : null), null);
         setSelectedIdx(ultimo);
       })
       .catch((e) => console.warn('[ArrecAnual]:', e?.message))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [ano, filtrosVersion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anosSel.join(','), filtrosVersion]);
 
+  const dados = dadosPorAno[ano] || null;
   const meses = dados?.meses || [];
   const total = dados?.total || 0;
   const sel = selectedIdx !== null ? meses[selectedIdx] : null;
@@ -2877,13 +2964,28 @@ function ArrecadacaoAnualChart() {
     }
   };
 
+  // Meses com 5 semanas de contribuição (qua→ter) arrecadam naturalmente mais
+  // → sinalizados com "•5" no eixo e badge no mês selecionado.
   const formatado = meses.map((m, i) => ({
     idx: i,
-    label: m.mes_label,
+    label: m.semanas_qua_ter === 5 ? `${m.mes_label} •5` : m.mes_label,
     Receita: m.receita,
     Acumulado: m.acumulado,
     qtd: m.qtd,
+    semanas: m.semanas_qua_ter,
   }));
+  const temMes5 = meses.some(m => m.semanas_qua_ter === 5);
+
+  // Comparativo multi-ano: 12 meses, uma série (barra) por ano selecionado.
+  const MES_LABELS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+  const formatadoMulti = multi
+    ? MES_LABELS.map((label, i) => {
+        const row = { idx: i, label };
+        for (const a of anosSel) row[String(a)] = Number(dadosPorAno[a]?.meses?.[i]?.receita || 0);
+        return row;
+      })
+    : [];
+  const algumDado = multi ? anosSel.some(a => (dadosPorAno[a]?.total || 0) > 0) : total > 0;
 
   return (
     <Card>
@@ -2891,34 +2993,99 @@ function ArrecadacaoAnualChart() {
         <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
           <div>
             <h3 className="text-base font-semibold flex items-center gap-2">
-              Arrecadação Anual · {ano}
+              Arrecadação Anual · {multi ? anosSel.join(' vs ') : ano}
               <Badge variant="outline" className="text-[10px] font-normal">
                 <MousePointer2 className="h-2.5 w-2.5 mr-1" />
                 clique num mês
               </Badge>
             </h3>
             <p className="text-xs text-muted-foreground">
-              Total no ano: <strong>{fmtMoney(total)}</strong> · barras mensais + acumulado · empréstimos excluídos
+              {multi
+                ? <>Totais: {anosSel.map((a, i) => <span key={a}>{i > 0 && ' · '}<strong>{a}</strong> {fmtMoney(dadosPorAno[a]?.total || 0)}</span>)} · empréstimos excluídos</>
+                : <>Total no ano: <strong>{fmtMoney(total)}</strong> · barras mensais + acumulado · empréstimos excluídos</>}
             </p>
           </div>
-          <div className="flex gap-1 flex-wrap">
-            {anos.map(a => (
-              <button
-                key={a}
-                onClick={() => setAno(a)}
-                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
-                  ano === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                }`}
-              >
-                {a}
-              </button>
-            ))}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex gap-1 flex-wrap">
+              {anos.map(a => (
+                <button
+                  key={a}
+                  onClick={() => toggleAno(a)}
+                  className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition ${
+                    anosSel.includes(a) ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                  }`}
+                >
+                  {a}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-muted-foreground">selecione mais de um ano pra comparar</span>
           </div>
         </div>
         {loading ? (
           <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
-        ) : total === 0 ? (
-          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {ano} · selecione outro ano</div>
+        ) : !algumDado ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">Sem dados de {multi ? anosSel.join('/') : ano} · selecione outro ano</div>
+        ) : multi ? (
+          <>
+            <div style={{ width: '100%', height: 320 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={formatadoMulti} onClick={onBarClick} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.08)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                  {anosSel.map((a, i) => (
+                    <Bar key={a} dataKey={String(a)} fill={corDoAno(i)} radius={[5, 5, 0, 0]} animationDuration={900} cursor="pointer" />
+                  ))}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <AnimatePresence mode="wait">
+              {selectedIdx !== null && (
+                <motion.div
+                  key={`anosel-multi-${selectedIdx}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.4 }}
+                  className="mt-4 pt-4 border-t border-border"
+                >
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <span className="text-xs text-muted-foreground">Mês selecionado · comparação entre os anos</span>
+                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      {MES_LABELS[selectedIdx]}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {anosSel.map((a, i) => {
+                      const mA = dadosPorAno[a]?.meses?.[selectedIdx];
+                      const anoAnt = anosSel[i - 1];
+                      const mAnt = anoAnt ? dadosPorAno[anoAnt]?.meses?.[selectedIdx] : null;
+                      const d = mA && mAnt && mAnt.receita > 0 ? ((mA.receita - mAnt.receita) / mAnt.receita) * 100 : null;
+                      const subPartes = [
+                        mA?.semanas_qua_ter === 5 ? '5 semanas' : null,
+                        anoAnt ? `vs ${anoAnt}` : null,
+                      ].filter(Boolean);
+                      return (
+                        <SemanaCard
+                          key={a}
+                          label={`${MES_LABELS[selectedIdx]} ${a}`}
+                          icon={Banknote}
+                          accent={corDoAno(i)}
+                          valor={fmtMoney(mA?.receita || 0)}
+                          delta={d}
+                          sub={subPartes.join(' · ') || 'no mês'}
+                          anim={`my-${a}-${selectedIdx}`}
+                        />
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
         ) : (
           <>
             <div style={{ width: '100%', height: 320 }}>
@@ -2938,7 +3105,15 @@ function ArrecadacaoAnualChart() {
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
                   <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
-                  <Tooltip cursor={{ fill: 'rgba(0,179,157,0.08)' }} formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                    formatter={(v) => fmtMoney(v)}
+                    labelFormatter={(label, payload) => {
+                      const p = payload?.[0]?.payload;
+                      return p?.semanas === 5 ? `${label} · mês com 5 semanas de contribuição` : label;
+                    }}
+                    contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
+                  />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
                   <Bar yAxisId="left" dataKey="Receita" fill={C.primary} radius={[6, 6, 0, 0]} animationDuration={1200} cursor="pointer">
                     {formatado.map((entry, i) => (
@@ -2949,6 +3124,11 @@ function ArrecadacaoAnualChart() {
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+            {temMes5 && (
+              <p className="text-[11px] text-muted-foreground mt-1">
+                <b>•5</b> = mês com <b>5 semanas de contribuição</b> (semana da igreja: quarta→terça) — tende a arrecadar mais que meses com 4.
+              </p>
+            )}
             <AnimatePresence mode="wait">
               {sel && (
                 <motion.div
@@ -2961,8 +3141,15 @@ function ArrecadacaoAnualChart() {
                 >
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <span className="text-xs text-muted-foreground">Mês selecionado</span>
-                    <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                      {sel.mes_label}/{String(ano).slice(2)}
+                    <span className="flex items-center gap-2">
+                      {sel.semanas_qua_ter === 5 && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
+                          5 semanas de contribuição
+                        </span>
+                      )}
+                      <span className="text-sm font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                        {sel.mes_label}/{String(ano).slice(2)}
+                      </span>
                     </span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

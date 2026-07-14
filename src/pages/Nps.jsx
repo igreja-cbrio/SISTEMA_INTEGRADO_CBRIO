@@ -6,7 +6,7 @@ import { nps as api } from '../api';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
-  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil,
+  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2,
 } from 'lucide-react';
 
 const C = {
@@ -162,6 +162,8 @@ export default function Nps() {
   const { isAdmin, isDiretor, getAccessLevel } = useAuth();
   // Líder de área com nível 3 no módulo NPS edita (o backend restringe à área dele).
   const canWrite = isAdmin || isDiretor || getAccessLevel(['nps']) >= 3;
+  // Criar NPS é liberado pra TODOS (2026-07-13); editar/analisar seguem no canWrite.
+  const canCreate = true;
   const navigate = useNavigate();
 
   const [lista, setLista] = useState([]);
@@ -203,7 +205,7 @@ export default function Nps() {
         title="NPS — Pesquisas com IA"
         accent={C.cyan}
         subtitle="Crie pesquisas para os 5 valores · IA gera as perguntas a partir do que você quer medir · respostas analisadas automaticamente e ligadas aos KPIs."
-        actions={canWrite ? <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn> : undefined}
+        actions={canCreate ? <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn> : undefined}
       />
 
       {/* Tabs + busca */}
@@ -241,7 +243,7 @@ export default function Nps() {
         <div style={{ textAlign: 'center', padding: 60, color: C.t3, background: C.card, borderRadius: 12, border: `1px dashed ${C.border}` }}>
           <MessageSquare size={36} style={{ opacity: 0.4, marginBottom: 12 }} />
           <p style={{ margin: 0, fontSize: 14 }}>Nenhuma pesquisa encontrada</p>
-          {canWrite && tab !== 'encerradas' && (
+          {canCreate && tab !== 'encerradas' && (
             <Btn variant="ghost" onClick={() => setShowCreate(true)} style={{ marginTop: 12 }}><Plus size={14} />Criar primeira NPS</Btn>
           )}
         </div>
@@ -813,6 +815,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [tab, setTab] = useState('resumo');
   const [analisando, setAnalisando] = useState(false);
   const [notificando, setNotificando] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -888,6 +891,20 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
     }
   }
 
+  async function excluir() {
+    if (!confirm('Excluir esta pesquisa? Ela some da lista e sai dos KPIs. As respostas coletadas ficam preservadas na base (recuperável por um administrador).')) return;
+    setExcluindo(true);
+    try {
+      await api.remove(id);
+      toast.success('Pesquisa excluída');
+      onChanged?.();
+      onClose();
+    } catch (e) {
+      toast.error(e.message);
+    }
+    setExcluindo(false);
+  }
+
   if (loading || !pesquisa) {
     return (
       <Modal open onClose={onClose} title="Carregando..." width={760}>
@@ -957,6 +974,11 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
           {pesquisa.status === 'ativa' && (
             <Btn variant="danger" size="sm" onClick={encerrar}>Encerrar</Btn>
           )}
+          <Btn variant="ghost" size="sm" onClick={excluir} disabled={excluindo}
+            style={{ marginLeft: 'auto', color: C.red }}>
+            {excluindo ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            Excluir
+          </Btn>
         </div>
       )}
 

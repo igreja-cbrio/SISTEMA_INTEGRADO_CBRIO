@@ -64,6 +64,51 @@ router.use(authenticate, authorizeModule('membresia', 1));
 router.use('/emails', require('./volEmails'));
 
 // ══════════════════════════════════════════════════════════════
+// CONFIG · régua do Termômetro (limiares de check-ins por categoria)
+// GET aberto (herda membresia>=1) · PUT exige voluntariado>=3.
+// ══════════════════════════════════════════════════════════════
+const VOL_CONFIG_DEFAULT = { muito_ativo_min: 8, regular_min: 4, pouco_ativo_min: 1, sobrecarga_limite: 8 };
+
+router.get('/config', async (req, res) => {
+  try {
+    const { data } = await supabase.from('vol_config').select('*').eq('id', 1).maybeSingle();
+    res.json({ ...VOL_CONFIG_DEFAULT, ...(data || {}) });
+  } catch (e) {
+    console.error('[vol/config get]', e.message);
+    res.json(VOL_CONFIG_DEFAULT); // degrada pros defaults · o termômetro nunca quebra
+  }
+});
+
+router.put('/config', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const toInt = (v, def) => {
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) && n >= 0 ? n : def;
+    };
+    const cfg = {
+      muito_ativo_min: toInt(req.body?.muito_ativo_min, VOL_CONFIG_DEFAULT.muito_ativo_min),
+      regular_min: toInt(req.body?.regular_min, VOL_CONFIG_DEFAULT.regular_min),
+      pouco_ativo_min: toInt(req.body?.pouco_ativo_min, VOL_CONFIG_DEFAULT.pouco_ativo_min),
+      sobrecarga_limite: toInt(req.body?.sobrecarga_limite, VOL_CONFIG_DEFAULT.sobrecarga_limite),
+    };
+    // Ordem coerente: muito_ativo_min >= regular_min >= pouco_ativo_min >= 1.
+    if (!(cfg.muito_ativo_min >= cfg.regular_min && cfg.regular_min >= cfg.pouco_ativo_min && cfg.pouco_ativo_min >= 1)) {
+      return res.status(400).json({ error: 'Os limites devem ser decrescentes: Muito Ativo ≥ Regular ≥ Pouco Ativo ≥ 1.' });
+    }
+    const { data, error } = await supabase
+      .from('vol_config')
+      .upsert({ id: 1, ...cfg, updated_at: new Date().toISOString(), updated_by: req.user?.id || null }, { onConflict: 'id' })
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[vol/config put]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a régua do termômetro' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // CONTROLE DE FREQUÊNCIA · histórico de serviços (planilha) + vínculo
 // "Quantas vezes serviu e em qual culto" · ativos/inativos (90 dias).
 // ══════════════════════════════════════════════════════════════
@@ -331,8 +376,9 @@ router.get('/frequencia', async (req, res) => {
       let q = supabase.from('vw_vol_frequencia').select('*');
       if (req.query.status === 'ativos') q = q.eq('ativo', true);
       else if (req.query.status === 'inativos') q = q.eq('ativo', false);
-      if (req.query.vinculo === 'nao') q = q.is('vol_profile_id', null);
-      else if (req.query.vinculo === 'sim') q = q.not('vol_profile_id', 'is', null);
+      // Vínculo = ligado a um MEMBRO (CPF). A lista já é de voluntários reais.
+      if (req.query.vinculo === 'nao') q = q.is('membro_id', null);
+      else if (req.query.vinculo === 'sim') q = q.not('membro_id', 'is', null);
       if (req.query.busca) q = q.ilike('nome', `%${req.query.busca}%`);
       return q.order('ativo', { ascending: false }).order('ultimo_servico', { ascending: false, nullsFirst: false });
     };
@@ -1028,27 +1074,79 @@ router.get('/profiles/:id/detalhe', async (req, res) => {
 
     const norm1 = (x) => (Array.isArray(x) ? x[0] : x) || null;
     const servArr = servicos || [];
+    const ciArr = (checkins || []).map((c) => ({ ...c, service: norm1(c.service) }));
+    const escArr = (escalas || []).map((e) => ({ ...e, service: norm1(e.service) }));
     const porCulto = {};
     for (const s of servArr) porCulto[s.culto_label] = (porCulto[s.culto_label] || 0) + 1;
     const d4 = new Date(); d4.setMonth(d4.getMonth() - 4);
     const desde4m = d4.toISOString().slice(0, 10);
+    const serv4m = servArr.filter((s) => s.data >= desde4m).length;
+
+    // Equipes/áreas onde serve (das escalas)
+    const equipes = [...new Set(escArr.map((e) => e.team_name).filter(Boolean))];
+
+    // Termômetro de atividade · pela recência da última atividade (serviço ou
+    // check-in) + volume nos últimos 4 meses. Régua alinhada à do sistema
+    // (voluntário inativo = 90+ dias sem servir).
+    const ultimoServico = servArr[0]?.data || null;
+    const ultimoCheckin = ciArr[0]?.checked_in_at || null;
+    const ultimaAtividade = [ultimoServico, ultimoCheckin].filter(Boolean).sort().pop() || null;
+    let diasDesde = Infinity;
+    if (ultimaAtividade) diasDesde = Math.floor((Date.now() - new Date(ultimaAtividade).getTime()) / 86400000);
+    let nivel, label;
+    if (diasDesde <= 30 && serv4m >= 4) { nivel = 'muito_ativo'; label = 'Muito ativo'; }
+    else if (diasDesde <= 45) { nivel = 'ativo'; label = 'Ativo'; }
+    else if (diasDesde <= 90) { nivel = 'pouco_ativo'; label = 'Pouco ativo'; }
+    else { nivel = 'inativo'; label = 'Inativo'; }
+    const termometro = {
+      nivel, label,
+      dias_desde_ultima_atividade: Number.isFinite(diasDesde) ? diasDesde : null,
+      ultima_atividade: ultimaAtividade,
+      servicos_4m: serv4m,
+    };
 
     res.json({
       profile,
       servicos: servArr,
-      checkins: (checkins || []).map((c) => ({ ...c, service: norm1(c.service) })),
-      escalas: (escalas || []).map((e) => ({ ...e, service: norm1(e.service) })),
+      checkins: ciArr,
+      escalas: escArr,
+      termometro,
+      equipes,
       totais: {
         total_servicos: servArr.length,
-        servicos_4m: servArr.filter((s) => s.data >= desde4m).length,
-        total_checkins: (checkins || []).length,
-        ultimo_servico: servArr[0]?.data || null,
+        servicos_4m: serv4m,
+        total_checkins: ciArr.length,
+        ultimo_servico: ultimoServico,
         por_culto: porCulto,
       },
     });
   } catch (e) {
     console.error('[vol] profile detalhe', e.message);
     res.status(500).json({ error: 'Erro ao carregar detalhe do voluntário' });
+  }
+});
+
+// GET /voluntariado/aniversariantes-semana → voluntários que fazem aniversário
+// nos próximos 7 dias (hoje..+6), pra a coordenação parabenizar. Data de
+// nascimento vem do membro (via membresia_id) ou da inscrição. RPC
+// fn_vol_aniversariantes_semana (SECURITY DEFINER).
+router.get('/aniversariantes-semana', async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc('fn_vol_aniversariantes_semana');
+    if (error) throw error;
+    const rows = (data || []).map((r) => ({
+      vol_profile_id: r.vol_profile_id,
+      nome: r.nome,
+      telefone: r.telefone || null,
+      data_nascimento: r.data_nascimento,
+      aniversario: r.aniversario, // a data do aniversário nesta semana
+      dow: r.dow,
+      hoje: r.aniversario === new Date().toISOString().slice(0, 10),
+    }));
+    res.json({ rows });
+  } catch (e) {
+    console.error('[vol] aniversariantes-semana', e.message);
+    res.status(500).json({ error: 'Erro ao carregar aniversariantes' });
   }
 });
 

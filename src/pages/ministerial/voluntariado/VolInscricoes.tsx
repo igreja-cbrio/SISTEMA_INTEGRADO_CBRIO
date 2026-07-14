@@ -291,6 +291,19 @@ export default function VolInscricoes() {
     queryFn: () => voluntariado.distribuicaoDirecionada({ ano }),
   });
 
+  // Áreas do direcionamento = as MESMAS opções do formulário público de inscrição
+  // (vol_form_opcoes). Fallback pra lista fixa se a consulta falhar/vazia.
+  const { data: opcoesForm } = useQuery({
+    queryKey: ['vol', 'form-opcoes'],
+    queryFn: () => voluntariado.formOpcoes.list(),
+  });
+  const areasDirecionamento = useMemo(() => {
+    const raw: any = opcoesForm;
+    const arr: any[] = Array.isArray(raw) ? raw : (raw?.opcoes || []);
+    const labels = arr.filter((o) => o?.ativo !== false).map((o) => o?.label).filter(Boolean);
+    return labels.length ? Array.from(new Set(labels)) : MINISTERIOS_DIRECIONAMENTO;
+  }, [opcoesForm]);
+
   const chartData = useMemo(() => {
     if (!data?.meses) return [];
     return data.meses.map(m => ({
@@ -772,7 +785,7 @@ export default function VolInscricoes() {
                     <div>
                       <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Área direcionada (onde foi de fato · pode marcar mais de uma)</label>
                       <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {MINISTERIOS_DIRECIONAMENTO.map((m) => {
+                        {Array.from(new Set([...areasDirecionamento, ...form.area_direcionada])).map((m) => {
                           const on = form.area_direcionada.includes(m);
                           return (
                             <button key={m} type="button" onClick={() => toggleMinisterio(m)}

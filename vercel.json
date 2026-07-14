@@ -42,6 +42,10 @@
       "schedule": "0 10 * * 1"
     },
     {
+      "path": "/api/public/grupos/cron/frequencia-mensal",
+      "schedule": "0 15 28 * *"
+    },
+    {
       "path": "/api/kpis/cultos/auto-create",
       "schedule": "5 3 * * 0"
     },
@@ -100,6 +104,10 @@
     {
       "path": "/api/devocional-planos/cron/enviar-diario",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/public/grupos/cron/whatsapp-fila",
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/devocional-planos/cron/lancar-semanal",

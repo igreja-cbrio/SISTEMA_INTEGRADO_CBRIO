@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { enviarEmail } = require('../services/email');
 const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
 
@@ -149,16 +150,22 @@ const CARGO_SETOR = {
   'coordenador-bridge': 'Ministerial', 'coordenador-online': 'Ministerial', 'supervisor-jornada': 'Ministerial',
   'coordenador-voluntarios': 'Ministerial',
 };
-// Cascata: kpi_areas → usuario_areas (granular.areas) → profile.area → cargo
+// Cascata: profile.area → cargo → usuario_areas (granular.areas) → kpi_areas.
+// ⚠️ A ordem importa (bug 2026-07-09: compra de gente da Gestão roteada pro
+// diretor do Criativo): kpi_areas/usuario_areas são listas LARGAS de permissão/
+// medição (uma pessoa da Gestão pode ter 'marketing' ali só pra ver KPI) — o
+// setor da pessoa vem do CADASTRO dela (profile.area) e do CARGO; as listas
+// entram por último, como resgate.
 function resolverSetorHint(user) {
-  const cands = [
-    ...(Array.isArray(user.kpi_areas) ? user.kpi_areas : []),
-    ...(Array.isArray(user.granular?.areas) ? user.granular.areas : []),
-    user.area,
-  ];
-  for (const c of cands) { const s = _setorPorArea(c); if (s) return s; }
+  const setorArea = _setorPorArea(user.area);
+  if (setorArea) return setorArea;
   const cs = user.granular?.cargoSlug;
   if (cs && CARGO_SETOR[cs]) return CARGO_SETOR[cs];
+  const cands = [
+    ...(Array.isArray(user.granular?.areas) ? user.granular.areas : []),
+    ...(Array.isArray(user.kpi_areas) ? user.kpi_areas : []),
+  ];
+  for (const c of cands) { const s = _setorPorArea(c); if (s) return s; }
   return null;
 }
 
@@ -239,10 +246,48 @@ async function coaprovadorIdsParaDiretor(diretorId) {
 // Presidente). Planejado (checkbox do solicitante) pula tudo.
 const SETOR_GESTAO = 'Gestao';
 
-// IDs dos aprovadores do carimbo de GESTÃO = diretor do setor Gestao
-// (setor_diretor) + co-aprovadores do setor (setor_coaprovadores · Eduardo +
-// Juliana). Best-effort: tabela ausente → lista vazia (degrada sem 500).
-async function aprovadoresGestaoIds() {
+// Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
+// Diego + Matheus (substitui a Diretoria de Gestão). Best-effort: tabela
+// ausente/categoria sem linha → null (cai no padrão de Gestão).
+async function overrideGestaoPorCategoria(categoria) {
+  if (!categoria) return null;
+  try {
+    const { data, error } = await supabase
+      .from('solicitacoes_categoria_aprovadores')
+      .select('profile_id, nome')
+      .eq('categoria', categoria);
+    if (error || !data || !data.length) return null;
+    return {
+      ids: [...new Set(data.map(r => r.profile_id).filter(Boolean))],
+      nomes: [...new Set(data.map(r => r.nome).filter(Boolean))],
+    };
+  } catch { return null; }
+}
+
+// Mapa completo {categoria: {ids, nomes}} · usado pela fila/contagens (1 leitura).
+async function mapaGestaoOverride() {
+  const map = {};
+  try {
+    const { data } = await supabase
+      .from('solicitacoes_categoria_aprovadores')
+      .select('categoria, profile_id, nome');
+    for (const r of data || []) {
+      if (!r.categoria || !r.profile_id) continue;
+      const m = (map[r.categoria] = map[r.categoria] || { ids: [], nomes: [] });
+      if (!m.ids.includes(r.profile_id)) m.ids.push(r.profile_id);
+      if (r.nome && !m.nomes.includes(r.nome)) m.nomes.push(r.nome);
+    }
+  } catch { /* best-effort */ }
+  return map;
+}
+
+// IDs dos aprovadores do carimbo de GESTÃO. Com `categoria` que tem override
+// (ex.: TI), retorna os aprovadores específicos; senão = diretor do setor Gestao
+// (setor_diretor) + co-aprovadores (setor_coaprovadores · Eduardo + Juliana).
+// Best-effort: tabela ausente → lista vazia (degrada sem 500).
+async function aprovadoresGestaoIds(categoria) {
+  const ov = await overrideGestaoPorCategoria(categoria);
+  if (ov && ov.ids.length) return ov.ids;
   const ids = new Set();
   try {
     const { data } = await supabase
@@ -257,8 +302,11 @@ async function aprovadoresGestaoIds() {
   return [...ids];
 }
 
-// Nomes dos aprovadores de Gestão (pro front mostrar "Eduardo ou Juliana").
-async function aprovadoresGestaoNomes() {
+// Nomes dos aprovadores de Gestão (pro front mostrar "Eduardo ou Juliana", ou
+// "Diego ou Matheus" quando a categoria tem override).
+async function aprovadoresGestaoNomes(categoria) {
+  const ov = await overrideGestaoPorCategoria(categoria);
+  if (ov && ov.nomes.length) return ov.nomes;
   const nomes = [];
   try {
     const { data } = await supabase
@@ -380,8 +428,11 @@ router.get('/', async (req, res) => {
       // é frágil) · a fila de decisão é pequena e recente por natureza.
       const isSuper = await isAdminFallback(req);
       const aprovarIds = await diretorIdsQuePodeAprovar(userId);
-      const gestaoIds = await aprovadoresGestaoIds();
-      const ehGestao = gestaoIds.includes(userId);
+      // Gestão por categoria: TI vai pro Diego/Matheus · demais pro padrão.
+      const overrideMap = await mapaGestaoOverride();
+      const defaultGestaoIds = await aprovadoresGestaoIds();
+      const aprovaGestaoDe = (cat) => (overrideMap[cat]?.ids?.length ? overrideMap[cat].ids : defaultGestaoIds).includes(userId);
+      const ehAlgumGestao = defaultGestaoIds.includes(userId) || Object.values(overrideMap).some(o => (o.ids || []).includes(userId));
       const meritoIds = await aprovadoresMeritoIds();
       const ehMerito = meritoIds.includes(userId);
 
@@ -404,7 +455,7 @@ router.get('/', async (req, res) => {
       // 2º carimbo (Gestão) só entra na fila DEPOIS que o diretor do demandante
       // aprovou a origem (regra sequencial · 2026-07-06). Aprovar antes disso
       // invertia a decisão (ops decidindo antes da área dona da demanda).
-      if (isSuper || ehGestao) queries.push(mkBase().eq('aprovacao_gestao_status', 'pendente').in('aprovacao_origem_status', ['aprovada', 'dispensada']));
+      if (isSuper || ehAlgumGestao) queries.push(mkBase().eq('aprovacao_gestao_status', 'pendente').in('aprovacao_origem_status', ['aprovada', 'dispensada']));
       if (isSuper || ehMerito) queries.push(mkBase().eq('status', 'aguardando_merito'));
 
       const results = await Promise.all(queries);
@@ -424,17 +475,20 @@ router.get('/', async (req, res) => {
 
       // Marca em cada item QUAL(is) carimbo(s) o ator tem pendente(s) — o
       // front usa pra saber o que mostrar (botão de origem, gestão ou mérito).
+      // "Aprovar" = SÓ o que está pendente PRA VOCÊ. Portão já aprovado (ou que é
+      // de outra pessoa) não aparece — inclusive pro super-admin (2026-07-13):
+      // antes o super via TODAS as filas, poluindo com pedidos já aprovados na
+      // origem que só aguardavam a Gestão de outra pessoa.
       papeisPorId = {};
       for (const d of data) {
         const papeis = [];
-        const origemPend = ['pendente', 'triagem'].includes(d.aprovacao_origem_status);
-        if (origemPend && (isSuper || (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)))) {
-          papeis.push('origem');
-        }
-        if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && (isSuper || ehGestao)) papeis.push('gestao');
-        if (d.status === 'aguardando_merito' && (isSuper || ehMerito)) papeis.push('merito');
+        if (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)) papeis.push('origem');
+        if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && aprovaGestaoDe(d.categoria)) papeis.push('gestao');
+        if (d.status === 'aguardando_merito' && ehMerito) papeis.push('merito');
         papeisPorId[d.id] = papeis;
       }
+      // Só mostra o que o ator realmente pode decidir agora (vale pra todos).
+      data = data.filter(d => (papeisPorId[d.id] || []).length);
     } else {
       let q = supabase
         .from('solicitacoes')
@@ -454,7 +508,18 @@ router.get('/', async (req, res) => {
       if (dias > 0) q = q.gte('updated_at', new Date(Date.now() - dias * 86400000).toISOString());
 
       if (mine === 'true') {
-        q = q.eq('solicitante_id', userId);
+        // "Minhas" = as que EU criei + as COMPARTILHADAS com a minha área
+        // (compartilhar_area=true e area_cliente ∈ minhas áreas). area_cliente é
+        // slug minúsculo; usuario_areas.nome vem em CAIXA → normaliza p/ minúsculo.
+        const areasView = [...new Set([
+          ...((granular?.areas) || []).map(a => String(a).toLowerCase()),
+          ...((req.user.kpi_areas) || []).map(a => String(a).toLowerCase()),
+        ])].filter(a => /^[a-z0-9_]+$/.test(a));
+        if (areasView.length) {
+          q = q.or(`solicitante_id.eq.${userId},and(compartilhar_area.eq.true,area_cliente.in.(${areasView.join(',')}))`);
+        } else {
+          q = q.eq('solicitante_id', userId);
+        }
       } else if (['admin', 'diretor'].includes(role)) {
         // Admin/diretor sees all — no filter
       } else {
@@ -580,12 +645,20 @@ router.get('/', async (req, res) => {
       return [principal, ...[...new Set(coaps)]];
     };
 
-    // Nomes dos aprovadores do 2º carimbo (Gestão) · pro front mostrar
-    // "Aguardando aprovação de Eduardo ou Juliana". Best-effort.
-    let gestaoNomes = [];
-    if ((data || []).some(d => d.aprovacao_gestao_status)) {
-      gestaoNomes = await aprovadoresGestaoNomes();
+    // Nomes do 2º carimbo POR CATEGORIA (TI → Diego/Matheus · resto → Gestão).
+    // Best-effort. Uma leitura por categoria presente na página.
+    const gestaoNomesPorCat = {};
+    for (const cat of [...new Set((data || []).filter(d => d.aprovacao_gestao_status).map(d => d.categoria))]) {
+      gestaoNomesPorCat[cat] = await aprovadoresGestaoNomes(cat);
     }
+    // "Aguardando aprovação de X" = quem está pendente AGORA (origem → gestão).
+    // Antes o front mostrava sempre o diretor de origem, mesmo depois dele
+    // aprovar (parecia que ainda esperava por ele · bug do Arthur).
+    const pendenteDe = (d) => {
+      if (['pendente', 'triagem'].includes(d.aprovacao_origem_status)) return nomesAprovadores(d);
+      if (d.aprovacao_gestao_status === 'pendente') return gestaoNomesPorCat[d.categoria] || [];
+      return [];
+    };
 
     const enriched = (data || []).map(d => ({
       ...d,
@@ -593,7 +666,8 @@ router.get('/', async (req, res) => {
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
       aprovacao_origem_aprovadores: nomesAprovadores(d),
-      aprovacao_gestao_aprovadores: d.aprovacao_gestao_status ? gestaoNomes : [],
+      aprovacao_gestao_aprovadores: d.aprovacao_gestao_status ? (gestaoNomesPorCat[d.categoria] || []) : [],
+      aprovacao_pendente_de: pendenteDe(d),
       ...(papeisPorId ? { aprovacao_papel_pendente: papeisPorId[d.id] || [] } : {}),
       marketing_tipo: tipoMap[d.marketing_tipo_id] || null,
       marketing_destino: destinoMap[d.marketing_destino_id] || null,
@@ -605,6 +679,79 @@ router.get('/', async (req, res) => {
   } catch (e) {
     console.error('[SOLICITACOES] list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar solicitações' });
+  }
+});
+
+// ── HISTÓRICO DE APROVAÇÕES ─────────────────────────────────
+// Log das DECISÕES do ator (aprovou/rejeitou · origem/gestão/mérito), pra quem
+// aprova ver o que já decidiu — a aba "Aprovar" só mostra pendências. Fonte =
+// solicitacoes_eventos (ator_id gravado por registrarEvento nos handlers de
+// aprovação/rejeição/mérito). Super-admin com ?todos=1 vê de todo mundo.
+router.get('/minhas-aprovacoes', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const isSuper = await isAdminFallback(req);
+    const dias = Math.min(parseInt(req.query.dias, 10) || 180, 730);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+    const todos = isSuper && ['1', 'true'].includes(String(req.query.todos));
+
+    let q = supabase
+      .from('solicitacoes_eventos')
+      .select('id, solicitacao_id, status_anterior, status_novo, ator_id, observacao, created_at')
+      .gte('created_at', desde)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (!todos) q = q.eq('ator_id', userId);
+    const { data: eventos, error } = await q;
+    if (error) throw error;
+
+    // Só eventos de decisão (aprovação/rejeição/mérito). Sobrestamento/retomada
+    // e mudanças de status genéricas ficam de fora.
+    const ehDecisao = (obs) => /^(aprova|rejei|reprov|m[eé]rito)/i.test((obs || '').trim());
+    const decisoes = (eventos || []).filter(e => ehDecisao(e.observacao));
+    if (!decisoes.length) return res.json([]);
+
+    const solIds = [...new Set(decisoes.map(e => e.solicitacao_id).filter(Boolean))];
+    const { data: sols } = await supabase
+      .from('solicitacoes')
+      .select('id, titulo, categoria, status, solicitante_id, valor_estimado')
+      .in('id', solIds);
+    const solMap = Object.fromEntries((sols || []).map(s => [s.id, s]));
+
+    const profIds = [...new Set([
+      ...decisoes.map(e => e.ator_id),
+      ...(sols || []).map(s => s.solicitante_id),
+    ].filter(Boolean))];
+    let profMap = {};
+    if (profIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', profIds);
+      profMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+    }
+
+    const out = decisoes.map(e => {
+      const s = solMap[e.solicitacao_id] || {};
+      const obs = e.observacao || '';
+      const decisao = /rejei|reprov/i.test(obs) ? 'rejeitada' : 'aprovada';
+      const etapa = /gest/i.test(obs) ? 'gestao' : /m[eé]rito/i.test(obs) ? 'merito' : 'origem';
+      return {
+        evento_id: e.id,
+        solicitacao_id: e.solicitacao_id,
+        titulo: s.titulo || null,
+        categoria: s.categoria || null,
+        status_atual: s.status || null,
+        valor_estimado: s.valor_estimado ?? null,
+        solicitante: s.solicitante_id ? (profMap[s.solicitante_id] || null) : null,
+        ator: e.ator_id ? (profMap[e.ator_id] || null) : null,
+        decisao,
+        etapa,
+        observacao: obs,
+        em: e.created_at,
+      };
+    });
+    res.json(out);
+  } catch (e) {
+    console.error('[SOLICITACOES] minhas-aprovacoes:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar histórico de aprovações' });
   }
 });
 
@@ -666,20 +813,26 @@ router.get('/meu-papel', async (req, res) => {
     // Fluxo BPMN (2026-07-02) · 2º carimbo (Gestão) + julgamento de mérito.
     // Flags = pertencimento real ao papel; contagens também pra super-admin
     // (fallback · ele vê/decide as filas inteiras).
-    const gestaoIds = await aprovadoresGestaoIds();
-    const ehAprovadorGestao = gestaoIds.includes(userId);
+    // Gestão por categoria (TI → Diego/Matheus). É aprovador de Gestão quem está
+    // no padrão OU em qualquer override; a contagem filtra por categoria.
+    const overrideMapMP = await mapaGestaoOverride();
+    const defaultGestaoIdsMP = await aprovadoresGestaoIds();
+    const aprovaGestaoDeMP = (cat) => (overrideMapMP[cat]?.ids?.length ? overrideMapMP[cat].ids : defaultGestaoIdsMP).includes(userId);
+    const ehAprovadorGestao = defaultGestaoIdsMP.includes(userId)
+      || Object.values(overrideMapMP).some(o => (o.ids || []).includes(userId));
     const meritoIds = await aprovadoresMeritoIds();
     const ehAprovadorMerito = meritoIds.includes(userId);
 
     let pendentesGestao = 0;
     if (ehAprovadorGestao || isSuper) {
-      const { count } = await supabase
+      const { data: gp } = await supabase
         .from('solicitacoes')
-        .select('id', { count: 'exact', head: true })
+        .select('categoria')
         .eq('aprovacao_gestao_status', 'pendente')
         .in('aprovacao_origem_status', ['aprovada', 'dispensada'])
-        .is('deleted_at', null);
-      pendentesGestao = count || 0;
+        .is('deleted_at', null)
+        .limit(1000);
+      pendentesGestao = (gp || []).filter(r => isSuper || aprovaGestaoDeMP(r.categoria)).length;
     }
     let pendentesMerito = 0;
     if (ehAprovadorMerito || isSuper) {
@@ -751,12 +904,20 @@ router.post('/', async (req, res) => {
             recorrente, recorrencia,
             // Pedido em massa (compras/serviço) · lista de itens estruturados
             itens_lista,
+            // Fotos gerais da solicitação (Serviços/Serviço externo · 2026-07-07)
+            imagens_url,
             // Marketing · Spec 010 (etiquetas) + intake por DOR (Redesenho 2026-05-30)
             marketing_tipo_id, marketing_destino_id,
             mkt_publico_alvo, mkt_ideia_inicial,
             // Fluxo BPMN (2026-07-02) · checkbox "estava no planejamento"
-            eh_planejado } = req.body;
+            eh_planejado,
+            // Visibilidade (2026-07-13) · a ÁREA vê por padrão; opt-out "manter_privada".
+            manter_privada } = req.body;
     if (!titulo || !categoria) return res.status(400).json({ error: 'Título e categoria são obrigatórios' });
+    // Regra: colegas da própria área veem a solicitação POR PADRÃO. Exceções:
+    // categorias pessoais/RH (nunca compartilham) e o opt-out "manter privada".
+    const CATEGORIAS_PRIVADAS = ['ferias', 'licenca', 'reembolso'];
+    const compartilharArea = !CATEGORIAS_PRIVADAS.includes(categoria) && !manter_privada;
     if (!ALLOWED_CATEGORIES.includes(categoria)) {
       return res.status(400).json({ error: `Categoria inválida: "${categoria}". Permitidas: ${ALLOWED_CATEGORIES.join(', ')}` });
     }
@@ -769,12 +930,19 @@ router.post('/', async (req, res) => {
         const qNum = Number(it.quantidade);
         const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
         const vNum = Number(it.valor_estimado);
+        const temValor = it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum);
+        // Semântica escolhida no form (2026-07-07): 'unitario' → normaliza pro
+        // TOTAL DA LINHA (× quantidade) antes de gravar. Sem valor_tipo (bundle
+        // antigo) = 'total' · valor já é o total da linha, não multiplica.
+        const valorLinha = temValor
+          ? (it.valor_tipo === 'unitario' ? vNum * quantidade : vNum)
+          : null;
         return {
           descricao: String(it.descricao).trim().slice(0, 500),
           quantidade,
           unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
           link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
-          valor_estimado: (it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum)) ? vNum : null,
+          valor_estimado: valorLinha,
           imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
           ordem: i,
         };
@@ -785,11 +953,22 @@ router.post('/', async (req, res) => {
       itensTexto = itensListaNorm
         .map(it => `${it.quantidade}x ${it.descricao}`)
         .join('\n');
+      // ⚠️ valor_estimado do item já está normalizado pro TOTAL DA LINHA acima
+      // (semântica 'unitario' multiplica × quantidade lá) — aqui só soma, NUNCA
+      // multiplicar de novo (caso aventais/coletes · 2026-07-07).
       const soma = itensListaNorm.reduce(
-        (acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado * it.quantidade : 0), 0);
+        (acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
       const semTotal = valorEstimadoFinal == null || valorEstimadoFinal === '' || Number(valorEstimadoFinal) === 0;
       if (semTotal && soma > 0) valorEstimadoFinal = soma;
     }
+
+    // Fotos gerais · sanitiza (só strings de URL · cap de 5 · 2000 chars cada).
+    // Só entra no insert quando tem foto → flows antigos não tocam a coluna
+    // (tolera a migration 20260707120000 ainda não aplicada).
+    const imagensNorm = (Array.isArray(imagens_url) ? imagens_url : [])
+      .filter(u => typeof u === 'string' && u.trim())
+      .slice(0, 5)
+      .map(u => u.trim().slice(0, 2000));
 
     // Auto-mapeia area_responsavel + subcategoria
     const mapa = CATEGORIA_TO_AREA_RESP[categoria] || { area: null, subcategoria: 'default' };
@@ -837,13 +1016,40 @@ router.post('/', async (req, res) => {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
     }
 
-    if (!planejado) {
-      // 2º carimbo · diretoria de Gestão (best-effort · lista vazia degrada).
-      const gestaoIds = await aprovadoresGestaoIds();
-      if (setorHint === SETOR_GESTAO || gestaoIds.includes(userId)) {
+    // Compras NÃO passam pela aprovação de origem do diretor do Criativo (Pedro
+    // Menezes) — decisão do Matheus (2026-07-13). Se a origem cairia nele,
+    // dispensa (compras já têm cotação + aprovação financeira depois). Vale só
+    // pro Criativo; os outros setores seguem aprovando suas compras normalmente.
+    if (categoria === 'compras' && rota?.diretor_id) {
+      try {
+        const { data: criativo } = await supabase.from('setor_diretor')
+          .select('diretor_id').eq('setor', 'Criativo').maybeSingle();
+        if (criativo?.diretor_id && rota.diretor_id === criativo.diretor_id) {
+          rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+            motivo: 'Compras não passam pelo diretor do Criativo' };
+        }
+      } catch (e) { console.warn('[SOLICITAÇÕES] exceção compras/Criativo:', e.message); }
+    }
+
+    // Reserva de espaço vai DIRETO pro Amaury (coordenador de operações) — sem
+    // aprovação de origem nem de gestão (2026-07-13, pedido do Matheus).
+    if (categoria === 'reserva_espaco') {
+      rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+        motivo: 'Reserva de espaço vai direto para operações (Amaury)' };
+    }
+
+    if (!planejado && categoria !== 'reserva_espaco') {
+      // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
+      // Diego/Matheus). Best-effort · lista vazia degrada.
+      const temOverride = !!(await overrideGestaoPorCategoria(categoria));
+      const gestaoIds = await aprovadoresGestaoIds(categoria);
+      const demandanteEhAprovador = gestaoIds.includes(userId);
+      // Categoria com override só dispensa se o próprio demandante é aprovador
+      // dela; categoria padrão também dispensa p/ demandante do setor Gestão.
+      if (demandanteEhAprovador || (!temOverride && setorHint === SETOR_GESTAO)) {
         gestaoStatus = 'dispensada';
-        gestaoMotivo = gestaoIds.includes(userId)
-          ? 'Demandante é aprovador de Gestão · papéis colapsam no carimbo de origem'
+        gestaoMotivo = demandanteEhAprovador
+          ? 'Demandante é aprovador do 2º carimbo · papéis colapsam no carimbo de origem'
           : 'Demandante do setor Gestão · papéis colapsam no carimbo de origem';
       } else {
         gestaoStatus = 'pendente';
@@ -862,6 +1068,7 @@ router.post('/', async (req, res) => {
         urgencia: urgencia || 'normal',
         valor_estimado: valorEstimadoFinal,
         solicitante_id: userId,
+        compartilhar_area: compartilharArea,
         area_solicitante,
         cargo_solicitante: req.user.granular?.cargoNome || null,
         // Campos novos · trigger calcula SLA e precisa_aprovacao_financeira.
@@ -895,6 +1102,8 @@ router.post('/', async (req, res) => {
         eh_urgente: !!eh_urgente,
         justificativa_urgencia: justificativa_urgencia || null,
         data_necessaria: data_necessaria || null,
+        // Fotos gerais (Serviços/Serviço externo) · só quando anexadas
+        ...(imagensNorm.length && { imagens_url: imagensNorm }),
         // Reserva de espaco
         ...(finalAreaResp === 'reserva_espaco' && {
           espaco_solicitado: espaco_solicitado || null,
@@ -1154,7 +1363,7 @@ async function aprovarOrigemHandler(req, res) {
     const podeOrigem = origemPendente && (isDiretorAlvo || isCoaprovador || isSuperAdmin);
     let ehAprovadorGestao = false;
     if (gestaoPendente) {
-      const gestaoIds = await aprovadoresGestaoIds();
+      const gestaoIds = await aprovadoresGestaoIds(atual.categoria);
       ehAprovadorGestao = gestaoIds.includes(userId);
     }
     // Regra sequencial (2026-07-06): o carimbo de Gestão só libera DEPOIS que a
@@ -1254,13 +1463,13 @@ async function aprovarOrigemHandler(req, res) {
       // Origem acabou de sair e ainda falta a Gestão → AGORA é a vez dos
       // aprovadores de Gestão (aviso adiado da criação · regra sequencial).
       if (carimbo === 'origem' && data.aprovacao_gestao_status === 'pendente') {
-        const gestaoIds = await aprovadoresGestaoIds();
+        const gestaoIds = await aprovadoresGestaoIds(data.categoria);
         if (gestaoIds.length) {
           notificar({
             modulo,
             tipo: 'solicitacao_aprovacao_gestao',
             titulo: `Aprovar solicitação (Gestão): ${data.titulo}`,
-            mensagem: `O diretor da área do demandante aprovou · agora precisa do carimbo da diretoria de Gestão.`,
+            mensagem: `O diretor da área do demandante aprovou · agora precisa do carimbo do 2º aprovador.`,
             link: '/solicitacoes?aba=aprovar',
             severidade: 'info',
             chaveDedup: `solicitacao_aprovacao_gestao_${data.id}`,
@@ -1411,6 +1620,382 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// COTAÇÕES MÚLTIPLAS (compras/serviço) · o Amaury registra VÁRIAS cotações de
+// fornecedores e, com um botão reenviável, dispara um e-mail rico ao financeiro
+// (Yago) com todas as cotações separadas + a sugerida + total, pra aprovar o
+// pagamento. Tabela `solicitacao_cotacoes`. A cotação inline antiga segue
+// preenchida com a de referência (retrocompat com telas/KPIs que a leem).
+// ══════════════════════════════════════════════════════════════════════════
+
+// Carrega a solicitação-mãe (ativa) a partir de uma cotação · reusa o gate podeCotar.
+async function carregarSolDaCotacao(cotacaoId) {
+  const { data: cot } = await supabase
+    .from('solicitacao_cotacoes').select('*').eq('id', cotacaoId).maybeSingle();
+  if (!cot) return { cot: null, sol: null };
+  const { data: sol } = await supabase
+    .from('solicitacoes').select('*').eq('id', cot.solicitacao_id).is('deleted_at', null).maybeSingle();
+  return { cot, sol };
+}
+
+function fmtBRLServer(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 'R$ 0,00';
+  return 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function escapeHtmlCot(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Lista as cotações de uma solicitação (qualquer um que já vê a solicitação).
+router.get('/:id/cotacoes', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes')
+      .select('*')
+      .eq('solicitacao_id', req.params.id)
+      .order('ordem', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[SOLICITACOES] listar-cotacoes:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar cotações' });
+  }
+});
+
+// Cria uma cotação (gate podeCotar · exige que a solicitação esteja em cotação).
+router.post('/:id/cotacoes', async (req, res) => {
+  try {
+    const { fornecedor, valor, prazo, link, observacao, anexo_url } = req.body || {};
+    const nomeForn = (fornecedor || '').trim();
+    if (!nomeForn) return res.status(400).json({ error: 'Informe o fornecedor.' });
+    const v = Number(valor);
+    if (valor == null || valor === '' || Number.isNaN(v) || v < 0) {
+      return res.status(400).json({ error: 'Informe o valor da cotação (número ≥ 0).' });
+    }
+    const { data: sol, error: getErr } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (getErr) throw getErr;
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!['compras', 'servico'].includes(sol.categoria)) {
+      return res.status(400).json({ error: 'Cotações só se aplicam a compras/serviço.' });
+    }
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar cotações.' });
+    }
+
+    // ordem = próxima posição
+    const { count } = await supabase
+      .from('solicitacao_cotacoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('solicitacao_id', sol.id);
+
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes')
+      .insert({
+        solicitacao_id: sol.id,
+        fornecedor: nomeForn,
+        valor: v,
+        prazo: (prazo || '').trim() || null,
+        link: (link || '').trim() || null,
+        observacao: (observacao || '').trim() || null,
+        anexo_url: (anexo_url || '').trim() || null,
+        ordem: count || 0,
+        created_by: req.user.userId,
+      })
+      .select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] criar-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao criar cotação' });
+  }
+});
+
+// Edita campos de uma cotação (gate via solicitação-mãe).
+router.patch('/cotacoes/:cotacaoId', async (req, res) => {
+  try {
+    const { sol } = await carregarSolDaCotacao(req.params.cotacaoId);
+    if (!sol) return res.status(404).json({ error: 'Cotação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode editar cotações.' });
+    }
+    const { fornecedor, valor, prazo, link, observacao, anexo_url } = req.body || {};
+    const updates = {};
+    if (fornecedor !== undefined) {
+      const nome = (fornecedor || '').trim();
+      if (!nome) return res.status(400).json({ error: 'Fornecedor não pode ficar vazio.' });
+      updates.fornecedor = nome;
+    }
+    if (valor !== undefined) {
+      const v = Number(valor);
+      if (Number.isNaN(v) || v < 0) return res.status(400).json({ error: 'Valor inválido.' });
+      updates.valor = v;
+    }
+    if (prazo !== undefined) updates.prazo = (prazo || '').trim() || null;
+    if (link !== undefined) updates.link = (link || '').trim() || null;
+    if (observacao !== undefined) updates.observacao = (observacao || '').trim() || null;
+    if (anexo_url !== undefined) updates.anexo_url = (anexo_url || '').trim() || null;
+    if (!Object.keys(updates).length) return res.status(400).json({ error: 'Nada para atualizar.' });
+
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes').update(updates).eq('id', req.params.cotacaoId).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] editar-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao editar cotação' });
+  }
+});
+
+// Remove uma cotação (hard delete · sem PII).
+router.delete('/cotacoes/:cotacaoId', async (req, res) => {
+  try {
+    const { sol } = await carregarSolDaCotacao(req.params.cotacaoId);
+    if (!sol) return res.status(404).json({ error: 'Cotação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode remover cotações.' });
+    }
+    const { error } = await supabase
+      .from('solicitacao_cotacoes').delete().eq('id', req.params.cotacaoId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[SOLICITACOES] remover-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao remover cotação' });
+  }
+});
+
+// Marca uma cotação como sugerida e desmarca as demais da mesma solicitação.
+router.post('/:id/cotacoes/:cotacaoId/sugerir', async (req, res) => {
+  try {
+    const { data: sol } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode marcar a cotação sugerida.' });
+    }
+    // Desmarca todas antes (respeita o índice único parcial) e marca a escolhida.
+    const { error: e1 } = await supabase
+      .from('solicitacao_cotacoes').update({ sugerida: false })
+      .eq('solicitacao_id', req.params.id).eq('sugerida', true);
+    if (e1) throw e1;
+    const { data, error } = await supabase
+      .from('solicitacao_cotacoes').update({ sugerida: true })
+      .eq('id', req.params.cotacaoId).eq('solicitacao_id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] sugerir-cotacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao marcar cotação sugerida' });
+  }
+});
+
+// Monta o HTML do e-mail de cotações pro financeiro (builder próprio · sem rodapé
+// de voluntariado). Valores em pt-BR, acentuação correta.
+function montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, catLabel, link }) {
+  const total = cotacoes.reduce((s, c) => s + (Number(c.valor) || 0), 0);
+  const dataNec = sol.data_necessaria
+    ? new Date(sol.data_necessaria).toLocaleDateString('pt-BR')
+    : null;
+
+  const linhasCot = cotacoes.map(c => {
+    const eSug = !!c.sugerida;
+    const fw = eSug ? 'font-weight:700;' : '';
+    const bg = eSug ? 'background:#e8faf6;' : '';
+    const estrela = eSug ? '★ ' : '';
+    const linkHtml = c.link
+      ? `<a href="${escapeHtmlCot(c.link)}" style="color:#00857a">abrir</a>`
+      : '<span style="color:#bbb">—</span>';
+    const obs = c.observacao
+      ? `<div style="color:#666;font-size:12px;margin-top:2px">${escapeHtmlCot(c.observacao)}</div>` : '';
+    return `<tr style="${bg}">
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;${fw}">${estrela}${escapeHtmlCot(c.fornecedor)}${obs}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;${fw}">${fmtBRLServer(c.valor)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;">${escapeHtmlCot(c.prazo || '—')}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;">${linkHtml}</td>
+    </tr>`;
+  }).join('');
+
+  const itensHtml = (itens && itens.length)
+    ? `<p style="margin:20px 0 6px;font-weight:700;color:#1a1a1a">Itens do pedido</p>
+       <table style="border-collapse:collapse;width:100%;font-size:13px">
+         <thead><tr style="background:#f5f5f5;text-align:left">
+           <th style="padding:6px 10px">Item</th>
+           <th style="padding:6px 10px;text-align:right">Qtd</th>
+         </tr></thead>
+         <tbody>${itens.map(it => `<tr>
+           <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapeHtmlCot(it.descricao)}</td>
+           <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right">${escapeHtmlCot(it.quantidade)} ${escapeHtmlCot(it.unidade || '')}</td>
+         </tr>`).join('')}</tbody>
+       </table>` : '';
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1a1a;line-height:1.5;max-width:640px">
+    <h2 style="margin:0 0 4px;font-size:18px;color:#00857a">Cotações para aprovação</h2>
+    <p style="margin:0 0 16px;color:#666">${escapeHtmlCot(sol.titulo || 'Solicitação')}</p>
+
+    <table style="border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px">
+      <tbody>
+        <tr><td style="padding:3px 0;color:#888;width:130px">Solicitante</td><td style="padding:3px 0">${escapeHtmlCot(solicitanteNome || '—')}</td></tr>
+        <tr><td style="padding:3px 0;color:#888">Categoria</td><td style="padding:3px 0">${escapeHtmlCot(catLabel || sol.categoria || '—')}</td></tr>
+        ${dataNec ? `<tr><td style="padding:3px 0;color:#888">Data necessária</td><td style="padding:3px 0">${dataNec}</td></tr>` : ''}
+      </tbody>
+    </table>
+
+    <p style="margin:16px 0 6px;font-weight:700">Cotações (${cotacoes.length})</p>
+    <table style="border-collapse:collapse;width:100%;font-size:13px">
+      <thead><tr style="background:#f5f5f5;text-align:left">
+        <th style="padding:8px 10px">Fornecedor</th>
+        <th style="padding:8px 10px;text-align:right">Valor</th>
+        <th style="padding:8px 10px">Prazo</th>
+        <th style="padding:8px 10px">Link</th>
+      </tr></thead>
+      <tbody>${linhasCot}</tbody>
+    </table>
+
+    <p style="margin:12px 0 0;font-size:13px;color:#444">
+      ${refCot ? `<strong>Sugerida:</strong> ${escapeHtmlCot(refCot.fornecedor)} — ${fmtBRLServer(refCot.valor)}<br/>` : ''}
+      <span style="color:#888">Soma de todas as cotações listadas:</span> ${fmtBRLServer(total)}
+    </p>
+
+    ${itensHtml}
+
+    ${link ? `<p style="margin:22px 0 8px"><a href="${escapeHtmlCot(link)}" style="background:#00B39D;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block">Abrir no sistema</a></p>` : ''}
+    <p style="margin:16px 0 0;color:#999;font-size:12px">Mensagem automática do sistema CBRio · módulo de Solicitações.</p>
+  </div>`;
+}
+
+// O BOTÃO · dispara o e-mail rico ao financeiro com todas as cotações (reenviável).
+router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
+  try {
+    const { data: sol, error: getErr } = await supabase
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (getErr) throw getErr;
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeCotar(req, sol))) {
+      return res.status(403).json({ error: 'Apenas a logística (ou admin) pode enviar as cotações.' });
+    }
+
+    const { data: cotacoes, error: cotErr } = await supabase
+      .from('solicitacao_cotacoes').select('*')
+      .eq('solicitacao_id', sol.id)
+      .order('ordem', { ascending: true }).order('created_at', { ascending: true });
+    if (cotErr) throw cotErr;
+    if (!cotacoes || !cotacoes.length) {
+      return res.status(400).json({ error: 'Adicione ao menos uma cotação antes de enviar ao financeiro.' });
+    }
+
+    // Referência: a sugerida; se nenhuma, a de MENOR valor.
+    const refCot = cotacoes.find(c => c.sugerida)
+      || [...cotacoes].sort((a, b) => (Number(a.valor) || 0) - (Number(b.valor) || 0))[0];
+
+    // Atualiza a solicitação (retrocompat inline + carimbo do e-mail).
+    const updates = {
+      valor_cotado: Number(refCot.valor),
+      valor_estimado: Number(refCot.valor),
+      precisa_aprovacao_financeira: true,
+      cotacao_fornecedor: refCot.fornecedor || null,
+      cotacao_observacao: refCot.observacao || null,
+      cotacao_em: new Date().toISOString(),
+      cotacao_por: req.user.userId,
+      cotacoes_email_em: new Date().toISOString(),
+      cotacoes_email_por: req.user.userId,
+    };
+    // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
+    if (sol.status === 'em_cotacao') updates.status = 'aguardando_aprovacao_financeira';
+
+    const { data: solAtualizada, error: upErr } = await supabase
+      .from('solicitacoes').update(updates).eq('id', sol.id).select('*').single();
+    if (upErr) throw upErr;
+
+    // Itens do pedido (opcional no e-mail).
+    const { data: itens } = await supabase
+      .from('solicitacao_itens').select('descricao, quantidade, unidade, ordem')
+      .eq('solicitacao_id', sol.id).order('ordem', { ascending: true });
+
+    // Nome do solicitante.
+    let solicitanteNome = null;
+    if (sol.solicitante_id) {
+      const { data: prof } = await supabase
+        .from('profiles').select('name').eq('id', sol.solicitante_id).maybeSingle();
+      solicitanteNome = prof?.name || null;
+    }
+
+    // Destinatários do financeiro: união de (a) responsáveis nominais da área
+    // 'financeiro' e (b) resolverDestinatarios('financeiro'). + CC o próprio Amaury.
+    const finProfileIds = new Set();
+    const { data: respFin } = await supabase
+      .from('area_solicitacoes_responsaveis').select('profile_id').eq('area', 'financeiro');
+    (respFin || []).forEach(r => r.profile_id && finProfileIds.add(r.profile_id));
+    const resolvidos = await resolverDestinatarios('financeiro').catch(() => []);
+    (resolvidos || []).forEach(id => id && finProfileIds.add(id));
+
+    const idsArr = [...finProfileIds];
+    let emails = [];
+    if (idsArr.length) {
+      const { data: profs } = await supabase.from('profiles').select('email').in('id', idsArr);
+      emails = (profs || []).map(p => p.email);
+    }
+    // CC o próprio solicitante do envio (Amaury).
+    let remetenteEmail = null;
+    if (req.user.userId) {
+      const { data: me } = await supabase.from('profiles').select('email').eq('id', req.user.userId).maybeSingle();
+      remetenteEmail = me?.email || null;
+    }
+    const to = [...new Set([...emails, remetenteEmail].filter(e => e && /@/.test(e)))];
+
+    const catLabel = ({ compras: 'Compras', servico: 'Serviço' })[sol.categoria] || sol.categoria;
+    const base = process.env.FRONTEND_URL || '';
+    const link = base ? `${base}/solicitacoes?id=${sol.id}` : '';
+    const html = montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, catLabel, link });
+
+    let emailResultado = { ok: false, error: 'sem destinatários' };
+    if (to.length) {
+      emailResultado = await enviarEmail({
+        to,
+        subject: `Cotações para aprovação — ${sol.titulo || 'Solicitação'}`,
+        html,
+      }).catch(e => ({ ok: false, error: e.message }));
+    }
+
+    // Notificação no sistema (email:false · o e-mail rico já foi enviado acima).
+    notificar({
+      modulo: 'financeiro',
+      tipo: 'cotacao_financeiro',
+      titulo: 'Cotações prontas para aprovação',
+      mensagem: `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
+      link: `/solicitacoes?id=${sol.id}`,
+      severidade: 'info',
+      chaveDedup: `solicitacao_cotacoes_${sol.id}`,
+      targetIds: idsArr,
+      email: false,
+    }).catch(err => console.error('[SOLICITACOES] notify cotacoes:', err.message));
+
+    if (!to.length) {
+      return res.json({
+        ok: true, email_ok: false, enviados: 0,
+        motivo: 'Nenhum e-mail de financeiro encontrado.',
+        solicitacao: solAtualizada,
+      });
+    }
+    if (!emailResultado?.ok) {
+      return res.json({
+        ok: true, email_ok: false, enviados: to.length,
+        motivo: emailResultado?.error || 'Falha no envio do e-mail.',
+        solicitacao: solAtualizada,
+      });
+    }
+    res.json({ ok: true, email_ok: true, enviados: to.length, solicitacao: solAtualizada });
+  } catch (e) {
+    console.error('[SOLICITACOES] enviar-cotacoes-financeiro:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao enviar cotações ao financeiro' });
+  }
+});
+
 // Rejeição por QUALQUER carimbo (origem OU Gestão) · motivo obrigatório ·
 // status fica imutavel (Marcos 2026-05-28 · "solicitação rejeitada não
 // reabre · cria nova").
@@ -1443,12 +2028,12 @@ async function rejeitarOrigemHandler(req, res) {
     const podeOrigem = origemPendente && (isDiretorAlvo || isCoaprovador || isSuperAdmin);
     let ehAprovadorGestao = false;
     if (gestaoPendente) {
-      const gestaoIds = await aprovadoresGestaoIds();
+      const gestaoIds = await aprovadoresGestaoIds(atual.categoria);
       ehAprovadorGestao = gestaoIds.includes(userId);
     }
     const podeGestao = gestaoPendente && (ehAprovadorGestao || isSuperAdmin);
     if (!podeOrigem && !podeGestao) {
-      return res.status(403).json({ error: 'Apenas o diretor de origem, um co-aprovador do setor ou a diretoria de Gestão pode rejeitar esta solicitação.' });
+      return res.status(403).json({ error: 'Apenas o diretor de origem, um co-aprovador do setor ou o 2º aprovador pode rejeitar esta solicitação.' });
     }
 
     const carimbo = podeOrigem ? 'origem' : 'gestao';
@@ -2151,7 +2736,7 @@ router.post('/:id/reenviar', async (req, res) => {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
-    const { titulo, descricao, justificativa, data_necessaria, resposta } = req.body || {};
+    const { titulo, descricao, justificativa, data_necessaria, resposta, itens_lista, valor_estimado } = req.body || {};
     const { data: sol } = await supabase
       .from('solicitacoes')
       .select('id, solicitante_id, status, status_antes_ajuste, sla_pausado_em, sla_resposta_deadline, sla_resolucao_deadline, categoria, titulo, area_responsavel')
@@ -2179,6 +2764,41 @@ router.post('/:id/reenviar', async (req, res) => {
     if (justificativa !== undefined) update.justificativa = justificativa;
     if (data_necessaria !== undefined) update.data_necessaria = data_necessaria || null;
 
+    // Itens do pedido (compras/serviço) · o solicitante pode ajustar a lista na
+    // devolução. Mesma normalização do POST: 'unitario' vira TOTAL DA LINHA; a
+    // soma vira o valor_estimado; itens[] (texto) fica em backward-compat.
+    const editaItens = Array.isArray(itens_lista)
+      && ['compras', 'servico'].includes(sol.categoria);
+    let itensNorm = [];
+    if (editaItens) {
+      itensNorm = itens_lista
+        .filter(it => it && String(it.descricao || '').trim())
+        .map((it, i) => {
+          const qNum = Number(it.quantidade);
+          const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
+          const vNum = Number(it.valor_estimado);
+          const temValor = it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum);
+          const valorLinha = temValor
+            ? (it.valor_tipo === 'unitario' ? vNum * quantidade : vNum)
+            : null;
+          return {
+            descricao: String(it.descricao).trim().slice(0, 500),
+            quantidade,
+            unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
+            link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
+            valor_estimado: valorLinha,
+            imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
+            ordem: i,
+          };
+        });
+      update.itens = itensNorm.length
+        ? itensNorm.map(it => `${it.quantidade}x ${it.descricao}`).join('\n')
+        : null;
+      const soma = itensNorm.reduce((acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
+      if (soma > 0) update.valor_estimado = soma;
+      else if (valor_estimado != null && valor_estimado !== '') update.valor_estimado = Number(valor_estimado) || null;
+    }
+
     // Retoma o SLA · empurra os prazos pelo tempo pausado
     if (sol.sla_pausado_em) {
       const pausaMs = Date.now() - new Date(sol.sla_pausado_em).getTime();
@@ -2191,6 +2811,18 @@ router.post('/:id/reenviar', async (req, res) => {
     const { data, error } = await supabase.from('solicitacoes')
       .update(update).eq('id', sol.id).select('*').single();
     if (error) throw error;
+
+    // Substitui os itens estruturados quando a lista foi enviada (compras/serviço).
+    // Best-effort: o pedido já foi salvo; falha aqui só loga.
+    if (editaItens) {
+      const { error: delErr } = await supabase.from('solicitacao_itens').delete().eq('solicitacao_id', sol.id);
+      if (delErr) console.error('[SOLICITACOES] reenviar · limpar itens:', delErr.message);
+      if (itensNorm.length) {
+        const rows = itensNorm.map(it => ({ ...it, solicitacao_id: sol.id }));
+        const { error: insErr } = await supabase.from('solicitacao_itens').insert(rows);
+        if (insErr) console.error('[SOLICITACOES] reenviar · gravar itens:', insErr.message);
+      }
+    }
 
     // Registra a tréplica do solicitante na linha do tempo (resposta ao ajuste pedido).
     const respostaTxt = resposta.trim();

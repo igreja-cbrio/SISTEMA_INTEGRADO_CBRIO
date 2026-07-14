@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react';
-import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight } from 'lucide-react';
+import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,7 @@ import { totemKids } from '@/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 type CultoDia = {
   culto_id: string;
@@ -102,14 +103,17 @@ function digitsTel(tel?: string | null): string | null {
 
 export default function TotemKidsPainel() {
   const { isAdmin, modulePerms } = useAuth();
+  const navigate = useNavigate();
   const [cultosDia, setCultosDia] = useState<CultoDia[]>([]);
   const [dataDia, setDataDia] = useState<string>('');
+  const [unicas, setUnicas] = useState<{ presentes: number; total: number } | null>(null);
   const [cultoSel, setCultoSel] = useState<CultoDia | null>(null);
   const cultoSelRef = useRef<string | null>(null);
   const [dados, setDados] = useState<PainelSala[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [encerrando, setEncerrando] = useState(false);
+  const [baixandoTodos, setBaixandoTodos] = useState(false);
 
   // Modal de detalhe da sala + drilldown na criança
   const [salaDetalhe, setSalaDetalhe] = useState<PainelSala | null>(null);
@@ -119,6 +123,43 @@ export default function TotemKidsPainel() {
   const [criancaSelId, setCriancaSelId] = useState<string | null>(null);
   const [criancaDet, setCriancaDet] = useState<CriancaDetalhe | null>(null);
   const [carregandoCrianca, setCarregandoCrianca] = useState(false);
+  // Check-out direto do painel
+  const [criancaSelCheckin, setCriancaSelCheckin] = useState<CriancaNaSala | null>(null);
+  const [fazendoCheckout, setFazendoCheckout] = useState(false);
+  // Check-out em lote: check-ins selecionados na lista da sala
+  const [selCheckout, setSelCheckout] = useState<Set<string>>(new Set());
+  const [checkoutLote, setCheckoutLote] = useState(false);
+
+  function toggleSel(id: string) {
+    setSelCheckout(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  }
+
+  async function fazerCheckoutSelecionados() {
+    const ids = [...selCheckout];
+    if (ids.length === 0 || checkoutLote) return;
+    setCheckoutLote(true);
+    let ok = 0;
+    try {
+      for (const checkinId of ids) {
+        try {
+          await totemKids.checkout.realizar({ checkin_id: checkinId, metodo: 'painel' });
+          ok++;
+        } catch { /* segue os demais */ }
+      }
+      toast.success(`Check-out de ${ok} criança${ok === 1 ? '' : 's'} registrado${ok === 1 ? '' : 's'}`);
+      setSelCheckout(new Set());
+      if (salaDetalhe) await abrirDetalheSala(salaDetalhe);
+      await carregar(true);
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro no check-out em lote');
+    } finally {
+      setCheckoutLote(false);
+    }
+  }
 
   const podeEncerrar = isAdmin || (modulePerms?.kids?.escrita ?? 0) >= 3;
   const podeMarcarDecisao = isAdmin || (modulePerms?.kids?.escrita ?? 0) >= 2;
@@ -135,6 +176,19 @@ export default function TotemKidsPainel() {
     }
   }
 
+  // Baixa (check-out) em massa de todos que ainda constam presentes (fim do culto / segunda).
+  async function checkoutTodos() {
+    if (!window.confirm('Dar baixa (check-out) em TODAS as crianças que ainda constam presentes? Use ao fim do culto — quem já saiu não é afetado.')) return;
+    setBaixandoTodos(true);
+    try {
+      const r: any = await totemKids.painel.checkoutTodos();
+      toast.success(`Baixa em ${r?.baixados ?? 0} criança(s).`);
+      carregar(true);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao dar baixa em todos');
+    } finally { setBaixandoTodos(false); }
+  }
+
   async function carregar(silent = false) {
     if (!silent) setRefreshing(true);
     try {
@@ -142,6 +196,7 @@ export default function TotemKidsPainel() {
       const cultos: CultoDia[] = resp?.cultos || [];
       setCultosDia(cultos);
       setDataDia(resp?.data || '');
+      setUnicas(resp?.unicas || null);
       // Mantém a seleção; senão prioriza culto aberto; senão o 1º.
       const sel =
         cultos.find(c => c.culto_id === cultoSelRef.current) ||
@@ -173,6 +228,7 @@ export default function TotemKidsPainel() {
     setSalaDetalhe(s);
     setCriancaSelId(null);
     setCriancaDet(null);
+    setSelCheckout(new Set());
     setCarregandoSala(true);
     try {
       const lista = await totemKids.painel.sala(s.sala_id, s.sessao_id);
@@ -224,6 +280,42 @@ export default function TotemKidsPainel() {
     }
   }
 
+  // Check-out da criança direto do painel ao vivo — um botão só, sem escolher
+  // qual responsável retirou (decisão do Matheus · 2026-07-07). Fecha o grupo
+  // multi-culto (backend · metodo 'painel').
+  async function fazerCheckoutPainel() {
+    if (!criancaSelCheckin || fazendoCheckout) return;
+    setFazendoCheckout(true);
+    try {
+      await totemKids.checkout.realizar({ checkin_id: criancaSelCheckin.id, metodo: 'painel' });
+      toast.success(`Check-out de ${criancaSelCheckin.crianca.nome} registrado`);
+      setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null);
+      if (salaDetalhe) await abrirDetalheSala(salaDetalhe);
+      carregar(true);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao fazer check-out');
+    } finally {
+      setFazendoCheckout(false);
+    }
+  }
+
+  // Desfaz um check-out feito sem querer → a criança volta a constar presente.
+  async function desfazerCheckoutPainel() {
+    if (!criancaSelCheckin || fazendoCheckout) return;
+    setFazendoCheckout(true);
+    try {
+      await totemKids.checkout.desfazer(criancaSelCheckin.id);
+      toast.success(`${criancaSelCheckin.crianca.nome} voltou pra sala (check-in refeito)`);
+      setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null);
+      if (salaDetalhe) await abrirDetalheSala(salaDetalhe);
+      carregar(true);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao refazer o check-in');
+    } finally {
+      setFazendoCheckout(false);
+    }
+  }
+
   async function encerrarSessao() {
     if (!cultoSel) return;
     if (!confirm(`Encerrar a sessão de ${cultoSel.culto_nome}? Vai consolidar ${cultoSel.presentes} criança(s) no culto.`)) return;
@@ -255,6 +347,7 @@ export default function TotemKidsPainel() {
   if (!cultosDia.length) {
     return (
       <div className="max-w-4xl mx-auto p-4 sm:p-6">
+        <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
         <h1 className="text-xl sm:text-2xl font-bold text-pink-700 dark:text-pink-300">Kids · Painel ao vivo</h1>
         <Card className="mt-4">
           <CardContent className="p-8 text-center">
@@ -274,6 +367,7 @@ export default function TotemKidsPainel() {
       {/* Cabeçalho */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
+          <button onClick={() => navigate('/ministerial/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-1"><ChevronLeft className="h-4 w-4" /> Voltar ao Kids</button>
           <h1 className="text-xl sm:text-2xl font-bold text-pink-700 dark:text-pink-300 leading-tight">Kids · Painel ao vivo</h1>
           <p className="text-xs sm:text-sm text-muted-foreground capitalize">
             {dataDia && format(new Date(dataDia + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
@@ -283,6 +377,13 @@ export default function TotemKidsPainel() {
           <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => carregar()} title="Atualizar">
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
+          {podeEncerrar && (unicas?.presentes ?? 0) > 0 && (
+            <Button variant="outline" size="sm" onClick={checkoutTodos} disabled={baixandoTodos}
+              title="Dar baixa (check-out) em todas as crianças que ainda constam presentes">
+              {baixandoTodos ? <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" /> : <LogOut className="h-4 w-4 sm:mr-1" />}
+              <span className="hidden sm:inline">Check-out de todos</span>
+            </Button>
+          )}
           {podeEncerrar && cultoSel?.status === 'aberta' && (
             <Button variant="destructive" size="sm" onClick={encerrarSessao} disabled={encerrando}>
               {encerrando ? <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" /> : <PowerOff className="h-4 w-4 sm:mr-1" />}
@@ -291,6 +392,21 @@ export default function TotemKidsPainel() {
           )}
         </div>
       </div>
+
+      {/* Crianças ÚNICAS no dia · sem dupla contagem de quem ficou em 2+ cultos */}
+      {unicas && (unicas.total > 0 || unicas.presentes > 0) && (
+        <div className="rounded-xl border-2 border-pink-300 dark:border-pink-800 bg-pink-50 dark:bg-pink-950/30 p-3 flex items-center gap-3">
+          <Users className="h-7 w-7 text-pink-600 shrink-0" />
+          <div>
+            <div className="text-3xl font-bold text-pink-600 leading-none">{unicas.presentes}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">crianças únicas presentes agora</div>
+          </div>
+          <div className="ml-auto text-right">
+            <div className="text-xl font-semibold leading-none">{unicas.total}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">únicas no dia (total)</div>
+          </div>
+        </div>
+      )}
 
       {/* Cultos do dia · toque pra ver cada culto */}
       <div>
@@ -399,14 +515,14 @@ export default function TotemKidsPainel() {
       </div>
 
       {/* Modal · sala → lista de crianças ↔ ficha da criança (drilldown mobile) */}
-      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); } }}>
+      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); setSelCheckout(new Set()); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0 gap-0">
           {/* ── Ficha da criança ── */}
           {criancaSelId ? (
             <>
               <DialogHeader className="p-4 pb-2 border-b">
                 <DialogTitle className="flex items-center gap-2">
-                  <button onClick={() => { setCriancaSelId(null); setCriancaDet(null); }} className="text-muted-foreground hover:text-foreground">
+                  <button onClick={() => { setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); }} className="text-muted-foreground hover:text-foreground">
                     <ChevronLeft className="h-5 w-5" />
                   </button>
                   Ficha da criança
@@ -482,6 +598,30 @@ export default function TotemKidsPainel() {
                         </div>
                       )}
                     </div>
+
+                    {/* Fazer check-out direto do painel */}
+                    {criancaSelCheckin && (
+                      criancaSelCheckin.checkout_at ? (
+                        <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-center">
+                          <p className="text-sm text-muted-foreground">Esta criança já saiu (check-out feito).</p>
+                          <p className="text-xs text-muted-foreground">Foi sem querer? Refaça o check-in:</p>
+                          <Button variant="outline" className="w-full" disabled={fazendoCheckout} onClick={desfazerCheckoutPainel}>
+                            {fazendoCheckout ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+                            Fazer check-in de novo
+                          </Button>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Fazer check-out</div>
+                          <Button className="w-full bg-pink-600 hover:bg-pink-700 text-white h-auto py-3"
+                            disabled={fazendoCheckout} onClick={fazerCheckoutPainel}>
+                            {fazendoCheckout ? <Loader2 className="h-5 w-5 mr-2 animate-spin" /> : <CheckCircle2 className="h-5 w-5 mr-2" />}
+                            Fazer check-out
+                          </Button>
+                          <p className="text-xs text-muted-foreground mt-2">Confira com quem a criança está saindo antes de confirmar.</p>
+                        </div>
+                      )
+                    )}
                   </div>
                 )}
               </div>
@@ -515,7 +655,16 @@ export default function TotemKidsPainel() {
                             ehDecisaoMarcada ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800' : 'bg-card'
                           } ${c.checkout_at ? 'opacity-60' : ''}`}
                         >
-                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => abrirCrianca(c.crianca_id)}>
+                          {!c.checkout_at && (
+                            <input
+                              type="checkbox"
+                              className="h-5 w-5 shrink-0 accent-pink-600"
+                              checked={selCheckout.has(c.id)}
+                              onChange={() => toggleSel(c.id)}
+                              aria-label={`Selecionar ${c.crianca.nome} pra check-out`}
+                            />
+                          )}
+                          <button className="flex items-center gap-3 flex-1 min-w-0 text-left" onClick={() => { setCriancaSelCheckin(c); abrirCrianca(c.crianca_id); }}>
                             {c.crianca.foto_url ? (
                               <img src={c.crianca.foto_url} alt="" className="h-10 w-10 rounded-full object-cover" />
                             ) : (
@@ -562,6 +711,33 @@ export default function TotemKidsPainel() {
                   </div>
                 )}
               </div>
+              {/* Barra de check-out em lote */}
+              {criancasNaSala.some(c => !c.checkout_at) && (
+                <div className="border-t p-3 flex items-center gap-2 bg-card">
+                  {(() => {
+                    const presentes = criancasNaSala.filter(c => !c.checkout_at);
+                    const todosSel = presentes.length > 0 && presentes.every(c => selCheckout.has(c.id));
+                    return (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => setSelCheckout(todosSel ? new Set() : new Set(presentes.map(c => c.id)))}
+                      >
+                        {todosSel ? 'Limpar' : 'Selecionar todos'}
+                      </Button>
+                    );
+                  })()}
+                  <Button
+                    className="flex-1 bg-pink-600 hover:bg-pink-700"
+                    disabled={selCheckout.size === 0 || checkoutLote}
+                    onClick={fazerCheckoutSelecionados}
+                  >
+                    {checkoutLote ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                    Fazer check-out{selCheckout.size > 0 ? ` (${selCheckout.size})` : ''}
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </DialogContent>

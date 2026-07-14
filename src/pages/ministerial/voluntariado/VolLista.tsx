@@ -7,7 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus } from 'lucide-react';
+import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X, Cake, Pencil, MessageCircle } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import Paginacao, { usePaginacaoLocal } from '@/components/Paginacao';
@@ -49,6 +51,98 @@ export default function VolLista() {
   );
 }
 
+// ── Aniversariantes da semana (parabenizar por WhatsApp) ─────────────────────
+const DOW_LBL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const BDAY_MSG_KEY = 'cbrio_vol_bday_msg';
+const BDAY_MSG_DEFAULT = 'Feliz aniversário, {nome}! 🎉 Que Deus te encha de alegria e bênçãos neste novo ano de vida. Obrigado por servir com a gente no CBRio! 💚';
+
+function waBday(tel?: string | null, msg?: string) {
+  if (!tel) return null;
+  let d = String(tel).replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length <= 11) d = '55' + d;
+  return `https://wa.me/${d}${msg ? `?text=${encodeURIComponent(msg)}` : ''}`;
+}
+
+function AniversariantesSemana() {
+  const { data } = useQuery({ queryKey: ['vol', 'aniversariantes'], queryFn: () => voluntariado.aniversariantesSemana() });
+  const rows: any[] = Array.isArray((data as any)?.rows) ? (data as any).rows : [];
+  const [msg, setMsg] = useState<string>(() => {
+    try { return localStorage.getItem(BDAY_MSG_KEY) || BDAY_MSG_DEFAULT; } catch { return BDAY_MSG_DEFAULT; }
+  });
+  const [editOpen, setEditOpen] = useState(false);
+  const [draft, setDraft] = useState(msg);
+
+  const mensagemPara = (nome: string) => {
+    const primeiro = (nome || '').trim().split(/\s+/)[0] || nome;
+    return msg.replace(/\{nome\}/g, primeiro);
+  };
+
+  return (
+    <Card className="border-[#00B39D]/30">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Cake className="h-4 w-4 text-[#00B39D]" />
+            <h3 className="font-semibold text-sm">Aniversariantes da semana</h3>
+            <Badge variant="secondary">{rows.length}</Badge>
+          </div>
+          <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setDraft(msg); setEditOpen(true); }}>
+            <Pencil className="h-3.5 w-3.5" /> Editar mensagem
+          </Button>
+        </div>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhum aniversariante nos próximos 7 dias.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map((r) => {
+              const wa = waBday(r.telefone, mensagemPara(r.nome));
+              const dataFmt = r.aniversario ? new Date(r.aniversario + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '';
+              return (
+                <div key={r.vol_profile_id} className="flex items-center gap-3 rounded-lg border px-3 py-2">
+                  <div className="h-9 w-9 rounded-full bg-[#00B39D]/10 flex items-center justify-center shrink-0">
+                    <Cake className="h-4 w-4 text-[#00B39D]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{r.nome}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {r.hoje ? <span className="text-[#00B39D] font-semibold">Hoje 🎉</span> : `${DOW_LBL[r.dow] ?? ''} · ${dataFmt}`}
+                    </p>
+                  </div>
+                  {wa ? (
+                    <a href={wa} target="_blank" rel="noopener noreferrer">
+                      <Button size="sm" className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
+                        <MessageCircle className="h-3.5 w-3.5" /> Parabenizar
+                      </Button>
+                    </a>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">sem telefone</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Mensagem de aniversário</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">Use <code className="bg-muted px-1 rounded">{'{nome}'}</code> pra inserir o primeiro nome da pessoa.</p>
+            <Textarea rows={4} value={draft} onChange={e => setDraft(e.target.value)} />
+            <p className="text-[11px] text-muted-foreground">Prévia: {draft.replace(/\{nome\}/g, 'Maria')}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancelar</Button>
+            <Button onClick={() => { setMsg(draft); try { localStorage.setItem(BDAY_MSG_KEY, draft); } catch { /* ignore */ } setEditOpen(false); toast.success('Mensagem salva.'); }}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 // ── Lista principal ──────────────────────────────────────────────────────────
 function TodosList() {
   const { data: pool = [], isLoading } = useVolunteersPool(true); // inclui arquivados p/ o card/filtro
@@ -61,6 +155,15 @@ function TodosList() {
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ full_name: '', email: '', phone: '', cpf: '' });
   const [detalheId, setDetalheId] = useState<string | null>(null);
+  const [gerenciar, setGerenciar] = useState<any | null>(null);
+  const [addTeam, setAddTeam] = useState('');
+  const { data: teamsManaged = [] } = useVolTeamsManaged();
+  const allocate = useAllocateVolunteer();
+  const removeMember = useMutation({
+    mutationFn: (tmId: string) => voluntariado.teamMembers.remove(tmId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['vol', 'volunteers-pool'] }),
+    onError: (err: any) => toast.error(err.message || 'Erro ao remover da equipe'),
+  });
 
   const createVol = useMutation({
     mutationFn: (data: typeof addForm) => voluntariado.profiles.create(data),
@@ -98,7 +201,9 @@ function TodosList() {
         v.cpf?.includes(q)
       );
     }
-    if (teamFilter !== 'all') {
+    if (teamFilter === 'none') {
+      list = list.filter(v => !((v.team_members || []).length));
+    } else if (teamFilter !== 'all') {
       list = list.filter(v =>
         (v.team_members || []).some((tm: any) => tm.team_id === teamFilter)
       );
@@ -128,6 +233,9 @@ function TodosList() {
     });
   };
 
+  // vol "vivo" (reflete add/remove após o refetch do pool)
+  const gvol = gerenciar ? ((pool as any[]).find(v => v.id === gerenciar.id) || gerenciar) : null;
+
   return (
     <>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -149,6 +257,8 @@ function TodosList() {
         </div>
       </div>
 
+      <AniversariantesSemana />
+
       <div className="flex flex-col sm:flex-row gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -158,6 +268,7 @@ function TodosList() {
           <SelectTrigger className="w-full sm:w-44"><SelectValue placeholder="Equipe" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todas equipes</SelectItem>
+            <SelectItem value="none">Sem equipe atribuída</SelectItem>
             {allTeams.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
           </SelectContent>
         </Select>
@@ -226,10 +337,17 @@ function TodosList() {
                     }
                   </div>
                 </div>
-                <div className="hidden md:block text-right shrink-0">
+                <div className="hidden md:block text-right shrink-0 min-w-0">
                   {vol.email && <p className="text-xs text-muted-foreground truncate max-w-44">{vol.email}</p>}
                   {vol.cpf && <p className="text-xs text-muted-foreground/60">{vol.cpf}</p>}
                 </div>
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 shrink-0"
+                  onClick={(e) => { e.stopPropagation(); setGerenciar(vol); }}
+                >
+                  <Users className="h-3 w-3" /> {teamsOf.length ? 'Equipe' : 'Atribuir'}
+                </Button>
               </div>
             );
           })}
@@ -272,6 +390,61 @@ function TodosList() {
               {createVol.isPending ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
               Salvar
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Gerenciar equipes do voluntário (atribuir / trocar / remover) */}
+      <Dialog open={!!gerenciar} onOpenChange={o => { if (!o) { setGerenciar(null); setAddTeam(''); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="truncate">Equipes de {gvol?.full_name}</DialogTitle>
+          </DialogHeader>
+          <div className="py-1 space-y-4">
+            <div>
+              <Label className="text-xs text-muted-foreground">Equipes atuais</Label>
+              {(gvol?.team_members || []).length ? (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {(gvol.team_members as any[]).map(tm => (
+                    <span key={tm.id} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-muted">
+                      {tm.team?.color && <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tm.team.color }} />}
+                      {tm.team?.name}{tm.position ? ` · ${tm.position.name}` : ''}
+                      <button onClick={() => removeMember.mutate(tm.id)} disabled={removeMember.isPending}
+                        className="text-muted-foreground hover:text-red-600" title="Remover desta equipe"><X className="h-3 w-3" /></button>
+                    </span>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-muted-foreground mt-1.5">Sem equipe atribuída.</p>}
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Adicionar equipe</Label>
+              <div className="flex gap-2 mt-1.5">
+                <Select value={addTeam} onValueChange={setAddTeam}>
+                  <SelectTrigger className="flex-1"><SelectValue placeholder="Escolher equipe" /></SelectTrigger>
+                  <SelectContent>
+                    {(teamsManaged as any[]).filter(t => t.is_active && !((gvol?.team_members || []).some((tm: any) => tm.team_id === t.id))).map(t => (
+                      <SelectItem key={t.id} value={t.id}>
+                        <span className="flex items-center gap-2">
+                          {t.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: t.color }} />}
+                          {t.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button className="bg-[#00B39D] hover:bg-[#00B39D]/80" disabled={!addTeam || allocate.isPending}
+                  onClick={() => allocate.mutate({ id: gvol.id, team_id: addTeam }, {
+                    onSuccess: () => { toast.success('Equipe atribuída'); setAddTeam(''); },
+                    onError: (e: any) => toast.error(e.message || 'Erro ao atribuir'),
+                  })}>
+                  {allocate.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Adicionar'}
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5">Pra trocar de equipe, remova a atual (×) e adicione a nova.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setGerenciar(null); setAddTeam(''); }}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

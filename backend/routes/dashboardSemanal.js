@@ -45,33 +45,10 @@ const INDICADORES = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers de data ISO (week)
+// Helpers de data ISO (week) · extraídos pra backend/utils/isoWeek.js
+// (mesmo código · reusados na coleta em routes/integracao.js)
 // ─────────────────────────────────────────────────────────────────────────────
-function isoWeekRange(ano, semana) {
-  // Quinta da semana ISO determina o ano ISO · usar 4 de jan e ajustar
-  const simple = new Date(Date.UTC(ano, 0, 4));
-  const dow = simple.getUTCDay() || 7; // 1..7, segunda=1
-  const isoWeek1Mon = new Date(simple);
-  isoWeek1Mon.setUTCDate(simple.getUTCDate() - dow + 1);
-  const inicio = new Date(isoWeek1Mon);
-  inicio.setUTCDate(isoWeek1Mon.getUTCDate() + (semana - 1) * 7);
-  const fim = new Date(inicio);
-  fim.setUTCDate(inicio.getUTCDate() + 6);
-  return { inicio, fim };
-}
-
-function fmtDateBr(d) {
-  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
-
-function isoWeekOf(date) {
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
-  return { ano: d.getUTCFullYear(), semana: week };
-}
+const { isoWeekRange, isoWeekOf, fmtDateBr, semanasDoMes } = require('../utils/isoWeek');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /cultos · lista service_types ativos
@@ -161,25 +138,21 @@ router.get('/semanal', async (req, res) => {
     const { data: semanaData, error } = await q;
     if (error) throw error;
 
-    // Média histórica · últimos 52 semanas anteriores à atual por service_type
-    const { inicio: inicioAtual } = isoWeekRange(ano, semana);
-    const inicioJanela = new Date(inicioAtual);
-    inicioJanela.setUTCDate(inicioJanela.getUTCDate() - 52 * 7);
-
-    // Pega janela ampla e filtra "anterior à semana atual" em JS pra simplificar
-    // Volume é trivial (1 linha por (ano, semana, tipo) · ~1000 rows em 5 anos)
+    // Média do ANO selecionado · semanas 1..(semana atual) por service_type.
+    // Antes era janela móvel de 52 semanas (cruzava o ano anterior). Pedido do
+    // Matheus (2026-07-08): a média deve ser do ANO que se está vendo — na
+    // semana 27, usa as 27 semanas do ano; a cada semana que passa, entra mais
+    // uma. Inclui a semana atual (assim a média sempre tem ≥1 ponto e o número
+    // de semanas bate com a semana ISO).
     let qHist = supabase
       .from(fonte)
       .select(`service_type_id, ${colunasView(indicadorKey).join(', ')}, ano_iso, semana_iso`)
-      .gte('ano_iso', ano - 1)
-      .lte('ano_iso', ano);
+      .eq('ano_iso', ano)
+      .lte('semana_iso', semana);
     if (cultoId) qHist = qHist.eq('service_type_id', cultoId);
     const { data: histDataRaw, error: errHist } = await qHist;
     if (errHist) throw errHist;
-    const histData = (histDataRaw || []).filter(r => {
-      if (r.ano_iso < ano) return true;
-      return r.ano_iso === ano && r.semana_iso < semana;
-    });
+    const histData = histDataRaw || [];
 
     // Agrupa histórico por service_type
     const histPorTipo = new Map();
@@ -213,13 +186,14 @@ router.get('/semanal', async (req, res) => {
     // Indicadores de Kids não se aplicam a cultos sem ministério infantil
     // (AMI, Bridge · has_kids=false). Remove pra não poluir o gráfico com zeros.
     let itemsVisiveis = items;
+    let excluirKids = new Set();
     if (indicadorKey.includes('kids')) {
       const { data: semKids } = await supabase
         .from('vol_service_types')
         .select('id')
         .eq('has_kids', false);
-      const excluir = new Set((semKids || []).map(s => s.id));
-      itemsVisiveis = items.filter(it => !excluir.has(it.service_type_id));
+      excluirKids = new Set((semKids || []).map(s => s.id));
+      itemsVisiveis = items.filter(it => !excluirKids.has(it.service_type_id));
     }
 
     // Ordem lógica dos cultos: Quarta -> Bridge/AMI (sab) -> Domingos.
@@ -233,8 +207,24 @@ router.get('/semanal', async (req, res) => {
     });
 
     const total = itemsVisiveis.reduce((s, i) => s + i.valor_absoluto, 0);
-    const sumMedias = itemsVisiveis.reduce((s, i) => s + i.media, 0);
-    const mediaGeral = itemsVisiveis.length ? Math.round(sumMedias / itemsVisiveis.length) : 0;
+
+    // Média Histórica = média (nas semanas do ano COM dado) do TOTAL semanal,
+    // isto é, a SOMA dos valores dos blocos/cultos visíveis em cada semana.
+    // É a MESMA base do "total" exibido. Antes era a média das médias por bloco
+    // dividida pelo nº de blocos → no modo "Todos" o resultado ficava MENOR que
+    // a média de um único turno (impossível: a média de um turno não pode ser
+    // maior que a de todos). Respeita o filtro de culto (histData já vem
+    // filtrado por service_type_id) e a exclusão de cultos sem Kids.
+    const totaisPorSemana = new Map();
+    for (const r of histData) {
+      if (excluirKids.has(r.service_type_id)) continue;
+      const v = somaColunas(r, colunasView(indicadorKey));
+      totaisPorSemana.set(r.semana_iso, (totaisPorSemana.get(r.semana_iso) || 0) + v);
+    }
+    const totaisSemana = [...totaisPorSemana.values()];
+    const mediaGeral = totaisSemana.length
+      ? Math.round(totaisSemana.reduce((s, v) => s + v, 0) / totaisSemana.length)
+      : 0;
     const variacao_pct = mediaGeral > 0 ? Math.round(((total - mediaGeral) / mediaGeral) * 100) : 0;
     const totalPresencial = itemsVisiveis.reduce((s, i) => s + (i.total_presencial || 0), 0);
     const taxa_ocupacao_geral = indDef.usa_ocupacao
@@ -278,6 +268,8 @@ router.get('/semanal', async (req, res) => {
         media_geral: mediaGeral,
         variacao_pct,
         taxa_ocupacao_geral,
+        // Nº de semanas do ano usadas na média (pro rótulo "média de N semanas").
+        media_semanas_base: new Set((histData || []).map(r => r.semana_iso)).size,
         ...volResumo,
       },
       meta: meta ? { id: meta.id, meta_valor: Number(meta.meta_valor), rotulo: meta.rotulo } : null,
@@ -406,6 +398,61 @@ router.get('/voluntariado-composicao', async (req, res) => {
 //             pior:   { semana, total, label, início, fim } | null,
 //             amostra }
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /serie · série semanal BRUTA do ano (total do indicador por semana ISO)
+//   query: ano, indicador, culto (uuid | 'todos')
+// Criado pro app CBRio Staff (detalhe histórico por culto + médias no cliente).
+// Mesma mecânica do /ranking, mas devolve a série inteira em vez de top/bottom.
+// Resposta: { ano, indicador, rotulo, serie: [{ semana, total, inicio, fim }] }
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/serie', async (req, res) => {
+  try {
+    const ano = parseInt(req.query.ano, 10);
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    if (!ano) return res.status(400).json({ error: 'ano é obrigatório' });
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    let q = supabase
+      .from(fonteView(indicadorKey))
+      .select(`service_type_id, semana_iso, ${colunasView(indicadorKey).join(', ')}`)
+      .eq('ano_iso', ano);
+    if (cultoId) q = q.eq('service_type_id', cultoId);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Indicadores de Kids não se aplicam a cultos sem ministério infantil
+    let excluir = new Set();
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      excluir = new Set((semKids || []).map(s => s.id));
+    }
+
+    const porSemana = new Map();
+    for (const r of (data || [])) {
+      if (excluir.has(r.service_type_id)) continue;
+      const v = somaColunas(r, colunasView(indicadorKey));
+      porSemana.set(r.semana_iso, (porSemana.get(r.semana_iso) || 0) + v);
+    }
+
+    const serie = [...porSemana.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([semana, total]) => {
+        const { inicio, fim } = isoWeekRange(ano, semana);
+        return { semana, total, inicio: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+      });
+
+    res.json({ ano, indicador: indicadorKey, rotulo: indDef.rotulo, serie });
+  } catch (e) {
+    console.error('[DASH-SEM] serie', e.message);
+    res.status(500).json({ error: 'Erro ao montar série semanal' });
+  }
+});
+
 router.get('/ranking', async (req, res) => {
   try {
     const ano = parseInt(req.query.ano, 10);
@@ -467,6 +514,190 @@ router.get('/ranking', async (req, res) => {
   } catch (e) {
     console.error('[DASH-SEM] ranking', e.message);
     res.status(500).json({ error: 'Erro ao calcular ranking de semanas' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /media-mes · média SEMANAL do indicador no mês calendário
+//   query: ano, mes (calendário · default hoje), indicador, culto (opcional)
+//
+// Consumido pelo app CBRio Staff: a comparação do Painel do app é "frequência
+// absoluta da semana selecionada × média semanal do MÊS selecionado" (pedido
+// da gestão · 2026-07-10). NÃO muda o /semanal — a "média do ano" de lá segue
+// sendo a régua do dashboard web (pedido do Matheus · 2026-07-08).
+//
+// "Semanas do mês" = semanas ISO cujo DOMINGO cai no mês (regra do Marcos no
+// /metas/sugerir). A média considera só semanas com total > 0 (semanas futuras
+// do mês corrente não zeram a média).
+// ─────────────────────────────────────────────────────────────────────────────
+const MESES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+router.get('/media-mes', async (req, res) => {
+  try {
+    const hoje = new Date();
+    const ano = parseInt(req.query.ano, 10) || hoje.getUTCFullYear();
+    const mes = parseInt(req.query.mes, 10) || (hoje.getUTCMonth() + 1);
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    if (mes < 1 || mes > 12) return res.status(400).json({ error: 'mês inválido' });
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    // Pares {ano_iso, semana} do mês · nas bordas o ano_iso pode diferir do
+    // ano calendário (S52/53 terminando em janeiro · S1 começando em dezembro).
+    const pares = semanasDoMes(ano, mes);
+    const cols = colunasView(indicadorKey);
+
+    let q = supabase
+      .from(fonteView(indicadorKey))
+      .select(`service_type_id, ano_iso, semana_iso, ${cols.join(', ')}`)
+      .in('ano_iso', [...new Set(pares.map(p => p.ano_iso))])
+      .in('semana_iso', [...new Set(pares.map(p => p.semana))]);
+    if (cultoId) q = q.eq('service_type_id', cultoId);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Indicadores de Kids não se aplicam a cultos sem ministério infantil
+    let excluir = new Set();
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      excluir = new Set((semKids || []).map(s => s.id));
+    }
+
+    const chave = (a, s) => `${a}-${s}`;
+    const validas = new Set(pares.map(p => chave(p.ano_iso, p.semana)));
+    const porSemana = new Map();
+    for (const r of (data || [])) {
+      const k = chave(r.ano_iso, r.semana_iso);
+      if (!validas.has(k)) continue; // .in() cruzado pode trazer combinação fora do mês
+      if (excluir.has(r.service_type_id)) continue;
+      porSemana.set(k, (porSemana.get(k) || 0) + somaColunas(r, cols));
+    }
+
+    const semanas = pares.map(p => {
+      const { inicio, fim } = isoWeekRange(p.ano_iso, p.semana);
+      return {
+        ano_iso: p.ano_iso,
+        semana: p.semana,
+        total: porSemana.get(chave(p.ano_iso, p.semana)) || 0,
+        inicio: inicio.toISOString().slice(0, 10),
+        fim: fim.toISOString().slice(0, 10),
+      };
+    });
+    const comDado = semanas.filter(s => s.total > 0);
+    const totalMes = comDado.reduce((s, x) => s + x.total, 0);
+
+    res.json({
+      ano,
+      mes,
+      mes_nome: MESES_NOME[mes - 1],
+      indicador: indicadorKey,
+      rotulo: indDef.rotulo,
+      semanas,
+      media_semanal: comDado.length ? Math.round(totalMes / comDado.length) : 0,
+      total_mes: totalMes,
+      semanas_base: comDado.length,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] media-mes', e.message);
+    res.status(500).json({ error: 'Erro ao calcular média semanal do mês' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /culto/:serviceTypeId/historico · série semanal de UM culto no ano
+//   query: ano (ISO · default ano ISO de hoje), indicador
+//
+// Consumido pela tela de detalhe do culto no app CBRio Staff: série do ano +
+// melhor/pior semana + média semanal. Lê a mesma vw_dashboard_semanal (1 linha
+// por service_type × semana); só semanas com total > 0 entram.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/culto/:serviceTypeId/historico', async (req, res) => {
+  try {
+    const { serviceTypeId } = req.params;
+    const ano = parseInt(req.query.ano, 10) || isoWeekOf(new Date()).ano;
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+
+    const { data: st, error: errSt } = await supabase
+      .from('vol_service_types')
+      .select('id, name, color, recurrence_day, recurrence_time, has_kids')
+      .eq('id', serviceTypeId)
+      .maybeSingle();
+    if (errSt) throw errSt;
+    if (!st) return res.status(404).json({ error: 'Culto não encontrado' });
+
+    const capacidade = capacidadeCulto(st.name);
+    const base = {
+      ano,
+      indicador: indicadorKey,
+      rotulo: indDef.rotulo,
+      culto: {
+        id: st.id,
+        nome: st.name,
+        cor: st.color,
+        recurrence_day: st.recurrence_day,
+        recurrence_time: st.recurrence_time,
+        capacidade,
+      },
+    };
+
+    if (indicadorKey.includes('kids') && !st.has_kids) {
+      return res.json({
+        ...base, serie: [], melhor: null, pior: null, media_semanal: 0, amostra: 0,
+        aviso: 'Este culto não tem ministério infantil',
+      });
+    }
+
+    const cols = colunasView(indicadorKey);
+    const { data, error } = await supabase
+      .from(fonteView(indicadorKey))
+      .select(`semana_iso, ${cols.join(', ')}`)
+      .eq('service_type_id', serviceTypeId)
+      .eq('ano_iso', ano);
+    if (error) throw error;
+
+    const porSemana = new Map();
+    for (const r of (data || [])) {
+      porSemana.set(r.semana_iso, (porSemana.get(r.semana_iso) || 0) + somaColunas(r, cols));
+    }
+
+    const serie = [...porSemana.entries()]
+      .filter(([, total]) => total > 0)
+      .sort((a, b) => a[0] - b[0])
+      .map(([semana, total]) => {
+        const { inicio, fim } = isoWeekRange(ano, semana);
+        const item = {
+          semana,
+          total,
+          inicio: inicio.toISOString().slice(0, 10),
+          fim: fim.toISOString().slice(0, 10),
+          label: `Sem ${semana} · ${fmtDateBr(inicio)} a ${fmtDateBr(fim)}`,
+        };
+        if (indDef.usa_ocupacao) {
+          item.taxa_ocupacao = Math.round((total / capacidade) * 1000) / 10;
+        }
+        return item;
+      });
+
+    if (!serie.length) {
+      return res.json({ ...base, serie: [], melhor: null, pior: null, media_semanal: 0, amostra: 0 });
+    }
+
+    const resumir = (s) => ({ semana: s.semana, total: s.total, label: s.label, inicio: s.inicio, fim: s.fim });
+    const melhor = resumir(serie.reduce((a, b) => (b.total > a.total ? b : a)));
+    const pior = resumir(serie.reduce((a, b) => (b.total < a.total ? b : a)));
+    const media = Math.round(serie.reduce((s, x) => s + x.total, 0) / serie.length);
+
+    res.json({ ...base, serie, melhor, pior, media_semanal: media, amostra: serie.length });
+  } catch (e) {
+    console.error('[DASH-SEM] culto historico', e.message);
+    res.status(500).json({ error: 'Erro ao montar histórico do culto' });
   }
 });
 

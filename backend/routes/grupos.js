@@ -9,6 +9,8 @@ const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { importarParticipantes } = require('../services/gruposImporter');
+const { notificarPessoaAprovada, notificarPessoaSugestao } = require('../services/gruposWhatsapp');
+const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -113,7 +115,7 @@ router.get('/', async (req, res) => {
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
-      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').is('deleted_at', null).in('id', liderIds);
+      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, telefone, foto_url').is('deleted_at', null).in('id', liderIds);
       (lideres || []).forEach(l => { lideresMap[l.id] = l; });
     }
 
@@ -132,6 +134,7 @@ router.get('/', async (req, res) => {
       ...g,
       membros_count: contagem[g.id] || 0,
       lider_nome: lideresMap[g.lider_id]?.nome || null,
+      lider_telefone: lideresMap[g.lider_id]?.telefone || null,
       lider_foto: lideresMap[g.lider_id]?.foto_url || null,
       grupo_origem_nome: origensMap[g.grupo_origem_id] || null,
     }));
@@ -867,24 +870,24 @@ router.post('/:id/pedidos', async (req, res) => {
       } catch (notifErr) { console.error('[Pedidos notify]', notifErr.message); }
     })();
 
+    // Linha do tempo do pedido (histórico da caixa de entrada)
+    registrarEventoPedido(data.id, 'criado', { origem: data.origem || 'cadastro_interno' }, req.user?.name || null);
+
     res.json(data);
   } catch (e) { console.error('[Pedidos create]', e.message); res.status(500).json({ error: 'Erro ao criar pedido' }); }
 });
 
-// GET /api/grupos/pedidos/list — lista pedidos (opcional: status, grupo_id, mine=true)
+// GET /api/grupos/pedidos/list — lista pedidos (opcional: status, grupo_id,
+// mine=true, desde=ISO). Pagina internamente além do cap de 1000 do PostgREST
+// (o volume de uma temporada passa de 1000 e cortaria linhas em silêncio) e
+// marca `veio_next` — a label de origem da caixa de entrada unificada.
 router.get('/pedidos/list', async (req, res) => {
   try {
-    const { status, grupo_id, mine } = req.query;
-    let query = supabase.from('mem_grupo_pedidos')
-      .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, mem_membros!lider_id(id, nome))')
-      .order('created_at', { ascending: false });
-
-    if (status) query = query.eq('status', status);
-    if (grupo_id) query = query.eq('grupo_id', grupo_id);
+    const { status, grupo_id, mine, desde } = req.query;
 
     // mine=true filtra por grupos onde o user logado e o líder
+    let grupoIdsMine = null;
     if (mine === 'true') {
-      // Resolve mem_membros.id do user via vol_profiles.membresia_id ou email match
       const { data: prof } = await supabase
         .from('vol_profiles')
         .select('membresia_id')
@@ -893,15 +896,123 @@ router.get('/pedidos/list', async (req, res) => {
       const minhaMembresiaId = prof?.membresia_id;
       if (!minhaMembresiaId) return res.json([]);
       const { data: meusGrupos } = await supabase.from('mem_grupos').select('id').eq('lider_id', minhaMembresiaId).eq('ativo', true).is('deleted_at', null);
-      const ids = (meusGrupos || []).map(g => g.id);
-      if (!ids.length) return res.json([]);
-      query = query.in('grupo_id', ids);
+      grupoIdsMine = (meusGrupos || []).map(g => g.id);
+      if (!grupoIdsMine.length) return res.json([]);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-    res.json(data || []);
+    const desdeISO = desde && !Number.isNaN(new Date(desde).getTime())
+      ? new Date(desde).toISOString() : null;
+
+    // Query objects do supabase-js são de uso único — o builder recria por página.
+    const montar = () => {
+      let q = supabase.from('mem_grupo_pedidos')
+        .select('*, mem_grupos(id, nome, codigo, bairro, lider_id, capacidade, aceitando_inscricoes, mem_membros!lider_id(id, nome))')
+        .order('created_at', { ascending: false });
+      if (status) q = q.eq('status', status);
+      if (grupo_id) q = q.eq('grupo_id', grupo_id);
+      if (grupoIdsMine) q = q.in('grupo_id', grupoIdsMine);
+      if (desdeISO) q = q.gte('created_at', desdeISO);
+      return q;
+    };
+
+    const PAGE = 1000;
+    const MAX = 5000; // teto de sanidade — bem acima de uma temporada inteira
+    let rows = [];
+    for (let offset = 0; offset < MAX; offset += PAGE) {
+      const { data, error } = await montar().range(offset, offset + PAGE - 1);
+      if (error) throw error;
+      rows = rows.concat(data || []);
+      if (!data || data.length < PAGE) break;
+    }
+
+    // Ocupação atual dos grupos com pedido em aberto — alimenta o aviso de
+    // capacidade no frontend (capacidade é conselho, não trava).
+    const abertos = rows.filter(p => ['pendente', 'devolvido'].includes(p.status));
+    const grupoIds = [...new Set(abertos.map(p => p.grupo_id).filter(Boolean))].slice(0, 50);
+    const ocupacao = {};
+    await Promise.all(grupoIds.map(async (gid) => {
+      const { count } = await supabase.from('mem_grupo_membros')
+        .select('id', { count: 'exact', head: true })
+        .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null);
+      ocupacao[gid] = count || 0;
+    }));
+    rows.forEach(p => {
+      if (p.mem_grupos && ocupacao[p.grupo_id] !== undefined) p.mem_grupos.membros_ativos = ocupacao[p.grupo_id];
+    });
+
+    // Track de origem (label "Next"): pessoa com encaminhamento do Next
+    // batendo por membro ou telefone — cobre também quem foi direcionada
+    // pelo Next e depois se inscreveu sozinha pelo form.
+    try {
+      const { data: encs } = await supabase.from('jornada_encaminhamentos')
+        .select('membro_id, telefone')
+        .eq('destino', 'grupos').eq('origem', 'next').is('deleted_at', null)
+        .limit(2000);
+      const membrosNext = new Set((encs || []).map(e => e.membro_id).filter(Boolean));
+      const telsNext = new Set((encs || []).map(e => String(e.telefone || '').replace(/\D+/g, '')).filter(t => t.length >= 10));
+      rows.forEach(p => {
+        const tel = String(p.telefone || '').replace(/\D+/g, '');
+        p.veio_next = Boolean((p.membro_id && membrosNext.has(p.membro_id)) || (tel.length >= 10 && telsNext.has(tel)));
+      });
+    } catch (e) { console.error('[Pedidos list veio_next]', e.message); }
+
+    res.json(rows);
   } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
+});
+
+// GET /api/grupos/pedidos/resumo — cockpit da caixa de entrada (Nana):
+// pedidos de hoje, pendentes com envelhecimento, decididos em 30 dias e
+// tempo médio de resposta. Leitura agregada, sem PII além de contagens.
+router.get('/pedidos/resumo', async (req, res) => {
+  try {
+    const agora = Date.now();
+    const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
+    const d30 = new Date(agora - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const h24 = new Date(agora - 24 * 60 * 60 * 1000).toISOString();
+    const h72 = new Date(agora - 72 * 60 * 60 * 1000).toISOString();
+
+    const contar = async (mod) => {
+      let q = supabase.from('mem_grupo_pedidos').select('id', { count: 'exact', head: true }).is('deleted_at', null);
+      q = mod(q);
+      const { count } = await q;
+      return count || 0;
+    };
+
+    const [hoje, pendentes, pend24, pend72, aprov30, rejei30] = await Promise.all([
+      contar(q => q.gte('created_at', hoje0.toISOString())),
+      contar(q => q.eq('status', 'pendente')),
+      contar(q => q.eq('status', 'pendente').lt('created_at', h24)),
+      contar(q => q.eq('status', 'pendente').lt('created_at', h72)),
+      contar(q => q.eq('status', 'aprovado').gte('decidido_em', d30)),
+      contar(q => q.eq('status', 'rejeitado').gte('decidido_em', d30)),
+    ]);
+
+    // Pendente mais antigo + tempo médio de decisão (últimos 30d)
+    const { data: maisAntigo } = await supabase.from('mem_grupo_pedidos')
+      .select('created_at').eq('status', 'pendente').is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(1).maybeSingle();
+    const { data: decididos } = await supabase.from('mem_grupo_pedidos')
+      .select('created_at, decidido_em').in('status', ['aprovado', 'rejeitado'])
+      .gte('decidido_em', d30).is('deleted_at', null).limit(1000);
+    let tempoMedioHoras = null;
+    if (decididos?.length) {
+      const soma = decididos.reduce((acc, p) => acc + (new Date(p.decidido_em) - new Date(p.created_at)), 0);
+      tempoMedioHoras = Math.round(soma / decididos.length / 36e5 * 10) / 10;
+    }
+
+    res.json({
+      hoje,
+      pendentes,
+      pendentes_24h: pend24,
+      pendentes_72h: pend72,
+      aprovados_30d: aprov30,
+      rejeitados_30d: rejei30,
+      mais_antigo_dias: maisAntigo
+        ? Math.floor((agora - new Date(maisAntigo.created_at)) / 864e5)
+        : null,
+      tempo_medio_horas: tempoMedioHoras,
+    });
+  } catch (e) { console.error('[Pedidos resumo]', e.message); res.status(500).json({ error: 'Erro ao carregar o resumo' }); }
 });
 
 // GET /api/grupos/pedidos/count — contador de pedidos pendentes do user logado
@@ -1086,14 +1197,16 @@ router.get('/:id/historico-membros', async (req, res) => {
   }
 });
 
-// POST /api/grupos/pedidos/:pedidoId/aprovar
-router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (req, res) => {
-  try {
+// Núcleo da aprovação de pedido — compartilhado pelo endpoint individual e
+// pelo lote (aprovar-lote). Não toca no res: devolve { ok: true } ou
+// { ok: false, code, error }.
+async function aprovarPedidoCore(pedidoId, user) {
     const { data: pedido, error: ePedido } = await supabase.from('mem_grupo_pedidos')
-      .select('*').eq('id', req.params.pedidoId).single();
-    if (ePedido) throw ePedido;
+      .select('*').eq('id', pedidoId).maybeSingle();
+    if (ePedido) throw ePedido; // erro de infra → 500 no chamador (não é "não encontrado")
+    if (!pedido) return { ok: false, code: 404, error: 'Pedido não encontrado' };
     if (pedido.status !== 'pendente') {
-      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+      return { ok: false, code: 409, error: `Pedido já foi ${pedido.status}` };
     }
 
     let membroId = pedido.membro_id;
@@ -1110,11 +1223,25 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
         if (cad.duplicado_de_id) {
           membroId = cad.duplicado_de_id;
         } else {
+          // nao_vincular_fraco = a pessoa afirmou "não sou eu" na inscrição —
+          // o matcher só pode religar por CPF (nunca por e-mail/telefone de família).
           const r = await acharOuCriarGuardado({
             cpf: cad.cpf, email: cad.email, telefone: cad.telefone, nome: cad.nome,
-            extra: { data_nascimento: cad.data_nascimento || null },
-          });
+            extra: { data_nascimento: cad.data_nascimento || null, foto_url: cad.foto_url || null, genero: cad.genero || null },
+          }, { soChaveForte: cad.nao_vincular_fraco === true });
           membroId = r.membro_id;
+        }
+        // Carrega foto, sexo e nascimento do cadastro público pro membro quando
+        // ele ainda não os tem — vale pro recém-criado e pro ligado por dedup.
+        if ((cad.foto_url || cad.genero || cad.data_nascimento) && membroId) {
+          const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
+          if (mem) {
+            const upd = {};
+            if (cad.foto_url && !mem.foto_url) upd.foto_url = cad.foto_url;
+            if (cad.genero && !mem.genero) upd.genero = cad.genero;
+            if (cad.data_nascimento && !mem.data_nascimento) upd.data_nascimento = cad.data_nascimento;
+            if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+          }
         }
         // Marca cadastro como aprovado
         await supabase.from('mem_cadastros_pendentes')
@@ -1123,34 +1250,91 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
     }
 
     if (!membroId) {
-      return res.status(400).json({ error: 'Pedido sem membro nem cadastro pendente valido' });
+      return { ok: false, code: 400, error: 'Pedido sem membro nem cadastro pendente valido' };
     }
 
-    // Fecha participação anterior do membro
-    await supabase.from('mem_grupo_membros')
-      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: 'Trocou de grupo via aprovação' })
-      .eq('membro_id', membroId).is('saiu_em', null);
-
-    // Cria nova participação
-    await supabase.from('mem_grupo_membros').insert({
-      grupo_id: pedido.grupo_id, membro_id: membroId,
-      entrou_em: new Date().toISOString().slice(0, 10),
-    });
-
-    // Atualiza pedido
-    await supabase.from('mem_grupo_pedidos').update({
+    // Trava anti-corrida: o UPDATE condicional em status='pendente' é atômico
+    // no banco — só UM decisor "reivindica" o pedido (aprovação logada × lote
+    // × link do WhatsApp podem correr em paralelo). Quem perde recebe 409.
+    // O guard de grupo_id cobre a realocação: se o pedido foi movido pra outro
+    // grupo entre a leitura e o claim, esta aprovação não vale mais (o vínculo
+    // iria pro grupo antigo com o pedido apontando pro novo).
+    const { data: claimed, error: eClaim } = await supabase.from('mem_grupo_pedidos').update({
       status: 'aprovado',
-      decidido_por: req.user.userId,
-      decidido_por_nome: req.user.name,
+      decidido_por: user.userId,
+      decidido_por_nome: user.name,
       decidido_em: new Date().toISOString(),
       membro_id: membroId,
-    }).eq('id', pedido.id);
+      // CHECK chk_pedido_um_solicitante é XOR estrito (membro OU cadastro):
+      // com o membro resolvido/promovido, o ponteiro pro cadastro precisa ser
+      // limpo no MESMO update — senão 23514 (o cadastro em si segue guardado).
+      cadastro_pendente_id: null,
+    }).eq('id', pedido.id).eq('status', 'pendente').eq('grupo_id', pedido.grupo_id).select('id');
+    if (eClaim) throw eClaim;
+    if (!claimed || !claimed.length) {
+      return { ok: false, code: 409, error: 'Pedido já foi decidido por outra pessoa' };
+    }
+
+    // Multi-grupo é permitido (uma pessoa participa de vários grupos ao mesmo
+    // tempo), então aprovar um pedido NÃO fecha as participações da pessoa em
+    // outros grupos — só a inscreve NESTE grupo. Idempotente: se já houver um
+    // vínculo ativo neste grupo, não cria outro. Se o vínculo falhar, o pedido
+    // volta pra pendente (não fica "aprovado" sem a pessoa no roster).
+    try {
+      const { data: jaAtivo } = await supabase.from('mem_grupo_membros')
+        .select('id').eq('grupo_id', pedido.grupo_id).eq('membro_id', membroId)
+        .is('saiu_em', null).is('deleted_at', null).limit(1);
+      if (!jaAtivo || !jaAtivo.length) {
+        const { error: eVinc } = await supabase.from('mem_grupo_membros').insert({
+          grupo_id: pedido.grupo_id, membro_id: membroId,
+          entrou_em: new Date().toISOString().slice(0, 10),
+        });
+        if (eVinc) throw eVinc;
+      }
+    } catch (e) {
+      await supabase.from('mem_grupo_pedidos').update({
+        status: 'pendente', decidido_por: null, decidido_por_nome: null, decidido_em: null,
+      }).eq('id', pedido.id);
+      throw e;
+    }
+
+    // Linha do tempo + status dinâmico (Marcos · 13/07): registra o "aprovado"
+    // e fecha os OUTROS pedidos abertos da MESMA pessoa como "aprovada em outro
+    // grupo" (match só por membro/cadastro — nunca telefone, que família
+    // compartilha). Tolerante à migration pendente (falha silenciosa).
+    (async () => {
+      try {
+        const { data: gAlvo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).maybeSingle();
+        await registrarEventoPedido(pedido.id, 'aprovado', { grupo: gAlvo?.nome || null }, user?.name || null);
+
+        const ors = [];
+        if (membroId) ors.push(`membro_id.eq.${membroId}`);
+        if (pedido.cadastro_pendente_id) ors.push(`cadastro_pendente_id.eq.${pedido.cadastro_pendente_id}`);
+        if (!ors.length) return;
+        const { data: abertos } = await supabase.from('mem_grupo_pedidos')
+          .select('id')
+          .neq('id', pedido.id)
+          .in('status', ['pendente', 'devolvido', 'encaminhado'])
+          .or(ors.join(','));
+        for (const outro of (abertos || [])) {
+          const { data: fechado } = await supabase.from('mem_grupo_pedidos').update({
+            status: 'cancelado',
+            resolvido_grupo_id: pedido.grupo_id,
+            decidido_em: new Date().toISOString(),
+            decidido_por_nome: 'Sistema · aprovada em outro grupo',
+          }).eq('id', outro.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+          if (fechado && fechado.length) {
+            await registrarEventoPedido(outro.id, 'resolvido_outro_grupo', { grupo: gAlvo?.nome || null }, user?.name || null);
+          }
+        }
+      } catch (e) { console.error('[Pedido aprovado · eventos]', e.message); }
+    })();
 
     // Fluxo de boas-vindas: notifica a pessoa (rica) e o líder (novo membro)
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos')
-          .select('id, nome, codigo, dia_semana, horario, local, complemento, bairro, lider_id')
+          .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, lider_id')
           .eq('id', pedido.grupo_id).single();
         if (!grupo) return;
         let liderNome = null;
@@ -1170,7 +1354,7 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
         const quando = grupo.dia_semana != null
           ? `${DIAS[grupo.dia_semana]}${grupo.horario ? ` as ${String(grupo.horario).slice(0,5)}` : ''}`
           : null;
-        const ondePartes = [grupo.local, grupo.complemento, grupo.bairro].filter(Boolean);
+        const ondePartes = [grupo.local, grupo.endereco, grupo.complemento, grupo.bairro].filter(Boolean);
         const onde = ondePartes.length ? ondePartes.join(' — ') : null;
 
         const partesPessoa = [];
@@ -1212,33 +1396,234 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
             targetIds: [liderAuthUserId],
           });
         }
+
+        // F3 · WhatsApp de boas-vindas à pessoa aprovada (template
+        // grupos_pedido_aprovado). Cobre aprovação logada E via link do
+        // líder. Gated por WHATSAPP_ENABLED no whatsappService.
+        await notificarPessoaAprovada({
+          telefone: pedido.telefone,
+          grupo,
+          liderNome,
+          liderTelefone,
+        });
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
     })();
 
+    // grupo_id devolvido = onde a aprovação DE FATO caiu (o chamador do aceite
+    // de sugestão usa pra responder com o grupo certo).
+    return { ok: true, grupo_id: pedido.grupo_id };
+}
+
+// POST /api/grupos/pedidos/:pedidoId/sugerir — body { grupo_sugerido_id, motivo? }
+// Realocação: em vez de aprovar/rejeitar, quem triageia sugere OUTRO grupo
+// pra pessoa (WhatsApp com link de aceite /g/s/<token> + notificação in-app).
+// O pedido continua valendo no grupo original até a pessoa aceitar. O `motivo`
+// (opcional · escolhido pela triagem) VAI pra pessoa no WhatsApp — é o único
+// motivo que ela recebe (o do líder na recusa é interno).
+router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { grupo_sugerido_id, motivo } = req.body || {};
+    if (!grupo_sugerido_id) return res.status(400).json({ error: 'Informe grupo_sugerido_id' });
+
+    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, nome, telefone, membro_id')
+      .eq('id', req.params.pedidoId).maybeSingle();
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
+    // 'devolvido' também aceita sugestão (é a fila da triagem) e 'encaminhado'
+    // aceita RE-encaminhar (mandar outra opção antes de a pessoa decidir).
+    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    if (grupo_sugerido_id === pedido.grupo_id) {
+      return res.status(400).json({ error: 'Sugira um grupo diferente do pedido original' });
+    }
+
+    const { data: grupoSugerido } = await supabase.from('mem_grupos')
+      .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, ativo, aceitando_inscricoes')
+      .eq('id', grupo_sugerido_id).is('deleted_at', null).maybeSingle();
+    if (!grupoSugerido || !grupoSugerido.ativo) {
+      return res.status(404).json({ error: 'Grupo sugerido não encontrado ou inativo' });
+    }
+    if (grupoSugerido.aceitando_inscricoes === false) {
+      // Trava explícita do líder do grupo sugerido — a sugestão não passa por
+      // cima (capacidade é conselho; a pausa não).
+      return res.status(400).json({ error: 'Esse grupo pausou novas inscrições — combine com o líder dele antes de sugerir' });
+    }
+
+    // O template da sugestão cita o grupo ORIGINAL do pedido ({{2}}).
+    const { data: grupoOriginal } = await supabase.from('mem_grupos')
+      .select('nome').eq('id', pedido.grupo_id).maybeSingle();
+
+    // WhatsApp com o link de aceite (gated por WHATSAPP_ENABLED · sem
+    // telefone no pedido, só a notificação in-app abaixo alcança a pessoa).
+    const wpp = await notificarPessoaSugestao({
+      telefone: pedido.telefone,
+      pessoaNome: pedido.nome,
+      grupoOriginalNome: grupoOriginal?.nome || null,
+      grupoSugerido,
+      pedidoId: pedido.id,
+      motivo, // sanitizado no service (vira o {{3}} do template de utilidade)
+    });
+
+    // Status dinâmico (Marcos · 13/07): sugerir marca o pedido como
+    // 'encaminhado' — a caixa mostra "Encaminhado" até a pessoa decidir.
+    // Tolerante à migration pendente: sem as colunas, o update falha
+    // silencioso e o fluxo (WhatsApp/in-app) segue idêntico.
+    const { data: marcado } = await supabase.from('mem_grupo_pedidos').update({
+      status: 'encaminhado',
+      sugerido_grupo_id: grupoSugerido.id,
+      sugerido_em: new Date().toISOString(),
+      sugerido_por_nome: req.user.name || null,
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+    if (marcado && marcado.length) {
+      registrarEventoPedido(pedido.id, 'encaminhado', {
+        grupo_sugerido: grupoSugerido.nome,
+        motivo: String(motivo || '').trim() || null,
+        whatsapp_enviado: wpp?.sent === true,
+      }, req.user.name);
+    }
+
+    // In-app, se a pessoa tem login
+    (async () => {
+      try {
+        if (!pedido.membro_id) return;
+        const { data: prof } = await supabase.from('vol_profiles')
+          .select('auth_user_id').eq('membresia_id', pedido.membro_id).maybeSingle();
+        if (!prof?.auth_user_id) return;
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'pedido_sugestao',
+          titulo: `Sugestão de grupo: ${grupoSugerido.nome}`,
+          // Só manda a pessoa "conferir o WhatsApp" se o WhatsApp de fato
+          // saiu — sem envio, o link de aceite não existe em lugar nenhum.
+          mensagem: wpp?.sent
+            ? `A liderança sugeriu o grupo ${grupoSugerido.nome} para você. Confira a sugestão que chegou no seu WhatsApp.`
+            : `A liderança sugeriu o grupo ${grupoSugerido.nome} para você. Fale com o líder do grupo para combinar sua entrada.`,
+          link: '/grupos',
+          severidade: 'info',
+          chaveDedup: `pedido_sugestao_${pedido.id}_${grupoSugerido.id}`,
+          targetIds: [prof.auth_user_id],
+        });
+      } catch (e) { console.error('[Pedido sugerir notify]', e.message); }
+    })();
+
+    res.json({ success: true, whatsapp_enviado: wpp?.sent === true, whatsapp_motivo: wpp?.sent ? null : (wpp?.reason || null) });
+  } catch (e) { console.error('[Pedido sugerir]', e.message); res.status(500).json({ error: 'Erro ao sugerir grupo' }); }
+});
+
+// GET /api/grupos/pedidos/:pedidoId/eventos — linha do tempo do pedido
+// (criado → recusado_lider → encaminhado → aprovado/rejeitado_final/…)
+router.get('/pedidos/:pedidoId/eventos', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_pedido_eventos')
+      .select('id, tipo, detalhe, autor_nome, created_at')
+      .eq('pedido_id', req.params.pedidoId)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { console.error('[Pedido eventos]', e.message); res.status(500).json({ error: 'Erro ao buscar o histórico do pedido' }); }
+});
+
+// POST /api/grupos/pedidos/aprovar-lote — body { pedido_ids: [] }
+// Aprova em sequência com a mesma lógica do individual; devolve o resultado
+// por pedido (um pedido inválido não derruba o lote).
+router.post('/pedidos/aprovar-lote', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.pedido_ids)
+      ? [...new Set(req.body.pedido_ids.filter(v => typeof v === 'string' && v))]
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'Informe pedido_ids' });
+    if (ids.length > 100) return res.status(400).json({ error: 'Máximo de 100 pedidos por lote' });
+
+    let aprovados = 0;
+    const falhas = [];
+    for (const id of ids) {
+      try {
+        const r = await aprovarPedidoCore(id, req.user);
+        if (r.ok) aprovados += 1;
+        else falhas.push({ id, error: r.error });
+      } catch (e) {
+        console.error('[Pedidos aprovar-lote item]', id, e.message);
+        falhas.push({ id, error: 'Erro ao aprovar' });
+      }
+    }
+    res.json({ success: true, aprovados, falhas });
+  } catch (e) { console.error('[Pedidos aprovar-lote]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedidos' }); }
+});
+
+// POST /api/grupos/pedidos/:pedidoId/aprovar
+router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await aprovarPedidoCore(req.params.pedidoId, req.user);
+    if (!r.ok) return res.status(r.code).json({ error: r.error });
     res.json({ success: true });
   } catch (e) { console.error('[Pedido aprovar]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedido' }); }
 });
 
 // POST /api/grupos/pedidos/:pedidoId/rejeitar — body: { motivo? }
+// Duas etapas (Marcos · 2026-07-13):
+//  · pedido PENDENTE  → recusa do líder DEVOLVE pra triagem (status 'devolvido').
+//    O motivo é INTERNO — a pessoa NÃO recebe nada aqui; ela é comunicada
+//    quando a triagem sugerir outro grupo (com o motivo externo da sugestão).
+//  · pedido DEVOLVIDO → rejeição FINAL pela triagem (status 'rejeitado').
 router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { motivo } = req.body || {};
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-      .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.pedidoId).single();
+      .select('id, status, grupo_id, membro_id, nome, motivo_rejeicao').eq('id', req.params.pedidoId).single();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (pedido.status !== 'pendente') {
+    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
-    await supabase.from('mem_grupo_pedidos').update({
+    if (pedido.status === 'pendente') {
+      // Guarda de corrida: só devolve se AINDA está pendente (uma aprovação
+      // simultânea — logada ou via link — não pode ser sobrescrita).
+      const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
+        status: 'devolvido',
+        motivo_rejeicao: motivo || null, // interno · visível só pra triagem
+        decidido_por: req.user.userId,
+        decidido_por_nome: req.user.name,
+        decidido_em: new Date().toISOString(),
+      }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+      if (!claimed || !claimed.length) {
+        return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
+      }
+
+      registrarEventoPedido(pedido.id, 'recusado_lider', { motivo_interno: motivo || null }, req.user.name);
+
+      // Avisa a TRIAGEM (módulo grupos) — a pessoa não é notificada aqui.
+      (async () => {
+        try {
+          const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'pedido_devolvido',
+            titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
+            mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${motivo ? ` (motivo interno: ${motivo})` : ''}. Sugira outro grupo pra pessoa.`,
+            link: '/grupos?tab=entrada',
+            severidade: 'aviso',
+            chaveDedup: `pedido_devolvido_${pedido.id}`,
+          });
+        } catch (e) { console.error('[Pedido devolver notify]', e.message); }
+      })();
+
+      return res.json({ success: true, devolvido: true });
+    }
+
+    // status devolvido/encaminhado → rejeição FINAL pela triagem.
+    const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
       status: 'rejeitado',
-      motivo_rejeicao: motivo || null,
+      motivo_rejeicao: motivo || pedido.motivo_rejeicao || null,
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id);
+    }).eq('id', pedido.id).in('status', ['devolvido', 'encaminhado']).select('id');
+    if (!claimed || !claimed.length) {
+      return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
+    }
 
-    // Notifica a pessoa
+    registrarEventoPedido(pedido.id, 'rejeitado_final', { motivo_interno: motivo || pedido.motivo_rejeicao || null }, req.user.name);
+
+    // Notifica a pessoa (in-app · só alcança quem tem login no sistema).
     (async () => {
       try {
         const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
@@ -1250,9 +1635,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
               modulo: 'grupos',
               tipo: 'pedido_rejeitado',
               titulo: `Pedido para ${grupo?.nome || 'grupo'} não foi aceito`,
-              mensagem: motivo
-                ? `Seu pedido foi recusado: ${motivo}. Você pode tentar outro grupo.`
-                : `Seu pedido foi recusado pelo líder. Você pode tentar outro grupo.`,
+              mensagem: 'Seu pedido não pôde seguir. Você pode se inscrever em outro grupo.',
               link: '/grupos',
               severidade: 'info',
               chaveDedup: `pedido_rejeitado_${pedido.id}`,
@@ -1265,6 +1648,49 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
 
     res.json({ success: true });
   } catch (e) { console.error('[Pedido rejeitar]', e.message); res.status(500).json({ error: 'Erro ao rejeitar pedido' }); }
+});
+
+// ══════════════════════════════════════════════
+// Redes (rede → supervisor → grupos) · ANTES das rotas /:id (Express casaria)
+// ══════════════════════════════════════════════
+router.get('/redes', async (req, res) => {
+  try {
+    const { data: redes, error } = await supabase.from('mem_redes')
+      .select('id, nome, cor, supervisor_id, ativa').eq('ativa', true).order('nome');
+    if (error) throw error;
+    const supIds = [...new Set((redes || []).map(r => r.supervisor_id).filter(Boolean))];
+    let sup = {};
+    if (supIds.length) {
+      const { data: ms } = await supabase.from('mem_membros').select('id, nome').in('id', supIds).is('deleted_at', null);
+      (ms || []).forEach(m => { sup[m.id] = m.nome; });
+    }
+    res.json((redes || []).map(r => ({ ...r, supervisor_nome: sup[r.supervisor_id] || null })));
+  } catch (e) { console.error('[Grupos redes]', e.message); res.status(500).json({ error: 'Erro ao listar redes' }); }
+});
+
+router.post('/redes', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { nome, cor, supervisor_id } = req.body || {};
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome da rede obrigatório.' });
+    const { data, error } = await supabase.from('mem_redes')
+      .insert({ nome: nome.trim(), cor: cor || null, supervisor_id: supervisor_id || null }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Grupos rede create]', e.message); res.status(500).json({ error: 'Erro ao criar rede' }); }
+});
+
+router.put('/redes/:id', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { nome, cor, supervisor_id, ativa } = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (nome !== undefined) patch.nome = nome;
+    if (cor !== undefined) patch.cor = cor;
+    if (supervisor_id !== undefined) patch.supervisor_id = supervisor_id || null;
+    if (ativa !== undefined) patch.ativa = ativa;
+    const { data, error } = await supabase.from('mem_redes').update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Grupos rede update]', e.message); res.status(500).json({ error: 'Erro ao atualizar rede' }); }
 });
 
 // ══════════════════════════════════════════════
@@ -1327,10 +1753,24 @@ router.get('/:id', async (req, res) => {
   } catch (e) { console.error('[Grupos get]', e.message); res.status(500).json({ error: 'Erro ao buscar grupo' }); }
 });
 
+// Normaliza idade_min/idade_max do form ('' → null · clamp defensivo 0-120).
+// NULL = sem restrição — a trava do form público só age quando há limite.
+function normIdade(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(120, Math.round(n)));
+}
+
 // POST /api/grupos
 router.post('/', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
+    const idadeMin = normIdade(d.idade_min);
+    const idadeMax = normIdade(d.idade_max);
+    if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
+      return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
+    }
     const { data, error } = await supabase.from('mem_grupos').insert({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
@@ -1341,6 +1781,12 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
       complemento: d.complemento || null,
       bairro: d.bairro || null,
+      faixa_etaria: d.faixa_etaria || null,
+      idade_min: idadeMin,
+      idade_max: idadeMax,
+      capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
+      aceitando_inscricoes: d.aceitando_inscricoes !== false,
+      rede_id: d.rede_id || null,
       status_temporada: d.status_temporada || 'novo',
       temporada: d.temporada || null,
       codigo: d.codigo || null, // se null, trigger auto-gera
@@ -1356,6 +1802,11 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
 router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
+    const idadeMin = normIdade(d.idade_min);
+    const idadeMax = normIdade(d.idade_max);
+    if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
+      return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
+    }
     const { data, error } = await supabase.from('mem_grupos').update({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
@@ -1366,6 +1817,12 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       lat: d.lat ?? null, lng: d.lng ?? null, cep: d.cep || null,
       complemento: d.complemento || null,
       bairro: d.bairro || null,
+      faixa_etaria: d.faixa_etaria || null,
+      idade_min: idadeMin,
+      idade_max: idadeMax,
+      capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
+      aceitando_inscricoes: d.aceitando_inscricoes !== false,
+      rede_id: d.rede_id || null,
       status_temporada: d.status_temporada || null,
       temporada: d.temporada || null,
       descricao: d.descricao || '', ativo: d.ativo ?? true,
@@ -1374,6 +1831,20 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
     syncWhatsappLideres();
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar grupo' }); }
+});
+
+// PATCH /api/grupos/:id/aceitando — toggle parcial de aceitando_inscricoes
+// (o PUT /:id é update completo; este PATCH muda SÓ o toggle, usado pelo
+// atalho "pausar/retomar inscrições" na tela de pedidos).
+router.patch('/:id/aceitando', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const aceitando = req.body?.aceitando === true;
+    const { data, error } = await supabase.from('mem_grupos')
+      .update({ aceitando_inscricoes: aceitando })
+      .eq('id', req.params.id).select('id, nome, aceitando_inscricoes').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { console.error('[Grupos aceitando]', e.message); res.status(500).json({ error: 'Erro ao atualizar grupo' }); }
 });
 
 // GET /api/grupos/temporadas — lista temporadas
@@ -2447,3 +2918,5 @@ router.post('/importar-lideres/aplicar', authorizeModule('grupos', 3), async (re
 });
 
 module.exports = router;
+// Compartilhado com a rota pública de aprovação por token (publicGrupos.js /aprovar)
+module.exports.aprovarPedidoCore = aprovarPedidoCore;

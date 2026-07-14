@@ -111,7 +111,12 @@ sistema inteiro: **a operação dos módulos ministeriais alimenta a NSM e os
   Arthur Cecconi / Lillian · leitura; preenchimento via /integracao.
 - **Totem Kids** (`/ministerial/totem-kids`) · check-in/out infantil com
   etiqueta e pager · voluntários do Kids · **consolida presencial_kids e
-  decisões kids nos cultos** (aguardando hardware pro go-live).
+  decisões kids nos cultos** (totems montados, em teste pro go-live).
+  Displays de TV (`display-sala`/`display-foyer`, públicos via token de
+  estação): usar `resolveApiBaseUrl` de `src/lib/api-base.js` pra montar a
+  base da API — o padrão inline `VITE_API_URL || '/api'` não acrescenta
+  `/api` quando a env não termina nele, o fetch cai no fallback do SPA e
+  quebra com "Unexpected token '<'" (corrigido 2026-07-07).
 
 **Operação administrativa:**
 - `/solicitacoes` · backbone único adm↔ministérios (TI, compras, reembolso,
@@ -253,6 +258,14 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   online + **kids** (`aceitacoes_kids` = `cultos.decisoes_kids`); card **Kids**
   segue como recorte separado. Não reverter pra só-templo (resumo-semana/mês em
   `backend/routes/dashboardSemanal.js`).
+- **⚠️ Semana: financeiro = QUARTA→TERÇA · frequência = SEG→DOM (2026-07-08):** as
+  DUAS semanas divergem DE PROPÓSITO — não reunificar. O **financeiro** (contribuições
+  do `DashboardFinanceiroSemanal.jsx` + views `vw_fin_semana_*` + endpoints
+  `/dashboard/semana*`) usa `fn fin_semana_qua_ter` = **quarta→terça** (semana da igreja,
+  como o financeiro interno concilia · revertido em `20260708160000` após a unificação
+  seg-dom de `20260601130000` dar número diferente do fechamento). A **frequência dos
+  cultos** (Dashboard Semanal de presença · `dashboardSemanal.js` · `isoWeekRange`) usa
+  função JS PRÓPRIA **seg→dom** e NÃO chama a RPC. Mexer numa NÃO deve mexer na outra.
 
 ### Backend
 
@@ -380,6 +393,28 @@ objeto**, nomes de **variáveis/funções/arquivos**, **colunas** SQL e qualquer
 string que seja comparada/persistida como identificador. Acentuar esses quebra
 matching, RLS, rotas e o banco. A regra de acentuar vale para o **conteúdo
 exibido**, não para os identificadores técnicos.
+
+## ⚠️ Avaliação externa de LLM (Google Stax) · regra de exportação (2026-07-13)
+
+Kit de avaliação em `backend/scripts/_stax_export.js` + guia/rubricas em
+`backend/scripts/stax-export/README.md` (piloto pedido pela gestão). Regras:
+
+- **NUNCA subir pra ferramenta externa** (Stax ou similar): pedidos de oração,
+  governança/atas de diretoria, relatos nominais de grupos, fila pastoral
+  (`cui_*_fila`/convertidos), documentos do Cérebro e QUALQUER dado de Kids.
+  Dado de igreja identifica convicção religiosa (categoria especial · LGPD
+  art. 11); o Stax é experimental, sem DPA. Exportador pra esses fluxos não
+  existe por decisão — não criar.
+- Exportáveis (anonimizados · linha de texto livre com telefone/CPF/e-mail é
+  DESCARTADA, não mascarada): números agregados de culto, categoria contábil de
+  NF (CNPJ/fornecedor = dado PJ, mantido), extração de compras, comentários de
+  NPS. CSVs `export_*.csv` são gitignored — nunca commitar dado real.
+- Constatação no banco vivo (2026-07-13): filas de revisão quase sem veredito
+  humano (0 coletas aplicadas/rejeitadas · 383 propostas do agente financeiro
+  `pending` · 0 NF com sugestão) — datasets reais só ganham corpo com uso.
+  A medição PERMANENTE de acurácia da IA deve sair de SQL interno sobre as
+  filas (follow-up: aba em `/assistente-ia`); Stax é pra iterar prompt/modelo
+  offline e conhecer a ferramenta (dataset demo sintético no repo).
 
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
@@ -1747,6 +1782,61 @@ confirmação). `Solicitacoes.jsx` é o consumidor nº 1; a Produção abre o me
 form a partir da ocorrência do culto. **Ponto de entrada novo = reusar esse
 componente** (não duplicar intake) — aprovação/SLA/roteamento/KPI ficam 100% no
 backend, iguais pra qualquer host.
+
+### Form · dualidades resolvidas (decisões do Marcos · 2026-07-07)
+Auditoria de perguntas repetidas no intake. Decisões (só frontend · backend
+intocado → bundles antigos abertos seguem enviando normal):
+- **Total de Compras é CALCULADO** (não digitável): "Valor estimado (R$)" saiu
+  de `showValueField` pra compras; o form mostra "Total estimado do pedido"
+  somado dos itens (respeita R$ total/por unid.) e o backend soma server-side
+  (fallback que já existia). Reembolso/Pagamento mantêm o campo.
+- **Justificativa única**: urgente NÃO abre 2ª caixa — o porquê vai na
+  "Justificativa do pedido" (label ganha "(inclua o porquê da urgência) *" e a
+  validação exige ≥5 chars só na urgência MANUAL). No submit o form copia a
+  justificativa pra `justificativa_urgencia` (mapa de urgência frequente
+  continua alimentado).
+- **Urgente automático pela data**: `data_necessaria` mais curta que o
+  `sla_resolucao_horas` padrão (não-urgente) da categoria → `eh_urgente=true`
+  automático + aviso âmbar; checkbox fica marcado/desabilitado. Marketing fora
+  (prazo é da triagem). Urgência automática não exige justificativa (auto-texto
+  "Data necessária abaixo do prazo padrão").
+- **Mantidos de propósito**: Descrição × Itens (necessidade ≠ o que comprar) e
+  Fornecedor sugerido × Link por item (casos diferentes: contato conhecido ×
+  compra online).
+- Resíduo `urgencia: 'normal'` removido do FORM_INITIAL (select saiu da UI em
+  2026-05-30 · coluna segue com default 'normal' no backend).
+
+### ⚠️ Compras · valor do item: seletor total/unitário · grava TOTAL DA LINHA (2026-07-07)
+Caso real (aventais/coletes): Marcos pôs 30 coletes · R$ 1.000 esperando "essa
+linha custa ~R$ 1.000", mas o backend somava `valor × quantidade` → pedido de
+R$ 60.000. Solução em 2 passos (mesmo dia): (1) valor do item passou a ser o
+total da linha; (2) Marcos pediu ESCOLHA explícita → cada item ganhou um
+seletor **"R$ total" | "R$ por unid."** (`valor_tipo`, default 'total' · sem
+migration — campo só do payload). O POST normaliza: 'unitario' → `valor ×
+quantidade`; `solicitacao_itens.valor_estimado` guarda **SEMPRE o total da
+linha** e a soma do pedido NUNCA multiplica de novo. No modo unitário o form
+mostra "= R$ X no total da linha" ao vivo. Bundle antigo (sem valor_tipo) cai
+em 'total'. Dado histórico pode ter mistura de semânticas (era ambíguo) — o
+valor é estimativa editável, sem migração.
+
+### Fotos anexadas no intake · Serviços/Serviço externo (2026-07-07)
+Pedido do Marcos: quem pede **Serviços (manutenção)** ou **Serviço externo
+(cotação)** pode anexar até 3 fotos no form pra quem atende/cota avaliar pela
+imagem (goteira, equipamento, referência). Compras NÃO ganhou o campo — já tem
+foto POR ITEM (`solicitacao_itens.imagem_url`).
+- **Coluna `solicitacoes.imagens_url` (jsonb · array de URLs)** · migration
+  `20260707120000` (aditiva/idempotente). Upload client-side pro bucket
+  `solicitacoes` (path `fotos/` · bucket+policies já existiam da 20260623200000),
+  mesmo padrão do comprovante/foto-de-item.
+- `NovaSolicitacaoForm.jsx`: campo `imagens` (Files) + componente `FotosAnexos`
+  (thumbnails + adicionar/remover · cap `MAX_FOTOS=3`) exibido só pra
+  `infraestrutura`/`servico`; no submit sobe as fotos e manda `imagens_url`.
+- Backend POST: sanitiza (strings · cap 5 · 2000 chars) e **só inclui a coluna
+  no insert quando há foto** — flows antigos não tocam a coluna (tolera a
+  migration ainda não aplicada; só o caminho novo exige ela).
+- Detalhe (`Solicitacoes.jsx` DetailDialog): bloco genérico "Fotos anexadas"
+  (thumbnails clicáveis · abre em tamanho real) pra qualquer categoria com
+  `imagens_url` — o GET usa `select('*')`, a coluna flui sozinha.
 
 ### Co-aprovadores de origem + e-mail das aprovações (2026-06-22)
 Pedido (gestão): a vice-diretora **Juliana Leão** (`juliana.leao@cbrio.org` ·

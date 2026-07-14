@@ -23,12 +23,14 @@ const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
+const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
 const { enviarTexto: enviarTextoWpp, enviarTemplate: enviarTemplateWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { syncCriancasPCO } = require('../services/planningCenterKids');
 
-// authenticate aplicado condicionalmente abaixo · rotas /display/* e
-// /chamadas com estacao_token bypassam pra display sem login
+// authenticate aplicado condicionalmente abaixo · só o cron bypassa (com
+// CRON_SECRET válido). O modelo antigo de TVs/pagers/estações pareadas foi
+// removido (2026-07-07) — o check-out agora é pelo PORTÃO (scan da etiqueta).
 
 const xlsxUpload = multer({
   storage: multer.memoryStorage(),
@@ -39,27 +41,12 @@ const xlsxUpload = multer({
   },
 });
 
-// Antes do router.use(authenticate) acima · bypass pra rotas publicas
-// (display da TV sem login · estacao_token no body/query autentica)
+// Cron da Vercel/GitHub manda CRON_SECRET (não JWT) · só pula authenticate
+// quando o secret é VÁLIDO (fail-closed via isAuthorizedCron). Chamada manual
+// de admin (com JWT, sem secret) segue pelo authenticate normalmente.
 router.use((req, res, next) => {
-  // Bypass authenticate pra:
-  //   - GET /display/* (TV consulta com ?token=X)
-  //   - POST /chamadas se vier estacao_token no body (self-service)
-  //   - POST /estacoes/parear (qualquer autenticado · já era público via authorizeModule)
-  const isDisplay = req.path.startsWith('/display/');
-  const isChamadaComToken = req.path === '/chamadas' && req.method === 'POST' && req.body?.estacao_token;
-  const isParear = req.path === '/estacoes/parear' && req.method === 'POST';
-  // Agente local de pagers (recepcao) · autentica por bearer token (PAGER_BRIDGE_TOKEN),
-  // não por JWT de usuário · handlers validam internamente via bridgeAutorizado()
-  const isPagerBridge = req.path.startsWith('/pager/bridge/');
-  // Cron da Vercel/GitHub manda CRON_SECRET (não JWT) · só pula authenticate
-  // quando o secret é VÁLIDO (fail-closed via isAuthorizedCron). Chamada manual
-  // de admin (com JWT, sem secret) segue pelo authenticate normalmente.
   const isCron = req.path.startsWith('/cron/') && isAuthorizedCron(req);
-  if (isDisplay || isChamadaComToken || isParear || isPagerBridge || isCron) {
-    // Pula authenticate · handlers validam token internamente
-    return next();
-  }
+  if (isCron) return next();
   return authenticate(req, res, next);
 });
 
@@ -167,7 +154,7 @@ router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         id, culto_id, status, abrir_em, fechar_em, encerrada_at,
         culto:cultos(id, data, nome, service_type_id, presencial_kids, decisoes_kids,
-                     service_type:vol_service_types(id, name, color, has_kids))
+                     service_type:vol_service_types(id, name, color, has_kids, recurrence_time))
       `)
       .eq('status', 'aberta')
       .order('abrir_em', { ascending: false })
@@ -181,6 +168,41 @@ router.get('/sessoes/atual', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// POST /api/totem-kids/sessoes/garantir · acha-ou-cria a sessão de um culto.
+// É o pivô do check-in POR HORÁRIO: o operador não gerencia mais sessão — o
+// front escolhe o culto (pelo relógio) e chama isto. Reabre se estava encerrada
+// (não bloqueia a operação · a contagem consolida no encerrar/cron). Idempotente.
+router.post('/sessoes/garantir', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { culto_id } = req.body;
+    if (!culto_id) return res.status(400).json({ error: 'culto_id obrigatorio' });
+    const sel = `id, culto_id, status, abrir_em, fechar_em, encerrada_at,
+        culto:cultos(id, data, nome, service_type_id, presencial_kids, decisoes_kids,
+                     service_type:vol_service_types(id, name, color, has_kids, recurrence_time))`;
+    let { data: s } = await supabase.from('kids_sessoes').select(sel).eq('culto_id', culto_id).maybeSingle();
+    if (!s) {
+      const ins = await supabase.from('kids_sessoes')
+        .insert({ culto_id, status: 'aberta', abrir_em: new Date().toISOString() })
+        .select(sel).single();
+      if (ins.error) {
+        // corrida entre 2 totens (UNIQUE culto_id) → re-seleciona a existente
+        if (ins.error.code === '23505') {
+          const re = await supabase.from('kids_sessoes').select(sel).eq('culto_id', culto_id).maybeSingle();
+          s = re.data;
+        } else throw ins.error;
+      } else s = ins.data;
+    } else if (s.status === 'encerrada') {
+      await supabase.from('kids_sessoes')
+        .update({ status: 'aberta', encerrada_at: null, encerrada_por: null }).eq('id', s.id);
+      s.status = 'aberta';
+    }
+    res.json(s || null);
+  } catch (e) {
+    console.error('[totemKids/sessoes/garantir]', e.message);
+    res.status(500).json({ error: 'Erro ao garantir sessão do culto' });
+  }
+});
+
 // GET /api/totem-kids/sessoes · lista sessões (admin)
 router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
   try {
@@ -191,7 +213,7 @@ router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
       .select(`
         id, culto_id, status, abrir_em, fechar_em, encerrada_at,
         culto:cultos(id, data, nome, presencial_kids, decisoes_kids,
-                     service_type:vol_service_types(id, name, color))
+                     service_type:vol_service_types(id, name, color, recurrence_time))
       `)
       .order('abrir_em', { ascending: false })
       .limit(limit);
@@ -265,8 +287,22 @@ router.post('/sessoes/:id/encerrar', authorizeModule('kids', 3), async (req, res
       .select('id, status, encerrada_at')
       .single();
     if (error) throw error;
-    // Resumo do Kids pros líderes (WhatsApp + in-app/e-mail) · best-effort
-    enviarResumoKids(req.params.id).catch(() => {});
+    // Sessão finalizada = todo mundo baixado: dá checkout automático em quem
+    // ficou com check-in aberto nessa sessão (evita "fantasma" no painel e na
+    // busca · era a causa dos 356 abertos do teste que nunca fecharam).
+    const { error: eCk } = await supabase.from('kids_checkins')
+      .update({
+        checkout_at: new Date().toISOString(),
+        checkout_metodo: 'checkout_forcado',
+        checkout_por: req.user.userId,
+        responsavel_checkout_nome: 'Baixa automática (sessão encerrada)',
+      })
+      .eq('sessao_id', req.params.id).is('checkout_at', null);
+    if (eCk) console.error('[totemKids/sessoes/encerrar] auto-checkout:', eCk.message);
+    // O resumo do Kids pros líderes NÃO sai mais daqui: o cron /cron/resumo-pco
+    // é o emissor ÚNICO (crianças únicas = PCO + totem, dedup por
+    // planning_center_id, com kids_resumo_enviado_at + chaveDedup). Evita dois
+    // resumos pro mesmo culto (encerrar sessão × cron).
     res.json(data);
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar]', e.message);
@@ -283,24 +319,34 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     if (q.length < 2) return res.json([]);
+    // Normaliza (minúscula + sem acento) pra casar com nome_norm — "jose" acha
+    // "José", sem depender de acento/maiúscula.
+    const qNorm = q.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    // Refino: cada PALAVRA precisa aparecer no nome (AND) — "pedro lit" acha
+    // "Pedro Theodoro Litwinczuk" mesmo com termos não adjacentes/fora de ordem.
+    const termos = qNorm.split(/\s+/).filter(t => t.length >= 1).slice(0, 6);
 
-    // Busca por nome (trigram) OU por nome do responsável OU telefone
-    const { data: criancas } = await supabase
+    // Inclui INATIVAS (marcadas) pra criança que sumiu 6+ meses do PCO ou não
+    // apareceu na última importação continuar achável — o check-in reativa.
+    // Ativas vêm primeiro.
+    let buscaQ = supabase
       .from('kids_criancas')
       .select(`
         id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
         tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
-        visitante, familia_id,
+        visitante, ativo, motivo_inativacao, familia_id,
         familia:mem_familias(id, nome),
         responsaveis:kids_responsaveis(
           membro_id, parentesco, autorizado_buscar,
           membro:mem_membros(id, nome, telefone, cpf, foto_url)
         )
       `)
-      .ilike('nome', `%${q}%`)
-      .eq('ativo', true)
+      .is('deleted_at', null);
+    for (const t of termos) buscaQ = buscaQ.ilike('nome_norm', `%${t}%`);
+    const { data: criancas } = await buscaQ
+      .order('ativo', { ascending: false })
       .order('nome')
-      .limit(20);
+      .limit(30);
 
     // Também busca por telefone do responsável (se q parece telefone)
     const digits = q.replace(/\D/g, '');
@@ -323,7 +369,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
             .from('kids_criancas')
             .select(`
               id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-              visitante, familia_id,
+              visitante, ativo, motivo_inativacao, familia_id,
               familia:mem_familias(id, nome),
               responsaveis:kids_responsaveis(
                 membro_id, parentesco, autorizado_buscar,
@@ -331,7 +377,7 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
               )
             `)
             .in('id', criancaIds)
-            .eq('ativo', true);
+            .is('deleted_at', null);
           extras = extras2 || [];
         }
       }
@@ -351,6 +397,50 @@ router.get('/criancas/buscar', authorizeModule('kids', 1), async (req, res) => {
   } catch (e) {
     console.error('[totemKids/criancas/buscar]', e.message);
     res.status(500).json({ error: 'Erro na busca' });
+  }
+});
+
+// GET /criancas/:id/irmaos · outras crianças ATIVAS da mesma família, pro
+// check-in em lote (uma família chega junta). Mesmo shape da busca, pra o front
+// reusar. Sem familia_id → []. (Path de 3 segmentos · não conflita com /:id.)
+router.get('/criancas/:id/irmaos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: base } = await supabase
+      .from('kids_criancas')
+      .select('familia_id')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!base?.familia_id) return res.json([]);
+
+    const { data: irmaos } = await supabase
+      .from('kids_criancas')
+      .select(`
+        id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
+        tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual,
+        visitante, ativo, motivo_inativacao, familia_id,
+        familia:mem_familias(id, nome),
+        responsaveis:kids_responsaveis(
+          membro_id, parentesco, autorizado_buscar,
+          membro:mem_membros(id, nome, telefone, cpf, foto_url)
+        )
+      `)
+      .eq('familia_id', base.familia_id)
+      .neq('id', req.params.id)
+      .eq('ativo', true)
+      .is('deleted_at', null)
+      .order('nome');
+
+    const lista = await Promise.all((irmaos || []).map(async c => ({
+      ...c,
+      foto_url: await fotoVisivelCrianca(c),
+      idade_meses: calcIdadeMeses(c.data_nascimento),
+      idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
+    })));
+    res.json(lista);
+  } catch (e) {
+    console.error('[totemKids/criancas/irmaos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar irmãos' });
   }
 });
 
@@ -434,7 +524,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
 //     responsável: { nome, telefone, cpf, parentesco, email? } }
 router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
   try {
-    const { crianca, responsavel, amigo_de_crianca_id } = req.body || {};
+    const { crianca, responsavel, responsaveis, amigo_de_crianca_id } = req.body || {};
     if (!crianca?.nome) return res.status(400).json({ error: 'crianca.nome obrigatorio' });
 
     const txt = (cond, v) => (cond && v ? String(v).trim().slice(0, 500) : null);
@@ -455,6 +545,9 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       espectro_qual: txt(crianca.tem_espectro === true, crianca.espectro_qual),
       tem_limitacao_fisica: bool(crianca.tem_limitacao_fisica),
       limitacao_fisica_qual: txt(crianca.tem_limitacao_fisica === true, crianca.limitacao_fisica_qual),
+      consent_marketing: bool(crianca.consent_marketing),
+      consent_marketing_em: crianca.consent_marketing == null ? null : new Date().toISOString(),
+      consent_marketing_versao: crianca.consent_marketing == null ? null : 'v1',
       visitante: true,
       created_by: req.user.userId,
     };
@@ -482,39 +575,69 @@ router.post('/criancas', authorizeModule('kids', 2), async (req, res) => {
       return res.status(201).json({ crianca: criancaCriada, amigo_de: { id: amigo.id, nome: amigo.nome }, familia_id: amigo.familia_id });
     }
 
-    // ── Fluxo normal: exige responsável (nome + telefone) ──
-    if (!responsavel?.nome || !responsavel?.telefone) {
-      return res.status(400).json({ error: 'responsavel.nome e responsavel.telefone obrigatórios' });
+    // ── Fluxo normal: exige AO MENOS 1 responsável (nome + telefone) ──
+    // Aceita `responsaveis` (lista) ou `responsavel` (único · retrocompat).
+    const listaResp = (Array.isArray(responsaveis) && responsaveis.length)
+      ? responsaveis
+      : (responsavel ? [responsavel] : []);
+    const validos = listaResp.filter(r => r?.nome && r?.telefone);
+    if (!validos.length) {
+      return res.status(400).json({ error: 'Informe ao menos um responsável (nome e telefone)' });
     }
-    const tel = normalizarTelefone(responsavel.telefone);
-    const cpf = normalizarCpf(responsavel.cpf);
-    const r = await acharOuCriarGuardado({
-      cpf, email: responsavel.email || null, telefone: tel, nome: responsavel.nome, status: 'visitante',
-    });
-    const { data: membro } = await supabase.from('mem_membros')
-      .select('id, nome, familia_id').eq('id', r.membro_id).single();
-    let familiaId = membro.familia_id;
+
+    // Resolve cada responsável (find-or-create membro) + resolve a família
+    // (compartilhada por todos · a do 1º que já tiver, senão cria uma nova).
+    const membros = [];
+    let familiaId = null;
+    for (const resp of validos) {
+      const tel = normalizarTelefone(resp.telefone);
+      const cpf = normalizarCpf(resp.cpf);
+      const rr = await acharOuCriarGuardado({
+        cpf, email: resp.email || null, telefone: tel, nome: resp.nome, status: 'visitante',
+      });
+      const { data: membro } = await supabase.from('mem_membros')
+        .select('id, nome, familia_id').eq('id', rr.membro_id).single();
+      if (!familiaId) familiaId = membro.familia_id || null;
+      membros.push({ membro, tel, cpf, parentesco: resp.parentesco || 'outro', autorizado_buscar: resp.autorizado_buscar !== false });
+    }
     if (!familiaId) {
+      const base = membros[0].membro;
       const { data: f, error: fe } = await supabase.from('mem_familias')
-        .insert({ nome: `Familia ${membro.nome.split(' ')[0]}` }).select('id').single();
+        .insert({ nome: `Familia ${base.nome.split(' ')[0]}` }).select('id').single();
       if (fe) throw fe;
       familiaId = f.id;
-      await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', membro.id);
     }
+    // Vincula à família quem ainda não tem
+    for (const m of membros) {
+      if (!m.membro.familia_id) {
+        await supabase.from('mem_membros').update({ familia_id: familiaId, parentesco: 'responsavel' }).eq('id', m.membro.id);
+      }
+    }
+
     const { data: criancaCriada, error: errCrianca } = await supabase.from('kids_criancas')
       .insert({ ...camposCrianca, familia_id: familiaId })
       .select('*, familia:mem_familias(id, nome)').single();
     if (errCrianca) throw errCrianca;
-    await supabase.from('kids_responsaveis').insert({
-      crianca_id: criancaCriada.id, membro_id: membro.id,
-      parentesco: responsavel.parentesco || 'outro', autorizado_buscar: true,
-    });
+
+    // Vínculos (dedup por membro)
+    const vistos = new Set();
+    const vinc = [];
+    for (const m of membros) {
+      if (vistos.has(m.membro.id)) continue;
+      vistos.add(m.membro.id);
+      vinc.push({ crianca_id: criancaCriada.id, membro_id: m.membro.id, parentesco: m.parentesco, autorizado_buscar: m.autorizado_buscar });
+    }
+    if (vinc.length) await supabase.from('kids_responsaveis').insert(vinc);
+
     res.status(201).json({
       crianca: criancaCriada,
-      responsavel: { id: membro.id, nome: membro.nome, telefone: tel, cpf },
+      responsavel: { id: membros[0].membro.id, nome: membros[0].membro.nome, telefone: membros[0].tel, cpf: membros[0].cpf },
+      responsaveis: membros.map(m => ({ id: m.membro.id, nome: m.membro.nome, telefone: m.tel })),
       familia_id: familiaId,
     });
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     console.error('[totemKids/criancas POST]', e.message);
     res.status(500).json({ error: 'Erro ao cadastrar criança' });
   }
@@ -525,13 +648,18 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
     const allowed = ['nome', 'data_nascimento', 'sexo', 'familia_id', 'observacoes_medicas',
                      'necessidades_especiais', 'foto_url', 'visitante', 'ativo', 'observacoes_internas',
-                     'serie', 'data_conversao', 'data_batismo',
+                     'serie', 'data_conversao', 'data_batismo', 'consent_marketing',
                      'tem_espectro', 'espectro_qual', 'tem_alergia', 'alergia_qual',
                      'tem_limitacao_fisica', 'limitacao_fisica_qual'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
     if (req.body.foto_url && !req.body.foto_consentimento_em) {
       update.foto_consentimento_em = new Date().toISOString();
+    }
+    // Consentimento de uso de imagem (marketing) · carimba quando é definido
+    if ('consent_marketing' in req.body) {
+      update.consent_marketing_em = req.body.consent_marketing == null ? null : new Date().toISOString();
+      update.consent_marketing_versao = req.body.consent_marketing == null ? null : 'v1';
     }
     const { data, error } = await supabase
       .from('kids_criancas')
@@ -544,6 +672,137 @@ router.patch('/criancas/:id', authorizeModule('kids', 3), async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'Erro ao editar criança' });
   }
+});
+
+// PATCH /criancas/:criancaId/responsaveis/:membroId · atualiza o VÍNCULO
+// (parentesco / autorizado a buscar) na kids_responsaveis — o parentesco vive
+// no vínculo, não no mem_membros.
+router.patch('/criancas/:criancaId/responsaveis/:membroId', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const allowed = ['parentesco', 'autorizado_buscar', 'contato_emergencia'];
+    const update = {};
+    for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+    if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+    const { data, error } = await supabase
+      .from('kids_responsaveis')
+      .update(update)
+      .eq('crianca_id', req.params.criancaId)
+      .eq('membro_id', req.params.membroId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    res.json(data || { ok: true });
+  } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
+    console.error('[totemKids] update vinculo responsavel:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o vínculo do responsável' });
+  }
+});
+
+// DELETE /criancas/:criancaId/responsaveis/:membroId · desvincula o responsável
+// da criança (remove só o VÍNCULO kids_responsaveis · NÃO apaga o membro). Não
+// deixa a criança ficar sem nenhum responsável.
+router.delete('/criancas/:criancaId/responsaveis/:membroId', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { criancaId, membroId } = req.params;
+    const { count } = await supabase.from('kids_responsaveis')
+      .select('id', { count: 'exact', head: true })
+      .eq('crianca_id', criancaId);
+    if ((count || 0) <= 1) {
+      return res.status(400).json({ error: 'A criança precisa ter ao menos um responsável. Adicione outro antes de remover este.' });
+    }
+    const { error } = await supabase.from('kids_responsaveis')
+      .delete()
+      .eq('crianca_id', criancaId).eq('membro_id', membroId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] remove vinculo responsavel:', e.message);
+    res.status(500).json({ error: 'Erro ao remover o responsável' });
+  }
+});
+
+// PATCH /api/totem-kids/membro/:id · corrige nome/telefone do responsável
+// (mem_membros) direto do totem Kids — pra consertar nome errado no check-in.
+router.patch('/membro/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const allowed = ['nome', 'telefone'];
+    const update = {};
+    for (const k of allowed) {
+      if (k in req.body && String(req.body[k] ?? '').trim()) update[k] = String(req.body[k]).trim();
+    }
+    if (Object.keys(update).length === 0) return res.status(400).json({ error: 'Nada pra atualizar' });
+    const { data, error } = await supabase
+      .from('mem_membros')
+      .update(update)
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .select('id, nome, telefone')
+      .single();
+    if (error) throw error;
+
+    // mem_membros é o cadastro CANÔNICO da pessoa — propaga a mudança pros
+    // espelhos (best-effort · não falha a resposta): conta de usuário
+    // (profiles) e perfil de voluntariado (vol_profiles). O telefone do bot
+    // WhatsApp (whatsapp_lideres) re-sincroniza no cron diário de líderes.
+    (async () => {
+      try {
+        const patchProfile = {};
+        if (update.telefone) patchProfile.telefone = update.telefone;
+        if (update.nome) patchProfile.name = update.nome;
+        if (Object.keys(patchProfile).length) {
+          await supabase.from('profiles').update(patchProfile).eq('membro_id', req.params.id);
+        }
+      } catch (err) { console.error('[totemKids/membro] sync profiles:', err.message); }
+      try {
+        const patchVol = {};
+        if (update.telefone) patchVol.phone = update.telefone;
+        if (update.nome) patchVol.full_name = update.nome;
+        if (Object.keys(patchVol).length) {
+          await supabase.from('vol_profiles').update(patchVol).eq('membresia_id', req.params.id);
+        }
+      } catch (err) { console.error('[totemKids/membro] sync vol_profiles:', err.message); }
+    })();
+
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao editar responsável' });
+  }
+});
+
+// ── Senha de edição da ficha da criança (totem) ──────────────────────────────
+// Criada por líder do Kids (Mari/Milena · kids>=4). Editar a ficha no totem exige
+// verificar essa senha (qualquer operador kids>=1).
+router.get('/edit-senha/status', authorizeModule('kids', 1), async (_req, res) => {
+  try {
+    const { data } = await supabase.from('kids_totem_config').select('edit_senha_hash').eq('id', true).maybeSingle();
+    res.json({ definida: !!data?.edit_senha_hash });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+});
+
+router.post('/edit-senha', authorizeModule('kids', 4), async (req, res) => {
+  try {
+    const bcrypt = require('bcryptjs');
+    const senha = String(req.body?.senha || '');
+    if (senha.length < 4) return res.status(400).json({ error: 'A senha precisa ter ao menos 4 caracteres' });
+    const hash = bcrypt.hashSync(senha, 10);
+    const { error } = await supabase.from('kids_totem_config')
+      .update({ edit_senha_hash: hash, edit_senha_por: req.user?.userId || null, edit_senha_em: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', true);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao salvar a senha' }); }
+});
+
+router.post('/edit-senha/verificar', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const bcrypt = require('bcryptjs');
+    const senha = String(req.body?.senha || '');
+    const { data } = await supabase.from('kids_totem_config').select('edit_senha_hash').eq('id', true).maybeSingle();
+    if (!data?.edit_senha_hash) return res.json({ ok: false, naoDefinida: true });
+    res.json({ ok: bcrypt.compareSync(senha, data.edit_senha_hash) });
+  } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
 // GET /api/totem-kids/criancas · listagem completa (admin)
@@ -1009,6 +1268,66 @@ router.post('/resumo-pco/testar', authorizeModule('kids', 1), async (req, res) =
   }
 });
 
+// GET /frequencia-sistema?data=YYYY-MM-DD · check-ins feitos PELO SISTEMA (totem)
+// naquele dia, agrupados por culto. Complementa a frequência do PCO (a mesma
+// tela mostra as duas fontes).
+router.get('/frequencia-sistema', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const data = String(req.query.data || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ error: 'Data inválida' });
+
+    const { data: cultos } = await supabase.from('cultos').select('id, nome, data').eq('data', data);
+    if (!cultos || cultos.length === 0) return res.json({ data, total_criancas: 0, total_checkins: 0, por_culto: [] });
+    const cultoIds = cultos.map(c => c.id);
+    const nomeCulto = Object.fromEntries(cultos.map(c => [c.id, c.nome]));
+
+    const { data: sessoes } = await supabase.from('kids_sessoes').select('id, culto_id').in('culto_id', cultoIds);
+    if (!sessoes || sessoes.length === 0) return res.json({ data, total_criancas: 0, total_checkins: 0, por_culto: [] });
+    const sessaoCulto = Object.fromEntries(sessoes.map(s => [s.id, s.culto_id]));
+
+    const { data: checkins } = await supabase.from('kids_checkins')
+      .select('id, sessao_id, crianca_id, checkin_at, checkout_at, codigo_seguranca, responsavel_checkin_nome, crianca:kids_criancas(id, nome, data_nascimento)')
+      .in('sessao_id', sessoes.map(s => s.id))
+      .is('deleted_at', null)
+      .order('checkin_at', { ascending: true });
+
+    const horaBRT = (iso) => {
+      if (!iso) return '';
+      const d = new Date(new Date(iso).getTime() - 3 * 3600 * 1000);
+      return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+    };
+
+    const porCultoMap = {};
+    const criancasDistintas = new Set();
+    for (const ck of (checkins || [])) {
+      const cultoId = sessaoCulto[ck.sessao_id];
+      if (!cultoId) continue;
+      if (!porCultoMap[cultoId]) porCultoMap[cultoId] = { culto_id: cultoId, nome: nomeCulto[cultoId] || 'Culto', total: 0, criancas: [] };
+      const cr = Array.isArray(ck.crianca) ? ck.crianca[0] : ck.crianca;
+      porCultoMap[cultoId].criancas.push({
+        crianca_id: ck.crianca_id,
+        nome: cr?.nome || '—',
+        hora: horaBRT(ck.checkin_at),
+        codigo: ck.codigo_seguranca || null,
+        saiu: !!ck.checkout_at,
+        trazida_por: ck.responsavel_checkin_nome || null,
+      });
+      porCultoMap[cultoId].total++;
+      if (ck.crianca_id) criancasDistintas.add(ck.crianca_id);
+    }
+
+    res.json({
+      data,
+      total_criancas: criancasDistintas.size,
+      total_checkins: (checkins || []).length,
+      por_culto: Object.values(porCultoMap),
+    });
+  } catch (e) {
+    console.error('[totemKids] frequencia-sistema:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar check-ins do sistema' });
+  }
+});
+
 // POST /criancas/depurar-inativos · desativa as crianças (com vínculo PCO) que
 // NÃO tiveram check-in nos últimos N meses (default 6). Saem da lista (que mostra
 // só ativos). Reversível (ativo=false · não apaga). Body: { meses }.
@@ -1082,19 +1401,56 @@ router.get('/pco-pessoa/:pcoId', authorizeModule('kids', 1), async (req, res) =>
 // pra notificação in-app/e-mail (a Mari não tem WhatsApp, recebe por aqui).
 const RESUMO_KIDS_EMAILS = ['mariane.gaia@cbrio.org', 'milena.rochet@cbrio.org', 'matheus.toscano@cbrio.org', 'matheus@cbrio.com.br'];
 
-// Dispara o resumo de UM culto (total de crianças do PCO) pros líderes.
-async function dispararResumoKidsCulto(culto, total) {
+// Check-ins do NOSSO sistema (totem) pra um culto → crianças ÚNICAS.
+// Retorna { comPco: Set(planning_center_id), semPco: Set(crianca_id sem vínculo
+// PCO) }. Serve pra combinar com o PCO sem dupla contagem (dedup por
+// planning_center_id quando a criança está vinculada aos dois lados).
+async function nossosCheckinsDoCulto(cultoId) {
+  const { data: sessoes } = await supabase.from('kids_sessoes').select('id').eq('culto_id', cultoId);
+  const sessIds = (sessoes || []).map((s) => s.id);
+  if (!sessIds.length) return { comPco: new Set(), semPco: new Set() };
+  const { data: cis } = await supabase.from('kids_checkins')
+    .select('crianca_id, crianca:kids_criancas(planning_center_id)')
+    .in('sessao_id', sessIds).is('deleted_at', null);
+  const comPco = new Set();
+  const semPco = new Set();
+  for (const ci of cis || []) {
+    const pco = ci.crianca?.planning_center_id;
+    if (pco) comPco.add(String(pco));
+    else if (ci.crianca_id) semPco.add(ci.crianca_id);
+  }
+  return { comPco, semPco };
+}
+
+// Total combinado de crianças ÚNICAS no culto = PCO ∪ nosso sistema (totem),
+// deduplicado por planning_center_id. `entry` é a linha por_culto do
+// coletarFrequenciaKidsPCO. Devolve { total, pco, totem } (totem = extras do
+// nosso sistema que NÃO estavam no PCO).
+async function totalKidsCombinado(cultoId, entry) {
+  const pco = entry?.total || 0;
+  const pcoSet = new Set((entry?.criancas || []).map((c) => c.pco_id).filter(Boolean).map(String));
+  const nossos = await nossosCheckinsDoCulto(cultoId);
+  let extras = nossos.semPco.size;
+  for (const p of nossos.comPco) if (!pcoSet.has(p)) extras += 1;
+  return { total: pco + extras, pco, totem: extras };
+}
+
+// Dispara o resumo de UM culto (crianças únicas: PCO + totem) pros líderes.
+async function dispararResumoKidsCulto(culto, total, fontes) {
   const dataFmt = culto.data ? new Date(culto.data + 'T00:00:00').toLocaleDateString('pt-BR') : '';
+  const detalhe = fontes && (fontes.totem || 0) > 0
+    ? `PCO ${fontes.pco || 0} · Totem ${fontes.totem || 0}`
+    : 'Frequência do Planning Center';
   const linhas = [
     '🧒 *Resumo do Kids*',
     `${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`,
     '',
     `👶 Crianças no check-in: *${total}*`,
     '',
-    '_Frequência do Planning Center · confira a lista em /ministerial/totem-kids/frequencia_',
+    `_${detalhe} · confira a lista em /ministerial/totem-kids/frequencia_`,
   ];
   const texto = linhas.join('\n');
-  const params = [`${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`, String(total), '—', 'Frequência do Planning Center'];
+  const params = [`${culto.nome}${dataFmt ? ` · ${dataFmt}` : ''}`, String(total), '—', detalhe];
   // WhatsApp pros líderes com telefone (Matheus, Milena)
   const lideres = await lideresKidsComTelefone();
   for (const l of lideres) { await enviarResumoWpp(l.telefone, { texto, params }).catch(() => {}); }
@@ -1163,24 +1519,27 @@ router.get('/cron/resumo-pco', async (req, res) => {
       const col = porData[c.data];
       if (!col) continue; // coleta falhou → tenta de novo na próxima hora
       const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
-      const total = entry?.total || 0;
-      if (total <= 0) continue; // sem dado ainda (ou culto sem Kids) → não envia "0", reavalia depois
+      // Crianças únicas = PCO ∪ nosso sistema (totem), sem dupla contagem.
+      const comb = await totalKidsCombinado(c.id, entry);
+      const total = comb.total;
+      if (total <= 0) continue; // sem check-in em NENHUMA fonte ainda → não envia "0", reavalia depois
       await supabase.from('cultos')
         .update({ presencial_kids: total, kids_resumo_enviado_at: new Date().toISOString() })
         .eq('id', c.id);
-      await dispararResumoKidsCulto(c, total);
+      await dispararResumoKidsCulto(c, total, comb);
       enviados += 1;
-      detalhe.push({ culto: c.nome, total });
+      detalhe.push({ culto: c.nome, total, pco: comb.pco, totem: comb.totem });
     }
 
-    // Reconciliação: check-ins corrigidos no PCO depois da foto → atualiza o
+    // Reconciliação: check-ins corrigidos no PCO/totem depois → atualiza o
     // número SEM reenviar o resumo (kids_resumo_enviado_at fica como está).
     let reconciliados = 0;
     for (const c of reconciliar) {
       const col = porData[c.data];
       if (!col) continue;
       const entry = (col.por_culto || []).find((p) => p.culto_id === c.id);
-      const total = entry?.total || 0;
+      const comb = await totalKidsCombinado(c.id, entry);
+      const total = comb.total;
       if (total > 0 && total !== c.presencial_kids) {
         await supabase.from('cultos').update({ presencial_kids: total }).eq('id', c.id);
         reconciliados += 1;
@@ -1369,6 +1728,31 @@ router.post('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res) =
   }
 });
 
+// POST /responsaveis/:membroId/foto · equipe Kids adiciona/troca a foto do
+// responsável (mem_membros · bucket público fotos-membros, igual à membresia).
+router.post('/responsaveis/:membroId/foto', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { dataUrl } = req.body || {};
+    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+    const mime = m[1];
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 5 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 5MB)' });
+    const path = `membros/${req.params.membroId}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('fotos-membros').upload(path, buffer, { contentType: mime, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const foto_url = `${urlData.publicUrl}?t=${Date.now()}`;
+    const { error: dbErr } = await supabase.from('mem_membros').update({ foto_url }).eq('id', req.params.membroId).is('deleted_at', null);
+    if (dbErr) throw dbErr;
+    res.json({ foto_url });
+  } catch (e) {
+    console.error('[totemKids] foto responsavel:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a foto do responsável' });
+  }
+});
+
 // DELETE /criancas/:id/foto · remove a foto
 router.delete('/criancas/:id/foto', authorizeModule('kids', 2), async (req, res) => {
   try {
@@ -1528,6 +1912,21 @@ router.post('/sync-pco', authorizeModule('kids', 3), async (req, res) => {
   }
 });
 
+// POST /api/totem-kids/responsaveis-pco · corrige os responsáveis poluídos
+// (household-dump de 22/05) podando pelos guardiões reais do PCO (checked_in_by).
+// Body { apply:true } grava · sem apply = prévia (dry-run · não altera nada).
+router.post('/responsaveis-pco', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const apply = ['1', 'true', true].includes(req.body?.apply);
+    const { corrigirResponsaveisPCO } = require('../services/planningCenterKidsCheckins');
+    const r = await corrigirResponsaveisPCO({ apply });
+    res.json(r);
+  } catch (e) {
+    console.error('[totemKids/responsaveis-pco]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao corrigir responsáveis pelo PCO' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // RESPONSÁVEIS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1551,11 +1950,15 @@ router.post('/criancas/:id/responsaveis', authorizeModule('kids', 2), async (req
       .select('*, membro:mem_membros(id, nome, telefone, foto_url)')
       .single();
     if (error) {
+      const t = traduzErroUmPaiUmaMae(error);
+      if (t) return res.status(t.status).json({ error: t.error });
       if (error.code === '23505') return res.status(409).json({ error: 'Responsável já cadastrado' });
       throw error;
     }
     res.status(201).json(data);
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     res.status(500).json({ error: 'Erro ao adicionar responsável' });
   }
 });
@@ -1610,6 +2013,8 @@ router.post('/criancas/:id/responsavel-rapido', authorizeModule('kids', 2), asyn
 
     res.status(201).json(ligacao);
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     console.error('[totemKids/responsavel-rapido]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao adicionar responsável' });
   }
@@ -1684,14 +2089,45 @@ router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {
   }
 });
 
+// GET /api/totem-kids/checkin/aberto?sessao_id=&crianca_id= · check-in ABERTO da
+// criança na sessão, com sala/culto/responsável — pra REIMPRIMIR a etiqueta
+// perdida (mesmo código) sem criar outro check-in.
+router.get('/checkin/aberto', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { sessao_id, crianca_id } = req.query;
+    if (!sessao_id || !crianca_id) return res.status(400).json({ error: 'sessao_id e crianca_id obrigatórios' });
+    const { data } = await supabase
+      .from('kids_checkins')
+      .select('id, codigo_seguranca, codigo_barras, checkin_grupo_id, responsavel_checkin_nome, created_at, sala:kids_salas(id, nome, cor, logo_url), sessao:kids_sessoes(id, culto:cultos(id, nome, data))')
+      .eq('sessao_id', sessao_id)
+      .eq('crianca_id', crianca_id)
+      .is('checkout_at', null)
+      .maybeSingle();
+    // Check-ins ABERTOS em OUTRAS sessões (culto anterior sem check-out) —
+    // não impedem o novo check-in, mas o totem avisa e oferece regularizar.
+    const { data: anteriores } = await supabase
+      .from('kids_checkins')
+      .select('id, codigo_seguranca, created_at, sessao:kids_sessoes(id, status, culto:cultos(id, nome, data))')
+      .eq('crianca_id', crianca_id)
+      .neq('sessao_id', sessao_id)
+      .is('checkout_at', null)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    res.json({ checkin: data || null, abertos_anteriores: anteriores || [] });
+  } catch (e) {
+    console.error('[totemKids] checkin aberto:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar o check-in' });
+  }
+});
+
 // POST /api/totem-kids/checkin · cria check-in + gera código + retorna pra impressão
 router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   try {
     const {
       sessao_id, crianca_id, sala_id, estacao_id,
       responsavel_id, responsavel_nome_manual, responsavel_telefone_manual, responsavel_parentesco,
-      pager_id,
       cultos_extras, // ids de OUTROS cultos do dia em que a criança também fica (multi-culto)
+      enviar_wpp,    // enviar código + QR de retirada por WhatsApp pro responsável (plus · etiqueta sempre imprime)
     } = req.body;
 
     if (!sessao_id) return res.status(400).json({ error: 'sessao_id obrigatorio' });
@@ -1709,17 +2145,19 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       return res.status(400).json({ error: 'Sessão não esta aberta', status: sessao.status });
     }
 
-    // Anti-duplicidade: não deixa 2 checkins na mesma sessão pra mesma criança
-    const { data: existing } = await supabase
+    // Anti-duplicidade: bloqueia só quando há check-in ABERTO (sem check-out) na
+    // sessão. Depois do check-out a criança PODE fazer novo check-in (saiu e
+    // voltou pra outra celebração) — gera código e etiqueta novos.
+    const { data: existentes } = await supabase
       .from('kids_checkins')
       .select('id, codigo_seguranca, sala_id, checkout_at')
       .eq('sessao_id', sessao_id)
-      .eq('crianca_id', crianca_id)
-      .maybeSingle();
-    if (existing) {
+      .eq('crianca_id', crianca_id);
+    const checkinAberto = (existentes || []).find(c => !c.checkout_at);
+    if (checkinAberto) {
       return res.status(409).json({
-        error: 'Criança já com check-in nessa sessão',
-        checkin_existente: existing,
+        error: 'Criança já está com check-in aberto nessa sessão. Perdeu a etiqueta? Use "Imprimir etiqueta de novo".',
+        checkin_existente: checkinAberto,
       });
     }
 
@@ -1751,7 +2189,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     // Buscar sala
     const { data: sala } = await supabase
       .from('kids_salas')
-      .select('id, nome, cor')
+      .select('id, nome, cor, logo_url')
       .eq('id', sala_id)
       .maybeSingle();
     if (!sala) return res.status(404).json({ error: 'Sala não encontrada' });
@@ -1781,7 +2219,7 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       : [];
     const grupoId = cultosExtras.length ? require('crypto').randomUUID() : null;
 
-    // INSERT (primário · culto atual · leva pager/etiqueta)
+    // INSERT (primário · culto atual)
     const { data: checkin, error: errIns } = await supabase
       .from('kids_checkins')
       .insert({
@@ -1795,13 +2233,24 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         responsavel_checkin_parentesco: responsavel_parentesco || null,
         codigo_seguranca: codigoFinal,
         codigo_barras: codigoFinal,                      // mesmo código
-        pager_id: pager_id || null,                      // pager entregue a família (opcional)
         checkin_por: req.user.userId,
         checkin_grupo_id: grupoId,
       })
       .select('*')
       .single();
+    // 23505 = índice único (check-in aberto) — corrida entre 2 totens ou
+    // migration 20260707220000 ainda não aplicada (UNIQUE antiga no lugar).
+    if (errIns && errIns.code === '23505') {
+      return res.status(409).json({ error: 'Criança já está com check-in nessa sessão. Perdeu a etiqueta? Use "Imprimir etiqueta de novo".' });
+    }
     if (errIns) throw errIns;
+
+    // Fez check-in → a criança está ativa de novo. Reativa se tinha sido
+    // auto-inativada (sumiu 6+ meses do PCO / não veio no último import).
+    supabase.from('kids_criancas')
+      .update({ ativo: true, motivo_inativacao: null, inativado_em: null })
+      .eq('id', crianca_id).eq('ativo', false)
+      .then(() => {}, (e) => console.error('[totemKids/checkin] reativar criança:', e?.message));
 
     // Cultos do grupo (pro recibo): começa com o atual.
     const cultosDoGrupo = [{ id: sessao.culto_id, nome: sessao.culto?.nome || null }];
@@ -1833,6 +2282,25 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       } catch (ex) { console.error('[totemKids/checkin] culto extra:', ex.message); }
     }
 
+    // Envio opcional do código + QR de retirada por WhatsApp (best-effort · NUNCA
+    // derruba o check-in). A etiqueta é impressa de qualquer jeito; isto é um plus
+    // (pais perdem a etiqueta). O QR da página codifica o mesmo código → o leitor
+    // 2D do portão lê e o /portao/scan já faz o checkout.
+    if (enviar_wpp && respTel) {
+      const template = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA;
+      if (template) {
+        const primeiroNome = String(crianca?.nome || '').trim().split(/\s+/)[0] || 'sua criança';
+        const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+        const link = `${base}/kids/retirada/${codigoFinal}`;
+        const lang = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR';
+        enviarTemplateWpp(respTel, template, lang, [primeiroNome, codigoFinal, link])
+          .then((r) => { if (!r?.ok) console.warn('[totemKids/checkin] wpp retirada pulado:', r?.error); })
+          .catch((e) => console.warn('[totemKids/checkin] wpp retirada erro:', e?.message));
+      } else {
+        console.warn('[totemKids/checkin] WHATSAPP_TEMPLATE_KIDS_RETIRADA não configurado · envio pulado');
+      }
+    }
+
     // Retorna tudo pro frontend renderizar as 2 etiquetas
     res.status(201).json({
       checkin,
@@ -1861,7 +2329,7 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
       .select(`
         *,
         crianca:kids_criancas(id, nome, data_nascimento, foto_url, observacoes_medicas, tem_espectro, espectro_qual, tem_alergia, alergia_qual, tem_limitacao_fisica, limitacao_fisica_qual),
-        sala:kids_salas(id, nome, cor),
+        sala:kids_salas(id, nome, cor, logo_url),
         sessao:kids_sessoes(id, status, culto:cultos(id, nome, data))
       `)
       .eq('codigo_seguranca', codigo)
@@ -1904,7 +2372,9 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     if (!checkin_id) return res.status(400).json({ error: 'checkin_id obrigatorio' });
     if (!metodo) return res.status(400).json({ error: 'metodo obrigatorio' });
 
-    const validMetodos = ['codigo_digitado', 'barcode_escaneado', 'responsavel_autorizado', 'override_supervisor'];
+    // 'painel' = check-out simples pela equipe (painel ao vivo / regularização
+    // de culto anterior no totem) — sem escolher qual responsável retirou.
+    const validMetodos = ['codigo_digitado', 'barcode_escaneado', 'responsavel_autorizado', 'override_supervisor', 'painel'];
     if (!validMetodos.includes(metodo)) return res.status(400).json({ error: 'metodo invalido', validos: validMetodos });
 
     // Override exige motivo + permissão
@@ -1923,13 +2393,13 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
       }
     }
 
-    // Buscar nome do responsável (snapshot)
+    // Buscar nome do responsável (snapshot) · dispensado no método 'painel'
     let respNome = responsavel_nome;
     if (responsavel_id && !respNome) {
       const { data: m } = await supabase.from('mem_membros').select('nome').eq('id', responsavel_id).maybeSingle();
       respNome = m?.nome;
     }
-    if (!respNome) return res.status(400).json({ error: 'responsavel_nome obrigatorio (snapshot)' });
+    if (!respNome && metodo !== 'painel') return res.status(400).json({ error: 'responsavel_nome obrigatorio (snapshot)' });
 
     // Multi-culto: se o check-in faz parte de um grupo (criança ficou em mais de
     // um culto), a retirada fecha TODAS as linhas ativas do grupo de uma vez.
@@ -1941,7 +2411,7 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     const patch = {
       checkout_at: new Date().toISOString(),
       responsavel_checkout_id: responsavel_id || null,
-      responsavel_checkout_nome: respNome,
+      responsavel_checkout_nome: respNome || null,
       checkout_metodo: metodo,
       checkout_por: req.user.userId,
       override_motivo: metodo === 'override_supervisor' ? override_motivo : null,
@@ -1956,6 +2426,153 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
   } catch (e) {
     console.error('[totemKids/checkout]', e.message);
     res.status(500).json({ error: 'Erro ao fazer checkout' });
+  }
+});
+
+// POST /api/totem-kids/checkin/:id/reabrir · DESFAZ um check-out (feito sem
+// querer) → a criança volta a constar presente. Reabre o grupo multi-culto todo.
+router.post('/checkin/:id/reabrir', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { data: alvo } = await supabase.from('kids_checkins')
+      .select('id, checkin_grupo_id, checkout_at, sessao:kids_sessoes(status)')
+      .eq('id', req.params.id).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Check-in não encontrado' });
+    if (!alvo.checkout_at) return res.json({ ok: true, ja_presente: true });
+    if (alvo.sessao?.status && alvo.sessao.status !== 'aberta') {
+      return res.status(409).json({ error: 'A sessão já foi encerrada — não dá pra reabrir o check-in.' });
+    }
+    const patch = {
+      checkout_at: null, responsavel_checkout_id: null, responsavel_checkout_nome: null,
+      checkout_metodo: null, checkout_por: null, override_motivo: null, override_aprovado_por: null,
+      updated_at: new Date().toISOString(),
+    };
+    let q = supabase.from('kids_checkins').update(patch).not('checkout_at', 'is', null);
+    q = alvo.checkin_grupo_id ? q.eq('checkin_grupo_id', alvo.checkin_grupo_id) : q.eq('id', req.params.id);
+    const { data, error } = await q.select('id, crianca:kids_criancas(nome)');
+    if (error) throw error;
+    res.json({ ok: true, reabertos: (data || []).length });
+  } catch (e) {
+    console.error('[totemKids/checkin/reabrir]', e.message);
+    res.status(500).json({ error: 'Erro ao reabrir o check-in' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PORTÃO DE SAÍDA · validação da etiqueta na entrada do corredor
+// ═══════════════════════════════════════════════════════════════════════════
+// Modelo (Marcos + líderes do Kids · 2026-07-07): o prédio tem corredor único —
+// o pai ENTRA, bipa o RECIBO num leitor de código de barras na porta e segue;
+// a professora confere na sala se o código do recibo bate com a etiqueta da
+// criança (custódia real). O scan VERDE registra a saída no sistema
+// (checkout_metodo='portao'). O portão é NÃO-BLOQUEANTE: anomalia (código já
+// usado / de sessão antiga / desconhecido) vira aviso âmbar "pode seguir —
+// confirmação na sala" e fica logada em kids_portao_scans (auditoria). Regra
+// de ouro: o portão nunca resolve exceção — exceção se resolve na sala/depois.
+// Substitui o modelo de chamadas TV/pagers (removido nesta mesma data).
+
+// POST /api/totem-kids/portao/scan · Body: { codigo }
+// Sempre responde 200 com { resultado } (o portão não bloqueia) · loga todo bip.
+router.post('/portao/scan', authorizeModule('kids', 2), async (req, res) => {
+  const registrar = async (row) => {
+    const { error } = await supabase.from('kids_portao_scans')
+      .insert({ criado_por: req.user.userId, ...row });
+    if (error) console.warn('[totemKids/portao] log falhou:', error.message);
+  };
+  try {
+    const cru = String(req.body?.codigo || '').toUpperCase().trim();
+    if (!/^[A-Z0-9]{4}$/.test(cru)) {
+      await registrar({ codigo: cru.slice(0, 24) || '?', resultado: 'nao_reconhecido' });
+      return res.json({ resultado: 'nao_reconhecido' });
+    }
+    const codigo = cru;
+
+    // 1) Match vivo: check-in ABERTO em sessão ABERTA → saída autorizada
+    const { data: aberto, error: e1 } = await supabase
+      .from('kids_checkins')
+      .select('id, checkin_grupo_id, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome, cor, logo_url), sessao:kids_sessoes(id, status)')
+      .eq('codigo_seguranca', codigo)
+      .is('checkout_at', null)
+      .order('checkin_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (e1) throw e1;
+
+    if (aberto && aberto.sessao?.status === 'aberta') {
+      // Fecha o grupo multi-culto inteiro (mesma regra do /checkout).
+      // Sem snapshot de responsável: a posse da etiqueta é conferida na sala.
+      const patch = {
+        checkout_at: new Date().toISOString(),
+        checkout_metodo: 'portao',
+        checkout_por: req.user.userId,
+      };
+      let q = supabase.from('kids_checkins').update(patch).is('checkout_at', null);
+      q = aberto.checkin_grupo_id ? q.eq('checkin_grupo_id', aberto.checkin_grupo_id) : q.eq('id', aberto.id);
+      const { data: fechados, error: e2 } = await q.select('id');
+      if (e2) throw e2;
+      if (!fechados || !fechados.length) {
+        // Corrida: outro bip fechou no meio do caminho → trata como já retirada
+        await registrar({ codigo, checkin_id: aberto.id, crianca_nome: aberto.crianca?.nome, resultado: 'ja_retirada', detalhe: 'corrida entre scans' });
+        return res.json({ resultado: 'ja_retirada', crianca: aberto.crianca?.nome || null });
+      }
+      await registrar({ codigo, checkin_id: aberto.id, crianca_nome: aberto.crianca?.nome, resultado: 'ok' });
+      return res.json({
+        resultado: 'ok',
+        crianca: aberto.crianca?.nome || null,
+        sala: aberto.sala ? { nome: aberto.sala.nome, cor: aberto.sala.cor } : null,
+        cultos_encerrados: fechados.length,
+      });
+    }
+
+    // Check-in aberto mas a sessão já foi encerrada → etiqueta de culto antigo
+    if (aberto) {
+      await registrar({ codigo, checkin_id: aberto.id, crianca_nome: aberto.crianca?.nome, resultado: 'fora_de_sessao' });
+      return res.json({ resultado: 'fora_de_sessao', crianca: aberto.crianca?.nome || null });
+    }
+
+    // 2) Código sem check-in aberto: já usado (sessão atual) ou culto antigo?
+    const { data: usado, error: e3 } = await supabase
+      .from('kids_checkins')
+      .select('id, checkout_at, crianca:kids_criancas(nome), sessao:kids_sessoes(status)')
+      .eq('codigo_seguranca', codigo)
+      .order('checkin_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (e3) throw e3;
+
+    if (usado && usado.checkout_at && usado.sessao?.status === 'aberta') {
+      // Dupla retirada em potencial — o sinal de segurança mais importante do log
+      await registrar({ codigo, checkin_id: usado.id, crianca_nome: usado.crianca?.nome, resultado: 'ja_retirada', detalhe: `retirada anterior em ${usado.checkout_at}` });
+      return res.json({ resultado: 'ja_retirada', crianca: usado.crianca?.nome || null, retirada_em: usado.checkout_at });
+    }
+    if (usado) {
+      await registrar({ codigo, checkin_id: usado.id, crianca_nome: usado.crianca?.nome, resultado: 'fora_de_sessao' });
+      return res.json({ resultado: 'fora_de_sessao', crianca: usado.crianca?.nome || null });
+    }
+
+    await registrar({ codigo, resultado: 'nao_reconhecido' });
+    return res.json({ resultado: 'nao_reconhecido' });
+  } catch (e) {
+    console.error('[totemKids/portao/scan]', e.message);
+    res.status(500).json({ error: 'Erro ao validar o código' });
+  }
+});
+
+// GET /api/totem-kids/portao/scans?limit=&resultado= · auditoria dos bips do portão
+router.get('/portao/scans', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    let q = supabase
+      .from('kids_portao_scans')
+      .select('id, codigo, resultado, crianca_nome, detalhe, created_at, checkin_id')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (req.query.resultado) q = q.eq('resultado', String(req.query.resultado));
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[totemKids/portao/scans]', e.message);
+    res.status(500).json({ error: 'Erro ao listar scans do portão' });
   }
 });
 
@@ -1994,11 +2611,23 @@ router.get('/painel/dia', authorizeModule('kids', 1), async (req, res) => {
   try {
     const data = req.query.data
       || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-    const { data: linhas, error } = await supabase
-      .from('vw_kids_sessao_ao_vivo')
-      .select('sessao_id, culto_id, data_culto, culto_nome, service_type_name, status, abrir_em, criancas_presentes, criancas_saidas, decisoes_jesus, total_checkins')
-      .eq('data_culto', data);
-    if (error) throw error;
+    const COLS = 'sessao_id, sala_id, culto_id, data_culto, culto_nome, service_type_name, status, abrir_em, criancas_presentes, criancas_saidas, decisoes_jesus, total_checkins';
+    // Cultos do dia + QUALQUER sessão ABERTA (independe de ser dia de culto —
+    // testes/cultos atípicos com sessão aberta e check-ins reais devem aparecer).
+    const [rHoje, rAbertas] = await Promise.all([
+      supabase.from('vw_kids_sessao_ao_vivo').select(COLS).eq('data_culto', data),
+      supabase.from('vw_kids_sessao_ao_vivo').select(COLS).eq('status', 'aberta'),
+    ]);
+    if (rHoje.error) throw rHoje.error;
+    if (rAbertas.error) throw rAbertas.error;
+    const vistos = new Set();
+    const linhas = [];
+    for (const r of [...(rHoje.data || []), ...(rAbertas.data || [])]) {
+      const k = `${r.sessao_id}|${r.sala_id ?? ''}`;
+      if (vistos.has(k)) continue;
+      vistos.add(k);
+      linhas.push(r);
+    }
 
     // Agrega por culto (a view vem 1 linha por sala)
     const porCulto = new Map();
@@ -2023,10 +2652,56 @@ router.get('/painel/dia', authorizeModule('kids', 1), async (req, res) => {
     }
     const lista = Array.from(porCulto.values())
       .sort((a, b) => String(a.abrir_em || '').localeCompare(String(b.abrir_em || '')));
-    res.json({ data, cultos: lista });
+
+    // Crianças ÚNICAS no dia (distinct crianca_id somando TODOS os cultos) —
+    // evita a dupla contagem de quem ficou em mais de um culto. presentes = sem
+    // checkout agora; total = todas que passaram hoje.
+    const sessaoIds = [...new Set(linhas.map(r => r.sessao_id).filter(Boolean))];
+    const vistosTotal = new Set(), vistosPresentes = new Set();
+    if (sessaoIds.length) {
+      let from = 0; const page = 1000;
+      for (;;) {
+        const { data: cks, error: eCk } = await supabase
+          .from('kids_checkins')
+          .select('crianca_id, checkout_at')
+          .in('sessao_id', sessaoIds)
+          .range(from, from + page - 1);
+        if (eCk) throw eCk;
+        for (const ck of (cks || [])) {
+          vistosTotal.add(ck.crianca_id);
+          if (!ck.checkout_at) vistosPresentes.add(ck.crianca_id);
+        }
+        if (!cks || cks.length < page) break;
+        from += page;
+      }
+    }
+    res.json({ data, cultos: lista, unicas: { presentes: vistosPresentes.size, total: vistosTotal.size } });
   } catch (e) {
     console.error('[totemKids/painel/dia]', e.message);
     res.status(500).json({ error: 'Erro ao resumir os cultos do dia' });
+  }
+});
+
+// POST /api/totem-kids/painel/checkout-todos · baixa (check-out) em massa de
+// TODAS as crianças que ainda constam presentes (checkout_at IS NULL). Uso: fim
+// do culto ou segunda de manhã pra limpar quem ficou sem baixa. Não bloqueia nada.
+router.post('/painel/checkout-todos', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: baixados, error } = await supabase
+      .from('kids_checkins')
+      .update({
+        checkout_at: new Date().toISOString(),
+        checkout_metodo: 'checkout_forcado',
+        checkout_por: req.user.userId,
+        responsavel_checkout_nome: 'Baixa em massa (painel)',
+      })
+      .is('checkout_at', null)
+      .select('id');
+    if (error) throw error;
+    res.json({ baixados: (baixados || []).length });
+  } catch (e) {
+    console.error('[totemKids/painel/checkout-todos]', e.message);
+    res.status(500).json({ error: 'Erro ao dar baixa em todos' });
   }
 });
 
@@ -2183,145 +2858,145 @@ router.patch('/salas/:id', authorizeModule('kids', 3), async (req, res) => {
   }
 });
 
+// DELETE /salas/:id · exclui a sala DE VERDADE (não é PII · é config).
+// Guard: se a sala já tem check-ins no histórico, não dá pra excluir (FK
+// RESTRICT) — devolve 409 pedindo pra desativar. Estoque/voluntários da sala
+// têm ON DELETE CASCADE, então somem junto.
 router.delete('/salas/:id', authorizeModule('kids', 5), async (req, res) => {
   try {
-    // Soft delete via ativo=false
-    const { error } = await supabase.from('kids_salas').update({ ativo: false }).eq('id', req.params.id);
+    const salaId = req.params.id;
+    const { count: nChk } = await supabase
+      .from('kids_checkins').select('id', { count: 'exact', head: true }).eq('sala_id', salaId);
+    if (nChk && nChk > 0) {
+      return res.status(409).json({
+        error: `Esta sala tem ${nChk} check-in(s) no histórico e não pode ser excluída permanentemente. Desative-a em vez de excluir.`,
+      });
+    }
+    const { error } = await supabase.from('kids_salas').delete().eq('id', salaId);
+    if (error) {
+      if (error.code === '23503') {
+        return res.status(409).json({
+          error: 'Esta sala está em uso (registros vinculados) e não pode ser excluída. Desative-a em vez de excluir.',
+        });
+      }
+      throw error;
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] excluir sala:', e.message);
+    res.status(500).json({ error: 'Erro ao excluir sala' });
+  }
+});
+
+// POST /salas/:id/logo · logo da categoria (impressa na etiqueta da criança).
+// Bucket público fotos-membros (prefixo kids-logos/) pra o iframe de impressão
+// carregar a imagem sem header de auth. Branding · sem PII.
+router.post('/salas/:id/logo', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { dataUrl } = req.body || {};
+    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+    const mime = m[1];
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 3 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 3MB)' });
+    const path = `kids-logos/${req.params.id}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('fotos-membros').upload(path, buffer, { contentType: mime, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const logo_url = `${urlData.publicUrl}?t=${Date.now()}`;
+    const { error: dbErr } = await supabase.from('kids_salas').update({ logo_url }).eq('id', req.params.id);
+    if (dbErr) throw dbErr;
+    res.json({ logo_url });
+  } catch (e) {
+    console.error('[totemKids] logo sala:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a logo da sala' });
+  }
+});
+
+// POST /salas/:id/logo/remover · tira a logo (volta pra sem logo na etiqueta)
+router.post('/salas/:id/logo/remover', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    for (const ext of ['png', 'jpg', 'webp']) {
+      await supabase.storage.from('fotos-membros').remove([`kids-logos/${req.params.id}.${ext}`]).catch(() => {});
+    }
+    const { error } = await supabase.from('kids_salas').update({ logo_url: null }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao desativar sala' });
+    console.error('[totemKids] remover logo sala:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a logo' });
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ESTAÇÕES
-// ═══════════════════════════════════════════════════════════════════════════
-
-router.get('/estacoes', authorizeModule('kids', 1), async (req, res) => {
+// ─── Config de layout da etiqueta (singleton) ───────────────────────────────
+router.get('/etiqueta-config', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('kids_estacoes')
-      .select('*, sala:kids_salas(id, nome)')
-      .order('nome');
-    if (error) throw error;
-    res.json(data || []);
+    const { data } = await supabase.from('kids_etiqueta_config').select('*').eq('id', 1).maybeSingle();
+    res.json(data || { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto' });
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao listar estações' });
+    res.status(500).json({ error: 'Erro ao carregar layout' });
   }
 });
 
-router.post('/estacoes', authorizeModule('kids', 3), async (req, res) => {
+router.put('/etiqueta-config', authorizeModule('kids', 3), async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('kids_estacoes')
-      .insert(req.body)
-      .select()
-      .single();
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) {
-    res.status(500).json({ error: 'Erro ao criar estação' });
-  }
-});
-
-router.patch('/estacoes/:id', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    // Bloqueia mexer no token via PATCH normal · usar /regenerar-token
-    const { token_pareamento, pareada_em, user_agent_pareada, ...resto } = req.body;
-    void token_pareamento; void pareada_em; void user_agent_pareada;
-    const { data, error } = await supabase
-      .from('kids_estacoes')
-      .update(resto)
-      .eq('id', req.params.id)
-      .select()
-      .single();
+    const tamOk = ['P', 'M', 'G'];
+    const posOk = ['esquerda', 'direita', 'acima'];
+    const nomeOk = ['auto', 'P', 'M', 'G'];
+    const patch = { id: 1, updated_at: new Date().toISOString() };
+    if (tamOk.includes(req.body?.logo_tamanho)) patch.logo_tamanho = req.body.logo_tamanho;
+    if (posOk.includes(req.body?.logo_posicao)) patch.logo_posicao = req.body.logo_posicao;
+    if (nomeOk.includes(req.body?.nome_tamanho)) patch.nome_tamanho = req.body.nome_tamanho;
+    const { data, error } = await supabase.from('kids_etiqueta_config')
+      .upsert(patch, { onConflict: 'id' }).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao editar estação' });
+    console.error('[totemKids] etiqueta-config:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar layout' });
   }
 });
 
-// ── Pareamento de tablet ↔ estação ──
-
-// GET /api/totem-kids/estacoes/:id/info-pareamento · pra admin gerar QR
-// Retorna URL completa pareada · so coord-kids/admin (nível 3+)
-router.get('/estacoes/:id/info-pareamento', authorizeModule('kids', 3), async (req, res) => {
+// POST /etiqueta-config/logo · logo do Kids da etiqueta de ANIVERSÁRIO (global).
+// Bucket público fotos-membros (kids-logos/_aniversario) pra o iframe imprimir.
+router.post('/etiqueta-config/logo', authorizeModule('kids', 3), async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('kids_estacoes')
-      .select('id, nome, tipo, token_pareamento, pareada_em, user_agent_pareada')
-      .eq('id', req.params.id)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Estação não encontrada' });
-
-    const baseUrl = process.env.FRONTEND_URL || `https://${req.get('host')}`;
-    const url = `${baseUrl}/ministerial/totem-kids/parear?estacao=${data.id}&token=${data.token_pareamento}`;
-    res.json({ ...data, url });
+    const { dataUrl } = req.body || {};
+    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
+    const mime = m[1];
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 3 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 3MB)' });
+    const path = `kids-logos/_aniversario.${ext}`;
+    const { error: upErr } = await supabase.storage.from('fotos-membros').upload(path, buffer, { contentType: mime, upsert: true });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
+    const logo_aniversario_url = `${urlData.publicUrl}?t=${Date.now()}`;
+    const { error: dbErr } = await supabase.from('kids_etiqueta_config')
+      .upsert({ id: 1, logo_aniversario_url, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (dbErr) throw dbErr;
+    res.json({ logo_aniversario_url });
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao buscar info de pareamento' });
+    console.error('[totemKids] etiqueta-config logo:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a logo' });
   }
 });
 
-// POST /api/totem-kids/estacoes/:id/regenerar-token · revoga pareamentos anteriores
-router.post('/estacoes/:id/regenerar-token', authorizeModule('kids', 3), async (req, res) => {
+// POST /etiqueta-config/logo/remover · tira a logo de aniversário
+router.post('/etiqueta-config/logo/remover', authorizeModule('kids', 3), async (req, res) => {
   try {
-    const novoToken = require('crypto').randomUUID();
-    const { data, error } = await supabase
-      .from('kids_estacoes')
-      .update({ token_pareamento: novoToken, pareada_em: null, user_agent_pareada: null })
-      .eq('id', req.params.id)
-      .select('id, nome, token_pareamento')
-      .single();
-    if (error) throw error;
-    const baseUrl = process.env.FRONTEND_URL || `https://${req.get('host')}`;
-    const url = `${baseUrl}/ministerial/totem-kids/parear?estacao=${data.id}&token=${data.token_pareamento}`;
-    res.json({ ...data, url });
-  } catch (e) {
-    res.status(500).json({ error: 'Erro ao regenerar token' });
-  }
-});
-
-// POST /api/totem-kids/estacoes/parear · tablet confirma pareamento
-// Body: { estacao_id, token }
-// Returns: { id, nome, tipo, printer_modelo } (sem expor o token de volta)
-router.post('/estacoes/parear', async (req, res) => {
-  try {
-    const { estacao_id, token } = req.body || {};
-    if (!estacao_id || !token) return res.status(400).json({ error: 'estacao_id e token obrigatórios' });
-
-    const { data: estacao } = await supabase
-      .from('kids_estacoes')
-      .select('id, nome, tipo, printer_modelo, token_pareamento, ativo')
-      .eq('id', estacao_id)
-      .maybeSingle();
-
-    if (!estacao) return res.status(404).json({ error: 'Estação não encontrada' });
-    if (!estacao.ativo) return res.status(400).json({ error: 'Estacao inativa' });
-    if (!estacao.token_pareamento || !safeEqual(String(token), String(estacao.token_pareamento))) {
-      return res.status(403).json({ error: 'Token invalido · pareamento foi revogado · peca admin pra gerar QR novo' });
+    for (const ext of ['png', 'jpg', 'webp']) {
+      await supabase.storage.from('fotos-membros').remove([`kids-logos/_aniversario.${ext}`]).catch(() => {});
     }
-
-    // Atualiza auditoria
-    await supabase
-      .from('kids_estacoes')
-      .update({
-        pareada_em: new Date().toISOString(),
-        user_agent_pareada: req.get('user-agent')?.slice(0, 200) || null,
-      })
-      .eq('id', estacao_id);
-
-    res.json({
-      id: estacao.id,
-      nome: estacao.nome,
-      tipo: estacao.tipo,
-      printer_modelo: estacao.printer_modelo,
-    });
+    const { error } = await supabase.from('kids_etiqueta_config')
+      .upsert({ id: 1, logo_aniversario_url: null, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (error) throw error;
+    res.json({ ok: true });
   } catch (e) {
-    console.error('[totemKids/parear]', e);
-    res.status(500).json({ error: 'Erro ao parear' });
+    console.error('[totemKids] etiqueta-config logo remover:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a logo' });
   }
 });
 
@@ -2334,21 +3009,29 @@ router.post('/etiquetas-log', authorizeModule('kids', 2), async (req, res) => {
     const { checkin_id, estacao_id, tipo, conteudo, reimpressao, motivo_reimpressao, status, erro } = req.body;
     if (!checkin_id || !tipo) return res.status(400).json({ error: 'checkin_id e tipo obrigatórios' });
 
-    const { data, error } = await supabase
-      .from('kids_etiquetas_log')
-      .insert({
-        checkin_id,
-        estacao_id: estacao_id || null,
-        tipo,
-        conteudo_json: conteudo || {},
-        reimpressao: !!reimpressao,
-        motivo_reimpressao: motivo_reimpressao || null,
-        impressa_por: req.user.userId,
-        status: status || 'enviada',
-        erro: erro || null,
-      })
-      .select('id')
-      .single();
+    const row = {
+      checkin_id,
+      estacao_id: estacao_id || null,
+      tipo,
+      conteudo_json: conteudo || {},
+      reimpressao: !!reimpressao,
+      motivo_reimpressao: motivo_reimpressao || null,
+      impressa_por: req.user.userId,
+      status: status || 'enviada',
+      erro: erro || null,
+    };
+    let { data, error } = await supabase.from('kids_etiquetas_log').insert(row).select('id').single();
+    // Estação é auditoria OPCIONAL: pareamento antigo no localStorage do totem
+    // apontando pra estação inexistente derrubava o log com FK (8× 500 em
+    // 2026-07-07 · caso Diego). Descarta a estação e loga mesmo assim.
+    if (error && error.code === '23503' && String(error.message || '').includes('estacao')) {
+      ({ data, error } = await supabase.from('kids_etiquetas_log')
+        .insert({ ...row, estacao_id: null }).select('id').single());
+    }
+    // Valor fora do CHECK (tipo/status) é erro do chamador, não do servidor
+    if (error && error.code === '23514') {
+      return res.status(400).json({ error: 'tipo ou status inválido', detalhe: error.message });
+    }
     if (error) throw error;
 
     // Incrementa contador no checkin (best effort)
@@ -2728,499 +3411,6 @@ router.get('/criancas/modelo-importacao', authorizeModule('kids', 1), async (req
   res.send(buf);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// CHAMADAS · sistema de display nas TVs das salas
-// ═══════════════════════════════════════════════════════════════════════════
-// Fluxo:
-//   1. Pai digita código no PC touch self-service da recepcao
-//   2. POST /api/totem-kids/chamadas { código, estacao_token }
-//   3. Backend valida + cria row em kids_chamadas
-//   4. TV da sala (estação tipo=display) faz polling em /display/sala
-//   5. Renderiza grande + sino + TTS
-//   6. Quando voluntaria confirma checkout, trigger fecha chamada
-//      (atendida_em e preenchido) e TV remove do display
-
-const publicRouter = require('express').Router();
-// Sub-router público (sem authenticate) · pareamento via token de estação
-// E montado dentro do main router em rota separada
-
-// Helper: valida token de estação e retorna { id, nome, tipo, sala_id, sala_nome }
-async function validarEstacaoToken(token, tipoEsperado = null) {
-  if (!token) return null;
-  let q = supabase
-    .from('kids_estacoes')
-    .select('id, nome, tipo, sala_id, ativo, kids_salas:sala_id(id, nome, cor)')
-    .eq('token_pareamento', token)
-    .eq('ativo', true);
-  const { data } = await q.maybeSingle();
-  if (!data) return null;
-  if (tipoEsperado && data.tipo !== tipoEsperado) {
-    // Se for um array de tipos, aceita qualquer um
-    if (Array.isArray(tipoEsperado) && !tipoEsperado.includes(data.tipo)) return null;
-    if (!Array.isArray(tipoEsperado)) return null;
-  }
-  return {
-    id: data.id,
-    nome: data.nome,
-    tipo: data.tipo,
-    sala_id: data.sala_id,
-    sala_nome: data.kids_salas?.nome,
-    sala_cor: data.kids_salas?.cor,
-  };
-}
-
-// POST /api/totem-kids/chamadas
-// Body: { código, estacao_token? }
-// Cria chamada · valida código · faz upsert (se já tem ativa, incrementa re_chamadas)
-router.post('/chamadas', async (req, res) => {
-  try {
-    const { codigo, estacao_token } = req.body || {};
-    if (!codigo || String(codigo).trim().length !== 4) {
-      return res.status(400).json({ error: 'código de 4 caracteres obrigatório' });
-    }
-
-    // Se enviou estacao_token, valida (modo self-service · sem login)
-    // Senão, exige auth (modo manned via header Authorization)
-    let estacao = null;
-    let userId = null;
-    if (estacao_token) {
-      estacao = await validarEstacaoToken(estacao_token, ['self', 'manned']);
-      if (!estacao) return res.status(403).json({ error: 'estação invalida ou não pareada' });
-    } else {
-      // Exige auth normal · req.user populado pelo authenticate
-      if (!req.user) return res.status(401).json({ error: 'login ou estacao_token necessário' });
-      userId = req.user.userId;
-    }
-
-    const codigoUpper = String(codigo).toUpperCase().trim();
-
-    // Acha checkin ativo
-    const { data: checkin } = await supabase
-      .from('kids_checkins')
-      .select('id, sessao_id, crianca_id, sala_id, codigo_seguranca, responsavel_checkin_nome, responsavel_checkin_telefone, checkout_at, pager_id, pager:kids_pagers(id, numero, cor, tipo_lrs, ativo), kids_criancas(nome, observacoes_medicas), kids_salas(nome, cor)')
-      .eq('codigo_seguranca', codigoUpper)
-      .is('checkout_at', null)
-      .order('checkin_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!checkin) {
-      return res.status(404).json({ error: 'Código não encontrado · criança pode já ter saido ou código errado' });
-    }
-
-    // Upsert · se já tem chamada ativa, incrementa re_chamadas
-    const { data: existente } = await supabase
-      .from('kids_chamadas')
-      .select('id, re_chamadas')
-      .eq('checkin_id', checkin.id)
-      .is('atendida_em', null)
-      .maybeSingle();
-
-    let chamada;
-    if (existente) {
-      const { data, error } = await supabase
-        .from('kids_chamadas')
-        .update({
-          re_chamadas: existente.re_chamadas + 1,
-          ultima_rechamada_em: new Date().toISOString(),
-        })
-        .eq('id', existente.id)
-        .select('*')
-        .single();
-      if (error) throw error;
-      chamada = data;
-    } else {
-      const { data, error } = await supabase
-        .from('kids_chamadas')
-        .insert({
-          sessao_id: checkin.sessao_id,
-          checkin_id: checkin.id,
-          crianca_id: checkin.crianca_id,
-          sala_id: checkin.sala_id,
-          estacao_origem_id: estacao?.id || null,
-          codigo_seguranca: codigoUpper,
-          responsavel_nome_snapshot: checkin.responsavel_checkin_nome,
-          responsavel_telefone_snapshot: checkin.responsavel_checkin_telefone,
-        })
-        .select('*')
-        .single();
-      if (error) throw error;
-      chamada = data;
-    }
-
-    // Enfileira o toque no pager da família (se a criança recebeu um no check-in).
-    // O agente local da recepcao consome /pager/bridge/fila e dispara via LRSN/TCP.
-    let pager_enfileirado = false;
-    if (checkin.pager && checkin.pager.ativo) {
-      const { error: errEnvio } = await supabase
-        .from('kids_pager_envios')
-        .insert({
-          chamada_id: chamada.id,
-          checkin_id: checkin.id,
-          pager_id: checkin.pager.id,
-          pager_numero: checkin.pager.numero,
-          cor: checkin.pager.cor || 'R',
-          tipo_lrs: checkin.pager.tipo_lrs ?? 2,
-          origem: existente ? 'rechamada' : 'chamada',
-          criado_por: userId,
-        });
-      if (errEnvio) console.warn('[totemKids/chamadas] enfileirar pager falhou:', errEnvio.message);
-      else pager_enfileirado = true;
-    }
-
-    res.json({
-      chamada,
-      crianca: { id: checkin.crianca_id, nome: checkin.kids_criancas?.nome, observacoes_medicas: checkin.kids_criancas?.observacoes_medicas },
-      sala: { id: checkin.sala_id, nome: checkin.kids_salas?.nome, cor: checkin.kids_salas?.cor },
-      responsavel: { nome: checkin.responsavel_checkin_nome, telefone: checkin.responsavel_checkin_telefone },
-      pager: checkin.pager ? { numero: checkin.pager.numero } : null,
-      pager_enfileirado,
-      ja_existia: !!existente,
-    });
-  } catch (e) {
-    console.error('[totemKids/chamadas]', e.message);
-    res.status(500).json({ error: 'Erro ao criar chamada' });
-  }
-});
-
-// GET /api/totem-kids/display/info?token=X
-// Tela display da TV consulta no boot · valida token e retorna sua estação
-router.get('/display/info', async (req, res) => {
-  try {
-    const token = req.query.token;
-    const estacao = await validarEstacaoToken(token, ['display', 'display_foyer']);
-    if (!estacao) return res.status(403).json({ error: 'token invalido' });
-    res.json(estacao);
-  } catch (e) {
-    res.status(500).json({ error: 'Erro' });
-  }
-});
-
-// GET /api/totem-kids/display/chamadas-ativas?token=X
-// TV chama a cada 2s (polling) · retorna chamadas ativas da sala (ou todas se foyer)
-router.get('/display/chamadas-ativas', async (req, res) => {
-  try {
-    const token = req.query.token;
-    const estacao = await validarEstacaoToken(token, ['display', 'display_foyer']);
-    if (!estacao) return res.status(403).json({ error: 'token invalido' });
-
-    let q = supabase
-      .from('vw_kids_chamadas_ativas')
-      .select('*')
-      .order('chamada_em', { ascending: true });
-    if (estacao.tipo === 'display' && estacao.sala_id) {
-      q = q.eq('sala_id', estacao.sala_id);
-    }
-    const { data, error } = await q;
-    if (error) throw error;
-
-    res.json({
-      estacao_id: estacao.id,
-      estacao_nome: estacao.nome,
-      tipo: estacao.tipo,
-      sala_id: estacao.sala_id,
-      sala_nome: estacao.sala_nome,
-      sala_cor: estacao.sala_cor,
-      chamadas: data || [],
-      server_time: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.error('[totemKids/display/chamadas]', e.message);
-    res.status(500).json({ error: 'Erro ao buscar chamadas' });
-  }
-});
-
-// GET /api/totem-kids/display/foyer-resumo?token=X
-// Painel central · resumo por sala (ocupacao + chamadas atrasadas)
-router.get('/display/foyer-resumo', async (req, res) => {
-  try {
-    const token = req.query.token;
-    const estacao = await validarEstacaoToken(token, ['display_foyer', 'display']);
-    if (!estacao) return res.status(403).json({ error: 'token invalido' });
-
-    // Sessão aberta atual
-    const { data: sessao } = await supabase
-      .from('kids_sessoes')
-      .select('id, culto:cultos(nome, data)')
-      .eq('status', 'aberta')
-      .order('abrir_em', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!sessao) {
-      return res.json({ sessao: null, salas: [] });
-    }
-
-    // Ocupação por sala
-    const { data: salas } = await supabase
-      .from('kids_salas')
-      .select('id, nome, cor, capacidade, ordem')
-      .eq('ativo', true)
-      .order('ordem');
-
-    // Conta presentes por sala
-    const { data: presentes } = await supabase
-      .from('kids_checkins')
-      .select('sala_id')
-      .eq('sessao_id', sessao.id)
-      .is('checkout_at', null);
-    const presPorSala = {};
-    for (const p of presentes || []) presPorSala[p.sala_id] = (presPorSala[p.sala_id] || 0) + 1;
-
-    // Chamadas ativas
-    const { data: chamadas } = await supabase
-      .from('vw_kids_chamadas_ativas')
-      .select('sala_id, segundos_esperando');
-    const chamPorSala = {};
-    for (const c of chamadas || []) {
-      if (!chamPorSala[c.sala_id]) chamPorSala[c.sala_id] = { total: 0, max_segundos: 0 };
-      chamPorSala[c.sala_id].total++;
-      if (c.segundos_esperando > chamPorSala[c.sala_id].max_segundos) {
-        chamPorSala[c.sala_id].max_segundos = c.segundos_esperando;
-      }
-    }
-
-    res.json({
-      sessao,
-      salas: (salas || []).map(s => ({
-        ...s,
-        presentes: presPorSala[s.id] || 0,
-        chamadas_ativas: chamPorSala[s.id]?.total || 0,
-        max_espera_segundos: chamPorSala[s.id]?.max_segundos || 0,
-      })),
-      server_time: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.error('[totemKids/display/foyer]', e.message);
-    res.status(500).json({ error: 'Erro' });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PAGERS · integração com o transmissor físico (LRS Freedom via agente local)
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Autoriza o agente local da recepcao por bearer token (PAGER_BRIDGE_TOKEN).
-// Usado so nas rotas /pager/bridge/* (que bypassam o authenticate de JWT).
-function bridgeAutorizado(req) {
-  const expected = process.env.PAGER_BRIDGE_TOKEN;
-  if (!expected) return false;
-  const header = String(req.headers.authorization || '');
-  const token = header.replace(/^Bearer\s+/i, '').trim() || String(req.query.token || '');
-  return token.length > 0 && safeEqual(token, expected);
-}
-
-// ─── CRUD do catalogo de pagers (admin do módulo) ───────────────────────────
-router.get('/pager/pagers', authorizeModule('kids', 1), async (req, res) => {
-  try {
-    let q = supabase
-      .from('kids_pagers')
-      .select('*, responsavel:mem_membros(id, nome)')
-      .is('deleted_at', null)
-      .order('numero');
-    if (req.query.ativo === 'true') q = q.eq('ativo', true);
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) {
-    console.error('[totemKids/pagers list]', e.message);
-    res.status(500).json({ error: 'Erro ao listar pagers' });
-  }
-});
-
-// Quem esta com cada pager AGORA (check-ins ativos da sessão aberta)
-router.get('/pager/em-uso', authorizeModule('kids', 1), async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('kids_checkins')
-      .select('id, pager_id, codigo_seguranca, responsavel_checkin_nome, crianca:kids_criancas(nome), sala:kids_salas(nome)')
-      .not('pager_id', 'is', null)
-      .is('checkout_at', null);
-    if (error) throw error;
-    const porPager = {};
-    for (const c of (data || [])) porPager[c.pager_id] = c;
-    res.json(porPager);
-  } catch (e) {
-    console.error('[totemKids/pagers em-uso]', e.message);
-    res.status(500).json({ error: 'Erro ao listar uso dos pagers' });
-  }
-});
-
-router.post('/pager/pagers', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const { numero, rotulo, cor, tipo_lrs, responsavel_padrao_id, observacao, ativo } = req.body || {};
-    if (numero == null || isNaN(Number(numero))) {
-      return res.status(400).json({ error: 'número do pager obrigatório' });
-    }
-    const { data, error } = await supabase
-      .from('kids_pagers')
-      .insert({
-        numero: Number(numero),
-        rotulo: rotulo || null,
-        cor: (cor || 'R').toUpperCase(),
-        tipo_lrs: tipo_lrs ?? 2,
-        responsavel_padrao_id: responsavel_padrao_id || null,
-        observacao: observacao || null,
-        ativo: ativo !== false,
-      })
-      .select('*')
-      .single();
-    if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Já existe um pager com esse número' });
-      throw error;
-    }
-    res.status(201).json(data);
-  } catch (e) {
-    console.error('[totemKids/pagers create]', e.message);
-    res.status(500).json({ error: 'Erro ao criar pager' });
-  }
-});
-
-router.patch('/pager/pagers/:id', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const { numero, rotulo, cor, tipo_lrs, responsavel_padrao_id, observacao, ativo } = req.body || {};
-    const patch = {};
-    if (numero != null) patch.numero = Number(numero);
-    if (rotulo !== undefined) patch.rotulo = rotulo || null;
-    if (cor !== undefined) patch.cor = (cor || 'R').toUpperCase();
-    if (tipo_lrs !== undefined) patch.tipo_lrs = tipo_lrs ?? 2;
-    if (responsavel_padrao_id !== undefined) patch.responsavel_padrao_id = responsavel_padrao_id || null;
-    if (observacao !== undefined) patch.observacao = observacao || null;
-    if (ativo !== undefined) patch.ativo = !!ativo;
-    const { data, error } = await supabase
-      .from('kids_pagers')
-      .update(patch)
-      .eq('id', req.params.id)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
-    if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Já existe um pager com esse número' });
-      throw error;
-    }
-    res.json(data);
-  } catch (e) {
-    console.error('[totemKids/pagers update]', e.message);
-    res.status(500).json({ error: 'Erro ao editar pager' });
-  }
-});
-
-router.delete('/pager/pagers/:id', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    // soft delete (kids_pagers esta na whitelist app_soft_deletable_tables)
-    const { error } = await supabase.rpc('app_soft_delete', {
-      p_table_name: 'kids_pagers',
-      p_row_id: req.params.id,
-      p_deleted_by: req.user?.userId ?? null,
-    });
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[totemKids/pagers delete]', e.message);
-    res.status(500).json({ error: 'Erro ao remover pager' });
-  }
-});
-
-// Toque de teste · enfileira um envio avulso pro agente disparar
-router.post('/pager/pagers/:id/testar', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const { data: pager, error: errP } = await supabase
-      .from('kids_pagers')
-      .select('id, numero, cor, tipo_lrs')
-      .eq('id', req.params.id)
-      .is('deleted_at', null)
-      .maybeSingle();
-    if (errP) throw errP;
-    if (!pager) return res.status(404).json({ error: 'Pager não encontrado' });
-
-    const { data, error } = await supabase
-      .from('kids_pager_envios')
-      .insert({
-        pager_id: pager.id,
-        pager_numero: pager.numero,
-        cor: pager.cor || 'R',
-        tipo_lrs: pager.tipo_lrs ?? 2,
-        origem: 'teste',
-        criado_por: req.user?.userId ?? null,
-      })
-      .select('id')
-      .single();
-    if (error) throw error;
-    res.status(201).json({ ok: true, envio_id: data.id });
-  } catch (e) {
-    console.error('[totemKids/pagers testar]', e.message);
-    res.status(500).json({ error: 'Erro ao enfileirar teste' });
-  }
-});
-
-// Histórico recente de envios (pro admin acompanhar status)
-router.get('/pager/envios', authorizeModule('kids', 1), async (req, res) => {
-  try {
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const { data, error } = await supabase
-      .from('kids_pager_envios')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) {
-    res.status(500).json({ error: 'Erro ao listar envios' });
-  }
-});
-
-// ─── Endpoints do AGENTE LOCAL (bearer token · sem JWT) ─────────────────────
-// GET /pager/bridge/fila?max=20 · pendentes mais antigos primeiro
-router.get('/pager/bridge/fila', async (req, res) => {
-  try {
-    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge não autorizado' });
-    const max = Math.min(Number(req.query.max) || 20, 100);
-    const { data, error } = await supabase
-      .from('kids_pager_envios')
-      .select('id, pager_numero, cor, tipo_lrs, origem, tentativas, created_at')
-      .eq('status', 'pendente')
-      .order('created_at', { ascending: true })
-      .limit(max);
-    if (error) throw error;
-    res.json({ envios: data || [], server_time: new Date().toISOString() });
-  } catch (e) {
-    console.error('[totemKids/pager/bridge/fila]', e.message);
-    res.status(500).json({ error: 'Erro ao buscar fila' });
-  }
-});
-
-// POST /pager/bridge/envios/:id/resultado · { ok:boolean, erro?:string }
-router.post('/pager/bridge/envios/:id/resultado', async (req, res) => {
-  try {
-    if (!bridgeAutorizado(req)) return res.status(401).json({ error: 'bridge não autorizado' });
-    const { ok, erro } = req.body || {};
-    // tentativas++ e status final
-    const { data: atual } = await supabase
-      .from('kids_pager_envios')
-      .select('tentativas, status')
-      .eq('id', req.params.id)
-      .maybeSingle();
-    if (!atual) return res.status(404).json({ error: 'envio não encontrado' });
-    if (atual.status === 'cancelado') return res.json({ ok: true, ignorado: 'cancelado' });
-
-    const patch = {
-      tentativas: (atual.tentativas || 0) + 1,
-      status: ok ? 'enviado' : 'erro',
-      erro: ok ? null : (erro ? String(erro).slice(0, 500) : 'falha no envio'),
-    };
-    if (ok) patch.enviado_em = new Date().toISOString();
-    const { error } = await supabase
-      .from('kids_pager_envios')
-      .update(patch)
-      .eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[totemKids/pager/bridge/resultado]', e.message);
-    res.status(500).json({ error: 'Erro ao registrar resultado' });
-  }
-});
-
 // ── Pré-check-in (vindo do app de membros) ─────────────────────────────────
 // GET /pre-checkin/codigo/:codigo — o voluntário escaneia/digita o código do
 // app e recebe responsável + filhos (com sala sugerida) pra confirmar e
@@ -3446,7 +3636,11 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
         parentesco: s.solicitante_parentesco || 'outro',
         autorizado_buscar: true,
       }, { onConflict: 'crianca_id,membro_id' });
-    if (ve) throw ve;
+    if (ve) {
+      const t = traduzErroUmPaiUmaMae(ve);
+      if (t) return res.status(t.status).json({ error: t.error });
+      throw ve;
+    }
 
     // 3. Marca a solicitação como aprovada.
     const { error: ue } = await supabase
@@ -3468,6 +3662,8 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
 
     res.json({ ok: true, crianca_id: criancaId });
   } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
     console.error('[TOTEM-KIDS] vinculo-solicitacoes aprovar:', e.message);
     res.status(500).json({ error: 'Erro ao aprovar solicitação' });
   }
@@ -3506,6 +3702,66 @@ router.post('/vinculo-solicitacoes/:id/rejeitar', authorizeModule('kids', 3), as
   } catch (e) {
     console.error('[TOTEM-KIDS] vinculo-solicitacoes rejeitar:', e.message);
     res.status(500).json({ error: 'Erro ao rejeitar solicitação' });
+  }
+});
+
+// ── Voluntariado · inscrições de quem quer servir no KIDS ────────────────────
+// Pra a coordenação do Kids (Mariane Gaia / Milena) ver e gerenciar quem se
+// inscreveu no voluntariado indicando o Kids (vol_inscricoes.area='kids').
+// Só leitura + status leve + contato (WhatsApp na UI). Integrar (com verificação
+// de antecedentes · ECA/LGPD) continua no módulo Voluntariado — não bypassa aqui.
+router.get('/voluntariado-inscricoes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const status = req.query.status ? String(req.query.status) : null;
+    const search = req.query.search ? String(req.query.search).trim() : null;
+    let q = supabase.from('vol_inscricoes')
+      .select('id, nome_completo, nome, sobrenome, telefone, email, status, ministerios_interesse, dom_predominante, data_inscricao, feedback, integrado_em')
+      .eq('area', 'kids')
+      .order('data_inscricao', { ascending: false, nullsFirst: false })
+      .limit(1000);
+    if (status) q = q.eq('status', status);
+    if (search) q = q.ilike('nome_completo', `%${search}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ rows: data || [] });
+  } catch (e) {
+    console.error('[TOTEM-KIDS] voluntariado-inscricoes:', e.message);
+    res.status(500).json({ error: 'Erro ao listar inscrições de voluntariado do Kids' });
+  }
+});
+
+// PATCH · status leve (encaminhar/voltar) + anotação. NÃO aceita 'integrado'
+// (a integração exige a triagem de antecedentes, feita no módulo Voluntariado).
+const KIDS_VOL_STATUS = ['inscrito', 'enviado_ministerio'];
+router.patch('/voluntariado-inscricoes/:id', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const { status, feedback } = req.body || {};
+    // Só age em inscrição de área kids (trava de escopo).
+    const { data: insc } = await supabase.from('vol_inscricoes')
+      .select('area').eq('id', req.params.id).maybeSingle();
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada.' });
+    if (String(insc.area || '').toLowerCase() !== 'kids') {
+      return res.status(403).json({ error: 'Esta inscrição não é do Kids.' });
+    }
+    const patch = { updated_at: new Date().toISOString() };
+    if (status !== undefined) {
+      if (!KIDS_VOL_STATUS.includes(status)) {
+        return res.status(400).json({
+          error: 'Integrar exige a verificação de antecedentes — faça isso no módulo Voluntariado.',
+          code: 'integrar_no_voluntariado',
+        });
+      }
+      patch.status = status;
+      if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
+    }
+    if (feedback !== undefined) patch.feedback = feedback ? String(feedback).slice(0, 2000) : null;
+    const { data, error } = await supabase.from('vol_inscricoes')
+      .update(patch).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[TOTEM-KIDS] patch voluntariado-inscricoes:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar inscrição' });
   }
 });
 

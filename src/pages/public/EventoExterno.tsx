@@ -109,6 +109,41 @@ function PillSelect({ label, value, onPick, required, opcoes, multi }: {
   );
 }
 
+// Rede social · dropdown da rede + campo do @/handle, combinados numa string
+// "Rede · @handle" guardada numa única chave de `dados`.
+const REDES_SOCIAIS = ['Instagram', 'Facebook', 'X (Twitter)', 'TikTok', 'YouTube', 'LinkedIn', 'Kwai', 'Outra'];
+function RedeSocialField({ label, value, onChange, required }: {
+  label: string; value: string; onChange: (v: string) => void; required?: boolean;
+}) {
+  const parse = (v: string) => { const s = String(v || ''); const i = s.indexOf(' · '); return i >= 0 ? [s.slice(0, i), s.slice(i + 3)] : ['', s]; };
+  const [rede, setRede] = useState(() => parse(value)[0]);
+  const [handle, setHandle] = useState(() => parse(value)[1]);
+  const [foco, setFoco] = useState(false);
+  function emit(r: string, h: string) {
+    const v = r && h ? `${r} · ${h}` : (h || r || '');
+    onChange(v);
+  }
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 13, color: 'var(--cbrio-text3)', marginBottom: 10 }}>{label}{required ? ' *' : ''}</div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: '0 0 140px' }}>
+          <select value={rede} onChange={e => { setRede(e.target.value); emit(e.target.value, handle); }}
+            required={required}
+            style={{ display: 'block', width: '100%', padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: '2px solid var(--cbrio-border)', outline: 'none', appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer' }}>
+            <option value="">Rede…</option>
+            {REDES_SOCIAIS.map((o, i) => <option key={i} value={o} style={{ background: 'var(--cbrio-modal-bg)', color: 'var(--cbrio-text)' }}>{o}</option>)}
+          </select>
+          <span style={{ position: 'absolute', right: 4, bottom: 12, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
+        </div>
+        <input value={handle} onChange={e => { setHandle(e.target.value); emit(rede, e.target.value); }}
+          onFocus={() => setFoco(true)} onBlur={() => setFoco(false)} placeholder="@usuário ou link"
+          style={{ flex: 1, minWidth: 160, padding: '10px 0', fontSize: 14, color: 'var(--cbrio-text)', background: 'transparent', border: 'none', borderBottom: `2px solid ${foco ? '#00B39D' : 'var(--cbrio-border)'}`, outline: 'none' }} />
+      </div>
+    </div>
+  );
+}
+
 // Campo de upload de imagem (ex.: logo da empresa parceira). Sobe pro Storage
 // via endpoint público e guarda a URL; avisa o pai enquanto está enviando pra
 // travar o "Confirmar" até terminar.
@@ -241,19 +276,24 @@ export default function EventoExterno() {
           resultado ? (
             <div style={{ padding: '32px 20px', textAlign: 'center', background: '#00B39D18', border: '1px solid #00B39D40', borderRadius: 14 }}>
               <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#00B39D', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, marginBottom: 14 }}>&#10003;</div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>Presença confirmada!</h2>
-              {resultado.temSorteio ? (
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>{evento.msg_sucesso_titulo || 'Presença confirmada!'}</h2>
+              {/* Texto de agradecimento: custom do evento (se houver) ou o padrão */}
+              {evento.msg_sucesso_texto ? (
+                <p style={{ fontSize: 13, color: C.text3, marginTop: 8, whiteSpace: 'pre-wrap' }}>{evento.msg_sucesso_texto}</p>
+              ) : (
+                <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>
+                  {resultado.jaInscrito ? 'Você já estava confirmado(a).' : resultado.temSorteio ? 'Anota aí o seu número da sorte:' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}
+                </p>
+              )}
+              {resultado.temSorteio && (
                 <>
-                  <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{resultado.jaInscrito ? 'Você já estava confirmado(a).' : 'Anota aí o seu número da sorte:'}</p>
                   <div style={{ marginTop: 12, fontSize: 13, color: '#00B39D', fontWeight: 600 }}>Seu número da sorte</div>
                   <div style={{ fontSize: 64, fontWeight: 800, color: '#00B39D', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{resultado.numero}</div>
                   <p style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>Guarde este número — vale pro sorteio!</p>
                 </>
-              ) : (
-                <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{resultado.jaInscrito ? 'Você já estava confirmado(a).' : `Te esperamos${evento?.nome ? ` no ${evento.nome}` : ''}!`}</p>
               )}
             </div>
-          ) : !evento.form_ativo ? (
+          ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>As inscrições deste evento estão encerradas.</p>
           ) : (
             <form onSubmit={enviar}>
@@ -266,6 +306,9 @@ export default function EventoExterno() {
                 ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
                   <PillSelect key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio} opcoes={c.opcoes || []} multi={c.tipo === 'multi'}
                     onPick={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
+                ) : c.tipo === 'rede_social' ? (
+                  <RedeSocialField key={c.key} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
+                    onChange={(v) => setDados(d => ({ ...d, [c.key]: v }))} />
                 ) : c.tipo === 'imagem' ? (
                   <ImagemField key={c.key} slug={slug} label={c.label} value={dados[c.key] || ''} required={c.obrigatorio}
                     onChange={(url) => setDados(d => ({ ...d, [c.key]: url }))} onBusy={marcarBusy} />

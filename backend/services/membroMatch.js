@@ -99,7 +99,7 @@ async function acharOuCriar({ cpf, email, telefone, nome, status = 'visitante' }
     const { data } = await supabase
       .from('mem_membros')
       .select('id')
-      .ilike('email', emailLc)
+      .ilike('email', escapePostgrestValue(emailLc))
       .limit(1);
     if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
   }
@@ -150,13 +150,15 @@ function nomesMesmaPessoa(a, b) {
 }
 
 // acharOuCriarGuardado · "guardar na origem" (Marcos · 2026-06-16). Política:
-//   CPF exato → liga · e-mail exato → liga · telefone + NOME batendo → liga ·
-//   senão CRIA stub. NUNCA liga por telefone/e-mail sozinho (família compartilha
-//   o número/e-mail · auto-link errado junta pessoas distintas = pior que
-//   duplicata). Colisão de telefone sem nome batendo cria stub e a
+//   CPF exato → liga · e-mail exato + NOME batendo → liga · telefone + NOME
+//   batendo → liga · senão CRIA stub. NUNCA liga por telefone/e-mail sozinho
+//   (família compartilha o número E o e-mail · auto-link errado junta pessoas
+//   distintas = pior que duplicata). Colisão sem nome batendo cria stub e a
 //   vw_membros_duplicados / vw_nb_duplicados_suspeitos + a fila do Kevyn pegam.
 // `extra` = campos extras pro insert (ex.: data_nascimento, familia_id).
-async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, status = 'visitante', extra = {} } = {}) {
+// `soChaveForte`: liga SÓ por CPF (a pessoa afirmou "não sou eu" no dedup —
+//   nenhum sinal deniável pode religá-la a outro cadastro).
+async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, status = 'visitante', extra = {} } = {}, { soChaveForte = false } = {}) {
   const cpf11 = normalizarCpf(cpf);
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
@@ -166,11 +168,18 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     const { data } = await supabase.from('mem_membros').select('id').eq('cpf', cpf11).maybeSingle();
     if (data?.id) return { membro_id: data.id, created: false, matched_by: 'cpf' };
   }
-  if (emailLc) {
-    const { data } = await supabase.from('mem_membros').select('id').ilike('email', emailLc).limit(1);
-    if (data && data[0]?.id) return { membro_id: data[0].id, created: false, matched_by: 'email' };
+  if (!soChaveForte && emailLc) {
+    // E-mail exige o NOME batendo quando há nome (esposa que usa o e-mail do
+    // marido não pode ser ligada ao marido). Sem nome informado, mantém o
+    // comportamento legado (e-mail sozinho).
+    const { data } = await supabase.from('mem_membros')
+      .select('id, nome').ilike('email', escapePostgrestValue(emailLc)).limit(5);
+    const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
+    if (hit?.id) return { membro_id: hit.id, created: false, matched_by: 'email' };
   }
-  if (tel && nome) {
+  if (soChaveForte) {
+    // pula direto pro CRIA (nenhum sinal deniável liga)
+  } else if (tel && nome) {
     const cands = await buscarCandidatos({ telefone }, { limit: 8 });
     const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
     if (hit) return { membro_id: hit.id, created: false, matched_by: 'telefone+nome' };
@@ -178,7 +187,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   // nome + data de nascimento · forte pra quem não tem CPF/e-mail/telefone batendo
   // (ex.: pessoas importadas de grupos têm nome+nascimento). Conservador: mesma
   // data de nascimento E nome batendo (≥0.90) — não liga por nascimento sozinho.
-  if (nasc && nome) {
+  if (!soChaveForte && nasc && nome) {
     const { data } = await supabase.from('mem_membros')
       .select('id, nome').eq('data_nascimento', nasc).is('deleted_at', null).limit(30);
     const hit = (data || []).find((c) => nomesMesmaPessoa(c.nome, nome));
@@ -198,6 +207,49 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   return { membro_id: data.id, created: true, matched_by: null };
 }
 
+// acharMembroGuardado · versão SÓ-LEITURA de acharOuCriarGuardado (NÃO cria).
+// Para pontos de entrada que querem apenas ROTEAR pro membro já existente sem
+// materializar um stub agora (ex.: inscrição pública de grupos, onde o membro
+// só vira membro na aprovação do líder). Mesma política conservadora de
+// acharOuCriarGuardado: cpf → email → telefone+nome → nascimento+nome → null.
+// NUNCA liga por telefone/e-mail sozinho (família compartilha o número).
+// `soChaveForte`: quando true, liga SÓ por CPF exato (pula e-mail, telefone+nome
+//   e nascimento+nome). Usado quando a pessoa afirma "não sou eu" no dedup — aí
+//   nenhum sinal deniável (e-mail/telefone/nome, que a família compartilha) pode
+//   ligá-la a outro cadastro; só o CPF, que é individual, resolve.
+async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento } = {}, { soChaveForte = false } = {}) {
+  const cpf11 = normalizarCpf(cpf);
+  const emailLc = normalizarEmail(email);
+  const tel = normalizarTelefone(telefone);
+  const nasc = dataNascimento || null;
+
+  if (cpf11) {
+    const { data } = await supabase.from('mem_membros').select('id').eq('cpf', cpf11).maybeSingle();
+    if (data?.id) return { membro_id: data.id, matched_by: 'cpf' };
+  }
+  if (soChaveForte) return null;
+  if (emailLc) {
+    // Mesma guarda do telefone: e-mail compartilhado pela família não pode
+    // ligar sozinho — exige o nome batendo quando há nome.
+    const { data } = await supabase.from('mem_membros')
+      .select('id, nome').ilike('email', escapePostgrestValue(emailLc)).limit(5);
+    const hit = (data || []).find((c) => !nome || nomesMesmaPessoa(c.nome, nome));
+    if (hit?.id) return { membro_id: hit.id, matched_by: 'email' };
+  }
+  if (tel && nome) {
+    const cands = await buscarCandidatos({ telefone }, { limit: 8 });
+    const hit = cands.find((c) => nomesMesmaPessoa(c.nome, nome));
+    if (hit) return { membro_id: hit.id, matched_by: 'telefone+nome' };
+  }
+  if (nasc && nome) {
+    const { data } = await supabase.from('mem_membros')
+      .select('id, nome').eq('data_nascimento', nasc).is('deleted_at', null).limit(30);
+    const hit = (data || []).find((c) => nomesMesmaPessoa(c.nome, nome));
+    if (hit) return { membro_id: hit.id, matched_by: 'nome+nascimento' };
+  }
+  return null;
+}
+
 module.exports = {
   normalizarCpf,
   normalizarTelefone,
@@ -207,4 +259,5 @@ module.exports = {
   buscarCandidatos,
   acharOuCriar,
   acharOuCriarGuardado,
+  acharMembroGuardado,
 };

@@ -699,6 +699,33 @@ router.post('/organograma/ia/aplicar', async (req, res) => {
   }
 });
 
+// POST /api/rh/funcionarios/:id/onboarding-link — gera (ou reusa) o link público
+// do formulário de dados pessoais pra mandar pro colaborador preencher. O RH só
+// cuida de salário/cargo; os dados pessoais vêm do próprio colaborador.
+router.post('/funcionarios/:id/onboarding-link', authorizeModule('rh', 2), async (req, res) => {
+  try {
+    const { data: func } = await supabase.from('rh_funcionarios')
+      .select('id, nome, onboarding_token').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!func) return res.status(404).json({ error: 'Colaborador não encontrado' });
+
+    let token = func.onboarding_token;
+    if (!token || (req.body && req.body.regenerar)) {
+      token = require('crypto').randomBytes(18).toString('base64url'); // ~24 chars
+    }
+    const { error } = await supabase.from('rh_funcionarios')
+      .update({ onboarding_token: token, onboarding_enviado_em: new Date().toISOString() })
+      .eq('id', func.id);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const base = process.env.FRONTEND_URL || 'https://cbrio.org';
+    const url = `${base.replace(/\/$/, '')}/onboarding/${token}`;
+    res.json({ url, token, nome: func.nome });
+  } catch (e) {
+    console.error('[RH] onboarding-link:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o link do formulário' });
+  }
+});
+
 // POST /api/rh/funcionarios/:id/foto — upload foto de perfil (multipart 'foto')
 router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) => {
   try {
@@ -945,17 +972,23 @@ router.patch('/treinamentos-funcionarios/:id', async (req, res) => {
 // GET /api/rh/ferias
 router.get('/ferias', async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, incluir_desligados } = req.query;
     let query = supabase
       .from('rh_ferias_licencas')
-      .select('*, rh_funcionarios!funcionario_id(nome, cargo, area), substituto:rh_funcionarios!substituto_id(nome)')
+      .select('*, rh_funcionarios!funcionario_id(nome, cargo, area, status, data_demissao), substituto:rh_funcionarios!substituto_id(nome)')
       .order('data_inicio', { ascending: false });
 
     if (status) query = query.eq('status', status);
 
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    // Não mostrar férias de quem já foi desligado/inativado (some do calendário).
+    // ?incluir_desligados=1 mantém tudo (para relatórios históricos).
+    const DESLIGADO = new Set(['inativo', 'desligado']);
+    const rows = incluir_desligados
+      ? (data || [])
+      : (data || []).filter((f) => !DESLIGADO.has(f.rh_funcionarios?.status || 'ativo'));
+    res.json(rows);
   } catch (e) {
     console.error('[RH] Listar férias:', e.message);
     res.status(500).json({ error: 'Erro ao listar férias' });

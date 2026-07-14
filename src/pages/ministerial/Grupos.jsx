@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -13,18 +13,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../componen
 import { toast } from 'sonner';
 import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import PedidosGrupo from './PedidosGrupo';
+import GruposEntrada from './GruposEntrada';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
-import GruposGeocode from '../admin/GruposGeocode';
 import TemporadasGrupos from '../admin/TemporadasGrupos';
 import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
 import GruposOrganograma from './GruposOrganograma';
-import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
-// GruposMapView traz maplibre-gl (~290KB gzip). Carregado sob demanda (React.lazy)
-// só quando a aba Mapa abre — não pesa no carregamento inicial de /grupos.
-const GruposMapView = lazy(() => import('@/components/grupos/GruposMapView'));
+// Import ESTÁTICO de propósito (13/07): o chunk dinâmico do mapa quebrava em
+// produção e derrubava a página em loop de reload. O GrupoSelector do form
+// público já embute o GruposMapView estaticamente — o peso do maplibre já é
+// pago onde mais importa; aqui é página de staff. Estático elimina a classe
+// inteira de erro de chunk (não regredir pra lazy sem revalidar em prod).
+import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -52,7 +53,11 @@ const RECORRENCIAS = [
 
 const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais', 'Jovens', 'Mulheres', 'Homens', 'Misto'];
 
-const PAGE_TABS = ['grupos', 'pessoas', 'organograma', 'relatorios', 'mapa', 'entrada', 'materiais', 'visitas', 'qrcode', 'config'];
+// Mapa virou visualização da aba Grupos e Organograma virou visualização da
+// aba Pessoas (Marcos · 2026-07-13): menos abas, mesma informação.
+// A aba Configurações fundiu com a de QR (Marcos · 13/07): temporada, abrir/
+// fechar inscrições e QR codes são o mesmo assunto — viraram a aba "Inscrições".
+const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode'];
 
 // Tipo/papel do membro no grupo · vem da funcao (mem_grupo_membros). "Membro" é
 // o padrão (frequentador); "Visitante" só quem foi marcado como tal (regra:
@@ -67,13 +72,64 @@ const TIPO_PAPEL = {
   coordenador: { label: 'Coordenador', cor: '#8b5cf6', bg: '#8b5cf620' },
 };
 // Chaves antigas de aba (links/notificações) → aba nova
-const TAB_LEGADO = { pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas', geocode: 'config', temporadas: 'config' };
+const TAB_LEGADO = {
+  pedidos: 'entrada', encaminhados: 'entrada', tarefas: 'visitas',
+  geocode: 'qrcode', temporadas: 'qrcode', config: 'qrcode', // Configurações fundiu com Inscrições (13/07)
+  mapa: 'grupos', organograma: 'pessoas', // viraram visualizações internas (13/07)
+};
 
 function tabDaUrl() {
   try { return new URLSearchParams(window.location.search).get('tab'); } catch { return null; }
 }
+function viewDaUrl() {
+  try { return new URLSearchParams(window.location.search).get('view'); } catch { return null; }
+}
 
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
+
+// Campos exigidos pro cadastro do grupo estar completo (capacidade e foto são
+// opcionais). Devolve os rótulos do que falta — lista vazia = cadastro completo.
+// Telefone do líder: na lista vem em lider_telefone; no detalhe, em lider.telefone.
+function camposFaltantes(g) {
+  const faltas = [];
+  if (!g.lider_id) faltas.push('Líder');
+  else if (!(g.lider?.telefone ?? g.lider_telefone)) faltas.push('Telefone do líder');
+  if (g.dia_semana == null) faltas.push('Dia da semana');
+  if (!g.horario) faltas.push('Horário');
+  if (!g.endereco) faltas.push('Endereço');
+  if (!g.bairro) faltas.push('Bairro');
+  if (!g.faixa_etaria) faltas.push('Faixa etária');
+  // Grupo com cara de faixa etária (rótulo ou nome) sem limites numéricos vira
+  // pendência pra liderança resolver (Marcos · 2026-07-13) — é o limite que arma
+  // a trava de idade do form público. Grupos gerais não precisam.
+  const rotuloEtario = ['adolescentes', 'jovens', 'jovens adultos'].includes(String(g.faixa_etaria || '').toLowerCase());
+  const nomeEtario = /jovens|jovem|adolescente|teen/i.test(g.nome || '');
+  if ((rotuloEtario || nomeEtario) && g.idade_min == null && g.idade_max == null) faltas.push('Idades da faixa (mín/máx)');
+  if (!g.categoria) faltas.push('Categoria');
+  if (!g.rede_id) faltas.push('Rede');
+  return faltas;
+}
+
+// Seletor de visualização dentro da aba (Lista|Mapa · Pessoas|Organograma):
+// mesma informação, projeções diferentes — uma ativa por vez (Marcos · 13/07).
+function ViewToggle({ value, onChange, opcoes }) {
+  return (
+    <div style={{ display: 'inline-flex', border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>
+      {opcoes.map(op => {
+        const ativo = value === op.key;
+        return (
+          <button key={op.key} onClick={() => onChange(op.key)} type="button" style={{
+            padding: '8px 18px', fontSize: 13, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
+            border: 'none', background: ativo ? C.primaryBg : 'transparent',
+            color: ativo ? C.primary : C.t3, display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+            {op.Icon && <op.Icon size={15} />} {op.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 // v2 - tabs membros/arquivos
 export default function Grupos() {
@@ -109,9 +165,9 @@ export default function Grupos() {
   const [gruposForSelect, setGruposForSelect] = useState([]);
   const [filterTipo, setFilterTipo] = useState('all');
   const [filterDia, setFilterDia] = useState('all');
-  const [filterTema, setFilterTema] = useState('all');
   const [filterBairro, setFilterBairro] = useState('all');
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
+  const [filterIncompleto, setFilterIncompleto] = useState(false);
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
   // Aba inicial pode vir da URL (/grupos?tab=visitas · usado por notificações).
@@ -122,13 +178,29 @@ export default function Grupos() {
     if (PAGE_TABS.includes(t)) return t;
     return TAB_LEGADO[t] || 'grupos';
   });
-  const [entradaTab, setEntradaTab] = useState(() => (tabDaUrl() === 'encaminhados' ? 'encaminhados' : 'pedidos'));
-  const [configTab, setConfigTab] = useState(() => (tabDaUrl() === 'geocode' ? 'geocode' : 'temporadas'));
+  // Visualizações internas (13/07): Grupos = Lista|Mapa · Pessoas = Pessoas|Organograma.
+  // A visualização vai na URL (?view=mapa/…): um reload — inclusive o reload
+  // automático de chunk velho pós-deploy — volta exatamente onde a pessoa estava.
+  // Deep-links antigos (?tab=mapa / ?tab=organograma) abrem a aba nova já na view certa.
+  const [gruposView, setGruposView] = useState(() => (tabDaUrl() === 'mapa' || viewDaUrl() === 'mapa' ? 'mapa' : 'lista'));
+  const [pessoasView, setPessoasView] = useState(() => (tabDaUrl() === 'organograma' || viewDaUrl() === 'organograma' ? 'organograma' : 'censo'));
+  // Sub-visualização da aba Inscrições: QR codes (default) | gestão de temporadas
+  const [configTab, setConfigTab] = useState(() => (['temporadas', 'geocode', 'config'].includes(tabDaUrl()) ? 'temporadas' : 'qr'));
+
+  const atualizarUrlView = (tab, view) => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      if (view) url.searchParams.set('view', view); else url.searchParams.delete('view');
+      window.history.replaceState({}, '', url);
+    } catch {}
+  };
+  const trocarGruposView = (v) => { setGruposView(v); atualizarUrlView('grupos', v === 'mapa' ? 'mapa' : null); };
+  const trocarPessoasView = (v) => { setPessoasView(v); atualizarUrlView('pessoas', v === 'organograma' ? 'organograma' : null); };
   const [visitaOpen, setVisitaOpen] = useState(false);
-  // A aba Configurações (Temporadas + Endereços) só aparece pra quem edita o
-  // módulo; QR Inscrição fica visível a todos (mandar o QR dos grupos).
-  // Deep-link (?tab=) de quem não edita cai na aba Grupos.
-  const tabAtiva = pageTab === 'config' && !podeEditarGrupos ? 'grupos' : pageTab;
+  // A aba Inscrições é visível a todos (mandar QR / ver a temporada no ar);
+  // a seção de administração dentro dela só renderiza pra quem edita.
+  const tabAtiva = pageTab;
   const [pedidosCount, setPedidosCount] = useState(0);
   const [encPendentes, setEncPendentes] = useState(0);
   const [historicoMembros, setHistoricoMembros] = useState([]);
@@ -483,23 +555,25 @@ export default function Grupos() {
 
   // Extrair opções únicas para filtros
   const tiposUnicos = [...new Set(gruposList.map(g => g.categoria).filter(Boolean))].sort();
-  const temasUnicos = [...new Set(gruposList.map(g => g.tema).filter(Boolean))].sort();
+  const diasUnicos = [...new Set(gruposList.map(g => g.dia_semana).filter(v => v != null))].sort((a, b) => a - b);
   const bairrosUnicos = [...new Set(gruposList.map(g => g.bairro).filter(Boolean))].sort();
 
   const filtered = gruposList.filter(g => {
     if (search) {
       const s = search.toLowerCase();
-      if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.tema?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
+      if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
     if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
-    if (filterTema !== 'all' && g.tema !== filterTema) return false;
     if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
     if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
+    if (filterIncompleto && camposFaltantes(g).length === 0) return false;
     return true;
   });
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterTema !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all';
+  const incompletosCount = gruposList.filter(g => camposFaltantes(g).length > 0).length;
+
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterIncompleto;
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -583,6 +657,20 @@ export default function Grupos() {
             )}
           </div>
         </div>
+
+        {/* Cadastro incompleto · checklist do que falta (não renderiza se completo) */}
+        {(() => {
+          const faltas = camposFaltantes(g);
+          if (!faltas.length) return null;
+          return (
+            <div style={{ background: `${C.amber}12`, borderRadius: 12, padding: '12px 16px', border: `1px solid ${C.amber}40`, marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <AlertTriangle size={16} style={{ color: C.amber, flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 13, color: C.t2 }}>
+                <strong style={{ color: C.amber }}>Cadastro incompleto</strong> — falta: {faltas.join(' · ')}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Supervisão do grupo · fonte da verdade do organograma (1 supervisor por grupo) */}
         <div style={{ background: C.card, borderRadius: 12, padding: '12px 16px', border: `1px solid ${C.border}`, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -1044,26 +1132,26 @@ export default function Grupos() {
         ) : undefined}
       />
 
-      {/* Tabs principais · centralizadas; quebram em 2 linhas se faltar espaço */}
-      <div className="cbrio-grupos-tabs" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+      {/* Tabs principais · alinhadas à ESQUERDA, na margem do conteúdo (Marcos
+          13/07: centralizadas flutuavam desalinhadas da página); quebram em 2
+          linhas se faltar espaço */}
+      <div className="cbrio-grupos-tabs" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-start', gap: 0, marginBottom: 16, borderBottom: `1px solid ${C.border}` }}>
         {[
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'pessoas', label: 'Pessoas', icon: UserCog },
-          { key: 'organograma', label: 'Organograma', icon: Compass },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
-          { key: 'mapa', label: 'Mapa', icon: MapIcon },
           { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
-          { key: 'qrcode', label: 'QR Inscrição', icon: QrCode },
-          { key: 'config', label: 'Configurações', icon: Settings, soEditor: true },
+          { key: 'qrcode', label: 'Inscrições', icon: QrCode },
         ].filter(tab => !tab.soEditor || podeEditarGrupos).map(tab => (
-          <button key={tab.key} onClick={() => setPageTab(tab.key)} style={{
-            padding: '10px 13px', background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 13.5, fontWeight: tabAtiva === tab.key ? 700 : 400,
+          <button key={tab.key} onClick={() => { setPageTab(tab.key); atualizarUrlView(tab.key, null); }} style={{
+            // Com menos abas (13/07), cada uma respira mais — padding e fonte maiores.
+            padding: '12px 22px', background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 14.5, fontWeight: tabAtiva === tab.key ? 700 : 400,
             color: tabAtiva === tab.key ? C.primary : C.t3,
             borderBottom: tabAtiva === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
-            display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.15s', whiteSpace: 'nowrap',
+            display: 'flex', alignItems: 'center', gap: 7, transition: 'all 0.15s', whiteSpace: 'nowrap',
           }}>
             <tab.icon size={16} /> {tab.label}
             {tab.badge > 0 && (
@@ -1076,66 +1164,12 @@ export default function Grupos() {
         ))}
       </div>
 
-      {/* ═══ TAB CAIXA DE ENTRADA · pedidos (a pessoa pediu) × encaminhados (sugestão do cuidado) ═══ */}
+      {/* ═══ TAB CAIXA DE ENTRADA · lista única: pedidos de inscrição + direcionados do Next ═══ */}
       {tabAtiva === 'entrada' && (
-        <div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {[
-              { key: 'pedidos', label: 'Pedidos de inscrição', Icon: Inbox, badge: pedidosCount },
-              { key: 'encaminhados', label: 'Encaminhados do cuidado', Icon: HeartHandshake, badge: encPendentes },
-            ].map(st => {
-              const ativo = entradaTab === st.key;
-              return (
-                <button key={st.key} onClick={() => setEntradaTab(st.key)} style={{
-                  padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
-                  border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                  background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                }}>
-                  <st.Icon size={13} /> {st.label}
-                  {st.badge > 0 && (
-                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99, background: '#ef4444', color: '#fff', minWidth: 18, textAlign: 'center' }}>
-                      {st.badge > 99 ? '99+' : st.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <p style={{ fontSize: 12, color: C.t3, margin: '10px 0 0', maxWidth: 760 }}>
-            {entradaTab === 'pedidos'
-              ? 'A própria pessoa pediu pra entrar: viu o QR ou o link do grupo, escolheu e preencheu o formulário. Aqui o líder aprova (ou recusa) e ela entra no grupo.'
-              : 'A pessoa NÃO pediu — é sugestão de quem a atendeu no cuidado pastoral. Alguém precisa entrar em contato, explicar o que é um grupo de conexão, mostrar os disponíveis e registrar a devolutiva.'}
-          </p>
-          {entradaTab === 'pedidos' ? (
-            <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-              <PedidosGrupo embedded />
-            </div>
-          ) : (
-            <div style={{ marginTop: 14 }}>
-              <EncaminhamentosInbox destino="grupos" canWrite={podeEditarGrupos} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ═══ TAB MAPA ═══ */}
-      {tabAtiva === 'mapa' && (
-        <div style={{ height: 'calc(100vh - 220px)', minHeight: 500, borderRadius: 12, overflow: 'hidden', border: `1px solid ${C.border}` }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
-          ) : (
-            <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando mapa...</div>}>
-              <GruposMapView
-                grupos={gruposList.filter(g => g.ativo)}
-                variant="admin"
-                defaultTheme="dark"
-                temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
-                mostrarBotaoInscricao={true}
-              />
-            </Suspense>
-          )}
-        </div>
+        <GruposEntrada
+          podeEditar={podeEditarGrupos}
+          onMudou={() => { loadPedidosCount(); loadEncPendentes(); }}
+        />
       )}
 
       {/* ═══ TAB MATERIAIS ═══ */}
@@ -1297,52 +1331,50 @@ export default function Grupos() {
         </div>
       )}
 
-      {/* ═══ TAB PESSOAS ═══ */}
+      {/* ═══ TAB PESSOAS · visualização Pessoas | Organograma ═══ */}
       {tabAtiva === 'pessoas' && (
-        <GruposPessoas
-          onOpenGrupo={openGrupoById}
-          podeEditar={podeEditarGrupos}
-          gruposOptions={gruposList.filter(g => g.ativo)}
-        />
+        <div>
+          <ViewToggle
+            value={pessoasView}
+            onChange={trocarPessoasView}
+            opcoes={[
+              { key: 'censo', label: 'Pessoas', Icon: UserCog },
+              { key: 'organograma', label: 'Organograma', Icon: Compass },
+            ]}
+          />
+          {pessoasView === 'organograma' ? (
+            <GruposOrganograma onOpenGrupo={openGrupoById} />
+          ) : (
+            <GruposPessoas
+              onOpenGrupo={openGrupoById}
+              podeEditar={podeEditarGrupos}
+              gruposOptions={gruposList.filter(g => g.ativo)}
+            />
+          )}
+        </div>
       )}
-
-      {/* ═══ TAB ORGANOGRAMA ═══ */}
-      {tabAtiva === 'organograma' && <GruposOrganograma onOpenGrupo={openGrupoById} />}
 
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
 
-      {/* ═══ TAB QR INSCRIÇÃO ═══ */}
+      {/* ═══ TAB INSCRIÇÕES · card da temporada no topo + botões QR codes | Temporadas ═══ */}
       {tabAtiva === 'qrcode' && (
-        <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-          <InscricaoGruposQRCode />
-        </div>
-      )}
-
-      {/* ═══ TAB CONFIGURAÇÕES · Temporadas + Endereços (só quem edita) ═══ */}
-      {tabAtiva === 'config' && (
         <div>
+          {/* O interruptor: qual temporada está valendo e se as inscrições estão abertas */}
           <TemporadaInscricoesCard podeEditar={podeEditarGrupos} />
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {[
-              { key: 'temporadas', label: 'Temporadas', Icon: Calendar },
-              { key: 'geocode', label: 'Endereços (validação no mapa)', Icon: Compass },
-            ].map(st => {
-              const ativo = configTab === st.key;
-              return (
-                <button key={st.key} onClick={() => setConfigTab(st.key)} style={{
-                  padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: ativo ? 700 : 500, cursor: 'pointer',
-                  border: ativo ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                  background: ativo ? C.primaryBg : 'transparent', color: ativo ? C.primary : C.t3,
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                }}>
-                  <st.Icon size={13} /> {st.label}
-                </button>
-              );
-            })}
-          </div>
+          <ViewToggle
+            value={configTab}
+            onChange={setConfigTab}
+            opcoes={[
+              { key: 'qr', label: 'QR codes', Icon: QrCode },
+              // Gestão completa (criar/virar temporada) só pra quem edita.
+              // O botão de Endereços/geocode saiu daqui (13/07) — a ferramenta
+              // técnica segue viva em /admin/grupos/geocode, sem poluir a aba.
+              ...(podeEditarGrupos ? [{ key: 'temporadas', label: 'Gestão de temporadas', Icon: Calendar }] : []),
+            ]}
+          />
           <div className="cbrio-grupos-bleed" style={{ margin: '0 -20px' }}>
-            {configTab === 'temporadas' ? <TemporadasGrupos /> : <GruposGeocode />}
+            {configTab === 'temporadas' && podeEditarGrupos ? <TemporadasGrupos /> : <InscricaoGruposQRCode />}
           </div>
         </div>
       )}
@@ -1352,8 +1384,33 @@ export default function Grupos() {
         <RelatorioGrupos temporada={filterTemporada} />
       )}
 
-      {/* ═══ TAB GRUPOS ═══ */}
-      {tabAtiva === 'grupos' && <>
+      {/* ═══ TAB GRUPOS · visualização Lista | Mapa (mesma informação, projeções diferentes) ═══ */}
+      {tabAtiva === 'grupos' && (
+        <ViewToggle
+          value={gruposView}
+          onChange={trocarGruposView}
+          opcoes={[
+            { key: 'lista', label: 'Lista', Icon: Users },
+            { key: 'mapa', label: 'Mapa', Icon: MapIcon },
+          ]}
+        />
+      )}
+      {tabAtiva === 'grupos' && gruposView === 'mapa' && (
+        <div style={{ height: 'calc(100vh - 270px)', minHeight: 500, borderRadius: 12, overflow: 'hidden', border: `1px solid ${C.border}` }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
+          ) : (
+            <GruposMapView
+              grupos={gruposList.filter(g => g.ativo)}
+              variant="admin"
+              defaultTheme="dark"
+              temporadasMap={Object.fromEntries((temporadas || []).map(t => [t.id, { inscricoes_abertas: !!t.inscricoes_abertas, label: t.label }]))}
+              mostrarBotaoInscricao={true}
+            />
+          )}
+        </div>
+      )}
+      {tabAtiva === 'grupos' && gruposView === 'lista' && <>
       {/* Resumo de saúde */}
       {saudeAgregada && saudeAgregada.total > 0 && (
         <div style={{ background: C.card, borderRadius: 16, padding: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 12, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1387,7 +1444,7 @@ export default function Grupos() {
 
       <div style={{ marginBottom: 12, position: 'relative' }}>
         <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
-        <Input placeholder="Buscar por código, grupo, líder, local, bairro ou tema..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
+        <Input placeholder="Buscar por código, grupo, líder, local ou bairro..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
       </div>
 
       {/* Filtros */}
@@ -1405,15 +1462,7 @@ export default function Grupos() {
           <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue placeholder="Dia" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos os dias</SelectItem>
-            {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-          </SelectContent>
-        </ShadSelect>
-
-        <ShadSelect value={filterTema} onValueChange={setFilterTema}>
-          <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Tema" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os temas</SelectItem>
-            {temasUnicos.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            {diasUnicos.map(i => <SelectItem key={i} value={String(i)}>{DIAS[i]}</SelectItem>)}
           </SelectContent>
         </ShadSelect>
 
@@ -1449,8 +1498,17 @@ export default function Grupos() {
           </ShadSelect>
         )}
 
+        <button onClick={() => setFilterIncompleto(v => !v)} title="Grupos com dados de cadastro faltando" style={{
+          fontSize: 11, padding: '4px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,
+          border: filterIncompleto ? `1px solid ${C.amber}` : `1px solid ${C.amber}40`,
+          background: filterIncompleto ? `${C.amber}28` : `${C.amber}12`, color: C.amber,
+          display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          <AlertTriangle size={11} /> Cadastro incompleto ({incompletosCount})
+        </button>
+
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all'); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterIncompleto(false); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -1481,8 +1539,8 @@ export default function Grupos() {
               <button
                 onClick={() => {
                   setFilterTipo('all'); setFilterDia('all');
-                  setFilterTema('all'); setFilterBairro('all'); setFilterStatusTemp('all');
-                  setFilterTemporada('');
+                  setFilterBairro('all'); setFilterStatusTemp('all');
+                  setFilterIncompleto(false); setFilterTemporada('');
                 }}
                 style={{ marginTop: 8, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
               >
@@ -1521,6 +1579,15 @@ export default function Grupos() {
                       </span>
                     )}
                     {!g.ativo && !g.status_temporada && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, textTransform: 'uppercase' }}>Arquivado</span>}
+                    {(() => {
+                      const n = camposFaltantes(g).length;
+                      if (!n) return null;
+                      return (
+                        <span title="Cadastro incompleto — abra o grupo para ver o que falta" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: `${C.amber}20`, color: C.amber, fontWeight: 600 }}>
+                          {n === 1 ? 'falta 1 dado' : `faltam ${n} dados`}
+                        </span>
+                      );
+                    })()}
                   </div>
                   {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
@@ -1796,14 +1863,17 @@ function GrupoQRModal({ open, onClose, grupo, temporada, copied, setCopied }) {
 function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, allMembros, loadMembros, temporadas, bairrosUnicos }) {
   const [form, setForm] = useState({});
   const [liderSearch, setLiderSearch] = useState('');
+  const [redesList, setRedesList] = useState([]);
 
   useEffect(() => {
     if (open) {
       loadMembros();
+      api.redes.list().then(setRedesList).catch(() => setRedesList([]));
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
       setForm(data ? { ...data } : {
         nome: '', categoria: '', area: 'sede', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
+        faixa_etaria: '', idade_min: '', idade_max: '', capacidade: '', aceitando_inscricoes: true, rede_id: '',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
       });
@@ -1820,6 +1890,9 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.nome?.trim()) { toast.error('Nome e obrigatório'); return; }
+    const iMin = form.idade_min === '' || form.idade_min == null ? null : Number(form.idade_min);
+    const iMax = form.idade_max === '' || form.idade_max == null ? null : Number(form.idade_max);
+    if (iMin != null && iMax != null && iMin > iMax) { toast.error('Idade mínima maior que a máxima'); return; }
     const { _geocoding, ...rest } = form;
     onSave({
       ...rest,
@@ -1877,6 +1950,55 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               </ShadSelect>
             </div>
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Faixa etária</Label>
+              <ShadSelect value={form.faixa_etaria || '__none__'} onValueChange={v => set('faixa_etaria', v === '__none__' ? '' : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Não definida</SelectItem>
+                  {['Adolescentes', 'Jovens', 'Jovens Adultos', 'Adultos', 'Todas as idades'].map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                </SelectContent>
+              </ShadSelect>
+            </div>
+            <div>
+              <Label>Capacidade (limite de pessoas)</Label>
+              <Input type="number" min={0} value={form.capacidade ?? ''} onChange={e => set('capacidade', e.target.value)} placeholder="Sem limite" />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <Label>Idade mínima (opcional)</Label>
+                <Input type="number" min={0} max={120} value={form.idade_min ?? ''} onChange={e => set('idade_min', e.target.value)} placeholder="Sem limite" />
+              </div>
+              <div>
+                <Label>Idade máxima (opcional)</Label>
+                <Input type="number" min={0} max={120} value={form.idade_max ?? ''} onChange={e => set('idade_max', e.target.value)} placeholder="Sem limite" />
+              </div>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--cbrio-text3)', margin: '4px 0 0' }}>
+              Com limite definido, o formulário público bloqueia inscrição fora da faixa (ex.: jovens até 25 anos).
+            </p>
+          </div>
+
+          <div>
+            <Label>Rede</Label>
+            <ShadSelect value={form.rede_id || '__none__'} onValueChange={v => set('rede_id', v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Sem rede</SelectItem>
+                {redesList.map(r => <SelectItem key={r.id} value={r.id}>{r.nome}{r.supervisor_nome ? ` — ${r.supervisor_nome}` : ''}</SelectItem>)}
+              </SelectContent>
+            </ShadSelect>
+          </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.aceitando_inscricoes !== false} onChange={e => set('aceitando_inscricoes', e.target.checked)} style={{ accentColor: '#00B39D', cursor: 'pointer' }} />
+            Aceitar novas inscrições (desligue para tirar o grupo do formulário público)
+          </label>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>

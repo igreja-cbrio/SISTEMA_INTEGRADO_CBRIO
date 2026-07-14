@@ -19,6 +19,23 @@ const C = { primary: '#00B39D', warn: '#f59e0b', danger: '#ef4444', info: '#3b82
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function nomeMesAtual() { const d = new Date(); return `${MESES_PT[d.getMonth()]} ${d.getFullYear()}`; }
 
+// wa.me da pessoa (normaliza pra 55 + DDD + número). Mensagem pré-preenchida
+// (editável no WhatsApp antes de enviar) com a turma e as datas dos encontros.
+function waHref(telefone?: string | null, msg?: string) {
+  const num = String(telefone || '').replace(/\D/g, '');
+  if (!num) return null;
+  const full = num.length <= 11 ? `55${num}` : num;
+  return `https://wa.me/${full}${msg ? `?text=${encodeURIComponent(msg)}` : ''}`;
+}
+function msgTurma(nome: string, turmaNome: string, encontros?: { data?: string | null }[]) {
+  const datas = (encontros || []).map(e => e.data).filter(Boolean)
+    .map(d => { const [, m, day] = String(d).split('-'); return `${day}/${m}`; });
+  const quando = datas.length
+    ? ` Os encontros são no dia ${datas.join(' e ')} (confirme o horário com a gente).`
+    : '';
+  return `Olá, ${nome}! 🎉 Você foi alocado(a) na turma do Next "${turmaNome}".${quando} Qualquer dúvida, é só chamar por aqui. Te esperamos!`;
+}
+
 type Status = 'matriculado' | 'formado' | 'incompleto' | 'desistiu';
 type Encontro = { id: string; turma_id: string; numero: number; data?: string | null; tema?: string | null };
 type Matricula = {
@@ -97,31 +114,29 @@ function TurmasView() {
   const [loading, setLoading] = useState(true);
   const [novaOpen, setNovaOpen] = useState(false);
   const [turmaAberta, setTurmaAberta] = useState<string | null>(null);
-  const [espera, setEspera] = useState(0);
+  const [espera, setEspera] = useState<{ count: number; pessoas: any[] }>({ count: 0, pessoas: [] });
 
   const load = useCallback(async () => {
     setLoading(true);
     try { setTurmas(await nextApi.turmas.list()); } catch (e: any) { toast.error(e?.message || 'Erro ao carregar turmas'); }
-    try { const r = await nextApi.turmas.listaEspera(); setEspera(r?.count || 0); } catch { /* noop */ }
+    try { const r = await nextApi.turmas.listaEspera(); setEspera({ count: r?.count || 0, pessoas: r?.pessoas || [] }); } catch { /* noop */ }
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const temAberta = turmas.some(t => t.status === 'aberta');
+  const turmasAbertas = turmas.filter(t => t.status === 'aberta');
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        {espera > 0 ? (
-          <p className="text-xs text-muted-foreground">
-            <span className="font-semibold text-foreground">{espera}</span> {espera === 1 ? 'pessoa aguardando' : 'pessoas aguardando'} na lista de espera —
-            {temAberta ? ' já entram na próxima turma que você abrir.' : ' abra uma turma pra incluí-las.'}
-          </p>
-        ) : <span />}
+      <div className="flex items-center justify-end gap-3 flex-wrap">
         <Button onClick={() => setNovaOpen(true)} className="gap-2 bg-[#00B39D] hover:bg-[#00B39D]/90 text-white">
           <Plus className="h-4 w-4" /> Abrir turma
         </Button>
       </div>
+
+      {espera.count > 0 && (
+        <FilaEspera pessoas={espera.pessoas} turmasAbertas={turmasAbertas} onChanged={load} />
+      )}
       {loading ? (
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : turmas.length === 0 ? (
@@ -154,6 +169,57 @@ function TurmasView() {
       )}
       {novaOpen && <NovaTurmaModal onClose={() => setNovaOpen(false)} onCreated={() => { setNovaOpen(false); load(); }} />}
       {turmaAberta && <TurmaDetalheModal turmaId={turmaAberta} onClose={() => setTurmaAberta(null)} onChanged={load} />}
+    </div>
+  );
+}
+
+// Lista de espera · pessoas direcionadas ao Next (sem turma) aguardando alocação.
+// O responsável escolhe a turma; ao alocar, a pessoa sai da fila e ganha o botão
+// de WhatsApp (no detalhe da turma) com dia dos encontros.
+function FilaEspera({ pessoas, turmasAbertas, onChanged }: { pessoas: any[]; turmasAbertas: Turma[]; onChanged: () => void }) {
+  const [alocando, setAlocando] = useState<string | null>(null);
+  const alocar = async (pid: string, turmaId: string) => {
+    setAlocando(pid);
+    try { await nextApi.matriculas.update(pid, { turma_id: turmaId }); toast.success('Pessoa alocada na turma'); onChanged(); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao alocar'); }
+    setAlocando(null);
+  };
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 sm:p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <UserCheck className="h-4 w-4 text-amber-600" />
+        <h3 className="text-sm font-semibold text-foreground">
+          Lista de espera <span className="text-muted-foreground font-normal">· {pessoas.length}</span>
+        </h3>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Pessoas direcionadas ao Next aguardando alocação. Escolha a turma de cada uma; depois de alocada, o botão de WhatsApp aparece no detalhe da turma.
+      </p>
+      <div className="space-y-2">
+        {pessoas.map(p => {
+          const nome = `${p.nome}${p.sobrenome ? ' ' + p.sobrenome : ''}`;
+          return (
+            <div key={p.id} className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium truncate">{nome}</p>
+                {p.telefone && <p className="text-[11px] text-muted-foreground">{p.telefone}</p>}
+              </div>
+              {turmasAbertas.length === 0 ? (
+                <span className="text-[11px] text-muted-foreground italic">abra uma turma pra alocar</span>
+              ) : (
+                <Select onValueChange={(v) => alocar(p.id, v)} disabled={alocando === p.id}>
+                  <SelectTrigger className="h-8 w-[190px] text-xs">
+                    <SelectValue placeholder={alocando === p.id ? 'Alocando…' : 'Alocar em turma'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {turmasAbertas.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -278,7 +344,18 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                     return (
                       <tr key={m.id} className="border-b border-border last:border-0">
                         <td className="p-2">
-                          <span className={incompletoFim ? 'text-amber-600' : ''}>{m.nome} {m.sobrenome || ''}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={incompletoFim ? 'text-amber-600' : ''}>{m.nome} {m.sobrenome || ''}</span>
+                            {(() => {
+                              const wa = waHref(m.telefone, msgTurma(`${m.nome}${m.sobrenome ? ' ' + m.sobrenome : ''}`, det.nome, det.encontros));
+                              return wa ? (
+                                <a href={wa} target="_blank" rel="noreferrer" title="Avisar no WhatsApp (dia dos encontros)"
+                                  className="inline-flex items-center gap-1 text-[11px] text-emerald-600 hover:underline shrink-0">
+                                  <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+                                </a>
+                              ) : null;
+                            })()}
+                          </div>
                           {m.telefone && <span className="block text-[11px] text-muted-foreground">{m.telefone}</span>}
                         </td>
                         {det.encontros.map(e => (
