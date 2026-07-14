@@ -1452,6 +1452,7 @@ export const totemKids = {
     create: (data) => post('/totem-kids/sessoes', data),
     abrir: (id) => post(`/totem-kids/sessoes/${id}/abrir`, {}),
     encerrar: (id) => post(`/totem-kids/sessoes/${id}/encerrar`, {}),
+    encerrarVencidas: () => post('/totem-kids/sessoes/encerrar-vencidas', {}),
   },
   criancas: {
     buscar: (q) => get(`/totem-kids/criancas/buscar?q=${encodeURIComponent(q)}`),

@@ -114,6 +114,10 @@ function AbaSessoes() {
   async function carregar() {
     setCarregando(true);
     try {
+      // Fecha sessões de dias anteriores antes de listar (lazy · SEM cron) — a
+      // config passa a mostrá-las como encerradas e o "Sessão atual" não oferece
+      // mais culto de outro dia. Best-effort.
+      try { await totemKids.sessoes.encerrarVencidas(); } catch { /* segue */ }
       // Janela de cultos: últimos 7 + próximos 14 dias.
       // Filtra so cultos cujo service_type tem has_kids=true · evita
       // listar AMI/Bridge que não tem programacao infantil (Marcos 2026-05-21).

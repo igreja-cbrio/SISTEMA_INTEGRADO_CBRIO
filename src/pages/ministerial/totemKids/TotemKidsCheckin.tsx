@@ -372,8 +372,15 @@ export default function TotemKidsCheckin() {
   // HOJE por conveniência (mesma lógica do #9).
   async function carregarCultosDoDia() {
     try {
+      // Fecha (lazy · SEM cron) sessões de dias anteriores deixadas abertas —
+      // senão o check-in adotaria uma sessão da semana passada e corromperia o
+      // KPI do culto antigo (R1). Baixa quem ficou aberto nelas. Best-effort.
+      try { await totemKids.sessoes.encerrarVencidas(); } catch { /* segue */ }
+      const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       const abertas: any[] = await totemKids.sessoes.list({ status: 'aberta', limit: 30 });
-      const cultos = (abertas || []).filter((s: any) => s.culto).map((s: any) => ({
+      // Só sessões de HOJE (BRT) entram no seletor · nunca adota sessão de outro
+      // dia (defesa em profundidade com o encerrar-vencidas + backstop do POST).
+      const cultos = (abertas || []).filter((s: any) => s.culto && String(s.culto?.data).slice(0, 10) === hoje).map((s: any) => ({
         culto_id: s.culto_id, sessao_id: s.id, nome: s.culto?.nome, data: s.culto?.data,
         hora: String(s.culto?.service_type?.recurrence_time || '').slice(0, 5), sessao: s,
       })).sort((a: any, b: any) => String(a.hora).localeCompare(String(b.hora)));
@@ -388,7 +395,6 @@ export default function TotemKidsCheckin() {
         setSessao(cur?.sessao || null);
         return;
       }
-      const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       const doDia: any[] = await totemKids.cultosDoDia(hoje);
       const { atual } = escolherCultoPorRelogio(doDia || []);
       if (atual) {

@@ -203,6 +203,56 @@ router.post('/sessoes/garantir', authorizeModule('kids', 2), async (req, res) =>
   }
 });
 
+// Data de HOJE em BRT (YYYY-MM-DD) — pra saber o que é "de outro dia".
+function _hojeBRT() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+
+// Encerra sessões ABERTAS cujo culto é de um dia ANTERIOR a hoje (BRT) e dá
+// checkout automático em quem ficou aberto nelas — mesmo efeito do "Encerrar"
+// manual (#1758a). É o fechamento LAZY (SEM cron · pedido do Marcos): roda na
+// carga do totem/admin. Fecha o buraco do R1 (check-in adotar sessão de outro
+// dia e corromper presencial_kids/decisoes_kids) e consolida o KPI do culto
+// antigo certo (trigger fn_kids_sessao_consolida_culto dispara no status→encerrada).
+async function encerrarSessoesVencidas(userId) {
+  const hoje = _hojeBRT();
+  const { data: abertas, error } = await supabase
+    .from('kids_sessoes')
+    .select('id, culto:cultos(data)')
+    .eq('status', 'aberta');
+  if (error) throw error;
+  const vencidas = (abertas || [])
+    .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) < hoje)
+    .map((s) => s.id);
+  if (!vencidas.length) return 0;
+  const agora = new Date().toISOString();
+  await supabase.from('kids_sessoes')
+    .update({ status: 'encerrada', encerrada_at: agora, encerrada_por: userId || null })
+    .in('id', vencidas);
+  const { error: eCk } = await supabase.from('kids_checkins')
+    .update({
+      checkout_at: agora,
+      checkout_metodo: 'checkout_forcado',
+      checkout_por: userId || null,
+      responsavel_checkout_nome: 'Baixa automática (sessão de outro dia)',
+    })
+    .in('sessao_id', vencidas).is('checkout_at', null);
+  if (eCk) console.error('[totemKids/encerrar-vencidas] auto-checkout:', eCk.message);
+  return vencidas.length;
+}
+
+// POST /api/totem-kids/sessoes/encerrar-vencidas · sweep lazy (SEM cron): o
+// totem/admin chama na carga; encerra sessões de dias anteriores + baixa abertos.
+router.post('/sessoes/encerrar-vencidas', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const n = await encerrarSessoesVencidas(req.user.userId);
+    res.json({ encerradas: n });
+  } catch (e) {
+    console.error('[totemKids/sessoes/encerrar-vencidas]', e.message);
+    res.status(500).json({ error: 'Erro ao encerrar sessões vencidas' });
+  }
+});
+
 // GET /api/totem-kids/sessoes · lista sessões (admin)
 router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
   try {
@@ -2143,6 +2193,14 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
     if (!sessao) return res.status(404).json({ error: 'Sessão não encontrada' });
     if (sessao.status !== 'aberta') {
       return res.status(400).json({ error: 'Sessão não esta aberta', status: sessao.status });
+    }
+    // Backstop de integridade (R1): nunca lança em culto de dia ANTERIOR — isso
+    // corromperia presencial_kids/decisoes_kids do culto antigo. NÃO bloqueia o
+    // culto de HOJE (a data de hoje nunca é < hoje) → respeita o princípio "nunca
+    // travar o check-in na hora". As vencidas já são encerradas no carregar
+    // (encerrar-vencidas); isto só cobre corrida / totem desatualizado.
+    if (sessao.culto?.data && String(sessao.culto.data).slice(0, 10) < _hojeBRT()) {
+      return res.status(409).json({ error: 'Essa sessão é de um culto de outro dia e já foi encerrada. Recarregue o totem.' });
     }
 
     // Anti-duplicidade: bloqueia só quando há check-in ABERTO (sem check-out) na
