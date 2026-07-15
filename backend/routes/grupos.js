@@ -1669,6 +1669,118 @@ router.get('/pessoas/buscar', authorizeModule('grupos', 1), async (req, res) => 
   } catch (e) { console.error('[Grupos pessoas buscar]', e.message); res.status(500).json({ error: 'Erro ao buscar pessoas' }); }
 });
 
+// ── Ficha da pessoa (aba Pessoas · Marcos 15/07: "deve ter uma forma de
+// editar, caso seja necessário excluir algum desses dados") ──
+// GET devolve os dados cadastrais; PATCH edita — campo enviado vazio/null
+// LIMPA o dado (é o "excluir"); campo ausente não mexe. Restrito ao universo
+// de grupos (escopo da triagem) e auditado pelo trigger de mem_membros.
+
+function _cpfValidoAdm(cpf) {
+  const d = String(cpf || '').replace(/\D+/g, '');
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  let s = 0;
+  for (let i = 0; i < 9; i++) s += parseInt(d[i]) * (10 - i);
+  let r = (s * 10) % 11;
+  if (r === 10) r = 0;
+  if (r !== parseInt(d[9])) return false;
+  s = 0;
+  for (let i = 0; i < 10; i++) s += parseInt(d[i]) * (11 - i);
+  r = (s * 10) % 11;
+  if (r === 10) r = 0;
+  return r === parseInt(d[10]);
+}
+
+// GET /api/grupos/pessoas/:membroId/ficha — dados cadastrais pra ficha/edição.
+// (Sufixo /ficha de propósito: /pessoas/:membroId cru capturaria as rotas
+// /pessoas/papeis e /pessoas/buscar definidas em outros pontos do arquivo.)
+router.get('/pessoas/:membroId/ficha', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const gruposDe = await universoGrupos();
+    if (!gruposDe.has(req.params.membroId)) {
+      return res.status(403).json({ error: 'Pessoa fora do universo de grupos.' });
+    }
+    const { data, error } = await supabase.from('mem_membros')
+      .select('id, nome, cpf, telefone, email, data_nascimento, genero, status, foto_url, observacoes')
+      .eq('id', req.params.membroId).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Pessoa não encontrada.' });
+    res.json(data);
+  } catch (e) { console.error('[Grupos pessoa GET]', e.message); res.status(500).json({ error: 'Erro ao carregar a pessoa' }); }
+});
+
+// PATCH /api/grupos/pessoas/:membroId/ficha — body: { nome?, telefone?,
+// email?, cpf?, data_nascimento?, observacoes? } · '' ou null limpa o campo.
+router.patch('/pessoas/:membroId/ficha', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const gruposDe = await universoGrupos();
+    if (!gruposDe.has(req.params.membroId)) {
+      return res.status(403).json({ error: 'Pessoa fora do universo de grupos.' });
+    }
+
+    const body = req.body || {};
+    const upd = {};
+    const limpo = (v) => String(v ?? '').trim();
+
+    if ('nome' in body) {
+      const nome = limpo(body.nome);
+      if (nome.length < 3) return res.status(400).json({ error: 'O nome não pode ficar vazio.', campo: 'nome' });
+      upd.nome = nome.slice(0, 200);
+    }
+    if ('telefone' in body) {
+      const dig = limpo(body.telefone).replace(/\D+/g, '');
+      if (dig && (dig.length < 10 || dig.length > 13)) return res.status(400).json({ error: 'Telefone inválido — use DDD + número.', campo: 'telefone' });
+      upd.telefone = dig || null;
+    }
+    if ('email' in body) {
+      const email = limpo(body.email).toLowerCase();
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'E-mail inválido.', campo: 'email' });
+      upd.email = email || null;
+    }
+    if ('cpf' in body) {
+      const dig = limpo(body.cpf).replace(/\D+/g, '');
+      if (dig) {
+        if (!_cpfValidoAdm(dig)) return res.status(400).json({ error: 'CPF inválido — confira os números.', campo: 'cpf' });
+        // CPF é chave de identidade: se OUTRA pessoa ativa já o tem, o caso é
+        // de duplicata (fundir), não de edição.
+        const { data: outro } = await supabase.from('mem_membros')
+          .select('id, nome').eq('cpf', dig).neq('id', req.params.membroId)
+          .is('deleted_at', null).limit(1);
+        if (outro && outro.length) {
+          return res.status(409).json({ error: `Este CPF já está no cadastro de "${outro[0].nome}". Se for a mesma pessoa, use a aba Duplicatas pra fundir.`, campo: 'cpf' });
+        }
+      }
+      upd.cpf = dig || null;
+    }
+    if ('data_nascimento' in body) {
+      const v = limpo(body.data_nascimento);
+      if (v) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return res.status(400).json({ error: 'Data de nascimento inválida.', campo: 'data_nascimento' });
+        const d = new Date(v + 'T12:00:00');
+        if (Number.isNaN(d.getTime()) || d > new Date() || d.getFullYear() < 1900) {
+          return res.status(400).json({ error: 'Confira a data de nascimento.', campo: 'data_nascimento' });
+        }
+      }
+      upd.data_nascimento = v || null;
+    }
+    if ('observacoes' in body) {
+      const v = limpo(body.observacoes);
+      upd.observacoes = v ? v.slice(0, 4000) : null;
+    }
+
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'Nada a atualizar.' });
+
+    const { data, error } = await supabase.from('mem_membros')
+      .update(upd).eq('id', req.params.membroId).is('deleted_at', null)
+      .select('id, nome, cpf, telefone, email, data_nascimento, genero, status, foto_url, observacoes')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Pessoa não encontrada.' });
+
+    _dupCache = { ts: 0, payload: null }; // dados mudaram → reanalisar duplicatas
+    res.json(data);
+  } catch (e) { console.error('[Grupos pessoa PATCH]', e.message); res.status(500).json({ error: 'Erro ao salvar a ficha' }); }
+});
+
 // ─────────────────────────────────────────────────────────────
 // Duplicatas do universo de grupos (Marcos · 2026-07-14)
 // A base acumulou registros repetidos da mesma pessoa: cada porta de entrada

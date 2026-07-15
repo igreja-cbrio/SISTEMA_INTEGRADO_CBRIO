@@ -60,6 +60,32 @@ function statusDe(p) {
   return 'ausente';
 }
 
+// Item somente-leitura da ficha cadastral (modal da pessoa)
+function FichaItem({ rotulo, valor }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700 }}>{rotulo}</div>
+      <div style={{ color: valor ? C.t2 : C.t3 }}>{valor || '—'}</div>
+    </div>
+  );
+}
+
+// Campo editável da ficha (input pequeno com rótulo)
+function FichaCampo({ rotulo, valor, onChange, type = 'text', inputMode }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700, marginBottom: 4 }}>{rotulo}</div>
+      <input
+        type={type}
+        inputMode={inputMode}
+        value={valor}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', boxSizing: 'border-box', padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12.5 }}
+      />
+    </div>
+  );
+}
+
 // Grupos da pessoa pra exibir/filtrar: participações; se não tiver, cai pros
 // grupos que lidera/supervisiona (pra líder/supervisor não ficar sem grupo).
 function gruposDe(p) {
@@ -92,7 +118,7 @@ function gruposDetalhados(p) {
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
@@ -155,6 +181,46 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // ── Ficha cadastral da pessoa do modal (Marcos · 15/07: editar/limpar
+  // dados direto na área de Pessoas). Campo salvo em branco APAGA o dado.
+  const [ficha, setFicha] = useState(null);        // dados carregados (ou null)
+  const [fichaEditando, setFichaEditando] = useState(false);
+  const [fichaForm, setFichaForm] = useState({});
+  const [fichaSalvando, setFichaSalvando] = useState(false);
+  useEffect(() => {
+    setFicha(null); setFichaEditando(false);
+    if (!selected?.membro_id) return;
+    let vivo = true;
+    api.pessoaFicha(selected.membro_id)
+      .then(f => { if (vivo) setFicha(f); })
+      .catch(() => {}); // sem nível/fora do universo → seção não aparece
+    return () => { vivo = false; };
+  }, [selected?.membro_id]);
+
+  const abrirEdicaoFicha = () => {
+    setFichaForm({
+      nome: ficha?.nome || '',
+      telefone: ficha?.telefone || '',
+      email: ficha?.email || '',
+      cpf: ficha?.cpf || '',
+      data_nascimento: ficha?.data_nascimento || '',
+      observacoes: ficha?.observacoes || '',
+    });
+    setFichaEditando(true);
+  };
+
+  const salvarFicha = async () => {
+    setFichaSalvando(true);
+    try {
+      const r = await api.pessoaFichaSalvar(selected.membro_id, fichaForm);
+      setFicha(r);
+      setFichaEditando(false);
+      toast.success('Ficha atualizada');
+      if (r.nome !== selected.nome) { setSelected(s => ({ ...s, nome: r.nome })); carregar(); }
+    } catch (e) { toast.error(e.message || 'Erro ao salvar a ficha'); }
+    finally { setFichaSalvando(false); }
+  };
 
   const pessoas = dados?.pessoas || [];
 
@@ -430,6 +496,68 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                 </div>
                 <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', fontSize: 22, lineHeight: 1, color: C.t3, cursor: 'pointer' }}>×</button>
               </div>
+
+              {/* Ficha cadastral · ver + editar (limpar um campo apaga o dado) */}
+              {ficha && (
+                <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>Dados da pessoa</span>
+                    {podeEditarDados && !fichaEditando && (
+                      <button onClick={abrirEdicaoFicha} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: 0 }}>
+                        Editar dados
+                      </button>
+                    )}
+                  </div>
+
+                  {!fichaEditando ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px 16px', fontSize: 12.5 }}>
+                      <FichaItem rotulo="Telefone" valor={ficha.telefone} />
+                      <FichaItem rotulo="E-mail" valor={ficha.email} />
+                      <FichaItem rotulo="CPF" valor={ficha.cpf} />
+                      <FichaItem rotulo="Nascimento" valor={ficha.data_nascimento ? fmtData(ficha.data_nascimento) : null} />
+                      {ficha.observacoes && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700 }}>Observações</div>
+                          <div style={{ color: C.t2, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{ficha.observacoes}</div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <p style={{ fontSize: 11.5, color: C.amber, margin: '0 0 10px', lineHeight: 1.5 }}>
+                        Deixar um campo em branco <strong>apaga o dado</strong> da ficha ao salvar. Toda alteração fica registrada na auditoria.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+                        <FichaCampo rotulo="Nome completo" valor={fichaForm.nome} onChange={v => setFichaForm(f => ({ ...f, nome: v }))} />
+                        <FichaCampo rotulo="Telefone" valor={fichaForm.telefone} onChange={v => setFichaForm(f => ({ ...f, telefone: v }))} inputMode="tel" />
+                        <FichaCampo rotulo="E-mail" valor={fichaForm.email} onChange={v => setFichaForm(f => ({ ...f, email: v }))} type="email" />
+                        <FichaCampo rotulo="CPF" valor={fichaForm.cpf} onChange={v => setFichaForm(f => ({ ...f, cpf: v }))} inputMode="numeric" />
+                        <FichaCampo rotulo="Nascimento" valor={fichaForm.data_nascimento} onChange={v => setFichaForm(f => ({ ...f, data_nascimento: v }))} type="date" />
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700, marginBottom: 4 }}>Observações</div>
+                        <textarea
+                          value={fichaForm.observacoes}
+                          onChange={e => setFichaForm(f => ({ ...f, observacoes: e.target.value }))}
+                          rows={3}
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12.5, fontFamily: 'inherit', resize: 'vertical' }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                        <button onClick={() => setFichaEditando(false)} disabled={fichaSalvando}
+                          style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, color: C.t2, cursor: 'pointer' }}>
+                          Cancelar
+                        </button>
+                        <button onClick={salvarFicha} disabled={fichaSalvando}
+                          style={{ background: C.primary, border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, color: '#fff', cursor: fichaSalvando ? 'wait' : 'pointer' }}>
+                          {fichaSalvando ? 'Salvando...' : 'Salvar ficha'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Lista de grupos */}
               <div style={{ padding: 16 }}>
                 <div style={{ fontSize: 11, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
