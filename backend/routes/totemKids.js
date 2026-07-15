@@ -94,6 +94,20 @@ function normalizarCpf(c) {
   return digits.length === 11 ? digits : null;
 }
 
+// CPF válido de verdade (dígitos verificadores) — evita "111.111.111-11" e afins,
+// que zerariam a qualidade do dado (o CPF vira chave de deduplicação).
+function cpfValido(cpf) {
+  const d = String(cpf || '').replace(/\D/g, '');
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const dig = (base, pesoIni) => {
+    let s = 0;
+    for (let i = 0; i < base.length; i++) s += parseInt(base[i], 10) * (pesoIni - i);
+    const r = (s * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dig(d.slice(0, 9), 10) === +d[9] && dig(d.slice(0, 10), 11) === +d[10];
+}
+
 // Sala sugerida pra idade em meses
 async function sugerirSala(idadeMeses) {
   if (idadeMeses == null) return null;
@@ -2221,6 +2235,8 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       responsavel_id, responsavel_nome_manual, responsavel_telefone_manual, responsavel_parentesco,
       cultos_extras, // ids de OUTROS cultos do dia em que a criança também fica (multi-culto)
       enviar_wpp,    // enviar código + QR de retirada por WhatsApp pro responsável (plus · etiqueta sempre imprime)
+      responsavel_cpf,   // CPF do responsável (obrigatório · Marcos 2026-07-15) · salvo no cadastro
+      permitir_sem_cpf,  // válvula: supervisor liberou o check-in sem CPF (PIN no totem)
     } = req.body;
 
     if (!sessao_id) return res.status(400).json({ error: 'sessao_id obrigatorio' });
@@ -2262,20 +2278,66 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       });
     }
 
-    // Resolve snapshot do responsável
+    // ── Responsável + CPF obrigatório (Marcos 2026-07-15) ──
+    // Todo responsável do check-in precisa de CPF. O totem pede num modal e manda
+    // aqui em `responsavel_cpf`; capturar salva no cadastro (uma vez só) e vira
+    // chave forte de deduplicação. Supervisor pode dispensar (`permitir_sem_cpf`,
+    // via PIN no totem) — nunca trava a família de verdade.
+    const cpfInformado = normalizarCpf(responsavel_cpf);
+    if (responsavel_cpf && !cpfValido(cpfInformado)) {
+      return res.status(400).json({ error: 'CPF inválido — confira os números.', precisa_cpf: true });
+    }
+    const ligarResponsavel = async (membroId, parentesco) => {
+      const { data: link } = await supabase.from('kids_responsaveis')
+        .select('crianca_id').eq('crianca_id', crianca_id).eq('membro_id', membroId).maybeSingle();
+      if (!link) {
+        await supabase.from('kids_responsaveis')
+          .insert({ crianca_id, membro_id: membroId, parentesco: parentesco || 'responsavel', autorizado_buscar: true })
+          .then(() => {}, (e) => console.error('[totemKids/checkin] ligar responsável:', e?.message));
+      }
+    };
+
     let respId = null, respNome = null, respTel = null;
     if (responsavel_id) {
       const { data: m } = await supabase
-        .from('mem_membros').select('id, nome, telefone').eq('id', responsavel_id).maybeSingle();
-      if (m) {
-        respId = m.id;
-        respNome = m.nome;
-        respTel = m.telefone;
+        .from('mem_membros').select('id, nome, telefone, cpf').eq('id', responsavel_id).maybeSingle();
+      if (!m) return res.status(404).json({ error: 'Responsável não encontrado' });
+      respId = m.id; respNome = m.nome; respTel = m.telefone;
+      const jaTemCpf = m.cpf && String(m.cpf).replace(/\D/g, '').length === 11;
+      if (!jaTemCpf) {
+        if (cpfInformado) {
+          // CPF já é de OUTRA pessoa? → é duplicata: usa a pessoa existente (dedup).
+          const { data: outro } = await supabase.from('mem_membros')
+            .select('id, nome, telefone').eq('cpf', cpfInformado).neq('id', m.id).maybeSingle();
+          if (outro) {
+            respId = outro.id; respNome = outro.nome; respTel = outro.telefone || respTel;
+            await ligarResponsavel(outro.id, responsavel_parentesco);
+          } else {
+            await supabase.from('mem_membros').update({ cpf: cpfInformado }).eq('id', m.id);
+          }
+        } else if (!permitir_sem_cpf) {
+          return res.status(422).json({ error: 'Precisamos do CPF do responsável.', precisa_cpf: true, responsavel_nome: m.nome });
+        } else {
+          console.warn(`[totemKids/checkin] CPF dispensado (supervisor) · resp ${m.id}`);
+        }
       }
-    }
-    if (!respNome && responsavel_nome_manual) {
-      respNome = responsavel_nome_manual;
-      respTel = normalizarTelefone(responsavel_telefone_manual);
+    } else if (responsavel_nome_manual) {
+      // Responsável manual → também exige CPF e vira cadastro (achar-ou-criar).
+      if (cpfInformado) {
+        const rr = await acharOuCriarGuardado({
+          cpf: cpfInformado, telefone: normalizarTelefone(responsavel_telefone_manual),
+          nome: responsavel_nome_manual, status: 'visitante',
+        });
+        const { data: m } = await supabase.from('mem_membros').select('id, nome, telefone').eq('id', rr.membro_id).single();
+        respId = m.id; respNome = m.nome; respTel = m.telefone || normalizarTelefone(responsavel_telefone_manual);
+        await ligarResponsavel(m.id, responsavel_parentesco || 'outro');
+      } else if (!permitir_sem_cpf) {
+        return res.status(422).json({ error: 'Precisamos do CPF do responsável.', precisa_cpf: true });
+      } else {
+        respNome = responsavel_nome_manual;
+        respTel = normalizarTelefone(responsavel_telefone_manual);
+        console.warn('[totemKids/checkin] CPF dispensado (supervisor · manual)');
+      }
     }
     if (!respNome) return res.status(400).json({ error: 'responsavel_id ou responsavel_nome_manual obrigatório' });
 

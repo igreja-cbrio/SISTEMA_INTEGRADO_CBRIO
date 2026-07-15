@@ -49,7 +49,7 @@ type Crianca = {
     membro_id: string;
     parentesco: string | null;
     autorizado_buscar: boolean;
-    membro: { id: string; nome: string; telefone: string | null; foto_url: string | null } | null;
+    membro: { id: string; nome: string; telefone: string | null; cpf?: string | null; foto_url: string | null } | null;
   }>;
 };
 
@@ -125,6 +125,89 @@ function nomeFamilia(c: any): string {
   return melhor ? `Família ${melhor}` : 'Família';
 }
 
+// CPF válido de verdade (dígitos verificadores) — evita "111.111.111-11" etc.
+function cpfValido(cpf: string): boolean {
+  const d = String(cpf || '').replace(/\D/g, '');
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const dig = (base: string, pesoIni: number) => {
+    let s = 0;
+    for (let i = 0; i < base.length; i++) s += parseInt(base[i], 10) * (pesoIni - i);
+    const r = (s * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dig(d.slice(0, 9), 10) === +d[9] && dig(d.slice(0, 10), 11) === +d[10];
+}
+function formatCpf(v: string): string {
+  const d = String(v || '').replace(/\D/g, '').slice(0, 11);
+  return d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+}
+
+// Modal do CPF obrigatório do responsável (Marcos 2026-07-15). Digitou → imprime.
+// "Não tenho o CPF agora" → supervisor libera (PIN do totem, se houver + motivo).
+function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }: {
+  respNome: string;
+  onConfirmar: (cpf: string) => void;
+  onDispensar: (motivo: string) => void;
+  onCancelar: () => void;
+}) {
+  const [cpf, setCpf] = useState('');
+  const [dispensa, setDispensa] = useState(false);
+  const [pin, setPin] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [erro, setErro] = useState('');
+  const ok = cpfValido(cpf);
+  const pinSalvo = (() => { try { return (localStorage.getItem('cbrio-totem-kids-pin') || '').trim(); } catch { return ''; } })();
+
+  function confirmarDispensa() {
+    if (pinSalvo && pin.trim() !== pinSalvo) { setErro('PIN incorreto'); return; }
+    if (!motivo.trim()) { setErro('Diga o motivo (ex.: estrangeiro, esqueceu o documento).'); return; }
+    onDispensar(motivo.trim());
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onCancelar(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-pink-600" /> CPF do responsável</DialogTitle>
+          <DialogDescription>
+            Pra garantir a <b>segurança na retirada</b>, precisamos do CPF de <b>{respNome}</b>. Fica salvo no cadastro — só pedimos uma vez.
+          </DialogDescription>
+        </DialogHeader>
+        {!dispensa ? (
+          <div className="space-y-3">
+            <Input autoFocus inputMode="numeric" placeholder="000.000.000-00"
+              value={cpf} onChange={(e) => { setCpf(formatCpf(e.target.value)); setErro(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && ok) onConfirmar(cpf.replace(/\D/g, '')); }}
+              className="h-14 text-2xl text-center tracking-wider" />
+            {!!cpf && !ok && <p className="text-xs text-red-500">CPF incompleto ou inválido.</p>}
+            <Button className="w-full bg-pink-600 hover:bg-pink-700 h-12 text-base" disabled={!ok} onClick={() => onConfirmar(cpf.replace(/\D/g, ''))}>
+              <Printer className="h-5 w-5 mr-2" /> Confirmar e imprimir
+            </Button>
+            <button type="button" className="w-full text-xs text-muted-foreground underline pt-1" onClick={() => { setDispensa(true); setErro(''); }}>
+              Não tenho o CPF agora
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm">Liberar o check-in <b>sem CPF</b> — só um supervisor. O responsável vai ser cobrado no próximo check-in.</p>
+            {pinSalvo && (
+              <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin}
+                onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-12 text-center tracking-widest" />
+            )}
+            <Input placeholder="Motivo (ex.: estrangeiro, esqueceu o documento)" value={motivo} onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
+            {!!erro && <p className="text-xs text-red-500">{erro}</p>}
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => { setDispensa(false); setPin(''); setMotivo(''); setErro(''); }}>Voltar</Button>
+              <Button className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={confirmarDispensa}>Liberar sem CPF</Button>
+            </div>
+          </div>
+        )}
+        {!!erro && !dispensa && <p className="text-xs text-red-500">{erro}</p>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -164,6 +247,19 @@ export default function TotemKidsCheckin() {
   // responsáveis via backend · modo "amigo_de_crianca_id").
   const [modalNovo, setModalNovo] = useState(false);
   const [novoContexto, setNovoContexto] = useState<Crianca | null>(null);
+
+  // CPF obrigatório do responsável (Marcos 2026-07-15): se o responsável não tem
+  // CPF, o check-in abre este modal (promise) — digita e imprime, ou supervisor
+  // dispensa. Salva no cadastro (uma vez só) e vira chave forte de dedup.
+  const [cpfPrompt, setCpfPrompt] = useState<{ respNome: string } | null>(null);
+  const cpfResolverRef = useRef<((r: { cpf?: string; dispensado?: boolean } | null) => void) | null>(null);
+  function garantirCpfResponsavel(cpfAtual: string | null | undefined, respNome: string): Promise<{ cpf?: string; dispensado?: boolean } | null> {
+    if (cpfAtual && String(cpfAtual).replace(/\D/g, '').length === 11) return Promise.resolve({});
+    return new Promise((resolve) => { cpfResolverRef.current = resolve; setCpfPrompt({ respNome }); });
+  }
+  function resolverCpfPrompt(r: { cpf?: string; dispensado?: boolean } | null) {
+    const fn = cpfResolverRef.current; cpfResolverRef.current = null; setCpfPrompt(null); fn?.(r);
+  }
 
   // Pré-check-in pelo app · o responsável preparou no celular e gerou um código
   const [preCodigo, setPreCodigo] = useState('');
@@ -308,11 +404,14 @@ export default function TotemKidsCheckin() {
   // código, multi-culto, WhatsApp). Erro numa criança não derruba o lote.
   async function confirmarCheckinFamilia(
     itens: { crianca: Crianca; sala_id: string }[],
-    resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string },
+    resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string; cpfAtual?: string | null },
   ) {
     if (!sessao || !itens.length) return;
     const { sessao_id: sessaoIdFam, cultos_extras: extrasFam } = resolverSessaoCultos();
     if (!sessaoIdFam) { toast.error('Selecione em qual culto a criança fica'); return; }
+    // CPF obrigatório do responsável (compartilhado): pede uma vez pro lote todo.
+    const cpfRes = await garantirCpfResponsavel(resp.manual ? null : (resp.cpfAtual || null), resp.nome || 'o responsável');
+    if (cpfRes === null) return; // cancelou
     setImprimindo(true);
     let ok = 0, jaTinha = 0, falhou = 0;
     for (const it of itens) {
@@ -321,6 +420,8 @@ export default function TotemKidsCheckin() {
           sessao_id: sessaoIdFam, crianca_id: it.crianca.id, sala_id: it.sala_id,
           cultos_extras: extrasFam, enviar_wpp: enviarWpp,
         };
+        if (cpfRes.cpf) payload.responsavel_cpf = cpfRes.cpf;
+        if (cpfRes.dispensado) payload.permitir_sem_cpf = true;
         if (resp.manual) {
           payload.responsavel_nome_manual = resp.nome;
           payload.responsavel_telefone_manual = resp.tel;
@@ -643,6 +744,14 @@ export default function TotemKidsCheckin() {
       return;
     }
 
+    // CPF obrigatório do responsável: se faltar, pede (ou supervisor dispensa).
+    const respSelInd = usarRespManual ? null : crianca.responsaveis.find(r => r.membro_id === responsavelSelecionado);
+    const cpfRes = await garantirCpfResponsavel(
+      usarRespManual ? null : (respSelInd?.membro?.cpf || null),
+      usarRespManual ? (respManualNome.trim() || 'o responsável') : (respSelInd?.membro?.nome || 'o responsável'),
+    );
+    if (cpfRes === null) return; // operador cancelou
+
     setImprimindo(true);
     try {
       const { sessao_id, cultos_extras } = resolverSessaoCultos();
@@ -663,6 +772,8 @@ export default function TotemKidsCheckin() {
         payload.responsavel_parentesco = resp?.parentesco || 'outro';
       }
       payload.enviar_wpp = enviarWpp; // backend só envia se houver telefone
+      if (cpfRes.cpf) payload.responsavel_cpf = cpfRes.cpf;
+      if (cpfRes.dispensado) payload.permitir_sem_cpf = true;
 
       const r = await totemKids.checkin.criar(payload);
 
@@ -1069,6 +1180,15 @@ export default function TotemKidsCheckin() {
         }}
       />
 
+      {cpfPrompt && (
+        <ModalCpfResponsavel
+          respNome={cpfPrompt.respNome}
+          onConfirmar={(cpf) => resolverCpfPrompt({ cpf })}
+          onDispensar={() => resolverCpfPrompt({ dispensado: true })}
+          onCancelar={() => resolverCpfPrompt(null)}
+        />
+      )}
+
       {/* Modo totem · cria/pede PIN */}
       <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
         <DialogContent className="max-w-xs">
@@ -1133,7 +1253,7 @@ function PainelFamilia(props: {
   onCancelar: () => void;
   onConfirmar: (
     itens: { crianca: Crianca; sala_id: string }[],
-    resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string },
+    resp: { membroId: string | null; parentesco: string | null; manual: boolean; nome: string; tel: string; cpfAtual?: string | null },
   ) => void;
   onAdicionarFilho: () => void;
   onAtualizarMembro: (id: string, patch: Partial<Crianca>) => void;
@@ -1164,10 +1284,10 @@ function PainelFamilia(props: {
 
   // Responsáveis autorizados da família inteira (dedup por membro_id)
   const respOpcoes = (() => {
-    const map = new Map<string, { membro_id: string; nome: string; parentesco: string | null; telefone: string | null }>();
+    const map = new Map<string, { membro_id: string; nome: string; parentesco: string | null; telefone: string | null; cpf: string | null }>();
     for (const m of membros) for (const r of (m.responsaveis || [])) {
       if (r.autorizado_buscar && r.membro && !map.has(r.membro_id)) {
-        map.set(r.membro_id, { membro_id: r.membro_id, nome: r.membro.nome, parentesco: r.parentesco, telefone: r.membro.telefone });
+        map.set(r.membro_id, { membro_id: r.membro_id, nome: r.membro.nome, parentesco: r.parentesco, telefone: r.membro.telefone, cpf: r.membro.cpf ?? null });
       }
     }
     return [...map.values()];
@@ -1199,7 +1319,10 @@ function PainelFamilia(props: {
     onConfirmar(itens, {
       membroId: manual ? null : respId,
       parentesco: manual ? 'outro' : (respSel?.parentesco || 'outro'),
-      manual, nome: manualNome.trim(), tel: manualTel.trim(),
+      manual,
+      nome: manual ? manualNome.trim() : (respSel?.nome || ''),
+      tel: manualTel.trim(),
+      cpfAtual: manual ? null : (respSel?.cpf || null),
     });
   }
 
