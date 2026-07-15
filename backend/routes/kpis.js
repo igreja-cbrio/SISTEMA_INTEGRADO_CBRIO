@@ -1236,7 +1236,7 @@ router.get('/cultura', async (req, res) => {
 
     const settled = await Promise.allSettled([
       supabase.from('cultos')
-        .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
+        .select('data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
       // Conectar = PESSOAS distintas em grupos ativos (saiu_em IS NULL), NÃO o nº
       // de vínculos: quem está em 2+ grupos conta 1x. Pagina pra escapar do cap de
@@ -1287,6 +1287,20 @@ router.get('/cultura', async (req, res) => {
     const cultos = cultosRes.data || [];
     const presencialTotal = cultos.reduce((s, c) => s + (c.presencial_adulto || 0) + (c.presencial_kids || 0), 0);
     const onlineDsTotal   = cultos.reduce((s, c) => s + (c.online_ds || 0), 0);
+
+    // Semanas do mês = nº de semanas ISO (seg→dom) DISTINTAS que de fato tiveram
+    // culto no mês. Consistente com o numerador (que soma TODOS os cultos do
+    // mês): junho/26 → 4 (não 3). Antes o pareamento dom→quarta-seguinte
+    // descartava a última semana e dividia o total de 4 semanas por 3, inflando
+    // a média. Cai no cálculo do parseMes se não houver culto no mês.
+    const chaveSemana = (iso) => {
+      const d = new Date(`${iso}T00:00:00Z`);
+      const dow = (d.getUTCDay() + 6) % 7; // 0 = segunda
+      d.setUTCDate(d.getUTCDate() - dow);
+      return d.toISOString().slice(0, 10);
+    };
+    const semanasComCulto = new Set(cultos.map((c) => c.data && chaveSemana(c.data)).filter(Boolean)).size;
+    const divisorSemanas = semanasComCulto || semanasNoMes;
     const decisoesTotal   = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
 
     const conectarPessoas = grupoMembrosRes.error ? null : (grupoMembrosRes.count || 0);
@@ -1325,16 +1339,16 @@ router.get('/cultura', async (req, res) => {
     // cultos · permite lancar mês consolidado sem cultos individuais.
     const presencialSemanal = cm?.freq_presencial_semanal != null
       ? cm.freq_presencial_semanal
-      : Math.round(presencialTotal / semanasNoMes);
+      : Math.round(presencialTotal / divisorSemanas);
     const onlineSemanal = cm?.freq_online_semanal != null
       ? cm.freq_online_semanal
-      : Math.round(onlineDsTotal / semanasNoMes);
+      : Math.round(onlineDsTotal / divisorSemanas);
     const decisoesMes = cm?.decisoes_total != null ? cm.decisoes_total : decisoesTotal;
     const conectarMes = cm?.freq_grupos_total != null ? cm.freq_grupos_total : conectarPessoas;
 
     res.json({
       mes: mesISO,
-      semanas_no_mes: semanasNoMes,
+      semanas_no_mes: divisorSemanas,
       dias_no_mes: diasNoMes,
       seguir_jesus: {
         presencial: presencialSemanal,
