@@ -213,6 +213,8 @@ export default function DashboardSemanal() {
   const semanas = useMemo(() => gerarSemanasIso(26), []);
   const [refData, setRefData] = useState(semanas[0].ref);
   const [slide, setSlide] = useState(0);
+  // Filtros globais (centro de custo / plano de contas) · muda → refaz o fetch
+  const [filtrosGlobais] = useFiltrosGlobais();
 
   // Navegação por teclado · ← → entre slides
   useEffect(() => {
@@ -231,7 +233,7 @@ export default function DashboardSemanal() {
     setLoading(true);
     const failsafe = (label) => (e) => { console.warn(`[Dashboard FinSemanal] ${label}:`, e.message); return null; };
     Promise.all([
-      financeiroV2.dashboard.semanaCompleta?.(refData)?.catch(failsafe('semanaCompleta')),
+      financeiroV2.dashboard.semanaCompleta?.(refData, filtrosGlobais)?.catch(failsafe('semanaCompleta')),
       financeiroV2.dashboard.financeiroCompleto?.()?.catch(failsafe('financeiroCompleto')),
       financeiroV2.dashboard.melhorSemana?.()?.catch(failsafe('melhorSemana')),
       financeiroV2.dashboard.saidasDetalhadas?.()?.catch(failsafe('saidasDetalhadas')),
@@ -247,7 +249,7 @@ export default function DashboardSemanal() {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [refData]);
+  }, [refData, filtrosGlobais]);
 
   const reloadMetas = () => {
     financeiroV2.metas?.list?.({ ativa: 'true' }).then(setMetas).catch(() => {});

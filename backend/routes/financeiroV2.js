@@ -1706,6 +1706,34 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     const anterior = new Date(range.inicio); anterior.setDate(anterior.getDate() - 7);
     const yoy = new Date(range.inicio); yoy.setFullYear(yoy.getFullYear() - 1);
 
+    // Filtros globais (centro de custo / plano de contas) · quando presentes,
+    // recomputa os valores MONETÁRIOS a partir das transações (as views
+    // pré-agregadas não têm dimensão de centro/plano). Frequência (presencial/
+    // online) não tem centro de custo → segue da view. Match por código é
+    // HIERÁRQUICO (escolher um pai inclui os filhos · prefixo).
+    const centroId = req.query.centro_custo_id || null;
+    const planoId = req.query.plano_contas_id || null;
+    const temFiltro = !!(centroId || planoId);
+    let centroCodigo = null, planoCodigo = null;
+    if (temFiltro) {
+      const [cc, pc] = await Promise.all([
+        centroId ? supabase.from('fin_centros_custo').select('codigo').eq('id', centroId).maybeSingle() : Promise.resolve({ data: null }),
+        planoId ? supabase.from('fin_plano_contas').select('codigo').eq('id', planoId).maybeSingle() : Promise.resolve({ data: null }),
+      ]);
+      centroCodigo = cc.data?.codigo || null;
+      planoCodigo = pc.data?.codigo || null;
+    }
+    const fetchTxFiltradas = async (ini, fim, cols) => {
+      let q = supabase.from('vw_fin_transacoes_completa')
+        .select(cols)
+        .gte('data_competencia', ini).lte('data_competencia', fim)
+        .eq('tipo', 'receita').neq('status', 'cancelado')
+        .in('classe_movimento', ['ordinaria', 'extraordinaria']);
+      if (centroCodigo) q = q.like('centro_custo_codigo', `${centroCodigo}%`);
+      if (planoCodigo) q = q.like('plano_contas_codigo', `${planoCodigo}%`);
+      return (await q.limit(50000)).data || [];
+    };
+
     const [
       cultosSemana,
       resumo,
@@ -1746,6 +1774,47 @@ router.get('/dashboard/semana-completa', async (req, res) => {
         .eq('tipo', 'receita').neq('status', 'cancelado'),
     ]);
 
+    // Quando há filtro, recomputa receita/buckets/cultos/top/histórico das transações
+    let catRows = categorias.data || [];
+    let recPorCulto = null, topFiltrado = null, recPorSemana = null;
+    let receitaFiltrada = 0, receitaAntFiltrada = 0, receitaYoyFiltrada = null;
+    if (temFiltro) {
+      const rowsSemana = await fetchTxFiltradas(range.inicio, range.fim,
+        'valor, plano_contas_codigo, plano_contas_nome, plano_contas_natureza, culto_nome, culto_service_type_slug, data_competencia, classe_movimento, membro_nome, membro_cpf');
+      catRows = rowsSemana;
+      receitaFiltrada = rowsSemana.reduce((s, t) => s + Number(t.valor || 0), 0);
+      recPorCulto = {};
+      const topMap = {};
+      rowsSemana.forEach((t) => {
+        const ck = t.culto_nome || '—';
+        recPorCulto[ck] = (recPorCulto[ck] || 0) + Number(t.valor || 0);
+        if (t.membro_nome) {
+          const mk = t.membro_cpf || t.membro_nome;
+          if (!topMap[mk]) topMap[mk] = { membro_nome: t.membro_nome, membro_cpf: t.membro_cpf || null, total_doado: 0, qtd_doacoes: 0 };
+          topMap[mk].total_doado += Number(t.valor || 0);
+          topMap[mk].qtd_doacoes += 1;
+        }
+      });
+      topFiltrado = Object.values(topMap).sort((a, b) => b.total_doado - a.total_doado).slice(0, 10);
+      // receita da semana anterior (janela qua-ter, 7 dias antes)
+      const antFim = new Date(anterior); antFim.setDate(antFim.getDate() + 6);
+      const rowsAnt = await fetchTxFiltradas(anterior.toISOString().slice(0, 10), antFim.toISOString().slice(0, 10), 'valor');
+      receitaAntFiltrada = rowsAnt.reduce((s, t) => s + Number(t.valor || 0), 0);
+      // receita YoY (semana qua-ter que contém a data de 1 ano atrás)
+      const { data: yoyRangeRow } = await supabase.rpc('fin_semana_qua_ter', { p_data: yoy.toISOString().slice(0, 10) });
+      const yoyRange = (yoyRangeRow || [])[0];
+      if (yoyRange) {
+        const rowsYoy = await fetchTxFiltradas(yoyRange.inicio, yoyRange.fim, 'valor');
+        receitaYoyFiltrada = rowsYoy.reduce((s, t) => s + Number(t.valor || 0), 0);
+      }
+      // receita por semana (12 semanas) pro histórico
+      const ini12 = new Date(range.inicio); ini12.setDate(ini12.getDate() - 11 * 7);
+      const rows12 = await fetchTxFiltradas(ini12.toISOString().slice(0, 10), range.fim, 'valor, data_competencia');
+      const quartaDe = (dstr) => { const d = new Date(dstr + 'T12:00:00Z'); const off = (d.getUTCDay() + 4) % 7; d.setUTCDate(d.getUTCDate() - off); return d.toISOString().slice(0, 10); };
+      recPorSemana = {};
+      rows12.forEach((t) => { if (!t.data_competencia) return; const k = quartaDe(t.data_competencia); recPorSemana[k] = (recPorSemana[k] || 0) + Number(t.valor || 0); });
+    }
+
     // Agrupa categorias em 4 buckets estilo Power BI
     const buckets = {
       quarta: { nome: 'Quarta com Deus', categorias: {}, total: 0 },
@@ -1773,7 +1842,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     //   w=6/0/1 (Sáb/Dom/Seg) → "Final de Semana" (seg = compensação do fim de semana)
     //   else                  → "Durante a Semana"
     // Empréstimo / transferência / estorno NÃO entram em arrecadação por culto.
-    for (const t of categorias.data || []) {
+    for (const t of catRows) {
       if (['emprestimo','transferencia','estorno'].includes(t.classe_movimento)) continue;
       const cat = labelCategoria(t.plano_contas_codigo, t.plano_contas_nome, t.plano_contas_natureza);
       const v = Number(t.valor);
@@ -1802,37 +1871,53 @@ router.get('/dashboard/semana-completa', async (req, res) => {
 
     const delta = (atual, ant) => ant > 0 ? ((atual - ant) / ant) * 100 : null;
 
+    // Receita/ticket · filtrados vêm das transações; sem filtro, da view.
+    const receitaAtual = temFiltro ? receitaFiltrada : Number(r.receita_total);
+    const receitaAnt = temFiltro ? receitaAntFiltrada : Number(ra.receita_total);
+    const receitaYoyV = temFiltro ? receitaYoyFiltrada : (ry ? Number(ry.receita_total) : null);
+    const presAtual = Number(r.total_presencial);
+    const presAnt = Number(ra.total_presencial);
+    const ticketMedio = temFiltro ? (presAtual > 0 ? receitaFiltrada / presAtual : 0) : Number(r.ticket_medio_presencial || 0);
+    const ticketAnt = temFiltro ? (presAnt > 0 ? receitaAntFiltrada / presAnt : 0) : Number(ra.ticket_medio_presencial);
+
     res.json({
       semana: range,
       kpis: {
-        receita: Number(r.receita_total),
-        receita_delta_wow: delta(Number(r.receita_total), Number(ra.receita_total)),
-        receita_yoy: ry ? Number(ry.receita_total) : null,
-        receita_delta_yoy: ry ? delta(Number(r.receita_total), Number(ry.receita_total)) : null,
-        presencial: Number(r.total_presencial),
-        presencial_delta_wow: delta(Number(r.total_presencial), Number(ra.total_presencial)),
+        receita: receitaAtual,
+        receita_delta_wow: delta(receitaAtual, receitaAnt),
+        receita_yoy: receitaYoyV,
+        receita_delta_yoy: receitaYoyV != null ? delta(receitaAtual, receitaYoyV) : null,
+        presencial: presAtual,
+        presencial_delta_wow: delta(presAtual, presAnt),
         online: Number(r.total_online || 0),
-        ticket_medio: Number(r.ticket_medio_presencial || 0),
-        ticket_delta_wow: delta(Number(r.ticket_medio_presencial), Number(ra.ticket_medio_presencial)),
+        ticket_medio: ticketMedio,
+        ticket_delta_wow: delta(ticketMedio, ticketAnt),
       },
-      cultos: (cultosSemana.data || []).map(c => ({
-        ...c,
-        ticket: c.total_presencial > 0 ? Number(c.receita_total) / c.total_presencial : 0,
-      })),
+      cultos: (cultosSemana.data || []).map(c => {
+        const rec = temFiltro ? (recPorCulto[c.culto_nome] || 0) : Number(c.receita_total);
+        return {
+          ...c,
+          receita_total: rec,
+          ticket: c.total_presencial > 0 ? rec / c.total_presencial : 0,
+        };
+      }),
       buckets: {
         quarta: formatBucket(buckets.quarta),
         domingo: formatBucket(buckets.domingo),
         outros: formatBucket(buckets.outros),
         acumulada: formatBucket(buckets.acumulada),
       },
-      historico: (historico.data || []).reverse().map(h => ({
-        semana_label: h.semana_label,
-        semana_inicio: h.semana_inicio,
-        receita: Number(h.receita_total),
-        presencial: Number(h.total_presencial),
-        ticket: Number(h.ticket_medio_presencial),
-      })),
-      top_contribuintes: topContribuintes.data || [],
+      historico: (historico.data || []).reverse().map(h => {
+        const rec = temFiltro ? (recPorSemana[h.semana_inicio] || 0) : Number(h.receita_total);
+        return {
+          semana_label: h.semana_label,
+          semana_inicio: h.semana_inicio,
+          receita: rec,
+          presencial: Number(h.total_presencial),
+          ticket: temFiltro ? (Number(h.total_presencial) > 0 ? rec / Number(h.total_presencial) : 0) : Number(h.ticket_medio_presencial),
+        };
+      }),
+      top_contribuintes: temFiltro ? topFiltrado : (topContribuintes.data || []),
     });
   } catch (e) {
     console.error('[FIN-V2] semana-completa:', e);

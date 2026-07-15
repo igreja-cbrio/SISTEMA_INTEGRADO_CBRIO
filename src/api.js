@@ -1020,7 +1020,14 @@ export const financeiroV2 = {
       return get(`/financeiro-v2/dashboard/overview${qs.toString() ? `?${qs}` : ''}`);
     },
     semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
-    semanaCompleta: (semana) => get('/financeiro-v2/dashboard/semana-completa' + (semana ? `?semana=${semana}` : '')),
+    semanaCompleta: (semana, filtros = {}) => {
+      const qs = new URLSearchParams();
+      if (semana) qs.set('semana', semana);
+      if (filtros?.centro_custo_id) qs.set('centro_custo_id', filtros.centro_custo_id);
+      if (filtros?.plano_contas_id) qs.set('plano_contas_id', filtros.plano_contas_id);
+      const s = qs.toString();
+      return get('/financeiro-v2/dashboard/semana-completa' + (s ? `?${s}` : ''));
+    },
     financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
     saidasDetalhadas: (mes) => get('/financeiro-v2/dashboard/saidas-detalhadas' + (mes ? `?mes=${mes}` : '')),
     melhorSemana: () => get('/financeiro-v2/dashboard/melhor-semana'),
