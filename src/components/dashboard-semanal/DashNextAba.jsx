@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { dashboardSemanal as api } from '../../api';
+import { useAuth } from '../../contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Loader2, Users } from 'lucide-react';
+import { Input } from '../ui/input';
+import { Loader2, Users, Pencil, Check, X, PencilLine } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Cell,
 } from 'recharts';
@@ -15,12 +18,35 @@ const C = { primary: '#00B39D' };
 // Presença = inscrição do NEXT com check-in (mesma régua do módulo /next).
 export default function DashNextAba() {
   const [meses, setMeses] = useState(12);
+  const { isAdmin } = useAuth();
+  const qc = useQueryClient();
+  const [editMes, setEditMes] = useState(null); // ano_mes em edição
+  const [editVal, setEditVal] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['dash-sem', 'next-presenca', meses],
     queryFn: () => api.nextPresencaMensal(meses),
     staleTime: 5 * 60_000,
   });
+
+  const salvarMut = useMutation({
+    mutationFn: ({ ano_mes, total }) => api.nextPresencaMensalSet({ ano_mes, total }),
+    onSuccess: () => {
+      toast.success('Presença do NEXT atualizada');
+      setEditMes(null); setEditVal('');
+      qc.invalidateQueries({ queryKey: ['dash-sem', 'next-presenca'] });
+    },
+    onError: (e) => toast.error(e.message || 'Erro ao salvar'),
+  });
+
+  const abrirEdicao = (m) => {
+    setEditMes(m.mes);
+    setEditVal(m.manual != null ? String(m.manual) : (m.auto ? String(m.auto) : ''));
+  };
+  const salvar = (ano_mes) => {
+    const t = editVal.trim();
+    salvarMut.mutate({ ano_mes, total: t === '' ? null : Number(t) });
+  };
 
   const serie = data?.serie || [];
   const total = data?.total || 0;
@@ -118,6 +144,95 @@ export default function DashNextAba() {
               </ResponsiveContainer>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Ajuste manual por mês · pra quando a lista de presença não veio do
+          check-in do sistema. Só admin/diretor edita; o manual substitui o
+          automático naquele mês. */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <PencilLine className="h-4 w-4 text-amber-500" />
+            Presença por mês {isAdmin ? '· ajuste manual' : ''}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-[11px] text-muted-foreground mb-2">
+            O número vem do check-in do NEXT. {isAdmin
+              ? 'Onde a lista de presença foi contada à mão (sem check-in), digite o total — o manual substitui o automático naquele mês.'
+              : 'Meses lançados à mão pela lista de presença aparecem marcados como “manual”.'}
+          </p>
+          <div className="divide-y divide-border/60 rounded-lg border">
+            {serie.slice().reverse().map((m) => (
+              <div key={m.mes} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="w-24 shrink-0 font-medium">{m.label}</span>
+                {editMes === m.mes ? (
+                  <div className="flex items-center gap-2 flex-1">
+                    <Input
+                      type="number"
+                      min={0}
+                      value={editVal}
+                      onChange={(e) => setEditVal(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') salvar(m.mes); if (e.key === 'Escape') { setEditMes(null); } }}
+                      className="h-8 w-28"
+                      autoFocus
+                      placeholder="total"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => salvar(m.mes)}
+                      disabled={salvarMut.isPending}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+                      style={{ background: C.primary }}
+                      title="Salvar"
+                    >
+                      <Check className="h-3.5 w-3.5" /> Salvar
+                    </button>
+                    {m.manual != null && (
+                      <button
+                        type="button"
+                        onClick={() => { setEditVal(''); salvar(m.mes); }}
+                        disabled={salvarMut.isPending}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                        title="Voltar pro automático (limpar o manual)"
+                      >
+                        Voltar ao automático
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setEditMes(null)} className="text-muted-foreground hover:text-foreground" title="Cancelar">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="flex-1 font-semibold tabular-nums" style={{ color: C.primary }}>
+                      {m.presentes.toLocaleString('pt-BR')}
+                      <span className="ml-2 text-[10px] font-normal align-middle">
+                        {m.fonte === 'manual' ? (
+                          <span className="rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5">manual</span>
+                        ) : m.auto > 0 ? (
+                          <span className="text-muted-foreground">check-in</span>
+                        ) : (
+                          <span className="text-muted-foreground">sem dado</span>
+                        )}
+                      </span>
+                    </span>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => abrirEdicao(m)}
+                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-primary/50"
+                        title="Lançar/ajustar manualmente"
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> Editar
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
     </div>

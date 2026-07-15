@@ -16,7 +16,7 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -1723,19 +1723,69 @@ router.get('/next-presenca-mensal', async (req, res) => {
       porMes[ym] = (porMes[ym] || 0) + 1;
     }
 
+    // Ajuste MANUAL por mês (lista de presença · quando o check-in não foi
+    // usado). Quando existe manual pro mês, ELE SUBSTITUI a contagem automática.
+    const manual = {};
+    try {
+      const { data: mrows } = await supabase.from('next_presenca_mensal').select('ano_mes, total');
+      for (const m of mrows || []) manual[m.ano_mes] = m.total;
+    } catch { /* tabela pode não existir ainda · cai só no automático */ }
+
     // Monta a série contínua dos últimos `meses` (mês sem NEXT aparece como 0).
     const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
     const serie = [];
     for (let i = 0; i < meses; i++) {
       const d = new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth() + i, 1));
       const ym = d.toISOString().slice(0, 7);
-      serie.push({ mes: ym, label: `${MESES_PT[d.getUTCMonth()]}/${d.getUTCFullYear()}`, presentes: porMes[ym] || 0 });
+      const auto = porMes[ym] || 0;
+      const temManual = Object.prototype.hasOwnProperty.call(manual, ym);
+      serie.push({
+        mes: ym,
+        label: `${MESES_PT[d.getUTCMonth()]}/${d.getUTCFullYear()}`,
+        presentes: temManual ? manual[ym] : auto,
+        auto,
+        manual: temManual ? manual[ym] : null,
+        fonte: temManual ? 'manual' : 'checkin',
+      });
     }
     const total = serie.reduce((s, m) => s + m.presentes, 0);
     res.json({ serie, total });
   } catch (e) {
     console.error('[DASH-SEM] next-presenca-mensal', e.message);
     res.status(500).json({ error: 'Erro ao carregar presença do NEXT' });
+  }
+});
+
+// PUT /next-presenca-mensal · define/atualiza o total MANUAL de um mês (lista de
+// presença). Passar total=null limpa o manual (volta pro automático do check-in).
+// Só admin/diretor. Body: { ano_mes:'AAAA-MM', total, observacao? }.
+router.put('/next-presenca-mensal', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { ano_mes, total, observacao } = req.body || {};
+    if (!/^\d{4}-\d{2}$/.test(String(ano_mes || ''))) {
+      return res.status(400).json({ error: 'ano_mes inválido (use AAAA-MM)' });
+    }
+    // Limpar o manual → remove a linha (volta pro automático).
+    if (total === null || total === '' || total === undefined) {
+      await supabase.from('next_presenca_mensal').delete().eq('ano_mes', ano_mes);
+      return res.json({ ok: true, ano_mes, total: null });
+    }
+    const n = Number(total);
+    if (!Number.isInteger(n) || n < 0) {
+      return res.status(400).json({ error: 'total deve ser um número inteiro >= 0' });
+    }
+    const { error } = await supabase.from('next_presenca_mensal').upsert({
+      ano_mes,
+      total: n,
+      observacao: observacao ? String(observacao).slice(0, 300) : null,
+      updated_by: req.user?.userId ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'ano_mes' });
+    if (error) throw error;
+    res.json({ ok: true, ano_mes, total: n });
+  } catch (e) {
+    console.error('[DASH-SEM] next-presenca-mensal PUT', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a presença do NEXT' });
   }
 });
 

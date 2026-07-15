@@ -449,6 +449,7 @@ export const dashboardSemanal = {
   notaDelete: (id) => del(`/dashboard-semanal/notas/${id}`),
   resumoMes: (ano, mes) => get(`/dashboard-semanal/resumo-mes?ano=${ano}&mes=${mes}`),
   nextPresencaMensal: (meses = 12) => get(`/dashboard-semanal/next-presenca-mensal?meses=${meses}`),
+  nextPresencaMensalSet: (data) => put('/dashboard-semanal/next-presenca-mensal', data),
   ranking: (params) => get('/dashboard-semanal/ranking?' + new URLSearchParams(params)),
   yoy: (params) => get('/dashboard-semanal/yoy?' + new URLSearchParams(params)),
   mensal: (params) => get('/dashboard-semanal/mensal?' + new URLSearchParams(params)),
