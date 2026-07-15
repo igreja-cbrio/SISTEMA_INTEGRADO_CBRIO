@@ -1115,6 +1115,10 @@ export default function TotemKidsCheckin() {
             onConfirmar={confirmarCheckinFamilia}
             onAdicionarFilho={() => { setNovoContexto(crianca); setModalNovo(true); }}
             onAtualizarMembro={atualizarMembro}
+            onResponsavelCadastrado={async () => {
+              // Recarrega os responsáveis da criança primária (entram no respOpcoes da família).
+              try { const fresh = await totemKids.criancas.get(crianca.id); setCrianca({ ...crianca, responsaveis: fresh.responsaveis || [] }); } catch { /* mantém */ }
+            }}
           />
         ) : (
           // Criança sem irmãos (ou sem família) → card individual (igual antes).
@@ -1156,6 +1160,7 @@ export default function TotemKidsCheckin() {
                 setCrianca({ ...crianca, responsaveis: fresh.responsaveis || [] });
               } catch { /* mantem state atual */ }
             }}
+            onAdicionarIrmao={() => { setNovoContexto(crianca); setModalNovo(true); }}
           />
         )}
         </>
@@ -1257,9 +1262,10 @@ function PainelFamilia(props: {
   ) => void;
   onAdicionarFilho: () => void;
   onAtualizarMembro: (id: string, patch: Partial<Crianca>) => void;
+  onResponsavelCadastrado: () => void;
 }) {
   const { primaria, irmaos, salas, sessoesAbertas, cultoAtualId, cultosSel, setCultosSel,
-    enviarWpp, setEnviarWpp, imprimindo, onCancelar, onConfirmar, onAdicionarFilho, onAtualizarMembro } = props;
+    enviarWpp, setEnviarWpp, imprimindo, onCancelar, onConfirmar, onAdicionarFilho, onAtualizarMembro, onResponsavelCadastrado } = props;
   const membros = [primaria, ...irmaos];
   const salaPorIdade = (c: Crianca) =>
     salas.find(s => c.idade_meses != null
@@ -1270,6 +1276,7 @@ function PainelFamilia(props: {
   const [salaPor, setSalaPor] = useState<Record<string, string>>(
     () => Object.fromEntries(membros.map(m => [m.id, salaPorIdade(m)])));
   const [detalheId, setDetalheId] = useState<string | null>(null);
+  const [modalCadResp, setModalCadResp] = useState(false);
   // Ao adicionar um filho novo, ele entra em `membros`: marca-o presente + põe a
   // sala da idade, SEM re-marcar quem o operador desmarcou (guarda os já vistos).
   const seenRef = useRef<Set<string>>(new Set(membros.map(m => m.id)));
@@ -1445,7 +1452,12 @@ function PainelFamilia(props: {
                   </button>
                 ))}
               </div>
-              <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setManual(true)}>Outro responsável (manual)</button>
+              <div className="flex gap-2 flex-wrap pt-0.5">
+                <Button type="button" variant="default" size="sm" className="bg-pink-600 hover:bg-pink-700" onClick={() => setModalCadResp(true)}>
+                  <Plus className="h-4 w-4 mr-1" /> Cadastrar responsável
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setManual(true)}>Outro responsável (manual · não cadastra)</Button>
+              </div>
             </>
           ) : (
             <div className="space-y-2">
@@ -1479,15 +1491,25 @@ function PainelFamilia(props: {
           crianca={detalhe}
           atualizarCrianca={(patch: Partial<Crianca>) => onAtualizarMembro(detalhe.id, patch)}
           onClose={() => setDetalheId(null)}
+          onAdicionarIrmao={onAdicionarFilho}
         />
       )}
+
+      <ModalCadastrarResponsavel
+        open={modalCadResp}
+        onClose={() => setModalCadResp(false)}
+        criancaId={primaria.id}
+        criancaNome={primaria.nome}
+        onCadastrado={() => { setModalCadResp(false); onResponsavelCadastrado(); }}
+      />
     </Card>
   );
 }
 
 // ── Pop-up: detalhes + edição da ficha da criança (protegido por senha do Kids) ──
-function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
+function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarIrmao }: {
   crianca: Crianca; atualizarCrianca: (p: Partial<Crianca>) => void; onClose: () => void;
+  onAdicionarIrmao?: () => void;
 }) {
   const [fase, setFase] = useState<'senha' | 'edit'>('senha');
   const [senhaDefinida, setSenhaDefinida] = useState<boolean | null>(null);
@@ -1541,6 +1563,30 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
   const [resps, setResps] = useState(() => crianca.responsaveis.map(r => ({ membro_id: r.membro_id, nome: r.membro?.nome || '', telefone: r.membro?.telefone || '', parentesco: r.parentesco || 'outro', foto_url: r.membro?.foto_url || null })));
   const [salvando, setSalvando] = useState(false);
   const [capturaResp, setCapturaResp] = useState<string | null>(null); // membro_id em captura de foto
+  const [consentMkt, setConsentMkt] = useState(false);
+  const [consentTocado, setConsentTocado] = useState(false);
+  const [camCrianca, setCamCrianca] = useState(false);      // webcam da foto da criança
+  const [salvandoFotoCri, setSalvandoFotoCri] = useState(false);
+  const [modalCadResp, setModalCadResp] = useState(false);  // cadastrar novo responsável
+
+  // Ao desbloquear a edição, busca o consentimento de imagem atual (não vem na
+  // busca do check-in) pra o toggle refletir o valor real.
+  useEffect(() => {
+    if (fase !== 'edit') return;
+    totemKids.criancas.get(crianca.id).then((d: any) => setConsentMkt(!!d?.consent_marketing)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fase]);
+
+  async function salvarFotoCrianca(dataUrl: string) {
+    setSalvandoFotoCri(true);
+    try {
+      const r: any = await totemKids.criancas.uploadFoto(crianca.id, dataUrl);
+      atualizarCrianca({ foto_url: r?.foto_url || r?.url || r?.signedUrl || dataUrl } as Partial<Crianca>);
+      setCamCrianca(false);
+      toast.success('Foto da criança atualizada');
+    } catch (e: unknown) { toast.error((e as { message?: string })?.message || 'Erro ao salvar a foto'); }
+    finally { setSalvandoFotoCri(false); }
+  }
 
   async function salvarTudo() {
     if (form.nome.trim().length < 2) { setErro('Nome da criança muito curto.'); return; }
@@ -1554,6 +1600,7 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
         tem_alergia: form.tem_alergia, alergia_qual: form.tem_alergia ? form.alergia_qual.trim() || null : null,
         tem_espectro: form.tem_espectro, espectro_qual: form.tem_espectro ? form.espectro_qual.trim() || null : null,
         tem_limitacao_fisica: form.tem_limitacao_fisica, limitacao_fisica_qual: form.tem_limitacao_fisica ? form.limitacao_fisica_qual.trim() || null : null,
+        ...(consentTocado ? { consent_marketing: consentMkt } : {}),
       };
       await totemKids.criancas.update(crianca.id, patch);
       // Responsáveis com nome e/ou telefone alterado. A mudança grava no
@@ -1657,6 +1704,20 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
           </div>
         ) : (
           <div className="space-y-3">
+            {/* Foto da criança + consentimento de uso de imagem */}
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => setCamCrianca(true)} title="Tirar/atualizar foto da criança"
+                className="relative h-16 w-16 rounded-full shrink-0">
+                {crianca.foto_url
+                  ? <img src={crianca.foto_url} alt="" className="h-16 w-16 rounded-full object-cover" />
+                  : <div className="h-16 w-16 rounded-full bg-pink-100 dark:bg-pink-900/40 flex items-center justify-center"><Baby className="h-7 w-7 text-pink-500" /></div>}
+                <span className="absolute -bottom-0.5 -right-0.5 h-6 w-6 rounded-full bg-pink-600 text-white flex items-center justify-center shadow ring-2 ring-background"><Camera className="h-3 w-3" /></span>
+              </button>
+              <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer flex-1">
+                <input type="checkbox" className="mt-0.5" checked={consentMkt} onChange={e => { setConsentMkt(e.target.checked); setConsentTocado(true); }} />
+                <span>Autoriza o <b>uso da imagem</b> da criança (redes sociais, site, etc.)</span>
+              </label>
+            </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Nome da criança</label>
               <Input value={form.nome} onChange={e => setF('nome', e.target.value)} />
@@ -1688,9 +1749,12 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
               </label>
               {form.tem_limitacao_fisica && <Input value={form.limitacao_fisica_qual} onChange={e => setF('limitacao_fisica_qual', e.target.value)} placeholder="Detalhe (opcional)" />}
             </div>
-            {resps.length > 0 && (
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Responsáveis</label>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-muted-foreground">Responsáveis</label>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setModalCadResp(true)}><Plus className="h-3.5 w-3.5" /> Adicionar</Button>
+              </div>
+              {resps.length === 0 && <p className="text-xs text-muted-foreground mb-1">Nenhum responsável ainda — clique em Adicionar.</p>}
                 <div className="space-y-2">
                   {resps.map((r, i) => {
                     const orig = crianca.responsaveis.find(x => x.membro_id === r.membro_id);
@@ -1737,6 +1801,10 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
                   Alterar aqui atualiza o cadastro da pessoa no sistema inteiro (membresia, voluntariado etc.).
                 </p>
               </div>
+            {onAdicionarIrmao && (
+              <Button type="button" variant="outline" className="w-full border-dashed" onClick={() => { onClose(); onAdicionarIrmao(); }}>
+                <Plus className="h-4 w-4 mr-1" /> Adicionar irmão a esta família
+              </Button>
             )}
             {erro && <p className="text-sm text-destructive text-center">{erro}</p>}
             <div className="flex gap-2 pt-1">
@@ -1765,6 +1833,30 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose }: {
           onFechar={() => setCapturaResp(null)}
         />
       )}
+      {camCrianca && (
+        <WebcamCaptura
+          titulo={`Foto de ${crianca.nome.split(' ')[0]}`}
+          salvando={salvandoFotoCri}
+          onCapturar={salvarFotoCrianca}
+          onFechar={() => setCamCrianca(false)}
+        />
+      )}
+      <ModalCadastrarResponsavel
+        open={modalCadResp}
+        onClose={() => setModalCadResp(false)}
+        criancaId={crianca.id}
+        criancaNome={crianca.nome}
+        onCadastrado={async () => {
+          setModalCadResp(false);
+          try {
+            const fresh: any = await totemKids.criancas.get(crianca.id);
+            const novos = fresh?.responsaveis || [];
+            setResps(novos.map((r: any) => ({ membro_id: r.membro_id, nome: r.membro?.nome || '', telefone: r.membro?.telefone || '', parentesco: r.parentesco || 'outro', foto_url: r.membro?.foto_url || null })));
+            atualizarCrianca({ responsaveis: novos } as Partial<Crianca>);
+            toast.success('Responsável adicionado');
+          } catch { /* mantém */ }
+        }}
+      />
     </Dialog>
   );
 }
@@ -1860,6 +1952,7 @@ function CheckinSelecao(props: {
   checkoutAnteriorId: string | null;
   atualizarCrianca: (patch: Partial<Crianca>) => void;
   onResponsavelCadastrado: () => void;
+  onAdicionarIrmao?: () => void;
   enviarWpp: boolean;
   setEnviarWpp: (b: boolean) => void;
 }) {
@@ -1872,7 +1965,7 @@ function CheckinSelecao(props: {
     onCancelar, onConfirmar, imprimindo,
     checkinAberto, onReimprimirEtiqueta, reimprimindoEtiqueta,
     abertosAnteriores, onCheckoutAnterior, checkoutAnteriorId,
-    onResponsavelCadastrado, enviarWpp, setEnviarWpp } = props;
+    onResponsavelCadastrado, onAdicionarIrmao, enviarWpp, setEnviarWpp } = props;
 
   // Tem telefone do responsável? (manual digitado OU o selecionado tem telefone)
   const temTelefoneResp = usarRespManual
@@ -1952,6 +2045,7 @@ function CheckinSelecao(props: {
             crianca={crianca}
             atualizarCrianca={atualizarCrianca}
             onClose={() => setDetalhesOpen(false)}
+            onAdicionarIrmao={onAdicionarIrmao}
           />
         )}
 
@@ -2259,62 +2353,37 @@ function ModalNovaCrianca(props: {
   open: boolean;
   onClose: () => void;
   nomeInicial: string;
-  // Quando aberto por "adicionar filho" a uma família: trava no modo "mesma
-  // família" com a criança de referência fixa (o novo herda família + responsáveis).
+  // Quando aberto por "adicionar filho/irmão" a uma família existente: as crianças
+  // novas herdam a família + responsáveis dela (não pede responsável de novo).
   referencia?: { id: string; nome: string; familiaNome: string | null } | null;
   onCadastrado: (c: Crianca) => void;
 }) {
-  const [modo, setModo] = useState<'novo' | 'amigo'>('novo');
-  const [criancaNome, setCriancaNome] = useState('');
-  const [criancaNasc, setCriancaNasc] = useState('');
-  const [criancaSexo, setCriancaSexo] = useState('');
-  // Saúde
-  const [temAlergia, setTemAlergia] = useState(false);
-  const [alergiaQual, setAlergiaQual] = useState('');
-  const [temEspectro, setTemEspectro] = useState(false);
-  const [espectroQual, setEspectroQual] = useState('');
-  const [temLimitacao, setTemLimitacao] = useState(false);
-  const [limitacaoQual, setLimitacaoQual] = useState('');
-  const [obsMed, setObsMed] = useState('');
-  // Responsáveis (modo novo · vários)
+  const emptyCrianca = () => ({
+    nome: '', nasc: '', sexo: '', foto: null as string | null, consent: false,
+    temAlergia: false, alergiaQual: '', temEspectro: false, espectroQual: '',
+    temLimitacao: false, limitacaoQual: '', obsMed: '',
+  });
+  // Uma OU MAIS crianças de uma vez (irmãos/primos/amigos que vieram juntos ·
+  // Marcos 2026-07-15) — mesma família, compartilham os responsáveis.
+  const [criancas, setCriancas] = useState<any[]>([{ ...emptyCrianca(), nome: props.nomeInicial }]);
   const [resps, setResps] = useState<any[]>([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
-  // Foto da criança + consentimento de uso de imagem (marketing) + alvo da webcam
-  const [fotoCrianca, setFotoCrianca] = useState<string | null>(null);
-  const [consentMkt, setConsentMkt] = useState(false);
-  const [captura, setCaptura] = useState<{ tipo: 'crianca' } | { tipo: 'resp'; i: number } | null>(null);
+  const [captura, setCaptura] = useState<{ tipo: 'crianca' | 'resp'; i: number } | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const setCri = (i: number, patch: any) => setCriancas(cs => cs.map((c, idx) => idx === i ? { ...c, ...patch } : c));
+  const addCri = () => setCriancas(cs => [...cs, emptyCrianca()]);
+  const delCri = (i: number) => setCriancas(cs => cs.length > 1 ? cs.filter((_, idx) => idx !== i) : cs);
   const setResp = (i: number, patch: any) => setResps(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const addResp = () => setResps(rs => [...rs, { nome: '', telefone: '', cpf: '', parentesco: 'outro', autorizado_buscar: true, foto: null }]);
   const delResp = (i: number) => setResps(rs => rs.length > 1 ? rs.filter((_, idx) => idx !== i) : rs);
-  // Amigo de (modo amigo)
-  const [amigoBusca, setAmigoBusca] = useState('');
-  const [amigoResultados, setAmigoResultados] = useState<any[]>([]);
-  const [amigoBuscando, setAmigoBuscando] = useState(false);
-  const [amigoSel, setAmigoSel] = useState<any>(null);
-  const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
     if (props.open) {
-      const ref = props.referencia;
-      setModo(ref ? 'amigo' : 'novo'); setCriancaNome(props.nomeInicial); setCriancaNasc(''); setCriancaSexo('');
-      setTemAlergia(false); setAlergiaQual(''); setTemEspectro(false); setEspectroQual('');
-      setTemLimitacao(false); setLimitacaoQual(''); setObsMed('');
+      setCriancas([{ ...emptyCrianca(), nome: props.nomeInicial }]);
       setResps([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
-      setFotoCrianca(null); setConsentMkt(false); setCaptura(null);
-      setAmigoBusca(''); setAmigoResultados([]); setAmigoSel(ref ? { id: ref.id, nome: ref.nome } : null);
+      setCaptura(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.open, props.nomeInicial, props.referencia?.id]);
-
-  useEffect(() => {
-    if (modo !== 'amigo' || amigoBusca.trim().length < 2) { setAmigoResultados([]); return; }
-    setAmigoBuscando(true);
-    const t = setTimeout(() => {
-      totemKids.criancas.buscar(amigoBusca.trim())
-        .then((d: any) => setAmigoResultados(Array.isArray(d) ? d : []))
-        .finally(() => setAmigoBuscando(false));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [amigoBusca, modo]);
 
   const Toggle = ({ on, set, label }: { on: boolean; set: (b: boolean) => void; label: string }) => (
     <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
@@ -2326,39 +2395,53 @@ function ModalNovaCrianca(props: {
     </div>
   );
 
+  const montarCrianca = (c: any) => ({
+    nome: c.nome.trim(), data_nascimento: c.nasc || null, sexo: c.sexo || null,
+    observacoes_medicas: c.obsMed.trim() || null, consent_marketing: c.consent,
+    tem_alergia: c.temAlergia, alergia_qual: c.temAlergia ? c.alergiaQual.trim() || null : null,
+    tem_espectro: c.temEspectro, espectro_qual: c.temEspectro ? c.espectroQual.trim() || null : null,
+    tem_limitacao_fisica: c.temLimitacao, limitacao_fisica_qual: c.temLimitacao ? c.limitacaoQual.trim() || null : null,
+  });
+
   async function salvar() {
-    if (!criancaNome.trim()) { toast.error('Informe o nome da criança'); return; }
-    const crianca: any = {
-      nome: criancaNome.trim(), data_nascimento: criancaNasc || null, sexo: criancaSexo || null,
-      observacoes_medicas: obsMed.trim() || null, consent_marketing: consentMkt,
-      tem_alergia: temAlergia, alergia_qual: temAlergia ? alergiaQual.trim() || null : null,
-      tem_espectro: temEspectro, espectro_qual: temEspectro ? espectroQual.trim() || null : null,
-      tem_limitacao_fisica: temLimitacao, limitacao_fisica_qual: temLimitacao ? limitacaoQual.trim() || null : null,
-    };
-    let body: any;
-    let validos: any[] = [];
-    if (modo === 'amigo') {
-      if (!amigoSel) { toast.error('Escolha a criança de quem o visitante é amigo'); return; }
-      body = { crianca, amigo_de_crianca_id: amigoSel.id };
-    } else {
-      validos = resps.filter(r => r.nome.trim() && r.telefone.trim());
-      if (!validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
-      body = { crianca, responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })) };
-    }
+    const validasCri = criancas.filter(c => c.nome.trim());
+    if (!validasCri.length) { toast.error('Informe o nome de ao menos uma criança'); return; }
+    const validos = props.referencia ? [] : resps.filter(r => r.nome.trim() && r.telefone.trim());
+    if (!props.referencia && !validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
     setSalvando(true);
     try {
-      const r = await totemKids.criancas.create(body);
-      // Fotos best-effort (não travam o cadastro). r.responsaveis volta na ordem dos validos.
-      const cid = r?.crianca?.id;
-      if (cid && fotoCrianca) { try { await totemKids.criancas.uploadFoto(cid, fotoCrianca); } catch { /* noop */ } }
-      const retResps = Array.isArray(r?.responsaveis) ? r.responsaveis : [];
-      for (let i = 0; i < retResps.length; i++) {
-        if (validos[i]?.foto && retResps[i]?.id) { try { await totemKids.criancas.uploadFotoResponsavel(retResps[i].id, validos[i].foto); } catch { /* noop */ } }
+      let primeiroId: string | null = props.referencia?.id || null;
+      let primeiroCriado: any = null;
+      for (let i = 0; i < validasCri.length; i++) {
+        const c = validasCri[i];
+        // 1ª criança de um cadastro NOVO cria a família + responsáveis; as demais
+        // (e todas no modo "adicionar à família") herdam via amigo_de_crianca_id.
+        const body = (props.referencia || primeiroCriado)
+          ? { crianca: montarCrianca(c), amigo_de_crianca_id: primeiroId }
+          : { crianca: montarCrianca(c), responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })) };
+        const r = await totemKids.criancas.create(body);
+        const cid = r?.crianca?.id;
+        if (cid && c.foto) { try { await totemKids.criancas.uploadFoto(cid, c.foto); } catch { /* noop */ } }
+        if (i === 0 && !props.referencia) {
+          primeiroId = cid; primeiroCriado = r?.crianca;
+          const retResps = Array.isArray(r?.responsaveis) ? r.responsaveis : [];
+          for (let j = 0; j < retResps.length; j++) {
+            if (validos[j]?.foto && retResps[j]?.id) { try { await totemKids.criancas.uploadFotoResponsavel(retResps[j].id, validos[j].foto); } catch { /* noop */ } }
+          }
+        } else if (i === 0) {
+          primeiroCriado = r?.crianca;
+        }
       }
-      toast.success(`${r.crianca.nome} cadastrada · pronto pra check-in`);
-      const detalhe = await totemKids.criancas.buscar(criancaNome.trim());
-      const found = detalhe.find((c: { id: string }) => c.id === r.crianca.id) || r.crianca;
-      props.onCadastrado(found as Crianca);
+      toast.success(validasCri.length > 1 ? `${validasCri.length} crianças cadastradas` : `${primeiroCriado?.nome || 'Criança'} cadastrada`);
+      // Sem referência (família nova) o fluxo segue com a 1ª criança (já com
+      // família → cai no painel da família). Com referência, o pai recarrega a família.
+      if (props.referencia) {
+        props.onCadastrado(primeiroCriado as Crianca);
+      } else {
+        const detalhe = await totemKids.criancas.buscar(validasCri[0].nome.trim());
+        const found = detalhe.find((x: { id: string }) => x.id === primeiroId) || primeiroCriado;
+        props.onCadastrado(found as Crianca);
+      }
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao cadastrar');
     } finally {
@@ -2367,11 +2450,9 @@ function ModalNovaCrianca(props: {
   }
 
   const temAlteracoes = (
-    criancaNome.trim() !== (props.nomeInicial || '').trim() ||
-    !!criancaNasc || !!criancaSexo || temAlergia || temEspectro || temLimitacao ||
-    !!obsMed.trim() || !!fotoCrianca || consentMkt ||
-    resps.some(r => r.nome.trim() || r.telefone.trim() || (r.cpf || '').trim()) ||
-    (!props.referencia && !!amigoSel) || !!amigoBusca.trim()
+    criancas.some((c, i) => (i === 0 ? c.nome.trim() !== (props.nomeInicial || '').trim() : !!c.nome.trim())
+      || !!c.nasc || !!c.sexo || c.temAlergia || c.temEspectro || c.temLimitacao || !!c.obsMed.trim() || !!c.foto || c.consent)
+    || resps.some(r => r.nome.trim() || r.telefone.trim() || (r.cpf || '').trim())
   );
   const { tentarFechar } = useConfirmarSaida(temAlteracoes, props.onClose);
 
@@ -2379,60 +2460,73 @@ function ModalNovaCrianca(props: {
     <Dialog open={props.open} onOpenChange={(o) => { if (!o) tentarFechar(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>{props.referencia ? `Adicionar filho · ${props.referencia.familiaNome || 'família'}` : 'Cadastrar criança · visitante'}</DialogTitle>
-          <DialogDescription>Dados mínimos · LGPD com menores. Sem CPF da criança.</DialogDescription>
+          <DialogTitle>{props.referencia ? `Adicionar à ${props.referencia.familiaNome || 'família'}` : 'Cadastrar criança(s)'}</DialogTitle>
+          <DialogDescription>
+            {props.referencia
+              ? 'As crianças novas entram nesta família e herdam os responsáveis dela.'
+              : 'Dados mínimos · LGPD com menores (sem CPF da criança). Dá pra cadastrar irmãos/primos/amigos que vieram juntos de uma vez.'}
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Modo · escondido quando já é "adicionar filho" (família travada) */}
-        {!props.referencia && (
-        <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 text-xs">
-          <button type="button" onClick={() => setModo('novo')} className={`px-3 py-1.5 rounded-md ${modo === 'novo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Novo cadastro</button>
-          <button type="button" onClick={() => setModo('amigo')} className={`px-3 py-1.5 rounded-md ${modo === 'amigo' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>Irmão / mesma família</button>
-        </div>
-        )}
-
-        <div className="space-y-4">
-          <div className="border-b pb-3 space-y-2">
-            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Criança</div>
-            <Input placeholder="Nome da criança *" value={criancaNome} onChange={e => setCriancaNome(e.target.value)} />
-            <DataNascimentoPicker value={criancaNasc} onChange={setCriancaNasc} />
-            <Select value={criancaSexo} onValueChange={setCriancaSexo}>
-              <SelectTrigger><SelectValue placeholder="Sexo (opcional)" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="M">Menino</SelectItem>
-                <SelectItem value="F">Menina</SelectItem>
-              </SelectContent>
-            </Select>
-            <div className="flex items-center gap-3 pt-1">
-              <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center overflow-hidden shrink-0">
-                {fotoCrianca ? <img src={fotoCrianca} alt="" className="h-full w-full object-cover" /> : <Baby className="h-6 w-6 text-muted-foreground" />}
-              </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => setCaptura({ tipo: 'crianca' })}>
-                <Camera className="h-4 w-4 mr-1" /> {fotoCrianca ? 'Refazer foto' : 'Tirar foto'}
-              </Button>
-              {fotoCrianca && <Button type="button" variant="ghost" size="sm" onClick={() => setFotoCrianca(null)}>Remover</Button>}
-            </div>
-            <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
-              <input type="checkbox" className="mt-0.5" checked={consentMkt} onChange={e => setConsentMkt(e.target.checked)} />
-              <span>Autoriza o <b>uso da imagem da criança</b> para divulgação/marketing (redes sociais, site, etc.)</span>
-            </label>
-          </div>
-
-          {/* Saúde */}
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+          {/* Crianças (uma ou várias) */}
           <div className="space-y-2">
-            <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Saúde</div>
-            <Toggle on={temAlergia} set={setTemAlergia} label="Tem alergia" />
-            {temAlergia && <Input placeholder="Qual alergia?" value={alergiaQual} onChange={e => setAlergiaQual(e.target.value)} />}
-            <Toggle on={temEspectro} set={setTemEspectro} label="Está no espectro autista" />
-            {temEspectro && <Input placeholder="Qual? (nível, observações)" value={espectroQual} onChange={e => setEspectroQual(e.target.value)} />}
-            <Toggle on={temLimitacao} set={setTemLimitacao} label="Tem limitação física / deficiência" />
-            {temLimitacao && <Input placeholder="Qual limitação?" value={limitacaoQual} onChange={e => setLimitacaoQual(e.target.value)} />}
-            <Input placeholder="Mais informações (medicação, cuidados...)" value={obsMed} onChange={e => setObsMed(e.target.value)} />
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Crianças</div>
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={addCri}><Plus className="h-3.5 w-3.5" /> Adicionar criança</Button>
+            </div>
+            {criancas.map((c, i) => (
+              <div key={i} className="rounded-lg border border-border p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Criança {i + 1}</span>
+                  {criancas.length > 1 && <button type="button" onClick={() => delCri(i)} className="text-muted-foreground hover:text-red-500" title="Remover"><X className="h-3.5 w-3.5" /></button>}
+                </div>
+                <Input placeholder="Nome da criança *" value={c.nome} onChange={e => setCri(i, { nome: e.target.value })} />
+                <div className="grid grid-cols-2 gap-2">
+                  <DataNascimentoPicker value={c.nasc} onChange={(v) => setCri(i, { nasc: v })} />
+                  <Select value={c.sexo} onValueChange={(v) => setCri(i, { sexo: v })}>
+                    <SelectTrigger><SelectValue placeholder="Sexo (opc.)" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="M">Menino</SelectItem>
+                      <SelectItem value="F">Menina</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center overflow-hidden shrink-0">
+                    {c.foto ? <img src={c.foto} alt="" className="h-full w-full object-cover" /> : <Baby className="h-5 w-5 text-muted-foreground" />}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => setCaptura({ tipo: 'crianca', i })}>
+                    <Camera className="h-3.5 w-3.5 mr-1" /> {c.foto ? 'Refazer foto' : 'Tirar foto'}
+                  </Button>
+                  {c.foto && <Button type="button" variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setCri(i, { foto: null })}>Remover</Button>}
+                </div>
+                <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
+                  <input type="checkbox" className="mt-0.5" checked={c.consent} onChange={e => setCri(i, { consent: e.target.checked })} />
+                  <span>Autoriza o <b>uso da imagem</b> da criança (redes sociais, site, etc.)</span>
+                </label>
+                {/* Saúde */}
+                <Toggle on={c.temAlergia} set={(b) => setCri(i, { temAlergia: b })} label="Tem alergia" />
+                {c.temAlergia && <Input placeholder="Qual alergia?" value={c.alergiaQual} onChange={e => setCri(i, { alergiaQual: e.target.value })} />}
+                <Toggle on={c.temEspectro} set={(b) => setCri(i, { temEspectro: b })} label="Está no espectro autista" />
+                {c.temEspectro && <Input placeholder="Qual? (nível, observações)" value={c.espectroQual} onChange={e => setCri(i, { espectroQual: e.target.value })} />}
+                <Toggle on={c.temLimitacao} set={(b) => setCri(i, { temLimitacao: b })} label="Limitação física / deficiência" />
+                {c.temLimitacao && <Input placeholder="Qual limitação?" value={c.limitacaoQual} onChange={e => setCri(i, { limitacaoQual: e.target.value })} />}
+                <Input placeholder="Observações médicas (medicação, cuidados...)" value={c.obsMed} onChange={e => setCri(i, { obsMed: e.target.value })} />
+              </div>
+            ))}
           </div>
 
-          {/* Responsável OU amigo */}
-          {modo === 'novo' ? (
+          {/* Responsáveis · só no cadastro NOVO (na família existente já herda) */}
+          {props.referencia ? (
+            <div className="rounded-lg border border-pink-400/40 bg-pink-50/50 dark:bg-pink-950/20 p-3 flex items-center gap-2">
+              <Users className="h-4 w-4 text-pink-600 shrink-0" />
+              <div className="min-w-0">
+                <div className="font-medium text-sm truncate">{props.referencia.familiaNome || `Família de ${props.referencia.nome.split(' ')[0]}`}</div>
+                <div className="text-xs text-muted-foreground">Herda os responsáveis da família</div>
+              </div>
+            </div>
+          ) : (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Responsáveis</div>
@@ -2452,7 +2546,6 @@ function ModalNovaCrianca(props: {
                   <Select value={r.parentesco} onValueChange={v => setResp(i, { parentesco: v })}>
                     <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
                     <SelectContent>
-                      {/* Só 1 mãe e 1 pai por criança */}
                       <SelectItem value="mae" disabled={r.parentesco !== 'mae' && resps.some((x, j) => j !== i && x.parentesco === 'mae')}>Mãe{r.parentesco !== 'mae' && resps.some((x, j) => j !== i && x.parentesco === 'mae') ? ' (já tem)' : ''}</SelectItem>
                       <SelectItem value="pai" disabled={r.parentesco !== 'pai' && resps.some((x, j) => j !== i && x.parentesco === 'pai')}>Pai{r.parentesco !== 'pai' && resps.some((x, j) => j !== i && x.parentesco === 'pai') ? ' (já tem)' : ''}</SelectItem>
                       <SelectItem value="padrasto">Padrasto</SelectItem>
@@ -2479,60 +2572,21 @@ function ModalNovaCrianca(props: {
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">{props.referencia ? 'Mesma família' : 'De qual família? (irmão / parente de...)'}</div>
-              <p className="text-xs text-muted-foreground">Entra na mesma família — liberado pelos mesmos responsáveis (quem traz, retira todos).</p>
-              {props.referencia ? (
-                <div className="flex items-center gap-2 rounded-lg border border-pink-400/40 bg-pink-50/50 dark:bg-pink-950/20 p-2">
-                  <Users className="h-4 w-4 text-pink-600" />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{props.referencia.familiaNome || `Família de ${props.referencia.nome.split(' ')[0]}`}</div>
-                    <div className="text-xs text-muted-foreground">Herda os responsáveis da família</div>
-                  </div>
-                </div>
-              ) : amigoSel ? (
-                <div className="flex items-center gap-2 rounded-lg border border-pink-400/40 p-2">
-                  <Baby className="h-4 w-4 text-pink-600" />
-                  <div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{amigoSel.nome}</div>{amigoSel.idade_label && <div className="text-xs text-muted-foreground">{amigoSel.idade_label}</div>}</div>
-                  <Button variant="ghost" size="sm" onClick={() => setAmigoSel(null)}>trocar</Button>
-                </div>
-              ) : (
-                <>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input className="pl-9" placeholder="Buscar criança cadastrada (ex.: Benjamin)..." value={amigoBusca} onChange={e => setAmigoBusca(e.target.value)} />
-                  </div>
-                  {amigoBuscando && <div className="flex justify-center py-2"><Loader2 className="h-4 w-4 animate-spin text-pink-500" /></div>}
-                  {!amigoBuscando && amigoResultados.length > 0 && (
-                    <div className="max-h-44 overflow-y-auto space-y-1">
-                      {amigoResultados.map((c: any) => (
-                        <button key={c.id} type="button" onClick={() => setAmigoSel(c)} className="w-full flex items-center gap-2 rounded-md border border-border p-2 text-left hover:border-pink-400/50">
-                          <Baby className="h-4 w-4 text-pink-500" />
-                          <div className="flex-1 min-w-0"><div className="text-sm truncate">{c.nome}</div>{c.idade_label && <div className="text-xs text-muted-foreground">{c.idade_label}</div>}</div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
           )}
 
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" onClick={props.onClose}>Cancelar</Button>
             <Button onClick={salvar} disabled={salvando} className="bg-pink-600 hover:bg-pink-700">
               {salvando ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Salvando...</> : <><CheckCircle2 className="h-4 w-4 mr-2" /> Cadastrar</>}
             </Button>
           </div>
         </div>
-        </div>
       </DialogContent>
       {captura && (
         <WebcamCaptura
           titulo={captura.tipo === 'crianca' ? 'Foto da criança' : 'Foto do responsável'}
           salvando={false}
-          onCapturar={(dataUrl) => { if (captura.tipo === 'crianca') setFotoCrianca(dataUrl); else setResp(captura.i, { foto: dataUrl }); setCaptura(null); }}
+          onCapturar={(dataUrl) => { if (captura.tipo === 'crianca') setCri(captura.i, { foto: dataUrl }); else setResp(captura.i, { foto: dataUrl }); setCaptura(null); }}
           onFechar={() => setCaptura(null)}
         />
       )}
