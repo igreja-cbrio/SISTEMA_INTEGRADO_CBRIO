@@ -105,6 +105,26 @@ function rotuloPeriodo(data?: string, hora?: string): string {
   return `${dias[dt.getDay()] || ''} ${_periodoDia(hora)}`.trim();
 }
 
+// Sobrenome = tudo depois do 1º nome.
+function _sobrenome(nome?: string): string {
+  const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  return p.length > 1 ? p.slice(1).join(' ') : '';
+}
+// Rótulo da família pro totem: "Família <sobrenome completo>". Evita o "Pereira
+// Household" (nome cru do PCO em mem_familias.nome) e usa o sobrenome COMPLETO da
+// criança (ex.: "Barcelos Pereira") pra distinguir famílias homônimas (Marcos
+// 2026-07-15). Fallback: nome da família limpo de "Household"/"The"/"Família".
+function nomeFamilia(c: any): string {
+  const doNome = _sobrenome(c?.nome);
+  const cru = String(c?.familia?.nome || '')
+    .replace(/\b(household|the)\b/gi, '')
+    .replace(/fam[íi]lia/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const melhor = doNome || cru;
+  return melhor ? `Família ${melhor}` : 'Família';
+}
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -913,7 +933,7 @@ export default function TotemKidsCheckin() {
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground truncate">
-                      {c.idade_label || '?'} · {c.familia?.nome || 'sem família'}
+                      {c.idade_label || '?'} · {c.familia ? nomeFamilia(c) : 'sem família'}
                     </div>
                   </div>
                 </button>
@@ -1031,7 +1051,7 @@ export default function TotemKidsCheckin() {
         open={modalNovo}
         onClose={() => { setModalNovo(false); setNovoContexto(null); }}
         nomeInicial={novoContexto ? '' : busca}
-        referencia={novoContexto ? { id: novoContexto.id, nome: novoContexto.nome, familiaNome: novoContexto.familia?.nome || null } : null}
+        referencia={novoContexto ? { id: novoContexto.id, nome: novoContexto.nome, familiaNome: nomeFamilia(novoContexto) } : null}
         onCadastrado={(criancaCriada) => {
           setModalNovo(false);
           if (novoContexto) {
@@ -1191,7 +1211,7 @@ function PainelFamilia(props: {
             <Users className="h-6 w-6 text-pink-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-2xl font-bold truncate">{primaria.familia?.nome || 'Família'}</h2>
+            <h2 className="text-2xl font-bold truncate">{nomeFamilia(primaria)}</h2>
             <p className="text-muted-foreground text-sm">{membros.length} criança{membros.length > 1 ? 's' : ''} · marque quem veio hoje</p>
           </div>
           <Button variant="ghost" size="sm" onClick={onCancelar}>
@@ -1783,7 +1803,7 @@ function CheckinSelecao(props: {
             </h2>
             <p className="text-muted-foreground">
               {formatIdade(crianca.idade_meses) || 'idade não informada'}
-              {crianca.familia?.nome && <> · {crianca.familia.nome}</>}
+              {crianca.familia && <> · {nomeFamilia(crianca)}</>}
               {crianca.visitante && <> · <Badge variant="secondary" className="ml-1">visitante</Badge></>}
             </p>
           </div>

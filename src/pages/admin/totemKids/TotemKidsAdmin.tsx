@@ -117,17 +117,17 @@ function AbaSessoes() {
       // config passa a mostrá-las como encerradas e o "Sessão atual" não oferece
       // mais culto de outro dia. Best-effort.
       try { await totemKids.sessoes.encerrarVencidas(); } catch { /* segue */ }
-      // Janela de cultos: últimos 7 + próximos 14 dias.
-      // Filtra so cultos cujo service_type tem has_kids=true · evita
-      // listar AMI/Bridge que não tem programacao infantil (Marcos 2026-05-21).
-      const hoje = new Date();
-      const inicio = new Date(hoje); inicio.setDate(hoje.getDate() - 7);
-      const fim = new Date(hoje); fim.setDate(hoje.getDate() + 14);
+      // Janela de cultos: de HOJE (BRT) até +14 dias. Sessões antigas (dias
+      // passados · já abertas e encerradas) NÃO aparecem mais no menu — só
+      // confundiam (Marcos 2026-07-15). +14 permite pré-abrir o próximo culto.
+      // Só cultos com has_kids (evita AMI/Bridge sem programação infantil).
+      const hojeBRT = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      const fim = new Date(); fim.setDate(fim.getDate() + 14);
       const [s, c] = await Promise.all([
         totemKids.sessoes.list({ limit: 60 }),
         kpis.cultos.list({
           limit: 100,
-          data_inicio: inicio.toISOString().slice(0, 10),
+          data_inicio: hojeBRT,
           data_fim: fim.toISOString().slice(0, 10),
         }).catch(() => []),
       ]);
@@ -156,7 +156,7 @@ function AbaSessoes() {
     }
     return Array.from(mapa.values())
       .map(g => ({ ...g, cultos: g.cultos.sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))) }))
-      .sort((a, b) => b.data.localeCompare(a.data) || a.periodo.ordem - b.periodo.ordem);
+      .sort((a, b) => a.data.localeCompare(b.data) || a.periodo.ordem - b.periodo.ordem);
   })();
 
   function rotuloGrupo(g: { data: string; periodo: { rotulo: string } }): string {
