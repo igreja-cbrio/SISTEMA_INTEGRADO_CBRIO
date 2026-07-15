@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -168,6 +168,16 @@ export default function Grupos() {
   const [filterDia, setFilterDia] = useState('all');
   const [filterBairro, setFilterBairro] = useState('all');
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
+  // Filtro por rede (Marcos · 15/07: a visualização por redes vive AQUI, na
+  // lista interna — não no formulário público). 'sem' = grupos sem rede.
+  const [filterRede, setFilterRede] = useState('all');
+  const [redesAll, setRedesAll] = useState([]);
+  useEffect(() => { api.redes.list().then(r => setRedesAll(r || [])).catch(() => {}); }, []);
+  const redeById = useMemo(() => {
+    const m = {};
+    redesAll.forEach(r => { m[r.id] = r; });
+    return m;
+  }, [redesAll]);
   const [filterIncompleto, setFilterIncompleto] = useState(false);
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
@@ -595,13 +605,17 @@ export default function Grupos() {
     if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
     if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
     if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
+    if (filterRede !== 'all') {
+      if (filterRede === 'sem' && g.rede_id) return false;
+      if (filterRede !== 'sem' && g.rede_id !== filterRede) return false;
+    }
     if (filterIncompleto && camposFaltantes(g).length === 0) return false;
     return true;
   });
 
   const incompletosCount = gruposList.filter(g => camposFaltantes(g).length > 0).length;
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterIncompleto;
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterRede !== 'all' || filterIncompleto;
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -1513,6 +1527,17 @@ export default function Grupos() {
           </SelectContent>
         </ShadSelect>
 
+        {redesAll.length > 0 && (
+          <ShadSelect value={filterRede} onValueChange={setFilterRede}>
+            <SelectTrigger className="w-[160px] h-8 text-xs"><SelectValue placeholder="Rede" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as redes</SelectItem>
+              {redesAll.map(r => <SelectItem key={r.id} value={r.id}>{r.nome}{r.supervisor_nome ? ` — ${r.supervisor_nome}` : ''}</SelectItem>)}
+              <SelectItem value="sem">Sem rede</SelectItem>
+            </SelectContent>
+          </ShadSelect>
+        )}
+
         <ShadSelect value={filterStatusTemp} onValueChange={setFilterStatusTemp}>
           <SelectTrigger className="w-[150px] h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
@@ -1547,7 +1572,7 @@ export default function Grupos() {
         </button>
 
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterIncompleto(false); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterRede('all'); setFilterIncompleto(false); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -1579,6 +1604,7 @@ export default function Grupos() {
                 onClick={() => {
                   setFilterTipo('all'); setFilterDia('all');
                   setFilterBairro('all'); setFilterStatusTemp('all');
+                  setFilterRede('all');
                   setFilterIncompleto(false); setFilterTemporada('');
                 }}
                 style={{ marginTop: 8, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
@@ -1624,6 +1650,13 @@ export default function Grupos() {
                     {g.modo_inscricao === 'sempre_aberto' && (
                       <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#3b82f620', color: '#3b82f6', fontWeight: 600, textTransform: 'uppercase' }}>Sempre aberto</span>
                     )}
+                    {g.rede_id && redeById[g.rede_id] && (() => {
+                      const r = redeById[g.rede_id];
+                      const cor = r.cor || '#0ea5e9';
+                      return (
+                        <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: `${cor}20`, color: cor, fontWeight: 600, textTransform: 'uppercase' }}>{r.nome}</span>
+                      );
+                    })()}
                     {(() => {
                       const n = camposFaltantes(g).length;
                       if (!n) return null;
