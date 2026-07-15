@@ -165,7 +165,10 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
       if (fRecorrencia && (g.recorrencia || '').toLowerCase().trim() !== fRecorrencia) return false;
       if (s) {
         if (searchMode === 'lider') {
-          if (!g.lider_nome?.toLowerCase().includes(s)) return false;
+          // Grupo com dois líderes aparece buscando por QUALQUER um
+          // (o principal + os marcados como líder/co-líder no grupo).
+          const nomes = (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome]).filter(Boolean);
+          if (!nomes.some(n => n.toLowerCase().includes(s))) return false;
         } else {
           const alvo = [g.nome, g.codigo, g.local, g.bairro, g.tema].filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(s)) return false;
@@ -356,7 +359,12 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
               {g.codigo && <code style={{ fontSize: 10, color: C.t3, fontFamily: 'monospace' }}>{g.codigo}</code>}
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 11, color: C.t3 }}>
-              {g.lider_nome && <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.lider_nome}</span>}
+              {(() => {
+                // Mostra TODOS os líderes (principal + co-líderes) — a pessoa
+                // acha o grupo pelo líder que conhece.
+                const nomes = (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome]).filter(Boolean);
+                return nomes.length ? <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {nomes.join(' · ')}</span> : null;
+              })()}
               {g.bairro && <span><MapPin size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.bairro}</span>}
               {g.dia_semana != null && <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> {DIAS_CURTO[g.dia_semana]}{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>}
               {g.recorrencia && g.recorrencia.toLowerCase().trim() !== 'semanal' && <span>· {recorrenciaLabel(g.recorrencia.toLowerCase().trim())}</span>}
