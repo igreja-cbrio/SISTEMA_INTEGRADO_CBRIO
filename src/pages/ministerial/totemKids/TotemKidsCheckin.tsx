@@ -144,6 +144,10 @@ function formatCpf(v: string): string {
 
 // PIN do supervisor pra liberar o check-in SEM CPF (válvula · Marcos 2026-07-15).
 const DISPENSA_PIN = '0000';
+// WhatsApp de retirada (código+QR pro responsável) OCULTO por enquanto — o envio
+// ainda não funciona e confundia no totem (Marcos 2026-07-15). Flip pra true quando
+// o disparo estiver no ar; o toggle e o envio voltam juntos.
+const WPP_RETIRADA_ATIVO = false;
 
 // Modal do CPF obrigatório do responsável (Marcos 2026-07-15). Digitou → imprime.
 // "Não tenho o CPF agora" → supervisor libera (PIN 0000 + motivo).
@@ -162,8 +166,7 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
 
   function confirmarDispensa() {
     if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
-    if (!motivo.trim()) { setErro('Diga o motivo (ex.: estrangeiro, esqueceu o documento).'); return; }
-    onDispensar(motivo.trim());
+    onDispensar(motivo.trim()); // motivo opcional · não trava o check-in (Marcos 2026-07-15)
   }
 
   return (
@@ -194,7 +197,7 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
             <p className="text-sm">Liberar o check-in <b>sem CPF</b> — só um supervisor (PIN). O responsável vai ser cobrado no próximo check-in.</p>
             <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin} autoFocus
               onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-12 text-center tracking-widest" />
-            <Input placeholder="Motivo (ex.: estrangeiro, esqueceu o documento)" value={motivo} onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
+            <Input placeholder="Motivo (opcional · ex.: estrangeiro, esqueceu o documento)" value={motivo} onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
             {!!erro && <p className="text-xs text-red-500">{erro}</p>}
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => { setDispensa(false); setPin(''); setMotivo(''); setErro(''); }}>Voltar</Button>
@@ -242,15 +245,14 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
       <p className="text-xs">Liberar o cadastro <b>sem CPF</b> — só um supervisor (PIN). O responsável vai ser cobrado no próximo check-in.</p>
       <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin}
         onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-10 text-center tracking-widest" />
-      <Input placeholder="Motivo (ex.: estrangeiro, esqueceu o documento)" value={motivo}
+      <Input placeholder="Motivo (opcional · ex.: estrangeiro, esqueceu o documento)" value={motivo}
         onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
       {!!erro && <p className="text-xs text-red-500">{erro}</p>}
       <div className="flex gap-2">
         <Button type="button" variant="outline" size="sm" className="flex-1" onClick={fechar}>Voltar</Button>
         <Button type="button" size="sm" className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={() => {
           if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
-          if (!motivo.trim()) { setErro('Diga o motivo (ex.: estrangeiro, esqueceu o documento).'); return; }
-          onDispensar(); setAberto(false);
+          onDispensar(); setAberto(false); // motivo opcional
         }}>Liberar sem CPF</Button>
       </div>
     </div>
@@ -276,7 +278,7 @@ export default function TotemKidsCheckin() {
   const [respManualTel, setRespManualTel] = useState('');
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
-  const [enviarWpp, setEnviarWpp] = useState(true); // enviar código+QR de retirada por WhatsApp
+  const [enviarWpp, setEnviarWpp] = useState(WPP_RETIRADA_ATIVO); // código+QR de retirada por WhatsApp (oculto por enquanto)
 
   // Sessões ABERTAS (o período aberto) · a pessoa escolhe no check-in em qual
   // culto a criança fica; o culto de agora (relógio) já vem pré-marcado.
@@ -1481,9 +1483,6 @@ function PainelFamilia(props: {
               </div>
             );
           })}
-          <Button type="button" variant="outline" className="w-full border-dashed" onClick={onAdicionarFilho}>
-            <Plus className="h-4 w-4 mr-1" /> Adicionar filho a esta família
-          </Button>
         </div>
 
         {/* Quem está trazendo (vale pra todos) */}
@@ -1505,6 +1504,9 @@ function PainelFamilia(props: {
                 <Button type="button" variant="default" size="sm" className="bg-pink-600 hover:bg-pink-700" onClick={() => setModalCadResp(true)}>
                   <Plus className="h-4 w-4 mr-1" /> Cadastrar responsável
                 </Button>
+                <Button type="button" variant="outline" size="sm" onClick={onAdicionarFilho}>
+                  <Plus className="h-4 w-4 mr-1" /> Cadastrar criança na família
+                </Button>
                 <Button type="button" variant="ghost" size="sm" onClick={() => setManual(true)}>Outro responsável (manual · não cadastra)</Button>
               </div>
             </>
@@ -1517,7 +1519,7 @@ function PainelFamilia(props: {
           )}
         </div>
 
-        {temTelefoneResp && (
+        {WPP_RETIRADA_ATIVO && temTelefoneResp && (
           <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
             <input type="checkbox" className="h-4 w-4 accent-pink-600" checked={enviarWpp} onChange={e => setEnviarWpp(e.target.checked)} />
             <span>Enviar código + QR de retirada por WhatsApp <span className="text-muted-foreground">(a etiqueta imprime de qualquer jeito)</span></span>
@@ -2258,6 +2260,11 @@ function CheckinSelecao(props: {
                 >
                   <Plus className="h-4 w-4 mr-1" /> Cadastrar responsável
                 </Button>
+                {onAdicionarIrmao && (
+                  <Button type="button" variant="outline" size="sm" onClick={onAdicionarIrmao}>
+                    <Plus className="h-4 w-4 mr-1" /> Cadastrar criança na família
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2337,7 +2344,7 @@ function CheckinSelecao(props: {
           </div>
         )}
 
-        {temTelefoneResp && !checkinAberto && (
+        {WPP_RETIRADA_ATIVO && temTelefoneResp && !checkinAberto && (
           <label className="flex items-center gap-2 pt-1 text-sm cursor-pointer select-none">
             <input type="checkbox" className="h-4 w-4 accent-pink-600"
               checked={enviarWpp} onChange={e => setEnviarWpp(e.target.checked)} />
@@ -2541,7 +2548,7 @@ function ModalNovaCrianca(props: {
                 <div className="grid grid-cols-2 gap-2">
                   <DataNascimentoPicker value={c.nasc} onChange={(v) => setCri(i, { nasc: v })} />
                   <Select value={c.sexo} onValueChange={(v) => setCri(i, { sexo: v })}>
-                    <SelectTrigger><SelectValue placeholder="Sexo (opc.)" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Sexo" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="M">Menino</SelectItem>
                       <SelectItem value="F">Menina</SelectItem>
