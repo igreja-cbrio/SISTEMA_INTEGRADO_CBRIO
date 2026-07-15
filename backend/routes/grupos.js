@@ -1483,10 +1483,15 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
     }
 
     const { data: grupoSugerido } = await supabase.from('mem_grupos')
-      .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, ativo, aceitando_inscricoes')
+      .select('id, nome, codigo, dia_semana, horario, local, endereco, complemento, bairro, ativo, aceitando_inscricoes, modo_inscricao')
       .eq('id', grupo_sugerido_id).is('deleted_at', null).maybeSingle();
     if (!grupoSugerido || !grupoSugerido.ativo) {
       return res.status(404).json({ error: 'Grupo sugerido não encontrado ou inativo' });
+    }
+    if (grupoSugerido.modo_inscricao === 'fechado') {
+      // Grupo por convite: quem decide quem entra é o líder dele (Marcos ·
+      // 15/07) — a sugestão da triagem não passa por cima.
+      return res.status(400).json({ error: 'Esse grupo é por convite do líder — combine com ele antes de sugerir' });
     }
     if (grupoSugerido.aceitando_inscricoes === false) {
       // Trava explícita do líder do grupo sugerido — a sugestão não passa por
@@ -2325,6 +2330,7 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
       idade_max: idadeMax,
       capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
       aceitando_inscricoes: d.aceitando_inscricoes !== false,
+      modo_inscricao: ['fechado', 'temporada', 'sempre_aberto'].includes(d.modo_inscricao) ? d.modo_inscricao : 'temporada',
       rede_id: d.rede_id || null,
       status_temporada: d.status_temporada || 'novo',
       temporada: d.temporada || null,
@@ -2361,6 +2367,9 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       idade_max: idadeMax,
       capacidade: (d.capacidade === '' || d.capacidade == null) ? null : Number(d.capacidade),
       aceitando_inscricoes: d.aceitando_inscricoes !== false,
+      // Só atualiza se veio no body — um form com chunk antigo (sem o campo)
+      // não pode resetar o modo do grupo ao salvar.
+      ...('modo_inscricao' in d ? { modo_inscricao: ['fechado', 'temporada', 'sempre_aberto'].includes(d.modo_inscricao) ? d.modo_inscricao : 'temporada' } : {}),
       rede_id: d.rede_id || null,
       status_temporada: d.status_temporada || null,
       temporada: d.temporada || null,

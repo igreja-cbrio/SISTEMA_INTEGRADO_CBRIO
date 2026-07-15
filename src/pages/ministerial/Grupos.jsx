@@ -640,6 +640,12 @@ export default function Grupos() {
                 <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: g.ativo ? '#10b98120' : '#ef444420', color: g.ativo ? C.green : C.red, fontWeight: 600 }}>{g.ativo ? 'Ativo' : 'Inativo'}</span>
               )}
               {g.temporada && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{g.temporada}</span>}
+              {g.modo_inscricao === 'fechado' && (
+                <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600 }}>Por convite</span>
+              )}
+              {g.modo_inscricao === 'sempre_aberto' && (
+                <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#3b82f620', color: '#3b82f6', fontWeight: 600 }}>Sempre aberto</span>
+              )}
             </div>
             {g.tema && <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>Tema: {g.tema}</div>}
             {g.descricao && <div style={{ fontSize: 13, color: C.t3, marginTop: 4 }}>{g.descricao}</div>}
@@ -1589,6 +1595,12 @@ export default function Grupos() {
                       </span>
                     )}
                     {!g.ativo && !g.status_temporada && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, textTransform: 'uppercase' }}>Arquivado</span>}
+                    {g.modo_inscricao === 'fechado' && (
+                      <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600, textTransform: 'uppercase' }}>Por convite</span>
+                    )}
+                    {g.modo_inscricao === 'sempre_aberto' && (
+                      <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#3b82f620', color: '#3b82f6', fontWeight: 600, textTransform: 'uppercase' }}>Sempre aberto</span>
+                    )}
                     {(() => {
                       const n = camposFaltantes(g).length;
                       if (!n) return null;
@@ -1888,10 +1900,11 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
     if (open) {
       api.redes.list().then(setRedesList).catch(() => setRedesList([]));
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
-      setForm(data ? { ...data } : {
+      setForm(data ? { modo_inscricao: 'temporada', ...data } : {
         nome: '', categoria: '', area: 'sede', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
         faixa_etaria: '', idade_min: '', idade_max: '', capacidade: '', aceitando_inscricoes: true, rede_id: '',
+        modo_inscricao: 'temporada',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
       });
@@ -2048,9 +2061,21 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             </ShadSelect>
           </div>
 
+          <div>
+            <Label>Inscrições (natureza do grupo)</Label>
+            <ShadSelect value={form.modo_inscricao || 'temporada'} onValueChange={v => set('modo_inscricao', v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="temporada">Aberto na temporada — aparece no formulário enquanto as inscrições estiverem abertas</SelectItem>
+                <SelectItem value="sempre_aberto">Sempre aberto — recebe inscrições o ano todo, mesmo com a temporada fechada</SelectItem>
+                <SelectItem value="fechado">Fechado — por convite do líder, nunca aparece no formulário</SelectItem>
+              </SelectContent>
+            </ShadSelect>
+          </div>
+
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
             <input type="checkbox" checked={form.aceitando_inscricoes !== false} onChange={e => set('aceitando_inscricoes', e.target.checked)} style={{ accentColor: '#00B39D', cursor: 'pointer' }} />
-            Aceitar novas inscrições (desligue para tirar o grupo do formulário público)
+            Aceitar novas inscrições (pausa pontual — ex.: grupo lotado; desligue para tirar do formulário)
           </label>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
