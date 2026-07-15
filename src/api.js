@@ -2384,6 +2384,8 @@ export const voluntariado = {
   },
   // Backfill de e-mails: Planning Center (People API) + complemento membresia
   backfillEmails: () => post('/voluntariado/backfill-emails', {}, { timeout: 300_000 }),
+  // Backfill de datas de nascimento (aniversário) do Planning Center → mem_membros
+  backfillNascimento: () => post('/voluntariado/backfill-nascimento', {}, { timeout: 300_000 }),
   // Opções do formulário público ("Onde você quer servir")
   formOpcoes: {
     list: () => get('/voluntariado/form-opcoes'),

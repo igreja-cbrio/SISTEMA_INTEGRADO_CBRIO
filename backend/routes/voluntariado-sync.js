@@ -4,7 +4,7 @@ const { supabase } = require('../utils/supabase');
 const {
   getPCCredentials, fetchWithRetry, fetchAllPlans, fetchPlansInRange,
   processServiceType, fetchAllTeamPersons, upsertVolunteerQrCodes, upsertVolunteerProfiles, PC_SERVICES_BASE,
-  fetchAllServiceTypes, backfillVolProfilesCpf, backfillVolProfilesEmail,
+  fetchAllServiceTypes, backfillVolProfilesCpf, backfillVolProfilesEmail, backfillMembrosNascimento,
 } = require('../services/planningCenter');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
 
@@ -456,6 +456,22 @@ router.post('/backfill-emails', async (req, res) => {
     res.json({ success: true, ...pco, via_membresia: viaMembresia });
   } catch (e) {
     console.error('[EMAIL-BACKFILL] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// BACKFILL · puxa DATA DE NASCIMENTO (birthdate) do People do PCO e grava em
+// mem_membros.data_nascimento dos voluntários (casa por planning_center_id ->
+// membresia_id). Nunca sobrescreve. POST /api/voluntariado/backfill-nascimento
+// ══════════════════════════════════════════════════════════════
+router.post('/backfill-nascimento', async (req, res) => {
+  try {
+    const { basic: credentials } = getPCCredentials();
+    const result = await backfillMembrosNascimento(supabase, credentials);
+    res.json({ success: true, ...result });
+  } catch (e) {
+    console.error('[NASC-BACKFILL] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

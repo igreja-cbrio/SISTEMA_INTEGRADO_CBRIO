@@ -907,6 +907,68 @@ async function backfillVolProfilesEmail(supabase, credentials) {
   return { total_emails_pco: totalEmailsPco, matched, updated, skipped_existing: skippedExisting, errors };
 }
 
+// Mapa planning_center_id -> birthdate (YYYY-MM-DD) do People do PCO.
+// birthdate é atributo direto da pessoa (fields[Person]=birthdate reduz payload).
+async function fetchPcoBirthdateMap(credentials) {
+  const headers = { Authorization: `Basic ${credentials}` };
+  const map = new Map();
+  const perPage = 100;
+  let offset = 0;
+  while (true) {
+    const url = `${PC_PEOPLE_BASE}/people?per_page=${perPage}&offset=${offset}&fields[Person]=birthdate`;
+    const r = await fetchWithRetry(url, headers);
+    if (!r.ok) break;
+    const j = await r.json();
+    for (const person of (j.data || [])) {
+      const bd = person.attributes?.birthdate; // "YYYY-MM-DD" (ou null)
+      if (person.id && bd && /^\d{4}-\d{2}-\d{2}$/.test(bd)) map.set(person.id, bd);
+    }
+    const total = j.meta?.total_count;
+    if (!j.data || j.data.length < perPage) break;
+    offset += perPage;
+    if (total && offset >= total) break;
+    if (offset > 50000) break; // safety
+  }
+  return map;
+}
+
+// Preenche mem_membros.data_nascimento dos VOLUNTÁRIOS a partir do birthdate do
+// PCO (casa por vol_profiles.planning_center_id -> membresia_id). NUNCA sobrescreve
+// quem já tem data. Só o dia/mês importa pro aniversário (o cron compara MM-DD).
+async function backfillMembrosNascimento(supabase, credentials) {
+  const bdMap = await fetchPcoBirthdateMap(credentials);
+  const totalPco = bdMap.size;
+  if (!totalPco) return { total_birthdays_pco: 0, matched: 0, updated: 0, skipped_existing: 0, errors: 0 };
+  const pcIds = [...bdMap.keys()];
+  let matched = 0, updated = 0, skippedExisting = 0, errors = 0;
+  for (let i = 0; i < pcIds.length; i += 200) {
+    const batch = pcIds.slice(i, i + 200);
+    const { data: profiles, error } = await supabase
+      .from('vol_profiles')
+      .select('planning_center_id, membresia_id')
+      .in('planning_center_id', batch)
+      .not('membresia_id', 'is', null);
+    if (error) { errors++; continue; }
+    const bdPorMembro = new Map();
+    for (const p of (profiles || [])) {
+      const bd = bdMap.get(p.planning_center_id);
+      if (bd && p.membresia_id && !bdPorMembro.has(p.membresia_id)) bdPorMembro.set(p.membresia_id, bd);
+    }
+    if (!bdPorMembro.size) continue;
+    const memIds = [...bdPorMembro.keys()];
+    const { data: membros } = await supabase
+      .from('mem_membros').select('id, data_nascimento').in('id', memIds).is('deleted_at', null);
+    for (const m of (membros || [])) {
+      matched++;
+      if (m.data_nascimento) { skippedExisting++; continue; } // nunca sobrescreve
+      const { error: upErr } = await supabase
+        .from('mem_membros').update({ data_nascimento: bdPorMembro.get(m.id) }).eq('id', m.id);
+      if (upErr) errors++; else updated++;
+    }
+  }
+  return { total_birthdays_pco: totalPco, matched, updated, skipped_existing: skippedExisting, errors };
+}
+
 module.exports = {
   STATUS_PRIORITY,
   STATUS_MAP,
@@ -931,5 +993,7 @@ module.exports = {
   backfillVolProfilesCpf,
   fetchPcoEmailMap,
   backfillVolProfilesEmail,
+  fetchPcoBirthdateMap,
+  backfillMembrosNascimento,
   fetchPcoPhone,
 };
