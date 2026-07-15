@@ -359,6 +359,10 @@ export default function TotemKidsCheckin() {
   // impedem o novo check-in; o totem avisa e oferece regularizar.
   const [abertosAnteriores, setAbertosAnteriores] = useState<any[]>([]);
   const [checkoutAnteriorId, setCheckoutAnteriorId] = useState<string | null>(null);
+  // Map crianca_id → check-in ABERTO nesta sessão, pros membros da FAMÍLIA. O painel
+  // da família não avisava que a criança já tinha entrado (risco de re-check-in ·
+  // Marcos 2026-07-15) — igual o card individual já faz com checkinAberto.
+  const [abertosFamilia, setAbertosFamilia] = useState<Record<string, any>>({});
 
   // Monta o payload da etiqueta (usado no check-in novo E na reimpressão).
   function montarDadosEtiqueta(c: Crianca, args: {
@@ -443,6 +447,25 @@ export default function TotemKidsCheckin() {
     carregarIrmaos(crianca.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id, crianca?.familia?.id]);
+
+  // Pros membros da família, descobre quem já tem check-in ABERTO nesta sessão →
+  // o painel marca "já entrou", tira do lote e oferece reimprimir/checkout.
+  useEffect(() => {
+    const membros = crianca ? [crianca, ...irmaos] : [];
+    if (!sessao?.id || irmaos.length === 0 || membros.length === 0) { setAbertosFamilia({}); return; }
+    let cancel = false;
+    Promise.all(membros.map(async (m) => {
+      try { const r: any = await totemKids.checkin.aberto(sessao.id, m.id); return [m.id, r?.checkin || null] as const; }
+      catch { return [m.id, null] as const; }
+    })).then((pares) => {
+      if (cancel) return;
+      const map: Record<string, any> = {};
+      for (const [id, ck] of pares) if (ck) map[id] = ck;
+      setAbertosFamilia(map);
+    });
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crianca?.id, irmaos.map((i) => i.id).join(','), sessao?.id]);
 
   // Patch local de um membro da família (o painel usa ao editar a ficha de um filho).
   const atualizarMembro = (id: string, patch: Partial<Crianca>) => {
@@ -529,6 +552,23 @@ export default function TotemKidsCheckin() {
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir a etiqueta');
     } finally { setReimprimindoAberto(false); }
+  }
+
+  // Reimprime a etiqueta de um membro da família que JÁ está com check-in aberto
+  // (mesmo helper/código · `ck` vem de abertosFamilia).
+  async function reimprimirMembroFamilia(ck: any, cr: Crianca) {
+    try {
+      const dados = montarDadosEtiqueta(cr, {
+        checkinId: ck.id, salaNome: ck.sala?.nome || '', salaCor: ck.sala?.cor || null,
+        salaLogoUrl: ck.sala?.logo_url || null, respNome: ck.responsavel_checkin_nome || '',
+        codigo: ck.codigo_seguranca, codigoBarras: ck.codigo_barras,
+        cultoNome: ck.sessao?.culto?.nome || null, cultoData: ck.sessao?.culto?.data || null,
+      });
+      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem (família)');
+      toast.success(`Etiqueta de ${cr.nome.split(' ')[0]} reimpressa · código ${ck.codigo_seguranca}`);
+    } catch (e: unknown) {
+      toast.error((e as { message?: string })?.message || 'Erro ao reimprimir');
+    }
   }
 
   // Regulariza o culto anterior: faz o check-out esquecido (método 'painel').
@@ -1164,6 +1204,8 @@ export default function TotemKidsCheckin() {
             imprimindo={imprimindo}
             onCancelar={() => { setCrianca(null); if (preCheckin) encerrarPreCheckin(); }}
             onConfirmar={confirmarCheckinFamilia}
+            abertos={abertosFamilia}
+            onReimprimirMembro={reimprimirMembroFamilia}
             onAdicionarFilho={() => { setNovoContexto(crianca); setModalNovo(true); }}
             onAtualizarMembro={atualizarMembro}
             onResponsavelCadastrado={async () => {
@@ -1314,10 +1356,14 @@ function PainelFamilia(props: {
   onAdicionarFilho: () => void;
   onAtualizarMembro: (id: string, patch: Partial<Crianca>) => void;
   onResponsavelCadastrado: () => void;
+  abertos: Record<string, any>;
+  onReimprimirMembro: (checkin: any, crianca: Crianca) => void;
 }) {
   const { primaria, irmaos, salas, sessoesAbertas, cultoAtualId, cultosSel, setCultosSel,
-    enviarWpp, setEnviarWpp, imprimindo, onCancelar, onConfirmar, onAdicionarFilho, onAtualizarMembro, onResponsavelCadastrado } = props;
+    enviarWpp, setEnviarWpp, imprimindo, onCancelar, onConfirmar, onAdicionarFilho, onAtualizarMembro, onResponsavelCadastrado,
+    abertos, onReimprimirMembro } = props;
   const membros = [primaria, ...irmaos];
+  const jaEntrou = (id: string) => !!abertos[id];
   const salaPorIdade = (c: Crianca) =>
     salas.find(s => c.idade_meses != null
       && s.faixa_etaria_min_meses <= (c.idade_meses || 0)
@@ -1356,7 +1402,8 @@ function PainelFamilia(props: {
   const [manualNome, setManualNome] = useState('');
   const [manualTel, setManualTel] = useState('');
 
-  const selecionados = membros.filter(m => sel.has(m.id));
+  const selecionados = membros.filter(m => sel.has(m.id) && !jaEntrou(m.id));
+  const todosEntraram = membros.length > 0 && membros.every(m => jaEntrou(m.id));
   const semSala = selecionados.filter(m => !salaPor[m.id]);
   const respOk = manual ? (!!manualNome.trim() && !!manualTel.trim()) : !!respId;
   const semCulto = sessoesAbertas.length > 1 && cultosSel.size === 0;
@@ -1432,15 +1479,20 @@ function PainelFamilia(props: {
         <div className="space-y-2">
           <label className="text-sm font-medium block">Quem veio hoje?</label>
           {membros.map(m => {
-            const on = sel.has(m.id);
+            const entrou = abertos[m.id];
+            const on = sel.has(m.id) && !entrou;
             const temSaude = m.tem_alergia || m.tem_espectro || m.tem_limitacao_fisica || m.observacoes_medicas;
             return (
-              <div key={m.id} className={`rounded-lg border p-3 ${on ? 'border-pink-400 bg-pink-50/50 dark:bg-pink-950/20' : 'border-border opacity-70'}`}>
+              <div key={m.id} className={`rounded-lg border p-3 ${entrou ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20' : on ? 'border-pink-400 bg-pink-50/50 dark:bg-pink-950/20' : 'border-border opacity-70'}`}>
                 <div className="flex items-center gap-3">
-                  <button type="button" onClick={() => toggle(m.id)}
-                    className={`h-6 w-6 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-pink-600 border-pink-600 text-white' : 'border-muted-foreground/40'}`}>
-                    {on && <Check className="h-4 w-4" />}
-                  </button>
+                  {entrou ? (
+                    <span className="h-6 w-6 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0" title="Já fez check-in"><Check className="h-4 w-4" /></span>
+                  ) : (
+                    <button type="button" onClick={() => toggle(m.id)}
+                      className={`h-6 w-6 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-pink-600 border-pink-600 text-white' : 'border-muted-foreground/40'}`}>
+                      {on && <Check className="h-4 w-4" />}
+                    </button>
+                  )}
                   {m.foto_url ? (
                     <img src={m.foto_url} alt="" className="h-10 w-10 rounded-full object-cover shrink-0" />
                   ) : (
@@ -1466,6 +1518,18 @@ function PainelFamilia(props: {
                     {m.observacoes_medicas && <div className="text-amber-600 dark:text-amber-400"><b>Obs.:</b> {m.observacoes_medicas}</div>}
                   </div>
                 ) : null}
+                {entrou && (
+                  <div className="mt-2 pl-9 text-xs space-y-1">
+                    <div className="text-emerald-700 dark:text-emerald-300 font-medium">
+                      Já fez check-in · código <b className="font-mono tracking-widest">{entrou.codigo_seguranca}</b>{entrou.sala?.nome ? <> · sala <b>{entrou.sala.nome}</b></> : null}
+                    </div>
+                    <div className="text-muted-foreground">Pra sair, faça o <b>check-out</b>. Perdeu a etiqueta?</div>
+                    <Button type="button" size="sm" variant="outline" className="h-7 text-xs border-emerald-400 text-emerald-700 dark:text-emerald-300"
+                      onClick={() => onReimprimirMembro(entrou, m)}>
+                      <Printer className="h-3.5 w-3.5 mr-1" /> Reimprimir etiqueta
+                    </Button>
+                  </div>
+                )}
                 {on && (
                   <div className="mt-2 pl-9">
                     <Select value={salaPor[m.id] || ''} onValueChange={(v) => setSalaPor(s => ({ ...s, [m.id]: v }))}>
@@ -1527,8 +1591,8 @@ function PainelFamilia(props: {
         )}
 
         <div className="flex items-center justify-between gap-3 pt-2 border-t">
-          <span className="text-xs text-pink-600 font-medium">
-            {semCulto ? '↑ Escolha o culto pra liberar' : semSala.length ? '↑ Escolha a sala de cada criança' : !respOk ? '↑ Escolha quem está trazendo' : ''}
+          <span className={`text-xs font-medium ${todosEntraram ? 'text-emerald-600' : 'text-pink-600'}`}>
+            {todosEntraram ? '✓ Todos já fizeram check-in · pra sair, use o check-out' : semCulto ? '↑ Escolha o culto pra liberar' : semSala.length ? '↑ Escolha a sala de cada criança' : !respOk ? '↑ Escolha quem está trazendo' : ''}
           </span>
           <Button className="bg-pink-600 hover:bg-pink-700 text-white" size="lg" onClick={confirmar} disabled={!podeConfirmar}
             title={semCulto ? 'Escolha em qual culto a família fica.' : semSala.length ? 'Selecione a sala de cada criança marcada.' : !respOk ? 'Escolha quem está trazendo.' : undefined}>
