@@ -93,6 +93,54 @@ export default function KidsFrequenciaPCO() {
     }
   }
 
+  // ── Comparativo do ANO inteiro (mês a mês) ──
+  const [anoComp, setAnoComp] = useState('2025');
+  const [anoLoading, setAnoLoading] = useState(false);
+  const [anoProg, setAnoProg] = useState<{ mes: string; feito: number; total: number } | null>(null);
+  const [anoRes, setAnoRes] = useState<any>(null);
+
+  async function compararAno() {
+    setAnoLoading(true);
+    setAnoRes(null);
+    const ano = Number(anoComp);
+    const hoje = new Date();
+    const mesLimite = ano < hoje.getFullYear() ? 12 : hoje.getMonth() + 1;
+    const meses: any[] = [];
+    const erros: string[] = [];
+    try {
+      for (let m = 1; m <= mesLimite; m++) {
+        const mes = `${ano}-${String(m).padStart(2, '0')}`;
+        let base: any;
+        try {
+          base = await api.comparativoMes(mes);
+        } catch {
+          erros.push(mes);
+          continue;
+        }
+        const datas: string[] = base?.datas || [];
+        const pcoPorCulto = new Map<string, number>();
+        for (let i = 0; i < datas.length; i++) {
+          setAnoProg({ mes, feito: i + 1, total: datas.length });
+          try {
+            const r: any = await api.resumoPcoTestar(datas[i]);
+            for (const c of r?.por_culto || []) pcoPorCulto.set(c.culto_id, c.total || 0);
+          } catch {
+            erros.push(datas[i]);
+          }
+        }
+        const sistema = (base?.cultos || []).reduce((s: number, c: any) => s + (c.presencial_kids || 0), 0);
+        const pco = (base?.cultos || []).reduce((s: number, c: any) => s + (pcoPorCulto.get(c.culto_id) ?? 0), 0);
+        meses.push({ mes, sistema, pco, diff: pco - sistema });
+      }
+      setAnoRes({ ano, meses, erros });
+    } finally {
+      setAnoLoading(false);
+      setAnoProg(null);
+    }
+  }
+
+  const MES_NOME = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
   async function abrirPessoa(k: any) {
     if (!k?.pco_id) { toast.error('Sem vínculo com o Planning Center pra esta pessoa.'); return; }
     setPessoaSel(k);
@@ -319,7 +367,85 @@ export default function KidsFrequenciaPCO() {
               </span>
             )}
           </div>
+
+          <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-border/50">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Ano inteiro (mês a mês)</label>
+              <input type="number" min={2020} max={2030} value={anoComp} onChange={(e) => setAnoComp(e.target.value)}
+                className="bg-[var(--cbrio-input-bg)] border border-border rounded-lg px-3 py-2 text-sm w-24" />
+            </div>
+            <button onClick={compararAno} disabled={anoLoading || compLoading || !/^\d{4}$/.test(anoComp)}
+              className="bg-primary text-primary-foreground text-sm px-4 py-2 rounded-lg inline-flex items-center gap-1.5 disabled:opacity-60">
+              {anoLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />} Comparar o ano
+            </button>
+            {anoLoading && (
+              <span className="text-xs text-muted-foreground pb-2">
+                {anoProg
+                  ? <>Varrendo {MES_NOME[Number(anoProg.mes.slice(5)) - 1]}/{anoProg.mes.slice(0, 4)} · dia {anoProg.feito}/{anoProg.total}… (leva alguns minutos · deixe a aba aberta)</>
+                  : 'Preparando…'}
+              </span>
+            )}
+          </div>
         </Card>
+
+        {anoRes && !anoLoading && (
+          <Card className="glass-solid overflow-hidden">
+            <div className="px-4 py-2 border-b border-border/50 text-xs text-muted-foreground">
+              Frequência Kids {anoRes.ano} · mês a mês · No sistema × check-ins do PCO
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-muted-foreground text-left border-b border-border/50">
+                    <th className="px-4 py-2 font-medium">Mês</th>
+                    <th className="px-4 py-2 font-medium text-right">No sistema</th>
+                    <th className="px-4 py-2 font-medium text-right">PCO</th>
+                    <th className="px-4 py-2 font-medium text-right">Δ</th>
+                    <th className="px-4 py-2 font-medium text-right">Δ%</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/40">
+                  {anoRes.meses.map((l: any) => (
+                    <tr key={l.mes}>
+                      <td className="px-4 py-1.5">{MES_NOME[Number(l.mes.slice(5)) - 1]}</td>
+                      <td className="px-4 py-1.5 text-right tabular-nums">{l.sistema}</td>
+                      <td className="px-4 py-1.5 text-right tabular-nums">{l.pco}</td>
+                      <td className={`px-4 py-1.5 text-right tabular-nums font-semibold ${l.diff === 0 ? 'text-muted-foreground' : l.diff > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {l.diff > 0 ? '+' : ''}{l.diff}
+                      </td>
+                      <td className="px-4 py-1.5 text-right tabular-nums text-xs text-muted-foreground">
+                        {l.sistema > 0 ? `${((l.diff / l.sistema) * 100).toFixed(1)}%` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-border/60 font-semibold">
+                    <td className="px-4 py-2">Total</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{anoRes.meses.reduce((s: number, l: any) => s + l.sistema, 0)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{anoRes.meses.reduce((s: number, l: any) => s + l.pco, 0)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {(() => { const d = anoRes.meses.reduce((s: number, l: any) => s + l.diff, 0); return `${d > 0 ? '+' : ''}${d}`; })()}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-xs text-muted-foreground">
+                      {(() => {
+                        const sis = anoRes.meses.reduce((s: number, l: any) => s + l.sistema, 0);
+                        const d = anoRes.meses.reduce((s: number, l: any) => s + l.diff, 0);
+                        return sis > 0 ? `${((d / sis) * 100).toFixed(1)}%` : '—';
+                      })()}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            {(anoRes.erros || []).length > 0 && (
+              <div className="px-4 py-2 text-xs text-amber-600 border-t border-border/50">
+                Consultas com erro (não entraram no PCO): {anoRes.erros.join(', ')}.
+              </div>
+            )}
+            <div className="px-4 py-2 text-xs text-muted-foreground border-t border-border/50">
+              Pra ver o detalhe culto a culto de um mês, use o comparativo mensal acima.
+            </div>
+          </Card>
+        )}
 
         {comp && !compLoading && (
           <>
