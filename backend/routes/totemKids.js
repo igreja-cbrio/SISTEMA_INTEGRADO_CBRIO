@@ -1435,6 +1435,40 @@ router.get('/frequencia-sistema', authorizeModule('kids', 1), async (req, res) =
   }
 });
 
+// GET /comparativo-mes?mes=YYYY-MM · base do comparativo "sistema × PCO" da tela
+// de Frequência: devolve os cultos do mês com o presencial_kids gravado hoje
+// (2025 = backfill da planilha "Dados Reconfigurados" · 2026+ = totem/coleta).
+// O front consulta o PCO dia a dia (POST /resumo-pco/testar) e cruza com esta
+// lista pra mostrar a diferença por culto e o total do mês.
+router.get('/comparativo-mes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const mes = String(req.query.mes || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'Mês inválido (use YYYY-MM)' });
+    const [y, m] = mes.split('-').map(Number);
+    const inicio = `${mes}-01`;
+    const fim = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+
+    const { data: cultos, error } = await supabase.from('cultos')
+      .select('id, nome, data, presencial_kids, vol_service_types(name, recurrence_time, has_kids)')
+      .gte('data', inicio).lte('data', fim)
+      .order('data', { ascending: true });
+    if (error) throw error;
+
+    const lista = (cultos || []).map(c => ({
+      culto_id: c.id,
+      nome: c.nome || c.vol_service_types?.name || 'Culto',
+      data: c.data,
+      hhmm: (c.vol_service_types?.recurrence_time || '').slice(0, 5) || null,
+      has_kids: !!c.vol_service_types?.has_kids,
+      presencial_kids: c.presencial_kids ?? null,
+    }));
+    res.json({ mes, inicio, fim, cultos: lista, datas: [...new Set(lista.map(c => c.data))] });
+  } catch (e) {
+    console.error('[totemKids] comparativo-mes:', e.message);
+    res.status(500).json({ error: 'Erro ao montar o comparativo do mês' });
+  }
+});
+
 // POST /criancas/depurar-inativos · desativa as crianças (com vínculo PCO) que
 // NÃO tiveram check-in nos últimos N meses (default 6). Saem da lista (que mostra
 // só ativos). Reversível (ativo=false · não apaga). Body: { meses }.

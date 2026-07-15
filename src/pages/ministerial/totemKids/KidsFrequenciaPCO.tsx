@@ -42,6 +42,57 @@ export default function KidsFrequenciaPCO() {
   const [detalhe, setDetalhe] = useState<any>(null);
   const [loadingDet, setLoadingDet] = useState(false);
 
+  // ── Comparativo mensal · o que está gravado no sistema × check-ins do PCO ──
+  const [mesComp, setMesComp] = useState('2025-01');
+  const [compLoading, setCompLoading] = useState(false);
+  const [compProg, setCompProg] = useState({ feito: 0, total: 0 });
+  const [comp, setComp] = useState<any>(null);
+  const [soDiferencas, setSoDiferencas] = useState(true);
+
+  async function comparar() {
+    setCompLoading(true);
+    setComp(null);
+    try {
+      const base: any = await api.comparativoMes(mesComp);
+      const datas: string[] = base?.datas || [];
+      if (!datas.length) {
+        toast.error('Nenhum culto encontrado nesse mês.');
+        return;
+      }
+      setCompProg({ feito: 0, total: datas.length });
+      const pcoPorCulto = new Map<string, number>();
+      let pcoSemCulto = 0;
+      const erros: string[] = [];
+      // Sequencial de propósito: cada dia é uma varredura paginada na API do
+      // Planning Center (respeita o rate limit deles).
+      for (let i = 0; i < datas.length; i++) {
+        const d = datas[i];
+        try {
+          const r: any = await api.resumoPcoTestar(d);
+          for (const c of r?.por_culto || []) pcoPorCulto.set(c.culto_id, c.total || 0);
+          pcoSemCulto += r?.sem_culto_casado || 0;
+        } catch {
+          erros.push(d);
+        }
+        setCompProg({ feito: i + 1, total: datas.length });
+      }
+      const linhas = (base?.cultos || []).map((c: any) => {
+        const pco = pcoPorCulto.get(c.culto_id) ?? 0;
+        const sistema = c.presencial_kids ?? 0;
+        return { ...c, pco, sistema, diff: pco - sistema };
+      });
+      const totais = {
+        sistema: linhas.reduce((s: number, l: any) => s + l.sistema, 0),
+        pco: linhas.reduce((s: number, l: any) => s + l.pco, 0),
+      };
+      setComp({ mes: base.mes, linhas, totais, erros, pcoSemCulto });
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível montar o comparativo.');
+    } finally {
+      setCompLoading(false);
+    }
+  }
+
   async function abrirPessoa(k: any) {
     if (!k?.pco_id) { toast.error('Sem vínculo com o Planning Center pra esta pessoa.'); return; }
     setPessoaSel(k);
@@ -241,6 +292,107 @@ export default function KidsFrequenciaPCO() {
           )}
         </>
       )}
+
+      {/* ── Comparativo mensal · sistema × PCO ── */}
+      <div className="space-y-2 pt-2">
+        <h2 className="text-sm font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wide">Comparativo mensal · sistema × PCO</h2>
+        <Card className="glass-solid p-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Compara, culto a culto, o número gravado no sistema com a contagem de crianças nos check-ins do
+            Planning Center. Em <b>2025</b>, o valor do sistema veio da planilha "Dados Reconfigurados"
+            (backfill de 27/05/2026); de 2026 em diante vem do totem/coleta. PCO = check-ins em eventos do
+            Kids, excluindo voluntários.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Mês</label>
+              <input type="month" value={mesComp} onChange={(e) => setMesComp(e.target.value)}
+                className="bg-[var(--cbrio-input-bg)] border border-border rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <button onClick={comparar} disabled={compLoading || !/^\d{4}-\d{2}$/.test(mesComp)}
+              className="bg-primary text-primary-foreground text-sm px-4 py-2 rounded-lg inline-flex items-center gap-1.5 disabled:opacity-60">
+              {compLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />} Comparar
+            </button>
+            {compLoading && compProg.total > 0 && (
+              <span className="text-xs text-muted-foreground pb-2">
+                Consultando o Planning Center · dia {compProg.feito}/{compProg.total}…
+              </span>
+            )}
+          </div>
+        </Card>
+
+        {comp && !compLoading && (
+          <>
+            <Card className="glass-solid p-4 text-sm">
+              <div className="flex flex-wrap gap-x-6 gap-y-1">
+                <span>No sistema: <b className="tabular-nums">{comp.totais.sistema}</b></span>
+                <span>PCO: <b className="tabular-nums">{comp.totais.pco}</b></span>
+                <span>
+                  Diferença:{' '}
+                  <b className={`tabular-nums ${comp.totais.pco - comp.totais.sistema === 0 ? '' : 'text-amber-600'}`}>
+                    {comp.totais.pco - comp.totais.sistema > 0 ? '+' : ''}{comp.totais.pco - comp.totais.sistema}
+                  </b>
+                  {comp.totais.sistema > 0 && (
+                    <span className="text-muted-foreground text-xs">
+                      {' '}({(((comp.totais.pco - comp.totais.sistema) / comp.totais.sistema) * 100).toFixed(1)}%)
+                    </span>
+                  )}
+                </span>
+              </div>
+              {(comp.pcoSemCulto > 0 || (comp.erros || []).length > 0) && (
+                <div className="text-xs text-amber-600 mt-1.5">
+                  {comp.pcoSemCulto > 0 && <span>{comp.pcoSemCulto} check-in(s) do PCO sem culto casado (fora do total PCO por culto). </span>}
+                  {(comp.erros || []).length > 0 && <span>Dias com erro na consulta: {comp.erros.map(fmtData).join(', ')}.</span>}
+                </div>
+              )}
+            </Card>
+
+            <Card className="glass-solid overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border/50">
+                <span className="text-xs text-muted-foreground">
+                  {soDiferencas ? 'Mostrando só cultos com diferença' : 'Mostrando todos os cultos do mês'}
+                </span>
+                <button onClick={() => setSoDiferencas(!soDiferencas)} className="text-xs text-primary hover:underline">
+                  {soDiferencas ? 'Ver todos' : 'Ver só diferenças'}
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground text-left border-b border-border/50">
+                      <th className="px-4 py-2 font-medium">Data</th>
+                      <th className="px-4 py-2 font-medium">Culto</th>
+                      <th className="px-4 py-2 font-medium text-right">No sistema</th>
+                      <th className="px-4 py-2 font-medium text-right">PCO</th>
+                      <th className="px-4 py-2 font-medium text-right">Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {comp.linhas
+                      .filter((l: any) => (soDiferencas ? l.diff !== 0 : l.sistema > 0 || l.pco > 0))
+                      .map((l: any) => (
+                        <tr key={l.culto_id}>
+                          <td className="px-4 py-1.5 tabular-nums whitespace-nowrap">{fmtData(l.data)}</td>
+                          <td className="px-4 py-1.5">{l.nome}</td>
+                          <td className="px-4 py-1.5 text-right tabular-nums">{l.sistema}</td>
+                          <td className="px-4 py-1.5 text-right tabular-nums">{l.pco}</td>
+                          <td className={`px-4 py-1.5 text-right tabular-nums font-semibold ${l.diff === 0 ? 'text-muted-foreground' : l.diff > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {l.diff > 0 ? '+' : ''}{l.diff}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              {comp.linhas.filter((l: any) => (soDiferencas ? l.diff !== 0 : l.sistema > 0 || l.pco > 0)).length === 0 && (
+                <div className="p-6 text-center text-sm text-muted-foreground">
+                  {soDiferencas ? 'Nenhuma diferença entre o sistema e o PCO nesse mês.' : 'Nenhum culto com número de Kids nesse mês.'}
+                </div>
+              )}
+            </Card>
+          </>
+        )}
+      </div>
 
       <Dialog open={!!pessoaSel} onOpenChange={(o) => { if (!o) { setPessoaSel(null); setDetalhe(null); } }}>
         <DialogContent className="max-w-lg flex flex-col max-h-[85vh]">
