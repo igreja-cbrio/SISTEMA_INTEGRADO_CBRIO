@@ -236,11 +236,12 @@ export function GruposMapView({
       {/* Sidebar */}
       <aside
         className={cn(
-          "relative z-30 flex flex-col min-h-0 border-r transition-all duration-300 ease-out",
+          "relative z-30 flex flex-col min-h-0 shrink-0 border-r transition-all duration-300 ease-out",
           sidebarBg,
-          sidebarOpen ? "w-[320px]" : "w-0",
+          // No celular a lista não pode ocupar a tela inteira (estoura o mapa):
+          // fluida até 320px no desktop.
+          sidebarOpen ? "w-[85vw] max-w-[320px]" : "w-0",
         )}
-        style={{ minWidth: sidebarOpen ? 320 : 0 }}
       >
         {sidebarOpen && (
           <>
@@ -418,7 +419,7 @@ export function GruposMapView({
           "absolute z-40 top-1/2 -translate-y-1/2 h-12 w-6 rounded-r-md flex items-center justify-center shadow-md transition-all",
           theme === "dark" ? "bg-gray-900/95 text-white border border-l-0 border-white/10" : "bg-white text-gray-900 border border-l-0 border-gray-200",
         )}
-        style={{ left: sidebarOpen ? 320 : 0 }}
+        style={{ left: sidebarOpen ? "min(85vw, 320px)" : 0 }}
         aria-label={sidebarOpen ? "Fechar lista" : "Abrir lista"}
       >
         {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}

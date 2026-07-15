@@ -69,7 +69,7 @@ function Field({
         style={{
           display: 'block', width: '100%',
           padding: as === 'textarea' ? '14px 0 8px' : '10px 0',
-          fontSize: 14,
+          fontSize: 16, // 16px evita o zoom automatico do iOS ao focar
           color: 'var(--cbrio-text)',
           background: 'transparent',
           border: 'none',
@@ -115,7 +115,7 @@ function SelectField({
         onBlur={() => setFocused(false)}
         required={required}
         style={{
-          display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
+          display: 'block', width: '100%', padding: '10px 0', fontSize: 16, // 16px evita o zoom do iOS ao focar
           color: 'var(--cbrio-text)', background: 'transparent', border: 'none',
           borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
           outline: 'none', transition: 'border-color 0.3s',

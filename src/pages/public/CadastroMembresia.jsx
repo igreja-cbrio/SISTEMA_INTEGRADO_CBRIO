@@ -91,9 +91,9 @@ function Field({ id, label, type = 'text', value, onChange, required, placeholde
         required={required}
         placeholder={placeholder && !active ? '' : ''}
         style={{
-          display: 'block', width: '100%',
+          display: 'block', width: '100%', minWidth: 0, maxWidth: '100%',
           padding: as === 'textarea' ? '14px 0 8px' : '10px 0',
-          fontSize: 14,
+          fontSize: 16, // 16px evita zoom automático do iOS ao focar o campo
           color: 'var(--cbrio-text)',
           background: 'transparent',
           border: 'none',
@@ -133,7 +133,7 @@ function SelectField({ id, label, value, onChange, options, required }) {
         onBlur={() => setFocused(false)}
         required={required}
         style={{
-          display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
+          display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', padding: '10px 0', fontSize: 16, // 16px evita zoom automático do iOS
           color: 'var(--cbrio-text)', background: 'transparent', border: 'none',
           borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
           outline: 'none', transition: 'border-color 0.3s',

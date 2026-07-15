@@ -485,7 +485,7 @@ export default function InscricaoGrupos() {
             <div>
               <button onClick={() => setStep(0)} style={{
                 background: 'none', border: 'none', color: '#00B39D', display: 'flex', alignItems: 'center',
-                gap: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 12, padding: 0,
+                gap: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 8, padding: '8px 0', minHeight: 40,
               }}>
                 <ArrowLeft size={16} /> Voltar à escolha do grupo
               </button>
@@ -503,7 +503,7 @@ export default function InscricaoGrupos() {
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12, marginBottom: 12 }}>
                 <Field campo="nome" error={errosCampos.nome} label="Nome completo *" value={form.nome} onChange={set('nome')} />
                 <Field campo="telefone" error={errosCampos.telefone} label="Celular / WhatsApp *" value={form.telefone} onChange={set('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
                 <Field campo="data_nascimento" error={errosCampos.data_nascimento} label="Data de nascimento *" value={form.data_nascimento} onChange={set('data_nascimento', mascaraDataBr)} placeholder="dia/mês/ano" maxLength={10} inputMode="numeric" />
@@ -519,7 +519,7 @@ export default function InscricaoGrupos() {
                           setErrosCampos(p => (p.genero ? { ...p, genero: '' } : p));
                         }}
                         style={{
-                          flex: 1, padding: '9px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                          flex: 1, minHeight: 44, padding: '9px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
                           fontWeight: form.genero === valor ? 700 : 500,
                           border: `1px solid ${form.genero === valor ? '#00B39D' : (errosCampos.genero ? '#ef4444' : C.inputBorder)}`,
                           background: form.genero === valor ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
@@ -659,7 +659,7 @@ function FotoOpcional({ C, fotoUrl, uploading, erro, onPick, onRemove }) {
             : <Camera size={22} />}
         </div>
         <label style={{
-          padding: '8px 14px', borderRadius: 8, border: `1px solid #00B39D`, color: '#00B39D',
+          padding: '8px 14px', minHeight: 44, boxSizing: 'border-box', borderRadius: 8, border: `1px solid #00B39D`, color: '#00B39D',
           fontWeight: 600, fontSize: 13, cursor: uploading ? 'wait' : 'pointer',
           display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent',
         }}>
