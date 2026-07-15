@@ -525,6 +525,11 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
                                 Verificar identidade
                               </span>
                             )}
+                            {p?.contato_divergente && (
+                              <span style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 99, background: C.blueBg, color: C.blue, fontWeight: 700 }}>
+                                Contato novo
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                             {r.telefone && <span><Phone size={10} style={{ display: 'inline', marginRight: 3 }} />{r.telefone}</span>}
@@ -662,6 +667,13 @@ function PainelPedido({
         )}
       </div>
       {p.observacao && <div style={{ fontSize: 11.5, color: C.t2, fontStyle: 'italic', marginBottom: 10 }}>"{p.observacao}"</div>}
+
+      {p.contato_divergente && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.blueBg, borderRadius: 6, lineHeight: 1.5 }}>
+          O telefone/e-mail desta inscrição é <strong>diferente do cadastro</strong> da pessoa. Ao aprovar,
+          o cadastro é atualizado com o contato novo e o anterior vai pras observações — nada se perde.
+        </div>
+      )}
 
       {p.status === 'devolvido' && (
         <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.violetBg, borderRadius: 6, lineHeight: 1.5 }}>
