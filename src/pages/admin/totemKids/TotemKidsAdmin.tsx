@@ -164,6 +164,10 @@ function AbaSessoes() {
     return `${dia.charAt(0).toUpperCase()}${dia.slice(1)} ${g.periodo.rotulo}`;
   }
 
+  // Períodos de HOJE (BRT) · alvo do "Sessão atual" (trocar manhã ↔ noite).
+  const hojeBRT = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const periodosHoje = grupos.filter((g) => g.data === hojeBRT);
+
   async function abrirGrupo(g: any) {
     setProcessando(g.key);
     try {
@@ -189,6 +193,19 @@ function AbaSessoes() {
     } finally { setProcessando(null); }
   }
 
+  // Troca a sessão do totem pra um período de HOJE: abre o escolhido e ENCERRA
+  // os outros abertos (consolida + baixa). "Trocar de verdade" (Marcos 2026-07-15).
+  async function trocarPeriodo(g: any) {
+    setProcessando(g.key);
+    try {
+      await totemKids.sessoes.trocarPeriodo(g.cultos.map((c: any) => c.id));
+      toast.success(`Sessão do totem: ${rotuloGrupo(g)}`);
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao trocar a sessão');
+    } finally { setProcessando(null); }
+  }
+
   async function encerrarUma(id: string) {
     if (!confirm('Encerrar essa sessão? KPIs serão consolidados.')) return;
     try { await totemKids.sessoes.encerrar(id); toast.success('Encerrada'); await carregar(); }
@@ -210,6 +227,31 @@ function AbaSessoes() {
         <p className="text-xs text-muted-foreground">
           Abra o período (ex.: <b>Domingo de manhã</b>) — os cultos do período ficam disponíveis. No check-in, o voluntário escolhe em qual culto a criança fica.
         </p>
+
+        {/* Sessão atual do totem · trocar entre os períodos de HOJE (ex.: manhã →
+            noite). Só aparece quando há +de um período hoje. Trocar ENCERRA o
+            período anterior (consolida + baixa) e abre o escolhido. */}
+        {periodosHoje.length > 1 && (
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+            <div className="text-sm font-medium">Sessão atual do totem</div>
+            <p className="text-xs text-muted-foreground">Toque no período de hoje que o totem deve usar. O período anterior é encerrado (consolida os números + baixa quem ficou) e o escolhido abre.</p>
+            <div className="flex flex-wrap gap-2">
+              {periodosHoje.map((g) => {
+                const total = g.cultos.length;
+                const abertas = g.cultos.filter((c: any) => sessaoPorCulto[c.id]?.status === 'aberta').length;
+                const ativa = total > 0 && abertas === total;
+                return (
+                  <Button key={g.key} size="sm" variant={ativa ? 'default' : 'outline'}
+                    className={ativa ? 'bg-pink-600 hover:bg-pink-700' : ''}
+                    disabled={processando === g.key} onClick={() => trocarPeriodo(g)}>
+                    {processando === g.key ? <Loader2 className="h-4 w-4 animate-spin" /> : rotuloGrupo(g)}
+                    {ativa ? <span className="ml-1 text-[10px] uppercase tracking-wide">· atual</span> : null}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {carregando ? (
           <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" />
