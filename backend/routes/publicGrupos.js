@@ -75,9 +75,10 @@ router.get('/buscar', async (req, res) => {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, q } = req.query;
 
     let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
       .eq('ativo', true)
-      .eq('aceitando_inscricoes', true); // líder pode ter parado de receber pedidos
+      .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
+      .neq('modo_inscricao', 'fechado'); // por convite do líder — nunca aparece
     // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
     query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
     if (categoria) query = query.eq('categoria', categoria);
@@ -85,8 +86,16 @@ router.get('/buscar', async (req, res) => {
     if (temporada) query = query.eq('temporada', temporada);
     query = query.order('nome');
 
-    const { data: grupos, error } = await query;
+    const { data: gruposCrus, error } = await query;
     if (error) throw error;
+
+    // Visibilidade por modo (Marcos · 15/07): 'temporada' aparece só com as
+    // inscrições da temporada abertas; 'sempre_aberto' aparece o ano todo.
+    const { data: temporadasAll } = await supabase.from('mem_temporadas').select('id, inscricoes_abertas');
+    const abertas = new Set((temporadasAll || []).filter(t => t.inscricoes_abertas).map(t => t.id));
+    const grupos = (gruposCrus || []).filter(g =>
+      g.modo_inscricao === 'sempre_aberto'
+      || (g.modo_inscricao !== 'fechado' && (!g.temporada || abertas.has(g.temporada))));
 
     // Enriquecer com líder
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
@@ -179,7 +188,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { data: grupo, error } = await supabase
       .from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes, modo_inscricao')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
@@ -198,18 +207,24 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// GET /api/public/grupos/lideres/:liderId/grupos
+// GET /api/public/grupos/lideres/:liderId/grupos — mesma regra de
+// visibilidade do /buscar (fechado nunca · temporada só aberta · sempre_aberto).
 router.get('/lideres/:liderId/grupos', async (req, res) => {
   try {
     const { temporada } = req.query;
     let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, modo_inscricao')
       .eq('lider_id', req.params.liderId).eq('ativo', true)
+      .eq('aceitando_inscricoes', true)
+      .neq('modo_inscricao', 'fechado')
       .in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
     if (temporada) query = query.eq('temporada', temporada);
     const { data, error } = await query.order('nome');
     if (error) throw error;
-    res.json(data || []);
+    const { data: temporadasAll } = await supabase.from('mem_temporadas').select('id, inscricoes_abertas');
+    const abertas = new Set((temporadasAll || []).filter(t => t.inscricoes_abertas).map(t => t.id));
+    res.json((data || []).filter(g =>
+      g.modo_inscricao === 'sempre_aberto' || !g.temporada || abertas.has(g.temporada)));
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
@@ -421,9 +436,17 @@ router.post('/inscrever', async (req, res) => {
 
     // Verifica se grupo existe e esta ativo
     const { data: grupo } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, aceitando_inscricoes, status_temporada, temporada, lider_id, categoria, idade_min, idade_max').eq('id', grupo_id).single();
+      .select('id, nome, ativo, aceitando_inscricoes, modo_inscricao, status_temporada, temporada, lider_id, categoria, idade_min, idade_max').eq('id', grupo_id).single();
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
+    }
+    // Grupo por convite do líder (Marcos · 15/07): nunca aceita inscrição
+    // pública — não aparece no form, e um deep-link antigo cai aqui.
+    if (grupo.modo_inscricao === 'fechado') {
+      return res.status(403).json({
+        error: 'Este grupo é por convite do líder — fale com ele para participar.',
+        codigo: 'inscricoes_fechadas',
+      });
     }
     if (grupo.aceitando_inscricoes === false) {
       return res.status(403).json({
@@ -432,8 +455,9 @@ router.post('/inscrever', async (req, res) => {
       });
     }
 
-    // Verifica se a temporada do grupo esta com inscrições abertas
-    if (grupo.temporada) {
+    // Verifica se a temporada do grupo esta com inscrições abertas —
+    // grupo 'sempre_aberto' recebe o ano todo, mesmo com a temporada fechada.
+    if (grupo.temporada && grupo.modo_inscricao !== 'sempre_aberto') {
       const { data: temporada } = await supabase.from('mem_temporadas')
         .select('inscricoes_abertas, label').eq('id', grupo.temporada).maybeSingle();
       if (!temporada?.inscricoes_abertas) {
@@ -867,10 +891,11 @@ router.post('/sugestao/aceitar', async (req, res) => {
     }
 
     const { data: sugerido } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, aceitando_inscricoes').eq('id', payload.g).is('deleted_at', null).maybeSingle();
-    if (!sugerido || !sugerido.ativo || sugerido.aceitando_inscricoes === false) {
+      .select('id, nome, ativo, aceitando_inscricoes, modo_inscricao').eq('id', payload.g).is('deleted_at', null).maybeSingle();
+    if (!sugerido || !sugerido.ativo || sugerido.aceitando_inscricoes === false || sugerido.modo_inscricao === 'fechado') {
       // aceitando=false: o líder do grupo sugerido pausou as entradas DEPOIS
       // da sugestão — respeita a trava dele (capacidade é conselho; pausa não).
+      // modo fechado: o grupo virou por-convite depois da sugestão — idem.
       return res.status(410).json({ error: 'O grupo sugerido não está mais disponível. Seu pedido original continua valendo.' });
     }
 

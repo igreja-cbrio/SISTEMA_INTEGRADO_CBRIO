@@ -38,6 +38,15 @@ const RECORRENCIA_LABEL = { diario: 'Diário', semanal: 'Semanal', quinzenal: 'Q
 const RECORRENCIA_ORDEM = ['diario', 'semanal', 'quinzenal', 'mensal'];
 const recorrenciaLabel = (r) => RECORRENCIA_LABEL[r] || (r ? r.charAt(0).toUpperCase() + r.slice(1) : '');
 
+// As temporadas de grupos abrem em março e agosto (cadência institucional ·
+// Marcos 15/07) — a frase do aviso aponta a PRÓXIMA abertura a partir de hoje.
+function proximaAbertura() {
+  const mes = new Date().getMonth(); // 0 = janeiro
+  if (mes < 2) return 'em março';
+  if (mes < 7) return 'em agosto';
+  return 'em março do ano que vem';
+}
+
 const selStyle = {
   padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
   // ≥16px: abaixo disso o iOS dá zoom automático ao focar o select/input
@@ -86,12 +95,18 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   // Temporadas selecionáveis no form: a ativa (default) + qualquer outra com
   // inscrições abertas (ex.: "Temporada Teste"). Só vira select quando há ≥2.
   const [temporadaOpcoes, setTemporadaOpcoes] = useState([]);
+  // inscricoes_abertas por temporada — alimenta o aviso de temporada fechada
+  // (quando fechada, o backend devolve só os grupos "sempre abertos").
+  const [temporadaAberta, setTemporadaAberta] = useState({});
 
   // Resolve a temporada ativa (se não veio por prop) + opções do seletor
   useEffect(() => {
     if (temporadaId) setTemporada(temporadaId);
     api.temporadas().then(ts => {
       const lista = ts || [];
+      const mapa = {};
+      lista.forEach(t => { mapa[t.id] = t.inscricoes_abertas === true; });
+      setTemporadaAberta(mapa);
       const ativa = lista.find(t => t.ativa);
       const aberta = lista.find(t => t.inscricoes_abertas);
       if (!temporadaId) {
@@ -162,8 +177,27 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
 
   const temFiltros = full && (categorias.length >= 1 || faixas.length >= 1 || bairros.length >= 1 || dias.length >= 1 || recorrencias.length >= 1);
 
+  // Temporada selecionada com inscrições FECHADAS: o que aparece são só os
+  // grupos "sempre abertos" — o aviso explica e aponta a próxima abertura.
+  const inscricoesFechadas = full && !!temporada && temporadaAberta[temporada] === false;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {inscricoesFechadas && !loading && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 10, fontSize: 13, lineHeight: 1.55,
+          background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.5)', color: C.text,
+        }}>
+          {grupos.length > 0 ? (
+            <>As inscrições da temporada estão <strong>fechadas</strong> no momento — os grupos abaixo
+            aceitam inscrição o ano todo. As inscrições para mais grupos abrem <strong>{proximaAbertura()}</strong>.</>
+          ) : (
+            <>As inscrições da temporada estão <strong>fechadas</strong> no momento e não há grupos
+            recebendo inscrição agora. As inscrições abrem <strong>{proximaAbertura()}</strong> — volte aqui
+            que a lista de grupos vai estar te esperando!</>
+          )}
+        </div>
+      )}
       {/* Busca: por grupo | por líder */}
       <div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>

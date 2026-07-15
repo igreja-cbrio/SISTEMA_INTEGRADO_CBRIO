@@ -180,8 +180,10 @@ export default function InscricaoGrupos() {
       try {
         const g = await gruposPublic.getById(grupoParam);
         if (cancelled || !g || !g.id) return;
-        let fechado = g.aceitando_inscricoes === false;
-        if (!fechado && g.temporada) {
+        // Fechado = por convite do líder (nunca recebe pelo form). Grupo
+        // "sempre aberto" ignora a temporada fechada (Marcos · 15/07).
+        let fechado = g.aceitando_inscricoes === false || g.modo_inscricao === 'fechado';
+        if (!fechado && g.temporada && g.modo_inscricao !== 'sempre_aberto') {
           const ts = await gruposPublic.temporadas().catch(() => []);
           const t = (ts || []).find(x => x.id === g.temporada);
           if (t && !t.inscricoes_abertas) fechado = true;
