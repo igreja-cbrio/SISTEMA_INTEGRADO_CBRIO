@@ -1740,13 +1740,19 @@ router.patch('/pessoas/:membroId/ficha', authorizeModule('grupos', 5), async (re
       const dig = limpo(body.cpf).replace(/\D+/g, '');
       if (dig) {
         if (!_cpfValidoAdm(dig)) return res.status(400).json({ error: 'CPF inválido — confira os números.', campo: 'cpf' });
-        // CPF é chave de identidade: se OUTRA pessoa ativa já o tem, o caso é
-        // de duplicata (fundir), não de edição.
+        // CPF é chave de identidade: se OUTRA pessoa ativa já o tem, é a
+        // MESMA pessoa em dois cadastros (Marcos · 15/07) — o 409 devolve o
+        // outro cadastro estruturado e o front oferece FUNDIR na hora.
         const { data: outro } = await supabase.from('mem_membros')
           .select('id, nome').eq('cpf', dig).neq('id', req.params.membroId)
           .is('deleted_at', null).limit(1);
         if (outro && outro.length) {
-          return res.status(409).json({ error: `Este CPF já está no cadastro de "${outro[0].nome}". Se for a mesma pessoa, use a aba Duplicatas pra fundir.`, campo: 'cpf' });
+          return res.status(409).json({
+            error: `Este CPF já está no cadastro de "${outro[0].nome}".`,
+            codigo: 'cpf_em_uso',
+            campo: 'cpf',
+            outro: { id: outro[0].id, nome: outro[0].nome },
+          });
         }
       }
       upd.cpf = dig || null;
@@ -2040,9 +2046,12 @@ router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res)
     if (!keep_id || !merges.length) return res.status(400).json({ error: 'Informe keep_id e merge_ids' });
     if (merges.length > 10) return res.status(400).json({ error: 'Máximo de 10 cadastros por fusão' });
 
+    // Escopo da triagem: PELO MENOS UM dos cadastros precisa ser do universo
+    // de grupos — a duplicata dele pode ser um cadastro avulso da membresia
+    // (ex.: conflito de CPF na edição da ficha · mesmo CPF = mesma pessoa).
     const gruposDe = await universoGrupos();
-    const fora = [keep_id, ...merges].filter(id => !gruposDe.has(id));
-    if (fora.length) return res.status(403).json({ error: 'Só cadastros do universo de grupos podem ser fundidos por aqui.' });
+    const noUniverso = [keep_id, ...merges].some(id => gruposDe.has(id));
+    if (!noUniverso) return res.status(403).json({ error: 'Nenhum destes cadastros é do universo de grupos — resolva pela Membresia.' });
 
     // Snapshot ANTES da fusão — é daqui que saem os divergentes a somar
     const { data: antes } = await supabase.from('mem_membros')
