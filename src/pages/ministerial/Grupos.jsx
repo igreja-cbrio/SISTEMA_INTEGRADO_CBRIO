@@ -1356,6 +1356,7 @@ export default function Grupos() {
             <GruposPessoas
               onOpenGrupo={openGrupoById}
               podeEditar={podeEditarGrupos}
+              podeEditarDados={podeGerenciarSupervisor}
               gruposOptions={gruposList.filter(g => g.ativo)}
               onVerDuplicatas={() => trocarPessoasView('duplicatas')}
             />

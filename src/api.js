@@ -519,6 +519,9 @@ export const grupos = {
   buscarLideres: (params) => get('/grupos/lideres/buscar' + (params ? '?' + new URLSearchParams(params) : '')),
   // Autocomplete de líder do cadastro de grupo (universo de grupos, server-side)
   buscarPessoas: (q) => get('/grupos/pessoas/buscar?q=' + encodeURIComponent(q)),
+  // Ficha da pessoa (aba Pessoas · editar/limpar dados cadastrais)
+  pessoaFicha: (membroId) => get(`/grupos/pessoas/${membroId}/ficha`),
+  pessoaFichaSalvar: (membroId, data) => patch(`/grupos/pessoas/${membroId}/ficha`, data),
   // Possíveis duplicatas do universo de grupos (triagem da Naná)
   duplicatas: {
     list: (fresh) => get('/grupos/duplicatas' + (fresh ? '?fresh=1' : '')),
