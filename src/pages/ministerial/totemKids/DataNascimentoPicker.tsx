@@ -7,7 +7,7 @@
 // Faixa de ano default cobre 0–14 anos (Kids).
 // ============================================================================
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 const MESES = [
@@ -34,7 +34,17 @@ export default function DataNascimentoPicker({
 }) {
   const yMax = anoMax ?? new Date().getFullYear();
   const yMin = anoMin ?? yMax - 14;
-  const { d, m, y } = partes(value);
+  // Estado interno das 3 partes — persiste seleção PARCIAL. Antes as listas liam
+  // direto de partes(value); como emit() mandava '' enquanto a data estava
+  // incompleta, o value voltava vazio e a escolha do dia/mês/ano some ao clicar
+  // (bug relatado 2026-07-15). Agora só sincroniza com o value externo.
+  const [d, setD] = useState(() => partes(value).d);
+  const [m, setM] = useState(() => partes(value).m);
+  const [y, setY] = useState(() => partes(value).y);
+  useEffect(() => {
+    const p = partes(value);
+    setD(p.d); setM(p.m); setY(p.y);
+  }, [value]);
 
   const diasNoMes = useMemo(() => {
     const mm = Number(m), yy = Number(y);
@@ -43,10 +53,16 @@ export default function DataNascimentoPicker({
   }, [m, y]);
 
   function emit(nd: string, nm: string, ny: string) {
+    // Se já dá pra fechar a data, clampa o dia ao máximo do mês (ex.: 31/Fev → 29)
+    // ANTES de gravar no estado, pra a lista e o valor não divergirem por 1 frame.
+    let dd = nd;
     if (nd && nm && ny) {
       const max = new Date(Number(ny), Number(nm), 0).getDate();
-      const dia = Math.min(Number(nd), max);
-      onChange(`${ny}-${String(Number(nm)).padStart(2, '0')}-${String(dia).padStart(2, '0')}`);
+      dd = String(Math.min(Number(nd), max));
+    }
+    setD(dd); setM(nm); setY(ny);
+    if (dd && nm && ny) {
+      onChange(`${ny}-${String(Number(nm)).padStart(2, '0')}-${String(Number(dd)).padStart(2, '0')}`);
     } else {
       onChange('');
     }
