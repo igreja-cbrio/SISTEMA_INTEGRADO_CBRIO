@@ -1464,6 +1464,7 @@ export const totemKids = {
     abrir: (id) => post(`/totem-kids/sessoes/${id}/abrir`, {}),
     encerrar: (id) => post(`/totem-kids/sessoes/${id}/encerrar`, {}),
     encerrarVencidas: () => post('/totem-kids/sessoes/encerrar-vencidas', {}),
+    trocarPeriodo: (cultoIds) => post('/totem-kids/sessoes/trocar-periodo', { culto_ids: cultoIds }),
   },
   criancas: {
     buscar: (q) => get(`/totem-kids/criancas/buscar?q=${encodeURIComponent(q)}`),

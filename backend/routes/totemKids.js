@@ -214,6 +214,26 @@ function _hojeBRT() {
 // carga do totem/admin. Fecha o buraco do R1 (check-in adotar sessão de outro
 // dia e corromper presencial_kids/decisoes_kids) e consolida o KPI do culto
 // antigo certo (trigger fn_kids_sessao_consolida_culto dispara no status→encerrada).
+// Encerra um conjunto de sessões + auto-checkout de quem ficou aberto (mesma
+// baixa do "Encerrar" manual · #1758a). Consolida o KPI (trigger no status→encerrada).
+async function _fecharSessoes(ids, userId, motivo) {
+  if (!ids?.length) return 0;
+  const agora = new Date().toISOString();
+  await supabase.from('kids_sessoes')
+    .update({ status: 'encerrada', encerrada_at: agora, encerrada_por: userId || null })
+    .in('id', ids);
+  const { error: eCk } = await supabase.from('kids_checkins')
+    .update({
+      checkout_at: agora,
+      checkout_metodo: 'checkout_forcado',
+      checkout_por: userId || null,
+      responsavel_checkout_nome: motivo,
+    })
+    .in('sessao_id', ids).is('checkout_at', null);
+  if (eCk) console.error('[totemKids/_fecharSessoes] auto-checkout:', eCk.message);
+  return ids.length;
+}
+
 async function encerrarSessoesVencidas(userId) {
   const hoje = _hojeBRT();
   const { data: abertas, error } = await supabase
@@ -224,21 +244,7 @@ async function encerrarSessoesVencidas(userId) {
   const vencidas = (abertas || [])
     .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) < hoje)
     .map((s) => s.id);
-  if (!vencidas.length) return 0;
-  const agora = new Date().toISOString();
-  await supabase.from('kids_sessoes')
-    .update({ status: 'encerrada', encerrada_at: agora, encerrada_por: userId || null })
-    .in('id', vencidas);
-  const { error: eCk } = await supabase.from('kids_checkins')
-    .update({
-      checkout_at: agora,
-      checkout_metodo: 'checkout_forcado',
-      checkout_por: userId || null,
-      responsavel_checkout_nome: 'Baixa automática (sessão de outro dia)',
-    })
-    .in('sessao_id', vencidas).is('checkout_at', null);
-  if (eCk) console.error('[totemKids/encerrar-vencidas] auto-checkout:', eCk.message);
-  return vencidas.length;
+  return _fecharSessoes(vencidas, userId, 'Baixa automática (sessão de outro dia)');
 }
 
 // POST /api/totem-kids/sessoes/encerrar-vencidas · sweep lazy (SEM cron): o
@@ -250,6 +256,43 @@ router.post('/sessoes/encerrar-vencidas', authorizeModule('kids', 2), async (req
   } catch (e) {
     console.error('[totemKids/sessoes/encerrar-vencidas]', e.message);
     res.status(500).json({ error: 'Erro ao encerrar sessões vencidas' });
+  }
+});
+
+// POST /api/totem-kids/sessoes/trocar-periodo · troca a sessão do totem entre
+// períodos do MESMO dia (ex.: Domingo de manhã → Domingo à noite). Abre os cultos
+// do período escolhido e ENCERRA os OUTROS cultos de HOJE que estiverem abertos
+// (consolida o KPI + baixa quem ficou) — o check-in passa a mostrar só o período
+// escolhido, sem risco de lançar criança no culto errado.
+router.post('/sessoes/trocar-periodo', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.culto_ids) ? [...new Set(req.body.culto_ids.map(String))] : [];
+    if (!ids.length) return res.status(400).json({ error: 'culto_ids obrigatório' });
+    const hoje = _hojeBRT();
+    // Só cultos de HOJE entram (proteção contra trocar pra outro dia).
+    const { data: alvo } = await supabase.from('cultos').select('id, data').in('id', ids);
+    const escolhidos = (alvo || []).filter((c) => String(c.data).slice(0, 10) === hoje).map((c) => c.id);
+    if (!escolhidos.length) return res.status(400).json({ error: 'Nenhum culto de hoje nos ids' });
+    // Abre/reabre as sessões do período escolhido.
+    for (const cid of escolhidos) {
+      const { data: s } = await supabase.from('kids_sessoes').select('id, status').eq('culto_id', cid).maybeSingle();
+      if (!s) {
+        await supabase.from('kids_sessoes').insert({ culto_id: cid, status: 'aberta', abrir_em: new Date().toISOString() });
+      } else if (s.status === 'encerrada') {
+        await supabase.from('kids_sessoes').update({ status: 'aberta', encerrada_at: null, encerrada_por: null }).eq('id', s.id);
+      }
+    }
+    // Encerra os OUTROS cultos de HOJE que estão abertos (períodos não escolhidos).
+    const { data: abertasHoje } = await supabase.from('kids_sessoes')
+      .select('id, culto_id, culto:cultos(data)').eq('status', 'aberta');
+    const fechar = (abertasHoje || [])
+      .filter((s) => s.culto?.data && String(s.culto.data).slice(0, 10) === hoje && !escolhidos.includes(s.culto_id))
+      .map((s) => s.id);
+    const encerradas = await _fecharSessoes(fechar, req.user.userId, 'Baixa automática (troca de sessão)');
+    res.json({ abertas: escolhidos.length, encerradas });
+  } catch (e) {
+    console.error('[totemKids/sessoes/trocar-periodo]', e.message);
+    res.status(500).json({ error: 'Erro ao trocar a sessão' });
   }
 });
 
