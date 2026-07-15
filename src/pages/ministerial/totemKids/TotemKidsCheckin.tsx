@@ -449,7 +449,10 @@ export default function TotemKidsCheckin() {
   // Da seleção (cultosSel) resolve o culto PRIMÁRIO (a sessão do check-in) + os
   // extras. Primário = o culto de agora se marcado, senão o mais cedo marcado.
   function resolverSessaoCultos(): { sessao_id: string | null; cultos_extras: string[] } {
-    const marcados = [...cultosSel];
+    let marcados = [...cultosSel];
+    // Culto ÚNICO aberto (Quarta/AMI/Bridge/Domingo à noite) → não precisa escolher:
+    // usa o único (o seletor "em qual culto" só aparece quando há +de um horário).
+    if (!marcados.length && sessoesAbertas.length === 1) marcados = [sessoesAbertas[0].culto_id];
     if (!marcados.length) return { sessao_id: null, cultos_extras: [] };
     const horaDe = (id: string) => String(sessoesAbertas.find((c: any) => c.culto_id === id)?.hora || '');
     const primaryId = (cultoAtualId && cultosSel.has(cultoAtualId))
@@ -1178,7 +1181,7 @@ function PainelFamilia(props: {
   const selecionados = membros.filter(m => sel.has(m.id));
   const semSala = selecionados.filter(m => !salaPor[m.id]);
   const respOk = manual ? (!!manualNome.trim() && !!manualTel.trim()) : !!respId;
-  const semCulto = sessoesAbertas.length > 0 && cultosSel.size === 0;
+  const semCulto = sessoesAbertas.length > 1 && cultosSel.size === 0;
   const podeConfirmar = selecionados.length > 0 && semSala.length === 0 && respOk && !semCulto && !imprimindo;
   // Tem telefone pra oferecer o WhatsApp de retirada? (manual ≥10 díg · ou o selecionado tem tel)
   const temTelefoneResp = manual
@@ -1220,7 +1223,7 @@ function PainelFamilia(props: {
         </div>
 
         {/* Em quais cultos a família vai ficar? (mesmo padrão do card individual) */}
-        {sessoesAbertas.length > 0 && (
+        {sessoesAbertas.length > 1 && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a família vai ficar?</label>
             <p className="text-xs text-muted-foreground mb-2">Escolha o culto — vale pra todos os irmãos marcados. (a etiqueta "agora" é só uma dica do horário atual)</p>
@@ -1891,7 +1894,7 @@ function CheckinSelecao(props: {
             agora (relógio · ou o 1º do período) vem pré-marcado; a pessoa confirma
             ou troca, e pode marcar mais de um (extras). A criança entra na sessão
             de cada culto marcado · 1 etiqueta só. */}
-        {sessoesAbertas.length > 0 && (
+        {sessoesAbertas.length > 1 && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a criança vai ficar?</label>
             <p className="text-xs text-muted-foreground mb-2">Escolha o culto. Marque mais de um só se a criança realmente ficar em mais de um. (a etiqueta "agora" é só uma dica do horário atual)</p>
@@ -2080,7 +2083,7 @@ function CheckinSelecao(props: {
           {(() => {
             // Trava a impressão: precisa de culto + sala + responsável (da lista OU manual completo).
             const faltaResp = !usarRespManual ? !responsavelSelecionado : (!respManualNome.trim() || !respManualTel.trim());
-            const faltaCulto = sessoesAbertas.length > 0 && cultosSel.size === 0;
+            const faltaCulto = sessoesAbertas.length > 1 && cultosSel.size === 0;
             const bloqueado = !checkinAberto && (!salaSelecionada || faltaResp || faltaCulto);
             return (
           <>
