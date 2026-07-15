@@ -68,8 +68,8 @@ function Field({
         placeholder={placeholder && !active ? '' : ''}
         style={{
           display: 'block', width: '100%',
-          padding: as === 'textarea' ? '14px 0 8px' : '10px 0',
-          fontSize: 14, color: 'var(--cbrio-text)',
+          padding: as === 'textarea' ? '14px 0 8px' : '12px 0',
+          fontSize: 16, color: 'var(--cbrio-text)',
           background: 'transparent', border: 'none',
           borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
           outline: 'none', transition: 'border-color 0.3s',
@@ -79,8 +79,8 @@ function Field({
       />
       <label htmlFor={id} style={{
         position: 'absolute', left: 0,
-        top: active ? -14 : 10,
-        fontSize: active ? 11 : 14,
+        top: active ? -14 : 12,
+        fontSize: active ? 11 : 16,
         color: focused ? '#00B39D' : 'var(--cbrio-text3)',
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
@@ -106,7 +106,7 @@ function SelectField({
         id={id} name={id} value={value || ''} onChange={onChange}
         onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} required={required}
         style={{
-          display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
+          display: 'block', width: '100%', padding: '12px 20px 12px 0', fontSize: 16,
           color: 'var(--cbrio-text)', background: 'transparent', border: 'none',
           borderBottom: `2px solid ${focused ? '#00B39D' : 'var(--cbrio-border)'}`,
           outline: 'none', transition: 'border-color 0.3s',
@@ -122,14 +122,14 @@ function SelectField({
       </select>
       <label htmlFor={id} style={{
         position: 'absolute', left: 0,
-        top: active ? -14 : 10,
-        fontSize: active ? 11 : 14,
+        top: active ? -14 : 12,
+        fontSize: active ? 11 : 16,
         color: focused ? '#00B39D' : 'var(--cbrio-text3)',
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
         {label}{required && <span style={{ color: '#ef4444' }}> *</span>}
       </label>
-      <span style={{ position: 'absolute', right: 4, bottom: 12, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
+      <span style={{ position: 'absolute', right: 4, bottom: 14, pointerEvents: 'none', color: 'var(--cbrio-text3)', fontSize: 12 }}>▾</span>
     </div>
   );
 }

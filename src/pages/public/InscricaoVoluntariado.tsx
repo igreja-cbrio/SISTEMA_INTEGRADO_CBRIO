@@ -116,7 +116,7 @@ function Field({
         style={{
           display: 'block', width: '100%',
           padding: as === 'textarea' ? '14px 0 8px' : '10px 0',
-          fontSize: 14,
+          fontSize: 16,
           color: C.text,
           background: 'transparent',
           border: 'none',
@@ -131,7 +131,7 @@ function Field({
       <label htmlFor={id} style={{
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
-        fontSize: active ? 11 : 14,
+        fontSize: active ? 11 : 16,
         color: focused ? '#00B39D' : C.text3,
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
@@ -162,7 +162,7 @@ function SelectField({
         onBlur={() => setFocused(false)}
         required={required}
         style={{
-          display: 'block', width: '100%', padding: '10px 0', fontSize: 14,
+          display: 'block', width: '100%', padding: '10px 0', fontSize: 16,
           color: C.text, background: 'transparent', border: 'none',
           borderBottom: `2px solid ${focused ? '#00B39D' : C.inputBorder}`,
           outline: 'none', transition: 'border-color 0.3s',
@@ -180,7 +180,7 @@ function SelectField({
       <label htmlFor={id} style={{
         position: 'absolute', left: 0,
         top: active ? -14 : 10,
-        fontSize: active ? 11 : 14,
+        fontSize: active ? 11 : 16,
         color: focused ? '#00B39D' : C.text3,
         transition: 'all 0.2s', pointerEvents: 'none',
       }}>
@@ -225,7 +225,7 @@ function ChipToggle({ checked, onChange, label }: {
       type="button"
       onClick={onChange}
       style={{
-        padding: '8px 12px', fontSize: 12, fontWeight: 600,
+        padding: '10px 14px', minHeight: 40, fontSize: 12, fontWeight: 600,
         background: checked ? '#00B39D' : 'transparent',
         color: checked ? '#fff' : C.text2,
         border: `1px solid ${checked ? '#00B39D' : C.inputBorder}`,
