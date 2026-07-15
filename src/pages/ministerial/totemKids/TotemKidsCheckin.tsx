@@ -208,6 +208,55 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   );
 }
 
+// Dispensa de CPF no CADASTRO (mesma válvula do check-in · Marcos 2026-07-15):
+// "Não tenho o CPF agora" → supervisor libera com PIN + motivo. O CPF volta a ser
+// cobrado no próximo check-in. Reusado no cadastro de criança e no "+ responsável".
+function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
+  dispensado: boolean;
+  onDispensar: () => void;
+  onCancelar: () => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [pin, setPin] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [erro, setErro] = useState('');
+  const fechar = () => { setAberto(false); setPin(''); setMotivo(''); setErro(''); };
+
+  if (dispensado) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-md border border-amber-400/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs">
+        <span className="text-amber-700 dark:text-amber-300">CPF dispensado pelo supervisor · será cobrado no próximo check-in.</span>
+        <button type="button" className="underline shrink-0" onClick={() => { onCancelar(); fechar(); }}>Desfazer</button>
+      </div>
+    );
+  }
+  if (!aberto) {
+    return (
+      <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setAberto(true)}>
+        Não tenho o CPF agora
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-2 rounded-md border border-amber-400/60 p-2">
+      <p className="text-xs">Liberar o cadastro <b>sem CPF</b> — só um supervisor (PIN). O responsável vai ser cobrado no próximo check-in.</p>
+      <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin}
+        onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-10 text-center tracking-widest" />
+      <Input placeholder="Motivo (ex.: estrangeiro, esqueceu o documento)" value={motivo}
+        onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
+      {!!erro && <p className="text-xs text-red-500">{erro}</p>}
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" className="flex-1" onClick={fechar}>Voltar</Button>
+        <Button type="button" size="sm" className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={() => {
+          if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
+          if (!motivo.trim()) { setErro('Diga o motivo (ex.: estrangeiro, esqueceu o documento).'); return; }
+          onDispensar(); setAberto(false);
+        }}>Liberar sem CPF</Button>
+      </div>
+    </div>
+  );
+}
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -2369,6 +2418,7 @@ function ModalNovaCrianca(props: {
   const [resps, setResps] = useState<any[]>([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
   const [captura, setCaptura] = useState<{ tipo: 'crianca' | 'resp'; i: number } | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const [dispensaCpf, setDispensaCpf] = useState(false); // supervisor liberou o cadastro sem CPF (PIN)
   const setCri = (i: number, patch: any) => setCriancas(cs => cs.map((c, idx) => idx === i ? { ...c, ...patch } : c));
   const addCri = () => setCriancas(cs => [...cs, emptyCrianca()]);
   const delCri = (i: number) => setCriancas(cs => cs.length > 1 ? cs.filter((_, idx) => idx !== i) : cs);
@@ -2381,6 +2431,7 @@ function ModalNovaCrianca(props: {
       setCriancas([{ ...emptyCrianca(), nome: props.nomeInicial }]);
       setResps([{ nome: '', telefone: '', cpf: '', parentesco: 'mae', autorizado_buscar: true, foto: null }]);
       setCaptura(null);
+      setDispensaCpf(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.open, props.nomeInicial, props.referencia?.id]);
@@ -2408,6 +2459,11 @@ function ModalNovaCrianca(props: {
     if (!validasCri.length) { toast.error('Informe o nome de ao menos uma criança'); return; }
     const validos = props.referencia ? [] : resps.filter(r => r.nome.trim() && r.telefone.trim());
     if (!props.referencia && !validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
+    // CPF do responsável obrigatório (Marcos 2026-07-15) · supervisor dispensa via PIN.
+    if (!props.referencia && !dispensaCpf && validos.some(r => !cpfValido(r.cpf || ''))) {
+      toast.error('CPF do responsável é obrigatório. Se não tiver agora, use "Não tenho o CPF agora".');
+      return;
+    }
     setSalvando(true);
     try {
       let primeiroId: string | null = props.referencia?.id || null;
@@ -2541,7 +2597,7 @@ function ModalNovaCrianca(props: {
                   <Input placeholder="Nome do responsável *" value={r.nome} onChange={e => setResp(i, { nome: e.target.value })} />
                   <div className="grid grid-cols-2 gap-2">
                     <Input placeholder="Telefone *" value={r.telefone} onChange={e => setResp(i, { telefone: e.target.value })} />
-                    <Input placeholder="CPF (opcional)" value={r.cpf} onChange={e => setResp(i, { cpf: e.target.value })} />
+                    <Input placeholder="CPF do responsável *" value={r.cpf} onChange={e => setResp(i, { cpf: e.target.value })} />
                   </div>
                   <Select value={r.parentesco} onValueChange={v => setResp(i, { parentesco: v })}>
                     <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
@@ -2571,6 +2627,7 @@ function ModalNovaCrianca(props: {
                   </div>
                 </div>
               ))}
+              <DispensaCpfInline dispensado={dispensaCpf} onDispensar={() => setDispensaCpf(true)} onCancelar={() => setDispensaCpf(false)} />
             </div>
           )}
 
@@ -2606,16 +2663,19 @@ function ModalCadastrarResponsavel(props: {
   const [cpf, setCpf] = useState('');
   const [parentesco, setParentesco] = useState('mae');
   const [salvando, setSalvando] = useState(false);
+  const [dispensaCpf, setDispensaCpf] = useState(false); // supervisor liberou sem CPF (PIN)
 
   useEffect(() => {
     if (props.open) {
-      setNome(''); setTelefone(''); setCpf(''); setParentesco('mae');
+      setNome(''); setTelefone(''); setCpf(''); setParentesco('mae'); setDispensaCpf(false);
     }
   }, [props.open]);
 
   async function salvar() {
     if (!nome.trim()) return toast.error('Nome obrigatório');
     if (!telefone.trim()) return toast.error('Telefone obrigatório');
+    // CPF do responsável obrigatório (Marcos 2026-07-15) · supervisor dispensa via PIN.
+    if (!dispensaCpf && !cpfValido(cpf)) return toast.error('CPF do responsável é obrigatório. Se não tiver agora, use "Não tenho o CPF agora".');
     setSalvando(true);
     try {
       await totemKids.criancas.addResponsavelRapido(props.criancaId, {
@@ -2649,7 +2709,7 @@ function ModalCadastrarResponsavel(props: {
           <Input placeholder="Nome do responsável *" value={nome} onChange={e => setNome(e.target.value)} autoFocus />
           <div className="grid grid-cols-2 gap-2">
             <Input placeholder="Telefone *" value={telefone} onChange={e => setTelefone(e.target.value)} />
-            <Input placeholder="CPF (opcional)" value={cpf} onChange={e => setCpf(e.target.value)} />
+            <Input placeholder="CPF do responsável *" value={cpf} onChange={e => setCpf(e.target.value)} />
           </div>
           <Select value={parentesco} onValueChange={setParentesco}>
             <SelectTrigger><SelectValue placeholder="Parentesco" /></SelectTrigger>
@@ -2665,6 +2725,7 @@ function ModalCadastrarResponsavel(props: {
               <SelectItem value="outro">Outro</SelectItem>
             </SelectContent>
           </Select>
+          <DispensaCpfInline dispensado={dispensaCpf} onDispensar={() => setDispensaCpf(true)} onCancelar={() => setDispensaCpf(false)} />
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={props.onClose} disabled={salvando}>
               Pular agora
